@@ -1063,7 +1063,8 @@ export async function finalizeRun(
 
   // The side effects below (Slack notifications + channel task finalization +
   // tracker sync) are non-idempotent. Only fire them when we actually finalized
-  // the run above.
+  // the run above, and each one is best-effort: the run is already ended, so a
+  // retry after a throw here would stop at `alreadyEnded` and fire none of them.
   // Channel-task runs own their terminal in-thread report (finalizeChannelTaskRun
   // below — opt-in-independent, exactly one message). Skip the generic
   // run-complete notification for them: the CODE route resolves a real
@@ -1089,7 +1090,9 @@ export async function finalizeRun(
     traceCostUsd: channelTraceCostUsd,
   });
 
-  // Best-effort tracker sync on workflow terminal status.
+  // Best-effort tracker sync on workflow terminal status. The run is already
+  // ended: a throw here would retry the activity into the `alreadyEnded` early
+  // return, so the sync would be lost either way — it is logged instead.
   const externalTicketId = run?.workRequest?.externalTicketId;
   if (
     notify &&
@@ -1097,17 +1100,24 @@ export async function finalizeRun(
     isTrackerTicket(run?.workRequest) &&
     (finalStatus === 'SUCCESS' || finalStatus === 'FAILED' || finalStatus === 'TIMED_OUT')
   ) {
-    const trackerConfig = await resolveIssueTrackerConfig();
-    await syncTrackerOnEvent(
-      finalStatus === 'SUCCESS'
-        ? { issueId: externalTicketId, type: 'workflow_completed' }
-        : {
-            issueId: externalTicketId,
-            summary: `Workflow ended with status: ${finalStatus}`,
-            type: 'workflow_failed',
-          },
-      trackerConfig
-    ).catch(() => null);
+    try {
+      const trackerConfig = await resolveIssueTrackerConfig();
+      await syncTrackerOnEvent(
+        finalStatus === 'SUCCESS'
+          ? { issueId: externalTicketId, type: 'workflow_completed' }
+          : {
+              issueId: externalTicketId,
+              summary: `Workflow ended with status: ${finalStatus}`,
+              type: 'workflow_failed',
+            },
+        trackerConfig
+      );
+    } catch (err) {
+      logError(`[finalizeRun] tracker sync failed for run ${runId}:`, {
+        err: err instanceof Error ? err.message : err,
+        runId,
+      });
+    }
   }
   return true;
 }

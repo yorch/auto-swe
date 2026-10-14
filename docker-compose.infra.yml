@@ -186,7 +186,11 @@ services:
       GARAGE_DEFAULT_BUCKET: ${ARTIFACT_S3_BUCKET:-auto-swe-artifacts}
       # Node-to-node auth. Single-node deployments never use it on the wire,
       # but Garage requires it to be set; the fallback keeps the quickstart
-      # zero-config.
+      # zero-config. !! The fallback is public — production MUST set it in
+      # `.env`. docker-compose.prod.yml cannot require it with `:?`: Compose
+      # interpolates this service even with its profile off, so that would
+      # also stop hosted-S3 deployments. `yarn env:setup check --profile prod`
+      # enforces it instead.
       GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-0000000000000000000000000000000000000000000000000000000000000001}
     ports:
       - "${GARAGE_API_PORT:-127.0.0.1:9000}:3900"

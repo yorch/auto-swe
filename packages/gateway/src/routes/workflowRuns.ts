@@ -111,6 +111,11 @@ const RunTracesResponseSchema = z.object({
   serverTime: z.iso.datetime(),
   /** Every trace the run has, counted in the same snapshot as `data`. */
   total: z.number().int(),
+  /**
+   * True when more traces matched than one read returns (`MAX_TRACES_PER_READ`).
+   * `data` is then the oldest page after the cursor; read on from its newest row.
+   */
+  truncated: z.boolean(),
 });
 
 const CancelRunResponseSchema = z.object({
@@ -123,6 +128,24 @@ const AutonomyDecisionsQuery = paginationQuery({ defaultLimit: 100, maxLimit: 20
 
 /** Max chars per string field in trace payloads returned by the polled run view. */
 const TRACE_FIELD_CAP = 4_000;
+
+/**
+ * Max trace rows one read loads. Rows carry their full JSON payloads and are
+ * trimmed only after loading, so an unbounded read of a long run held every
+ * payload in memory at once. Generous on purpose: a typical run has hundreds.
+ */
+export const MAX_TRACES_PER_READ = 5_000;
+
+const NEWEST_TRACES_FIRST = [
+  { createdAt: 'desc' as const },
+  { seq: 'desc' as const },
+  { id: 'desc' as const },
+];
+
+/** A newest-first read cut to the cap, back in the order the viewer shows: oldest first. */
+function newestInOrder<T>(rows: T[]): T[] {
+  return rows.slice(0, MAX_TRACES_PER_READ).reverse();
+}
 
 /**
  * Trim large string fields out of trace payloads. LLM-response rows carry the
@@ -281,7 +304,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
               select: { description: true, externalTicketId: true, id: true, requestPayload: true },
             },
           },
-          orderBy: { startedAt: 'desc' },
+          orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
           skip: offset,
           take: limit,
           where,
@@ -508,7 +531,11 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           fastify.prisma.$transaction(
             [
               fastify.prisma.agentTrace.findMany({
-                orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+                // Newest first, so a cut page keeps the live end of the run; the id
+                // breaks ties between parallel activities' rows at the cut.
+                orderBy: NEWEST_TRACES_FIRST,
+                // One row past the cap, so a full page can be told from a cut one.
+                take: MAX_TRACES_PER_READ + 1,
                 where: {
                   runId: run.id,
                   ...(since ? { createdAt: { gte: new Date(since) } } : {}),
@@ -519,7 +546,12 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
             { isolationLevel: 'RepeatableRead' }
           )
       );
-      return { data: traces.map((t) => projectTrace(t, false)), serverTime, total };
+      return {
+        data: newestInOrder(traces).map((t) => projectTrace(t, false)),
+        serverTime,
+        total,
+        truncated: traces.length > MAX_TRACES_PER_READ,
+      };
     }
   );
 
@@ -564,7 +596,11 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
             ['AgentTrace'],
             () =>
               fastify.prisma.agentTrace.findMany({
-                orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+                // Newest first, so a cut page keeps the live end of the run; the id
+                // breaks ties between parallel activities' rows at the cut.
+                orderBy: NEWEST_TRACES_FIRST,
+                // One row past the cap, so a full page can be told from a cut one.
+                take: MAX_TRACES_PER_READ + 1,
                 where: { runId: run.id },
               })
           )
@@ -602,7 +638,9 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           templateVersion: run.templateVersion,
           tokensInputTotal: Number(run.tokensInputTotal),
           tokensOutputTotal: Number(run.tokensOutputTotal),
-          traces: traces.map((t) => projectTrace(t, fullTraces)),
+          traces: newestInOrder(traces).map((t) => projectTrace(t, fullTraces)),
+          // The newest `MAX_TRACES_PER_READ` traces only, oldest first.
+          tracesTruncated: traces.length > MAX_TRACES_PER_READ,
           workflowId: run.workflowId,
           workRequest: projectWorkRequest(run.workRequest),
         },
@@ -636,7 +674,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const rows = await fastify.prisma.autonomyDecision.findMany({
-        orderBy: { createdAt: 'asc' },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         skip: request.query.offset,
         take: request.query.limit,
         where: { runId: run.id },

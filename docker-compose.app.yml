@@ -10,7 +10,7 @@
 # `yarn docker:app:up` works out of the box. The production path is
 # docker-compose.prod.yml, which makes those variables mandatory via `:?`.
 #
-# `.env` reaches the app containers through `env_file`, so every integration
+# `.env` reaches the gateway and worker through `env_file`, so every integration
 # fallback it sets (GITHUB_*, GOOGLE_*/OKTA_*, SLACK_*, TRACKER_*/KB_*,
 # FIGMA_API_TOKEN, SMTP_*/RESEND_*, BUNDLE_*, CI_WAIT_*/CI_POLL_*, …) is visible
 # to them without a line here per variable. `environment:` wins over
@@ -20,7 +20,10 @@
 # switch the images onto the in-source dev secrets.
 #
 # Grafana and the OTLP receivers bind to loopback by default, like the infra
-# ports; see `.env.example` for the override variables.
+# ports; see `.env.example` for the override variables. So do the gateway and
+# web dashboard here, through APP_BIND_ADDRESS rather than a `host-ip:` prefix
+# on GATEWAY_PORT/WEB_PORT, because those two also build the localhost URLs
+# below. docker-compose.prod.yml publishes them on every interface.
 services:
   gateway:
     build:
@@ -29,7 +32,7 @@ services:
     init: true
     restart: unless-stopped
     ports:
-      - "${GATEWAY_PORT:-8080}:8080"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${GATEWAY_PORT:-8080}:8080"
     depends_on:
       postgres:
         condition: service_healthy
@@ -143,13 +146,13 @@ services:
     init: true
     restart: unless-stopped
     ports:
-      - "${WEB_PORT:-3000}:3000"
+      - "${APP_BIND_ADDRESS:-127.0.0.1}:${WEB_PORT:-3000}:3000"
     depends_on:
       gateway:
         condition: service_healthy
-    env_file:
-      - path: .env
-        required: false
+    # No `env_file`, unlike the gateway and worker: the dashboard reads only the
+    # variables below, and `.env` holds every secret (CONFIG_ENCRYPTION_KEY,
+    # auth secrets, integration tokens). `${...}` still interpolates from it.
     environment:
       - NODE_ENV=production
       # NEXT_PUBLIC_* are read at request time by the root Server Component and

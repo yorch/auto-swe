@@ -76,11 +76,13 @@ vi.mock('../agents/mcpTools.js', () => ({ loadMcpTools: vi.fn() }));
 vi.mock('../lib/activityContext.js', () => ({
   persistActivityTrace: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
 
 import { ApplicationFailure } from '@temporalio/activity';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
 import { loadMcpTools } from '../agents/mcpTools.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
+import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import { resolveAgentRuntime } from '../lib/config/agentRuntime.js';
@@ -522,6 +524,27 @@ describe('runAgentNode', () => {
       ).rejects.toThrow('model down');
       expect(workspace.destroy).toHaveBeenCalledTimes(1);
       expect(vi.mocked(persistActivityTrace)).toHaveBeenCalledTimes(1);
+    });
+
+    it('destroys the checkout and persists the trace when the harness fails to close', async () => {
+      vi.mocked(resolveAgentRuntime).mockResolvedValueOnce({
+        runtime: 'claude-code',
+        source: 'run',
+      });
+      harness.close.mockRejectedValueOnce(new Error('relay hung up'));
+
+      const result = await runAgentNode({
+        agentRef: 'reviewer',
+        workspace: { branch: 'auto/JIRA-1', repoId: 'repo-1', ticketId: 'JIRA-1' },
+      });
+
+      expect(result).toEqual({ text: 'harness verdict' });
+      expect(workspace.destroy).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(persistActivityTrace)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(logWarn)).toHaveBeenCalledWith('runAgentNode: releasing a resource failed', {
+        agentKey: 'reviewer',
+        error: 'relay hung up',
+      });
     });
   });
 });

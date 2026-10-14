@@ -1,4 +1,6 @@
 import type { Prisma } from '@auto-swe/shared';
+import { type PullRequestRepo, pullRequestUrl } from '@auto-swe/shared/lib/pullRequest';
+import { resolveGitHubBaseUrl } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -19,19 +21,33 @@ const ListWorkflowsQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 })
 // runs). Fastify's JSON serializer throws on a bare BigInt, so coerce the two
 // columns to Number before returning a raw ActiveWorkflow row.
 function serializeWorkflow<
-  R extends Partial<ConnectionEnvelopeColumns>,
-  T extends { tokensInputUsed: bigint; tokensOutputUsed: bigint; repository: R | null },
+  R extends Partial<ConnectionEnvelopeColumns> & PullRequestRepo,
+  P extends { prNumber: number | null },
+  T extends {
+    tokensInputUsed: bigint;
+    tokensOutputUsed: bigint;
+    repository: R | null;
+    pullRequests: P[];
+  },
 >(
-  workflow: T
-): Omit<T, 'tokensInputUsed' | 'tokensOutputUsed' | 'repository'> & {
+  workflow: T,
+  instanceBaseUrl: string
+): Omit<T, 'tokensInputUsed' | 'tokensOutputUsed' | 'repository' | 'pullRequests'> & {
+  pullRequests: Array<P & { url: string | null }>;
   repository: RedactedConnection<R> | null;
   tokensInputUsed: number;
   tokensOutputUsed: number;
 } {
+  const repo = workflow.repository;
   return {
     ...workflow,
+    // Each PR's link on its host, derived here so a client never assumes the host.
+    pullRequests: workflow.pullRequests.map((pr) => ({
+      ...pr,
+      url: repo ? pullRequestUrl(repo, pr.prNumber, instanceBaseUrl) : null,
+    })),
     // The joined connection carries the API-token envelope — strip it.
-    repository: workflow.repository ? redactConnection(workflow.repository) : null,
+    repository: repo ? redactConnection(repo) : null,
     tokensInputUsed: Number(workflow.tokensInputUsed),
     tokensOutputUsed: Number(workflow.tokensOutputUsed),
   };
@@ -59,17 +75,21 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
               repository: reachableConnections(user, request.repoAccessGate),
             };
 
-      const [workflows, total] = await Promise.all([
+      const [workflows, total, instanceBaseUrl] = await Promise.all([
         fastify.prisma.activeWorkflow.findMany({
           include: { pullRequests: true, repository: true },
-          orderBy: { updatedAt: 'desc' },
+          orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
           skip: offset,
           take: limit,
           where,
         }),
         fastify.prisma.activeWorkflow.count({ where }),
+        resolveGitHubBaseUrl(),
       ]);
-      return { data: workflows.map(serializeWorkflow), meta: { limit, offset, total } };
+      return {
+        data: workflows.map((workflow) => serializeWorkflow(workflow, instanceBaseUrl)),
+        meta: { limit, offset, total },
+      };
     }
   );
 
@@ -101,7 +121,7 @@ export const workflowRoutes: FastifyPluginAsync = async (fastify) => {
           },
         });
       }
-      return { data: serializeWorkflow(workflow) };
+      return { data: serializeWorkflow(workflow, await resolveGitHubBaseUrl()) };
     }
   );
 };

@@ -42,9 +42,14 @@ declare module 'fastify' {
       verifyAccessTokenClaims: (token: string) => JwtPayload;
       hashToken: (token: string) => string;
       /** Sign a single-purpose, short-lived token for OAuth `state`. Audience-
-       *  scoped so it can never be replayed as an API bearer (and vice versa). */
-      signOAuthState: (sub: string, purpose: OAuthStatePurpose) => string;
-      verifyOAuthState: (token: string, purpose: OAuthStatePurpose) => { sub: string };
+       *  scoped so it can never be replayed as an API bearer (and vice versa).
+       *  `nonce`, when given, is carried for a flow that binds the state to the
+       *  browser that started it. */
+      signOAuthState: (sub: string, purpose: OAuthStatePurpose, nonce?: string) => string;
+      verifyOAuthState: (
+        token: string,
+        purpose: OAuthStatePurpose
+      ) => { sub: string; nonce?: string };
     };
   }
   interface FastifyRequest {
@@ -263,8 +268,8 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       });
     },
 
-    signOAuthState(sub: string, purpose: OAuthStatePurpose): string {
-      return jwt.sign({ purpose, sub }, privateKey, {
+    signOAuthState(sub: string, purpose: OAuthStatePurpose, nonce?: string): string {
+      return jwt.sign({ ...(nonce ? { nonce } : {}), purpose, sub }, privateKey, {
         algorithm,
         audience: OAUTH_STATE_AUDIENCE,
         expiresIn: OAUTH_STATE_TTL,
@@ -297,15 +302,18 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
       }) as JwtPayload;
     },
 
-    verifyOAuthState(token: string, purpose: OAuthStatePurpose): { sub: string } {
+    verifyOAuthState(token: string, purpose: OAuthStatePurpose): { sub: string; nonce?: string } {
       const decoded = jwt.verify(token, publicKey, {
         algorithms: [algorithm],
         audience: OAUTH_STATE_AUDIENCE,
-      }) as { sub: string; purpose?: string };
+      }) as { sub: string; purpose?: string; nonce?: unknown };
       if (decoded.purpose !== purpose) {
         throw new Error('OAuth state was minted for a different flow');
       }
-      return { sub: decoded.sub };
+      return {
+        sub: decoded.sub,
+        ...(typeof decoded.nonce === 'string' ? { nonce: decoded.nonce } : {}),
+      };
     },
   });
 };

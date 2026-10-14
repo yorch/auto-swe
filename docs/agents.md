@@ -60,6 +60,10 @@ runs on a cheaper, different model from the agents it scores, to avoid self-pref
 > `scanDiffForSecurityIssues`, which `executeImplementation` and all three fix paths call on the
 > committed diff, and which throws a non-retryable `SECURITY_GATE_FAILURE` when any finding is
 > CRITICAL (the processor forces `passed: false` in that case regardless of what the model returned).
+> A gate call that errors (provider failure, unreadable config) fails the step with a non-retryable
+> `SECURITY_GATE_UNAVAILABLE` instead of retrying the whole paid session; a budget stop keeps its
+> `BUDGET_EXCEEDED` type. Every caller runs the same `runPostDiffSecurityGate`
+> (`worker/src/lib/securityGate.ts`).
 > It complements the review network rather than being replaced by it: the network gives three
 > personas an opinion and routes on their verdicts, this one fails the activity outright.
 
@@ -115,8 +119,11 @@ CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active v
 - **Resolution → execution:** `resolveAgentSpec` composes the result into an `AgentSpec`, which the
   generic `runAgent` activity executes.
 - **Governance:** editing a system prompt runs the injection/exfiltration scan and resets
-  `isVerified`. Versions are immutable — editing a base cuts a new version. RBAC is ADMIN for
-  GLOBAL, team OWNER for TEAM.
+  `isVerified`. Versions are immutable — editing a base cuts a new version. An edit names the
+  version it read (`:id`) and must name the newest one of its lineage; an edit of an older
+  version, or one that loses a race to a concurrent edit or restore, is refused with
+  `409 AGENT_CHANGED` and writes nothing, so two editors cannot silently undo each other. RBAC is
+  ADMIN for GLOBAL, team OWNER for TEAM.
 - **API + UI:** `/api/v1/platform/agent-library` (plus `/api/v1/teams/:id/agent-library`) and
   `/studio/agents/library`. Each agent's History view lists its versions, shows what changed
   between a version and the one before it (prompt as a line diff; model, skills, tools,
@@ -1043,7 +1050,9 @@ interface TraceRecord {
 String values are stored up to 32 000 characters per field. The run page polls, so
 `GET /api/v1/workflow-runs/:id` and its live tail `GET /api/v1/workflow-runs/:id/traces` trim each
 field to 4 000 characters (head and tail) and mark the trace `trimmed`; the page then offers
-**Load full payloads**, which refetches once with `?fullTraces=true` and stops polling. The `writeFile` tool records only the file `path` in `inputJson` (not the full
+**Load full payloads**, which refetches once with `?fullTraces=true` and stops polling. Each of the
+two reads loads at most the newest 5 000 traces (`MAX_TRACES_PER_READ`), returned oldest first: the
+run detail then sets `tracesTruncated` and the tail sets `truncated`. The `writeFile` tool records only the file `path` in `inputJson` (not the full
 content) to keep trace sizes manageable.
 
 ### 8.3 AgentTrace Table
@@ -1141,6 +1150,8 @@ on the `Agent` payload below.
 | `POST` | `/api/v1/platform/skills/:id/verify` | `ADMIN` | Mark the current revision human-verified (audited) |
 | `DELETE` | `/api/v1/platform/skills/:id` | `ADMIN` | Delete (built-in skills are rejected with 400) |
 
+A create, or a rename, onto a name an agent could confuse with an existing skill's is refused with `409 SKILL_NAME_EXISTS`, listing the skills it collides with. Names compare as an import compares them (§6.6: case, spacing and trailing punctuation folded), and a GLOBAL skill collides with a same-named skill at any scope. The check and the write run in one transaction under the same advisory lock an import takes, so two writers cannot both take a name; a rename onto the skill's own name in another case is allowed.
+
 Any edit that cuts a revision (a `promptText` or `description` change) automatically resets `isVerified` to `false`, whether or not the skill is flagged built-in (bundle-installed skills are); a rename or an `isActive` toggle leaves it. The edit triggers a security scan (the scan result is returned in the response but does not block the save). A change to `promptText` or `description` cuts a new revision (§6.5).
 
 Importing skills from an external repository is a separate surface, documented with its trust model in §6.6.
@@ -1220,6 +1231,12 @@ template override is never badged, because it may use a different model or crede
   checked only by the shell-command scanner, whose write-target extraction is a heuristic over the
   command text and does not know the harness's current directory.
 
+- **The run page shows at most 5 000 traces of a run.** A read loads the newest
+  `MAX_TRACES_PER_READ` rows, and on a run with more the page keeps a window of that size, sliding
+  it forward as the tail appends; the oldest traces are not shown. A tail that itself returns more
+  than 5 000 rows between two polls leaves a gap inside the window until the run finishes, when
+  the page re-reads it.
+
 - **The memory gate and the credential masker are pattern-based.** The memory gate (§6.4) refuses
   only the phrasings the `INJECTION` patterns name; a reworded instruction is stored and recalled,
   with only the `<recalled_memory>` fence between it and the model. A refused write or a dropped
@@ -1262,6 +1279,12 @@ template override is never badged, because it may use a different model or crede
   which skills a retry sees.
 - **A pinned revision whose row is missing falls back to the live text** rather than failing the run.
   Deleting a skill deletes its revisions with it, along with the agents' references to it.
+- **Skill names are unique by check, not by constraint.** The library and the importer refuse a
+  name already in use (§9.1, §6.6), but the database has no unique index on it: a deployment that
+  already holds two skills with one name keeps both, and an index cannot be added without first
+  deciding which to keep. Bundle install and the built-in sync match a GLOBAL skill by its exact
+  name, so they neither fold names nor take the name lock; where two skills share a name, the one a
+  bundle's agent reference resolves to is whichever the query returns first.
 - **Verification attests to text, not to a source.** `isVerified` says an admin approved the current
   revision; it carries no signature and nothing re-checks it against provenance.
 - **External skill sources run no scripts.** Nothing from a source is executed, and only `.md`/`.txt`

@@ -32,6 +32,21 @@ All under the gateway's `/api/v1/auth/slack` prefix:
 | `GET  /install` | One-click app install — redirects to Slack's bot-scope authorize URL (admin-only) |
 | `GET  /install/callback` | Install OAuth redirect target — captures the per-workspace bot token |
 
+## Linking a Slack account
+
+A signed-in user links their Slack account from **Settings → Connect**, a full-page visit to
+`GET /connect`. The OAuth `state` it sends to Slack names that user, and the flow is also bound to
+the browser that started it: `/connect` sets a random nonce in the state and in a short-lived
+cookie (`auto_swe_slack_link`: `HttpOnly`, `SameSite=Lax`, `Secure` when the public URL is https,
+scoped to the callback path, ten minutes). `GET /callback` refuses with `403 STATE_MISMATCH` unless
+the cookie is present and matches the state's nonce, clears it either way, and refuses with
+`403 USER_INACTIVE` when the user who started the flow has since been deactivated. So an authorize
+link started by one person cannot be finished by another to attach the second person's Slack
+account to the first one's user. The callback must be served from the same host as `/connect` —
+the gateway's public URL — or the cookie is not sent and every link is refused. The cookie is
+host-only but not `__Host-`-prefixed, so a site on a sibling subdomain that can set cookies for the
+parent domain could plant its own nonce; serve the gateway from a host whose siblings you trust.
+
 ## Multi-workspace install ("Add to Slack")
 
 One Slack app can be installed into **many workspaces**, each with its own bot

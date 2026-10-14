@@ -101,6 +101,8 @@ const { createChannelWorkflowDraft, refineChannelWorkflowDraft } = proxyActiviti
   startToCloseTimeout: '6m',
 });
 
+// The placeholder is edited to (or this is posted as) the reply when the turn errors.
+// The workflow is its only sender, so it lives here, inside the workflow bundle.
 const CHANNEL_ERROR_TEXT =
   ":warning: Sorry, I hit an error working on that and couldn't finish. Please try again.";
 

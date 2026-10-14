@@ -7,6 +7,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { PG_INT_MAX } from '../lib/pgInt.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { sendTemporalUnavailable, temporalConnected } from '../lib/temporalErrors.js';
@@ -49,7 +50,7 @@ const CreateChannelSchema = z.object({
   consolidationSimilarityThreshold: z.number().min(0).max(1).nullable().optional(),
   followupSessionEnabled: z.boolean().optional(),
   isPrivate: z.boolean().optional(),
-  monthlyBudgetUsdCents: z.number().int().min(0).nullable().optional(),
+  monthlyBudgetUsdCents: z.number().int().min(0).max(PG_INT_MAX).nullable().optional(),
   name: z.string().min(1).max(200).nullable().optional(),
   orgFlaggingEnabled: z.boolean().optional(),
   passiveIngestEnabled: z.boolean().optional(),
@@ -82,18 +83,18 @@ const UpdateChannelSchema = z.object({
   followupSessionEnabled: z.boolean().optional(),
   isActive: z.boolean().optional(),
   isPrivate: z.boolean().optional(),
-  monthlyBudgetUsdCents: z.number().int().min(0).nullable().optional(),
+  monthlyBudgetUsdCents: z.number().int().min(0).max(PG_INT_MAX).nullable().optional(),
   name: z.string().min(1).max(200).nullable().optional(),
-  openItemNudgeAfterHours: z.number().int().min(1).nullable().optional(),
-  openItemNudgeCooldownHours: z.number().int().min(1).nullable().optional(),
-  orgFlagCooldownHours: z.number().int().min(1).nullable().optional(),
+  openItemNudgeAfterHours: z.number().int().min(1).max(PG_INT_MAX).nullable().optional(),
+  openItemNudgeCooldownHours: z.number().int().min(1).max(PG_INT_MAX).nullable().optional(),
+  orgFlagCooldownHours: z.number().int().min(1).max(PG_INT_MAX).nullable().optional(),
   orgFlaggingEnabled: z.boolean().optional(),
   passiveIngestEnabled: z.boolean().optional(),
   personaPrompt: z.string().max(2000).nullable().optional(),
-  reactiveCooldownMinutes: z.number().int().min(1).nullable().optional(),
+  reactiveCooldownMinutes: z.number().int().min(1).max(PG_INT_MAX).nullable().optional(),
   reactiveCron: z.string().regex(CRON_5_FIELD_RE, CRON_MESSAGE).nullable().optional(),
   reactiveEnabled: z.boolean().optional(),
-  reactiveLookbackMinutes: z.number().int().min(1).nullable().optional(),
+  reactiveLookbackMinutes: z.number().int().min(1).max(PG_INT_MAX).nullable().optional(),
   teamId: z.string().uuid().optional(),
 });
 

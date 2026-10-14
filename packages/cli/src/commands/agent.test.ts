@@ -4,6 +4,9 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runAgentCommand } from './agent.js';
 
+// Polling sleeps resolve at once so a test that waits for a row does not wait for real.
+vi.mock('../lib/time.js', () => ({ sleep: vi.fn(async () => undefined) }));
+
 const ENV = { apiUrl: 'http://gw', token: 't' };
 const REPO_ID = '550e8400-e29b-41d4-a716-446655440000';
 const WR = '660e8400-e29b-41d4-a716-446655440000';
@@ -143,7 +146,7 @@ describe('auto-swe agent', () => {
             status: 201,
           }
         : c.url.includes('/workflow-runs?')
-          ? { body: { data: [{ id: 'run-1' }] } }
+          ? { body: { data: [{ id: 'run-1', workflowId: 't' }] } }
           : { body: { data: { result: { text: 'hi' }, status: 'SUCCESS', steps: [] } } };
     const code = await runAgentCommand(
       ['run', '--wait', 'contentWriter', 'p', `--repo-id=${REPO_ID}`],
@@ -195,7 +198,7 @@ describe('auto-swe agent', () => {
           };
         }
         if (c.url.includes('/workflow-runs?')) {
-          return { body: { data: [{ id: 'run-1' }] } };
+          return { body: { data: [{ id: 'run-1', workflowId: 't' }] } };
         }
         return { body: { data: { steps: [], ...final } } };
       };
@@ -258,5 +261,39 @@ describe('auto-swe agent', () => {
     });
     expect(calls[0]?.headers['Idempotency-Key']).toBe('k');
     expect(await runAgentCommand(['rerun', 'not-a-uuid'], ENV)).toBe(1);
+  });
+
+  it('waits on a re-run for its own row, not the earlier run of the same request', async () => {
+    let listed = 0;
+    responder = (c) => {
+      if (c.method === 'POST') {
+        return {
+          body: {
+            data: {
+              effective: { deliver: 'none', maxSteps: 5, maxWallClockSeconds: 60 },
+              temporalWorkflowId: 'agent-new',
+              workflowId: 'aw',
+              workRequestId: WR,
+            },
+          },
+          status: 201,
+        };
+      }
+      if (c.url.includes('/workflow-runs?')) {
+        listed++;
+        const old = { id: 'run-old', workflowId: 'agent-old' };
+        // The new run's row appears only once the worker starts it.
+        return {
+          body: { data: listed < 2 ? [old] : [{ id: 'run-new', workflowId: 'agent-new' }, old] },
+        };
+      }
+      return c.url.endsWith('/run-new')
+        ? { body: { data: { status: 'FAILED', steps: [{ error: 'boom', nodeId: 'run' }] } } }
+        : { body: { data: { result: { text: 'old' }, status: 'SUCCESS', steps: [] } } };
+    };
+    const code = await runAgentCommand(['rerun', WR, '--wait'], ENV);
+    expect(code).toBe(2);
+    expect(calls.some((c) => c.url.endsWith('/workflow-runs/run-old'))).toBe(false);
+    expect(err.join('')).toContain('boom');
   });
 });

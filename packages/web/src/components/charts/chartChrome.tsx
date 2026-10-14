@@ -93,12 +93,6 @@ export const LEGEND_STYLE: React.CSSProperties = {
   paddingTop: 8,
 };
 
-/** Legend entries in sentence case ("completed" → "Completed"). */
-export function legendLabel(value: unknown): string {
-  const text = String(value);
-  return text.charAt(0).toUpperCase() + text.slice(1);
-}
-
 /**
  * Legend `formatter`: the entry's text in a text token, sentence case. Recharts
  * paints legend text in the series colour by default; the swatch beside it

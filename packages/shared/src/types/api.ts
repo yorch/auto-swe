@@ -38,7 +38,7 @@ export interface WorkflowRepository {
   id: string;
   organizationName: string;
   repoName: string;
-  /** GitHub host base (e.g. https://github.com or a GHE URL); null = github.com */
+  /** GitHub host base (e.g. https://github.com or a GHE URL); null = the instance's host */
   githubUrl?: string | null;
 }
 
@@ -47,6 +47,8 @@ export interface PullRequestSummary {
   prNumber: number | null;
   status: string;
   ciStatus: string | null;
+  /** The PR on its host, resolved by the gateway; null when it cannot be linked. */
+  url: string | null;
 }
 
 export interface WorkRequestSummary {
@@ -611,6 +613,11 @@ export interface WorkflowRunDetail extends WorkflowRunSummary {
   result: unknown;
   steps: WorkflowStepRecord[];
   traces: AgentTraceRecord[];
+  /**
+   * True when the run has more traces than one read returns: `traces` is then the
+   * newest `MAX_TRACES_PER_READ` of them, not all of them.
+   */
+  tracesTruncated?: boolean;
   templateName: string;
   /** A run of the hidden Agent Run system template (keyed on its origin, not its name). */
   isAgentRun?: boolean;

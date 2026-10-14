@@ -1,8 +1,16 @@
 services:
   gateway:
     ports: !reset []
+    # `default` is listed explicitly: naming any network replaces the implicit
+    # one, which is how the gateway reaches postgres/temporal and web the gateway.
+    # The alias is the name web uses for it: the shared `traefik` network may hold
+    # another stack's `gateway`, and Docker answers a name from every network a
+    # container is on, so the plain service name could resolve to that one.
     networks:
-      - traefik
+      default:
+        aliases:
+          - auto-swe-internal-gateway
+      traefik: {}
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=traefik"
@@ -15,7 +23,12 @@ services:
 
   web:
     ports: !reset []
+    environment:
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://auto-swe-internal-gateway:8080}
+    # `default` is listed explicitly: naming any network replaces the implicit
+    # one, which is how the gateway reaches postgres/temporal and web the gateway.
     networks:
+      - default
       - traefik
     labels:
       - "traefik.enable=true"

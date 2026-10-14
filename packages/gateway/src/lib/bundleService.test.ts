@@ -82,6 +82,60 @@ describe('exportBundle and system templates', () => {
 });
 
 describe('exportBundle', () => {
+  it("reads each template's active spec in two queries, honouring a pinned version", async () => {
+    const versionFindMany = vi.fn().mockResolvedValue([
+      { spec: { ...RUNNABLE_SPEC, name: 'pinned-v2' }, templateId: 't-pinned' },
+      { spec: { ...RUNNABLE_SPEC, name: 'head-v7' }, templateId: 't-head' },
+    ]);
+    const groupBy = vi.fn().mockResolvedValue([
+      { _max: { version: 7 }, templateId: 't-head' },
+      { _max: { version: null }, templateId: 't-empty' },
+    ]);
+    const template = (id: string, name: string, activeVersion: number | null) => ({
+      activeVersion,
+      description: null,
+      id,
+      inputSchema: null,
+      name,
+      origin: null,
+    });
+    const prisma = {
+      agent: { findMany: vi.fn().mockResolvedValue([]) },
+      scannerPattern: { findMany: vi.fn().mockResolvedValue([]) },
+      skill: { findMany: vi.fn().mockResolvedValue([]) },
+      workflowTemplate: {
+        findMany: vi
+          .fn()
+          .mockResolvedValue([
+            template('t-empty', 'a', null),
+            template('t-head', 'b', null),
+            template('t-pinned', 'c', 2),
+          ]),
+      },
+      workflowTemplateVersion: { findMany: versionFindMany, groupBy },
+    } as unknown as Parameters<typeof exportBundle>[0];
+
+    const m = await exportBundle(prisma, { name: 'x', version: '1.0.0' });
+
+    // Only the unpinned templates need their highest version looked up.
+    expect(groupBy).toHaveBeenCalledTimes(1);
+    expect(groupBy.mock.calls[0][0].where).toEqual({
+      templateId: { in: ['t-empty', 't-head'] },
+    });
+    expect(versionFindMany).toHaveBeenCalledTimes(1);
+    expect(versionFindMany.mock.calls[0][0].where).toEqual({
+      OR: [
+        { templateId: 't-pinned', version: 2 },
+        { templateId: 't-head', version: 7 },
+      ],
+    });
+    // A template with no version is left out, as before.
+    expect(m.entities.templates.map((t) => [t.name, (t.spec as { name: string }).name])).toEqual([
+      ['b', 'head-v7'],
+      ['c', 'pinned-v2'],
+    ]);
+  });
+
   it('serializes GLOBAL content, strips locals, and derives the mcp dependency', async () => {
     const prisma = {
       agent: {

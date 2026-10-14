@@ -125,7 +125,14 @@ const recordLlmUsageMock = vi.fn(async (..._args: unknown[]) => ({
 const { assertRolePricedMock } = vi.hoisted(() => ({
   assertRolePricedMock: vi.fn(async (_role: string) => {}),
 }));
-vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: assertRolePricedMock }));
+vi.mock('../lib/usdCapGuard.js', () => ({
+  assertRolePricedForUsdCap: assertRolePricedMock,
+  // The security gate passes spend refusals through; the real check reads the type.
+  isSpendRefusal: (err: unknown) =>
+    ['BUDGET_EXCEEDED', 'MODEL_PRICE_UNAVAILABLE', 'MODEL_UNPRICED'].includes(
+      (err as { type?: string } | null)?.type ?? ''
+    ),
+}));
 const unpriced = () =>
   Object.assign(new Error('Model has no price in the model catalog'), { type: 'MODEL_UNPRICED' });
 
@@ -363,6 +370,15 @@ describe('runImplementerFixSession', () => {
     // Trace persisted and workspace destroyed despite the throw.
     expect(persistMock).toHaveBeenCalled();
     expect(destroyMock).toHaveBeenCalled();
+  });
+
+  it('fails non-retryable when the security gate itself errors after the push', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    scanDiffForSecurityIssuesMock.mockRejectedValueOnce(new Error('provider 500'));
+    await expect(runImplementerFixSession(input())).rejects.toMatchObject({
+      nonRetryable: true,
+      type: 'SECURITY_GATE_UNAVAILABLE',
+    });
   });
 
   it('persists the trace and destroys the workspace when the agent throws', async () => {

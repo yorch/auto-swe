@@ -9,6 +9,7 @@ import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import {
   createSkill,
   getSkillEffectivenessReport,
+  SkillNameConflictError,
   skillVisibilityWhere,
   updateSkill,
   verifySkill,
@@ -66,6 +67,12 @@ const ListSkillsQuery = z.object({});
 export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+
+  // Two skills an agent could mistake for each other: the name is refused, as an import's is.
+  const nameExists = (reply: FastifyReply, err: SkillNameConflictError) =>
+    reply.status(409).send({
+      error: { code: 'SKILL_NAME_EXISTS', conflicts: err.conflicts, message: err.message },
+    });
 
   const skillChanged = (reply: FastifyReply) =>
     reply.status(409).send({
@@ -170,10 +177,16 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const actor = requireUser(request);
       const { name, description, promptText } = request.body;
-      const { skill, scanWarnings } = await createSkill(fastify.prisma, {
-        ...request.body,
-        createdById: actor.sub,
-      });
+      let created: Awaited<ReturnType<typeof createSkill>>;
+      try {
+        created = await createSkill(fastify.prisma, { ...request.body, createdById: actor.sub });
+      } catch (err) {
+        if (err instanceof SkillNameConflictError) {
+          return nameExists(reply, err);
+        }
+        throw err;
+      }
+      const { skill, scanWarnings } = created;
       await writeAuditLog(fastify, {
         action: 'CREATE',
         actor,
@@ -231,6 +244,9 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         result = await updateSkill(fastify.prisma, existing, request.body, actor.sub);
       } catch (err) {
+        if (err instanceof SkillNameConflictError) {
+          return nameExists(reply, err);
+        }
         return revisionErrorReply(err, existing, reply);
       }
       const { updated, scanWarnings } = result;

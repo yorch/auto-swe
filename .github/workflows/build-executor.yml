@@ -8,13 +8,14 @@ on:
         required: true
   repository_dispatch:
     types: [build-executor]
-  schedule:
-    # Weekly rebuild: Sunday 02:00 UTC
-    - cron: '0 2 * * 0'
+  # No schedule: a scheduled run carries no repo_id, and fanning a schedule out
+  # over every repository needs a caller that lists them. A trigger without an
+  # id fails rather than passing as a no-op.
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read # actions/checkout and the default-Dockerfile fetch
       id-token: write # For OIDC -> ECR auth
@@ -34,17 +35,12 @@ jobs:
           elif [ -n "${PAYLOAD_REPO_ID}" ]; then
             echo "id=${PAYLOAD_REPO_ID}" >> "$GITHUB_OUTPUT"
           else
-            # Scheduled runs carry no repo id. Exiting 0 here used to let every
-            # later step run against an empty id and fail; instead the steps
-            # below are gated on `steps.repo.outputs.id` and the run ends green
-            # as a no-op until per-repo dispatch (repository_dispatch with a
-            # repo_id) is wired up for the schedule.
-            echo "No repo_id provided; nothing to build on this trigger."
+            echo "::error::No repo_id provided (workflow_dispatch input or client_payload.repo_id)"
+            exit 1
           fi
 
       - name: Fetch repo config from Gateway API
         id: config
-        if: steps.repo.outputs.id != ''
         env:
           GATEWAY_TOKEN: ${{ secrets.GATEWAY_TOKEN }}
           GATEWAY_URL: ${{ secrets.GATEWAY_URL }}
@@ -74,14 +70,15 @@ jobs:
           echo "name=$(echo "$REPO" | jq -r '.repoName')" >> "$GITHUB_OUTPUT"
 
       - name: Checkout target repo
-        if: steps.repo.outputs.id != ''
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ steps.config.outputs.org }}/${{ steps.config.outputs.name }}
           token: ${{ secrets.GITHUB_APP_TOKEN }}
+          # Only read and built here, never pushed to, so the token is not left
+          # in .git/config where the build context (and the Dockerfile) sees it.
+          persist-credentials: false
 
       - name: Resolve Dockerfile
-        if: steps.repo.outputs.id != ''
         id: dockerfile
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -99,23 +96,19 @@ jobs:
           fi
 
       - name: Configure AWS credentials (OIDC)
-        if: steps.repo.outputs.id != ''
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
         with:
           role-to-assume: ${{ secrets.ECR_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
-        if: steps.repo.outputs.id != ''
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2
         id: ecr-login
 
       - name: Set up Docker Buildx
-        if: steps.repo.outputs.id != ''
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Generate image metadata
-        if: steps.repo.outputs.id != ''
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         id: meta
         with:
@@ -125,7 +118,6 @@ jobs:
             type=raw,value=latest
 
       - name: Build and push
-        if: steps.repo.outputs.id != ''
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
@@ -133,11 +125,12 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Scoped per repository: the default shared scope lets each repo's
+          # build evict and overwrite the others' cache.
+          cache-from: type=gha,scope=executor-${{ steps.repo.outputs.id }}
+          cache-to: type=gha,mode=max,scope=executor-${{ steps.repo.outputs.id }}
 
       - name: Update repository executor image in Gateway
-        if: steps.repo.outputs.id != ''
         env:
           GATEWAY_TOKEN: ${{ secrets.GATEWAY_TOKEN }}
           GATEWAY_URL: ${{ secrets.GATEWAY_URL }}

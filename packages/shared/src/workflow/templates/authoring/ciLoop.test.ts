@@ -90,6 +90,16 @@ describe('ciLoop', () => {
     expect(plain.ciFix).toMatchObject({ next: 'updateCodeAfterCIFix' });
   });
 
+  it('with pollOrSignal, a repush re-enters the wait through the poll-or-signal router', () => {
+    const nodes = ciLoop({
+      fix: { handoff: { repush: 'repushAfterFix' } },
+      passed: 'finish',
+      wait: 'pollOrSignal',
+    });
+    expect(nodes.repushAfterFix).toMatchObject({ next: 'loadCiWaitConfig' });
+    expectWellFormed(nodes, 'loadCiWaitConfig', ['finish']);
+  });
+
   it('lets the repush step take a different id', () => {
     const nodes = ciLoop({ fix: { handoff: { repush: 'repushAfterFix' } }, passed: 'f' });
     expect(nodes.repushAfterCIFix).toBeUndefined();

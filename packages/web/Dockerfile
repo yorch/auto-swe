@@ -90,6 +90,9 @@ ENV BUILD_NUMBER=${BUILD_NUMBER}
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
+# The standalone server binds to HOSTNAME, which Docker sets to the container id;
+# bind every interface so the 127.0.0.1 healthcheck below can reach it.
+ENV HOSTNAME=0.0.0.0
 
 # Next.js standalone output includes everything needed
 COPY --from=builder --chown=node:node /app/packages/web/.next/standalone ./

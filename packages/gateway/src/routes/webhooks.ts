@@ -428,7 +428,8 @@ async function aggregateCheckRuns(
   token: string | null,
   org: string,
   repoName: string,
-  headSha: string
+  headSha: string,
+  log: FastifyRequest['log']
 ): Promise<AggregatedChecks | null> {
   if (!token) {
     return null;
@@ -450,6 +451,7 @@ async function aggregateCheckRuns(
         }
       );
       if (!res.ok) {
+        log.warn({ headSha, page, status: res.status }, 'check-run listing refused by GitHub');
         return null;
       }
       const body = (await res.json()) as {
@@ -472,7 +474,8 @@ async function aggregateCheckRuns(
         break;
       }
     }
-  } catch {
+  } catch (err) {
+    log.warn({ err, headSha }, 'check-run listing failed');
     return null;
   }
   if (runs.length === 0) {
@@ -948,7 +951,14 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         for (const group of byRepository.values()) {
           const target = await checkRunTarget(group[0].repository, request.log);
           const aggregated = target
-            ? await aggregateCheckRuns(target.apiUrl, target.token, org, repoName, headSha)
+            ? await aggregateCheckRuns(
+                target.apiUrl,
+                target.token,
+                org,
+                repoName,
+                headSha,
+                request.log
+              )
             : null;
           if (aggregated && !aggregated.complete) {
             continue;

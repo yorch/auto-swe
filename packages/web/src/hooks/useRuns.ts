@@ -130,20 +130,30 @@ export function useWorkflowRun(id: string, includeTraces = true, fullTraces = fa
       const since = traceTailCursor(heldTraces, held.tracesReadAt);
       const [run, tail] = await Promise.all([
         api.get<{ data: WorkflowRunDetail }>(runUrl()),
-        api.get<{ data: AgentTraceRecord[]; serverTime: string; total: number }>(
+        api.get<{
+          data: AgentTraceRecord[];
+          serverTime: string;
+          total: number;
+          truncated: boolean;
+        }>(
           `/api/v1/workflow-runs/${id}/traces${since ? `?since=${encodeURIComponent(since)}` : ''}`
         ),
       ]);
-      const traces = mergeTraces(heldTraces, tail.data);
+      const merged = mergeTraces(heldTraces, tail.data);
+      // A run with more traces than one read returns is shown as a window of its
+      // newest ones. The window cannot match the run's count, so the count check
+      // below would re-read everything on every poll; slide the window instead.
+      const windowed = held.tracesTruncated === true;
+      const traces = windowed ? merged.slice(-heldTraces.length) : merged;
       const justFinished =
         isTerminalWorkflowRunStatus(run.data.status) && !isTerminalWorkflowRunStatus(held.status);
       // The tail's server time precedes the full read too, so either way it is
       // a safe base for the next cursor.
       const tracesReadAt = tail.serverTime;
-      if (traces.length !== tail.total || justFinished) {
+      if ((!windowed && traces.length !== tail.total) || justFinished) {
         return { ...(await readAll()), tracesReadAt };
       }
-      return { ...withHeldSpec(run.data), traces, tracesReadAt };
+      return { ...withHeldSpec(run.data), traces, tracesReadAt, tracesTruncated: windowed };
     },
     queryKey,
     refetchInterval: (q) => {

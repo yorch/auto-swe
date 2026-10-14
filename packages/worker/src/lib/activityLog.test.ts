@@ -1,20 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const { store, info } = vi.hoisted(() => ({
+const { store, info, warn, error } = vi.hoisted(() => ({
+  error: vi.fn(),
   info: vi.fn(),
   store: { current: undefined as unknown },
+  warn: vi.fn(),
 }));
 
 vi.mock('@temporalio/activity', () => ({
   asyncLocalStorage: { getStore: () => store.current },
-  log: { error: vi.fn(), info, warn: vi.fn() },
+  log: { error, info, warn },
 }));
 
-import { auditLog } from './activityLog.js';
+import { auditLog, logError, logWarn } from './activityLog.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
+  error.mockClear();
   info.mockClear();
+  warn.mockClear();
   store.current = undefined;
 });
 
@@ -36,5 +40,34 @@ describe('auditLog', () => {
 
     expect(out).toHaveBeenCalledTimes(1);
     expect(info).not.toHaveBeenCalled();
+  });
+});
+
+describe('logWarn / logError', () => {
+  it('go to the Temporal logger inside an activity', () => {
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    store.current = {};
+
+    logWarn('w', { a: 1 });
+    logError('e');
+
+    expect(warn).toHaveBeenCalledWith('w', { a: 1 });
+    expect(error).toHaveBeenCalledWith('e', {});
+    expect(consoleWarn).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it('fall back to the console outside an activity instead of dropping the message', () => {
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    logWarn('unpriced model', { model: 'x/y' });
+    logError('catalog unreadable');
+
+    expect(consoleWarn).toHaveBeenCalledWith('unpriced model', { model: 'x/y' });
+    expect(consoleError).toHaveBeenCalledWith('catalog unreadable', {});
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
   });
 });

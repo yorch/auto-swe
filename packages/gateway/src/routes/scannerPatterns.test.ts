@@ -144,6 +144,40 @@ describe('PUT /admin/scanner-patterns/:id — ReDoS gate', () => {
   });
 });
 
+describe('scanner pattern labels', () => {
+  const uniqueViolation = () => Object.assign(new Error('unique'), { code: 'P2002' });
+
+  it('answers 409 PATTERN_LABEL_EXISTS on a create with a taken label', async () => {
+    const app = await buildApp();
+    prisma.scannerPattern.create.mockRejectedValueOnce(uniqueViolation());
+    const res = await app.inject({
+      body: { label: 'custom', pattern: 'x+y', type: 'INJECTION' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/scanner-patterns',
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload).error.code).toBe('PATTERN_LABEL_EXISTS');
+    expect(prisma.configAuditLog.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('answers 409 PATTERN_LABEL_EXISTS on a rename onto a taken label', async () => {
+    const app = await buildApp();
+    prisma.scannerPattern.update.mockRejectedValueOnce(uniqueViolation());
+    const res = await app.inject({
+      body: { label: 'taken' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/scanner-patterns/${EXISTING.id}`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload).error.code).toBe('PATTERN_LABEL_EXISTS');
+    expect(prisma.configAuditLog.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+});
+
 describe('POST /scanner-patterns/test — try a pattern', () => {
   afterEach(() => resetRegexExecutor());
 

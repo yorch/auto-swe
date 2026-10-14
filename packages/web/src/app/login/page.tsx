@@ -239,7 +239,12 @@ function LoginPageInner() {
         return;
       }
       const u = useAuthStore.getState().user;
-      if (u?.isActive !== false && api.getToken()) {
+      // An account awaiting approval gets the explanation, not a silent sign-in form.
+      if (u?.isActive === false) {
+        setPendingEmail(u.email ?? null);
+        return;
+      }
+      if (api.getToken()) {
         router.replace(destination);
       }
     })();
@@ -292,12 +297,13 @@ function LoginPageInner() {
     setLoading(true);
     try {
       const resume = await login(email, password, oauthQuery);
+      // An account still awaiting approval may not authorize anything, and the dashboard
+      // would only bounce it back here on its first 401.
+      if (useAuthStore.getState().user?.isActive === false) {
+        setPendingEmail(email);
+        return;
+      }
       if (resume) {
-        // An account still awaiting approval may not authorize anything.
-        if (useAuthStore.getState().user?.isActive === false) {
-          setPendingEmail(email);
-          return;
-        }
         window.location.assign(resume);
         return;
       }
@@ -407,7 +413,10 @@ function LoginPageInner() {
         </div>
         <Button
           className="w-full"
-          onClick={() => {
+          onClick={async () => {
+            // A pending user can still hold a session; sign it out, or the
+            // sign-in check that runs on '/login' puts this screen straight back.
+            await useAuthStore.getState().logout();
             setPendingEmail(null);
             router.replace('/login');
           }}

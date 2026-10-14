@@ -2255,4 +2255,89 @@ describe('run cancellation and non-retryable errors', () => {
     expect(waits).toHaveLength(1);
     expect(waits[0]?.abandoned?.()).toBe(true);
   });
+
+  it('records a FAILED row for a dispatch node that fails before its first attempt', async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'sh',
+      name: 'prep-fail',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        sh: { command: 'true', image: 'alpine', next: 'done', type: 'shell' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    for (const patchedTo of [true, false]) {
+      const records: Parameters<Dispatcher['recordStep']>[0][] = [];
+      const patchIds: string[] = [];
+      // No dispatchShell: the node fails in its support check, before any attempt.
+      const dispatcher: Dispatcher = {
+        async dispatchStep() {
+          return {};
+        },
+        patched(id) {
+          patchIds.push(id);
+          return patchedTo;
+        },
+        async recordStep(args) {
+          records.push(args);
+        },
+        async waitSignal() {
+          return undefined;
+        },
+      };
+      await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(/no dispatchShell/);
+      expect(patchIds).toEqual(['interpreter-records-dispatch-prep-failure']);
+      // A pre-patch history recorded nothing here, so a replay of it must not either.
+      expect(records).toEqual(
+        patchedTo
+          ? [
+              {
+                error: expect.stringContaining('no dispatchShell'),
+                nodeId: 'sh',
+                nodeType: 'shell',
+                specNodeId: 'sh',
+                status: 'FAILED',
+                stepName: 'shell',
+              },
+            ]
+          : []
+      );
+    }
+  });
+
+  it("records a run cancellation's fan-out row with the fan-out's identity", async () => {
+    const spec = parseWorkflowSpec({
+      entry: 'fan',
+      name: 'fan-cancel-identity',
+      nodes: {
+        branchDone: { status: 'SUCCESS', type: 'terminate' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: {
+          join: 'done',
+          onBranchFail: 'continue',
+          over: { literal: [1] },
+          subgraph: 'work',
+          type: 'fanOut',
+        },
+        work: { next: 'branchDone', step: 'x', type: 'step' },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    const records: Parameters<Dispatcher['recordStep']>[0][] = [];
+    const dispatcher: Dispatcher = {
+      async dispatchStep() {
+        throw new FakeCancelled('cancelled');
+      },
+      isCancellation: (err: unknown) => err instanceof FakeCancelled,
+      async recordStep(args) {
+        records.push(args);
+      },
+      async waitSignal() {
+        return undefined;
+      },
+    };
+    await expect(runSpec(spec, baseCtx(), dispatcher)).rejects.toThrow(FakeCancelled);
+    const fanFailed = records.find((r) => r.nodeId === 'fan' && r.status === 'FAILED');
+    expect(fanFailed).toMatchObject({ nodeType: 'fanOut', specNodeId: 'fan', stepName: 'fanOut' });
+  });
 });

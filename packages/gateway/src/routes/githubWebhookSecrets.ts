@@ -9,7 +9,6 @@
  * ADMIN-only. A secret is write-only: it is encrypted on the way in and the API
  * only ever reports its last four characters.
  */
-import { Prisma } from '@auto-swe/shared';
 import { hostEntry } from '@auto-swe/shared/config';
 import { approvedRepositoryHosts } from '@auto-swe/shared/lib/connectionCredential';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
@@ -18,7 +17,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
-import { isUniqueConstraintError } from '../lib/prismaErrors.js';
+import { isRecordNotFoundError, isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { isGitHubDotComHost } from '../lib/repositoryHost.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -33,9 +32,6 @@ const SecretSchema = z
 const CreateSchema = z.object({ host: hostEntry, secret: SecretSchema });
 const UpdateSchema = z.object({ secret: SecretSchema });
 const IdParams = z.object({ id: z.string().uuid() });
-
-const isRecordNotFound = (err: unknown) =>
-  err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025';
 
 function present(row: {
   id: string;
@@ -171,7 +167,7 @@ export const githubWebhookSecretRoutes: FastifyPluginAsync = async (fastify) => 
         });
         return { data: present(updated) };
       } catch (err) {
-        if (isRecordNotFound(err)) {
+        if (isRecordNotFoundError(err)) {
           return notFound(reply);
         }
         throw err;
@@ -198,7 +194,7 @@ export const githubWebhookSecretRoutes: FastifyPluginAsync = async (fastify) => 
         });
         return reply.status(204).send();
       } catch (err) {
-        if (isRecordNotFound(err)) {
+        if (isRecordNotFoundError(err)) {
           return notFound(reply);
         }
         throw err;

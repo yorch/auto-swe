@@ -279,6 +279,21 @@ describe('slackChannelRoutes', () => {
     await app.close();
   });
 
+  it('400s, without writing, on a budget or cooldown larger than its integer column', async () => {
+    const { app, mockPrisma } = await buildApp();
+    for (const body of [{ monthlyBudgetUsdCents: 2 ** 31 }, { reactiveCooldownMinutes: 2 ** 31 }]) {
+      const res = await app.inject({
+        body,
+        headers: AUTH,
+        method: 'PATCH',
+        url: `/api/v1/platform/slack-channels/${CHANNEL}`,
+      });
+      expect(res.statusCode).toBe(400);
+    }
+    expect(mockPrisma.slackChannel.update).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it('patches a proactivity cooldown override', async () => {
     const { app, mockPrisma } = await buildApp();
     mockPrisma.slackChannel.findUnique.mockResolvedValue({

@@ -142,11 +142,21 @@ function buildApp(state: State): FastifyInstance {
         data,
       }: {
         where: { id: string };
-        data: { shellImageAllowlist?: string[]; egressAllowlist?: string[] };
+        data: { name?: string; shellImageAllowlist?: string[]; egressAllowlist?: string[] };
       }) => {
         const row = state.teams.find((t) => t.id === where.id);
         if (!row) {
           throw new Error('team not found');
+        }
+        // The unique index on name.
+        if (
+          data.name !== undefined &&
+          state.teams.some((t) => t.id !== row.id && t.name === data.name)
+        ) {
+          throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+        }
+        if (data.name !== undefined) {
+          row.name = data.name;
         }
         if (data.shellImageAllowlist !== undefined) {
           row.shellImageAllowlist = data.shellImageAllowlist;
@@ -234,6 +244,45 @@ describe('GET /api/v1/teams/:id shared repositories', () => {
       connection: { isActive: true, type: 'git_repo' },
       teamId: TEAM_ID,
     });
+  });
+});
+
+describe('PATCH /api/v1/teams/:id', () => {
+  it('409s, not 500s, on a rename onto another team’s name', async () => {
+    const state = freshState({
+      teams: [
+        ...freshState().teams,
+        {
+          egressAllowlist: [],
+          id: '00000000-0000-4000-8000-000000000002',
+          name: 'payments',
+          shellImageAllowlist: [],
+          slug: 'payments',
+        },
+      ],
+    });
+    const res = await buildApp(state).inject({
+      body: { name: 'payments' },
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'PATCH',
+      url: `/api/v1/teams/${TEAM_ID}`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('TEAM_EXISTS');
+    expect(state.teams[0].name).toBe('platform');
+    expect(state.audits ?? []).toEqual([]);
+  });
+
+  it('renames a team to a free name', async () => {
+    const state = freshState();
+    const res = await buildApp(state).inject({
+      body: { name: 'platform-eng' },
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'PATCH',
+      url: `/api/v1/teams/${TEAM_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(state.teams[0].name).toBe('platform-eng');
   });
 });
 

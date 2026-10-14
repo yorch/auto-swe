@@ -257,19 +257,30 @@ async function afterLaunch(launched: LaunchResponse, wait: boolean, env: CliEnv)
     );
     return 0;
   }
-  return waitForRun(launched.workRequestId, env);
+  return waitForRun(launched.workRequestId, launched.temporalWorkflowId, env);
 }
 
-/** Wait for the run row, then poll it to a terminal status. Exit 0 only on SUCCESS. */
-async function waitForRun(workRequestId: string, env: CliEnv, intervalSec = 3): Promise<number> {
+/**
+ * Wait for the run row, then poll it to a terminal status. Exit 0 only on SUCCESS.
+ *
+ * The row is matched on the Temporal workflow id this launch started, not merely on the
+ * work request: a re-run reuses the work request, and its row appears only once the
+ * worker starts it, so the newest row for the request is the previous run until then.
+ */
+async function waitForRun(
+  workRequestId: string,
+  temporalWorkflowId: string,
+  env: CliEnv,
+  intervalSec = 3
+): Promise<number> {
   let runId: string | undefined;
   for (let i = 0; i < 100 && !runId; i++) {
     const rows = await apiRequest<WorkflowRunSummary[]>(
       env,
       'GET',
-      `/api/v1/workflow-runs?limit=1&workRequestId=${workRequestId}`
+      `/api/v1/workflow-runs?limit=20&workRequestId=${workRequestId}`
     );
-    runId = rows[0]?.id;
+    runId = rows.find((r) => r.workflowId === temporalWorkflowId)?.id;
     if (!runId) {
       await sleep(intervalSec * 1000);
     }

@@ -7,6 +7,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { builtinModelFor, findUnpricedSpecs, rolePricing } from '../lib/modelCatalogService.js';
+import { isRecordNotFoundError, isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -98,10 +99,6 @@ function toDto(row: CatalogRow) {
       cacheWrite5mMultiplier: defaults.write,
     },
   };
-}
-
-function isUniqueViolation(err: unknown): boolean {
-  return (err as { code?: string } | null)?.code === 'P2002';
 }
 
 export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
@@ -213,7 +210,7 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
           });
           return { data: row };
         } catch (err) {
-          if ((err as { code?: string } | null)?.code === 'P2025') {
+          if (isRecordNotFoundError(err)) {
             return reply
               .status(404)
               .send({ error: { code: 'NOT_FOUND', message: 'Suggestion not found' } });
@@ -252,7 +249,7 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
           data: { ...request.body, isBuiltIn: false, isCustomized: false },
         });
       } catch (err) {
-        if (isUniqueViolation(err)) {
+        if (isUniqueConstraintError(err)) {
           return reply.status(409).send({
             error: {
               code: 'MODEL_EXISTS',

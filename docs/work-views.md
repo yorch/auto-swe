@@ -91,8 +91,12 @@ A row carries the repository (`id`, `org`, `name`), `prNumber`, `url`, `title`, 
 to — `ticketId`, `workRequestId`, `costUsd` and `latestRun` (`id`, `status`).
 
 `url` is derived in one place, `pullRequestUrl()` in `@auto-swe/shared/lib/pullRequest`, from the
-repository's own web base (so a repository on another host links to that host) and is null unless
-that base is an http(s) address. The request list and the workflow page use the same function.
+repository's own web base (so a repository on another host links to that host) or, when the
+repository names none, the instance's configured GitHub base (`resolveGitHubBaseUrl()`, so a
+GHE-primary deployment links to its own host, not github.com), and is null unless that base is an
+http(s) address. The gateway derives it for every surface — the ticket and request lists and the
+workflow API (`pullRequests[].url`), which the workflow page reads — so the browser never guesses
+the host.
 
 **Visibility.** A row is listed when the caller may reach the PR's repository
 (`reachableConnections`, so a shared team counts and the permission gate applies); an ADMIN sees

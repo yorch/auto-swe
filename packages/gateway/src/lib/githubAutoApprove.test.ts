@@ -4,7 +4,11 @@ import {
   type AutoApproveDeps,
   autoApproveGithubUser,
   fetchOrgMembership,
+  platformCredentialForSignIn,
 } from './githubAutoApprove.js';
+
+const { resolveGitHubConfig } = vi.hoisted(() => ({ resolveGitHubConfig: vi.fn() }));
+vi.mock('@auto-swe/shared/lib/systemConfig', () => ({ resolveGitHubConfig }));
 
 const API = 'https://api.github.com';
 
@@ -44,6 +48,16 @@ describe('fetchOrgMembership', () => {
       throw new Error('down');
     });
     await expect(ask()).resolves.toBe('unavailable');
+  });
+});
+
+describe('platformCredentialForSignIn', () => {
+  it('fails safe to no credential, but says why', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    resolveGitHubConfig.mockRejectedValueOnce(new Error('config unreadable'));
+    await expect(platformCredentialForSignIn()).resolves.toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('config unreadable'));
+    warn.mockRestore();
   });
 });
 

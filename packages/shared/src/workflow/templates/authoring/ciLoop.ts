@@ -135,11 +135,11 @@ export interface CiLoopOptions {
  *                        |
  *                    (under)
  *                        v
- *   fetchLogs -> storeLogs -> ciFix -> updateCodeAfterCIFix -> <repush> -> waitForCI
+ *   fetchLogs -> storeLogs -> ciFix -> updateCodeAfterCIFix -> <repush> -> wait entry
  *
  * plus the two CI terminals. The counter lives at `context.ciRetries` and must be
- * initialised to 0 first (`initCounters`, or the pull-request step). Entry node:
- * {@link ciWaitEntry}.
+ * initialised to 0 first (`initCounters`, or the pull-request step). Entry node, and
+ * where a repush re-enters the wait: {@link ciWaitEntry}.
  */
 export function ciLoop(opts: CiLoopOptions): NodeMap {
   const loop = 'CI loop';
@@ -231,7 +231,9 @@ export function ciLoop(opts: CiLoopOptions): NodeMap {
           [handoff.repush]: {
             group: loop,
             inputs: { codeResult: { from: 'context.currentCodeResult' } },
-            next: 'waitForCI',
+            // The wait starts over the way it first did: with `pollOrSignal`, through the
+            // router, so a deployment that only polls does not sit out the webhook timeout.
+            next: ciWaitEntry(wait),
             step: 'createOrUpdatePullRequest',
             title: 'Push the fix',
             type: 'step',

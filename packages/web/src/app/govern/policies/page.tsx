@@ -33,6 +33,7 @@ import { useWorkflowTemplates } from '@/hooks/useTemplates';
 import { riskClassLabel } from '@/lib/autonomyEvents';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
+import { randomId } from '@/lib/randomId';
 
 type RuleRow = {
   action: 'auto' | 'require_approval';
@@ -52,27 +53,30 @@ type PolicyForm = {
   templateId: string;
 };
 
-const DEFAULT_RULES: RuleRow[] = [
-  {
-    action: 'require_approval',
-    approverCount: '1',
-    id: crypto.randomUUID(),
-    riskClass: 'external_communication',
-  },
-  { action: 'auto', approverCount: '', id: crypto.randomUUID(), riskClass: 'internal_write' },
-  {
-    action: 'require_approval',
-    approverCount: '2',
-    id: crypto.randomUUID(),
-    riskClass: 'mass_communication',
-  },
-];
+/** Built per call, not at module load: each form needs its own row ids. */
+function defaultRules(): RuleRow[] {
+  return [
+    {
+      action: 'require_approval',
+      approverCount: '1',
+      id: randomId(),
+      riskClass: 'external_communication',
+    },
+    { action: 'auto', approverCount: '', id: randomId(), riskClass: 'internal_write' },
+    {
+      action: 'require_approval',
+      approverCount: '2',
+      id: randomId(),
+      riskClass: 'mass_communication',
+    },
+  ];
+}
 
 function emptyForm(): PolicyForm {
   return {
     description: '',
     name: '',
-    rules: [...DEFAULT_RULES],
+    rules: defaultRules(),
     scope: 'global',
     teamId: '',
     templateId: '',
@@ -83,7 +87,7 @@ function policyToForm(policy: AutonomyPolicy): PolicyForm {
   const entries = Object.entries(policy.rules).map(([riskClass, rule]) => ({
     action: rule.action,
     approverCount: rule.approverCount?.toString() ?? '',
-    id: crypto.randomUUID(),
+    id: randomId(),
     riskClass,
   }));
   let scope: Scope = 'global';
@@ -95,7 +99,7 @@ function policyToForm(policy: AutonomyPolicy): PolicyForm {
   return {
     description: policy.description ?? '',
     name: policy.name,
-    rules: entries.length > 0 ? entries : [...DEFAULT_RULES],
+    rules: entries.length > 0 ? entries : defaultRules(),
     scope,
     teamId: policy.teamId ?? '',
     templateId: policy.templateId ?? '',
@@ -256,7 +260,7 @@ function PolicyModal({
         {
           action: 'require_approval',
           approverCount: '1',
-          id: crypto.randomUUID(),
+          id: randomId(),
           riskClass: riskClassOptions(f.rules, '')[0]?.value ?? '',
         },
       ],

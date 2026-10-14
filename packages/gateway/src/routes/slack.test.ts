@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import fastifyCookie from '@fastify/cookie';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
@@ -216,12 +217,21 @@ function buildApp(state: FakeState): FastifyInstance {
 
   // Slack routes rely on rawBody for signature verification.
   app.register(fastifyRawBody, { encoding: 'utf8', global: false, runFirst: true });
+  // The account-link flow binds its state to the browser with a cookie; the
+  // gateway registers this plugin app-wide.
+  app.register(fastifyCookie);
 
   app.decorate('auth', {
     signAccessToken: () => 'fake-jwt',
-    signOAuthState: () => 'fake-state',
+    // A readable stand-in for the signed state: `state:<sub>:<nonce>`. Any
+    // other token (the install tests' `s1`) verifies as u1 with no nonce.
+    signOAuthState: (sub: string, _purpose: string, nonce?: string) =>
+      `state:${sub}:${nonce ?? ''}`,
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'ADMIN', sub: 'u1' }),
-    verifyOAuthState: () => ({ sub: 'u1' }),
+    verifyOAuthState: (token: string) => {
+      const [kind, sub, nonce] = token.split(':');
+      return kind === 'state' && sub ? { sub, ...(nonce ? { nonce } : {}) } : { sub: 'u1' };
+    },
   } as unknown as never);
   app.decorate('temporal', {
     cancelWorkflow: async () => undefined,
@@ -2343,6 +2353,109 @@ describe('GET /api/v1/auth/slack/install/callback (multi-workspace install)', ()
     expect(res.statusCode).toBe(400);
     expect(state.workspaceCreateCalls).toHaveLength(0);
     expect(state.workspaceUpdateCalls).toHaveLength(0);
+  });
+});
+
+describe('Slack account link — bound to the browser that started it', () => {
+  const originalFetch = globalThis.fetch;
+  let slackCalls: string[];
+
+  beforeEach(() => {
+    slackCalls = [];
+    globalThis.fetch = (async (url: string | URL) => {
+      slackCalls.push(String(url));
+      if (String(url).includes('oauth.v2.access')) {
+        const grant = { authed_user: { access_token: 'xoxp-u' }, ok: true };
+        return { json: async () => grant } as Response;
+      }
+      if (String(url).includes('users.identity')) {
+        return { json: async () => ({ ok: true, user: { id: 'U-NEW' } }) } as Response;
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }) as typeof fetch;
+  });
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  /** Start the flow; returns the state Slack would echo back and the cookie set. */
+  async function connect(): Promise<{ link: string; cookie: { name: string; value: string } }> {
+    const res = await app.inject({
+      headers: { authorization: 'Bearer fake-jwt' },
+      method: 'GET',
+      url: '/api/v1/auth/slack/connect',
+    });
+    expect(res.statusCode).toBe(302);
+    const cookie = res.cookies.find((c) => c.name === 'auto_swe_slack_link');
+    expect(cookie).toMatchObject({
+      httpOnly: true,
+      maxAge: 600,
+      path: '/api/v1/auth/slack/callback',
+      sameSite: 'Lax',
+    });
+    // http in this test, so not Secure; https public URLs get it.
+    expect(cookie?.secure).toBeFalsy();
+    const link = new URL(res.headers.location as string).searchParams.get('state') ?? '';
+    return { cookie: cookie as { name: string; value: string }, link };
+  }
+
+  function callback(link: string, cookies: Record<string, string> = {}) {
+    return app.inject({
+      cookies,
+      method: 'GET',
+      url: `/api/v1/auth/slack/callback?code=c1&state=${encodeURIComponent(link)}`,
+    });
+  }
+
+  it('links the Slack account when the same browser finishes the flow', async () => {
+    const { cookie, link } = await connect();
+
+    const res = await callback(link, { [cookie.name]: cookie.value });
+
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.payload).data).toEqual({ connected: true, slackId: 'U-NEW' });
+    // One use: the callback clears the cookie.
+    const cleared = res.cookies.find((c) => c.name === 'auto_swe_slack_link');
+    expect(cleared?.value).toBe('');
+  });
+
+  it('refuses a callback carrying no binding cookie, before asking Slack anything', async () => {
+    const { link } = await connect();
+
+    const res = await callback(link);
+
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.payload).error.code).toBe('STATE_MISMATCH');
+    expect(slackCalls).toEqual([]);
+  });
+
+  it("refuses a callback whose cookie is another flow's nonce", async () => {
+    const { link } = await connect();
+    const other = await connect();
+
+    const res = await callback(link, { [other.cookie.name]: other.cookie.value });
+
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.payload).error.code).toBe('STATE_MISMATCH');
+    expect(slackCalls).toEqual([]);
+  });
+
+  it('refuses a state with no nonce, whatever cookie is sent', async () => {
+    const res = await callback('state:u1:', { auto_swe_slack_link: 'anything' });
+
+    expect(res.statusCode).toBe(403);
+    expect(slackCalls).toEqual([]);
+  });
+
+  it('refuses when the user who started the flow is no longer active', async () => {
+    const { cookie, link } = await connect();
+    state.installer = { id: 'u1', isActive: false, role: 'ADMIN' };
+
+    const res = await callback(link, { [cookie.name]: cookie.value });
+
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.payload).error.code).toBe('USER_INACTIVE');
+    expect(slackCalls).toEqual([]);
   });
 });
 

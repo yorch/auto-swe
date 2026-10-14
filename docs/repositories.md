@@ -178,6 +178,30 @@ Importing lists repositories from the instance's own host and onboards them with
 repository-level URLs a GitHub listing returns are not base URLs; stored as overrides they made every
 clone and API call land on a path that does not exist.
 
+### Who may onboard
+
+Onboarding (`POST /repositories`, which the import dialog also uses) needs the LEAD role in the
+target team. A caller who is not a platform ADMIN must also be able to **read the repository on
+GitHub themselves**: once the row exists, the team's members can launch runs that clone and push
+with the platform's credential, so a lead naming any `owner/name` that credential can see would
+otherwise give their team a repository nobody on it can open. The check is made live on every
+onboarding, whatever [`repoAccess.mode`](./repo-access-gating.md) is set to, and it is made again
+when a non-admin moves a repository to another host with a URL override (`PATCH`), because the same
+owner and name on another host is another repository.
+
+The caller's GitHub identity is their recorded GitHub login (`users.github_login`, captured when a
+GitHub account is linked by signing in with GitHub), verified to still belong to them — the identity
+the launch gate asks about. GitHub is asked with the platform credential for the repository's host,
+under the same host rules as every other lookup. The refusals:
+
+| Code | Status | When |
+|---|---|---|
+| `GITHUB_ACCESS_UNVERIFIED` | 403 | the caller has no linked GitHub login; GitHub reports no access for them, the repository does not exist, or the platform credential cannot see it (one answer for all three, so the refusal reveals nothing about which private repositories exist); or no platform credential applies to the repository's host |
+| `GITHUB_UNAVAILABLE` | 503 | GitHub could not be asked (outage, rate limit, a database error); it is not taken as a yes |
+
+The access check runs before the duplicate check, so a refused caller does not learn whether the
+repository is already onboarded.
+
 ---
 
 ## 3. Sharing with other teams
@@ -269,6 +293,15 @@ longer fit.
 
 ## Limitations
 
+- **Onboarding asks about the caller's linked login, not a saved token.** A per-repository token
+  (see [`user-github-credentials.md`](./user-github-credentials.md)) belongs to a connection that
+  does not exist yet, so it cannot stand in; a lead whose only GitHub identity is such a token asks a
+  platform admin to onboard. The login is asked about on the repository's host as recorded, so on a
+  GitHub Enterprise host it names whoever holds that username there — the same caveat the launch
+  gate carries.
+- **Onboarding access is checked once.** Losing access on GitHub afterwards does not remove the
+  repository; only [`repoAccess.mode`](./repo-access-gating.md) gates later use. A platform ADMIN is
+  never asked.
 - **An executor image is checked when it is saved, not when a run starts.** Only a platform admin
   may set one (see [`deployment.md`](./deployment.md)), but the worker runs whatever image the row
   holds, so an image already stored stays in use until an admin changes or clears it.
@@ -276,7 +309,11 @@ longer fit.
   target repository's own `.auto-swe/Dockerfile` when it has one and writes the result to the
   connection with an admin token, so anyone who can merge to that repository's default branch decides
   what the next rebuilt image runs, and that image receives the run's GitHub credential.
-
+- **Executor images are not rebuilt on a schedule.** `build-executor.yml` builds one repository per
+  run and only when dispatched with that repository's id (`workflow_dispatch` or a
+  `build-executor` `repository_dispatch`); a run without one fails. Nothing lists the repositories
+  and dispatches a periodic rebuild, so an image picks up base-image fixes only when someone
+  triggers it.
 - **Overrides must be base URLs on one host each.** A GitHub Enterprise server served under a path
   prefix rather than at the root of its host cannot be expressed: the web base is stored as an
   origin.

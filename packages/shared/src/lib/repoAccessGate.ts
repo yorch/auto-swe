@@ -59,12 +59,6 @@ export interface RepoAccessGate {
  */
 let lastKnownGate: RepoAccessGate | null = null;
 
-/** Drop the remembered gate and any failure backoff. Exported for tests. */
-export function resetRepoAccessGateCache(): void {
-  lastKnownGate = null;
-  lastFailedReadAt = 0;
-}
-
 export async function resolveRepoAccessGate(): Promise<RepoAccessGate> {
   const cfg = await resolveSettings(['repoAccess.mode', 'repoAccess.viewStaleAfterHours'], {});
   const mode = cfg['repoAccess.mode'] as RepoAccessMode;

@@ -350,7 +350,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             },
             requestedBy: { select: { email: true, id: true, name: true } },
           },
-          orderBy: { createdAt: 'desc' },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
           skip: offset,
           take: limit,
           where,

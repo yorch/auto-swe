@@ -1,14 +1,24 @@
 import { asyncLocalStorage, log } from '@temporalio/activity';
 
+/**
+ * Inside an activity the Temporal logger (exported with the activity's trace
+ * context); outside one — embedding pricing, boot-time checks, where `log`
+ * throws — the console, so the message is never dropped.
+ */
 export function logError(message: string, meta?: Record<string, unknown>): void {
   if (asyncLocalStorage.getStore()) {
     log.error(message, meta ?? {});
+  } else {
+    console.error(message, meta ?? {});
   }
 }
 
+/** {@link logError}'s warning-level twin: the Temporal logger, else the console. */
 export function logWarn(message: string, meta?: Record<string, unknown>): void {
   if (asyncLocalStorage.getStore()) {
     log.warn(message, meta ?? {});
+  } else {
+    console.warn(message, meta ?? {});
   }
 }
 

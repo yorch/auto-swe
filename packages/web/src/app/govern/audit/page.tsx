@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -26,6 +26,7 @@ import {
   useAdminPruneShellAudit,
   useAuditLog,
 } from '@/hooks/useAdmin';
+import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { entityHref, entityTypeLabel } from '@/lib/auditEntity';
 import {
@@ -72,8 +73,13 @@ function AuditWorkspace() {
   const { params, update } = useUrlFilters();
   const range = params.get('range') ? parseDateRange(params) : null;
   const search = (params.get('search') ?? '').slice(0, 100);
-  const [searchDraft, setSearchDraft] = useState(search);
-  useEffect(() => setSearchDraft(search), [search]);
+  // Typing waits for a pause before it changes the URL (and the query). The URL holds the
+  // trimmed text; the box keeps what was typed, trailing space included.
+  const [searchDraft, setSearchDraft] = useDebouncedUrlSearch(
+    search,
+    (value) => update({ offset: null, search: value || null }),
+    { normalize: (value) => value.trim() }
+  );
   const offset = parseOffset(params.get('offset'));
   const rawAction = params.get('action');
   const filters: AuditLogFilters = {
@@ -109,18 +115,6 @@ function AuditWorkspace() {
       ...(filters.entityType ? [filters.entityType] : []),
     ]),
   ];
-
-  // Typing in the search box waits for a pause before it changes the URL (and the query).
-  useEffect(() => {
-    if (searchDraft === search) {
-      return;
-    }
-    const timer = setTimeout(
-      () => update({ offset: null, search: searchDraft.trim() || null }),
-      300
-    );
-    return () => clearTimeout(timer);
-  }, [searchDraft, search, update]);
 
   /** Every filter change starts again from the first page. */
   function setFilter(patch: Record<string, string | null>) {

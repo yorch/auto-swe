@@ -8,6 +8,7 @@ import {
 } from '@auto-swe/shared/types/api';
 import { BUILTIN_PROVIDERS } from './credentialService.js';
 import { catalogWarnings } from './modelCatalogService.js';
+import { isUniqueConstraintError } from './prismaErrors.js';
 import { scanSkillAdvisory } from './skillScan.js';
 
 /**
@@ -518,47 +519,51 @@ export async function createAgent(
   }
   const scanWarnings = base.systemPrompt ? await scanSkillAdvisory(null, base.systemPrompt) : [];
   // Create the row and its skill refs atomically so a failure mid-way cannot
-  // leave a partial agent behind.
-  const agent = await prisma.$transaction(async (tx) => {
-    const agentBase = await tx.agent.create({
-      data: {
-        channelId: scopeWhere(key).channelId,
-        createdById: actorId,
-        credentialId: base.credentialId ?? null,
-        description: base.description ?? null,
-        inheritsModelFrom: base.inheritsModelFrom ?? null,
-        isActive: true,
-        isBuiltIn: false,
-        isVerified: false,
-        key: key.key,
-        mcpConnectionId: base.mcpConnectionId ?? null,
-        modelSpec: base.modelSpec ?? null,
-        name: base.name,
-        orgId: scopeWhere(key).orgId,
-        origin: null,
-        runtime: base.runtime ?? null,
-        scope: key.scope,
-        systemPrompt: base.systemPrompt ?? null,
-        teamId: scopeWhere(key).teamId,
-        toolKeys: base.toolKeys ?? undefined,
-        version: 1,
-        workflowTemplateId: scopeWhere(key).workflowTemplateId,
-      },
-    });
-    if ((base.skillRefs ?? []).length > 0) {
-      await tx.agentSkillRef.createMany({
-        data: (base.skillRefs ?? []).map((ref) => ({
-          agentId: agentBase.id,
-          skillId: ref.skillId,
-          sortOrder: ref.sortOrder,
-        })),
+  // leave a partial agent behind. A concurrent create of the same lineage loses
+  // on the (key, scope, version) unique index and reads as the lineage existing.
+  const agent = await onUniqueViolation(
+    prisma.$transaction(async (tx) => {
+      const agentBase = await tx.agent.create({
+        data: {
+          channelId: scopeWhere(key).channelId,
+          createdById: actorId,
+          credentialId: base.credentialId ?? null,
+          description: base.description ?? null,
+          inheritsModelFrom: base.inheritsModelFrom ?? null,
+          isActive: true,
+          isBuiltIn: false,
+          isVerified: false,
+          key: key.key,
+          mcpConnectionId: base.mcpConnectionId ?? null,
+          modelSpec: base.modelSpec ?? null,
+          name: base.name,
+          orgId: scopeWhere(key).orgId,
+          origin: null,
+          runtime: base.runtime ?? null,
+          scope: key.scope,
+          systemPrompt: base.systemPrompt ?? null,
+          teamId: scopeWhere(key).teamId,
+          toolKeys: base.toolKeys ?? undefined,
+          version: 1,
+          workflowTemplateId: scopeWhere(key).workflowTemplateId,
+        },
       });
-    }
-    return tx.agent.findUniqueOrThrow({
-      include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
-      where: { id: agentBase.id },
-    });
-  });
+      if ((base.skillRefs ?? []).length > 0) {
+        await tx.agentSkillRef.createMany({
+          data: (base.skillRefs ?? []).map((ref) => ({
+            agentId: agentBase.id,
+            skillId: ref.skillId,
+            sortOrder: ref.sortOrder,
+          })),
+        });
+      }
+      return tx.agent.findUniqueOrThrow({
+        include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
+        where: { id: agentBase.id },
+      });
+    }),
+    () => new AgentLineageExistsError(key.key, key.scope)
+  );
   return {
     agent,
     catalogWarnings: await agentCatalogWarnings(prisma, agent),
@@ -591,7 +596,13 @@ export async function updateAgent(
     teamId: current.teamId,
     workflowTemplateId: current.workflowTemplateId,
   };
-  const nextVersion = (await maxVersion(prisma, key)) + 1;
+  // `current` is the version the editor read. Merging over anything but the
+  // lineage head would silently undo every edit cut since, so refuse it.
+  const latestVersion = await maxVersion(prisma, key);
+  if (latestVersion !== current.version) {
+    throw new AgentVersionConflictError(current.key, current.version);
+  }
+  const nextVersion = latestVersion + 1;
   const promptChanged = base.systemPrompt !== undefined;
   const scanWarnings =
     promptChanged && base.systemPrompt ? await scanSkillAdvisory(null, base.systemPrompt) : [];
@@ -611,51 +622,55 @@ export async function updateAgent(
     refsToCreate = currentRefs;
   }
 
-  const agent = await prisma.$transaction(async (tx) => {
-    const agentBase = await tx.agent.create({
-      data: {
-        channelId: current.channelId,
-        createdById: actorId,
-        credentialId: pick(base.credentialId, current.credentialId),
-        description: pick(base.description, current.description),
-        inheritsModelFrom: pick(base.inheritsModelFrom, current.inheritsModelFrom),
-        isActive: true,
-        isBuiltIn: current.isBuiltIn,
-        // A prompt edit drops verification (mirrors the skill library); an
-        // unchanged prompt keeps the prior verification state.
-        isVerified: promptChanged ? false : current.isVerified,
-        key: current.key,
-        mcpConnectionId: pick(base.mcpConnectionId, current.mcpConnectionId),
-        modelSpec: pick(base.modelSpec, current.modelSpec),
-        name: pick(base.name, current.name),
-        orgId: current.orgId,
-        origin: current.origin,
-        runtime: pick(base.runtime, current.runtime),
-        scope: current.scope,
-        systemPrompt: pick(base.systemPrompt, current.systemPrompt),
-        teamId: current.teamId,
-        toolKeys:
-          base.toolKeys === undefined
-            ? (current.toolKeys ?? undefined)
-            : (base.toolKeys ?? undefined),
-        version: nextVersion,
-        workflowTemplateId: current.workflowTemplateId,
-      },
-    });
-    if (refsToCreate.length > 0) {
-      await tx.agentSkillRef.createMany({
-        data: refsToCreate.map((ref) => ({
-          agentId: agentBase.id,
-          skillId: ref.skillId,
-          sortOrder: ref.sortOrder,
-        })),
+  // A concurrent edit that cut this version number first wins; this one is stale.
+  const agent = await onUniqueViolation(
+    prisma.$transaction(async (tx) => {
+      const agentBase = await tx.agent.create({
+        data: {
+          channelId: current.channelId,
+          createdById: actorId,
+          credentialId: pick(base.credentialId, current.credentialId),
+          description: pick(base.description, current.description),
+          inheritsModelFrom: pick(base.inheritsModelFrom, current.inheritsModelFrom),
+          isActive: true,
+          isBuiltIn: current.isBuiltIn,
+          // A prompt edit drops verification (mirrors the skill library); an
+          // unchanged prompt keeps the prior verification state.
+          isVerified: promptChanged ? false : current.isVerified,
+          key: current.key,
+          mcpConnectionId: pick(base.mcpConnectionId, current.mcpConnectionId),
+          modelSpec: pick(base.modelSpec, current.modelSpec),
+          name: pick(base.name, current.name),
+          orgId: current.orgId,
+          origin: current.origin,
+          runtime: pick(base.runtime, current.runtime),
+          scope: current.scope,
+          systemPrompt: pick(base.systemPrompt, current.systemPrompt),
+          teamId: current.teamId,
+          toolKeys:
+            base.toolKeys === undefined
+              ? (current.toolKeys ?? undefined)
+              : (base.toolKeys ?? undefined),
+          version: nextVersion,
+          workflowTemplateId: current.workflowTemplateId,
+        },
       });
-    }
-    return tx.agent.findUniqueOrThrow({
-      include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
-      where: { id: agentBase.id },
-    });
-  });
+      if (refsToCreate.length > 0) {
+        await tx.agentSkillRef.createMany({
+          data: refsToCreate.map((ref) => ({
+            agentId: agentBase.id,
+            skillId: ref.skillId,
+            sortOrder: ref.sortOrder,
+          })),
+        });
+      }
+      return tx.agent.findUniqueOrThrow({
+        include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
+        where: { id: agentBase.id },
+      });
+    }),
+    () => new AgentVersionConflictError(current.key, current.version)
+  );
   return {
     agent,
     catalogWarnings: await agentCatalogWarnings(prisma, agent),
@@ -677,6 +692,26 @@ export async function deactivateAgentLineage(
     where: scopeWhere(key),
   });
   return res.count;
+}
+
+/**
+ * Thrown by {@link updateAgent} when the version being edited is no longer the
+ * newest of its lineage — another edit landed since it was read.
+ */
+export class AgentVersionConflictError extends Error {
+  constructor(key: string, version: number) {
+    super(`Agent '${key}' changed since version ${version} was read; reload it and try again.`);
+    this.name = 'AgentVersionConflictError';
+  }
+}
+
+/** Run `write`, turning a lost race on a unique index into `conflict()`. */
+async function onUniqueViolation<T>(write: Promise<T>, conflict: () => Error): Promise<T> {
+  try {
+    return await write;
+  } catch (err) {
+    throw isUniqueConstraintError(err) ? conflict() : err;
+  }
 }
 
 /** Thrown by {@link createAgent} when the key+scope lineage already exists. */

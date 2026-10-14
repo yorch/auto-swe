@@ -108,6 +108,19 @@ describe('PATCH /:orgId/budget', () => {
     expect(res.statusCode).toBe(200);
   });
 
+  it('400s, without writing, on a cap larger than the integer column holds', async () => {
+    const app = buildApp('ADMIN');
+    await app.ready();
+    const res = await app.inject({
+      body: JSON.stringify({ budgetAlertThresholdPercent: null, monthlyBudgetUsdCents: 2 ** 31 }),
+      headers: { 'content-type': 'application/json' },
+      method: 'PATCH',
+      url: `${PREFIX}/${ORG_ID}/budget`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(app.prisma.organization.update).not.toHaveBeenCalled();
+  });
+
   it('allows a platform-ENGINEER who is ORG_ADMIN to edit the cap', async () => {
     const app = buildApp('ENGINEER', 'ORG_ADMIN');
     await app.ready();

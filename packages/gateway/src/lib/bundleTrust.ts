@@ -14,17 +14,27 @@ export function resolveBundleTrustedKeys(): TrustedKey[] {
   if (!raw) {
     return [];
   }
+  // Malformed config fails safe (no trusted keys), but loudly: otherwise an
+  // operator's typo silently marks every signed bundle UNVERIFIED.
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.filter(
-      (k): k is TrustedKey => !!k && typeof k.id === 'string' && typeof k.publicKeyPem === 'string'
-    );
+    parsed = JSON.parse(raw);
   } catch {
+    console.warn('[bundles] BUNDLE_TRUSTED_KEYS is not valid JSON; no bundle key is trusted');
     return [];
   }
+  if (!Array.isArray(parsed)) {
+    console.warn('[bundles] BUNDLE_TRUSTED_KEYS is not a JSON array; no bundle key is trusted');
+    return [];
+  }
+  const keys = parsed.filter(
+    (k): k is TrustedKey => !!k && typeof k.id === 'string' && typeof k.publicKeyPem === 'string'
+  );
+  if (keys.length !== parsed.length) {
+    const skipped = parsed.length - keys.length;
+    console.warn(`[bundles] BUNDLE_TRUSTED_KEYS: ignored ${skipped} malformed entries`);
+  }
+  return keys;
 }
 
 /** Whether to allow UNVERIFIED bundles to install. Default is deny. */

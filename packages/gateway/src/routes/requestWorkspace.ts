@@ -4,6 +4,7 @@ import {
   CHANNEL_TASK_TEMPLATE_NAME,
 } from '@auto-swe/shared/lib/channelTask';
 import { pullRequestUrl } from '@auto-swe/shared/lib/pullRequest';
+import { resolveGitHubBaseUrl } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -131,6 +132,8 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
         organizationName: true,
         repoName: true,
       } as const;
+      // Where a repository that names no host of its own links its PRs.
+      const instanceBaseUrl = await resolveGitHubBaseUrl();
       const rows = await fastify.prisma.workflowRun.findMany({
         include: {
           _count: { select: { humanSteps: { where: { status: 'PENDING' } } } },
@@ -185,7 +188,8 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
                   organizationName: target.organizationName,
                   repoName: target.repoName,
                 },
-                prNumber ?? null
+                prNumber ?? null,
+                instanceBaseUrl
               )
             : null;
           return {

@@ -5,7 +5,6 @@ import type {
   GlobalAnalyticsResponse,
   SpecDiffResponse,
   StepRegistryEntry,
-  WorkflowRunSummary,
   WorkflowTemplateAnalytics,
   WorkflowTemplateDetail,
   WorkflowTemplateSummary,
@@ -15,6 +14,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useRef } from 'react';
 import { api } from '@/lib/api';
 import { type DateRange, rangeKey, rangeQuery } from '@/lib/dateRange';
+import { randomId } from '@/lib/randomId';
 
 export function useWorkflowTemplates(teamId?: string | null) {
   return useQuery({
@@ -49,24 +49,6 @@ export function useWorkflowTemplateVersion(id: string, version: number | null) {
         }>(`/api/v1/workflow-templates/${id}/versions/${version}`)
         .then((r) => r.data),
     queryKey: ['workflow-template-version', id, version],
-  });
-}
-
-export function useTemplateRuns(
-  id: string,
-  { limit = 50, offset = 0 }: { limit?: number; offset?: number } = {}
-) {
-  return useQuery({
-    enabled: !!id,
-    queryFn: () =>
-      api
-        .get<{
-          data: WorkflowRunSummary[];
-          meta: { total: number };
-        }>(`/api/v1/workflow-templates/${id}/runs?limit=${limit}&offset=${offset}`)
-        .then((r) => ({ data: r.data, total: r.meta.total })),
-    queryKey: ['workflow-template-runs', id, limit, offset],
-    refetchInterval: 10_000,
   });
 }
 
@@ -302,7 +284,7 @@ export function useRunTemplate(templateId: string) {
     mutationFn: (body: { payload?: Record<string, unknown>; label?: string }) => {
       const serialized = JSON.stringify(body);
       if (!submission.current || submission.current.body !== serialized) {
-        submission.current = { body: serialized, key: crypto.randomUUID() };
+        submission.current = { body: serialized, key: randomId() };
       }
       return api
         .fetch<{ data: { temporalWorkflowId: string; workflowId: string; workRequestId: string } }>(

@@ -1,7 +1,7 @@
 'use client';
 
 import { PULL_REQUEST_STATES, type PullRequestState } from '@auto-swe/shared/lib/pullRequest';
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense } from 'react';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
@@ -16,6 +16,7 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { PullRequestTable } from '@/components/work/PullRequestTable';
+import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { useRepositories } from '@/hooks/useRepositories';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { usePullRequests } from '@/hooks/useWorkViews';
@@ -49,15 +50,9 @@ function PullRequests() {
   const repoId = UUID.test(rawRepo) ? rawRepo : '';
   const ticket = (params.get('ticket') ?? '').slice(0, 200);
   const offset = parseOffset(params.get('offset'));
-  const [ticketDraft, setTicketDraft] = useState(ticket);
-  useEffect(() => setTicketDraft(ticket), [ticket]);
-  useEffect(() => {
-    if (ticketDraft === ticket) {
-      return;
-    }
-    const timer = setTimeout(() => update({ offset: null, ticket: ticketDraft }), 300);
-    return () => clearTimeout(timer);
-  }, [ticketDraft, ticket, update]);
+  const [ticketDraft, setTicketDraft] = useDebouncedUrlSearch(ticket, (value) =>
+    update({ offset: null, ticket: value })
+  );
 
   const { data: repositories = [] } = useRepositories({ limit: 100 });
   const { data, error, isError, isFetching, isLoading, meta, refetch } = usePullRequests({

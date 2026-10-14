@@ -5,6 +5,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
   type AgentScope,
+  AgentVersionConflictError,
   updateAgent,
   validateCredentialRef,
   validateMcpConnectionRef,
@@ -163,27 +164,40 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
                 })
             )
           : [];
-      const { agent, catalogWarnings, credentialWarnings, scanWarnings } = await updateAgent(
-        fastify.prisma,
-        latest,
-        {
-          credentialId: source.credentialId,
-          description: source.description,
-          inheritsModelFrom: source.inheritsModelFrom,
-          mcpConnectionId: source.mcpConnectionId,
-          modelSpec: source.modelSpec,
-          name: source.name,
-          // Restore is admin-only, so it may restore the runtime too.
-          runtime: toImplementerRuntime(source.runtime),
-          skillRefs: source.skillRefs.map((r) => ({ skillId: r.skillId, sortOrder: r.sortOrder })),
-          // An unchanged prompt is left out so restoring other fields keeps verification.
-          ...(source.systemPrompt !== latest.systemPrompt
-            ? { systemPrompt: source.systemPrompt }
-            : {}),
-          toolKeys: (source.toolKeys as string[] | null) ?? null,
-        },
-        actor.sub
-      );
+      let saved: Awaited<ReturnType<typeof updateAgent>>;
+      try {
+        saved = await updateAgent(
+          fastify.prisma,
+          latest,
+          {
+            credentialId: source.credentialId,
+            description: source.description,
+            inheritsModelFrom: source.inheritsModelFrom,
+            mcpConnectionId: source.mcpConnectionId,
+            modelSpec: source.modelSpec,
+            name: source.name,
+            // Restore is admin-only, so it may restore the runtime too.
+            runtime: toImplementerRuntime(source.runtime),
+            skillRefs: source.skillRefs.map((r) => ({
+              skillId: r.skillId,
+              sortOrder: r.sortOrder,
+            })),
+            // An unchanged prompt is left out so restoring other fields keeps verification.
+            ...(source.systemPrompt !== latest.systemPrompt
+              ? { systemPrompt: source.systemPrompt }
+              : {}),
+            toolKeys: (source.toolKeys as string[] | null) ?? null,
+          },
+          actor.sub
+        );
+      } catch (err) {
+        // Another edit or restore cut the next version first.
+        if (err instanceof AgentVersionConflictError) {
+          return reply.status(409).send({ error: { code: 'AGENT_CHANGED', message: err.message } });
+        }
+        throw err;
+      }
+      const { agent, catalogWarnings, credentialWarnings, scanWarnings } = saved;
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,

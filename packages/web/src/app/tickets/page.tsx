@@ -1,6 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
+import { Suspense } from 'react';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
@@ -13,6 +13,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { TicketTable } from '@/components/work/TicketTable';
+import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { useTickets } from '@/hooks/useWorkViews';
 
@@ -25,15 +26,9 @@ function Tickets() {
   const includeAutomated = params.get('automated') === '1';
   const search = (params.get('search') ?? '').slice(0, 200);
   const offset = parseOffset(params.get('offset'));
-  const [searchDraft, setSearchDraft] = useState(search);
-  useEffect(() => setSearchDraft(search), [search]);
-  useEffect(() => {
-    if (searchDraft === search) {
-      return;
-    }
-    const timer = setTimeout(() => update({ offset: null, search: searchDraft }), 300);
-    return () => clearTimeout(timer);
-  }, [searchDraft, search, update]);
+  const [searchDraft, setSearchDraft] = useDebouncedUrlSearch(search, (value) =>
+    update({ offset: null, search: value })
+  );
 
   const { data, error, isError, isFetching, isLoading, meta, refetch } = useTickets({
     includeAutomated,

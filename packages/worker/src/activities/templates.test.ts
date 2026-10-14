@@ -36,6 +36,13 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   }),
 }));
 
+// The Temporal mock above has no activity context, so the loggers are stubbed.
+vi.mock('../lib/activityLog.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/activityLog.js')>()),
+  logError: vi.fn(),
+  logWarn: vi.fn(),
+}));
+
 vi.mock('../lib/slackNotify.js', () => ({
   notifySlackRunComplete: vi.fn(),
   notifySlackStepFailure: vi.fn(),
@@ -163,6 +170,7 @@ vi.mock('@auto-swe/shared/db', () => {
 
 import { prisma } from '@auto-swe/shared/db';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
+import { logError } from '../lib/activityLog.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import {
   notifySlackRunComplete,
@@ -1475,6 +1483,35 @@ describe('finalizeWorkflowRun', () => {
       expect(notify).toHaveBeenCalledTimes(expected);
       expect(tracker).toHaveBeenCalledTimes(expected);
     }
+    findRun.mockReset();
+  });
+
+  it('still reports the run finalized when the tracker sync throws after the commit', async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const tracker = vi.mocked(syncTrackerOnEvent);
+    tracker.mockReset();
+    tracker.mockImplementationOnce(() => {
+      throw new Error('tracker down');
+    });
+    updateManyRuns.mockReset();
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    findRun.mockResolvedValue({
+      endedAt: null,
+      workflowId: 'eng-x',
+      workRequest: {
+        activeWorkflows: [],
+        connection: { team: { orgId: 'org-1' } },
+        externalTicketId: 'T-1',
+        payload: null,
+      },
+    } as never);
+    // A throw here would retry into the already-ended early return and lose the sync.
+    await expect(finalizeRun('run-t', 'SUCCESS', undefined, 'worker')).resolves.toBe(true);
+    expect(tracker).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logError)).toHaveBeenCalledWith(
+      '[finalizeRun] tracker sync failed for run run-t:',
+      { err: 'tracker down', runId: 'run-t' }
+    );
     findRun.mockReset();
   });
 

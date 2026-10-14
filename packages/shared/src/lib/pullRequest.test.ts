@@ -7,22 +7,26 @@ import {
 
 describe('pullRequestUrl', () => {
   const repo = { githubUrl: null, organizationName: 'acme', repoName: 'api' };
+  const GITHUB = 'https://github.com';
 
-  it('defaults to github.com', () => {
-    expect(pullRequestUrl(repo, 7)).toBe('https://github.com/acme/api/pull/7');
+  it("puts a repository that names no host on the instance's host", () => {
+    expect(pullRequestUrl(repo, 7, GITHUB)).toBe('https://github.com/acme/api/pull/7');
+    // A GHE-primary deployment: not github.com.
+    expect(pullRequestUrl(repo, 7, 'https://ghe.corp')).toBe('https://ghe.corp/acme/api/pull/7');
   });
 
   it("uses the repository's own host and drops a trailing slash", () => {
-    expect(pullRequestUrl({ ...repo, githubUrl: 'https://ghe.corp/' }, 7)).toBe(
+    expect(pullRequestUrl({ ...repo, githubUrl: 'https://ghe.corp/' }, 7, GITHUB)).toBe(
       'https://ghe.corp/acme/api/pull/7'
     );
   });
 
   it('is null for a missing number or name, or a non-http(s) or malformed base', () => {
-    expect(pullRequestUrl(repo, null)).toBeNull();
-    expect(pullRequestUrl({ ...repo, repoName: null }, 7)).toBeNull();
-    expect(pullRequestUrl({ ...repo, githubUrl: 'javascript:alert(1)' }, 7)).toBeNull();
-    expect(pullRequestUrl({ ...repo, githubUrl: 'not a url' }, 7)).toBeNull();
+    expect(pullRequestUrl(repo, null, GITHUB)).toBeNull();
+    expect(pullRequestUrl({ ...repo, repoName: null }, 7, GITHUB)).toBeNull();
+    expect(pullRequestUrl({ ...repo, githubUrl: 'javascript:alert(1)' }, 7, GITHUB)).toBeNull();
+    expect(pullRequestUrl({ ...repo, githubUrl: 'not a url' }, 7, GITHUB)).toBeNull();
+    expect(pullRequestUrl(repo, 7, 'not a url')).toBeNull();
   });
 });
 

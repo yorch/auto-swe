@@ -159,6 +159,9 @@ Go to **Admin → Integrations → GitHub → App authentication (optional)**.
 Paste the entire PEM contents (including the `-----BEGIN/END-----` lines) into the **Private key** textarea.
 
 Click **Save**. The gateway encrypts and stores all fields using AES-256-GCM (same envelope as provider credentials).
+Before it does, it refuses (400) an App ID that is not numeric, a private key that does not parse
+as a PEM private key, and a personal access token that starts or ends with whitespace — the same
+checks a per-host credential gets — so a credential that could never authenticate is not stored.
 
 ---
 

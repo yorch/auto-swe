@@ -423,14 +423,10 @@ export async function exportBundle(
       ...originWhere,
     },
   });
+  const specs = await activeTemplateSpecs(prisma, templateRows);
   const templates: BundleTemplate[] = [];
   for (const t of templateRows) {
-    // Fetch only the active version's spec (pinned if set, else the highest) —
-    // not the whole version history.
-    const active = await prisma.workflowTemplateVersion.findFirst({
-      orderBy: { version: 'desc' },
-      where: { templateId: t.id, ...(t.activeVersion != null ? { version: t.activeVersion } : {}) },
-    });
+    const active = specs.get(t.id);
     if (!active) {
       continue;
     }
@@ -454,6 +450,48 @@ export async function exportBundle(
     version: opts.version,
     ...(opts.origin !== undefined ? { source: opts.origin } : {}),
   });
+}
+
+/**
+ * Each template's active version spec — the pinned `activeVersion` if set, else
+ * the highest — in two queries however many templates there are, loading no
+ * other version's spec. A pinned version that does not exist yields no entry.
+ */
+async function activeTemplateSpecs(
+  prisma: PrismaClient,
+  templates: { activeVersion: number | null; id: string }[]
+): Promise<Map<string, { spec: Prisma.JsonValue }>> {
+  const specs = new Map<string, { spec: Prisma.JsonValue }>();
+  if (templates.length === 0) {
+    return specs;
+  }
+  const wanted = templates.flatMap((t) =>
+    t.activeVersion != null ? [{ templateId: t.id, version: t.activeVersion }] : []
+  );
+  const unpinned = templates.filter((t) => t.activeVersion == null).map((t) => t.id);
+  if (unpinned.length > 0) {
+    const heads = await prisma.workflowTemplateVersion.groupBy({
+      _max: { version: true },
+      by: ['templateId'],
+      where: { templateId: { in: unpinned } },
+    });
+    for (const h of heads) {
+      if (h._max.version != null) {
+        wanted.push({ templateId: h.templateId, version: h._max.version });
+      }
+    }
+  }
+  if (wanted.length === 0) {
+    return specs;
+  }
+  const rows = await prisma.workflowTemplateVersion.findMany({
+    select: { spec: true, templateId: true },
+    where: { OR: wanted },
+  });
+  for (const row of rows) {
+    specs.set(row.templateId, { spec: row.spec });
+  }
+  return specs;
 }
 
 /** What an install or preview works from once the bundle has passed every pre-write check. */

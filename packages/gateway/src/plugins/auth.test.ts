@@ -104,6 +104,24 @@ describe('auth plugin — verifyAccessToken re-reads the user', () => {
   });
 });
 
+describe('auth plugin — OAuth state', () => {
+  it('carries a browser-binding nonce through, and none when not given', async () => {
+    const app = await buildApp(vi.fn());
+    try {
+      const bound = app.auth.signOAuthState(USER_ID, 'slack-link', 'n0nce');
+      expect(app.auth.verifyOAuthState(bound, 'slack-link')).toEqual({
+        nonce: 'n0nce',
+        sub: USER_ID,
+      });
+      const unbound = app.auth.signOAuthState(USER_ID, 'slack-install');
+      expect(app.auth.verifyOAuthState(unbound, 'slack-install')).toEqual({ sub: USER_ID });
+      expect(() => app.auth.verifyOAuthState(bound, 'slack-install')).toThrow();
+    } finally {
+      await app.close();
+    }
+  });
+});
+
 describe('session cache invalidation', () => {
   const payload: JwtPayload = { exp: 0, iat: 0, role: 'ENGINEER', sub: USER_ID };
 

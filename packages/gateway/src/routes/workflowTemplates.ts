@@ -1975,7 +1975,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
               select: { description: true, externalTicketId: true, id: true },
             },
           },
-          orderBy: { startedAt: 'desc' },
+          orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
           skip: offset,
           take: limit,
           where: {

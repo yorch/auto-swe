@@ -9,6 +9,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { type AuditEntityType, writeAuditLog } from '../lib/auditLog.js';
 import { currentYearMonth } from '../lib/orgAccess.js';
+import { PG_INT_MAX } from '../lib/pgInt.js';
 import type { JwtPayload } from '../plugins/auth.js';
 import { requireAuth } from '../plugins/auth.js';
 
@@ -18,7 +19,7 @@ const PatchBudgetSchema = z.object({
   /** Alert threshold as a percentage of the monthly cap (0-100). Null disables the alert. */
   budgetAlertThresholdPercent: z.number().int().min(0).max(100).nullable(),
   /** Monthly cap in USD cents. Null removes the cap entirely. */
-  monthlyBudgetUsdCents: z.number().int().min(0).nullable(),
+  monthlyBudgetUsdCents: z.number().int().min(0).max(PG_INT_MAX).nullable(),
 });
 
 const CurrentMonthUsageSchema = z.object({

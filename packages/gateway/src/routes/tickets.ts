@@ -5,6 +5,7 @@ import {
   CHANNEL_TASK_TEMPLATE_NAME,
 } from '@auto-swe/shared/lib/channelTask';
 import { type PullRequestState, pullRequestUrl } from '@auto-swe/shared/lib/pullRequest';
+import { resolveGitHubBaseUrl } from '@auto-swe/shared/lib/systemConfig';
 import type { TicketGroup, WorkflowRunStatus } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -177,7 +178,7 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const requestIds = requests.map((row) => row.id);
 
-      const [runs, ledgers, pullRequests, snapshots] = await Promise.all([
+      const [runs, ledgers, pullRequests, snapshots, instanceBaseUrl] = await Promise.all([
         fastify.prisma.workflowRun.findMany({
           orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
           select: { id: true, status: true, workRequestId: true },
@@ -211,6 +212,8 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
           select: { rawTicketData: true, workRequestId: true },
           where: { workRequestId: { in: requestIds } },
         }),
+        // Where a repository that names no host of its own links its PRs.
+        resolveGitHubBaseUrl(),
       ]);
 
       const data: TicketGroup[] = page.map((row) => {
@@ -251,7 +254,9 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
                   }
                 : null,
               status: pr.status as PullRequestState,
-              url: pr.repository ? pullRequestUrl(pr.repository, pr.prNumber) : null,
+              url: pr.repository
+                ? pullRequestUrl(pr.repository, pr.prNumber, instanceBaseUrl)
+                : null,
             })),
           requestCount: ids.length,
           runCounts,

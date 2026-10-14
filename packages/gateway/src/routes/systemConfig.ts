@@ -9,6 +9,11 @@ import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
+  GitHubAppIdSchema,
+  GitHubAppPrivateKeySchema,
+  GitHubTokenSchema,
+} from '../lib/githubCredentialSchemas.js';
+import {
   auditConfigWrite,
   BaseUrlRefusedError,
   CLEARABLE_SECRETS,
@@ -65,16 +70,19 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 
 // ─── Zod schemas ──────────────────────────────────────────────────────────────
 
+/// The token, App id and private key are checked as the per-host credentials
+/// are. A field left out is unchanged, and `null` clears a non-secret one, so
+/// the checks apply only to a value actually being saved.
 const GitHubPutBody = z.object({
   apiUrl: z.string().url().max(500).nullable().optional(),
   appClientId: z.string().max(200).nullable().optional(),
   appClientSecret: z.string().min(1).max(500).optional(),
-  appId: z.string().max(100).nullable().optional(),
+  appId: GitHubAppIdSchema.nullable().optional(),
   appInstallationId: z.string().max(100).nullable().optional(),
-  appPrivateKey: z.string().min(1).max(10_000).optional(),
+  appPrivateKey: GitHubAppPrivateKeySchema.optional(),
   authMode: z.enum(['auto', 'pat', 'app']).nullable().optional(),
   baseUrl: z.string().url().max(500).nullable().optional(),
-  token: z.string().min(1).max(500).optional(),
+  token: GitHubTokenSchema.optional(),
   webhookSecret: z.string().min(1).max(500).optional(),
 });
 

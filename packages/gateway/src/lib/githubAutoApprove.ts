@@ -87,7 +87,10 @@ export interface AutoApproveDeps {
   now: () => Date;
 }
 
-async function platformCredentialForSignIn(): Promise<{ apiUrl: string; token: string } | null> {
+type SignInCredential = { apiUrl: string; token: string } | null;
+
+/** The production `credential` dependency; exported for its test. */
+export async function platformCredentialForSignIn(): Promise<SignInCredential> {
   try {
     const config = await resolveGitHubConfig();
     // The API root sign-in itself resolved, so the credential goes to the host the user
@@ -99,7 +102,11 @@ async function platformCredentialForSignIn(): Promise<{ apiUrl: string; token: s
     }
     const token = await resolveGitHubToken(config, { apiUrl });
     return { apiUrl, token };
-  } catch {
+  } catch (err) {
+    // Fails safe (no auto-approval), but says why: a misconfigured credential
+    // otherwise leaves every sign-in in the queue with nothing in the log.
+    const reason = err instanceof Error ? err.message : String(err);
+    console.warn(`[github-auto-approve] no platform credential for the org check: ${reason}`);
     return null;
   }
 }

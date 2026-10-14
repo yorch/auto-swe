@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from 'node:crypto';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -175,6 +176,7 @@ import {
   testSlackConnection,
   updateCanaryConfig,
   updateConsolidationConfig,
+  updateGitHubConfig,
   updateIssueTrackerConfig,
   updateKnowledgeBaseConfig,
   updateWorkflowDefaults,
@@ -320,6 +322,41 @@ describe('connection tests with unsaved form values', () => {
     expect(res.statusCode).toBe(200);
     expect(vi.mocked(testSlackConnection)).toHaveBeenCalledWith({ botToken: 'xoxb-typed' });
     await app.close();
+  });
+});
+
+describe('PUT /config/github credential checks', () => {
+  const put = async (payload: Record<string, unknown>) => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: AUTH_HEADER,
+      method: 'PUT',
+      payload,
+      url: '/api/v1/platform/config/github',
+    });
+    await app.close();
+    return res;
+  };
+
+  // The same checks the per-host credentials make, so neither stores a credential
+  // that can never authenticate.
+  it.each([
+    ['a token with a pasted trailing newline', { token: 'ghp_abc\n' }],
+    ['a non-numeric App id', { appId: 'my-app' }],
+    ['a private key that is not a PEM', { appPrivateKey: 'not a key' }],
+  ])('refuses %s without saving', async (_label, payload) => {
+    const res = await put(payload);
+    expect(res.statusCode).toBe(400);
+    expect(vi.mocked(updateGitHubConfig)).not.toHaveBeenCalled();
+  });
+
+  it('saves a well-formed credential, and still lets the App id be cleared', async () => {
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const pem = privateKey.export({ format: 'pem', type: 'pkcs1' }).toString();
+    const res = await put({ appId: '12345', appPrivateKey: pem, token: 'ghp_abc' });
+    expect(res.statusCode).toBe(200);
+    expect((await put({ appId: null })).statusCode).toBe(200);
+    expect(vi.mocked(updateGitHubConfig)).toHaveBeenCalledTimes(2);
   });
 });
 
