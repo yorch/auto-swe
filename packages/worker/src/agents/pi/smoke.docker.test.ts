@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { EventEmitter } from 'node:events';
+import { access, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it, vi } from 'vitest';
 import { runSmoke, type SmokeOptions, scriptedModel } from './smoke.js';
 
 /**
@@ -112,4 +113,109 @@ describe.skipIf(!enabled)('the Pi smoke tool against a real container', () => {
 
     expect(await leftoverContainers()).toBe('');
   }, 60_000);
+
+  it('never runs the copied-back .git: a planted fsmonitor and hook have no host effect', async () => {
+    const opts = await options();
+    const marker = path.join(path.dirname(opts.traceFile as string), 'host-ran-fsmonitor');
+    const hookMarker = path.join(path.dirname(opts.traceFile as string), 'host-ran-hook');
+    const plant =
+      `cd .git && printf '[core]\\n\\tfsmonitor = "touch ${marker}; false"\\n' >> config && ` +
+      `printf '#!/bin/sh\\ntouch ${hookMarker}\\n' > hooks/pre-commit && { chmod +x hooks/pre-commit || true; }`;
+    opts.languageModel = scriptedModel([
+      { calls: [{ input: { command: plant }, name: 'bash' }] },
+      { calls: [{ input: { content: 'ok\n', path: 'fine.txt' }, name: 'write' }] },
+      { text: 'done' },
+    ]);
+
+    const { report } = await runSmoke(opts);
+
+    // The plant must have run in the container, or the host checks below prove nothing.
+    expect(report.toolCalls[0]?.decision).toBe('ok');
+    await expect(access(marker)).rejects.toThrow();
+    await expect(access(hookMarker)).rejects.toThrow();
+    expect(report.diffStat).toContain('fine.txt');
+    expect(report.diffStat).not.toContain('.git');
+  }, 120_000);
+
+  it("diffs against a baseline of its own: a dirty --dir's earlier changes are not the agent's, and its repository is untouched", async () => {
+    const opts = await options();
+    const repo = opts.dir as string;
+    const host = (args: string[]) =>
+      run('git', args, {
+        cwd: repo,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_EMAIL: 'a@b.c',
+          GIT_AUTHOR_NAME: 'a',
+          GIT_COMMITTER_EMAIL: 'a@b.c',
+          GIT_COMMITTER_NAME: 'a',
+        },
+      });
+    await host(['init', '-q']);
+    await host(['add', '-A']);
+    await host(['commit', '-q', '-m', 'init']);
+    await writeFile(path.join(repo, 'dirty.txt'), 'uncommitted\n');
+    const before = (await host(['status', '--porcelain'])).stdout;
+
+    const { report } = await runSmoke(opts);
+
+    expect(report.diffStat).toContain('SMOKE.md');
+    expect(report.diffStat).not.toContain('dirty.txt');
+    expect((await host(['status', '--porcelain'])).stdout).toBe(before);
+  }, 120_000);
+
+  it('leaves .env files out of the container unless asked, but keeps templates', async () => {
+    const listing = async (includeEnv: boolean) => {
+      const opts = await options({ includeEnv });
+      await writeFile(path.join(opts.dir as string, '.env'), 'SECRET=1\n');
+      await writeFile(path.join(opts.dir as string, '.env.example'), 'SECRET=\n');
+      opts.languageModel = scriptedModel([
+        { calls: [{ input: { command: 'ls -A' }, name: 'bash' }] },
+        { text: 'done' },
+      ]);
+      const { trace } = await runSmoke(opts);
+      return String(
+        (trace as { toolCalls: { outputJson: unknown }[] }).toolCalls[0]?.outputJson
+      ).split('\n');
+    };
+
+    const without = await listing(false);
+    expect(without).toContain('.env.example');
+    expect(without).not.toContain('.env');
+    expect(await listing(true)).toContain('.env');
+  }, 120_000);
+
+  it('removes a container that was created but failed to start', async () => {
+    const opts = await options({ containerCommand: ['/no-such-binary'] });
+
+    await expect(runSmoke(opts)).rejects.toThrow();
+
+    expect(await leftoverContainers()).toBe('');
+  }, 60_000);
+
+  it('removes the container and the temporary files on SIGINT, then exits 130', async () => {
+    const opts = await options();
+    const signals = new EventEmitter();
+    const exit = vi.fn();
+    opts.signals = signals;
+    opts.exit = exit;
+    opts.languageModel = scriptedModel([
+      { calls: [{ input: { command: 'sleep 300' }, name: 'bash' }] },
+      { text: 'done' },
+    ]);
+    const runDirs = async () =>
+      (await run('ls', [tmpdir()])).stdout
+        .split('\n')
+        .filter((n) => n.startsWith('pi-smoke-') && !n.startsWith('pi-smoke-test-'));
+    const before = await runDirs();
+    setTimeout(() => signals.emit('SIGINT'), 5000);
+
+    const started = Date.now();
+    await runSmoke(opts).catch(() => undefined);
+
+    expect(Date.now() - started).toBeLessThan(60_000);
+    expect(exit).toHaveBeenCalledWith(130);
+    expect(await leftoverContainers()).toBe('');
+    expect((await runDirs()).filter((n) => !before.includes(n))).toEqual([]);
+  }, 120_000);
 });

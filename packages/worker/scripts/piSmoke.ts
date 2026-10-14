@@ -10,39 +10,36 @@
  * `yarn pi:smoke --help` lists the options. The key is read only from
  * `PI_SMOKE_API_KEY`.
  */
+// Only the argument module is loaded before the checks below: the worker's modules build the
+// shared Prisma client when they load, which needs a DATABASE_URL.
+import { parseSmokeArgs, SMOKE_USAGE } from '../src/agents/pi/smokeArgs.js';
 
-// `yarn workspace … exec` runs from packages/worker; relative --dir/--trace-file paths mean the caller's.
-if (process.env.INIT_CWD) {
-  process.chdir(process.env.INIT_CWD);
+// The root `pi:smoke` script passes the caller's directory (a nested `yarn workspace … exec`
+// resets INIT_CWD to this package), so relative --dir and --trace-file mean the caller's.
+if (process.env.PI_SMOKE_CWD) {
+  process.chdir(process.env.PI_SMOKE_CWD);
 }
-
-// The worker's modules construct the shared Prisma client when they load, and that needs a
-// DATABASE_URL even though nothing connects. In the explicit built-in-scanner mode a placeholder
-// stands in; otherwise the scanners really read the database, so a missing URL is an error.
-const builtinScanners =
-  process.argv.includes('--no-db-scanners') || process.env.PI_SMOKE_NO_DB_SCANNERS === '1';
-const wantsHelp = process.argv.includes('--help');
-if (!process.env.DATABASE_URL && !wantsHelp) {
-  if (!builtinScanners) {
-    console.error(
-      'The scanners read their patterns from the database and DATABASE_URL is not set.\n' +
-        'Set it, or pass --no-db-scanners to run them against the built-in pattern list\n' +
-        '(an explicit, labelled mode: patterns an admin added or disabled are not applied).'
-    );
-    process.exit(2);
-  }
-  process.env.DATABASE_URL = 'postgresql://smoke:smoke@127.0.0.1:1/smoke';
-}
-
-const { formatReport, parseSmokeArgs, runSmoke, SMOKE_USAGE } = await import(
-  '../src/agents/pi/smoke.js'
-);
 
 try {
   const options = parseSmokeArgs(process.argv.slice(2));
   if (options === 'help') {
     console.log(SMOKE_USAGE);
   } else {
+    // The key lives in this process only: nothing it starts (docker, git) inherits it.
+    delete process.env.PI_SMOKE_API_KEY;
+    if (!process.env.DATABASE_URL) {
+      if (!options.noDbScanners) {
+        throw new Error(
+          'The scanners read their patterns from the database and DATABASE_URL is not set.\n' +
+            'Set it, or pass --no-db-scanners to run them against the built-in pattern list\n' +
+            '(an explicit, labelled mode: patterns an admin added or disabled are not applied).'
+        );
+      }
+      // Loading the worker's modules constructs the Prisma client, which needs a URL even
+      // though, in this mode, nothing connects.
+      process.env.DATABASE_URL = 'postgresql://smoke:smoke@127.0.0.1:1/smoke';
+    }
+    const { formatReport, runSmoke } = await import('../src/agents/pi/smoke.js');
     const { report } = await runSmoke({ ...options, log: (line) => console.error(line) });
     console.log(`\n${formatReport(report)}`);
     console.log(`\nFull trace: ${options.traceFile}`);

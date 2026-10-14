@@ -1,21 +1,25 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { cp, mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { parseArgs, promisify } from 'node:util';
+import { promisify } from 'node:util';
 import {
   BUILTIN_MODELS,
   builtinModelSpec,
   cacheMultipliers,
 } from '@auto-swe/shared/lib/builtinModels';
+import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { BUILTIN_SCANNER_PATTERNS } from '@auto-swe/shared/scannerPatterns';
 import { MockActivityEnvironment } from '@temporalio/testing';
-import type { LanguageModel } from 'ai';
 import { MockLanguageModelV4 } from 'ai/test';
+import { buildMetadataBlockArgs } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
 import { WORKSPACE_DIR } from '../harness/adapter.js';
 import { piRuntime } from './runtime.js';
+import { DEFAULT_SYSTEM, redactUrlCredentials, type SmokeOptions } from './smokeArgs.js';
+
+export * from './smokeArgs.js';
 
 /**
  * One real Pi implementer turn, end to end, outside Temporal and without a
@@ -26,140 +30,6 @@ import { piRuntime } from './runtime.js';
  */
 
 const run = promisify(execFile);
-
-export const DEFAULT_IMAGE = 'node:24-alpine';
-export const DEFAULT_REPO = 'https://github.com/octocat/Hello-World.git';
-export const DEFAULT_MODEL = 'anthropic/claude-sonnet-5-5';
-export const DEFAULT_PROMPT =
-  'Add a file named SMOKE.md at the repository root containing one sentence that says what this ' +
-  'repository is, based on what you find in it. Then run `cat SMOKE.md` to confirm it, and reply ' +
-  'with one sentence saying what you did.';
-export const DEFAULT_SYSTEM =
-  'You are the implementer. Work inside the repository checkout with your tools. Make the ' +
-  'requested change, check it, then reply with a short summary.';
-
-export interface SmokeOptions {
-  model: string;
-  /** Never read from a flag: `PI_SMOKE_API_KEY`. Not needed with `mock` or `languageModel`. */
-  apiKey?: string;
-  apiBase?: string;
-  image: string;
-  /** Cloned on the host (shallow) and copied in; the image needs no git. */
-  repoUrl?: string;
-  /** A local directory copied in instead of a clone. */
-  dir?: string;
-  prompt: string;
-  maxSteps: number;
-  deadlineSeconds: number;
-  /** Where the full JSON trace is written. */
-  traceFile?: string;
-  /** A scripted model in place of the real one: no key, no network. */
-  mock: boolean;
-  /**
-   * Run the scanners against the built-in pattern list instead of the database
-   * (see {@link installBuiltinScannerPatterns}). Without it the scanners read
-   * `scanner_patterns` through `DATABASE_URL`, as the worker does.
-   */
-  noDbScanners: boolean;
-  /** A bound model in place of resolving `model` (tests). */
-  languageModel?: LanguageModel;
-  /** Progress lines while the turn runs. */
-  log?: (line: string) => void;
-}
-
-export const SMOKE_USAGE = `Usage: yarn pi:smoke [options]
-
-Runs ONE Pi implementer turn against a real model, in a hardened Docker container.
-
-  PI_SMOKE_API_KEY=<key> yarn pi:smoke --model anthropic/claude-sonnet-5-5 --no-db-scanners
-
-Options (each also reads the PI_SMOKE_<NAME> environment variable):
-  --model <provider/model>   model spec            (default ${DEFAULT_MODEL})
-  --api-base <url>           base URL, for an OpenAI-compatible provider
-  --image <image>            workspace image       (default ${DEFAULT_IMAGE})
-  --repo <url>               git repository to clone  (default ${DEFAULT_REPO})
-  --dir <path>               local directory to copy in instead of cloning
-  --prompt <text>            the task              (default: write SMOKE.md)
-  --max-steps <n>            model-call cap        (default 12)
-  --deadline-seconds <n>     wall-clock deadline   (default 300)
-  --trace-file <path>        full JSON trace       (default ./pi-smoke-trace.json)
-  --no-db-scanners           scanners use the built-in pattern list, not the database
-  --mock                     scripted model; no key, no network
-  --help
-
-The API key is read only from PI_SMOKE_API_KEY, so it stays out of shell history.
-Without --no-db-scanners the scanners load their patterns from the database
-(DATABASE_URL); with neither, the script refuses to start rather than run unscanned.`;
-
-/** Parses flags (falling back to `PI_SMOKE_*`) into options; throws a usage message on bad input. */
-export function parseSmokeArgs(
-  argv: readonly string[],
-  env: NodeJS.ProcessEnv = process.env
-): SmokeOptions | 'help' {
-  const { values } = parseArgs({
-    args: [...argv],
-    options: {
-      'api-base': { type: 'string' },
-      'deadline-seconds': { type: 'string' },
-      dir: { type: 'string' },
-      help: { type: 'boolean' },
-      image: { type: 'string' },
-      'max-steps': { type: 'string' },
-      mock: { type: 'boolean' },
-      model: { type: 'string' },
-      'no-db-scanners': { type: 'boolean' },
-      prompt: { type: 'string' },
-      repo: { type: 'string' },
-      'trace-file': { type: 'string' },
-    },
-    strict: true,
-  });
-  if (values.help) {
-    return 'help';
-  }
-  const pick = (flag: string | undefined, name: string) => flag ?? env[`PI_SMOKE_${name}`];
-  const positive = (raw: string | undefined, fallback: number, label: string) => {
-    if (raw === undefined || raw === '') {
-      return fallback;
-    }
-    const n = Number(raw);
-    if (!Number.isInteger(n) || n <= 0) {
-      throw new Error(`${label} must be a positive integer, got '${raw}'.`);
-    }
-    return n;
-  };
-  const dir = pick(values.dir, 'DIR');
-  const repoUrl = pick(values.repo, 'REPO');
-  if (dir && repoUrl) {
-    throw new Error('Give --dir or --repo, not both.');
-  }
-  const mock = values.mock ?? false;
-  const apiKey = env.PI_SMOKE_API_KEY || undefined;
-  if (!mock && !apiKey) {
-    throw new Error(
-      'PI_SMOKE_API_KEY is not set. It is read only from the environment, never a flag. ' +
-        'Pass --mock to run a scripted model instead.'
-    );
-  }
-  return {
-    apiBase: pick(values['api-base'], 'API_BASE') || undefined,
-    apiKey,
-    deadlineSeconds: positive(
-      pick(values['deadline-seconds'], 'DEADLINE_SECONDS'),
-      300,
-      '--deadline-seconds'
-    ),
-    dir: dir || undefined,
-    image: pick(values.image, 'IMAGE') || DEFAULT_IMAGE,
-    maxSteps: positive(pick(values['max-steps'], 'MAX_STEPS'), 12, '--max-steps'),
-    mock,
-    model: pick(values.model, 'MODEL') || DEFAULT_MODEL,
-    noDbScanners: values['no-db-scanners'] ?? env.PI_SMOKE_NO_DB_SCANNERS === '1',
-    prompt: pick(values.prompt, 'PROMPT') || DEFAULT_PROMPT,
-    repoUrl: dir ? undefined : repoUrl || DEFAULT_REPO,
-    traceFile: pick(values['trace-file'], 'TRACE_FILE') || 'pi-smoke-trace.json',
-  };
-}
 
 // ── Scanners ────────────────────────────────────────────────────────────────
 
@@ -421,82 +291,222 @@ export function formatReport(report: SmokeReport): string {
   return out.join('\n');
 }
 
-// ── Workspace ───────────────────────────────────────────────────────────────
+// ── Host side ───────────────────────────────────────────────────────────────
+//
+// Everything that comes OUT of the container (the copied-back tree, above all its
+// `.git`) is untrusted: the agent can write `core.fsmonitor`, hooks, a `gitdir:`
+// file. So no host git ever runs against it. The diff is taken with a git
+// directory the host made before the container existed, the container's tree as a
+// bare work tree whose own `.git` entries have been deleted, a scratch index, and
+// the config switches that run programs turned off.
 
-const GIT_ENV = {
-  GIT_AUTHOR_EMAIL: 'smoke@example.invalid',
-  GIT_AUTHOR_NAME: 'pi-smoke',
-  GIT_COMMITTER_EMAIL: 'smoke@example.invalid',
-  GIT_COMMITTER_NAME: 'pi-smoke',
-};
+/** Variables a host git or docker needs to reach the network; the API key is never among them. */
+const NETWORK_ENV = [
+  'CURL_CA_BUNDLE',
+  'GIT_SSL_CAINFO',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'SSL_CERT_DIR',
+  'SSL_CERT_FILE',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+];
 
-async function git(cwd: string, args: string[]): Promise<string> {
-  const { stdout } = await run('git', ['-c', 'safe.directory=*', ...args], {
-    cwd,
-    env: { ...process.env, ...GIT_ENV },
+/** The host environment for docker: everything but the provider key. */
+function dockerEnv(): NodeJS.ProcessEnv {
+  const { PI_SMOKE_API_KEY: _key, ...rest } = process.env;
+  return rest;
+}
+
+/** A minimal environment for host git: no key, no user or system git config. */
+function gitEnv(home: string, extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {
+    GIT_AUTHOR_EMAIL: 'smoke@example.invalid',
+    GIT_AUTHOR_NAME: 'pi-smoke',
+    GIT_COMMITTER_EMAIL: 'smoke@example.invalid',
+    GIT_COMMITTER_NAME: 'pi-smoke',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_TERMINAL_PROMPT: '0',
+    HOME: home,
+    PATH: process.env.PATH,
+  };
+  for (const name of NETWORK_ENV) {
+    if (process.env[name] !== undefined) {
+      env[name] = process.env[name];
+    }
+  }
+  return { ...env, ...extra };
+}
+
+/** Config that stops git running a program named by the repository's own config. */
+const NO_PROGRAMS = [
+  '-c',
+  'core.fsmonitor=false',
+  '-c',
+  'core.hooksPath=/dev/null',
+  '-c',
+  'core.untrackedCache=false',
+  '-c',
+  'protocol.ext.allow=never',
+];
+
+async function git(
+  root: string,
+  args: string[],
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number } = {}
+): Promise<string> {
+  const { stdout } = await run('git', [...NO_PROGRAMS, ...args], {
+    cwd: options.cwd ?? root,
+    env: gitEnv(root, options.env),
     maxBuffer: 64 * 1024 * 1024,
+    timeout: options.timeout,
   });
   return stdout;
 }
 
-/** A host directory holding the repository with a baseline commit, to copy into the container. */
-async function prepareCheckout(options: SmokeOptions, root: string): Promise<string> {
-  const target = path.join(root, 'repo');
+const ENV_FILE = /^\.env(\..*)?$/;
+const ENV_TEMPLATE = /\.(example|sample|template|dist)$/;
+
+/**
+ * Put the repository's files in `<root>/repo` with a fresh baseline commit made
+ * by the host, and keep the baseline's git directory at `<root>/baseline.git`.
+ * The user's own `.git` is never carried over (not for `--repo`, not for `--dir`,
+ * not a nested one): a linked worktree's `.git` file points at the user's real
+ * repository, and pre-existing changes in a dirty `--dir` would otherwise be
+ * attributed to the agent.
+ */
+async function prepareCheckout(
+  options: SmokeOptions,
+  root: string
+): Promise<{ checkout: string; baselineGitDir: string }> {
+  const checkout = path.join(root, 'repo');
   if (options.dir) {
     const source = path.resolve(options.dir);
     if (!(await stat(source)).isDirectory()) {
       throw new Error(`--dir ${source} is not a directory.`);
     }
-    await cp(source, target, {
-      filter: (src) => path.basename(src) !== 'node_modules',
+    await cp(source, checkout, {
+      filter: (src) => {
+        const base = path.basename(src);
+        if (src === source) {
+          return true;
+        }
+        if (base === 'node_modules' || base === '.git') {
+          return false;
+        }
+        return options.includeEnv || !ENV_FILE.test(base) || ENV_TEMPLATE.test(base);
+      },
       recursive: true,
+      verbatimSymlinks: true,
     });
   } else if (options.repoUrl) {
-    await run('git', ['clone', '--depth', '1', '--', options.repoUrl, target], {
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    await git(root, ['clone', '--depth', '1', '--', options.repoUrl, checkout], {
       timeout: 180_000,
     });
+    await rm(path.join(checkout, '.git'), { force: true, recursive: true });
   } else {
-    await mkdir(target, { recursive: true });
+    await mkdir(checkout, { recursive: true });
   }
-  const hasGit = (await readdir(target)).includes('.git');
-  if (!hasGit) {
-    await git(target, ['init', '-q']);
-  }
-  if (!hasGit || !(await git(target, ['rev-parse', '--verify', '-q', 'HEAD']).catch(() => ''))) {
-    await git(target, ['add', '-A']);
-    await git(target, ['commit', '-q', '--allow-empty', '-m', 'baseline']);
-  }
-  return target;
+  await git(root, ['init', '-q'], { cwd: checkout });
+  await git(root, ['add', '-A'], { cwd: checkout });
+  await git(root, ['commit', '-q', '--allow-empty', '-m', 'baseline'], { cwd: checkout });
+  // The baseline is a host-made copy, taken before the container exists.
+  const baselineGitDir = path.join(root, 'baseline.git');
+  await cp(path.join(checkout, '.git'), baselineGitDir, { recursive: true });
+  return { baselineGitDir, checkout };
 }
 
-/** A container hardened as `createWorkspace`'s is, and the `Workspace` calls the runtime makes. */
-async function startWorkspace(image: string) {
-  const name = `workspace-smoke-${randomBytes(4).toString('hex')}`;
-  await run('docker', [
-    'run',
-    '-d',
-    '--init',
-    '--cap-drop=ALL',
-    '--security-opt=no-new-privileges',
-    '--memory=2g',
-    '--cpus=2',
-    '--pids-limit=512',
-    '--name',
-    name,
-    '--',
-    image,
-    'sleep',
-    'infinity',
-  ]);
+/**
+ * The agent's changes: the container's tree compared with the baseline. Deletes
+ * every `.git` entry in the copy first, then runs git against the host-made
+ * directory with a scratch index.
+ */
+async function diffAgainstBaseline(
+  root: string,
+  baselineGitDir: string,
+  after: string
+): Promise<{ diff: string; diffStat: string }> {
+  await run('find', [after, '-name', '.git', '-prune', '-exec', 'rm', '-rf', '{}', '+']);
+  const env = {
+    GIT_DIR: baselineGitDir,
+    GIT_INDEX_FILE: path.join(root, 'index-after'),
+    GIT_WORK_TREE: after,
+  };
+  await git(root, ['read-tree', 'HEAD'], { env });
+  await git(root, ['add', '-A'], { env });
+  const flags = ['--cached', '--no-ext-diff', '--no-textconv'];
+  return {
+    diff: await git(root, ['diff', ...flags, 'HEAD'], { env }),
+    diffStat: await git(root, ['diff', ...flags, '--stat', 'HEAD'], { env }),
+  };
+}
+
+// ── Workspace ───────────────────────────────────────────────────────────────
+
+/**
+ * A container hardened as `createWorkspace`'s is: the same limits and DNS from
+ * `resolveWorkspaceInfra()`, `--cap-drop=ALL`, `no-new-privileges`, the
+ * metadata hostnames blackholed and the metadata-IP sidecar (best effort, as
+ * there). The harness model proxy's host alias is not added: the model is called
+ * from this process. The name is chosen by the caller before this runs, so a
+ * container created but never started is still removed by name.
+ */
+async function startWorkspace(
+  name: string,
+  image: string,
+  command: string[],
+  log: (line: string) => void
+) {
+  const infra = resolveWorkspaceInfra();
+  await run(
+    'docker',
+    [
+      'run',
+      '-d',
+      '--name',
+      name,
+      '--init',
+      ...infra.dns.map((server) => `--dns=${server}`),
+      `--memory=${infra.memory}`,
+      `--cpus=${infra.cpus}`,
+      `--pids-limit=${infra.pidsLimit}`,
+      '--cap-drop=ALL',
+      '--security-opt=no-new-privileges',
+      '--add-host=metadata.google.internal:0.0.0.0',
+      '--add-host=metadata.gke.internal:0.0.0.0',
+      ...(infra.network ? [`--network=${infra.network}`] : []),
+      '--',
+      image,
+      ...command,
+    ],
+    { env: dockerEnv() }
+  );
+  if (infra.blockMetadata) {
+    try {
+      await run('sh', ['-c', buildMetadataBlockArgs(name, image)], {
+        env: dockerEnv(),
+        timeout: 60_000,
+      });
+    } catch (err) {
+      log(
+        `warning: metadata-IP egress block failed, continuing without it: ${
+          err instanceof Error ? err.message.split('\n')[0]?.slice(0, 160) : String(err)
+        }`
+      );
+    }
+  }
   const shell = async (command: string, o?: { timeoutMs?: number }) =>
     (
       await run('docker', ['exec', '-w', WORKSPACE_DIR, name, 'sh', '-c', command], {
+        env: dockerEnv(),
         maxBuffer: 64 * 1024 * 1024,
         timeout: o?.timeoutMs ?? 120_000,
       })
     ).stdout;
-  const workspace = {
+  return {
     containerId: name,
     exec: shell,
     execCapture: async (command: string, o?: { timeoutMs?: number }) => {
@@ -516,21 +526,25 @@ async function startWorkspace(image: string) {
         const child = execFile(
           'docker',
           ['exec', '-i', '-w', WORKSPACE_DIR, name, 'sh', '-c', command],
-          { maxBuffer: 64 * 1024 * 1024 },
+          { env: dockerEnv(), maxBuffer: 64 * 1024 * 1024 },
           (err, stdout) => (err ? reject(err) : resolve(stdout))
         );
         child.stdin?.end(stdin);
       }),
   };
-  return { name, workspace };
 }
 
 // ── The run ─────────────────────────────────────────────────────────────────
 
+/** The most of the diff the trace file keeps. */
+const MAX_TRACE_DIFF_CHARS = 1_000_000;
+
 /**
- * Run one Pi turn against a fresh container and report it. Always removes the
- * container. A failed turn is reported in `error`, not thrown; setup failures
- * (no Docker, a bad clone, a missing scanner source) throw.
+ * Run one Pi turn against a fresh container and report it. The container and the
+ * temporary directories are removed however the run ends, an interrupt (SIGINT,
+ * SIGTERM) included. A failed turn is reported in `error`, not thrown; setup
+ * failures (no Docker, a bad clone, a missing scanner source) throw, with URL
+ * credentials removed from the message.
  */
 export async function runSmoke(options: SmokeOptions): Promise<{
   report: SmokeReport;
@@ -552,22 +566,56 @@ export async function runSmoke(options: SmokeOptions): Promise<{
   }
 
   const root = await mkdtemp(path.join(tmpdir(), 'pi-smoke-'));
-  let containerName: string | undefined;
+  // Named before `docker run`, so a container that was created but failed to start is removed too.
+  const containerName = `workspace-smoke-${randomBytes(4).toString('hex')}`;
+  let cleaned: Promise<void> | undefined;
+  const cleanup = () => {
+    cleaned ??= (async () => {
+      await run('docker', ['rm', '-f', containerName], { env: dockerEnv() }).catch(() => undefined);
+      await rm(root, { force: true, recursive: true });
+    })();
+    return cleaned;
+  };
+  const interrupt = new AbortController();
+  const signals = options.signals ?? process;
+  const onSignal = (signal: string) => {
+    interrupt.abort();
+    log(`${signal}: removing the container and temporary files…`);
+    void cleanup().finally(() => (options.exit ?? process.exit)(signal === 'SIGINT' ? 130 : 143));
+  };
+  const onInt = () => onSignal('SIGINT');
+  const onTerm = () => onSignal('SIGTERM');
+  signals.once('SIGINT', onInt);
+  signals.once('SIGTERM', onTerm);
+
   try {
-    log(`Preparing the checkout (${options.dir ?? options.repoUrl ?? 'empty'})…`);
-    const checkout = await prepareCheckout(options, root);
+    log(
+      `Preparing the checkout (${redactUrlCredentials(options.dir ?? options.repoUrl ?? 'empty')})…`
+    );
+    const { baselineGitDir, checkout } = await prepareCheckout(options, root);
 
     log(`Starting a workspace container from ${options.image}…`);
-    const { name, workspace } = await startWorkspace(options.image);
-    containerName = name;
-    await run('docker', ['exec', name, 'mkdir', '-p', '/workspace']);
-    await run('docker', ['cp', `${checkout}/.`, `${name}:${WORKSPACE_DIR}`]);
+    const workspace = await startWorkspace(
+      containerName,
+      options.image,
+      options.containerCommand ?? ['sleep', 'infinity'],
+      log
+    );
+    await run('docker', ['exec', containerName, 'mkdir', '-p', '/workspace'], {
+      env: dockerEnv(),
+    });
+    await run('docker', ['cp', `${checkout}/.`, `${containerName}:${WORKSPACE_DIR}`], {
+      env: dockerEnv(),
+    });
 
     const tracer = new MemoryTracer();
     const modelCalls: SmokeModelCall[] = [];
     const runtime = piRuntime({
       access: { apiBase: options.apiBase, apiKey: options.apiKey ?? 'unused', spec: options.model },
-      deadline: AbortSignal.timeout(options.deadlineSeconds * 1000),
+      deadline: AbortSignal.any([
+        AbortSignal.timeout(options.deadlineSeconds * 1000),
+        interrupt.signal,
+      ]),
       languageModel: options.languageModel ?? (options.mock ? defaultMockModel() : undefined),
       loadProjectSettings: true,
       maxTurns: options.maxSteps,
@@ -607,7 +655,9 @@ export async function runSmoke(options: SmokeOptions): Promise<{
         })
       );
     } catch (err) {
-      error = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+      error = redactUrlCredentials(
+        err instanceof Error ? `${err.name}: ${err.message}` : String(err)
+      );
     }
     const wallMs = Date.now() - startedAt;
 
@@ -615,12 +665,14 @@ export async function runSmoke(options: SmokeOptions): Promise<{
     let diff = '';
     try {
       const after = path.join(root, 'after');
-      await run('docker', ['cp', `${name}:${WORKSPACE_DIR}`, after]);
-      await git(after, ['add', '-A']);
-      diffStat = await git(after, ['diff', '--cached', '--stat', 'HEAD']);
-      diff = await git(after, ['diff', '--cached', 'HEAD']);
+      await run('docker', ['cp', `${containerName}:${WORKSPACE_DIR}`, after], {
+        env: dockerEnv(),
+      });
+      ({ diff, diffStat } = await diffAgainstBaseline(root, baselineGitDir, after));
     } catch (err) {
-      diffStat = `(could not read the diff: ${err instanceof Error ? err.message : String(err)})`;
+      diffStat = `(could not read the diff: ${redactUrlCredentials(
+        err instanceof Error ? err.message : String(err)
+      )})`;
     }
 
     const known = modelCalls.every((m) => m.costUsd !== null) && modelCalls.length > 0;
@@ -652,31 +704,36 @@ export async function runSmoke(options: SmokeOptions): Promise<{
     };
     const trace = {
       activityEvents: tracer.events,
-      diff,
+      diff: diff.slice(0, MAX_TRACE_DIFF_CHARS),
       options: {
-        apiBase: options.apiBase,
+        apiBase: options.apiBase && redactUrlCredentials(options.apiBase),
         deadlineSeconds: options.deadlineSeconds,
         dir: options.dir,
         image: options.image,
+        includeEnv: options.includeEnv ?? false,
         maxSteps: options.maxSteps,
         mock: mocked,
         model: options.model,
         noDbScanners: options.noDbScanners,
         prompt: options.prompt,
-        repoUrl: options.repoUrl,
+        repoUrl: options.repoUrl && redactUrlCredentials(options.repoUrl),
       },
       outcome,
       report,
       toolCalls: tracer.toolCalls,
     };
     if (options.traceFile) {
-      await writeFile(options.traceFile, `${JSON.stringify(trace, null, 2)}\n`);
+      // It holds the prompt, the tool output and the diff: readable by the owner only.
+      await writeFile(options.traceFile, `${JSON.stringify(trace, null, 2)}\n`, { mode: 0o600 });
     }
     return { report, trace };
+  } catch (err) {
+    throw err instanceof Error
+      ? Object.assign(new Error(redactUrlCredentials(err.message)), { name: err.name })
+      : err;
   } finally {
-    if (containerName) {
-      await run('docker', ['rm', '-f', containerName]).catch(() => undefined);
-    }
-    await rm(root, { force: true, recursive: true });
+    signals.off('SIGINT', onInt);
+    signals.off('SIGTERM', onTerm);
+    await cleanup();
   }
 }

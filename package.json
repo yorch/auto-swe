@@ -22,7 +22,7 @@
     "postinstall": "yarn db:generate",
     "db:seed": "yarn workspace @auto-swe/shared build && yarn workspace @auto-swe/shared db:seed && yarn db:seed:auth",
     "db:seed:auth": "yarn workspace @auto-swe/gateway exec tsx src/scripts/provisionAuthAdmin.ts",
-    "pi:smoke": "yarn workspace @auto-swe/worker exec tsx scripts/piSmoke.ts",
+    "pi:smoke": "PI_SMOKE_CWD=\"$INIT_CWD\" yarn workspace @auto-swe/worker exec tsx scripts/piSmoke.ts",
     "db:studio": "yarn workspace @auto-swe/shared db:studio",
     "docker:infra": "node scripts/compose.mjs --add-profile temporal-ui -f docker-compose.infra.yml",
     "docker:infra:ps": "run docker:infra ps",

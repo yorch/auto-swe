@@ -1,3 +1,4 @@
+import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_IMAGE,
@@ -6,6 +7,7 @@ import {
   estimateCostUsd,
   formatReport,
   parseSmokeArgs,
+  redactUrlCredentials,
   runSmoke,
   type SmokeReport,
 } from './smoke.js';
@@ -50,8 +52,26 @@ describe('parseSmokeArgs', () => {
     );
   });
 
+  it('writes the trace under the temp dir by default, and leaves .env out unless asked', () => {
+    const defaults = parseSmokeArgs(['--mock'], {}) as { traceFile: string; includeEnv: boolean };
+    expect(defaults.traceFile.startsWith(tmpdir())).toBe(true);
+    expect(defaults.includeEnv).toBe(false);
+    expect(parseSmokeArgs(['--mock', '--include-env'], {})).toMatchObject({ includeEnv: true });
+  });
+
   it('rejects a non-positive cap', () => {
     expect(() => parseSmokeArgs(['--mock', '--max-steps', '0'], {})).toThrow(/positive integer/);
+  });
+});
+
+describe('redactUrlCredentials', () => {
+  it('removes URL userinfo wherever it appears and leaves other text', () => {
+    expect(redactUrlCredentials('clone https://user:tok%40en@host.test/a.git failed')).toBe(
+      'clone https://***@host.test/a.git failed'
+    );
+    expect(redactUrlCredentials('https://host.test/a.git scp@host:a/b')).toBe(
+      'https://host.test/a.git scp@host:a/b'
+    );
   });
 });
 
@@ -121,6 +141,21 @@ describe('formatReport', () => {
 });
 
 describe('runSmoke', () => {
+  it('keeps URL credentials out of a setup error', async () => {
+    await expect(
+      runSmoke({
+        deadlineSeconds: 1,
+        image: 'img',
+        maxSteps: 1,
+        mock: true,
+        model: DEFAULT_MODEL,
+        noDbScanners: true,
+        prompt: 'p',
+        repoUrl: 'https://user:s3cr3t-token@127.0.0.1:1/x.git',
+      })
+    ).rejects.toThrow(/^(?!.*s3cr3t-token)/s);
+  }, 60_000);
+
   it('refuses to run unscanned: no database and no explicit built-in mode', async () => {
     const saved = process.env.DATABASE_URL;
     delete process.env.DATABASE_URL;
