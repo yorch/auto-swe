@@ -1009,6 +1009,11 @@ export interface EvalRunDto {
    */
   candidateRuntime: ImplementerRuntimeKind | null;
   baselineRuntime: ImplementerRuntimeKind | null;
+  /**
+   * RUNNING | SUCCESS | REGRESSION | FAILED | INCONCLUSIVE. INCONCLUSIVE: the
+   * dataset had cases but none flake-screened, so nothing was scored;
+   * `summary.inconclusive` says how many await screening.
+   */
   status: string;
   /**
    * The runless budget stopped the run before every case ran, so a SUCCESS or

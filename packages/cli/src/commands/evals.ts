@@ -20,8 +20,9 @@ const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regressio
   evals run <dataset-slug> --candidate=<ref> --against=<ref>
             [--candidate-runtime=mastra|claude-code] [--against-runtime=mastra|claude-code]
                                       Start the nightly regression gate; exits 0 on SUCCESS,
-                                      1 on a regression, 2 when the run fails without a verdict
-                                      or the budget stopped it before every case ran. A runtime
+                                      1 on a regression, 2 when the run fails without a verdict,
+                                      is INCONCLUSIVE (no case flake-screened yet), or the budget
+                                      stopped it before every case ran. A runtime
                                       flag runs that side on the named implementer runtime
                                       instead of the one its agent resolves to
 `;
@@ -165,6 +166,12 @@ async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
           `Partial verdict: ${completedCases} of ${totalCases} cases ran — ${error ?? 'stopped early'}\n`
         );
       }
+      const unscreened = summary.unscreened;
+      if (unscreened && unscreened.neverScreened + unscreened.screenFailed > 0) {
+        process.stdout.write(
+          `Not scored: ${unscreened.neverScreened} cases await flake screening, ${unscreened.screenFailed} failed it\n`
+        );
+      }
       return evalRunExitCode(run.status, summary.partial != null);
     }
     if (Date.now() > deadline) {
@@ -182,14 +189,17 @@ interface EvalRunSummary {
   runtimes?: { baseline: string[]; candidate: string[] };
   /** Set when the runless budget stopped the run before every case ran. */
   partial?: { completedCases: number; totalCases: number; error?: string };
+  /** The cases the run did not score: never flake-screened, or failed their screen. */
+  unscreened?: { neverScreened: number; screenFailed: number };
 }
 
 /**
  * Only a complete SUCCESS passes the gate. REGRESSION is the documented 1 —
  * also when partial, since the cases that ran already regressed. Any other
- * terminal status (FAILED — the harness crashed or was cancelled) means no
- * verdict was reached, and a partial SUCCESS covers only the cases the budget
- * reached; a CI gate must read neither as a pass, so both are 2.
+ * terminal status means no verdict was reached: FAILED (the harness crashed or
+ * was cancelled) and INCONCLUSIVE (no case was flake-screened yet, so none was
+ * scored). A partial SUCCESS covers only the cases the budget reached; a CI
+ * gate must read none of these as a pass, so all are 2.
  */
 export function evalRunExitCode(status: string, partial = false): number {
   if (status === 'SUCCESS') {
@@ -198,6 +208,7 @@ export function evalRunExitCode(status: string, partial = false): number {
   if (status === 'REGRESSION') {
     return 1;
   }
+  // INCONCLUSIVE, FAILED, and any status this CLI does not know.
   return 2;
 }
 

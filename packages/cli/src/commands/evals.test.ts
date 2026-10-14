@@ -304,6 +304,24 @@ describe('runEvalsCommand', () => {
     expect(stdoutWrites.join('')).toContain('FAILED');
   });
 
+  it('run exits 2 on an INCONCLUSIVE run and names the cases awaiting screening', async () => {
+    globalThis.fetch = runFetch('INCONCLUSIVE', {
+      inconclusive: { awaitingScreen: 4, reason: 'unscreened', screenFailed: 1 },
+      summary:
+        'inconclusive: no case is flake-screened yet — 4 await screening, 1 failed their screen',
+      unscreened: { neverScreened: 4, screenFailed: 1 },
+    });
+    const code = await runEvalsCommand(
+      ['run', 'golden', '--candidate=feat', '--against=main'],
+      ENV
+    );
+    expect(code).toBe(2);
+    expect(stdoutWrites.join('')).toContain('inconclusive: no case is flake-screened yet');
+    expect(stdoutWrites.join('')).toContain(
+      'Not scored: 4 cases await flake screening, 1 failed it'
+    );
+  });
+
   it('run exits 2 and says so when the budget stopped a SUCCESS run part-way', async () => {
     globalThis.fetch = runFetch('SUCCESS', {
       partial: {
@@ -334,6 +352,7 @@ describe('runEvalsCommand', () => {
     expect(evalRunExitCode('SUCCESS')).toBe(0);
     expect(evalRunExitCode('REGRESSION')).toBe(1);
     expect(evalRunExitCode('FAILED')).toBe(2);
+    expect(evalRunExitCode('INCONCLUSIVE')).toBe(2);
     expect(evalRunExitCode('CANCELLED')).toBe(2);
   });
 

@@ -5,7 +5,8 @@
  * for each case it obtains a binary floor outcome (golden test pass/fail) under
  * both arms, persists per-case `EvalResult` rows, and computes the paired,
  * error-barred regression verdict (evalStats). It writes the `EvalRun` summary
- * and marks the run SUCCESS / REGRESSION.
+ * and marks the run SUCCESS / REGRESSION, or INCONCLUSIVE when no case was
+ * flake-screened and so none could be scored.
  *
  * The per-case execution (provision a fixture at its pinned SHA, run the
  * candidate/baseline implementer, run the golden test) is the expensive
@@ -354,6 +355,18 @@ export interface PartialRunSummary {
   notRunCaseIds: string[];
 }
 
+/**
+ * Set on the summary of an INCONCLUSIVE run: the dataset had cases, but none
+ * flake-screened, so no case was scored and there is no verdict.
+ */
+export interface InconclusiveRunSummary {
+  reason: 'unscreened';
+  /** Cases never screened: a screen is running or due, and they count once it passes. */
+  awaitingScreen: number;
+  /** Cases whose screen failed: they count only after an admin re-screen passes. */
+  screenFailed: number;
+}
+
 const isBudgetExceeded = (err: unknown) =>
   err instanceof ApplicationFailure && err.type === 'BUDGET_EXCEEDED';
 
@@ -388,6 +401,22 @@ export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
         error: err instanceof Error ? err.message : String(err),
       });
     });
+  }
+  const unscored = unscreened.neverScreened + unscreened.screenFailed;
+  if (cases.length === 0 && unscored > 0) {
+    // Nothing is screened yet, so there is nothing to compare: neither a pass nor a
+    // failure of the candidate. Typically a new dataset, or one whose screen has not finished.
+    const inconclusive: InconclusiveRunSummary = {
+      awaitingScreen: unscreened.neverScreened,
+      reason: 'unscreened',
+      screenFailed: unscreened.screenFailed,
+    };
+    await finalize(input.evalRunId, 'INCONCLUSIVE', {
+      inconclusive,
+      summary: `inconclusive: no case is flake-screened yet — ${inconclusive.awaitingScreen} await screening, ${inconclusive.screenFailed} failed their screen`,
+      unscreened,
+    });
+    return regressionVerdict([]);
   }
 
   return withRunlessCapScale(cases.length, async () => {

@@ -30,6 +30,34 @@ interface Verdict {
     error: string;
     reason?: 'budget' | 'org_budget';
   };
+  /** The cases the run did not score for want of a passing stability (flake) check. */
+  unscreened?: Unscreened;
+}
+
+interface Unscreened {
+  neverScreened: number;
+  screenFailed: number;
+}
+
+/** The summary of an INCONCLUSIVE run: no case was flake-screened, so nothing was scored. */
+interface Inconclusive {
+  inconclusive: { awaitingScreen: number; screenFailed: number };
+  summary: string;
+}
+
+function isInconclusive(v: unknown): v is Inconclusive {
+  const o = v as Partial<Inconclusive> | null;
+  return !!o && typeof o === 'object' && !!o.inconclusive;
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** The unscored cases as a sentence, or null when every case was scored. */
+function unscreenedSentence(u: Unscreened | undefined): string | null {
+  if (!u || u.neverScreened + u.screenFailed === 0) {
+    return null;
+  }
+  return `Not scored: ${plural(u.neverScreened, 'case')} awaiting a stability check, ${plural(u.screenFailed, 'case')} that failed one.`;
 }
 
 function isVerdict(v: unknown): v is Verdict {
@@ -89,6 +117,14 @@ function VerdictView({ summary }: { summary: unknown }) {
       />
     );
   }
+  if (isInconclusive(summary)) {
+    const { awaitingScreen, screenFailed } = summary.inconclusive;
+    return (
+      <Alert title="Inconclusive: no case was scored" variant="warning">
+        {`None of this dataset's cases had passed a stability check yet, so there was nothing to compare. ${plural(awaitingScreen, 'case')} awaiting the check (it starts on its own), ${plural(screenFailed, 'case')} that failed it (re-check them from the dataset page). Run again once the check finishes.`}
+      </Alert>
+    );
+  }
   if (!isVerdict(summary)) {
     // A start failure stores `{ error }`; anything else is shown as stored.
     const error = (summary as { error?: unknown }).error;
@@ -113,6 +149,9 @@ function VerdictView({ summary }: { summary: unknown }) {
         {verdictSentence(summary.overall).text}
       </Alert>
       <p className="text-[13px] text-paper-400">{summary.summary}</p>
+      {unscreenedSentence(summary.unscreened) && (
+        <p className="text-[13px] text-paper-400">{unscreenedSentence(summary.unscreened)}</p>
+      )}
       {summary.runtimes && (
         <p className="text-[13px] text-paper-400">
           {`Ran on: candidate ${describeRuntimes(summary.runtimes.candidate)}, baseline ${describeRuntimes(summary.runtimes.baseline)}`}

@@ -1881,7 +1881,7 @@ model EvalRun {
   /// the setting.
   candidateRuntime String?     @map("candidate_runtime")
   baselineRuntime  String?     @map("baseline_runtime")
-  /// RUNNING | SUCCESS | FAILED | REGRESSION.
+  /// RUNNING | SUCCESS | FAILED | REGRESSION | INCONCLUSIVE (no case was flake-screened).
   status           String      @default("RUNNING")
   /// Paired-stats verdict: { delta, se, ci95, n, byTag, regression }.
   summary          Json?

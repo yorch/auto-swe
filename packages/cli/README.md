@@ -92,7 +92,8 @@ evals results [--run=<id>] [--source=GATE|REVIEW|MERGE] [--scorer=<s>] [--limit=
 evals run <dataset-slug> --candidate=<ref> --against=<ref>
           [--candidate-runtime=mastra|claude-code] [--against-runtime=mastra|claude-code]
                                      Run the regression gate; exits 1 on a regression,
-                                     2 when the eval run fails without a verdict or the
+                                     2 when the eval run fails without a verdict, is
+                                     INCONCLUSIVE (no case flake-screened yet), or the
                                      budget stopped it before every case ran. A runtime
                                      flag runs that side on the named implementer runtime
 
@@ -110,7 +111,7 @@ admin token; `evals run` is the regression gate a nightly CI job polls to comple
 | ---- | ----------------------------------------- |
 | `0`  | Success                                   |
 | `1`  | User error (missing arg, no token, etc.); `evals run` also exits 1 on a regression |
-| `2`  | Remote error (HTTP non-2xx from gateway); `runs tail` and `agent run --wait` also exit 2 when the run ends in a non-success status, and `evals run` when the eval run fails without reaching a verdict or passes over only the cases its budget reached (`summary.partial`; a partial run that regressed exits 1) |
+| `2`  | Remote error (HTTP non-2xx from gateway); `runs tail` and `agent run --wait` also exit 2 when the run ends in a non-success status, and `evals run` when the eval run fails without reaching a verdict, ends `INCONCLUSIVE` (no case had passed its flake screen, so none was scored), or passes over only the cases its budget reached (`summary.partial`; a partial run that regressed exits 1) |
 
 ## Examples
 

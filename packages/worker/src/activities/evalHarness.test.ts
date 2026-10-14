@@ -240,6 +240,28 @@ describe('runEvalHarness', () => {
     expect(startScreen).toHaveBeenCalledExactlyOnceWith('d1');
   });
 
+  it('finishes INCONCLUSIVE, scoring nothing, when no case is screened yet', async () => {
+    const runCase = vi.fn(async () => outcome(1)) as HarnessDeps['runCase'];
+    const d = deps({
+      loadCases: async () => [
+        { ...cases[0], flakeRuns: 0, flakeScreened: false },
+        { ...cases[1], flakeRuns: 0, flakeScreened: false },
+        { ...cases[2], flakeRuns: 3, flakeScreened: false },
+      ],
+      runCase,
+    });
+    await runEvalHarness(input, d);
+    expect(runCase).not.toHaveBeenCalled();
+    expect(d.records).toHaveLength(0);
+    expect(d.finals).toHaveLength(1);
+    expect(d.finals[0].status).toBe('INCONCLUSIVE');
+    expect(d.finals[0].summary).toMatchObject({
+      inconclusive: { awaitingScreen: 2, reason: 'unscreened', screenFailed: 1 },
+      summary: expect.stringContaining('2 await screening'),
+      unscreened: { neverScreened: 2, screenFailed: 1 },
+    });
+  });
+
   it('starts no screen when every unscored case already failed its screen', async () => {
     const startScreen = vi.fn(async () => {});
     const d = deps({
