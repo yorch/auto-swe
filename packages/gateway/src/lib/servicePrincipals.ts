@@ -7,6 +7,7 @@
  * launch this, and its own two limits.
  */
 import type { Prisma } from '@auto-swe/shared';
+import { isRepoTeam } from '@auto-swe/shared/lib/repoMembership';
 import { ACTIVE_WORKFLOW_TERMINAL_STATUSES } from '@auto-swe/shared/types/api';
 import type { FastifyReply } from 'fastify';
 import type { ServicePrincipalCaller } from '../plugins/auth.js';
@@ -62,7 +63,8 @@ export interface ServiceLaunchTarget {
  * It takes the principal's row lock first, so two launches by one principal count one after the
  * other, and an edit to its allowlists or limits (an `UPDATE` of the same row) either lands before
  * this launch reads them or waits for it to commit. Then, fresh from the row: not disabled, team
- * active, the target still on its allowlists, fewer than `maxRunsPerDay` runs requested in the last
+ * active, the target still on its allowlists and its repository still owned by or shared with
+ * the principal's team, fewer than `maxRunsPerDay` runs requested in the last
  * 24 hours and fewer than `maxInFlight` ledger rows not yet terminal. Every check before this one
  * read what the token's request loaded; this is the one that decides.
  */
@@ -86,6 +88,7 @@ export function servicePrincipalLaunchGuard(
         maxInFlight: true,
         maxRunsPerDay: true,
         team: { select: { isActive: true } },
+        teamId: true,
         templateIds: true,
       },
       where: { id: servicePrincipalId },
@@ -93,8 +96,26 @@ export function servicePrincipalLaunchGuard(
     if (!sp || sp.disabledAt || !sp.team.isActive) {
       return SERVICE_LAUNCH_REFUSALS.disabled;
     }
-    if (target.connectionId && !sp.connectionIds.includes(target.connectionId)) {
-      return SERVICE_LAUNCH_REFUSALS.connectionNotAllowed;
+    if (target.connectionId) {
+      if (!sp.connectionIds.includes(target.connectionId)) {
+        return SERVICE_LAUNCH_REFUSALS.connectionNotAllowed;
+      }
+      // The repository must still be the principal's team's, owned or shared: a share removed or
+      // a repository moved since the grant ends the grant's effect. Share writers and repository
+      // moves take this row lock, so the answer holds until the ledger rows commit.
+      // CLAUDE.md §7 exception: Prisma cannot express SELECT … FOR UPDATE.
+      const lockedConnection = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM connections WHERE id = ${target.connectionId}::uuid FOR UPDATE
+      `;
+      const connection = lockedConnection.length
+        ? await tx.connection.findUnique({
+            select: { isActive: true, shares: { select: { teamId: true } }, teamId: true },
+            where: { id: target.connectionId },
+          })
+        : null;
+      if (!connection?.isActive || !isRepoTeam(connection, sp.teamId)) {
+        return SERVICE_LAUNCH_REFUSALS.connectionNotAllowed;
+      }
     }
     if (target.templateId && !sp.templateIds.includes(target.templateId)) {
       return SERVICE_LAUNCH_REFUSALS.templateNotAllowed;
@@ -129,8 +150,10 @@ export function sendServiceLaunchRefusal(reply: FastifyReply, code: string) {
 
 /**
  * The `Idempotency-Key` scope for a caller. A principal's keys are its own: they can neither
- * collide with a person's nor reveal through a 409 that another caller used the same key. The
- * `s` keeps a principal's id prefix from ever equalling a user's.
+ * collide with a person's nor reveal through a 409 that another caller used the same key. A
+ * principal is scoped by its whole id (`s` + 32 hex), so no two principals ever share a scope;
+ * a person keeps the 8-hex prefix their workflow ids always had. The longest result, an agent
+ * run's `agent-<8>-s<32>-<16>`, is 65 characters.
  */
 export function idempotencyCallerScope(
   caller:
@@ -138,7 +161,7 @@ export function idempotencyCallerScope(
     | { kind: 'service'; principal: ServicePrincipalCaller }
 ): string {
   return caller.kind === 'service'
-    ? `s${caller.principal.servicePrincipalId.replace(/-/g, '').slice(0, 8)}`
+    ? `s${caller.principal.servicePrincipalId.replace(/-/g, '')}`
     : caller.user.sub.replace(/-/g, '').slice(0, 8);
 }
 

@@ -77,6 +77,15 @@ export async function validateRunConnection(
   let source: LaunchRepositorySource | null = null;
 
   if (connectionId) {
+    // A principal is answered from its allowlist before anything is looked up, and exactly as
+    // for a connection that does not exist: it cannot probe which connection ids exist, are
+    // inactive or sit behind a retired installation.
+    if (service && !service.connectionIds.includes(connectionId)) {
+      reply.status(404).send({
+        error: { code: 'CONNECTION_NOT_FOUND', message: 'Connection not found or inactive' },
+      });
+      return { ok: false };
+    }
     const connection = await prisma.connection.findUnique({
       include: {
         installation: { select: { host: true, installationId: true, isActive: true } },

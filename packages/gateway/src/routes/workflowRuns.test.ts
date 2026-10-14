@@ -933,6 +933,20 @@ describe('workflowRunRoutes with a service principal token', () => {
     });
   });
 
+  it('refuses traces to a principal, on the run detail and the traces route', async () => {
+    const { app, prisma } = await buildServiceApp(['runs:read']);
+    for (const q of ['includeTraces=true', 'fullTraces=true']) {
+      const res = await app.inject({
+        headers: SERVICE,
+        method: 'GET',
+        url: `/api/v1/workflow-runs/${RUN}?${q}`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('TRACES_NOT_AVAILABLE');
+    }
+    expect(prisma.agentTrace.findMany).not.toHaveBeenCalled();
+  });
+
   it('needs runs:read to read and runs:cancel to cancel', async () => {
     const { app } = await buildServiceApp(['runs:launch']);
     const list = await app.inject({

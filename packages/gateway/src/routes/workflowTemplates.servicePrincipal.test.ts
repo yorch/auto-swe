@@ -107,10 +107,15 @@ function harness(s: State) {
     },
     // The launch snapshots the template team as the run's knowledge source.
     team: {
+      // Read twice: the launch snapshot of the template team, and the principal's team org cap.
       findUnique: async () => ({
-        id: s.templateTeamId,
+        id: s.templateTeamId ?? SP_TEAM,
         isActive: true,
-        organization: { isActive: true },
+        organization: {
+          id: 'org-1',
+          isActive: true,
+          monthlyBudgetUsdCents: s.orgOverBudget ? 100 : null,
+        },
         orgId: 'org-1',
       }),
     },
@@ -210,6 +215,16 @@ describe('POST /workflow-templates/:id/runs with a service principal token', () 
     await h.app.close();
   });
 
+  it("holds a connection-less run of a global template to its own team's org cap", async () => {
+    s.templateTeamId = null;
+    s.orgOverBudget = true;
+    const h = harness(s);
+    const res = await h.run();
+    expect(res.statusCode).toBe(402);
+    expect(h.started).toHaveLength(0);
+    await h.app.close();
+  });
+
   it('refuses at its daily limit, decided inside the ledger transaction', async () => {
     s.runsLastDay = 3;
     const h = harness(s);
@@ -223,7 +238,7 @@ describe('POST /workflow-templates/:id/runs with a service principal token', () 
   it('scopes an Idempotency-Key to the principal as well as the template', async () => {
     const h = harness(s);
     await h.run({ 'idempotency-key': 'k-1' });
-    expect(h.started[0]).toMatch(/^wf-aaaaaaaa-s33333333-[0-9a-f]{16}$/);
+    expect(h.started[0]).toMatch(/^wf-aaaaaaaa-s33333333333343338333333333333333-[0-9a-f]{16}$/);
     await h.app.close();
   });
 

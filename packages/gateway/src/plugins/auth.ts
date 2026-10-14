@@ -300,6 +300,7 @@ export async function loadTokenUser(
 }
 
 const authPlugin: FastifyPluginAsync = async (fastify) => {
+  fastify.addHook('onRoute', assertServiceScopesAdmissible);
   const privateKey = getPrivateKey();
   const publicKey = getPublicKey();
   const algorithm = getAlgorithm();
@@ -761,11 +762,56 @@ async function authenticateBridgedCall(
 }
 
 /**
+ * Whether a route guarded by these options may admit a service principal at all. A principal
+ * holds no role, so only a route whose bar is the lowest platform role (or none) and that asks
+ * for no team or organization role can opt in.
+ */
+export function serviceAdmissible(options: RBACOptions): boolean {
+  return (
+    (!options.requiredRole || options.requiredRole === 'ENGINEER') &&
+    !options.requiredTeamRole &&
+    !options.requiredOrgRole
+  );
+}
+
+/** The options a `requireAuth` hook was built with, so route registration can read them. */
+const RBAC_OPTIONS = Symbol('requireAuth options');
+
+/**
+ * Refuse, at registration, a route that opts in to service tokens behind a role a principal
+ * cannot hold. Without this the route would register and answer every service call with 403,
+ * which reads as a working opt-in in review.
+ */
+export function assertServiceScopesAdmissible(routeOptions: {
+  url?: string;
+  config?: { serviceScopes?: readonly string[] };
+  onRequest?: unknown;
+}): void {
+  if (!routeOptions.config?.serviceScopes?.length) {
+    return;
+  }
+  const hooks = Array.isArray(routeOptions.onRequest)
+    ? routeOptions.onRequest
+    : routeOptions.onRequest
+      ? [routeOptions.onRequest]
+      : [];
+  for (const hook of hooks) {
+    const options = (hook as { [RBAC_OPTIONS]?: RBACOptions })[RBAC_OPTIONS];
+    if (options && !serviceAdmissible(options)) {
+      throw new Error(
+        `Route ${routeOptions.url ?? '?'} declares serviceScopes behind a role a service principal cannot hold`
+      );
+    }
+  }
+}
+
+/**
  * Admit a service principal's token to this route, or refuse it. Secure by default: a route that
  * declares no `config.serviceScopes` answers 401 `SERVICE_TOKEN_NOT_ALLOWED`, whatever the token
  * carries — so a new route is closed to machines until it opts in. A route that does declare them
- * needs every one on the token (else 403 `INSUFFICIENT_SCOPE`). A team or organization role
- * requirement on the route refuses a principal outright: it holds no role to check.
+ * needs every one on the token (else 403 `INSUFFICIENT_SCOPE`). A platform role above ENGINEER,
+ * or any team or organization role, refuses a principal outright: it holds no role to check
+ * (and `assertServiceScopesAdmissible` refuses such a route at registration).
  *
  * The principal is set on `request.principal` and `request.user` stays unset, so a handler that
  * reads the user cannot mistake a machine for a person.
@@ -794,9 +840,12 @@ async function admitServicePrincipal(
       },
     });
   }
-  if (options.requiredTeamRole || options.requiredOrgRole) {
+  if (!serviceAdmissible(options)) {
     return reply.status(403).send({
-      error: { code: 'FORBIDDEN', message: 'This route needs a team or organization role' },
+      error: {
+        code: 'FORBIDDEN',
+        message: 'This route needs a role a service principal cannot hold',
+      },
     });
   }
   request.principal = principal;
@@ -807,7 +856,7 @@ async function admitServicePrincipal(
 }
 
 export function requireAuth(options: RBACOptions = {}) {
-  return async (request: FastifyRequest, reply: FastifyReply) => {
+  const hook = async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
     let payload: JwtPayload | null = null;
 
@@ -962,4 +1011,5 @@ export function requireAuth(options: RBACOptions = {}) {
       }
     }
   };
+  return Object.assign(hook, { [RBAC_OPTIONS]: options });
 }

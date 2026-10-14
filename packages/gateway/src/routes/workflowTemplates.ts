@@ -1829,19 +1829,33 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // With a connection, `validateRunConnection` took the whole launch
       // decision against the connection's org. Without one the run spends its
       // template team's org, so that org's membership and cap apply instead.
-      if (!connectionResult.budgetOrgId && tpl.team?.organization) {
-        const authorization =
-          caller.kind === 'user'
-            ? await authorizeLaunch(fastify.prisma, caller.user, {
-                gate: request.repoAccessGate,
-                log: request.log,
-                orgs: [tpl.team.organization],
-                repos: [],
-              })
-            : await authorizeServiceLaunch(fastify.prisma, caller.principal, {
-                orgs: [tpl.team.organization],
-                repos: [],
-              });
+      if (caller.kind === 'user') {
+        if (!connectionResult.budgetOrgId && tpl.team?.organization) {
+          const authorization = await authorizeLaunch(fastify.prisma, caller.user, {
+            gate: request.repoAccessGate,
+            log: request.log,
+            orgs: [tpl.team.organization],
+            repos: [],
+          });
+          if (!authorization.ok) {
+            return sendLaunchRefusal(reply, authorization.refusal);
+          }
+        }
+      } else if (!connectionResult.budgetOrgId) {
+        // A principal's connection-less run is held to its own team's org cap as well as the
+        // template team's, so a global template with no repository is never a run no cap
+        // applies to.
+        const principalTeam = await fastify.prisma.team.findUnique({
+          select: { organization: { select: { id: true, monthlyBudgetUsdCents: true } } },
+          where: { id: caller.principal.teamId },
+        });
+        const orgs = [tpl.team?.organization, principalTeam?.organization].filter(
+          (o): o is { id: string; monthlyBudgetUsdCents: number | null } => !!o
+        );
+        const authorization = await authorizeServiceLaunch(fastify.prisma, caller.principal, {
+          orgs,
+          repos: [],
+        });
         if (!authorization.ok) {
           return sendLaunchRefusal(reply, authorization.refusal);
         }

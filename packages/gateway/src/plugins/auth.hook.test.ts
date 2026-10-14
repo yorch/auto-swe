@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import type { JwtPayload } from './auth.js';
-import { hasRole, requireAuth } from './auth.js';
+import { assertServiceScopesAdmissible, hasRole, requireAuth } from './auth.js';
 
 /**
  * Exercises the pure/decidable authz surface of `plugins/auth.ts` directly —
@@ -385,6 +385,44 @@ describe('requireAuth — service principal tokens', () => {
       { requiredTeamRole: 'LEAD', teamIdParam: 'id' }
     );
     expect(reply.statusCode).toBe(403);
+  });
+
+  it('refuses a principal on a route that requires a platform role above ENGINEER', async () => {
+    const { reply, request } = await call(
+      serviceToken(),
+      { serviceScopes: ['runs:read'] },
+      { requiredRole: 'LEAD' }
+    );
+    expect(reply.statusCode).toBe(403);
+    expect(request.principal).toBeUndefined();
+  });
+
+  it('refuses at registration a route that opts in behind a role a principal cannot hold', () => {
+    expect(() =>
+      assertServiceScopesAdmissible({
+        config: { serviceScopes: ['runs:read'] },
+        onRequest: requireAuth({ requiredRole: 'LEAD' }),
+        url: '/x',
+      })
+    ).toThrow(/serviceScopes/);
+    expect(() =>
+      assertServiceScopesAdmissible({
+        config: { serviceScopes: ['runs:read'] },
+        onRequest: [requireAuth({ requiredTeamRole: 'ENGINEER' })],
+        url: '/y',
+      })
+    ).toThrow();
+    expect(() =>
+      assertServiceScopesAdmissible({
+        config: { serviceScopes: ['runs:read'] },
+        onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+        url: '/z',
+      })
+    ).not.toThrow();
+    // Without the opt-in there is nothing to check.
+    expect(() =>
+      assertServiceScopesAdmissible({ onRequest: requireAuth({ requiredRole: 'ADMIN' }) })
+    ).not.toThrow();
   });
 
   it("leaves a person's token alone: scopes are ignored and the route needs no opt-in", async () => {

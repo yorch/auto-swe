@@ -586,13 +586,27 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       schema: {
         params: RunIdParam,
         querystring: RunDetailQuery,
-        response: { 200: RunDetailResponseSchema, 404: ErrorResponseSchema },
+        response: {
+          200: RunDetailResponseSchema,
+          403: ErrorResponseSchema,
+          404: ErrorResponseSchema,
+        },
       },
     },
     async (request, reply) => {
       const caller = requireCaller(request);
       const { fullTraces, includeSpec } = request.query;
       const includeTraces = request.query.includeTraces || fullTraces;
+      // Traces carry prompts, tool output and repository content: a person's to inspect, not a
+      // machine's. A principal reads a run's status, steps and result.
+      if (caller.kind === 'service' && includeTraces) {
+        return sendError(
+          reply,
+          403,
+          'TRACES_NOT_AVAILABLE',
+          'Service principals cannot read traces; request the run without includeTraces'
+        );
+      }
       const run = await fastify.prisma.workflowRun.findFirst({
         include: {
           steps: { orderBy: [{ startedAt: 'asc' }, { attempt: 'asc' }] },
