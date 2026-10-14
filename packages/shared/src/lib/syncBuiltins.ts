@@ -2,6 +2,7 @@ import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SCANNER_PATTERNS, scannerPatternOrigin } from '../scannerPatterns/index.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
+import { activeLineageHead, lockAgentLineage } from './agentLineageLock.js';
 import {
   BRAND_REVIEWER_PROMPT,
   CHANNEL_ASSISTANT_PROMPT,
@@ -769,6 +770,14 @@ async function migrateSeededModelDefault(
     return current;
   }
   return prisma.$transaction(async (tx) => {
+    // A deactivation writes no version, so it can land between the read above and this write — and
+    // the new version would switch a lineage an admin had just switched off back on. This is the
+    // same lock the gateway's agent library takes, and the activation is re-read under it.
+    await lockAgentLineage(tx, current);
+    const head = await activeLineageHead(tx, current);
+    if (!head?.isActive || head.version !== current.version) {
+      return current;
+    }
     const next = await tx.agent.create({
       data: {
         channelId: current.channelId,

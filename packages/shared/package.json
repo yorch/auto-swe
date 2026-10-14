@@ -18,6 +18,7 @@
     "./lib/securityTraceTags": "./dist/lib/securityTraceTags.js",
     "./lib/credentialScope": "./dist/lib/credentialScope.js",
     "./lib/agentPrompts": "./dist/lib/agentPrompts.js",
+    "./lib/agentLineageLock": "./dist/lib/agentLineageLock.js",
     "./lib/canary": "./dist/lib/canary.js",
     "./lib/systemConfig": "./dist/lib/systemConfig.js",
     "./lib/billing": "./dist/lib/billing.js",

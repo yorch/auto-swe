@@ -24,6 +24,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/agentPrompts.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/agentLineageLock',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/agentLineageLock.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/workflowId',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/workflowId.ts'),
       },

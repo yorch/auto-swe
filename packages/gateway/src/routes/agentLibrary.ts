@@ -460,7 +460,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         }
         throw err;
       }
-      const { agent, catalogWarnings, credentialWarnings, scanWarnings } = saved;
+      const { agent, catalogWarnings, credentialWarnings, scanWarnings, wasActive } = saved;
       // A new model can strand harness agents that inherit it: say so, refuse nothing.
       const runtimeWarnings =
         request.body.modelSpec !== undefined
@@ -481,7 +481,7 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           version: agent.version,
         },
         before: {
-          isActive: current.isActive,
+          isActive: wasActive,
           modelSpec: current.modelSpec,
           reasoning: current.reasoning ?? null,
           runtime: current.runtime,
@@ -751,7 +751,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         }
         throw err;
       }
-      const { agent, catalogWarnings, credentialWarnings, scanWarnings } = saved;
+      const { agent, catalogWarnings, credentialWarnings, scanWarnings, wasActive } = saved;
       // A new model can strand harness agents that inherit it: say so, refuse nothing.
       const runtimeWarnings =
         request.body.modelSpec !== undefined
@@ -779,7 +779,7 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
           version: agent.version,
         },
         before: {
-          isActive: current.isActive,
+          isActive: wasActive,
           key: current.key,
           modelSpec: current.modelSpec,
           reasoning: current.reasoning ?? null,

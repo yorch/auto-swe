@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import {
+  AgentInactiveError,
   type AgentScope,
   AgentVersionConflictError,
   modelRequiredError,
@@ -197,6 +198,11 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
         // Another edit or restore cut the next version first.
         if (err instanceof AgentVersionConflictError) {
           return sendError(reply, 409, 'AGENT_CHANGED', err.message);
+        }
+        // A deactivation that landed after this route's own active check: the service refuses it
+        // under the lineage's lock, and the reason is the operator's to act on, not a 500.
+        if (err instanceof AgentInactiveError) {
+          return sendError(reply, 409, 'AGENT_INACTIVE', err.message);
         }
         throw err;
       }

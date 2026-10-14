@@ -1592,6 +1592,37 @@ describe('activation belongs to the lineage', () => {
     await app.close();
   });
 
+  it('records the activation the write saw, not the one it read before locking', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    // The editor's row says active; by the time the write holds the lock it does not, and the
+    // explicit request is what puts it back on. An audit reading the stale row would say it was
+    // never switched off.
+    mockPrisma.agent.findUnique.mockResolvedValue(
+      teamAgentRow({ isActive: true, scope: 'GLOBAL', teamId: null })
+    );
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: false, version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-4', isActive: true, version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'new-4',
+      isActive: true,
+      key: 'teamAgent',
+      skillRefs: [],
+      version: 2,
+    });
+    const res = await app.inject({
+      body: { isActive: true },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockPrisma.configAuditLog.create.mock.calls[0][0].data).toMatchObject({
+      afterJson: { isActive: true },
+      beforeJson: { isActive: false },
+    });
+    await app.close();
+  });
+
   it('takes the lineage lock to edit and to deactivate', async () => {
     const { app, mockPrisma } = await buildAdminApp();
     mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ scope: 'GLOBAL', teamId: null }));

@@ -1,4 +1,5 @@
-import type { Prisma, PrismaClient } from '@auto-swe/shared';
+import type { PrismaClient } from '@auto-swe/shared';
+import { lockAgentLineage } from '@auto-swe/shared/lib/agentLineageLock';
 import {
   isAnthropicSpec,
   normalizeModelSpec,
@@ -277,27 +278,6 @@ function scopeWhere(key: AgentScopeKey) {
     workflowTemplateId: key.scope === 'WORKFLOW_TEMPLATE' ? (key.workflowTemplateId ?? null) : null,
   };
 }
-
-/** The identity a lineage locks on: one key at one scope, its discriminators included. */
-function lineageLockKey(key: AgentScopeKey): string {
-  return [
-    'agent-lineage',
-    key.key,
-    key.scope,
-    key.teamId ?? '',
-    key.orgId ?? '',
-    key.channelId ?? '',
-    key.workflowTemplateId ?? '',
-  ].join('|');
-}
-
-// CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock.
-// Deactivating a lineage writes no new version, so a version check alone cannot order an edit
-// against it: an edit could read an active head, lose the race, and still write the lineage back
-// on. Every writer of a lineage's activation takes this lock, so the check and the write are one
-// step and the loser of the race sees what the winner did.
-export const lockAgentLineage = (tx: Prisma.TransactionClient, key: AgentScopeKey) =>
-  tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lineageLockKey(key)}, 0))`;
 
 /** Highest existing version for a key+scope (0 when the lineage is new). */
 async function maxVersion(prisma: PrismaClient, key: AgentScopeKey): Promise<number> {
@@ -659,6 +639,12 @@ export async function updateAgent(
   catalogWarnings: string[];
   credentialWarnings: string[];
   scanWarnings: string[];
+  /**
+   * The activation the write observed under the lineage's lock. A caller that audits the change
+   * records this rather than the activation it read before locking, which a concurrent
+   * deactivation may since have changed.
+   */
+  wasActive: boolean;
 }> {
   const key: AgentScopeKey = {
     channelId: current.channelId,
@@ -691,7 +677,7 @@ export async function updateAgent(
   }
 
   // A concurrent edit that cut this version number first wins; this one is stale.
-  const agent = await onUniqueViolation(
+  const { savedAgent: agent, wasActive } = await onUniqueViolation(
     prisma.$transaction(async (tx) => {
       // The check above ran outside this transaction, and a deactivation writes no version at all,
       // so under it alone an edit could pass the check, lose to a deactivation, and still switch
@@ -751,10 +737,13 @@ export async function updateAgent(
           })),
         });
       }
-      return tx.agent.findUniqueOrThrow({
-        include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
-        where: { id: agentBase.id },
-      });
+      return {
+        savedAgent: await tx.agent.findUniqueOrThrow({
+          include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
+          where: { id: agentBase.id },
+        }),
+        wasActive: head.isActive,
+      };
     }),
     () => new AgentVersionConflictError(current.key, current.version)
   );
@@ -768,7 +757,7 @@ export async function updateAgent(
     () => agentCredentialWarnings(prisma, agent),
     []
   );
-  return { agent, catalogWarnings, credentialWarnings, scanWarnings };
+  return { agent, catalogWarnings, credentialWarnings, scanWarnings, wasActive };
 }
 
 /**
