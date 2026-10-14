@@ -60,7 +60,8 @@ A member of a shared team launches against the owning team's repository, so budg
 charged to the **owning** team, and the agent resolves at GLOBAL and ORGANIZATION scope only (section 5).
 
 A team's [service principal](./service-principals.md) may launch too, with a token carrying the
-`runs:launch` scope, on a repository on its allowlist that its team owns or has shared with it. The
+`runs:agent` scope (`runs:launch` is not enough: it starts only allowlisted templates), on a
+repository on its allowlist that its team owns or has shared with it. The
 organisation's monthly cap applies, and so do the principal's own daily and in-flight limits. Its run
 acts as no one: it uses the platform credential and is attributed to the principal
 (`RunInput.requestedByServiceId`). Its `Idempotency-Key` is scoped to the principal. A re-run and the

@@ -611,8 +611,8 @@ body rather than a route param — every launch path, notably — take the org c
 
 **Run visibility** keys on the run, never on its template: a non-admin sees a run they requested, a
 run whose work request targets a repository they can reach, a run of a template their team owns,
-a channel-assistant run in a Slack channel their team owns, or a run a service principal of their
-team requested. That one predicate also gates
+a channel-assistant run in a Slack channel their team owns, or a connection-less run a service
+principal of their team requested (a principal's run on a repository goes by the repository terms). That one predicate also gates
 cancelling a run and resolving its human steps, from the dashboard and from Slack buttons, and it
 filters each template's "last run" summary. A run of a GLOBAL template is therefore not visible to
 everyone. Every term is an exact relational match, and a multi-repository run is decided per run:

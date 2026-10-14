@@ -10,7 +10,7 @@ What separates a principal from a person's token:
   its runs are attributed to it, not to whoever minted the token.
 - **It can do only what its lists name.** Each principal carries an explicit allowlist of
   repositories and of workflow templates. An empty list allows nothing.
-- **Its tokens are scoped.** A token carries one or more of three scopes, and a route accepts it only
+- **Its tokens are scoped.** A token carries one or more of four scopes, and a route accepts it only
   when the route has opted in and the token holds the scopes that route asks for.
 - **Its runs use the platform credential.** A principal has no GitHub login, so its runs never act as
   a person and never use anyone's saved GitHub token.
@@ -32,11 +32,16 @@ The routes a service token can reach, and the scope each needs:
 
 | Route | Scope | What it does for a principal |
 |---|---|---|
-| `POST /api/v1/agent-runs` | `runs:launch` | Starts an [agent run](./agent-runs.md) on a repository on the principal's allowlist |
+| `POST /api/v1/agent-runs` | `runs:agent` | Starts an [agent run](./agent-runs.md) on a repository on the principal's allowlist |
 | `POST /api/v1/workflow-templates/:id/runs` | `runs:launch` | Starts a run of a template on the principal's allowlist; a `connectionId` in the payload must be on its repository allowlist |
 | `GET /api/v1/workflow-runs` | `runs:read` | Lists the runs this principal started, and no others, whatever `scope` asks for |
-| `GET /api/v1/workflow-runs/:id` | `runs:read` | Reads one of them |
+| `GET /api/v1/workflow-runs/:id` | `runs:read` | Reads one of them: status, steps and result. `includeTraces` and `fullTraces` answer `403 TRACES_NOT_AVAILABLE` |
 | `POST /api/v1/workflow-runs/:id/cancel` | `runs:cancel` | Cancels one of them |
+
+`runs:agent` is a scope of its own because an agent run takes a free-form prompt and an agent of
+the caller's choosing (the implementer has a shell), so a repository grant with it lets the principal
+do anything an agent can on that repository. `runs:launch` starts only the templates on the
+principal's template list. Grant `runs:agent` only to a caller trusted with that.
 
 Every other route answers a service token with `401 SERVICE_TOKEN_NOT_ALLOWED`, including the MCP
 endpoint, which accepts only its own OAuth tokens. A route that has opted in but whose scope the token
@@ -44,7 +49,8 @@ lacks answers `403 INSUFFICIENT_SCOPE`.
 
 An `Idempotency-Key` works as it does for a person: a retry with the same key answers
 `409 RUN_CONFLICT` instead of starting a second run. The key is scoped to the principal, so it can
-neither collide with a person's key nor reveal through a `409` that someone else used it.
+neither collide with a person's key nor reveal through a `409` that someone else used it. The scope
+is the principal's whole id, so no two principals share one.
 
 ## 2. Authentication
 
@@ -56,7 +62,8 @@ A service token is refused with `401` when it is revoked or expired, when its pr
 or when the principal's team or that team's organization is inactive. It never becomes
 `request.user`: the gateway sets a separate `request.principal`, so a handler that reads the user
 cannot take a machine for a person. Whether the route accepts it is decided centrally, in the same
-hook, from the route's own declaration:
+hook, from the route's own declaration (a route that opts in behind a platform role above ENGINEER,
+or any team or organization role, is refused at registration, since a principal holds no role):
 
 ```ts
 app.post('/', {
@@ -84,11 +91,18 @@ person-specific steps swapped for the principal's own:
 | Organization monthly cap | Applies | Applies |
 | Template | Visible to the person | On the principal's template allowlist, and global or the principal's team's own |
 | Retired installation, repository host allowlist, agent-run ceilings and concurrency | Apply | Apply |
+| Organization cap of a run with no repository | The template team's org | The template team's org and the principal's own team's org |
 | Own limits | — | At most `maxRunsPerDay` runs requested in any 24 hours, and `maxInFlight` runs not yet finished |
+
+A connection that is not on the principal's list answers `404 CONNECTION_NOT_FOUND`, the answer a
+connection that does not exist gets, before anything is looked up, so a principal cannot probe which
+connection ids exist.
 
 The principal's own checks run inside the transaction that writes the run's ledger rows, under a lock
 on the principal's row. Two launches by one principal are therefore counted one after the other, and
-an edit to its allowlists or limits lands either before a launch reads them or after it commits. A
+an edit to its allowlists or limits lands either before a launch reads them or after it commits. The
+repository is re-read there too, under its own row lock: it must still be active and owned by or
+shared with the principal's team, so a share removed since the grant ends the grant's effect. A
 refusal there writes nothing and starts nothing: `403 SERVICE_PRINCIPAL_DISABLED`,
 `403 SERVICE_CONNECTION_NOT_ALLOWED`, `403 SERVICE_TEMPLATE_NOT_ALLOWED`,
 `429 SERVICE_DAILY_LIMIT_REACHED` or `429 SERVICE_IN_FLIGHT_LIMIT_REACHED`. A template not on the
@@ -111,9 +125,14 @@ cannot.
 ## 5. Attribution and visibility
 
 A principal's run records it in `RunInput.requestedByServiceId`; `requestedById` and `launchedById` are
-null, which is what makes the worker use the platform credential. The run is visible to, and may be
-cancelled and steered by, the members of the principal's team, wherever the repository is, as a
-person controls a run they launched. The principal itself reads and cancels only the runs it started.
+null, which is what makes the worker use the platform credential.
+
+Who else sees it follows the run's repository, exactly as for a person's run: a run on a repository is
+visible to those who reach the repository (owning or shared team, under the [access
+gate](./repo-access-gating.md)) and controlled — cancelled, its human steps answered — by the owning
+team. Having a machine launch it changes neither. Only a run that names no repository, which no
+repository rule can reach, is visible to and controlled by the members of the principal's team. The
+principal itself reads and cancels only the runs it started.
 
 ## 6. Managing principals and tokens
 
@@ -133,12 +152,16 @@ team's members and settings have. Names are unique within a team. Limits are pos
 `maxRunsPerDay` 1–10,000 (default 50) and `maxInFlight` 1–100 (default 5); disabling is the switch for
 "none".
 
-A token is minted with a name, at least one scope (`runs:launch`, `runs:read`, `runs:cancel`) and an
+A token is minted with a name, at least one scope (`runs:launch`, `runs:agent`, `runs:read`,
+`runs:cancel`) and an
 expiry of 1 to 365 days; a service token without an expiry cannot be minted. The plaintext appears in
 the mint response once and is never stored. A principal holds at most two live tokens at a time, so a
 replacement can be rolled out before the old one is revoked; a third answers
-`409 SERVICE_TOKEN_LIMIT_REACHED`. Deleting a principal deletes its tokens; its runs keep running and
-lose their attribution.
+`409 SERVICE_TOKEN_LIMIT_REACHED`.
+
+Deleting a principal is refused (`409 SERVICE_PRINCIPAL_HAS_RUNS`) while any run it started is still
+in flight: disable it to stop new launches, and delete it once its runs finish. Deleting deletes its
+tokens; its finished runs keep their history but lose their attribution.
 
 Platform admins also see service tokens on **Govern → API tokens**, with their principal and team, and
 may revoke them there.
@@ -154,16 +177,23 @@ the principal's id in the record.
   If the lead later loses access to the repository, or the access gate would now refuse them, the
   grant stands until someone edits the list; launches still require the repository to be reachable by
   the principal's team and the organization to be under its cap.
-- **A run with no connection on a global template spends no organization's cap**, exactly as for a
-  person: the run has no repository or template team to charge, so only the principal's own limits
-  bound it.
+- **A run with no connection is gated, not billed, by its organization's cap.** The launch is
+  refused when the principal's team's organization (or the template team's) is over its cap, but the
+  run's spend is billed to an organization only through a repository, as for a person's
+  connection-less run, so such runs do not add to the month's figure.
 - **The daily limit counts requests, not finished runs.** A run that is refused later (by the
   worker's concurrency admission, say) still counts against the principal's 24 hours.
-- **Deleting a principal loses attribution.** Its runs remain, with `requestedByServiceId` cleared,
-  and are then visible only through the repository, template or channel terms of run visibility. To
-  stop a principal while keeping its history, disable it.
+- **Deleting a principal loses attribution.** Its finished runs remain, with `requestedByServiceId`
+  cleared, and are then visible only through the repository, template or channel terms of run
+  visibility. To stop a principal while keeping its history, disable it.
+- **Disabling is not a reset.** Tokens can be minted and revoked while a principal is disabled (so a
+  replacement is ready before it is re-enabled), and re-enabling it takes no new decision about its
+  allowlists: the grants made before it was disabled apply again as they were.
+- **A principal's team does not control its runs on a shared repository.** On a repository the team
+  has only through a share, the owning team controls the run; the principal can still cancel it with
+  `runs:cancel`.
 - **Only the run routes accept service tokens.** A principal cannot submit a work request, an epic or
-  a PRD run, re-run an agent run, read traces through `/workflow-runs/:id/traces`, or call the MCP
-  endpoint.
+  a PRD run, re-run an agent run, read a run's traces (through `/workflow-runs/:id/traces` or
+  `includeTraces`), or call the MCP endpoint.
 - **The CLI does not manage principals.** Principals and their tokens are managed from the dashboard
   or the REST API.
