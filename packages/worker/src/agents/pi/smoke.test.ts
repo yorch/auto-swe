@@ -1,5 +1,8 @@
+import { EventEmitter } from 'node:events';
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { describe, expect, it } from 'vitest';
+import path from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 import {
   DEFAULT_IMAGE,
   DEFAULT_MODEL,
@@ -180,6 +183,55 @@ describe('runSmoke', () => {
         repoUrl: 'https://user:s3cr3t-token@127.0.0.1:1/x.git',
       })
     ).rejects.toThrow(/^(?!.*s3cr3t-token)/s);
+  }, 60_000);
+
+  it('on an interrupt, removes the temp dir only after the run has stopped writing to it', async () => {
+    // A SIGINT the moment the checkout starts: the copy of `dir` into the temp dir is then in
+    // flight, and removing the dir under it fails with ENOTEMPTY or leaves it behind.
+    const dir = await mkdtemp(path.join(tmpdir(), 'pi-smoke-test-src-'));
+    const runDirs = async () =>
+      (await readdir(tmpdir())).filter(
+        (n) => n.startsWith('pi-smoke-') && !n.startsWith('pi-smoke-test-')
+      );
+    try {
+      for (let d = 0; d < 20; d++) {
+        await mkdir(path.join(dir, `d${d}`));
+        await Promise.all(
+          Array.from({ length: 50 }, (_, f) => writeFile(path.join(dir, `d${d}`, `f${f}`), 'x'))
+        );
+      }
+      const before = await runDirs();
+      const signals = new EventEmitter();
+      const exit = vi.fn();
+      const log = vi.fn((line: string) => {
+        if (line.startsWith('Preparing the checkout')) {
+          signals.emit('SIGINT');
+        }
+      });
+
+      await expect(
+        runSmoke({
+          deadlineSeconds: 1,
+          dir,
+          exit,
+          image: 'img',
+          log,
+          maxSteps: 1,
+          mock: true,
+          model: DEFAULT_MODEL,
+          noDbScanners: true,
+          prompt: 'p',
+          signals,
+        })
+      ).rejects.toThrow();
+
+      expect(exit).toHaveBeenCalledExactlyOnceWith(130);
+      expect(log.mock.calls.flat().join('\n')).not.toContain('could not remove');
+      expect((await runDirs()).filter((n) => !before.includes(n))).toEqual([]);
+      expect(signals.listenerCount('SIGINT') + signals.listenerCount('SIGTERM')).toBe(0);
+    } finally {
+      await rm(dir, { force: true, recursive: true });
+    }
   }, 60_000);
 
   it('refuses to run unscanned: no database and no explicit built-in mode', async () => {
