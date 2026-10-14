@@ -1374,9 +1374,15 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         );
         return sendCallbackRefusal(reply, callback);
       }
-      const budgetOrgId = connectionResult.budgetOrgId ?? template.team?.organization?.id;
-      const budgetCap =
-        connectionResult.budgetCap ?? template.team?.organization?.monthlyBudgetUsdCents;
+      // Without a connection the run spends its template team's org: gated here, and stamped
+      // on the request (`billingOrgId`) so it is billed and capped mid-run against that org.
+      const billingOrgId = connectionId ? null : (template.team?.organization?.id ?? null);
+      // The cap read is the gated org's own: a connection's org with no cap is not held to the
+      // template team's.
+      const budgetOrgId = connectionId ? connectionResult.budgetOrgId : billingOrgId;
+      const budgetCap = connectionId
+        ? connectionResult.budgetCap
+        : template.team?.organization?.monthlyBudgetUsdCents;
 
       if (budgetOrgId && !(await assertOrgBudget(fastify.prisma, budgetOrgId, budgetCap, reply))) {
         await refused(
@@ -1403,6 +1409,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             workRequestId,
           },
           runInput: {
+            billingOrgId,
             connectionId,
             description,
             externalTicketId,

@@ -438,6 +438,15 @@ jobs:
           MEMORY_FORGET_PG_TEST: '1'
         run: yarn test packages/shared/src/lib/memoryForget.pg.test.ts
 
+      # The org spend the budget cap reads: which unfinalized runs count for an
+      # organization is a set of relational filters (connections, ledger
+      # repositories, the org a connection-less launch was charged to) that must
+      # stay disjoint, which a mocked Prisma does not evaluate.
+      - name: Org month spend (database-backed tests)
+        env:
+          BILLING_PG_TEST: '1'
+        run: yarn test packages/shared/src/lib/billing.pg.test.ts
+
       # Run-pinned settings pinned on first read: the compare-and-set on the
       # JSON column (and on SQL NULL) is what keeps concurrent activities of one
       # run from overwriting each other's pin, which a mocked Prisma does not

@@ -676,6 +676,7 @@ CREATE TABLE "run_inputs" (
     "request_payload" TEXT NOT NULL,
     "payload" JSONB,
     "connection_id" UUID,
+    "billing_org_id" UUID,
     "knowledge_source_kind" "WorkflowRunKnowledgeSourceKind",
     "knowledge_source_repo_id" UUID,
     "knowledge_source_team_id" UUID,
@@ -2071,6 +2072,9 @@ CREATE INDEX "verifications_identifier_idx" ON "verifications"("identifier");
 CREATE INDEX "run_inputs_connection_id_idx" ON "run_inputs"("connection_id");
 
 -- CreateIndex
+CREATE INDEX "run_inputs_billing_org_id_idx" ON "run_inputs"("billing_org_id");
+
+-- CreateIndex
 CREATE INDEX "run_inputs_requested_by_id_idx" ON "run_inputs"("requested_by_id");
 
 -- CreateIndex
@@ -2678,6 +2682,9 @@ ALTER TABLE "sessions" ADD CONSTRAINT "sessions_user_id_fkey" FOREIGN KEY ("user
 
 -- AddForeignKey
 ALTER TABLE "run_inputs" ADD CONSTRAINT "run_inputs_connection_id_fkey" FOREIGN KEY ("connection_id") REFERENCES "connections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "run_inputs" ADD CONSTRAINT "run_inputs_billing_org_id_fkey" FOREIGN KEY ("billing_org_id") REFERENCES "organizations"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "run_inputs" ADD CONSTRAINT "run_inputs_requested_by_id_fkey" FOREIGN KEY ("requested_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;

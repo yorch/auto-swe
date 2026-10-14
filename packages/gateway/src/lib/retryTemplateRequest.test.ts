@@ -23,7 +23,7 @@ const input = {
   templateId: 'template-1',
   templateVersion: 3,
 };
-async function harness(visible = true) {
+async function harness(visible = true, request: Record<string, unknown> = input) {
   const app = Fastify();
   const prisma = {
     // The launch records an authorized source snapshot: row locks, then the membership reads. All
@@ -36,7 +36,11 @@ async function harness(visible = true) {
     ),
     activeWorkflow: { create: vi.fn(async () => ({ id: 'ledger-1' })) },
     connection: { findUnique: vi.fn(async () => null) },
+    organization: {
+      findUnique: vi.fn(async (_q: unknown) => ({ id: 'org-1', monthlyBudgetUsdCents: 100 })),
+    },
     organizationMembership: { findUnique: vi.fn(async () => null) },
+    runInput: { create: vi.fn(), updateMany: vi.fn(async (_q: unknown) => ({ count: 1 })) },
     teamMembership: { findUnique: vi.fn(async () => null) },
     user: { findUnique: vi.fn(async () => null) },
     workflowRun: {
@@ -53,7 +57,7 @@ async function harness(visible = true) {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'ENGINEER', sub: 'retry-caller' }),
   } as never);
   app.post('/retry', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, (req, reply) =>
-    retryTemplateRequest(app, req, reply, input as never, 'Include migration notes')
+    retryTemplateRequest(app, req, reply, request as never, 'Include migration notes')
   );
   return { app, prisma, start };
 }
@@ -115,11 +119,77 @@ describe('generic workflow retry', () => {
     await app.close();
   });
 
-  it('applies organization launch authorization to connection-free templates', async () => {
-    const { app, prisma, start } = await harness();
+  it('gates a connection-free retry against the org the request was charged to, and re-stamps nothing', async () => {
+    const { app, prisma, start } = await harness(true, { ...input, billingOrgId: 'org-1' });
+    // The template's team now is not what decides: the request's charged org is.
     prisma.workflowTemplate.findFirst.mockResolvedValueOnce({
       id: 'template-1',
-      team: { organization: { id: 'org-1', monthlyBudgetUsdCents: 100 } },
+      team: { organization: { id: 'org-elsewhere', monthlyBudgetUsdCents: 1 } },
+      teamId: 'team-elsewhere',
+      workspaceProvider: null,
+    } as never);
+    vi.mocked(authorizeLaunch).mockResolvedValueOnce({ ok: false, refusal: {} } as never);
+    expect((await app.inject({ headers: auth, method: 'POST', url: '/retry' })).statusCode).toBe(
+      403
+    );
+    expect(prisma.organization.findUnique).toHaveBeenCalledWith({
+      select: { id: true, monthlyBudgetUsdCents: true },
+      where: { id: 'org-1' },
+    });
+    expect(authorizeLaunch).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({ sub: 'retry-caller' }),
+      expect.objectContaining({ orgs: [{ id: 'org-1', monthlyBudgetUsdCents: 100 }], repos: [] })
+    );
+    expect(start).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('inherits the charged org: the retry reuses the request and writes no new one', async () => {
+    const { app, prisma, start } = await harness(true, { ...input, billingOrgId: 'org-1' });
+    expect((await app.inject({ headers: auth, method: 'POST', url: '/retry' })).statusCode).toBe(
+      201
+    );
+    expect(start).toHaveBeenCalled();
+    expect(prisma.runInput.create).not.toHaveBeenCalled();
+    expect(prisma.runInput.updateMany).not.toHaveBeenCalled();
+    expect(prisma.activeWorkflow.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ repoId: null, workRequestId: input.id }),
+    });
+    await app.close();
+  });
+
+  it('gates an unstamped retry of a team template against its team org, and charges the request to it', async () => {
+    const { app, prisma, start } = await harness(true, { ...input, billingOrgId: null });
+    prisma.workflowTemplate.findFirst.mockResolvedValueOnce({
+      id: 'template-1',
+      team: { organization: { id: 'org-t', monthlyBudgetUsdCents: 100 } },
+      teamId: 'team-1',
+      workspaceProvider: null,
+    } as never);
+    expect((await app.inject({ headers: auth, method: 'POST', url: '/retry' })).statusCode).toBe(
+      201
+    );
+    expect(prisma.organization.findUnique).not.toHaveBeenCalled();
+    expect(authorizeLaunch).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({ sub: 'retry-caller' }),
+      expect.objectContaining({ orgs: [{ id: 'org-t', monthlyBudgetUsdCents: 100 }], repos: [] })
+    );
+    // Charged in the ledger transaction, only if the request is still uncharged.
+    expect(prisma.runInput.updateMany).toHaveBeenCalledWith({
+      data: { billingOrgId: 'org-t' },
+      where: { billingOrgId: null, connectionId: null, id: input.id },
+    });
+    expect(start).toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('charges nothing when the gate refuses an unstamped retry', async () => {
+    const { app, prisma, start } = await harness(true, { ...input, billingOrgId: null });
+    prisma.workflowTemplate.findFirst.mockResolvedValueOnce({
+      id: 'template-1',
+      team: { organization: { id: 'org-t', monthlyBudgetUsdCents: 100 } },
       teamId: 'team-1',
       workspaceProvider: null,
     } as never);
@@ -127,12 +197,19 @@ describe('generic workflow retry', () => {
     expect((await app.inject({ headers: auth, method: 'POST', url: '/retry' })).statusCode).toBe(
       403
     );
-    expect(authorizeLaunch).toHaveBeenCalledWith(
-      prisma,
-      expect.objectContaining({ sub: 'retry-caller' }),
-      expect.objectContaining({ orgs: [{ id: 'org-1', monthlyBudgetUsdCents: 100 }], repos: [] })
-    );
+    expect(prisma.runInput.updateMany).not.toHaveBeenCalled();
     expect(start).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('takes no org decision for an unstamped retry of a global template, as before', async () => {
+    const { app, prisma, start } = await harness(true, { ...input, billingOrgId: null });
+    expect((await app.inject({ headers: auth, method: 'POST', url: '/retry' })).statusCode).toBe(
+      201
+    );
+    expect(authorizeLaunch).not.toHaveBeenCalled();
+    expect(prisma.runInput.updateMany).not.toHaveBeenCalled();
+    expect(start).toHaveBeenCalled();
     await app.close();
   });
 

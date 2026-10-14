@@ -841,6 +841,7 @@ export async function finalizeRun(
               tokensOutputUsed: true,
             },
           },
+          billingOrgId: true,
           connection: {
             select: { team: { select: { orgId: true } } },
           },
@@ -970,7 +971,8 @@ export async function finalizeRun(
 
   // An epic's work request targets no single connection, so an epic child
   // reaches its org through its own run's connection; a run with no connection
-  // anywhere, through its own ledger row's repository. The order
+  // anywhere, through its own ledger row's repository, else through the org its
+  // launch charged the request to (`billingOrgId`). The order
   // `readOrgMonthSpend` and `resolveBilledOrg` (the mid-run cap) also use, so a
   // run is billed to the org the cap counted it under.
   const placedByConnection = !!(run?.workRequest?.connectionId || run?.connectionId);
@@ -986,6 +988,7 @@ export async function finalizeRun(
   }
   const orgId = billedOrgId({
     ledgerOrgId,
+    requestBillingOrgId: run?.workRequest?.billingOrgId,
     requestConnectionId: run?.workRequest?.connectionId,
     requestOrgId: run?.workRequest?.connection?.team?.orgId,
     runConnectionId: run?.connectionId,

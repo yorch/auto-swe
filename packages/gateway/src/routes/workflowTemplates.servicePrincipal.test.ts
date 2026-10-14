@@ -224,6 +224,16 @@ describe('POST /workflow-templates/:id/runs with a service principal token', () 
     await h.app.close();
   });
 
+  it("bills a connection-less run to its own team's org, the org its cap decision included", async () => {
+    for (const templateTeamId of [SP_TEAM, null]) {
+      s.templateTeamId = templateTeamId;
+      const h = harness(s);
+      expect((await h.run()).statusCode).toBe(201);
+      expect(h.runInputs[0]).toMatchObject({ billingOrgId: 'org-1', connectionId: null });
+      await h.app.close();
+    }
+  });
+
   it('answers 404 for a template not on its allowlist, as for one that does not exist', async () => {
     s.templateIds = [];
     const h = harness(s);

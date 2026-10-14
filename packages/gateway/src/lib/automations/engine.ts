@@ -464,6 +464,9 @@ export async function decideAndStart<F, X>(
             workRequestId,
           },
           runInput: {
+            // A run with no repository spends its team's org, the one gated above: stamped so
+            // it is billed, counted in flight and capped mid-run against that org.
+            billingOrgId: connection ? null : team.orgId,
             connectionId: connection?.id ?? null,
             description: run.description,
             externalTicketId: run.ticketId,

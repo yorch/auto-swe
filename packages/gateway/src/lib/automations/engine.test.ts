@@ -368,6 +368,8 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
     });
     expect(JSON.stringify(request.payload)).not.toContain('http');
     expect(h.runInputs[0]).toMatchObject({ requestedById: null, ticketIsSynthetic: true });
+    // A repository run is billed through its connection, never a launch org.
+    expect(h.runInputs[0]).toMatchObject({ billingOrgId: null });
     expect(request).not.toHaveProperty('launchedById');
     expect(h.fires).toHaveLength(1);
     expect(h.fires[0]).toMatchObject({ outcome: 'STARTED' });
@@ -751,6 +753,8 @@ describe('owners that are not a repository', () => {
       ownerKey: OWNER,
     });
     expect(h.db.$executeRaw.mock.calls[0]?.[1]).toBe('automation-owner:@team/team-1');
+    // Charged to the team's org, the org the budget decision read, so it is billed there.
+    expect(h.runInputs[0]).toMatchObject({ billingOrgId: 'org-1', connectionId: null });
     // A redelivery of the same occurrence is decided once, on its owner.
     await expect(decide(h)).resolves.toEqual({ duplicate: true });
   });

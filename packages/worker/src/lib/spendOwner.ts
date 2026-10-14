@@ -73,8 +73,11 @@ export async function ownerOfDataset(datasetId: string): Promise<SpendOwner> {
  *
  * Derived the way run visibility decides a run's team: the run's own
  * repository (an epic child), its ledger row's repository, its work request's
- * connection, its Slack channel, then its template. Never throws — attribution
- * is bookkeeping, and a call that has been paid for must still be recorded.
+ * connection, its Slack channel, then its template. A run no repository or
+ * connection places but whose launch charged its request to an organization
+ * (`RunInput.billingOrgId`) is attributed to that organization — the one billing
+ * names — with its channel's or template's team only when that team is in it. Never throws — attribution is
+ * bookkeeping, and a call that has been paid for must still be recorded.
  */
 export async function currentSpendOwner(): Promise<SpendOwner> {
   const explicit = explicitOwner.getStore();
@@ -96,7 +99,7 @@ export async function currentSpendOwner(): Promise<SpendOwner> {
       configCacheTtlMs(),
       () => ownerOfWorkflow(workflowId),
       // A lookup that raced ahead of the run's rows must not pin "nobody".
-      (owner) => owner.teamId !== undefined
+      (owner) => owner.teamId !== undefined || owner.orgId !== undefined
     );
   } catch {
     return {};
@@ -111,7 +114,7 @@ async function ownerOfWorkflow(workflowId: string): Promise<SpendOwner> {
         channel: { select: { team } },
         connection: { select: { team } },
         template: { select: { team } },
-        workRequest: { select: { connection: { select: { team } } } },
+        workRequest: { select: { billingOrgId: true, connection: { select: { team } } } },
       },
       where: { workflowId },
     }),
@@ -120,11 +123,17 @@ async function ownerOfWorkflow(workflowId: string): Promise<SpendOwner> {
       where: { temporalWorkflowId: workflowId },
     }),
   ]);
-  return fromTeam(
-    run?.connection?.team ??
-      ledger?.repository?.team ??
-      run?.workRequest?.connection?.team ??
-      run?.channel?.team ??
-      run?.template?.team
-  );
+  const placed =
+    run?.connection?.team ?? ledger?.repository?.team ?? run?.workRequest?.connection?.team;
+  if (placed) {
+    return fromTeam(placed);
+  }
+  // A connection-less run charged to an org at launch is attributed to that org, the one billing
+  // names; its template's team is kept only when it belongs to that org.
+  const charged = run?.workRequest?.billingOrgId;
+  if (charged) {
+    const team = run?.channel?.team ?? run?.template?.team;
+    return team?.orgId === charged ? fromTeam(team) : { orgId: charged };
+  }
+  return fromTeam(run?.channel?.team ?? run?.template?.team);
 }

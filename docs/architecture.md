@@ -723,6 +723,15 @@ every launch path returns `402 ORG_BUDGET_EXCEEDED` once the month's spend meets
 The launch paths — work requests and their re-runs, epics, PRD runs, schedules, template runs and
 the Slack run modal — take one decision, `authorizeLaunch` (`gateway/src/lib/launchAuthorization.ts`):
 repository access, then membership of every org the launch spends against, then each org's cap.
+A launch with no connection that spends against an org — a template run or template webhook call
+(the template team's org), a service principal's template run (its own team's org), a team
+automation (the team's org) — records that org on the request as `RunInput.billingOrgId`, so the run
+is billed to, counted under and capped by the org its launch was gated against. A re-run reuses the
+request, and so the org: a connection-less re-run is gated against the org the request is charged
+to — for a service principal's run, the principal's team's org, so the person re-running it must be
+a member of that org. A request charged to no org (its connection or org was deleted, or its
+template had no team when it launched) is gated against its template team's org, as a fresh launch
+is, and that org is recorded on the request in the transaction that writes the re-run's ledger row.
 The spend the cap reads is `orgMonthSpend` (`@auto-swe/shared/lib/billing`): `OrgMonthlyUsage`, plus
 what each unfinalized run billed to the org has accrued so far (its own ledger row, or its trace
 rows when it has none), plus this month's trace rows of runless workflows attributed to the org.
@@ -737,7 +746,7 @@ returns it as `currentMonthSpend` beside the finalized `currentMonthUsage`. The 
 best-effort under concurrency: launches that arrive together see the same total.
 A run already going meets the cap too: `assertBudgetAvailable` also reads `orgMonthSpend` for the
 run's organization (found as billing finds it: the work request's connection, else the run's own
-connection, else — only when the run has no connection — the ledger row's repository, else — for a workflow with no run — its spend owner) and refuses the next model call with a non-retryable `BUDGET_EXCEEDED` once spend
+connection, else — only when the run has no connection — the ledger row's repository, else the org the request was charged to at launch, else — for a workflow with no run — its spend owner) and refuses the next model call with a non-retryable `BUDGET_EXCEEDED` once spend
 reaches the cap. That read goes through a per-org cache of one config-cache window (30 s), holding
 the cap and the spend together, so a refusal clears within a window of the cap being raised.
 The cap and org membership are managed at `/api/v1/platform/organizations/:orgId/budget` and
@@ -1198,14 +1207,18 @@ Current constraints of the system as built. Deliberate product boundaries are in
   A run is counted for, capped under and billed to one organization, found in this order: its work
   request's connection, else — only when the request names none, as an epic child's and a scheduled
   fire's do not — the run's own connection, else — only when the run has no connection — the
-  repository of the run's own ledger row. A connection that is found decides even when its team has
-  no organization: the run is then billed to no one, never to the next source. A
+  repository of the run's own ledger row, else — only when that row names no repository — the org
+  its launch charged the request to (`RunInput.billingOrgId`). A connection that is found decides
+  even when its team has no organization: the run is then billed to no one, never to the next
+  source. A
   scheduled fire gets its connection and ledger row at its first activity, from the schedule's
   repository (and its branch and budget tier), so it is capped, counted in flight and billed to that
   repository's organization like any other run. For the same reason a running fire counts against
   its creator's MCP concurrency cap and appears in team-scoped workflow lists, as any launched run
   does.
-  Spend with no org on it — a runless workflow with no derivable owner — is outside the cap. An
+  Spend with no org on it — a runless workflow with no derivable owner, or a connection-less run of a
+  global template launched by a person or a template webhook, which no org decision gates — is
+  outside the cap. An
   epic's planning is attributed to one team, the first repository the epic names, even when the
   epic spans organizations; each child run is billed to its own repository's organization.
 - **The org cap is checked before each call, so spend can overshoot it.** A run's next call is

@@ -1873,10 +1873,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         return;
       }
       // With a connection, `validateRunConnection` took the whole launch
-      // decision against the connection's org. Without one the run spends its
-      // template team's org, so that org's membership and cap apply instead.
+      // decision against the connection's org, and the run is billed there.
+      // Without one the run spends the org chosen here, which is both gated now
+      // and stamped on the request (`billingOrgId`) so billing, the in-flight
+      // figure and the mid-run cap count the run against that same org.
+      let billingOrgId: string | null = null;
       if (caller.kind === 'user') {
-        if (!connectionResult.budgetOrgId && tpl.team?.organization) {
+        // A person's connection-less run spends its template team's org.
+        if (!connectionId && tpl.team?.organization) {
+          billingOrgId = tpl.team.organization.id;
           const authorization = await authorizeLaunch(fastify.prisma, caller.user, {
             gate: request.repoAccessGate,
             log: request.log,
@@ -1887,14 +1892,17 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             return sendLaunchRefusal(reply, authorization.refusal);
           }
         }
-      } else if (!connectionResult.budgetOrgId) {
+      } else if (!connectionId) {
         // A principal's connection-less run is held to its own team's org cap as well as the
         // template team's, so a global template with no repository is never a run no cap
-        // applies to.
+        // applies to. It is billed to its own team's org: a principal launches only global
+        // templates and its own team's, so that is the template team's org whenever the
+        // template has a team, and the one org a global template's run can be charged to.
         const principalTeam = await fastify.prisma.team.findUnique({
           select: { organization: { select: { id: true, monthlyBudgetUsdCents: true } } },
           where: { id: caller.principal.teamId },
         });
+        billingOrgId = principalTeam?.organization?.id ?? null;
         const orgs = [tpl.team?.organization, principalTeam?.organization].filter(
           (o): o is { id: string; monthlyBudgetUsdCents: number | null } => !!o
         );
@@ -1973,6 +1981,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             workRequestId,
           },
           runInput: {
+            billingOrgId,
             connectionId,
             description,
             externalTicketId,
