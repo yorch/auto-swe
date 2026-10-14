@@ -61,6 +61,7 @@ describe('the write guards, enforced in the bridged route', () => {
         calls.transaction++;
         throw new Error('the guard stand-in has no transaction');
       },
+      apiToken: { findUnique: async () => null, update: async () => ({}) },
       configAuditLog: {
         create: async (args: { data: Record<string, unknown> }) => {
           if (auditFails) {
@@ -77,7 +78,6 @@ describe('the write guards, enforced in the bridged route', () => {
         },
       },
       oauthClient: { findUnique: async () => ({ name: 'Test Client' }) },
-      personalAccessToken: { findUnique: async () => null, update: async () => ({}) },
       runInput: {
         findUnique: async () => {
           calls.runInput++;

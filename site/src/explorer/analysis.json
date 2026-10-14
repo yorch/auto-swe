@@ -3468,6 +3468,7 @@
     "Agent": "Versioned scoped agent persona, model/prompt/tools and skill attachments.",
     "AgentSkillRef": "Ordered agent-to-skill attachment.",
     "AgentTrace": "Tool call, LLM response or activity event with spend, spec-node link, span correlation and owning team/org.",
+    "ApiToken": "Hashed long-lived bearer token, expiry and revocation tracking.",
     "Automation": "A rule on a repository: when an occurrence of an event source matches its filters, start a template with its options, within a cooldown and a daily cap.",
     "AutomationFire": "One decision about one occurrence (a run started, or suppressed and why); an event automation’s decisions are keyed on the repository so they outlive the automation, and every limit is judged on them. Schedule fires and template webhook calls also leave rows here.",
     "AutonomyDecision": "Audit record of publish and human approval/rejection decisions.",
@@ -3514,7 +3515,6 @@
     "Organization": "Organization ownership, governance and budget grouping.",
     "OrganizationMembership": "Schema entity; inspect fields and relationship declarations below.",
     "OrgMonthlyUsage": "Schema entity; inspect fields and relationship declarations below.",
-    "PersonalAccessToken": "Hashed long-lived bearer token, expiry and revocation tracking.",
     "ProviderCredential": "Scoped encrypted LLM provider key and optional API base: required by a compatible provider, and for a built-in provider a proxy base it is tested, listed and called at, through the outbound guard.",
     "PullRequest": "SCM pull-request tracking linked to a workflow and connection: OPEN/MERGED/CLOSED state, draft flag, capped title, and open, merge and close times.",
     "RepoAccess": "Schema entity; inspect fields and relationship declarations below.",
@@ -3587,7 +3587,7 @@
       "WorkflowStep"
     ],
     "Identity & targets": [
-      "PersonalAccessToken",
+      "ApiToken",
       "Connection",
       "RepoAccess",
       "ConnectionTeamShare",

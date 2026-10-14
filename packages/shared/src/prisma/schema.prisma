@@ -286,11 +286,12 @@ model PullRequest {
   @@map("pull_requests")
 }
 
-/// Phase-8 long-lived API token for CI / CLI use. The plaintext token is
-/// returned exactly once on create (`ats_<random>` format); only the sha-256
-/// hash is stored. `lastUsedAt` is updated best-effort on each successful
-/// auth so admins can prune stale tokens.
-model PersonalAccessToken {
+/// Long-lived API token for CI / CLI use — a user's personal access token
+/// (Settings → API tokens). The plaintext token is returned exactly once on
+/// create (`ats_<random>` format); only the sha-256 hash is stored.
+/// `lastUsedAt` is updated best-effort on each successful auth so admins can
+/// prune stale tokens.
+model ApiToken {
   id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId     String    @map("user_id") @db.Uuid
   user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -306,7 +307,7 @@ model PersonalAccessToken {
   createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([userId])
-  @@map("personal_access_tokens")
+  @@map("api_tokens")
 }
 
 /// Generic integration target (P3). Replaces the SWE-specific `Repository`.
@@ -1216,7 +1217,7 @@ model User {
 
   memberships           TeamMembership[]
   orgMemberships        OrganizationMembership[]
-  accessTokens          PersonalAccessToken[]
+  accessTokens          ApiToken[]
   /// Better-auth relations.
   accounts              Account[]
   sessions              Session[]

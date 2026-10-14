@@ -237,7 +237,7 @@ async function build(options: {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   app.decorate('prisma', {
-    personalAccessToken: { findUnique: async () => null },
+    apiToken: { findUnique: async () => null },
     user: { findUnique: async () => ({ isActive: true, role: 'ENGINEER', slackId: null }) },
   } as never);
   if (options.rateMax) {

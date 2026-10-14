@@ -9,16 +9,16 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   app.setSerializerCompiler(serializerCompiler);
 
   const mockPrisma = {
+    apiToken: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn(),
+      update: vi.fn(),
+    },
     configAuditLog: {
       count: vi.fn().mockResolvedValue(0),
       create: vi.fn().mockResolvedValue({}),
       findMany: vi.fn().mockResolvedValue([]),
       groupBy: vi.fn().mockResolvedValue([]),
-    },
-    personalAccessToken: {
-      findMany: vi.fn().mockResolvedValue([]),
-      findUnique: vi.fn(),
-      update: vi.fn(),
     },
     session: {
       delete: vi.fn(),
@@ -57,7 +57,7 @@ describe('adminRoutes', () => {
     afterAll(() => ctx.app.close());
 
     it('returns all tokens with owning user email', async () => {
-      ctx.mockPrisma.personalAccessToken.findMany.mockResolvedValueOnce([
+      ctx.mockPrisma.apiToken.findMany.mockResolvedValueOnce([
         {
           createdAt: new Date('2026-01-01'),
           expiresAt: null,
@@ -99,19 +99,19 @@ describe('adminRoutes', () => {
       ctx = await buildApp('ADMIN');
     });
     beforeEach(() => {
-      ctx.mockPrisma.personalAccessToken.findUnique.mockReset();
-      ctx.mockPrisma.personalAccessToken.update.mockReset();
+      ctx.mockPrisma.apiToken.findUnique.mockReset();
+      ctx.mockPrisma.apiToken.update.mockReset();
     });
     afterAll(() => ctx.app.close());
 
     it('revokes any user’s token', async () => {
-      ctx.mockPrisma.personalAccessToken.findUnique.mockResolvedValueOnce({
+      ctx.mockPrisma.apiToken.findUnique.mockResolvedValueOnce({
         id: '11111111-1111-4111-8111-111111111111',
         revokedAt: null,
         userId: 'other-user',
       });
       const revokedAt = new Date('2026-03-01');
-      ctx.mockPrisma.personalAccessToken.update.mockResolvedValueOnce({
+      ctx.mockPrisma.apiToken.update.mockResolvedValueOnce({
         id: '11111111-1111-4111-8111-111111111111',
         revokedAt,
       });
@@ -121,11 +121,11 @@ describe('adminRoutes', () => {
         url: '/api/v1/platform/access-tokens/11111111-1111-4111-8111-111111111111',
       });
       expect(res.statusCode).toBe(200);
-      expect(ctx.mockPrisma.personalAccessToken.update).toHaveBeenCalled();
+      expect(ctx.mockPrisma.apiToken.update).toHaveBeenCalled();
     });
 
     it('returns 404 when token does not exist', async () => {
-      ctx.mockPrisma.personalAccessToken.findUnique.mockResolvedValueOnce(null);
+      ctx.mockPrisma.apiToken.findUnique.mockResolvedValueOnce(null);
       const res = await ctx.app.inject({
         headers: AUTH,
         method: 'DELETE',
@@ -312,14 +312,14 @@ describe('adminRoutes', () => {
     });
     beforeEach(() => {
       ctx.mockPrisma.configAuditLog.create.mockClear();
-      ctx.mockPrisma.personalAccessToken.findUnique.mockReset();
-      ctx.mockPrisma.personalAccessToken.update.mockReset();
+      ctx.mockPrisma.apiToken.findUnique.mockReset();
+      ctx.mockPrisma.apiToken.update.mockReset();
     });
     afterAll(() => ctx.app.close());
 
     it('DELETE /access-tokens/:id writes an UPDATE audit entry without tokenHash', async () => {
       const tokenId = '55555555-5555-4555-8555-555555555555';
-      ctx.mockPrisma.personalAccessToken.findUnique.mockResolvedValueOnce({
+      ctx.mockPrisma.apiToken.findUnique.mockResolvedValueOnce({
         expiresAt: null,
         id: tokenId,
         name: 'admin-revoked',
@@ -329,7 +329,7 @@ describe('adminRoutes', () => {
         userId: 'user-2',
       });
       const revokedAt = new Date('2026-05-01');
-      ctx.mockPrisma.personalAccessToken.update.mockResolvedValueOnce({
+      ctx.mockPrisma.apiToken.update.mockResolvedValueOnce({
         expiresAt: null,
         id: tokenId,
         name: 'admin-revoked',

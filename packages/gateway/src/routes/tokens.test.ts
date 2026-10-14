@@ -9,14 +9,14 @@ async function buildApp() {
   app.setSerializerCompiler(serializerCompiler);
 
   const mockPrisma = {
-    configAuditLog: {
-      create: vi.fn().mockResolvedValue({}),
-    },
-    personalAccessToken: {
+    apiToken: {
       create: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
       update: vi.fn(),
+    },
+    configAuditLog: {
+      create: vi.fn().mockResolvedValue({}),
     },
   };
 
@@ -57,15 +57,15 @@ describe('tokenRoutes', () => {
     // return values via `mockResolvedValueOnce`, so we need clean call
     // history between tests for the `toHaveBeenCalled` assertions.
     ctx.mockPrisma.configAuditLog.create.mockClear();
-    ctx.mockPrisma.personalAccessToken.create.mockClear();
-    ctx.mockPrisma.personalAccessToken.findMany.mockClear();
-    ctx.mockPrisma.personalAccessToken.findUnique.mockClear();
-    ctx.mockPrisma.personalAccessToken.update.mockClear();
+    ctx.mockPrisma.apiToken.create.mockClear();
+    ctx.mockPrisma.apiToken.findMany.mockClear();
+    ctx.mockPrisma.apiToken.findUnique.mockClear();
+    ctx.mockPrisma.apiToken.update.mockClear();
   });
   afterAll(() => ctx.app.close());
 
   it('POST issues a plaintext token exactly once + persists the hash', async () => {
-    ctx.mockPrisma.personalAccessToken.create.mockResolvedValueOnce({
+    ctx.mockPrisma.apiToken.create.mockResolvedValueOnce({
       createdAt: new Date('2026-01-01'),
       expiresAt: null,
       id: 'pat-1',
@@ -88,13 +88,13 @@ describe('tokenRoutes', () => {
     // the sha-256 hash, never the raw token. (Our mock prefixes `hash:` for
     // traceability; with the real `crypto.createHash('sha256')` they would
     // diverge entirely. The hash must not equal the token.)
-    const call = ctx.mockPrisma.personalAccessToken.create.mock.calls[0]?.[0];
+    const call = ctx.mockPrisma.apiToken.create.mock.calls[0]?.[0];
     expect(call?.data.tokenHash).toMatch(/^hash:ats_/);
     expect(call?.data.tokenHash).not.toBe(body.data.token);
   });
 
   it('POST honors expiresInDays', async () => {
-    ctx.mockPrisma.personalAccessToken.create.mockResolvedValueOnce({
+    ctx.mockPrisma.apiToken.create.mockResolvedValueOnce({
       createdAt: new Date(),
       expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
       id: 'pat-2',
@@ -107,12 +107,12 @@ describe('tokenRoutes', () => {
       payload: { expiresInDays: 7, name: 'ephemeral' },
       url: '/api/v1/auth/tokens',
     });
-    const lastCall = ctx.mockPrisma.personalAccessToken.create.mock.calls.at(-1)?.[0];
+    const lastCall = ctx.mockPrisma.apiToken.create.mock.calls.at(-1)?.[0];
     expect(lastCall?.data.expiresAt).toBeInstanceOf(Date);
   });
 
   it('GET lists only the requester’s tokens (no plaintext)', async () => {
-    ctx.mockPrisma.personalAccessToken.findMany.mockResolvedValueOnce([
+    ctx.mockPrisma.apiToken.findMany.mockResolvedValueOnce([
       {
         createdAt: new Date('2026-01-01'),
         expiresAt: null,
@@ -133,12 +133,12 @@ describe('tokenRoutes', () => {
     expect(body.data).toHaveLength(1);
     expect(body.data[0]).not.toHaveProperty('token');
     expect(body.data[0]).not.toHaveProperty('tokenHash');
-    const whereArg = ctx.mockPrisma.personalAccessToken.findMany.mock.calls.at(-1)?.[0];
+    const whereArg = ctx.mockPrisma.apiToken.findMany.mock.calls.at(-1)?.[0];
     expect(whereArg?.where).toEqual({ userId: 'user-1' });
   });
 
   it('DELETE 404s when not owned', async () => {
-    ctx.mockPrisma.personalAccessToken.findUnique.mockResolvedValueOnce({
+    ctx.mockPrisma.apiToken.findUnique.mockResolvedValueOnce({
       id: '11111111-1111-4111-8111-111111111111',
       revokedAt: null,
       userId: 'other-user',
@@ -152,13 +152,13 @@ describe('tokenRoutes', () => {
   });
 
   it('DELETE marks the token revoked', async () => {
-    ctx.mockPrisma.personalAccessToken.findUnique.mockResolvedValueOnce({
+    ctx.mockPrisma.apiToken.findUnique.mockResolvedValueOnce({
       id: '22222222-2222-4222-8222-222222222222',
       revokedAt: null,
       userId: 'user-1',
     });
     const revokedAt = new Date('2026-02-01');
-    ctx.mockPrisma.personalAccessToken.update.mockResolvedValueOnce({
+    ctx.mockPrisma.apiToken.update.mockResolvedValueOnce({
       id: '22222222-2222-4222-8222-222222222222',
       revokedAt,
     });
@@ -174,7 +174,7 @@ describe('tokenRoutes', () => {
 
   it('DELETE on already-revoked is idempotent', async () => {
     const prior = new Date('2026-01-15');
-    ctx.mockPrisma.personalAccessToken.findUnique.mockResolvedValueOnce({
+    ctx.mockPrisma.apiToken.findUnique.mockResolvedValueOnce({
       id: '33333333-3333-4333-8333-333333333333',
       revokedAt: prior,
       userId: 'user-1',
@@ -185,11 +185,11 @@ describe('tokenRoutes', () => {
       url: '/api/v1/auth/tokens/33333333-3333-4333-8333-333333333333',
     });
     expect(res.statusCode).toBe(200);
-    expect(ctx.mockPrisma.personalAccessToken.update).not.toHaveBeenCalled();
+    expect(ctx.mockPrisma.apiToken.update).not.toHaveBeenCalled();
   });
 
   it('POST writes a CREATE audit entry without plaintext token or tokenHash', async () => {
-    ctx.mockPrisma.personalAccessToken.create.mockResolvedValueOnce({
+    ctx.mockPrisma.apiToken.create.mockResolvedValueOnce({
       createdAt: new Date('2026-01-01'),
       expiresAt: null,
       id: 'pat-audit-1',
@@ -226,7 +226,7 @@ describe('tokenRoutes', () => {
 
   it('DELETE writes an UPDATE audit entry with before and after snapshots', async () => {
     const tokenId = '44444444-4444-4444-8444-444444444444';
-    ctx.mockPrisma.personalAccessToken.findUnique.mockResolvedValueOnce({
+    ctx.mockPrisma.apiToken.findUnique.mockResolvedValueOnce({
       expiresAt: null,
       id: tokenId,
       name: 'revoke-me',
@@ -235,7 +235,7 @@ describe('tokenRoutes', () => {
       userId: 'user-1',
     });
     const revokedAt = new Date('2026-04-01');
-    ctx.mockPrisma.personalAccessToken.update.mockResolvedValueOnce({
+    ctx.mockPrisma.apiToken.update.mockResolvedValueOnce({
       expiresAt: null,
       id: tokenId,
       name: 'revoke-me',
