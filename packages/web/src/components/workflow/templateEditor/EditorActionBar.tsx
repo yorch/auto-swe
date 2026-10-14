@@ -48,13 +48,17 @@ export function EditorActionBar({
           <dt className="text-paper-500">Starts at</dt>
           <dd className="truncate font-mono text-xs text-ember-300">{spec.entry}</dd>
         </div>
-        {costEstimateUsd != null && costEstimateUsd > 0 && (
+        {costEstimateUsd != null && (costEstimateUsd > 0 || costEstimateExclusions) && (
           <div
             className="flex items-baseline gap-1.5"
             title={
+              // The estimate is per model call priced from step and agent
+              // metadata; it is not the agent's own model price (an `agent`
+              // node is priced from a proxy role) and it omits anything without
+              // a token cost. Say so rather than implying precision.
               costEstimateExclusions
-                ? `Estimated from each agent's model price. ${costEstimateExclusions}`
-                : "Estimated from each agent's model price"
+                ? `Rough estimate from step and agent metadata. ${costEstimateExclusions}`
+                : 'Rough estimate from step and agent metadata'
             }
           >
             <dt className="text-paper-500">Est.</dt>
