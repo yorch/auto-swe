@@ -27,6 +27,7 @@ const preview = (over: Partial<BundlePreview> = {}): BundlePreview => ({
 
 const result = {
   counts: { agents: 1, scannerPatterns: 0, skills: 1, templates: 0 },
+  signedBy: null,
   trustState: 'VERIFIED' as const,
   warnings: [],
 };
