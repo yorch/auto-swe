@@ -12,7 +12,10 @@
  * reference is known not to pass, and the harness skips it anyway. A case whose
  * reference run hit an infrastructure error — the workspace could not be
  * provisioned, or the run was killed or timed out (`isInfrastructureFailure`)
- * — is left unscreened for the next screen rather than recorded as flaky.
+ * — is left unscreened for the next screen rather than recorded as flaky. Each
+ * such error is counted on the case (`flakeScreenInfraErrors`); at
+ * `FLAKE_SCREEN_MAX_INFRA_ERRORS` the case is recorded as a failed screen, so a
+ * test that always dies on a signal does not loop through every screen forever.
  */
 
 import { resolveSetting } from '@auto-swe/shared/config';
@@ -23,11 +26,19 @@ import type { EvalCaseRow } from './evalHarness.js';
 import { runCaseReference } from './evalRevalidate.js';
 import type { GateResult } from './qualityGates.js';
 
+/** Infrastructure errors after which a case is recorded as a failed screen. */
+export const FLAKE_SCREEN_MAX_INFRA_ERRORS = 3;
+
+/** A case to screen, with the infrastructure errors earlier screens counted on it. */
+export interface ScreenCaseRow extends EvalCaseRow {
+  infraErrors: number;
+}
+
 export interface FlakeScreenDeps {
   /** k: how many times each reference runs. */
   runs: number;
   /** The dataset's never-screened, non-quarantined cases. */
-  loadCases: (datasetId: string) => Promise<EvalCaseRow[]>;
+  loadCases: (datasetId: string) => Promise<ScreenCaseRow[]>;
   /** Run the case's reference once. Throws on an infrastructure error. */
   runReference: (c: EvalCaseRow) => Promise<GateResult>;
   /**
@@ -35,6 +46,12 @@ export interface FlakeScreenDeps {
    * its reference changed, or another screen recorded it, while this one ran.
    */
   recordScreen: (c: EvalCaseRow, flakeScreened: boolean, runs: number) => Promise<boolean>;
+  /**
+   * Count an infrastructure error on the case. At the cap
+   * (`FLAKE_SCREEN_MAX_INFRA_ERRORS`) it also records the case as a failed
+   * screen. Resolves true only when that failed screen was recorded.
+   */
+  recordInfraError: (c: ScreenCaseRow, runs: number) => Promise<boolean>;
   /** Report progress after each reference run (the activity's heartbeat). */
   heartbeat?: (details: { caseId: string; run: number }) => void;
 }
@@ -77,24 +94,27 @@ export async function screenDatasetCases(
 /**
  * A reference run that says nothing about the test: killed by a signal or a
  * timeout. `signal` is set when the runner killed the command (its timeout,
- * exit 124) or could not start it; an exit of 128 and above is a process
+ * exit 124) or could not start it; an exit of 128 to 254 is a process
  * killed inside the container — 137 is SIGKILL, typically the out-of-memory
- * killer, 143 SIGTERM. Such a case is left unscreened for the next screen
- * rather than marked flaky.
+ * killer, 143 SIGTERM. Exit 255 is what a test's own `exit(-1)` produces, so it
+ * is a test failure. Such a case is left unscreened for the next screen rather
+ * than marked flaky, until `FLAKE_SCREEN_MAX_INFRA_ERRORS` screens in a row have
+ * failed this way.
  *
  * Every other non-zero exit is a test failure. The runner sees only the golden
  * test's exit status, so a dependency install or network fetch inside the
  * test command that fails (exit 1) is indistinguishable from a failing test and
  * marks the case flaky; an admin re-screen clears it. A test suite that itself
- * dies on a signal is the reverse: it never screens, and is retried each time.
+ * dies on a signal is the reverse: it is retried until the error cap records it
+ * as a failed screen, which an admin re-screen resets.
  */
 export function isInfrastructureFailure(r: GateResult): boolean {
-  return r.signal !== undefined || r.exitCode >= 128;
+  return r.signal !== undefined || (r.exitCode >= 128 && r.exitCode < 255);
 }
 
 /** Screen one case; resolves whether its outcome was recorded. */
 async function screenOne(
-  c: EvalCaseRow,
+  c: ScreenCaseRow,
   deps: FlakeScreenDeps,
   result: FlakeScreenResult
 ): Promise<boolean> {
@@ -108,8 +128,7 @@ async function screenOne(
       // minutes, and the activity's heartbeat timeout is shorter than a case.
       deps.heartbeat?.({ caseId: c.id, run });
       if (isInfrastructureFailure(r)) {
-        result.erroredCaseIds.push(c.id);
-        return false;
+        return recordInfraFailure(c, deps, result);
       }
       if (!r.passed) {
         consistent = false;
@@ -117,8 +136,7 @@ async function screenOne(
       }
     }
   } catch {
-    result.erroredCaseIds.push(c.id);
-    return false;
+    return recordInfraFailure(c, deps, result);
   }
   if (!(await deps.recordScreen(c, consistent, deps.runs))) {
     return false;
@@ -132,19 +150,73 @@ async function screenOne(
   return true;
 }
 
-async function defaultLoadCases(datasetId: string): Promise<EvalCaseRow[]> {
-  return prisma.evalCase.findMany({
+/**
+ * Count an infrastructure failure on the case. Resolves whether it reached the
+ * cap and was recorded as a failed screen; otherwise the case stays unscreened.
+ * A failure to count is not allowed to abort the screen of the other cases.
+ */
+async function recordInfraFailure(
+  c: ScreenCaseRow,
+  deps: FlakeScreenDeps,
+  result: FlakeScreenResult
+): Promise<boolean> {
+  let capped = false;
+  try {
+    capped = await deps.recordInfraError(c, deps.runs);
+  } catch {
+    capped = false;
+  }
+  if (!capped) {
+    result.erroredCaseIds.push(c.id);
+    return false;
+  }
+  result.screened += 1;
+  result.failedCaseIds.push(c.id);
+  return true;
+}
+
+async function defaultLoadCases(datasetId: string): Promise<ScreenCaseRow[]> {
+  const rows = await prisma.evalCase.findMany({
     orderBy: { createdAt: 'asc' },
     select: {
       baselineSha: true,
+      flakeScreenInfraErrors: true,
       goldenTest: true,
       id: true,
       input: true,
       repoUrl: true,
       tags: true,
     },
-    where: { datasetId, flakeRuns: 0, quarantined: false },
+    where: {
+      datasetId,
+      flakeRuns: 0,
+      flakeScreenInfraErrors: { lt: FLAKE_SCREEN_MAX_INFRA_ERRORS },
+      quarantined: false,
+    },
   });
+  return rows.map(({ flakeScreenInfraErrors, ...rest }) => ({
+    ...rest,
+    infraErrors: flakeScreenInfraErrors,
+  }));
+}
+
+async function defaultRecordInfraError(c: ScreenCaseRow, runs: number): Promise<boolean> {
+  const capped = c.infraErrors + 1 >= FLAKE_SCREEN_MAX_INFRA_ERRORS;
+  // Same guard as recordScreen: only the reference this screen ran, still unscreened.
+  const { count } = await prisma.evalCase.updateMany({
+    data: {
+      flakeScreenInfraErrors: { increment: 1 },
+      ...(capped ? { flakeRuns: runs, flakeScreened: false } : {}),
+    },
+    where: {
+      baselineSha: c.baselineSha,
+      flakeRuns: 0,
+      goldenTest: c.goldenTest,
+      id: c.id,
+      repoUrl: c.repoUrl,
+    },
+  });
+  return capped && count > 0;
 }
 
 async function defaultRecordScreen(
@@ -175,6 +247,7 @@ export async function screenDatasetCasesActivity(datasetId: string): Promise<Fla
   return screenDatasetCases(datasetId, {
     heartbeat: (details) => heartbeat(details),
     loadCases: defaultLoadCases,
+    recordInfraError: defaultRecordInfraError,
     recordScreen: defaultRecordScreen,
     runReference: runCaseReference,
     runs: await resolveSetting('evals.flakeScreenRuns', {}),

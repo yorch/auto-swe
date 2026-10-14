@@ -90,7 +90,7 @@ describe('defaultSetQuarantined', () => {
     evalCaseUpdate.mockClear();
     await _defaults.defaultSetQuarantined('a', false);
     expect(evalCaseUpdate).toHaveBeenCalledWith({
-      data: { flakeRuns: 0, flakeScreened: false, quarantined: false },
+      data: { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0, quarantined: false },
       where: { id: 'a' },
     });
   });

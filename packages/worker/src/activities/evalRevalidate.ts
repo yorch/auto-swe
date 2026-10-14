@@ -100,7 +100,9 @@ async function defaultSetQuarantined(caseId: string, quarantined: boolean): Prom
   // screen saw, so that screen says nothing now: it goes back to unscreened, and
   // the harness scores it only once a new screen (the sweep's, right after this)
   // passes.
-  const data = quarantined ? { quarantined } : { flakeRuns: 0, flakeScreened: false, quarantined };
+  const data = quarantined
+    ? { quarantined }
+    : { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0, quarantined };
   await prisma.evalCase.update({ data, where: { id: caseId } }).catch(() => undefined);
 }
 

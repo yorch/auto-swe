@@ -364,7 +364,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       return 'DATASET_NOT_FOUND';
     }
     const { count } = await fastify.prisma.evalCase.updateMany({
-      data: { flakeRuns: 0, flakeScreened: false },
+      data: { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0 },
       where: { datasetId: ds.id, ...(caseId ? { id: caseId } : {}) },
     });
     if (caseId && count === 0) {

@@ -1,16 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  FLAKE_SCREEN_MAX_INFRA_ERRORS,
   type FlakeScreenDeps,
   isInfrastructureFailure,
+  type ScreenCaseRow,
   screenDatasetCases,
 } from './evalFlakeScreen.js';
-import type { EvalCaseRow } from './evalHarness.js';
 import type { GateResult } from './qualityGates.js';
 
-const c = (id: string): EvalCaseRow => ({
+const c = (id: string, infraErrors = 0): ScreenCaseRow => ({
   baselineSha: 's',
   goldenTest: 'yarn test',
   id,
+  infraErrors,
   input: null,
   repoUrl: 'r',
   tags: [],
@@ -23,25 +25,34 @@ const gate = (passed: boolean): GateResult => ({
 });
 
 function deps(
-  cases: EvalCaseRow[],
+  cases: ScreenCaseRow[],
   runReference: FlakeScreenDeps['runReference'],
   recorded = true
 ) {
   // Like the database: a recorded case is no longer loaded as unscreened.
   const done = new Set<string>();
-  const recordScreen = vi.fn(async (x: EvalCaseRow, _flakeScreened: boolean, _runs: number) => {
+  const recordScreen = vi.fn(async (x: ScreenCaseRow, _flakeScreened: boolean, _runs: number) => {
     if (recorded) {
       done.add(x.id);
     }
     return recorded;
   });
+  // Like the database: the cap records a failed screen, so the case is no longer loaded.
+  const recordInfraError = vi.fn(async (x: ScreenCaseRow, _runs: number) => {
+    const capped = x.infraErrors + 1 >= FLAKE_SCREEN_MAX_INFRA_ERRORS;
+    if (capped) {
+      done.add(x.id);
+    }
+    return capped;
+  });
   const d: FlakeScreenDeps = {
     loadCases: async () => cases.filter((x) => !done.has(x.id)),
+    recordInfraError,
     recordScreen,
     runReference,
     runs: 3,
   };
-  return { d, recordScreen };
+  return { d, recordInfraError, recordScreen };
 }
 
 describe('isInfrastructureFailure', () => {
@@ -51,6 +62,8 @@ describe('isInfrastructureFailure', () => {
     );
     expect(isInfrastructureFailure({ ...gate(false), exitCode: 137 })).toBe(true);
     expect(isInfrastructureFailure({ ...gate(false), exitCode: 143 })).toBe(true);
+    // exit(-1) in the test itself is the test failing, not the infrastructure.
+    expect(isInfrastructureFailure({ ...gate(false), exitCode: 255 })).toBe(false);
     expect(isInfrastructureFailure(gate(false))).toBe(false);
     expect(isInfrastructureFailure({ ...gate(false), exitCode: 2 })).toBe(false);
     expect(isInfrastructureFailure(gate(true))).toBe(false);
@@ -81,14 +94,15 @@ describe('screenDatasetCases', () => {
   });
 
   it('leaves a case unscreened when a reference run hits an infrastructure error', async () => {
-    const runReference = vi.fn(async (x: EvalCaseRow) => {
+    const runReference = vi.fn(async (x: ScreenCaseRow) => {
       if (x.id === 'a') {
         throw new Error('clone failed');
       }
       return gate(true);
     });
-    const { d, recordScreen } = deps([c('a'), c('b')], runReference);
+    const { d, recordInfraError, recordScreen } = deps([c('a'), c('b')], runReference);
     const r = await screenDatasetCases('d1', d);
+    expect(recordInfraError).toHaveBeenCalledWith(c('a'), 3);
     expect(recordScreen).toHaveBeenCalledTimes(1);
     expect(recordScreen).toHaveBeenCalledWith(c('b'), true, 3);
     expect(r).toEqual({ erroredCaseIds: ['a'], failedCaseIds: [], passed: 1, screened: 1 });
@@ -110,7 +124,7 @@ describe('screenDatasetCases', () => {
 
   it('picks up a case that became unscreened while it ran', async () => {
     const cases = [c('a')];
-    const runReference = vi.fn(async (x: EvalCaseRow) => {
+    const runReference = vi.fn(async (x: ScreenCaseRow) => {
       if (x.id === 'a' && cases.length === 1) {
         cases.push(c('b'));
       }
@@ -135,11 +149,39 @@ describe('screenDatasetCases', () => {
       .fn<FlakeScreenDeps['runReference']>()
       .mockResolvedValueOnce(gate(true))
       .mockResolvedValueOnce(killed);
-    const { d, recordScreen } = deps([c('a')], runReference);
+    const { d, recordInfraError, recordScreen } = deps([c('a')], runReference);
     const r = await screenDatasetCases('d1', d);
     expect(runReference).toHaveBeenCalledTimes(2);
     expect(recordScreen).not.toHaveBeenCalled();
+    expect(recordInfraError).toHaveBeenCalledTimes(1);
     expect(r).toEqual({ erroredCaseIds: ['a'], failedCaseIds: [], passed: 0, screened: 0 });
+  });
+
+  it('records a case as a failed screen once it reaches the infrastructure-error cap', async () => {
+    const killed: GateResult = { exitCode: 137, passed: false, summary: 'exit 137' };
+    const { d, recordInfraError, recordScreen } = deps(
+      [c('a', FLAKE_SCREEN_MAX_INFRA_ERRORS - 1)],
+      async () => killed
+    );
+    const r = await screenDatasetCases('d1', d);
+    expect(recordInfraError).toHaveBeenCalledTimes(1);
+    expect(recordScreen).not.toHaveBeenCalled();
+    expect(r).toEqual({ erroredCaseIds: [], failedCaseIds: ['a'], passed: 0, screened: 1 });
+  });
+
+  it('keeps screening the other cases when counting an infrastructure error fails', async () => {
+    const runReference = vi.fn(async (x: ScreenCaseRow) => {
+      if (x.id === 'a') {
+        throw new Error('clone failed');
+      }
+      return gate(true);
+    });
+    const { d } = deps([c('a'), c('b')], runReference);
+    const recordInfraError = vi.fn(async () => {
+      throw new Error('db down');
+    });
+    const r = await screenDatasetCases('d1', { ...d, recordInfraError });
+    expect(r).toEqual({ erroredCaseIds: ['a'], failedCaseIds: [], passed: 1, screened: 1 });
   });
 
   it('does not count a case whose reference changed while it was screened', async () => {

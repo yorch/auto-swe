@@ -880,7 +880,7 @@ describe('evalRoutes', () => {
       expect(res.statusCode).toBe(202);
       expect(res.json().data).toEqual({ reset: 3, screenStarted: true });
       expect(prisma.evalCase.updateMany).toHaveBeenCalledWith({
-        data: { flakeRuns: 0, flakeScreened: false },
+        data: { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0 },
         where: { datasetId: DS },
       });
       expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
@@ -907,7 +907,7 @@ describe('evalRoutes', () => {
       });
       expect(res.statusCode).toBe(202);
       expect(prisma.evalCase.updateMany).toHaveBeenCalledWith({
-        data: { flakeRuns: 0, flakeScreened: false },
+        data: { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0 },
         where: { datasetId: DS, id: CASE },
       });
     });
