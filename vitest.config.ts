@@ -244,6 +244,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/credentialCoverage.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/credentialDestination',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/credentialDestination.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/modelSpec',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/modelSpec.ts'),
       },

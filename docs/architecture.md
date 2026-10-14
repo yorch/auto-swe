@@ -1314,24 +1314,31 @@ Current constraints of the system as built. Deliberate product boundaries are in
   non-git retry path does). Closing it properly means authorizing the connection a node actually
   resolved, at the worker boundary, against the run's launcher and team reach — the same check the
   public-caller branch already makes — rather than inferring it from the template's own metadata.
-- **A connection's stored token is not bound to the origin it was entered for.** The token is
-  encrypted per connection, but `config.baseUrl` is editable by a team LEAD, so repointing an
-  existing connection at another **public** host sends the stored credential there. The URL guard
-  refuses loopback, link-local, cloud-metadata and unspecified addresses whatever the opt-in says,
-  and a credentialed request has to be HTTPS unless the host text itself is refused as a private
-  address and an admin opted that exact origin in. That condition is decided on the **host text and
-  only on it**: a private-range or `.internal`/`.local` spelling gets the exemption, and the check
-  does not require the name to resolve privately — an opted-in `http://wiki.corp.internal` that
-  resolves to a public address is reached over HTTP with the credential. A private host written as
-  an ordinary DNS name (say `wiki.corp.example.com`) is refused over HTTP while the same host
-  written as its address is allowed, so a plain-HTTP internal deployment configures the address or
-  moves to HTTPS. The alternative — waiving TLS because the private-network opt-in is on — lets any
-  public host be reached in clear, which is worse than a clear error. None of this knows
-  which origin the operator entered the token against; the `mcp` connection type is the one that
-  closes that (`TOKEN_ORIGIN_CHANGE`), and a fix belongs in one place for the tracker,
-  knowledge-base, document and record connections alike. The HTTPS rule applies to the tracker
-  connector too, so a self-hosted Jira reached over plain HTTP on a public address now fails
-  non-retryably and has to move to HTTPS.
+- **A connection's stored token is bound to the destination it was entered for.** `config` is
+  editable by a team LEAD, who cannot read the secret in the row, so repointing a connection is how
+  they would collect it. The update route therefore refuses an edit that would keep a stored token
+  while moving where it is sent — the base URL, the tracker provider, or the Zendesk subdomain —
+  with `409 TOKEN_ORIGIN_CHANGE`, exactly as the `mcp` route does; supplying a new token, or
+  clearing the stored one, is the explicit consent. `credentialDestination`
+  (`shared/src/lib/credentialDestination.ts`) is the per-type answer to "where would this row's
+  secret go", mapped over `ConnectionType` so a new type does not compile until its author says.
+  **What this rests on:** the check is on the write, so it holds only while the create and update
+  routes are the sole writers of a non-`mcp` connection's `config`; a new writer has to make the same
+  check, and nothing enforces that. The `mcp` type reports its destination here for completeness but
+  is guarded by its own route. A `git_repo` row's `api_key_*` columns are inert — the platform and
+  per-user repository credentials live in `GitHubConfig`/`ConnectionCredential` and are bound to
+  their host by `resolvePlatformCredential`/`resolveUserCredential` — so there is nothing to bind.
+  The URL guard is a separate rule and still applies: it refuses loopback, link-local,
+  cloud-metadata and unspecified addresses whatever the opt-in says, and a credentialed request has
+  to be HTTPS unless the host text itself is refused as a private address and an admin opted that
+  exact origin in. That condition is decided on the **host text and only on it**: a private-range or
+  `.internal`/`.local` spelling gets the exemption, and the check does not require the name to
+  resolve privately — an opted-in `http://wiki.corp.internal` that resolves to a public address is
+  reached over HTTP with the credential. A private host written as an ordinary DNS name (say
+  `wiki.corp.example.com`) is refused over HTTP while the same host written as its address is
+  allowed, so a plain-HTTP internal deployment configures the address or moves to HTTPS. The
+  HTTPS rule applies to the tracker connector too, so a self-hosted Jira reached over plain HTTP on
+  a public address fails non-retryably and has to move to HTTPS.
 - **An external write is not exactly-once.** The outcome ledger records a result *after* the
   mutation, so a committed write whose response or ledger insert is lost is retried by the next
   activity attempt. A create can therefore be sent twice, and an update that did not receive a
