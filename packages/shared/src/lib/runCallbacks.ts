@@ -97,10 +97,11 @@ function hasUnsafeChar(text: string): boolean {
   }
   return false;
 }
-// An encoded `.`, `/` or `\`: a receiver that decodes before routing would read a different path
-// than the one matched against the prefix. `%25` (an encoded `%`) is refused for the same reason
-// one decode later (`%252e%252e`), and so is an encoded control character (`.%00.`).
-const ENCODED_SEPARATOR_RE = /%(2e|2f|5c|25|[01][0-9a-f]|7f)/i;
+// An encoded `.`, `/`, `\` or `;`: a receiver that decodes before routing would read a different
+// path than the one matched against the prefix. Also refused: `%25` (an encoded `%`, the same trick
+// one decode later: `%252e%252e`), an encoded control character (`.%00.`), the overlong UTF-8 forms
+// of `.` and `/` a lenient decoder accepts (`%c0%ae`, `%c1%9c`, `%e0%80%ae`), and IIS's `%u002e`.
+const ENCODED_SEPARATOR_RE = /%(2e|2f|5c|3b|25|[01][0-9a-f]|7f|c0|c1|e0%[89]|u)/i;
 
 /** Rules a path (prefix or URL path) must meet; null when it meets them. */
 function pathRefusal(path: string): string | null {
@@ -111,7 +112,7 @@ function pathRefusal(path: string): string | null {
     return 'the path contains whitespace, a control character or a backslash';
   }
   if (ENCODED_SEPARATOR_RE.test(path)) {
-    return 'the path contains an encoded ".", "/", "\\", "%" or control character';
+    return 'the path contains an encoded ".", "/", "\\", ";", "%" or control character, or an overlong or %u encoding';
   }
   // A `;` starts a path parameter some servers strip before routing (`/hooks/..;/admin`).
   if (path.includes(';')) {
@@ -250,6 +251,21 @@ export function parseCallbackUrl(
     ok: true,
     value: { origin: url.origin, path: url.pathname, target: `${url.origin}${url.pathname}`, url },
   };
+}
+
+/**
+ * The origin of a stored target (origin + path). A path can be a secret of its own (a Slack
+ * incoming-webhook URL is one), so only the endpoint's team sees more than this.
+ */
+export function callbackTargetOrigin(target: string | null | undefined): string | null {
+  if (!target) {
+    return null;
+  }
+  try {
+    return new URL(target).origin;
+  } catch {
+    return null;
+  }
 }
 
 /** Whether `path` is the prefix itself or under it on a segment boundary. */

@@ -181,7 +181,7 @@ describe('attemptDelivery', () => {
     expect(lastUpdate().data).toMatchObject({ deadReason: reason, status: 'DEAD' });
   });
 
-  it('never logs the URL query', async () => {
+  it('never logs the URL path or query, only the origin', async () => {
     prisma.outboundDelivery.findUnique.mockResolvedValue(
       delivery({ endpoint: endpoint({ disabledAt: NOW }).columns })
     );
@@ -189,7 +189,11 @@ describe('attemptDelivery', () => {
       { attempts: 1, claimToken: 'claim-1', id: 'd-1' },
       { now: () => NOW, send: sendOk }
     );
-    expect(JSON.stringify(vi.mocked(logWarn).mock.calls)).not.toContain('receiver-secret');
+    const logged = JSON.stringify(vi.mocked(logWarn).mock.calls);
+    expect(logged).not.toContain('receiver-secret');
+    // Not the path either: it can be a secret of its own.
+    expect(logged).not.toContain('/hooks/run');
+    expect(logged).toContain('https://hooks.example.com');
   });
 
   it('reports nothing when a later claim of the row holds the token', async () => {

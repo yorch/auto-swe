@@ -5,6 +5,7 @@ import {
   buildCallbackPayload,
   CallbackRequestSchema,
   callbackRetryDelayMs,
+  callbackTargetOrigin,
   callbackUrlMatchesEndpoint,
   endpointSigningSecrets,
   newEndpointSecretColumns,
@@ -102,6 +103,11 @@ describe('normaliseCallbackPathPrefix', () => {
       '/hooks/%252e%252e/admin',
       '/hooks/.%00./x',
       '/hooks/%7F',
+      '/hooks/%3b/x',
+      '/hooks/%c0%ae%c0%ae/admin',
+      '/hooks/%C1%9C',
+      '/hooks/%e0%80%ae',
+      '/hooks/%u002e%u002e/admin',
     ]) {
       expect(normaliseCallbackPathPrefix(bad).ok, bad).toBe(false);
     }
@@ -134,6 +140,11 @@ describe('callback URL matching', () => {
     expect(matches('https://hooks.example.com/hooks/%252e%252e/admin', ep)).toBe(false);
     expect(matches('https://hooks.example.com/hooks/.%00./x', ep)).toBe(false);
     expect(matches('https://hooks.example.com/hooks/%0a', ep)).toBe(false);
+    // Overlong UTF-8, IIS %u, an encoded `;`.
+    expect(matches('https://hooks.example.com/hooks/%c0%ae%c0%ae/admin', ep)).toBe(false);
+    expect(matches('https://hooks.example.com/hooks/%e0%80%ae', ep)).toBe(false);
+    expect(matches('https://hooks.example.com/hooks/%u002e%u002e/admin', ep)).toBe(false);
+    expect(matches('https://hooks.example.com/hooks/..%3b/admin', ep)).toBe(false);
     // Ordinary percent-encoding is still accepted.
     expect(matches('https://hooks.example.com/hooks/caf%C3%A9', ep)).toBe(true);
   });
@@ -183,6 +194,16 @@ describe('CallbackRequestSchema', () => {
       CallbackRequestSchema.safeParse({ context: 'x'.repeat(1100), url: 'https://x/' }).success
     ).toBe(false);
     expect(CallbackRequestSchema.safeParse({ other: 1, url: 'https://x/' }).success).toBe(false);
+  });
+});
+
+describe('callbackTargetOrigin', () => {
+  it('keeps only the origin of a target', () => {
+    expect(callbackTargetOrigin('https://hooks.slack.com/services/T0/B0/secret')).toBe(
+      'https://hooks.slack.com'
+    );
+    expect(callbackTargetOrigin(null)).toBeNull();
+    expect(callbackTargetOrigin('not a url')).toBeNull();
   });
 });
 

@@ -153,3 +153,12 @@ ALTER TABLE "outbound_deliveries"
   ADD CONSTRAINT "outbound_deliveries_event_check"
   CHECK ("event" IN ('run.completed', 'run.waiting_for_human')),
   ADD CONSTRAINT "outbound_deliveries_attempts_check" CHECK ("attempts" >= 0);
+
+-- Who launched the run, as every payload reports it: a known kind and a non-empty id.
+ALTER TABLE "run_callbacks"
+  ADD CONSTRAINT "run_callbacks_launched_by_check"
+  CHECK (
+    jsonb_typeof("launched_by") = 'object'
+    AND "launched_by"->>'kind' IN ('user', 'service_principal', 'template_webhook', 'automation')
+    AND coalesce("launched_by"->>'id', '') <> ''
+  );

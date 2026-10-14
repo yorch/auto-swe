@@ -269,6 +269,37 @@ describe('callback endpoint management', () => {
     expect(byAdmin.statusCode).toBe(200);
   });
 
+  it('lets only a platform ADMIN open a private-network endpoint to template webhooks', async () => {
+    const privateEp = endpointRow({ allowPrivateNetwork: true, origin: 'http://10.0.0.5:8080' });
+    lead.prisma.callbackEndpoint.findFirst.mockResolvedValue(privateEp);
+    const byLead = await lead.app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { acceptTemplateWebhookLaunches: true },
+      url: `${BASE}/${EP}`,
+    });
+    expect(byLead.statusCode).toBe(403);
+    expect(JSON.parse(byLead.payload).error.code).toBe('PRIVATE_NETWORK_ADMIN_ONLY');
+    expect(lead.prisma.callbackEndpoint.update).not.toHaveBeenCalled();
+    // On an ordinary endpoint it is the team's call.
+    lead.prisma.callbackEndpoint.findFirst.mockResolvedValue(endpointRow());
+    const publicEp = await lead.app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { acceptTemplateWebhookLaunches: true },
+      url: `${BASE}/${EP}`,
+    });
+    expect(publicEp.statusCode).toBe(200);
+    admin.prisma.callbackEndpoint.findFirst.mockResolvedValue(privateEp);
+    const byAdmin = await admin.app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { acceptTemplateWebhookLaunches: true },
+      url: `${BASE}/${EP}`,
+    });
+    expect(byAdmin.statusCode).toBe(200);
+  });
+
   it('refuses a path prefix that is not canonical', async () => {
     const res = await lead.app.inject({
       headers: AUTH,
@@ -387,7 +418,11 @@ describe('a run’s callback deliveries', () => {
         id: RUN,
         workflowId: 'wf-1',
         workRequest: {
-          callback: { target: 'https://hooks.example.com/hooks/run', workflowId: 'wf-1' },
+          callback: {
+            endpoint: { teamId: TEAM },
+            target: 'https://hooks.example.com/hooks/run',
+            workflowId: 'wf-1',
+          },
         },
       });
       prisma.outboundDelivery.findMany.mockResolvedValue([deliveryRow()]);
@@ -406,13 +441,17 @@ describe('a run’s callback deliveries', () => {
     await manager.app.close();
   });
 
-  it('show a viewer outside the endpoint’s team only where each went and how it ended', async () => {
+  it('show a viewer outside the endpoint’s team only the origin each went to and how it ended', async () => {
     const outsiderViewer = await buildApp('ENGINEER', null);
     outsiderViewer.prisma.workflowRun.findFirst.mockResolvedValue({
       id: RUN,
       workflowId: 'wf-1',
       workRequest: {
-        callback: { target: 'https://hooks.example.com/hooks/run', workflowId: 'wf-1' },
+        callback: {
+          endpoint: { teamId: TEAM },
+          target: 'https://hooks.example.com/hooks/run',
+          workflowId: 'wf-1',
+        },
       },
     });
     outsiderViewer.prisma.outboundDelivery.findMany.mockResolvedValue([deliveryRow()]);
@@ -421,14 +460,16 @@ describe('a run’s callback deliveries', () => {
       method: 'GET',
       url: `/api/v1/workflow-runs/${RUN}/callback-deliveries`,
     });
-    const [row] = JSON.parse(res.payload).data.deliveries;
-    expect(row).toEqual({
+    const { data } = JSON.parse(res.payload);
+    // A path can be the receiver's secret (a Slack incoming webhook is one): the origin only.
+    expect(data.target).toBe('https://hooks.example.com');
+    expect(data.deliveries[0]).toEqual({
       createdAt: '2026-10-01T00:00:00.000Z',
       deliveredAt: null,
       event: 'run.completed',
       id: DELIVERY,
       status: 'DEAD',
-      target: 'https://hooks.example.com/hooks/run',
+      target: 'https://hooks.example.com',
     });
     await outsiderViewer.app.close();
   });

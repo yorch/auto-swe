@@ -16,6 +16,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import {
   type CallbackDeadReason,
+  callbackTargetOrigin,
   callbackUrlMatchesEndpoint,
   endpointSigningSecrets,
   nextCallbackAttemptAt,
@@ -173,11 +174,11 @@ export async function attemptDelivery(
       where: guard,
     });
     if (count > 0) {
-      // Origin and path only: the query may carry the receiver's token.
+      // The origin only: a path or query may carry the receiver's token.
       logWarn('run callback delivery is dead', {
         deliveryId: row.id,
+        origin: callbackTargetOrigin(row.runCallback?.target),
         reason,
-        target: row.runCallback?.target ?? null,
       });
     }
     return count > 0 ? ('dead' as const) : null;

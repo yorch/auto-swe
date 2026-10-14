@@ -2,6 +2,7 @@ import type { Prisma, Role } from '@auto-swe/shared';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
 import {
   CALLBACK_EVENT_TYPES,
+  callbackTargetOrigin,
   newEndpointSecretColumns,
   normaliseCallbackOrigin,
   normaliseCallbackPathPrefix,
@@ -181,8 +182,8 @@ function refusePrivateNetwork(reply: FastifyReply) {
 }
 
 /**
- * A delivery as a run viewer outside the endpoint's team sees it: where it went (origin and
- * path) and how it went, nothing about the endpoint or its errors.
+ * A delivery as a run viewer outside the endpoint's team sees it: the origin it went to and how
+ * it went — not the path (which can itself be a receiver's secret), the endpoint or its errors.
  */
 function limitedDeliveryView(row: DeliveryViewRow) {
   return {
@@ -191,7 +192,7 @@ function limitedDeliveryView(row: DeliveryViewRow) {
     event: row.event,
     id: row.id,
     status: row.status,
-    target: row.runCallback?.target ?? null,
+    target: callbackTargetOrigin(row.runCallback?.target),
   };
 }
 
@@ -319,8 +320,11 @@ export const callbackEndpointRoutes: FastifyPluginAsync = async (fastify) => {
       const movesDestination =
         (body.origin !== undefined && body.origin !== existing.origin) ||
         (body.pathPrefix !== undefined && body.pathPrefix !== existing.pathPrefix);
+      // Accepting template-webhook launches widens who may send to the destination the same way.
+      const opensToWebhooks =
+        body.acceptTemplateWebhookLaunches === true && !existing.acceptTemplateWebhookLaunches;
       if (
-        movesDestination &&
+        (movesDestination || opensToWebhooks) &&
         (existing.allowPrivateNetwork || privateAfter) &&
         user.role !== 'ADMIN'
       ) {
@@ -591,7 +595,11 @@ export const runCallbackDeliveryRoutes: FastifyPluginAsync = async (fastify) => 
           id: true,
           workflowId: true,
           workRequest: {
-            select: { callback: { select: { target: true, workflowId: true } } },
+            select: {
+              callback: {
+                select: { endpoint: { select: { teamId: true } }, target: true, workflowId: true },
+              },
+            },
           },
         },
         where: {
@@ -608,12 +616,21 @@ export const runCallbackDeliveryRoutes: FastifyPluginAsync = async (fastify) => 
         take: 100,
         where: { workflowRunId: run.id },
       });
-      // Full detail (the endpoint, attempts, errors) for the endpoint's team and admins; anyone
-      // else who can see the run sees where each delivery went and how it ended.
+      // Full detail (the endpoint, the path, attempts, errors) for the endpoint's team and admins;
+      // anyone else who can see the run sees the origin each delivery went to and how it ended.
+      const callback =
+        run.workRequest?.callback?.workflowId === run.workflowId ? run.workRequest.callback : null;
       const access = new Map<string, { member: boolean; manages: boolean }>();
-      for (const teamId of new Set(rows.flatMap((r) => (r.endpoint ? [r.endpoint.teamId] : [])))) {
+      const teamIds = new Set(rows.flatMap((r) => (r.endpoint ? [r.endpoint.teamId] : [])));
+      if (callback?.endpoint) {
+        teamIds.add(callback.endpoint.teamId);
+      }
+      for (const teamId of teamIds) {
         access.set(teamId, await teamAccess(fastify.prisma, user, teamId));
       }
+      const seesPath = callback?.endpoint
+        ? access.get(callback.endpoint.teamId)?.member === true
+        : user.role === 'ADMIN';
       return {
         data: {
           deliveries: rows.map((r) => {
@@ -621,10 +638,11 @@ export const runCallbackDeliveryRoutes: FastifyPluginAsync = async (fastify) => 
             return a?.member ? deliveryView(r, a.manages) : limitedDeliveryView(r);
           }),
           // The request's callback reports only the execution that asked for it, not a re-run.
-          target:
-            run.workRequest?.callback?.workflowId === run.workflowId
-              ? run.workRequest.callback.target
-              : null,
+          target: callback
+            ? seesPath
+              ? callback.target
+              : callbackTargetOrigin(callback.target)
+            : null,
         },
       };
     }
