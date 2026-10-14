@@ -673,9 +673,10 @@ packages/worker/src/agents/claudeCode/runtime.docker.test.ts`. It needs the Dock
 Alpine's package mirror; the `docker-tests` job in `ci.yml` runs it with the flag set, so it is
 part of the CI gate that image publishing depends on.
 
-**Other harnesses.** Claude Code is the only harness registered. Codex CLI, OpenCode and Gemini CLI
-were each checked for what the registry requires: a callback the worker answers, synchronously,
-before every tool call, that nothing inside the container can bypass. None provides it.
+**Other harnesses.** Claude Code is the only harness registered. Codex CLI, OpenCode, Gemini CLI and
+Pi were each checked for what the registry requires: a callback the worker answers, synchronously,
+before every tool call, that nothing inside the container can bypass. None of the four provides it
+as a CLI in the container; Pi provides it as a library in the worker.
 
 - **Codex CLI.** Its worker-reachable channel is the `codex app-server` JSON-RPC protocol over
   stdio, whose `item/commandExecution/requestApproval` and `item/fileChange/requestApproval`
@@ -702,6 +703,23 @@ before every tool call, that nothing inside the container can bypass. None provi
   shell command rather than the command. The rule that makes every call ask, and the system settings
   that keep repository settings out, are files inside the container (for example `/etc/gemini-cli/policies/`), which the agent's own shell can rewrite;
   there is no client-supplied settings layer like the one the Claude Agent SDK passes over its pipe.
+- **Pi, as a CLI in the container.** An extension's `tool_call` handler runs before every tool call
+  with the call's real arguments, and a handler that throws blocks the call; under `--mode rpc` it
+  could ask the worker over stdio. `--no-extensions` keeps the repository's `.pi/extensions/` and the
+  extensions its settings name out, so a worker-supplied extension (`-e`) would be the only one
+  loaded. But no flag keeps the repository's `.pi/settings.json` out, and its `shellCommandPrefix` is
+  prepended to every `bash` command after the handler has approved it (its `shellPath` picks the
+  shell the same way). The scanners would decide `ls` while the shell ran the repository's prefix
+  first.
+- **Pi, as a library in the worker.** `pi-agent-core`'s agent loop takes a `beforeToolCall` hook that
+  is awaited before every tool call, and a hook that throws blocks the call. Run in the worker, the
+  loop is not in the container at all, nothing from the repository is loaded unless the worker reads
+  it, and the model credential stays in the worker. Pi's built-in tools cannot be pointed at the
+  container as they are, though: `grep` always runs ripgrep on the local machine (downloading it if
+  it is missing), `bash` writes overflow output to the local temp directory and tells the model that
+  path, and `read` probes the local filesystem for alternative spellings of a path. A worker adapter
+  has to supply its own `bash` and `grep`, and resolve every path before the policy decides it, so
+  the path the scanners saw is the path the tool uses.
 
 Adding a harness is an adapter in its own directory, a `defineHarness` entry in `harnessRegistry.ts`,
 a new value in `IMPLEMENTER_RUNTIMES`, unit tests, and a `*.docker.test.ts` named on the
@@ -1217,11 +1235,12 @@ template override is never badged, because it may use a different model or crede
   of its own (for example one written to `/etc/claude-code/` by an earlier `Bash` call). The
   worker-side policy hook decides every call a genuine binary makes; the container's own isolation is
   what holds when the binary is not genuine.
-- **Claude Code is the only harness an agent can run on.** Codex CLI, OpenCode and Gemini CLI each
-  lack a worker-answered callback before every tool call that the repository or the container cannot
-  bypass, so the registry would refuse them ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness),
-  *Other harnesses*). The verdict rests on what each CLI exposes for that callback; one that gains
-  it fits the same seam.
+- **Claude Code is the only harness an agent can run on.** Codex CLI, OpenCode, Gemini CLI and the
+  Pi CLI each lack a worker-answered callback before every tool call that the repository or the
+  container cannot bypass, so the registry would refuse them
+  ([§3.7](#37-runtimes-mastra-and-the-claude-code-harness), *Other harnesses*). Pi's agent loop run
+  as a library in the worker does not, but the harness seam assumes a binary in the container. The
+  verdict rests on what each CLI exposes for that callback; one that gains it fits the same seam.
 - **The capability flag is declared, not proven.** The registry trusts what an adapter declares in
   `enforcesPerCallPolicyInWorker`; it refuses an adapter that says no, but cannot test that one which
   says yes routes every call through `turn.decide`. Each adapter's unit and Docker-backed tests are
