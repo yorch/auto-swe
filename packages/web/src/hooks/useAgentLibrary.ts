@@ -55,7 +55,8 @@ export interface BulkModelChange {
   name: string;
   /** The id of the version the change created; null until it is applied. */
   newId: string | null;
-  scope: AgentScope;
+  /** Null when the agent's row could not be read, so its scope is not known. */
+  scope: AgentScope | null;
   version: number;
   from: string | null;
   to: string | null;

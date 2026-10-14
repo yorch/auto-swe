@@ -385,13 +385,46 @@ describe('BulkModelModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Preview changes' }));
     await screen.findByRole('button', { name: 'Apply 1 changes' });
 
-    // The header's close button is the affordance Escape and a backdrop click go through.
+    // Escape, a backdrop click and the header's close button all consult `dismissible`; the button
+    // is the one that can be observed from here.
     const headerClose = () => document.querySelector('dialog header button');
     expect(headerClose()?.hasAttribute('disabled')).toBe(false);
 
     fireEvent.click(screen.getByRole('button', { name: 'Apply 1 changes' }));
     await waitFor(() => expect(release).toBeDefined());
     expect(headerClose()?.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('identifies an agent whose row could not be read without inventing its scope', async () => {
+    setupFetchMock({
+      'POST /api/v1/platform/agent-library/bulk-model/preview': () => ({
+        data: {
+          ...plan,
+          changes: [
+            change({
+              blockers: ['Could not read this agent: read failed'],
+              id: 'the-unread-id',
+              key: '',
+              name: '',
+              scope: null,
+              status: 'ERROR',
+            }),
+          ],
+          summary: { ...plan.summary, error: 1, total: 1 },
+        },
+      }),
+    });
+    render(
+      withQuery(<BulkModelModal agents={[agent('a', 'openai/old')]} onClose={vi.fn()} open />)
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: 'Target model' }), {
+      target: { value: 'anthropic/new' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview changes' }));
+
+    // The id is the only handle the operator has for it, and its scope is not ours to guess.
+    expect(await screen.findByText('the-unread-id')).toBeTruthy();
+    expect(screen.getByText('Unknown')).toBeTruthy();
   });
 
   it('says so when an applied change could not be audited', async () => {

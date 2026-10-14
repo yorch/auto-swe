@@ -66,13 +66,18 @@ function PlanRow({ applied, change }: { applied: boolean; change: BulkModelChang
   return (
     <TRow>
       <Td className="py-2 pr-3" primary>
-        <span className="font-medium">{change.name}</span>
-        <div className="font-mono text-xs text-paper-500">{change.key}</div>
+        {/* An id whose row could not be read has no name or key; the id is what identifies it. */}
+        <span className="font-medium">{change.name || change.id}</span>
+        {change.key && <div className="font-mono text-xs text-paper-500">{change.key}</div>}
       </Td>
       <Td className="py-2 pr-3" label="Scope">
-        <Badge tone={change.scope === 'GLOBAL' ? 'neutral' : 'dust'}>
-          {scopeLabel(change.scope)}
-        </Badge>
+        {change.scope ? (
+          <Badge tone={change.scope === 'GLOBAL' ? 'neutral' : 'dust'}>
+            {scopeLabel(change.scope)}
+          </Badge>
+        ) : (
+          <span className="text-paper-500">Unknown</span>
+        )}
       </Td>
       <Td className="py-2 pr-3 font-mono text-xs" label="Model">
         <span>
