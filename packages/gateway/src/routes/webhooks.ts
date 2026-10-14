@@ -1173,7 +1173,9 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // The exact bytes, for the signature: it is computed over the body as sent, not as parsed.
       preParsing: captureRawBodyBytes,
       schema: {
-        body: z.record(z.string(), z.unknown()).optional(),
+        // A bodiless POST (no content type) arrives as null: an empty payload, which a signed
+        // call signs over the timestamp alone.
+        body: z.record(z.string(), z.unknown()).nullish(),
         headers: IdempotencyHeaderSchema,
         params: TriggerParams,
       },
@@ -1211,7 +1213,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         );
       // The signature first: a caller that cannot sign learns nothing else about the template.
       const rawBodyBytes = (request as FastifyRequest & RawBodyBytes).rawBodyBytes;
-      if (rawBodyBytes === undefined && request.body !== undefined) {
+      if (rawBodyBytes === undefined && request.body != null) {
         // A parsed body without its bytes means the capture did not run; never verify (or
         // accept) against a stand-in.
         await refused(
@@ -1282,12 +1284,14 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // Without one, every delivery is a distinct run — the previous behaviour.
       // A verified call's key is its signature's (timestamp and body), never the unsigned
       // header: otherwise a captured call could be replayed with a fresh key inside the window.
-      const idempotencyKey = signature.verified
-        ? signature.idempotencyKey
-        : request.headers['idempotency-key'];
-      const temporalWorkflowId = idempotencyKey
-        ? workflowIdFromIdempotencyKey('wh', shortTplId, idempotencyKey)
-        : `wh-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+      // Its own `whs` namespace: a caller-supplied key, hashed under `wh`, can never name the id
+      // a signed call will use, so an unsigned caller cannot squat it ahead of the real call.
+      const callerKey = request.headers['idempotency-key'];
+      const temporalWorkflowId = signature.verified
+        ? workflowIdFromIdempotencyKey('whs', shortTplId, signature.idempotencyKey)
+        : callerKey
+          ? workflowIdFromIdempotencyKey('wh', shortTplId, callerKey)
+          : `wh-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
 
       const providerMeta =
         template.workspaceProvider && isWorkspaceProviderType(template.workspaceProvider)

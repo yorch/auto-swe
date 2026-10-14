@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { signWebhookBody } from '@auto-swe/shared/lib/webhookSigning';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -568,6 +569,41 @@ describe('POST /webhooks/:token — signatures', () => {
     // A fresh signature (new timestamp) is a new call.
     const next = await send(signed(SECRET, BODY, nowSec() - 1));
     expect(next.statusCode).toBe(201);
+  });
+
+  it('an unsigned caller cannot squat the id a signed call will use', async () => {
+    // Optional signing: unsigned calls are accepted, and the body of a cron sender is predictable.
+    h.template = { ...h.template, ...sealed('webhookSigningSecret', SECRET) };
+    const t = nowSec();
+    const bodyHash = createHash('sha256').update(BODY).digest('hex');
+    const squat = await send({ 'idempotency-key': `sig:${t}:${bodyHash}` });
+    expect(squat.statusCode).toBe(201);
+    const real = await send(signed(SECRET, BODY, t));
+    expect(real.statusCode).toBe(201);
+    expect(h.started).toHaveLength(2);
+    expect(h.started[1]).toMatch(/^whs-/);
+    expect(h.started[0]).toMatch(/^wh-/);
+  });
+
+  it('a signed call with an empty body verifies over the timestamp alone', async () => {
+    h.template = {
+      ...h.template,
+      ...sealed('webhookSigningSecret', SECRET),
+      webhookRequireSignature: true,
+    };
+    const ok = await h.app.inject({
+      headers: { 'x-autoswe-signature': signWebhookBody(SECRET, '', nowSec()) },
+      method: 'POST',
+      url: `/api/v1/webhooks/${TOKEN}`,
+    });
+    expect(ok.statusCode).toBe(201);
+    // A signature over a non-empty body does not verify an empty one.
+    const bad = await h.app.inject({
+      headers: { 'x-autoswe-signature': signWebhookBody(SECRET, '{}', nowSec() - 1) },
+      method: 'POST',
+      url: `/api/v1/webhooks/${TOKEN}`,
+    });
+    expect(bad.statusCode).toBe(401);
   });
 
   it('keeps the caller’s Idempotency-Key for an unsigned call', async () => {

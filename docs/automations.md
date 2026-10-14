@@ -351,12 +351,14 @@ refusal. The Automations list marks a webhook that still accepts unsigned calls 
 its own. A sender that cannot switch atomically can sign with both secrets for the overlap — the
 header carries one `v1=` entry per secret.
 
-**A signed call's idempotency comes from its signature.** When a call's signature verifies, the
-run's idempotency key is derived from the signed timestamp and a hash of the body bytes, and any
-`Idempotency-Key` header is ignored (headers are not signed). Sending the same signed call again —
-a sender's retry, or a captured call replayed inside the 300-second window — is refused with
-`409 RUN_CONFLICT` and recorded as `SUPPRESSED_SAME_SUBJECT`, whatever key it carries. To start two
-runs with the same body, sign them with different timestamps. An unsigned call keeps the
+**A signed call's identity is its timestamp and body.** When a call's signature verifies, its
+run's workflow id is derived from the signed `t` and a hash of the body bytes, in a namespace no
+`Idempotency-Key` can reach, and the `Idempotency-Key` header is **ignored** (headers are not
+signed; honouring it would let a captured call be replayed under a fresh key). Sending the same
+`(t, body)` again — a retry, or a captured call replayed inside the 300-second window — is refused
+with `409 RUN_CONFLICT` and recorded as `SUPPRESSED_SAME_SUBJECT`. A retrying sender must therefore
+resend the **same timestamp and body** it signed the first time (or deduplicate on its side):
+re-signing a retry with a new `t` is a new call and starts another run. An unsigned call keeps the
 `Idempotency-Key` behaviour described in [product-overview.md](./product-overview.md).
 
 **Verifying or signing elsewhere.** `@auto-swe/sdk` exports the same implementation the gateway
