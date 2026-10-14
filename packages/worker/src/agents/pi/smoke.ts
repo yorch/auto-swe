@@ -360,12 +360,13 @@ const GIT_TIMEOUT_MS = 120_000;
 async function git(
   root: string,
   args: string[],
-  options: { cwd?: string; env?: NodeJS.ProcessEnv; timeout?: number } = {}
+  options: { cwd?: string; env?: NodeJS.ProcessEnv; signal?: AbortSignal; timeout?: number } = {}
 ): Promise<string> {
   const { stdout } = await run('git', [...NO_PROGRAMS, ...args], {
     cwd: options.cwd ?? root,
     env: gitEnv(root, options.env),
     maxBuffer: 64 * 1024 * 1024,
+    signal: options.signal,
     timeout: options.timeout ?? GIT_TIMEOUT_MS,
   });
   return stdout;
@@ -389,7 +390,8 @@ export function isExcludedEnvFile(basename: string): boolean {
  */
 async function prepareCheckout(
   options: SmokeOptions,
-  root: string
+  root: string,
+  signal: AbortSignal
 ): Promise<{ checkout: string; baselineGitDir: string }> {
   const checkout = path.join(root, 'repo');
   if (options.dir) {
@@ -413,15 +415,17 @@ async function prepareCheckout(
     });
   } else if (options.repoUrl) {
     await git(root, ['clone', '--depth', '1', '--', options.repoUrl, checkout], {
+      signal,
       timeout: 180_000,
     });
     await rm(path.join(checkout, '.git'), { force: true, recursive: true });
   } else {
     await mkdir(checkout, { recursive: true });
   }
-  await git(root, ['init', '-q'], { cwd: checkout });
-  await git(root, ['add', '-A'], { cwd: checkout });
-  await git(root, ['commit', '-q', '--allow-empty', '-m', 'baseline'], { cwd: checkout });
+  await git(root, ['init', '-q'], { cwd: checkout, signal });
+  await git(root, ['add', '-A'], { cwd: checkout, signal });
+  await git(root, ['commit', '-q', '--allow-empty', '-m', 'baseline'], { cwd: checkout, signal });
+  signal.throwIfAborted();
   // The baseline is a host-made copy, taken before the container exists.
   const baselineGitDir = path.join(root, 'baseline.git');
   await cp(path.join(checkout, '.git'), baselineGitDir, { recursive: true });
@@ -557,9 +561,10 @@ const MAX_TRACE_DIFF_CHARS = 1_000_000;
 /**
  * Run one Pi turn against a fresh container and report it. The container and the
  * temporary directories are removed however the run ends, an interrupt (SIGINT,
- * SIGTERM) included. A failed turn is reported in `error`, not thrown; setup
- * failures (no Docker, a bad clone, a missing scanner source) throw, with URL
- * credentials removed from the message.
+ * SIGTERM) included: an interrupt stops the run, waits for it to stop writing,
+ * cleans up and exits 130 or 143 without a report. A failed turn is reported in
+ * `error`, not thrown; setup failures (no Docker, a bad clone, a missing scanner
+ * source) throw, with URL credentials removed from the message.
  */
 export async function runSmoke(options: SmokeOptions): Promise<{
   report: SmokeReport;
@@ -587,14 +592,25 @@ export async function runSmoke(options: SmokeOptions): Promise<{
   // The in-flight `docker run`, pull included: removing before it settles races it, and the
   // container it then creates is left running.
   let starting: Promise<unknown> | undefined;
+  // Never rejects: a directory it could not remove is reported, not thrown over the run's result.
   const cleanup = () => {
     cleaned ??= (async () => {
       await starting?.catch(() => undefined);
       await run('docker', ['rm', '-f', containerName], { env: dockerEnv() }).catch(() => undefined);
-      await rm(root, { force: true, recursive: true });
+      await rm(root, { force: true, maxRetries: 3, recursive: true }).catch((err: unknown) =>
+        log(`warning: could not remove ${root}: ${err instanceof Error ? err.message : err}`)
+      );
     })();
     return cleaned;
   };
+  // Resolved when the main flow below has stopped: until then a step it already started (a `cp`,
+  // a `docker cp` into `root`) can still create files under `root`, and a recursive remove racing
+  // it fails on a directory that has just gained an entry.
+  let mainSettled!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    mainSettled = resolve;
+  });
+  let exiting: Promise<void> | undefined;
   const interrupt = new AbortController();
   const signals = options.signals ?? process;
   // `on`, not `once`, and removed only after the cleanup has finished: with the listener gone
@@ -613,16 +629,21 @@ export async function runSmoke(options: SmokeOptions): Promise<{
         void run('docker', ['rm', '-f', containerName], { env: dockerEnv(), timeout: 10_000 })
           .catch(() => undefined)
           .finally(() => {
-            rmSync(root, { force: true, recursive: true });
+            try {
+              rmSync(root, { force: true, maxRetries: 3, recursive: true });
+            } catch (err) {
+              log(`warning: could not remove ${root}: ${err instanceof Error ? err.message : err}`);
+            }
             (options.exit ?? process.exit)(exitCode);
           });
       }
       return;
     }
     interrupted = true;
+    // Kills the main flow's git and docker children and stops it at its next step.
     interrupt.abort();
     log(`${signal}: removing the container and temporary files…`);
-    void cleanup().finally(() => {
+    exiting = settled.then(cleanup).finally(() => {
       signals.off('SIGINT', onInt);
       signals.off('SIGTERM', onTerm);
       (options.exit ?? process.exit)(exitCode);
@@ -637,7 +658,7 @@ export async function runSmoke(options: SmokeOptions): Promise<{
     log(
       `Preparing the checkout (${redactUrlCredentials(options.dir ?? options.repoUrl ?? 'empty')})…`
     );
-    const { baselineGitDir, checkout } = await prepareCheckout(options, root);
+    const { baselineGitDir, checkout } = await prepareCheckout(options, root, interrupt.signal);
 
     log(`Starting a workspace container from ${options.image}…`);
     starting = startWorkspace(
@@ -647,11 +668,14 @@ export async function runSmoke(options: SmokeOptions): Promise<{
       log
     );
     const workspace = await starting;
+    interrupt.signal.throwIfAborted();
     await run('docker', ['exec', containerName, 'mkdir', '-p', '/workspace'], {
       env: dockerEnv(),
+      signal: interrupt.signal,
     });
     await run('docker', ['cp', `${checkout}/.`, `${containerName}:${WORKSPACE_DIR}`], {
       env: dockerEnv(),
+      signal: interrupt.signal,
       timeout: 120_000,
     });
     // `docker cp` keeps the host's uid, and the container's root has no
@@ -662,7 +686,7 @@ export async function runSmoke(options: SmokeOptions): Promise<{
     await run(
       'docker',
       ['exec', '--privileged', '-u', '0', containerName, 'chown', '-R', '-h', '0:0', WORKSPACE_DIR],
-      { env: dockerEnv(), timeout: 120_000 }
+      { env: dockerEnv(), signal: interrupt.signal, timeout: 120_000 }
     );
 
     const tracer = new MemoryTracer();
@@ -717,6 +741,8 @@ export async function runSmoke(options: SmokeOptions): Promise<{
       );
     }
     const wallMs = Date.now() - startedAt;
+    // An interrupted run reports nothing, so it copies nothing more into `root`.
+    interrupt.signal.throwIfAborted();
 
     let diffStat = '';
     let diff = '';
@@ -794,8 +820,14 @@ export async function runSmoke(options: SmokeOptions): Promise<{
       ? Object.assign(new Error(redactUrlCredentials(err.message)), { name: err.name })
       : err;
   } finally {
-    await cleanup();
-    signals.off('SIGINT', onInt);
-    signals.off('SIGTERM', onTerm);
+    mainSettled();
+    if (exiting) {
+      // The signal handler cleans up and exits; settling first would let a caller's own exit win.
+      await exiting;
+    } else {
+      await cleanup();
+      signals.off('SIGINT', onInt);
+      signals.off('SIGTERM', onTerm);
+    }
   }
 }
