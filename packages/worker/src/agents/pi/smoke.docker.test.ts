@@ -219,6 +219,28 @@ describe.skipIf(!enabled)('the Pi smoke tool against a real container', () => {
     expect((await runDirs()).filter((n) => !before.includes(n))).toEqual([]);
   }, 120_000);
 
+  it('exits and removes the container when a second signal follows the first', async () => {
+    const opts = await options();
+    const signals = new EventEmitter();
+    const exit = vi.fn();
+    opts.signals = signals;
+    opts.exit = exit;
+    opts.languageModel = scriptedModel([
+      { calls: [{ input: { command: 'sleep 300' }, name: 'bash' }] },
+      { text: 'done' },
+    ]);
+    setTimeout(() => {
+      signals.emit('SIGINT');
+      signals.emit('SIGTERM');
+    }, 5000);
+
+    await runSmoke(opts).catch(() => undefined);
+
+    expect(exit).toHaveBeenCalledWith(130);
+    expect(exit).toHaveBeenCalledWith(143);
+    expect(await leftoverContainers()).toBe('');
+  }, 120_000);
+
   it('cannot be pointed at a host directory by a symlink at the checkout path', async () => {
     const opts = await options();
     const hostDir = path.join(path.dirname(opts.traceFile as string), 'host-secret-dir');
@@ -259,7 +281,11 @@ describe.skipIf(!enabled)('the Pi smoke tool against a real container', () => {
       const before = await smokeDirs();
       const child = spawn(
         process.execPath,
-        ['--import', 'tsx', path.join(import.meta.dirname, 'smoke.signalHarness.ts')],
+        [
+          '--import',
+          'tsx',
+          path.resolve(import.meta.dirname, '../../../scripts/piSmokeSignalHarness.ts'),
+        ],
         {
           cwd: path.resolve(import.meta.dirname, '../../..'),
           env: {
@@ -270,6 +296,9 @@ describe.skipIf(!enabled)('the Pi smoke tool against a real container', () => {
         }
       );
       let output = '';
+      child.stderr.on('data', (chunk) => {
+        output += String(chunk);
+      });
       let sent = false;
       child.stdout.on('data', (chunk) => {
         output += String(chunk);
@@ -279,24 +308,28 @@ describe.skipIf(!enabled)('the Pi smoke tool against a real container', () => {
         }
       });
       const code = await new Promise<number | null>((resolve) => child.on('exit', resolve));
+      // The child's output rides in every assertion message, so a CI failure says why.
       return { before, code, output, sent };
     }
 
     it('mid-turn removes the container and the temporary directory, and exits 130', async () => {
       const { before, code, output, sent } = await interruptedRun('Running the turn', 3000);
 
-      expect(sent).toBe(true);
+      expect(sent, output).toBe(true);
       expect(output).toContain('SIGINT: removing the container');
-      expect(code).toBe(130);
+      expect(code, output).toBe(130);
       expect(await leftoverContainers()).toBe('');
       expect((await smokeDirs()).filter((n) => !before.includes(n))).toEqual([]);
     }, 120_000);
 
     it('while the container is starting leaves no running container', async () => {
-      const { before, code, sent } = await interruptedRun('Starting a workspace container', 0);
+      const { before, code, output, sent } = await interruptedRun(
+        'Starting a workspace container',
+        0
+      );
 
-      expect(sent).toBe(true);
-      expect(code).toBe(130);
+      expect(sent, output).toBe(true);
+      expect(code, output).toBe(130);
       expect(await leftoverContainers()).toBe('');
       expect((await smokeDirs()).filter((n) => !before.includes(n))).toEqual([]);
     }, 120_000);

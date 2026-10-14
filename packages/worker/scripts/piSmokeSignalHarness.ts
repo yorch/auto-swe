@@ -1,12 +1,12 @@
 /**
- * A minimal process around `runSmoke` for `smoke.docker.test.ts`, which sends it a
+ * A minimal process around `runSmoke` for `src/agents/pi/smoke.docker.test.ts`, which sends it a
  * real SIGINT: an event-emitter test cannot see what other signal listeners in
  * the process (a `signal-exit` hook, say) do to the handler. It runs a scripted
  * turn that blocks in `sleep`, so the signal arrives mid-turn.
  *
- *   node --import tsx smoke.signalHarness.ts   (PI_SMOKE_HARNESS_IMAGE, PI_SMOKE_HARNESS_DIR)
+ *   node --import tsx scripts/piSmokeSignalHarness.ts   (PI_SMOKE_HARNESS_IMAGE, PI_SMOKE_HARNESS_DIR)
  */
-import { runSmoke, scriptedModel } from './smoke.js';
+import { runSmoke, scriptedModel } from '../src/agents/pi/smoke.js';
 
 process.env.DATABASE_URL ||= 'postgresql://smoke:smoke@127.0.0.1:1/smoke';
 

@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { rmSync } from 'node:fs';
 import { cp, lstat, mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -600,8 +601,22 @@ export async function runSmoke(options: SmokeOptions): Promise<{
   // a `signal-exit` hook (execa and friends) sees itself as the last one and re-raises the
   // signal, killing the process mid-cleanup.
   let interrupted = false;
+  let forced = false;
   const onSignal = (signal: string) => {
+    const exitCode = signal === 'SIGINT' ? 130 : 143;
     if (interrupted) {
+      // A second signal means the cleanup is stuck (a stalled pull, say): remove the
+      // container by name without waiting for `docker run`, and leave at once.
+      if (!forced) {
+        forced = true;
+        log(`${signal}: forcing exit…`);
+        void run('docker', ['rm', '-f', containerName], { env: dockerEnv(), timeout: 10_000 })
+          .catch(() => undefined)
+          .finally(() => {
+            rmSync(root, { force: true, recursive: true });
+            (options.exit ?? process.exit)(exitCode);
+          });
+      }
       return;
     }
     interrupted = true;
@@ -610,7 +625,7 @@ export async function runSmoke(options: SmokeOptions): Promise<{
     void cleanup().finally(() => {
       signals.off('SIGINT', onInt);
       signals.off('SIGTERM', onTerm);
-      (options.exit ?? process.exit)(signal === 'SIGINT' ? 130 : 143);
+      (options.exit ?? process.exit)(exitCode);
     });
   };
   const onInt = () => onSignal('SIGINT');
@@ -769,8 +784,8 @@ export async function runSmoke(options: SmokeOptions): Promise<{
       ? Object.assign(new Error(redactUrlCredentials(err.message)), { name: err.name })
       : err;
   } finally {
+    await cleanup();
     signals.off('SIGINT', onInt);
     signals.off('SIGTERM', onTerm);
-    await cleanup();
   }
 }

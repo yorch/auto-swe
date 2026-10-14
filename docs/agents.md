@@ -807,7 +807,8 @@ and a timeout on every call. The tree is copied out with `docker cp <container>:
 into a directory made on the host, so Docker resolves the path inside the container and a symlink
 the agent left at the checkout path cannot point the copy at a host directory. The container and
 the temporary directories are removed however the run ends, including on SIGINT and SIGTERM, which
-wait for an in-flight `docker run` (an image pull included) to settle before removing the container.
+wait for an in-flight `docker run` (an image pull included) to settle before removing the container;
+a second signal removes the container by name and exits at once, without waiting.
 
 Once a turn has run cleanly, compare the runtime with the Mastra loop on the same prompt, model and
 skills, as [evals.md "Comparing runtimes"](./evals.md#comparing-runtimes) describes:

@@ -121,6 +121,11 @@ jobs:
       - name: Generate Prisma client
         run: yarn db:generate
 
+      # The Pi smoke suite spawns a child process that resolves @auto-swe/shared/*
+      # through the package exports, which point at dist.
+      - name: Build shared
+        run: yarn workspace @auto-swe/shared build
+
       # The real runtime against a real container and a mock model API: the SDK,
       # `docker exec`, the musl binary from node_modules and the policy hook together.
       - name: Claude Code harness (Docker-backed tests)
