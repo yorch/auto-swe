@@ -256,7 +256,8 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     effectiveVersion !== null &&
     (effectiveVersion !== template?.activeVersion || template?.status === 'DRAFT');
   // The header already offers Run on an active workflow, so promotion there is secondary.
-  const promoteVariant = template?.status === 'ACTIVE' ? 'secondary' : 'primary';
+  const promoteVariant =
+    template?.status === 'ACTIVE' ? ('secondary' as const) : ('primary' as const);
   const isActiveVersion = effectiveVersion === template?.activeVersion;
 
   const templateInputSchema = template?.inputSchema;
