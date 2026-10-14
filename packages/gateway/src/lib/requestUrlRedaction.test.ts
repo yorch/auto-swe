@@ -23,6 +23,12 @@ describe('redactRequestUrl', () => {
       `/api/v1/webhooks/${encodeURIComponent(TOKEN).replace(/6/g, '%36')}`,
       '/api/v1/webhooks/[redacted]',
     ],
+    // Paths the router 404s, but that are still logged and traced (OTel resolves `..`).
+    [`/api/v1/webhooks//${TOKEN}`, '/api/v1/webhooks/[redacted]'],
+    [`/api//v1/webhooks/${TOKEN}`, '/api/v1/webhooks/[redacted]'],
+    [`/api/v1/x/../webhooks/${TOKEN}`, '/api/v1/webhooks/[redacted]'],
+    [`/api/v1/./webhooks/${TOKEN}/`, '/api/v1/webhooks/[redacted]/'],
+    [`/api/v1/%2e%2e/v1/webhooks/${TOKEN}`, '/api/v1/webhooks/[redacted]'],
     // An encoded slash is not a separator: the whole segment is the token.
     [`/api/v1/webhooks/${TOKEN}%2Fx`, '/api/v1/webhooks/[redacted]'],
   ])('redacts the token in %s', (url, expected) => {
@@ -90,12 +96,15 @@ describe('redactedRequestSerializer', () => {
       url: `/api/v1/%77ebhooks/${TOKEN}`,
     });
     expect(routed.statusCode).toBe(200);
-    const missing = await app.inject({
-      method: 'POST',
-      payload: {},
-      url: `/api/v1/webhooks/${TOKEN}/extra`,
-    });
-    expect(missing.statusCode).toBe(404);
+    for (const url of [
+      `/api/v1/webhooks/${TOKEN}/extra`,
+      `/api/v1/webhooks//${TOKEN}`,
+      `/api//v1/webhooks/${TOKEN}`,
+      `/api/v1/x/../webhooks/${TOKEN}`,
+    ]) {
+      // Most 404; whichever the router accepts or refuses, the token must not be logged.
+      await app.inject({ method: 'POST', payload: {}, url });
+    }
     await app.close();
 
     const all = lines.join('\n');

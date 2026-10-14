@@ -12,8 +12,6 @@
  * left readable, so a log line still says which provider called.
  */
 
-const WEBHOOK_PREFIX = '/api/v1/webhooks/';
-
 /** Path segments under the prefix that name a route, not a token. */
 const NAMED_WEBHOOK_ROUTES: ReadonlySet<string> = new Set(['access', 'ci', 'git', 'jira', 'slack']);
 
@@ -32,30 +30,54 @@ function decodePath(path: string): string {
 }
 
 /**
- * `url` with a webhook token in its path replaced by `[redacted]`. The query string is kept;
- * anything not under the webhook prefix is returned unchanged. The prefix is matched
- * case-insensitively and after percent-decoding; when a token is found the decoded path is
- * returned, since the encoded spelling of the token is as much a credential as the plain one.
+ * Collapse repeated slashes and resolve `.` and `..` segments, as an HTTP client or the tracing
+ * instrumentation would. A path the router 404s (`/api/v1/webhooks//<token>`,
+ * `/api/v1/x/../webhooks/<token>`) is still logged and traced, so it is matched in this form.
+ */
+function normalisePath(path: string): string {
+  const out: string[] = [];
+  for (const segment of path.split('/')) {
+    if (segment === '' || segment === '.') {
+      continue;
+    }
+    if (segment === '..') {
+      out.pop();
+      continue;
+    }
+    out.push(segment);
+  }
+  const lead = path.startsWith('/') ? '/' : '';
+  return `${lead}${out.join('/')}${path.endsWith('/') && out.length > 0 ? '/' : ''}`;
+}
+
+/**
+ * `url` with a webhook token in its path replaced by `[redacted]`: the segment after any
+ * `webhooks` segment, unless it names a route. The path is percent-decoded and normalised first,
+ * and when something is redacted that form is returned — an encoded or un-normalised spelling of
+ * the token is as much a credential as the plain one. The query string is kept; a path with no
+ * token is returned unchanged.
  */
 export function redactRequestUrl(url: string): string {
   const cut = url.search(/[?#]/);
   const path = cut === -1 ? url : url.slice(0, cut);
   const rest = cut === -1 ? '' : url.slice(cut);
-  const decoded = decodePath(path);
-  const at = decoded.toLowerCase().indexOf(WEBHOOK_PREFIX);
-  if (at === -1) {
+  if (!/webhooks/i.test(decodePath(path))) {
     return url;
   }
-  const start = at + WEBHOOK_PREFIX.length;
-  let end = start;
-  while (end < decoded.length && decoded[end] !== '/') {
-    end++;
+  const segments = normalisePath(decodePath(path)).split('/');
+  let redacted = false;
+  for (let i = 0; i < segments.length - 1; i++) {
+    const next = segments[i + 1] as string;
+    if (
+      (segments[i] as string).toLowerCase() === 'webhooks' &&
+      next.length > 0 &&
+      !NAMED_WEBHOOK_ROUTES.has(next.toLowerCase())
+    ) {
+      segments[i + 1] = REDACTED_SEGMENT;
+      redacted = true;
+    }
   }
-  const segment = decoded.slice(start, end);
-  if (segment.length === 0 || NAMED_WEBHOOK_ROUTES.has(segment.toLowerCase())) {
-    return url;
-  }
-  return `${decoded.slice(0, start)}${REDACTED_SEGMENT}${decoded.slice(end)}${rest}`;
+  return redacted ? `${segments.join('/')}${rest}` : url;
 }
 
 /**
