@@ -7,6 +7,12 @@ export interface TemplateEditorProps {
   onSelect: (id: string | null) => void;
   onChange: (next: WorkflowSpec) => void;
   costEstimateUsd?: number | null;
+  /**
+   * What the estimate above leaves out (container runtime, external calls,
+   * unpriced steps, retries). Rendered as the estimate's tooltip; a partial sum
+   * should say what it is missing.
+   */
+  costEstimateExclusions?: string | null;
   observedCostUsd?: number | null;
   parseError?: string | null;
   /** A save the server rejected; listed beside the live lint results rather than in a separate banner. */

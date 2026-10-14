@@ -34,10 +34,11 @@ export {
 } from './authoring.js';
 export type { Codemod } from './codemod.js';
 export { migrateSpec, registerCodemod } from './codemod.js';
-export type { CostEstimate, CostRole } from './costEstimator.js';
+export type { CostEstimate, CostRole, UnpricedReason } from './costEstimator.js';
 export {
   DEFAULT_FANOUT_WIDTH,
   DEFAULT_ROLE_PRICING,
+  describeCostExclusions,
   estimateSpecCost,
 } from './costEstimator.js';
 export { DEFAULT_ENGINEERING_SPEC } from './defaultEngineeringSpec.js';

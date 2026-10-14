@@ -7,6 +7,8 @@ import { cn, formatCost, plural } from '@/lib/utils';
 interface EditorActionBarProps {
   spec: WorkflowSpec;
   costEstimateUsd?: number | null;
+  /** What the estimate excludes; becomes the estimate's tooltip. */
+  costEstimateExclusions?: string | null;
   observedCostUsd?: number | null;
   paletteOpen: boolean;
   showOutline: boolean;
@@ -23,6 +25,7 @@ interface EditorActionBarProps {
 export function EditorActionBar({
   spec,
   costEstimateUsd,
+  costEstimateExclusions,
   observedCostUsd,
   paletteOpen,
   showOutline,
@@ -48,7 +51,11 @@ export function EditorActionBar({
         {costEstimateUsd != null && costEstimateUsd > 0 && (
           <div
             className="flex items-baseline gap-1.5"
-            title="Estimated from each agent's model price"
+            title={
+              costEstimateExclusions
+                ? `Estimated from each agent's model price. ${costEstimateExclusions}`
+                : "Estimated from each agent's model price"
+            }
           >
             <dt className="text-paper-500">Est.</dt>
             <dd className="text-paper-200 tabular-nums">{formatCost(costEstimateUsd)}/run</dd>

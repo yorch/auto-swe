@@ -1,6 +1,11 @@
 import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import type { StepMetadata, WorkflowSpec } from '@auto-swe/shared/workflow';
-import { estimateSpecCost, parseWorkflowSpec, validateSpec } from '@auto-swe/shared/workflow';
+import {
+  describeCostExclusions,
+  estimateSpecCost,
+  parseWorkflowSpec,
+  validateSpec,
+} from '@auto-swe/shared/workflow';
 import { use, useEffect, useMemo, useState } from 'react';
 import { countContainerNodes } from '@/components/workflow/containerNodes';
 import { useRolePricing } from '@/hooks/useModelCatalog';
@@ -155,6 +160,15 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     });
   }, [visualSpec, stepRegistryByName, rolePrices]);
 
+  // The estimate's caveat (container runtime, external calls, unpriced steps,
+  // retries) travels with the number, so a partial sum never reads as the whole
+  // cost. `visualSpec` is the not-yet-parsed canvas spec, so an unparseable
+  // draft simply has no estimate to qualify.
+  const costExclusions = useMemo(
+    () => (costEstimate ? describeCostExclusions(costEstimate) : null),
+    [costEstimate]
+  );
+
   const commitSave = async (spec: WorkflowSpec) => {
     try {
       const result = await createVersion.mutateAsync(spec);
@@ -270,6 +284,7 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     commitSave,
     continueSave,
     costEstimate,
+    costExclusions,
     createVersion,
     editMetaOpen,
     editorJson,

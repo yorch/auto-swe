@@ -585,6 +585,12 @@ register({
     },
     SYSTEM_PROMPT_FIELD,
   ],
+  // The referenced Agent's real model is not statically knowable (the ref may
+  // float, and the row is deployed, not authored), so this is an upper-bound
+  // proxy: the `implementer` role is the most expensive seeded class, which is
+  // the direction the estimator errs in. Without a hint an agent node — the
+  // most expensive node in most specs — contributed nothing at all.
+  costHint: { role: 'implementer', tokensIn: 20000, tokensOut: 8000 },
   description: 'Run a library Agent by reference (the declarative agent node).',
   label: 'Run agent',
   name: 'runAgentNode',

@@ -48,6 +48,7 @@ function EditorInner({
   onSelect,
   onChange,
   costEstimateUsd,
+  costEstimateExclusions,
   observedCostUsd,
   parseError,
   serverError,
@@ -106,6 +107,7 @@ function EditorInner({
       <EditorActionBar
         actions={actions}
         checkPending={checkResult?.server.state === 'pending'}
+        costEstimateExclusions={costEstimateExclusions}
         costEstimateUsd={costEstimateUsd}
         observedCostUsd={observedCostUsd}
         onCheck={runCheck}

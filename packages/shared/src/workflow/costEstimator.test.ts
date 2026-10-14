@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_MODELS, builtinModelSpec } from '../lib/builtinModels.js';
 import { SWE_AGENTS } from '../lib/syncBuiltins.js';
-import { DEFAULT_FANOUT_WIDTH, DEFAULT_ROLE_PRICING, estimateSpecCost } from './costEstimator.js';
+import {
+  type CostEstimate,
+  DEFAULT_FANOUT_WIDTH,
+  DEFAULT_ROLE_PRICING,
+  describeCostExclusions,
+  estimateSpecCost,
+  type UnpricedReason,
+} from './costEstimator.js';
 import type { StepMetadata } from './registry-types.js';
 import { makeSpec as spec } from './testHelpers.js';
 
@@ -28,6 +35,16 @@ const REGISTRY: Record<string, StepMetadata> = {
     description: '',
     label: '',
     name: 'noHint',
+  },
+  // Mirrors the real registry: the declarative `agent` node is priced from this
+  // step's hint, since the referenced Agent's own model is not statically known.
+  runAgentNode: {
+    category: 'agent',
+    configFields: [],
+    costHint: { role: 'implementer', tokensIn: 1_000_000, tokensOut: 1_000_000 },
+    description: '',
+    label: '',
+    name: 'runAgentNode',
   },
 };
 const lookup = (name: string): StepMetadata | undefined => REGISTRY[name];
@@ -87,6 +104,49 @@ describe('estimateSpecCost', () => {
     );
     expect(result.totalUsd).toBe(0);
     expect(result.perStep).toEqual([]);
+    // Not silently dropped: an unpriced step is reported so the editor can say
+    // what the number leaves out.
+    expect(result.unpriced).toEqual([{ nodeId: 'n', reason: 'no-cost-hint' }]);
+  });
+
+  it('prices a declarative agent node from the runAgentNode hint', () => {
+    const result = estimateSpecCost(
+      spec({
+        entry: 'a',
+        nodes: {
+          a: { agentRef: 'supportResponder', next: 't', type: 'agent' },
+          t: { status: 'SUCCESS', type: 'terminate' },
+        },
+      }),
+      { pricing: PRICING, stepLookup: lookup }
+    );
+    // Priced from the hint's proxy role rather than contributing nothing.
+    expect(result.totalUsd).toBeCloseTo(90, 6);
+    expect(result.perStep).toEqual([{ nodeId: 'a', step: 'runAgentNode', usd: 90 }]);
+    expect(result.unpriced).toEqual([]);
+  });
+
+  it('reports container, external, and hint-less nodes as unpriced', () => {
+    const result = estimateSpecCost(
+      spec({
+        entry: 'n',
+        nodes: {
+          c: { image: 'x', next: 'm', type: 'containerStep' },
+          m: { connectionRef: 'c1', next: 't', tool: 'do', type: 'mcp' },
+          n: { next: 'sh', step: 'noHint', type: 'step' },
+          sh: { command: 'true', image: 'alpine:latest', next: 'c', type: 'shell' },
+          t: { status: 'SUCCESS', type: 'terminate' },
+        },
+      }),
+      { pricing: PRICING, stepLookup: lookup }
+    );
+    expect(result.totalUsd).toBe(0);
+    expect(result.unpriced).toEqual([
+      { nodeId: 'n', reason: 'no-cost-hint' },
+      { nodeId: 'sh', reason: 'container-runtime' },
+      { nodeId: 'c', reason: 'container-runtime' },
+      { nodeId: 'm', reason: 'external-call' },
+    ]);
   });
 
   it('takes the max of cond arms (pessimistic)', () => {
@@ -226,5 +286,39 @@ describe('DEFAULT_ROLE_PRICING', () => {
         outputUsdPerM: model?.outputUsdPerMTok,
       });
     }
+  });
+});
+
+describe('describeCostExclusions', () => {
+  const est = (unpriced: Array<{ nodeId: string; reason: UnpricedReason }>): CostEstimate => ({
+    fanOutWidthAssumed: DEFAULT_FANOUT_WIDTH,
+    perStep: [],
+    totalUsd: 0,
+    unpriced,
+  });
+
+  it('returns null when the walk priced everything it reached', () => {
+    expect(describeCostExclusions(est([]))).toBeNull();
+  });
+
+  it('names each excluded class, with counts and the retry caveat', () => {
+    const sentence = describeCostExclusions(
+      est([
+        { nodeId: 'a', reason: 'container-runtime' },
+        { nodeId: 'b', reason: 'external-call' },
+        { nodeId: 'c', reason: 'no-cost-hint' },
+        { nodeId: 'd', reason: 'no-cost-hint' },
+      ])
+    );
+    expect(sentence).toBe(
+      'Excludes container runtime (1 node), external calls (1 node), unpriced steps (2 nodes) and retries (each node is counted once).'
+    );
+  });
+
+  it('omits a class that is not present', () => {
+    const sentence = describeCostExclusions(est([{ nodeId: 'a', reason: 'external-call' }]));
+    expect(sentence).toBe(
+      'Excludes external calls (1 node) and retries (each node is counted once).'
+    );
   });
 });

@@ -10,8 +10,9 @@
  *     (default 4, same as `DEFAULT_FANOUT_CONCURRENCY`). The actual width is
  *     only known at runtime from the planner's output, so the displayed
  *     number is a planning aid, not an invoice.
- *   - Nodes without a `costHint` contribute zero (consistent with the existing
- *     palette behavior).
+ *   - Nodes without a `costHint` contribute zero and are listed in `unpriced`,
+ *     which `describeCostExclusions` turns into the caveat shown beside the
+ *     number — a partial sum should say what it leaves out.
  *   - Each node's downstream cost is memoised, so a node reached by several
  *     arms (a diamond) counts fully in every arm and the max is the true worst
  *     case regardless of which arm is walked first. Cycles (cond → back-edge)
@@ -47,10 +48,30 @@ export const DEFAULT_ROLE_PRICING: Record<
 
 export const DEFAULT_FANOUT_WIDTH = 4;
 
+/**
+ * Why a node contributes nothing to the estimate. Kept as a closed set so the
+ * editor can render one sentence per class rather than a per-node list.
+ */
+export type UnpricedReason =
+  /** `shell` / `containerStep`: the cost is container runtime, not tokens. */
+  | 'container-runtime'
+  /** `mcp`: an external tool call whose token usage we cannot see. */
+  | 'external-call'
+  /** A `step` / `agent` / `eval` whose step metadata carries no `costHint`. */
+  | 'no-cost-hint';
+
 export interface CostEstimate {
   totalUsd: number;
   perStep: Array<{ nodeId: string; step: string; usd: number }>;
   fanOutWidthAssumed: number;
+  /**
+   * Nodes this estimate did not price, and why. A partial sum presented as the
+   * whole cost is worse than an acknowledged gap: an agent node with no hint
+   * used to be invisible here, so a spec that was mostly agent nodes estimated
+   * at zero. `describeCostExclusions` turns this into the sentence the editor
+   * shows beside the number.
+   */
+  unpriced: Array<{ nodeId: string; reason: UnpricedReason }>;
 }
 
 interface EstimatorOptions {
@@ -79,6 +100,7 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
   const pricing = { ...DEFAULT_ROLE_PRICING, ...(options.pricing ?? {}) };
   const fanOutWidth = options.fanOutWidth ?? DEFAULT_FANOUT_WIDTH;
   const perStep: CostEstimate['perStep'] = [];
+  const unpriced: CostEstimate['unpriced'] = [];
 
   // Per-node USD, recursive walker memoised per node. A plain visited set
   // made the branch max order-dependent: the second arm to reach a shared
@@ -117,21 +139,28 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
         const usd = stepUsd(meta, pricing);
         if (usd > 0) {
           perStep.push({ nodeId, step: node.step, usd });
+        } else {
+          // A step the registry prices at zero: either it is a container or
+          // external step (which has its own node type) or the hint is missing.
+          unpriced.push({ nodeId, reason: 'no-cost-hint' });
         }
         return usd + walk(node.next);
       }
       case 'agent': {
-        // Cost depends on the referenced Agent (dynamic); use the node's step
-        // metadata if it carries a cost hint, otherwise just walk onward.
+        // Cost depends on the referenced Agent (dynamic); priced from the
+        // step's hint, which is an upper-bound proxy for the agent class.
         const meta = options.stepLookup('runAgentNode');
         const usd = stepUsd(meta, pricing);
         if (usd > 0) {
           perStep.push({ nodeId, step: 'runAgentNode', usd });
+        } else {
+          unpriced.push({ nodeId, reason: 'no-cost-hint' });
         }
         return usd + walk(node.next);
       }
       case 'mcp':
         // External MCP tool call — no token-based cost modeled here.
+        unpriced.push({ nodeId, reason: 'external-call' });
         return walk(node.next);
       case 'eval': {
         // Evals node: the judge scorer (if any) makes one LLM call; model it via
@@ -140,11 +169,14 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
         const usd = stepUsd(meta, pricing);
         if (usd > 0) {
           perStep.push({ nodeId, step: 'runEvalNode', usd });
+        } else {
+          unpriced.push({ nodeId, reason: 'no-cost-hint' });
         }
         return usd + walk(node.next);
       }
       case 'containerStep':
         // Coded container step — container runtime cost, not token-based.
+        unpriced.push({ nodeId, reason: 'container-runtime' });
         return walk(node.next);
       case 'set':
         return walk(node.next);
@@ -157,6 +189,7 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
       case 'shell':
         // Shell steps don't have a token-based cost. They incur container
         // runtime cost instead, which we don't model here.
+        unpriced.push({ nodeId, reason: 'container-runtime' });
         return walk(node.next);
       case 'terminate':
         return 0;
@@ -175,5 +208,37 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
   };
 
   const totalUsd = walk(spec.entry);
-  return { fanOutWidthAssumed: fanOutWidth, perStep, totalUsd };
+  return { fanOutWidthAssumed: fanOutWidth, perStep, totalUsd, unpriced };
+}
+
+/**
+ * One sentence naming what the estimate leaves out, for display beside the
+ * number — or null when the walk priced every node it reached.
+ *
+ * The excluded classes are structural, not oversights: container steps cost
+ * runtime rather than tokens, an MCP call's usage is the remote server's, a
+ * step without a `costHint` has no basis to price, and a node in a retry loop
+ * is counted once (the walk cuts cycles rather than guessing an iteration
+ * count). Saying so is the difference between a partial sum and a wrong claim.
+ */
+export function describeCostExclusions(estimate: CostEstimate): string | null {
+  const count = (reason: UnpricedReason): number =>
+    estimate.unpriced.filter((u) => u.reason === reason).length;
+  const parts: string[] = [];
+  const container = count('container-runtime');
+  const external = count('external-call');
+  const noHint = count('no-cost-hint');
+  if (container > 0) {
+    parts.push(`container runtime (${container} ${container === 1 ? 'node' : 'nodes'})`);
+  }
+  if (external > 0) {
+    parts.push(`external calls (${external} ${external === 1 ? 'node' : 'nodes'})`);
+  }
+  if (noHint > 0) {
+    parts.push(`unpriced steps (${noHint} ${noHint === 1 ? 'node' : 'nodes'})`);
+  }
+  if (parts.length === 0) {
+    return null;
+  }
+  return `Excludes ${parts.join(', ')} and retries (each node is counted once).`;
 }
