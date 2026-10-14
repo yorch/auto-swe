@@ -243,17 +243,28 @@ Integration credentials that an operator rotates during normal use are stored en
 
 ## 3. Database setup
 
-The shipped schema lives in `packages/shared/src/prisma/migrations/` — a consolidated baseline, one
-hand-written DDL migration, and the ordinary Prisma migrations appended after them:
+The shipped schema lives in `packages/shared/src/prisma/migrations/` — a consolidated baseline and
+the hand-written DDL migration beside it:
 
 | Migration | What it adds |
 | --------- | ------------ |
-| `00000000000000_init` | The consolidated baseline, generated from `schema.prisma` via `prisma migrate diff --from-empty --to-schema --script` — the `vector` extension, every enum, table, column, FK and Prisma-expressible index (including the `repo_dependencies` edge table and `connections.package_names`) |
-| `00000000000001_custom_constraints_and_indexes` | Everything the DSL can't express: the HNSW vector index on `memory_items.embedding`, the partial unique indexes for the scope cascade (agents, credentials, [config settings and grants](./configuration.md)), HITL idempotency and the `repo_dependencies` resolved-edge/suggestion pair, singleton/scope and `repo_dependencies` CHECK constraints, array-column `NOT NULL`s, and the embedding-config seed |
-| `00000000000002_user_approval` | `users.approved_at` and `users.approval_source`, which record when and how an account was first approved so the GitHub organization auto-approval never re-approves a deactivated account |
+| `20260618000000_init` | The consolidated baseline, generated from `schema.prisma` via `prisma migrate diff --from-empty --to-schema --script` — the `vector` extension, every enum, table, column, FK and Prisma-expressible index (including the `repo_dependencies` edge table and `connections.package_names`) |
+| `20260618000001_custom_constraints_and_indexes` | Everything the DSL can't express: the HNSW vector indexes on `memory_items.embedding` and `knowledge_items.embedding`, the partial and expression indexes the scope cascade and the automation ledger rely on, the singleton / scope-discriminator / per-source-filter CHECK constraints, `api_tokens`' exactly-one-owner CHECK, array-column `NOT NULL`s, the governed-knowledge scope-guard triggers, and the embedding-config seed |
 
-New changes append normal Prisma migrations after these, and the baseline and the hand-written DDL
-migration are not edited. `prisma migrate deploy` applies whatever is pending.
+The split between the two is by *kind* of DDL, not by when it was written. While the schema is
+undeployed the pair is regenerated as a whole — the baseline from `schema.prisma` via
+`prisma migrate diff --from-empty --to-schema --script`, then the hand-written file beside it — so a
+schema change never leaves a third migration behind. Once the schema is deployed anywhere this
+inverts: both are applied in the wild and only new migrations are appended, and
+`prisma migrate deploy` applies whatever is pending. See the
+[`prisma-pgvector-hnsw`](../.claude/skills/prisma-pgvector-hnsw/SKILL.md) skill.
+
+Directory names follow Prisma's `<timestamp>_<name>` convention: `20260618000000_init` for the
+consolidated baseline and `20260618000001_custom_constraints_and_indexes` for the hand-written file
+beside it. The stamp is a sentinel — the day before the repository's earliest content migration —
+because that ordering is the contract: `migrate deploy` applies migrations lexicographically by
+directory name, so the baseline has to sort before every migration whose DDL it contains. It is
+deliberately not the date the consolidation happened.
 
 The `oauth_*` and `jwks` tables must exist before MCP clients can use the gateway, so deploy the migration
 first. The gateway does boot without them: it seeds the MCP resource into `oauth_resources` while

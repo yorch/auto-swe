@@ -79,7 +79,7 @@ packages/
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
 | `src/prisma/schema.prisma` | **Authoritative data model** — 88 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
-| `src/prisma/migrations/` | Generated `init` baseline, a hand-written constraints/indexes migration, and appended migrations for later changes |
+| `src/prisma/migrations/` | The consolidated `20260618000000_init` baseline (generated from `schema.prisma`) plus the hand-written `20260618000001_custom_constraints_and_indexes` beside it; new changes append their own migration once the schema is deployed |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
 | `src/scannerPatterns/index.ts` | `BUILTIN_SCANNER_PATTERNS` — synced at gateway startup |
 | `src/lib/syncBuiltins.ts` | Seeded built-in templates, agents, skills, and scanner patterns; idempotent, and never overwrites admin-owned state (see [Versioning and reproducibility](#versioning-and-reproducibility)) |

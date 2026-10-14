@@ -23,6 +23,15 @@ CREATE TYPE "WorkflowStepStatus" AS ENUM ('PENDING', 'RUNNING', 'PASSED', 'FAILE
 CREATE TYPE "WorkflowTemplateStatus" AS ENUM ('DRAFT', 'ACTIVE', 'ARCHIVED');
 
 -- CreateEnum
+CREATE TYPE "KnowledgeType" AS ENUM ('LEARNING', 'REFERENCE', 'DECISION', 'POLICY');
+
+-- CreateEnum
+CREATE TYPE "KnowledgeStatus" AS ENUM ('UNREVIEWED', 'APPROVED', 'REJECTED', 'SUPERSEDED');
+
+-- CreateEnum
+CREATE TYPE "KnowledgeVisibility" AS ENUM ('REPOSITORY', 'TEAM', 'SELECTED_TEAMS', 'ORGANIZATION');
+
+-- CreateEnum
 CREATE TYPE "ConfigScope" AS ENUM ('GLOBAL', 'ORGANIZATION', 'TEAM', 'CHANNEL', 'WORKFLOW_TEMPLATE');
 
 -- CreateEnum
@@ -44,6 +53,15 @@ CREATE TYPE "EvalSignalSource" AS ENUM ('GATE', 'ASSERT', 'REVIEW', 'MERGE', 'JU
 CREATE TYPE "channel_open_item_status" AS ENUM ('OPEN', 'RESOLVED', 'DISMISSED');
 
 -- CreateEnum
+CREATE TYPE "KnowledgeEvidenceProducer" AS ENUM ('QUALITY_GATE');
+
+-- CreateEnum
+CREATE TYPE "KnowledgeEvidenceOutcome" AS ENUM ('PASSED');
+
+-- CreateEnum
+CREATE TYPE "WorkflowRunKnowledgeSourceKind" AS ENUM ('UNKNOWN', 'REPOSITORY', 'TEAM');
+
+-- CreateEnum
 CREATE TYPE "ModelKind" AS ENUM ('CHAT', 'EMBEDDING');
 
 -- CreateEnum
@@ -61,6 +79,9 @@ CREATE TYPE "SkillSourceScriptMode" AS ENUM ('TEXT_ONLY', 'REJECT');
 -- CreateEnum
 CREATE TYPE "ScannerPatternType" AS ENUM ('INJECTION', 'EXFILTRATION', 'SHELL_COMMAND', 'CODE_SECURITY', 'SENSITIVE_FILE', 'PII');
 
+-- CreateEnum
+CREATE TYPE "OutboundDeliveryStatus" AS ENUM ('PENDING', 'DELIVERED', 'DEAD');
+
 -- CreateTable
 CREATE TABLE "active_workflows" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -68,6 +89,10 @@ CREATE TABLE "active_workflows" (
     "parent_workflow_id" TEXT,
     "work_request_id" UUID,
     "repo_id" UUID,
+    "knowledge_source_kind" "WorkflowRunKnowledgeSourceKind",
+    "knowledge_source_repo_id" UUID,
+    "knowledge_source_team_id" UUID,
+    "knowledge_source_org_id" UUID,
     "current_status" TEXT NOT NULL,
     "assigned_branch" TEXT,
     "budget_tier" TEXT NOT NULL DEFAULT 'STANDARD',
@@ -142,9 +167,11 @@ CREATE TABLE "pull_requests" (
 );
 
 -- CreateTable
-CREATE TABLE "personal_access_tokens" (
+CREATE TABLE "api_tokens" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
-    "user_id" UUID NOT NULL,
+    "user_id" UUID,
+    "service_principal_id" UUID,
+    "scopes" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "name" TEXT NOT NULL,
     "token_hash" TEXT NOT NULL,
     "prefix" TEXT NOT NULL,
@@ -153,7 +180,25 @@ CREATE TABLE "personal_access_tokens" (
     "revoked_at" TIMESTAMPTZ,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    CONSTRAINT "personal_access_tokens_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "api_tokens_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "service_principals" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "team_id" UUID NOT NULL,
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "created_by_id" UUID,
+    "disabled_at" TIMESTAMPTZ,
+    "max_runs_per_day" INTEGER NOT NULL DEFAULT 50,
+    "max_in_flight" INTEGER NOT NULL DEFAULT 5,
+    "connection_ids" UUID[] DEFAULT ARRAY[]::UUID[],
+    "template_ids" UUID[] DEFAULT ARRAY[]::UUID[],
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL,
+
+    CONSTRAINT "service_principals_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -188,6 +233,61 @@ CREATE TABLE "connections" (
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "connections_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "knowledge_items" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "owner_team_id" UUID NOT NULL,
+    "org_id" UUID NOT NULL,
+    "origin_team_id" UUID NOT NULL,
+    "repo_id" UUID,
+    "type" "KnowledgeType" NOT NULL DEFAULT 'LEARNING',
+    "status" "KnowledgeStatus" NOT NULL DEFAULT 'UNREVIEWED',
+    "visibility" "KnowledgeVisibility" NOT NULL DEFAULT 'REPOSITORY',
+    "title" TEXT NOT NULL,
+    "content" TEXT NOT NULL,
+    "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "entity_type" TEXT,
+    "entity_id" TEXT,
+    "version" INTEGER NOT NULL DEFAULT 1,
+    "approved_version" INTEGER,
+    "producer_run_id" UUID,
+    "producer_node_id" TEXT,
+    "producer_agent_key" TEXT,
+    "model_spec" TEXT,
+    "idempotency_key" TEXT,
+    "content_digest" TEXT NOT NULL,
+    "evidence" JSONB,
+    "embedding" vector(1536),
+    "embedding_model" TEXT,
+    "embedding_digest" TEXT,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "approved_by_id" UUID,
+    "approved_at" TIMESTAMPTZ,
+
+    CONSTRAINT "knowledge_items_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "knowledge_item_team_grants" (
+    "knowledge_item_id" UUID NOT NULL,
+    "team_id" UUID NOT NULL,
+
+    CONSTRAINT "knowledge_item_team_grants_pkey" PRIMARY KEY ("knowledge_item_id","team_id")
+);
+
+-- CreateTable
+CREATE TABLE "knowledge_item_events" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "knowledge_item_id" UUID NOT NULL,
+    "actor_id" UUID,
+    "action" TEXT NOT NULL,
+    "version" INTEGER NOT NULL,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "knowledge_item_events_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -309,6 +409,7 @@ CREATE TABLE "organizations" (
     "is_active" BOOLEAN NOT NULL DEFAULT true,
     "monthly_budget_usd_cents" INTEGER,
     "budget_alert_threshold_percent" INTEGER,
+    "trusted_invites" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -509,6 +610,8 @@ CREATE TABLE "users" (
     "github_login_account_id" TEXT,
     "role" "Role" NOT NULL DEFAULT 'ENGINEER',
     "is_active" BOOLEAN NOT NULL DEFAULT true,
+    "approved_at" TIMESTAMPTZ,
+    "approval_source" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "preferences" JSONB NOT NULL DEFAULT '{}',
@@ -570,12 +673,18 @@ CREATE TABLE "run_inputs" (
     "request_payload" TEXT NOT NULL,
     "payload" JSONB,
     "connection_id" UUID,
+    "knowledge_source_kind" "WorkflowRunKnowledgeSourceKind",
+    "knowledge_source_repo_id" UUID,
+    "knowledge_source_team_id" UUID,
+    "knowledge_source_org_id" UUID,
+    "knowledge_repo_sources" JSONB,
     "slack_message_ts" TEXT,
     "slack_channel_id" TEXT,
     "is_cross_repo" BOOLEAN NOT NULL DEFAULT false,
     "template_id" UUID,
     "template_version" INTEGER,
     "requested_by_id" UUID,
+    "requested_by_service_id" UUID,
     "idempotency_key" TEXT,
     "started_active_workflow_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -609,6 +718,83 @@ CREATE TABLE "scheduled_work_requests" (
 );
 
 -- CreateTable
+CREATE TABLE "automations" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "connection_id" UUID,
+    "team_id" UUID,
+    "target_connection_id" UUID,
+    "name" TEXT NOT NULL,
+    "enabled" BOOLEAN NOT NULL DEFAULT true,
+    "source" TEXT NOT NULL,
+    "filters" JSONB NOT NULL,
+    "inputs" JSONB NOT NULL DEFAULT '{}',
+    "cooldown_minutes" INTEGER NOT NULL DEFAULT 30,
+    "max_runs_per_day" INTEGER NOT NULL DEFAULT 10,
+    "template_id" UUID,
+    "created_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL,
+
+    CONSTRAINT "automations_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "event_endpoints" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "team_id" UUID NOT NULL,
+    "name" TEXT NOT NULL,
+    "enabled" BOOLEAN NOT NULL DEFAULT true,
+    "scheme" TEXT NOT NULL,
+    "signature_header" TEXT,
+    "signature_prefix" TEXT,
+    "signature_encoding" TEXT,
+    "format" TEXT NOT NULL DEFAULT 'json',
+    "type_pointer" TEXT NOT NULL,
+    "id_pointer" TEXT,
+    "subject_pointer" TEXT,
+    "scope_pointer" TEXT,
+    "time_pointer" TEXT,
+    "secret_ciphertext" BYTEA NOT NULL,
+    "secret_nonce" BYTEA NOT NULL,
+    "secret_auth_tag" BYTEA NOT NULL,
+    "secret_key_version" INTEGER NOT NULL,
+    "secret_last_four" TEXT NOT NULL,
+    "previous_secret_ciphertext" BYTEA,
+    "previous_secret_nonce" BYTEA,
+    "previous_secret_auth_tag" BYTEA,
+    "previous_secret_key_version" INTEGER,
+    "previous_secret_last_four" TEXT,
+    "previous_secret_expires_at" TIMESTAMPTZ,
+    "created_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL,
+
+    CONSTRAINT "event_endpoints_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "automation_fires" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "automation_id" UUID,
+    "connection_id" UUID,
+    "repo_key" TEXT NOT NULL,
+    "source" TEXT NOT NULL,
+    "dedupe_key" TEXT NOT NULL,
+    "outcome" TEXT NOT NULL,
+    "reason" TEXT,
+    "scope_key" TEXT NOT NULL,
+    "subject_key" TEXT NOT NULL,
+    "produced_key" TEXT,
+    "facts" JSONB NOT NULL DEFAULT '{}',
+    "temporal_workflow_id" TEXT,
+    "work_request_id" UUID,
+    "retried_at" TIMESTAMPTZ,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "automation_fires_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "workflow_artifacts" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "run_id" UUID,
@@ -625,6 +811,26 @@ CREATE TABLE "workflow_artifacts" (
 );
 
 -- CreateTable
+CREATE TABLE "trusted_knowledge_evidence" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "run_id" UUID NOT NULL,
+    "temporal_run_id" TEXT NOT NULL,
+    "recording_id" TEXT NOT NULL,
+    "spec_node_id" TEXT NOT NULL,
+    "step_attempt" INTEGER NOT NULL,
+    "activity_attempt" INTEGER NOT NULL DEFAULT 1,
+    "evidence_correlation" TEXT NOT NULL,
+    "producer" "KnowledgeEvidenceProducer" NOT NULL,
+    "gate_name" TEXT NOT NULL,
+    "outcome" "KnowledgeEvidenceOutcome" NOT NULL,
+    "artifact_id" UUID,
+    "summary" TEXT NOT NULL,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "trusted_knowledge_evidence_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "workflow_runs" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "workflow_id" TEXT NOT NULL,
@@ -633,6 +839,10 @@ CREATE TABLE "workflow_runs" (
     "work_request_id" UUID,
     "channel_id" UUID,
     "connection_id" UUID,
+    "knowledge_source_kind" "WorkflowRunKnowledgeSourceKind",
+    "knowledge_source_repo_id" UUID,
+    "knowledge_source_team_id" UUID,
+    "knowledge_source_org_id" UUID,
     "spec_snapshot" JSONB NOT NULL,
     "context_snapshot" JSONB,
     "agent_versions" JSONB,
@@ -737,6 +947,7 @@ CREATE TABLE "eval_cases" (
     "tags" TEXT[] DEFAULT ARRAY[]::TEXT[],
     "flake_screened" BOOLEAN NOT NULL DEFAULT false,
     "flake_runs" INTEGER NOT NULL DEFAULT 0,
+    "flake_screen_infra_errors" INTEGER NOT NULL DEFAULT 0,
     "quarantined" BOOLEAN NOT NULL DEFAULT false,
     "source_run_id" UUID,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -813,6 +1024,9 @@ CREATE TABLE "workflow_steps" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "run_id" UUID NOT NULL,
     "node_id" TEXT NOT NULL,
+    "spec_node_id" TEXT,
+    "node_type" TEXT,
+    "step_name" TEXT,
     "attempt" INTEGER NOT NULL DEFAULT 1,
     "status" "WorkflowStepStatus" NOT NULL DEFAULT 'PENDING',
     "started_at" TIMESTAMPTZ,
@@ -876,6 +1090,18 @@ CREATE TABLE "workflow_templates" (
     "experiment_version" INTEGER,
     "experiment_split" INTEGER,
     "webhook_token" TEXT,
+    "webhook_signing_secret_ciphertext" BYTEA,
+    "webhook_signing_secret_nonce" BYTEA,
+    "webhook_signing_secret_auth_tag" BYTEA,
+    "webhook_signing_secret_key_version" INTEGER,
+    "webhook_signing_secret_last_four" TEXT,
+    "webhook_previous_signing_secret_ciphertext" BYTEA,
+    "webhook_previous_signing_secret_nonce" BYTEA,
+    "webhook_previous_signing_secret_auth_tag" BYTEA,
+    "webhook_previous_signing_secret_key_version" INTEGER,
+    "webhook_previous_signing_secret_last_four" TEXT,
+    "webhook_previous_signing_secret_expires_at" TIMESTAMPTZ,
+    "webhook_require_signature" BOOLEAN NOT NULL DEFAULT false,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -1306,6 +1532,7 @@ CREATE TABLE "agents" (
     "mcp_connection_id" UUID,
     "tool_keys" JSONB,
     "runtime" TEXT,
+    "reasoning" TEXT,
     "origin" TEXT,
     "is_built_in" BOOLEAN NOT NULL DEFAULT false,
     "is_verified" BOOLEAN NOT NULL DEFAULT false,
@@ -1515,6 +1742,78 @@ CREATE TABLE "jwks" (
     CONSTRAINT "jwks_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "callback_endpoints" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "team_id" UUID NOT NULL,
+    "name" TEXT NOT NULL,
+    "origin" TEXT NOT NULL,
+    "path_prefix" TEXT NOT NULL DEFAULT '/',
+    "events" TEXT[],
+    "allow_private_network" BOOLEAN NOT NULL DEFAULT false,
+    "accept_template_webhook_launches" BOOLEAN NOT NULL DEFAULT false,
+    "signing_secret_ciphertext" BYTEA NOT NULL,
+    "signing_secret_nonce" BYTEA NOT NULL,
+    "signing_secret_auth_tag" BYTEA NOT NULL,
+    "signing_secret_key_version" INTEGER NOT NULL,
+    "signing_secret_last_four" TEXT NOT NULL,
+    "previous_signing_secret_ciphertext" BYTEA,
+    "previous_signing_secret_nonce" BYTEA,
+    "previous_signing_secret_auth_tag" BYTEA,
+    "previous_signing_secret_key_version" INTEGER,
+    "previous_signing_secret_last_four" TEXT,
+    "previous_signing_secret_expires_at" TIMESTAMPTZ,
+    "disabled_at" TIMESTAMPTZ,
+    "created_by_id" UUID,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL,
+
+    CONSTRAINT "callback_endpoints_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "run_callbacks" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "run_input_id" UUID NOT NULL,
+    "endpoint_id" UUID,
+    "workflow_id" TEXT NOT NULL,
+    "target" TEXT NOT NULL,
+    "url_ciphertext" BYTEA NOT NULL,
+    "url_nonce" BYTEA NOT NULL,
+    "url_auth_tag" BYTEA NOT NULL,
+    "url_key_version" INTEGER NOT NULL,
+    "context" JSONB,
+    "launched_by" JSONB NOT NULL,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "run_callbacks_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "outbound_deliveries" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "endpoint_id" UUID,
+    "run_callback_id" UUID,
+    "workflow_run_id" UUID NOT NULL,
+    "dedupe_key" TEXT NOT NULL,
+    "event" TEXT NOT NULL,
+    "payload" JSONB NOT NULL,
+    "status" "OutboundDeliveryStatus" NOT NULL DEFAULT 'PENDING',
+    "attempts" INTEGER NOT NULL DEFAULT 0,
+    "next_attempt_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "retry_window_started_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "last_attempt_at" TIMESTAMPTZ,
+    "claim_token" UUID,
+    "last_status_code" INTEGER,
+    "last_error" TEXT,
+    "dead_reason" TEXT,
+    "delivered_at" TIMESTAMPTZ,
+    "dead_at" TIMESTAMPTZ,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "outbound_deliveries_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "active_workflows_temporal_workflow_id_key" ON "active_workflows"("temporal_workflow_id");
 
@@ -1564,16 +1863,49 @@ CREATE INDEX "pull_requests_repo_id_idx" ON "pull_requests"("repo_id");
 CREATE INDEX "pull_requests_status_opened_at_idx" ON "pull_requests"("status", "opened_at");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "personal_access_tokens_token_hash_key" ON "personal_access_tokens"("token_hash");
+CREATE UNIQUE INDEX "api_tokens_token_hash_key" ON "api_tokens"("token_hash");
 
 -- CreateIndex
-CREATE INDEX "personal_access_tokens_user_id_idx" ON "personal_access_tokens"("user_id");
+CREATE INDEX "api_tokens_user_id_idx" ON "api_tokens"("user_id");
+
+-- CreateIndex
+CREATE INDEX "api_tokens_service_principal_id_idx" ON "api_tokens"("service_principal_id");
+
+-- CreateIndex
+CREATE INDEX "service_principals_created_by_id_idx" ON "service_principals"("created_by_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "service_principals_team_id_name_key" ON "service_principals"("team_id", "name");
 
 -- CreateIndex
 CREATE INDEX "connections_team_id_idx" ON "connections"("team_id");
 
 -- CreateIndex
 CREATE INDEX "connections_installation_id_idx" ON "connections"("installation_id");
+
+-- CreateIndex
+CREATE INDEX "knowledge_items_owner_team_id_status_visibility_idx" ON "knowledge_items"("owner_team_id", "status", "visibility");
+
+-- CreateIndex
+CREATE INDEX "knowledge_items_org_id_status_visibility_idx" ON "knowledge_items"("org_id", "status", "visibility");
+
+-- CreateIndex
+CREATE INDEX "knowledge_items_repo_id_status_idx" ON "knowledge_items"("repo_id", "status");
+
+-- CreateIndex
+CREATE INDEX "knowledge_items_origin_team_id_idx" ON "knowledge_items"("origin_team_id");
+
+-- CreateIndex
+CREATE INDEX "knowledge_items_approved_by_id_idx" ON "knowledge_items"("approved_by_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "knowledge_items_producer_run_id_producer_node_id_idempotenc_key" ON "knowledge_items"("producer_run_id", "producer_node_id", "idempotency_key");
+
+-- CreateIndex
+CREATE INDEX "knowledge_item_team_grants_team_id_idx" ON "knowledge_item_team_grants"("team_id");
+
+-- CreateIndex
+CREATE INDEX "knowledge_item_events_knowledge_item_id_created_at_idx" ON "knowledge_item_events"("knowledge_item_id", "created_at");
 
 -- CreateIndex
 CREATE INDEX "repo_access_connection_id_idx" ON "repo_access"("connection_id");
@@ -1720,6 +2052,9 @@ CREATE INDEX "run_inputs_connection_id_idx" ON "run_inputs"("connection_id");
 CREATE INDEX "run_inputs_requested_by_id_idx" ON "run_inputs"("requested_by_id");
 
 -- CreateIndex
+CREATE INDEX "run_inputs_requested_by_service_id_created_at_idx" ON "run_inputs"("requested_by_service_id", "created_at");
+
+-- CreateIndex
 CREATE INDEX "run_inputs_external_ticket_id_idx" ON "run_inputs"("external_ticket_id");
 
 -- CreateIndex
@@ -1744,7 +2079,58 @@ CREATE INDEX "scheduled_work_requests_work_request_id_idx" ON "scheduled_work_re
 CREATE INDEX "scheduled_work_requests_team_id_idx" ON "scheduled_work_requests"("team_id");
 
 -- CreateIndex
+CREATE INDEX "automations_connection_id_source_idx" ON "automations"("connection_id", "source");
+
+-- CreateIndex
+CREATE INDEX "automations_team_id_source_idx" ON "automations"("team_id", "source");
+
+-- CreateIndex
+CREATE INDEX "automations_target_connection_id_idx" ON "automations"("target_connection_id");
+
+-- CreateIndex
+CREATE INDEX "automations_template_id_idx" ON "automations"("template_id");
+
+-- CreateIndex
+CREATE INDEX "automations_created_by_id_idx" ON "automations"("created_by_id");
+
+-- CreateIndex
+CREATE INDEX "event_endpoints_team_id_idx" ON "event_endpoints"("team_id");
+
+-- CreateIndex
+CREATE INDEX "event_endpoints_created_by_id_idx" ON "event_endpoints"("created_by_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "automation_fires_dedupe_key_key" ON "automation_fires"("dedupe_key");
+
+-- CreateIndex
+CREATE INDEX "automation_fires_automation_id_created_at_idx" ON "automation_fires"("automation_id", "created_at");
+
+-- CreateIndex
+CREATE INDEX "automation_fires_repo_key_scope_key_created_at_idx" ON "automation_fires"("repo_key", "scope_key", "created_at");
+
+-- CreateIndex
+CREATE INDEX "automation_fires_repo_key_subject_key_idx" ON "automation_fires"("repo_key", "subject_key");
+
+-- CreateIndex
+CREATE INDEX "automation_fires_produced_key_idx" ON "automation_fires"("produced_key");
+
+-- CreateIndex
+CREATE INDEX "automation_fires_work_request_id_idx" ON "automation_fires"("work_request_id");
+
+-- CreateIndex
+CREATE INDEX "automation_fires_connection_id_idx" ON "automation_fires"("connection_id");
+
+-- CreateIndex
 CREATE INDEX "workflow_artifacts_run_id_idx" ON "workflow_artifacts"("run_id");
+
+-- CreateIndex
+CREATE INDEX "trusted_knowledge_evidence_run_id_artifact_id_idx" ON "trusted_knowledge_evidence"("run_id", "artifact_id");
+
+-- CreateIndex
+CREATE INDEX "trusted_knowledge_evidence_artifact_id_idx" ON "trusted_knowledge_evidence"("artifact_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "trusted_knowledge_evidence_run_id_recording_id_step_attempt_key" ON "trusted_knowledge_evidence"("run_id", "recording_id", "step_attempt", "activity_attempt", "producer", "gate_name");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "workflow_runs_workflow_id_key" ON "workflow_runs"("workflow_id");
@@ -1763,6 +2149,12 @@ CREATE INDEX "workflow_runs_channel_id_idx" ON "workflow_runs"("channel_id");
 
 -- CreateIndex
 CREATE INDEX "workflow_runs_connection_id_idx" ON "workflow_runs"("connection_id");
+
+-- CreateIndex
+CREATE INDEX "workflow_runs_started_at_idx" ON "workflow_runs"("started_at");
+
+-- CreateIndex
+CREATE INDEX "workflow_runs_status_started_at_idx" ON "workflow_runs"("status", "started_at");
 
 -- CreateIndex
 CREATE INDEX "autonomy_decisions_run_id_idx" ON "autonomy_decisions"("run_id");
@@ -1843,7 +2235,13 @@ CREATE INDEX "workflow_human_steps_run_id_node_id_idx" ON "workflow_human_steps"
 CREATE INDEX "workflow_human_steps_status_idx" ON "workflow_human_steps"("status");
 
 -- CreateIndex
+CREATE INDEX "workflow_human_steps_resolved_by_idx" ON "workflow_human_steps"("resolved_by");
+
+-- CreateIndex
 CREATE INDEX "human_approvals_step_id_idx" ON "human_approvals"("step_id");
+
+-- CreateIndex
+CREATE INDEX "human_approvals_resolved_by_idx" ON "human_approvals"("resolved_by");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "human_approvals_step_id_resolved_by_key" ON "human_approvals"("step_id", "resolved_by");
@@ -1990,6 +2388,9 @@ CREATE INDEX "agents_channel_id_idx" ON "agents"("channel_id");
 CREATE INDEX "agents_workflow_template_id_idx" ON "agents"("workflow_template_id");
 
 -- CreateIndex
+CREATE INDEX "agent_skill_refs_skill_id_idx" ON "agent_skill_refs"("skill_id");
+
+-- CreateIndex
 CREATE UNIQUE INDEX "agent_skill_refs_agent_id_skill_id_key" ON "agent_skill_refs"("agent_id", "skill_id");
 
 -- CreateIndex
@@ -2058,6 +2459,36 @@ CREATE INDEX "oauth_consents_client_id_idx" ON "oauth_consents"("client_id");
 -- CreateIndex
 CREATE INDEX "oauth_consents_user_id_idx" ON "oauth_consents"("user_id");
 
+-- CreateIndex
+CREATE INDEX "callback_endpoints_created_by_id_idx" ON "callback_endpoints"("created_by_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "callback_endpoints_team_id_name_key" ON "callback_endpoints"("team_id", "name");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "run_callbacks_run_input_id_key" ON "run_callbacks"("run_input_id");
+
+-- CreateIndex
+CREATE INDEX "run_callbacks_endpoint_id_idx" ON "run_callbacks"("endpoint_id");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "outbound_deliveries_dedupe_key_key" ON "outbound_deliveries"("dedupe_key");
+
+-- CreateIndex
+CREATE INDEX "outbound_deliveries_status_next_attempt_at_idx" ON "outbound_deliveries"("status", "next_attempt_at");
+
+-- CreateIndex
+CREATE INDEX "outbound_deliveries_status_created_at_idx" ON "outbound_deliveries"("status", "created_at");
+
+-- CreateIndex
+CREATE INDEX "outbound_deliveries_endpoint_id_created_at_idx" ON "outbound_deliveries"("endpoint_id", "created_at");
+
+-- CreateIndex
+CREATE INDEX "outbound_deliveries_workflow_run_id_idx" ON "outbound_deliveries"("workflow_run_id");
+
+-- CreateIndex
+CREATE INDEX "outbound_deliveries_run_callback_id_idx" ON "outbound_deliveries"("run_callback_id");
+
 -- AddForeignKey
 ALTER TABLE "active_workflows" ADD CONSTRAINT "active_workflows_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
@@ -2095,13 +2526,49 @@ ALTER TABLE "pull_requests" ADD CONSTRAINT "pull_requests_workflow_id_fkey" FORE
 ALTER TABLE "pull_requests" ADD CONSTRAINT "pull_requests_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "connections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "personal_access_tokens" ADD CONSTRAINT "personal_access_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "api_tokens" ADD CONSTRAINT "api_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "api_tokens" ADD CONSTRAINT "api_tokens_service_principal_id_fkey" FOREIGN KEY ("service_principal_id") REFERENCES "service_principals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "service_principals" ADD CONSTRAINT "service_principals_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "service_principals" ADD CONSTRAINT "service_principals_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "connections" ADD CONSTRAINT "connections_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "connections" ADD CONSTRAINT "connections_installation_id_fkey" FOREIGN KEY ("installation_id") REFERENCES "github_installations"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "knowledge_items" ADD CONSTRAINT "knowledge_items_owner_team_id_fkey" FOREIGN KEY ("owner_team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "knowledge_items" ADD CONSTRAINT "knowledge_items_org_id_fkey" FOREIGN KEY ("org_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "knowledge_items" ADD CONSTRAINT "knowledge_items_origin_team_id_fkey" FOREIGN KEY ("origin_team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "knowledge_items" ADD CONSTRAINT "knowledge_items_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "knowledge_items" ADD CONSTRAINT "knowledge_items_approved_by_id_fkey" FOREIGN KEY ("approved_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "knowledge_item_team_grants" ADD CONSTRAINT "knowledge_item_team_grants_knowledge_item_id_fkey" FOREIGN KEY ("knowledge_item_id") REFERENCES "knowledge_items"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "knowledge_item_team_grants" ADD CONSTRAINT "knowledge_item_team_grants_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "knowledge_item_events" ADD CONSTRAINT "knowledge_item_events_knowledge_item_id_fkey" FOREIGN KEY ("knowledge_item_id") REFERENCES "knowledge_items"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "knowledge_item_events" ADD CONSTRAINT "knowledge_item_events_actor_id_fkey" FOREIGN KEY ("actor_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "repo_access" ADD CONSTRAINT "repo_access_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
@@ -2191,6 +2658,9 @@ ALTER TABLE "run_inputs" ADD CONSTRAINT "run_inputs_connection_id_fkey" FOREIGN 
 ALTER TABLE "run_inputs" ADD CONSTRAINT "run_inputs_requested_by_id_fkey" FOREIGN KEY ("requested_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "run_inputs" ADD CONSTRAINT "run_inputs_requested_by_service_id_fkey" FOREIGN KEY ("requested_by_service_id") REFERENCES "service_principals"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_repo_id_fkey" FOREIGN KEY ("repo_id") REFERENCES "connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -2209,7 +2679,40 @@ ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_wo
 ALTER TABLE "scheduled_work_requests" ADD CONSTRAINT "scheduled_work_requests_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "automations" ADD CONSTRAINT "automations_connection_id_fkey" FOREIGN KEY ("connection_id") REFERENCES "connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "automations" ADD CONSTRAINT "automations_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "automations" ADD CONSTRAINT "automations_target_connection_id_fkey" FOREIGN KEY ("target_connection_id") REFERENCES "connections"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "automations" ADD CONSTRAINT "automations_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "workflow_templates"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "automations" ADD CONSTRAINT "automations_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "event_endpoints" ADD CONSTRAINT "event_endpoints_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "event_endpoints" ADD CONSTRAINT "event_endpoints_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "automation_fires" ADD CONSTRAINT "automation_fires_automation_id_fkey" FOREIGN KEY ("automation_id") REFERENCES "automations"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "automation_fires" ADD CONSTRAINT "automation_fires_connection_id_fkey" FOREIGN KEY ("connection_id") REFERENCES "connections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "workflow_artifacts" ADD CONSTRAINT "workflow_artifacts_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "trusted_knowledge_evidence" ADD CONSTRAINT "trusted_knowledge_evidence_run_id_fkey" FOREIGN KEY ("run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "trusted_knowledge_evidence" ADD CONSTRAINT "trusted_knowledge_evidence_artifact_id_fkey" FOREIGN KEY ("artifact_id") REFERENCES "workflow_artifacts"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_template_id_fkey" FOREIGN KEY ("template_id") REFERENCES "workflow_templates"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -2402,4 +2905,25 @@ ALTER TABLE "oauth_consents" ADD CONSTRAINT "oauth_consents_client_id_fkey" FORE
 
 -- AddForeignKey
 ALTER TABLE "oauth_consents" ADD CONSTRAINT "oauth_consents_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "callback_endpoints" ADD CONSTRAINT "callback_endpoints_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "callback_endpoints" ADD CONSTRAINT "callback_endpoints_created_by_id_fkey" FOREIGN KEY ("created_by_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "run_callbacks" ADD CONSTRAINT "run_callbacks_run_input_id_fkey" FOREIGN KEY ("run_input_id") REFERENCES "run_inputs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "run_callbacks" ADD CONSTRAINT "run_callbacks_endpoint_id_fkey" FOREIGN KEY ("endpoint_id") REFERENCES "callback_endpoints"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "outbound_deliveries" ADD CONSTRAINT "outbound_deliveries_endpoint_id_fkey" FOREIGN KEY ("endpoint_id") REFERENCES "callback_endpoints"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "outbound_deliveries" ADD CONSTRAINT "outbound_deliveries_run_callback_id_fkey" FOREIGN KEY ("run_callback_id") REFERENCES "run_callbacks"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "outbound_deliveries" ADD CONSTRAINT "outbound_deliveries_workflow_run_id_fkey" FOREIGN KEY ("workflow_run_id") REFERENCES "workflow_runs"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
