@@ -3,15 +3,18 @@
 import Link from 'next/link';
 import { use, useState } from 'react';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
+import { Alert } from '@/components/ui/Alert';
 import { BackLink } from '@/components/ui/BackLink';
 import { Badge } from '@/components/ui/Badge';
+import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { useEvalDataset, useEvalRuns } from '@/hooks/useAdmin';
+import { useEvalDataset, useEvalRuns, useRescreenEvalCases } from '@/hooks/useAdmin';
 import { formatArm } from '@/lib/evalRuntime';
 import { validateRouteParam } from '@/lib/routeParams';
 import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
@@ -25,6 +28,10 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
   const [casesPage, setCasesPage] = useState(0);
   const dataset = useEvalDataset(id);
   const runs = useEvalRuns(id, RUNS_LIMIT, runsOffset);
+  const rescreen = useRescreenEvalCases(id ?? '');
+  // The re-check awaiting confirmation: one case, or (no caseId) the whole dataset.
+  const [confirmRescreen, setConfirmRescreen] = useState<{ caseId?: string } | null>(null);
+  const [rescreenNote, setRescreenNote] = useState<string | null>(null);
   const ds = dataset.data;
   const runRows = runs.data?.data ?? [];
   const runsTotal = runs.data?.meta.total ?? 0;
@@ -157,10 +164,22 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
             <Card>
               <CardHeader>
                 <CardTitle eyebrow="Golden cases">Cases</CardTitle>
-                <span className="text-xs text-paper-500 tabular-nums">
-                  {ds.caseCount} case{ds.caseCount === 1 ? '' : 's'}
+                <span className="flex items-center gap-3">
+                  <span className="text-xs text-paper-500 tabular-nums">
+                    {ds.caseCount} case{ds.caseCount === 1 ? '' : 's'}
+                  </span>
+                  {ds.cases.length > 0 && (
+                    <Button onClick={() => setConfirmRescreen({})} size="sm">
+                      Re-check all
+                    </Button>
+                  )}
                 </span>
               </CardHeader>
+              {rescreenNote && (
+                <Alert className="mb-3" variant="info">
+                  {rescreenNote}
+                </Alert>
+              )}
               <div className="-mx-4">
                 <Table className="max-sm:px-4" stacked>
                   <THead>
@@ -169,7 +188,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                     <Th variant="plain">Golden test</Th>
                     <Th variant="plain">Tags</Th>
                     <Th variant="plain">
-                      <span title="Each case is re-run several times on the baseline; cases that pass only some of the time are flaky and get quarantined so they cannot skew a verdict.">
+                      <span title="Each case's golden test is run several times at its pinned commit; a case that fails any run is flaky, and the benchmark does not score it, so it cannot skew a verdict. Re-check one after fixing what made it fail.">
                         Stability check
                       </span>
                     </Th>
@@ -212,11 +231,31 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                             )}
                           </Td>
                           <Td className="px-4 py-2.5" label="Stability check">
-                            <Badge dot tone={c.flakeScreened ? 'moss' : 'muted'} variant="text">
+                            {/* A failed check (runs recorded, no pass) is skipped like an unchecked case. */}
+                            <Badge
+                              dot
+                              tone={c.flakeScreened ? 'moss' : c.flakeRuns > 0 ? 'amber' : 'muted'}
+                              variant="text"
+                            >
                               {c.flakeScreened
                                 ? `Checked (${c.flakeRuns} runs)`
-                                : 'Not checked yet'}
+                                : c.screenEnvironmentFailed
+                                  ? "Couldn't be checked (its runs kept being killed or timing out)"
+                                  : c.flakeRuns > 0
+                                    ? `Flaky (failed a ${c.flakeRuns}-run check)`
+                                    : 'Not checked yet'}
                             </Badge>
+                            {c.flakeRuns > 0 && (
+                              <Button
+                                aria-label={`Re-check case ${c.id}`}
+                                className="ml-2"
+                                onClick={() => setConfirmRescreen({ caseId: c.id })}
+                                size="sm"
+                                variant="ghost"
+                              >
+                                Re-check
+                              </Button>
+                            )}
                           </Td>
                         </TRow>
                       ))}
@@ -246,6 +285,25 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                 </div>
               )}
             </Card>
+            <ConfirmModal
+              confirmLabel="Re-check"
+              message={
+                confirmRescreen?.caseId
+                  ? 'This case goes back to "Not checked yet" and is checked again. Until that check passes, benchmark runs do not score it.'
+                  : 'Every case goes back to "Not checked yet" and is checked again. Until a case passes its check, benchmark runs do not score it, so runs in the meantime may be inconclusive.'
+              }
+              onClose={() => setConfirmRescreen(null)}
+              onConfirm={async () => {
+                const r = await rescreen.mutateAsync(confirmRescreen?.caseId);
+                setRescreenNote(
+                  r.screenStarted
+                    ? `${r.reset} case${r.reset === 1 ? '' : 's'} reset; the stability check has started.`
+                    : `${r.reset} case${r.reset === 1 ? '' : 's'} reset. The check could not start now; the next benchmark run of this dataset starts it.`
+                );
+              }}
+              open={confirmRescreen !== null}
+              title={confirmRescreen?.caseId ? 'Re-check this case?' : 'Re-check every case?'}
+            />
           </>
         )}
       </QueryBoundary>

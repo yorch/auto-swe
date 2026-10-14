@@ -6,8 +6,12 @@ import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import type { WorkspaceProviderMetadata } from '@auto-swe/shared/lib/workspaceProviders';
 import type { FastifyBaseLogger, FastifyInstance, FastifyReply } from 'fastify';
-import type { JwtPayload } from '../plugins/auth.js';
-import { authorizeLaunch, sendLaunchRefusal } from './launchAuthorization.js';
+import type { JwtPayload, ServicePrincipalCaller } from '../plugins/auth.js';
+import {
+  authorizeLaunch,
+  authorizeServiceLaunch,
+  sendLaunchRefusal,
+} from './launchAuthorization.js';
 import type { LaunchRepositorySource } from './workflowLaunch.js';
 
 export interface ValidateRunConnectionInput {
@@ -16,6 +20,12 @@ export interface ValidateRunConnectionInput {
   providerMeta: WorkspaceProviderMetadata | null;
   templateTeamId: string | null;
   user: JwtPayload | null;
+  /**
+   * A service principal launching (with `user` null): the connection is then decided by
+   * `authorizeServiceLaunch` — its allowlist, its team's reach and the org's cap — instead of the
+   * template-team check a public or webhook caller gets.
+   */
+  service?: ServicePrincipalCaller;
   /**
    * The GitHub permission gate. Required so a caller has to name it — it was
    * optional in an earlier shape and the one caller that needed it applied the
@@ -60,13 +70,22 @@ export async function validateRunConnection(
   input: ValidateRunConnectionInput,
   reply: FastifyReply
 ): Promise<ValidateRunConnectionResult> {
-  const { connectionId, gate, log, prisma, providerMeta, templateTeamId, user } = input;
+  const { connectionId, gate, log, prisma, providerMeta, service, templateTeamId, user } = input;
 
   let budgetOrgId: string | null = null;
   let budgetCap: number | null = null;
   let source: LaunchRepositorySource | null = null;
 
   if (connectionId) {
+    // A principal is answered from its allowlist before anything is looked up, and exactly as
+    // for a connection that does not exist: it cannot probe which connection ids exist, are
+    // inactive or sit behind a retired installation.
+    if (service && !service.connectionIds.includes(connectionId)) {
+      reply.status(404).send({
+        error: { code: 'CONNECTION_NOT_FOUND', message: 'Connection not found or inactive' },
+      });
+      return { ok: false };
+    }
     const connection = await prisma.connection.findUnique({
       include: {
         installation: { select: { host: true, installationId: true, isActive: true } },
@@ -74,7 +93,13 @@ export async function validateRunConnection(
         // too. Filtered to the acting user; with no user (a public or webhook
         // caller) the decision never runs, so match nobody rather than load
         // every shared team's membership for nothing.
-        shares: repoMembersSelect({ userId: true }, { userId: user?.sub ?? NO_USER }).shares,
+        // `teamId` too, for a service principal, whose reach is its team's.
+        shares: {
+          select: {
+            ...repoMembersSelect({ userId: true }, { userId: user?.sub ?? NO_USER }).shares.select,
+            teamId: true,
+          },
+        },
         team: {
           include: {
             // Filtered to the acting user. It used to load every member of the
@@ -115,6 +140,14 @@ export async function validateRunConnection(
         // An authenticated template run is launched as its caller
         // (`launchedById`); a public or webhook caller never reaches here.
         runIdentity: 'caller',
+      });
+      if (!authorization.ok) {
+        sendLaunchRefusal(reply, authorization.refusal);
+        return { ok: false };
+      }
+    } else if (service) {
+      const authorization = await authorizeServiceLaunch(prisma, service, {
+        repos: [connection],
       });
       if (!authorization.ok) {
         sendLaunchRefusal(reply, authorization.refusal);

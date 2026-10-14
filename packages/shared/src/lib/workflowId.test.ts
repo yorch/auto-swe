@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   chooseWorkflowId,
   disambiguatedWorkflowIdBase,
+  evalScreenWorkflowId,
   generateBranchName,
   generateWorkflowId,
   legacyWorkflowIdBases,
@@ -329,5 +330,11 @@ describe('chooseWorkflowId — rows of one repository under several ids', () => 
       disambiguatedWorkflowIdBase(base, REPO_A),
       disambiguatedWorkflowIdBase(base, REPO_B),
     ]);
+  });
+});
+
+describe('evalScreenWorkflowId', () => {
+  it('is one deterministic id per dataset', () => {
+    expect(evalScreenWorkflowId('d1')).toBe('eval-screen-d1');
   });
 });

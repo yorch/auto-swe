@@ -3,7 +3,8 @@
 An **automation** starts template runs without a person pressing run. Every automation has the same
 three parts:
 
-- **When** it fires: an event on a repository and the automation's filters over it.
+- **When** it fires: an event on what the automation belongs to (a repository, or a team) and
+  the automation's filters over it.
 - **What** it starts: a template, and that template's own options.
 - **Limits** on how often: a cooldown, a daily cap, and the guards every decision applies.
 
@@ -18,9 +19,22 @@ transition hook start runs too; they keep their own configuration (§6).
 
 ## 1. Event automations
 
-An event automation (`Automation`) is a rule on one repository. When an **occurrence** of its
-**source** happens on that repository and its filters select it, the platform starts its template.
-Automations are opt-in per repository; there are none until someone creates one.
+An event automation (`Automation`) is a rule that belongs to an **owner**. When an
+**occurrence** of its **source** happens on that owner and its filters select it, the platform
+starts its template. Automations are opt-in; there are none until someone creates one.
+
+Each source declares what its automations belong to (its `target`):
+
+- **A repository** (`connectionId`): the rule is on one git repository, its runs act on that
+  repository, and the repository's owning team manages it. Both shipped sources target a
+  repository.
+- **A team** (`teamId`): the rule belongs to a team and has no repository; its runs act on none
+  and take the workspace their template declares (§1, *Team automations*).
+
+The database holds every automation to at least one owner (`automations_owner_present`). A row
+that names a repository is a repository automation, whatever else it names. The API creates an
+automation only on the owner its source targets, and answers `400 SOURCE_TARGET_MISMATCH`
+otherwise.
 
 | Field | Part | Meaning | Default |
 |---|---|---|---|
@@ -29,7 +43,7 @@ Automations are opt-in per repository; there are none until someone creates one.
 | `filters` | when | The source's filters, a JSON object in the source's shape | — |
 | `cooldownMinutes` | limits | No new run for the same scope (a branch, for CI) within this many minutes of the last one started (0–10080) | 30 |
 | `maxRunsPerDay` | limits | Most runs this automation starts in any 24 hours (1–500) | 10 |
-| `templateId` | what | A template to start instead of the source's default: active, global or the repository team's own, not a system template, and one the source can start | the source's default |
+| `templateId` | what | A template to start instead of the source's default: active, global or the owning team's own (the repository's team, or the team automation's team), not a system template, and one the source can start | the source's default |
 | `inputs` | what | The template's options this automation sets. An option left out takes the template's default | `{}` |
 | `enabled` | — | — | `true` |
 
@@ -44,7 +58,8 @@ follows the template when a default moves; the API stores the options it is sent
 
 1. every declared default;
 2. the automation's options (only keys the template declares);
-3. the repository and what the occurrence fills, which always win.
+3. the repository (for an automation that has one) and what the occurrence fills, which always
+   win.
 
 The result must pass the template's input schema and, where the source has one, the source's
 payload contract, which is what the run itself parses.
@@ -64,18 +79,20 @@ automation whose filters do not parse matches nothing.
 automation the caller may see, of every kind (§5). Each row says:
 
 - when it fires;
-- what it is on (a repository, a team's template, the platform);
+- what it is on (a repository, a team, a team's template, the platform);
 - what it starts;
 - what it last did: the latest decision for an event automation, a schedule or a template webhook
   (§5), with its reason on hover, and the latest run for the tracker hook.
 
-Rows can be filtered by kind and searched. **Manage** opens where that kind is edited. **New event
+Rows can be filtered by kind and searched. **Manage** opens where that kind is edited: a
+repository's automations, or for an automation with no repository, its team's. **New event
 automation** asks for a repository and opens its automations. **Schedules**
 leads to the schedule editor at `/govern/schedules`, which keeps its own page and live state.
 
 `GET /api/v1/automations` serves the page:
 
-- event automations on the repositories the caller can reach (all, for ADMIN);
+- event automations on the repositories the caller can reach, and team automations of the teams
+  they belong to (all, for ADMIN). A team automation's row names its team and no repository;
 - template webhook URLs on templates the caller can read. Managing one also needs platform role
   LEAD, as the webhook routes do, and a webhook's last call is the newest one the caller may see
   (§5), so a global template never shows another team's call;
@@ -98,11 +115,17 @@ which depend on earlier runs.
 | Route | Who |
 |---|---|
 | `GET /api/v1/automations/events?connectionId=` | A member of the owning team or of a team the repository is shared with, or ADMIN; under an enforcing [access gate](./repo-access-gating.md) a member also needs a current GitHub permission on the repository. The response says whether the caller may manage them (`canManage`) |
-| `POST /api/v1/automations/events` | ADMIN, or a LEAD of the repository's **owning** team |
+| `GET /api/v1/automations/events?teamId=` | A member of the team, or ADMIN: the team's automations that have no repository |
+| `POST /api/v1/automations/events` | ADMIN, or a LEAD of the repository's **owning** team; for a team automation (`teamId` instead of `connectionId`), ADMIN or a LEAD of that team |
 | `PATCH` / `DELETE /api/v1/automations/events/:id` | The same |
 | `GET /api/v1/automations/events/:id/fires?limit=` | A member, as for the list |
 | `POST /api/v1/automations/events/:id/fires/:fireId/retry` | Those who may manage, as a launch decision: takes one decision that started no run again (§2) |
-| `GET /api/v1/automations/events/templates?connectionId=&source=` | Those who may manage: the templates an automation of that source may start, each with the options it declares |
+| `GET /api/v1/automations/events/templates?connectionId=&source=` (or `teamId=`) | Those who may manage: the templates an automation of that source may start, each with the options it declares |
+
+Every route below the list takes the automation's owner from the row: a repository's rules for a
+repository automation, a team's for a team automation. A caller who may not read the owner gets
+`404`, so an automation, and its decisions, are never visible outside the teams that may read its
+owner.
 
 An event automation starts runs on the repository with the platform credential. That is why
 managing one stays with the owning team, like every other repository setting, and a shared team can
@@ -114,6 +137,20 @@ automation that is off, and switching one off, are not launch decisions. The rep
 active. The access gate judges the caller's own GitHub login (the runs use the platform
 credential), and the caller must belong to the repository's organization, which must be under its
 monthly cap. Every create, update and delete is written to the audit log (entity `Automation`).
+
+### Team automations
+
+A team automation has no repository, so the rules that hang off the repository move to the team:
+
+- **Who.** Members of the team read its automations and their decisions; ADMIN and the team's
+  LEADs manage them. The team must be active to turn one on.
+- **The launch decision.** Saving one that can start runs, and **Decide again**, check the caller's
+  membership of the team's organization and that organization's monthly cap. There is no
+  repository, so there is no access-gate check.
+- **The run.** It spends against the team's organization, resolves the source's kill switch and
+  gated options for the team, starts a template that is global or the team's own, and carries no
+  `connectionId`. A source that acts only for a repository's members (`actor`) cannot start a run
+  for a team: such a decision is `SUPPRESSED_PRECONDITION`.
 
 A source may **gate** an option value: refuse it at save unless a setting allows it, or unless the
 automation uses the source's default template. For CI, pushing a fix onto a pull request's branch
@@ -133,18 +170,18 @@ host. The engine (`handleOccurrence`) then:
 2. **Lets the first matching automation act.** Repository rows are taken oldest first, and
    automations oldest first within each. One occurrence starts at most one run, however many
    automations or repository rows match it.
-3. **Records the decision** as an `AutomationFire`, keyed by the occurrence on its repository
+3. **Records the decision** as an `AutomationFire`, keyed by the occurrence on its owner
    (`dedupeKey`). A redelivered webhook answers `duplicate` and starts nothing, unless the earlier
    decision was `FAILED_TO_START`: that one is taken again. The decision is taken
-   under a transaction lock on the **repository**, so concurrent deliveries see each other. A run
+   under a transaction lock on the **owner**, so concurrent deliveries see each other. A run
    is **suppressed** when:
 
    | Outcome | When |
    |---|---|
    | `SUPPRESSED_PRECONDITION` | The source says the occurrence cannot start a run (for CI, a pull-request failure with no open pull request) |
-   | `SUPPRESSED_BUDGET` | The repository's organization is over its monthly budget |
+   | `SUPPRESSED_BUDGET` | The owning team's organization is over its monthly budget |
    | `SUPPRESSED_OWN_OUTPUT` | The occurrence's subject is something a run of the platform produced (for CI, a fix commit it pushed): acting on it would answer the platform's own output with more of it |
-   | `SUPPRESSED_SAME_SUBJECT` | A run was already started on the repository for this subject (for CI, the commit), by any automation |
+   | `SUPPRESSED_SAME_SUBJECT` | A run was already started on the owner for this subject (for CI, the commit), by any automation |
    | `SUPPRESSED_COOLDOWN` | A run started for this scope (for CI, the branch) within the automation's `cooldownMinutes` |
    | `SUPPRESSED_IN_FLIGHT` | A run started for this scope within the source's look-back is still in progress: its ledger row is open **and** Temporal does not report the execution over (a Temporal that cannot answer counts as running) |
    | `SUPPRESSED_DAILY_CAP` | This automation started `maxRunsPerDay` runs in the last 24 hours |
@@ -168,10 +205,26 @@ moved aside to `<key>~<its id>`; concurrent retries and redeliveries take it at 
 
 ### The ledger
 
-`AutomationFire` rows belong to the **repository** (`repoKey`, `<host>/<owner>/<repo>` lowercased)
-and the **source**, not to the automation or the connection row. The guards count one source's
-decisions on one repository. The exception is the own-output check, which matches the subject on
-its own: a commit sha names one commit wherever it is. The automation and connection links are set to null
+`AutomationFire` rows belong to an **owner** (`ownerKey`, stored in the `repo_key` column, which
+keeps the name it had when every owner was a repository so that processes of an older release
+keep working during an upgrade) and the **source**, not to the automation or the connection row.
+The owner key takes one of two shapes:
+
+- **A repository** is `<host>/<owner>/<repo>`, lowercased, with no prefix. Every source's dedupe
+  key starts with it, so a redelivered webhook finds the decision recorded for it.
+- **Anything else** is `@<kind>/<id>`: `@team/<team id>` for a team automation, and
+  `@owner/<id>` for a schedule's or a template webhook's rows (§5). A host never contains `@`, so
+  no sigil key can be read as a repository. `repositoryOwnerKey`, `isRepositoryOwnerKey` and
+  `parseOwnerKey` (`@auto-swe/shared/automation`) build and read them.
+
+Only a repository key names a host, so only a repository's decisions match a person's account on
+a host (the `actor` check). The transaction lock is `automation-repo:<key>` for a repository, the
+same lock earlier gateways take, and `automation-owner:<key>` for any other owner.
+
+The guards count one source's decisions on one owner. The exception is the own-output check: on a
+repository it matches the subject on its own, since a commit sha names one commit wherever it is;
+on any other owner it matches within that owner, so one team's output never suppresses another
+team's occurrence. The automation and connection links are set to null
 when either is deleted, and the limits keep reading the rows. So deleting and recreating an
 automation, or a repository row, does not forget which subjects were handled, what the platform
 produced, or what is still in flight. Each row keeps:
@@ -213,7 +266,7 @@ normalizer in the gateway. The descriptor declares:
 
 Adding a source means:
 
-1. a descriptor;
+1. a descriptor, with its `target` (a repository or a team);
 2. a normalizer;
 3. a branch in the webhook route;
 4. the source key in the database's `automations_source_known` check, with a CHECK on its filters.
@@ -264,7 +317,7 @@ event automations.
 
 Schedules and template webhooks also write their decisions to the ledger, under their own sources
 (`schedule.fire`, `template_webhook.call`), with the schedule's or template's id as subject and
-scope and no repository key. Event sources' guards read only their own source, so these rows never
+scope and `@owner/<that id>` as owner key; they are read by that id, never by repository. Event sources' guards read only their own source, so these rows never
 suppress anything:
 
 - **A schedule fire** is recorded by the worker when the run is created (`STARTED`, keyed by the
@@ -384,8 +437,14 @@ recorded as `FAILED_TO_START` with its code.
 
 ## Limitations
 
-- **Two event sources.** Failed GitHub Actions runs and issue labels start event automations; a
-  comment, a review or a pull request label does not.
+- **Two event sources, both on a repository.** Failed GitHub Actions runs and issue labels start
+  event automations; a comment, a review or a pull request label does not. No source targets a
+  team, so no team automation can be created yet: the engine, API, ledger and dashboard hold them,
+  and the API refuses one for every shipped source.
+- **New event automation starts from a repository.** The Automations page opens a team's
+  automations from an existing team automation's row; it has no picker for a team.
+- **A team automation's run has no repository.** It cannot act through a source with an `actor`,
+  and its template gets no `connectionId`.
 - **An issue run acts on the issue's text.** The labeller is a member, but the issue's title and
   body may be anyone's: an issue opened by an outsider and labelled by a member carries the
   outsider's text into the run's description, as a work request typed from it would. Only the first
@@ -423,6 +482,10 @@ recorded as `FAILED_TO_START` with its code.
   guard never lapses. A redelivery older than the retention is decided afresh.
 - **Shared teams do not manage event automations.** A LEAD of a team the repository is shared with
   can read them, but only the owning team's leads and ADMIN manage them, unlike schedules (§5).
+- **A decision recorded mid-upgrade can keep an empty owner key.** A schedule or template webhook
+  decision written by a process older than the owner key, while an upgrade rolls out, keeps the
+  empty key it was written with. Nothing reads those rows by owner key, so the Automations page and
+  the schedule list are unaffected.
 - **The daily cap is the automation's own.** Deleting and recreating an automation starts its cap
   afresh; the repository-wide guards (subject, scope, in flight) and the own-output check, which
   matches the subject across the source's whole ledger, are not affected.

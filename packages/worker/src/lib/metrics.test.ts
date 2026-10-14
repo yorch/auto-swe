@@ -73,6 +73,7 @@ describe('worker metrics', () => {
       ['channel', 'FAILED', 0],
       ['eval', 'SUCCESS', 0],
       ['eval', 'REGRESSION', 0],
+      ['eval', 'INCONCLUSIVE', 0],
       ['eval', 'FAILED', 0],
       ['reaper', 'SUCCESS', 0],
       ['reaper', 'FAILED', 0],

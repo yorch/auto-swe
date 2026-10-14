@@ -1,5 +1,5 @@
 # ── Stage 1: Build ──
-FROM node:26-alpine AS builder
+FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS builder
 WORKDIR /app
 
 # node:26 ships no Corepack — it left the Node distribution in Node 25 — so the
@@ -53,7 +53,7 @@ RUN yarn workspace @auto-swe/shared db:generate \
   && yarn workspace @auto-swe/gateway build
 
 # ── Stage 2: Production dependencies only ──
-FROM node:26-alpine AS prod-deps
+FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS prod-deps
 WORKDIR /app
 
 # No `yarn` in node:26 — same vendored-release shim as the builder stage above.
@@ -72,7 +72,7 @@ RUN yarn workspaces focus @auto-swe/gateway --production \
   && mkdir -p packages/shared/node_modules packages/gateway/node_modules
 
 # ── Stage 3: Runtime ──
-FROM node:26-alpine
+FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a
 WORKDIR /app
 
 ARG APP_VERSION=unknown

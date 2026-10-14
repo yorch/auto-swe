@@ -83,13 +83,22 @@ describe('EventAutomationsPanel', () => {
   });
 
   it('says a repository with no automation starts nothing', () => {
-    render(<EventAutomationsPanel connectionId="r-1" />);
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
     expect(screen.getByText(/no event automations/i)).toBeTruthy();
+  });
+
+  it('offers a team’s manager only sources whose automations belong to a team', () => {
+    state.canManage = true;
+    render(<EventAutomationsPanel owner={{ teamId: 't-1' }} />);
+    expect(screen.getByText(/nothing that happens for this team/i)).toBeTruthy();
+    // Every shipped source lives on a repository.
+    expect(screen.queryByRole('button', { name: ADD })).toBeNull();
+    expect(screen.queryByRole('button', { name: /issue is labelled/i })).toBeNull();
   });
 
   it('shows a member the automations but no way to add one', () => {
     state.automations = [automation];
-    render(<EventAutomationsPanel connectionId="r-1" />);
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
     expect(screen.getByText('release branches')).toBeTruthy();
     expect(screen.getByText(/Diagnose and draft a fix/)).toBeTruthy();
     expect(screen.getByText(/pushes on release\/\*/)).toBeTruthy();
@@ -99,7 +108,7 @@ describe('EventAutomationsPanel', () => {
 
   it('offers a manager the form for a source, from its descriptor and its template', () => {
     state.canManage = true;
-    render(<EventAutomationsPanel connectionId="r-1" />);
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
     fireEvent.click(screen.getByRole('button', { name: ADD }));
     expect((screen.getByLabelText('Pushes') as HTMLInputElement).checked).toBe(true);
     expect(
@@ -112,7 +121,7 @@ describe('EventAutomationsPanel', () => {
 
   it('saves the source, its filters, and only the options that differ from the defaults', () => {
     state.canManage = true;
-    render(<EventAutomationsPanel connectionId="r-1" />);
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
     fireEvent.click(screen.getByRole('button', { name: ADD }));
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'mainline' } });
     fireEvent.click(screen.getByLabelText('dependency'));
@@ -134,7 +143,7 @@ describe('EventAutomationsPanel', () => {
 
   it('answers whether an occurrence would match, with the source’s own matcher', () => {
     state.canManage = true;
-    render(<EventAutomationsPanel connectionId="r-1" />);
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
     fireEvent.click(screen.getByRole('button', { name: ADD }));
     expect(screen.getByText(/Would start a run/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText('Branch'), { target: { value: 'feature/x' } });
@@ -144,7 +153,7 @@ describe('EventAutomationsPanel', () => {
   it('opens an existing automation for editing, and never sends its on/off switch', () => {
     state.canManage = true;
     state.automations = [{ ...automation, inputs: { minFixConfidence: 0.8, mode: 'fix' } }];
-    render(<EventAutomationsPanel connectionId="r-1" />);
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
     fireEvent.click(screen.getByRole('button', { name: /actions for release branches/i }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
     expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('release branches');

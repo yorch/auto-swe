@@ -70,8 +70,8 @@ function occurrence(x: IssueLabeledFacts): string {
  */
 export const issueLabeledSource: EventSource<IssueLabeledFilters, IssueLabeledFacts> = {
   actor: (x) => ({ id: x.senderId, login: x.senderLogin }),
-  dedupeKey: (repoKey, x) =>
-    `${repoKey}#issue-${x.issueNumber}/${x.label}/${x.updatedAt}`.toLowerCase(),
+  dedupeKey: (ownerKey, x) =>
+    `${ownerKey}#issue-${x.issueNumber}/${x.label}/${x.updatedAt}`.toLowerCase(),
   defaultFilters: { labels: ['auto-swe'] },
   defaultTemplate: { name: DEFAULT_ENGINEERING },
   describe: (f) => `labelled ${f.labels.join(' or ')}`,
@@ -131,6 +131,7 @@ export const issueLabeledSource: EventSource<IssueLabeledFilters, IssueLabeledFa
     },
   ],
   summary: 'A label is added to an open issue: implement it and open a pull request.',
+  target: 'repository',
   templateCompatible(schema: InputSchema) {
     const runFields: Record<string, unknown> = {
       connectionId: '00000000-0000-4000-8000-000000000000',

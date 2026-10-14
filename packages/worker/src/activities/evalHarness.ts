@@ -5,7 +5,8 @@
  * for each case it obtains a binary floor outcome (golden test pass/fail) under
  * both arms, persists per-case `EvalResult` rows, and computes the paired,
  * error-barred regression verdict (evalStats). It writes the `EvalRun` summary
- * and marks the run SUCCESS / REGRESSION.
+ * and marks the run SUCCESS / REGRESSION, or INCONCLUSIVE when no case was
+ * flake-screened and so none could be scored.
  *
  * The per-case execution (provision a fixture at its pinned SHA, run the
  * candidate/baseline implementer, run the golden test) is the expensive
@@ -27,38 +28,20 @@ import {
 } from '../agents/implementerRuntimeSelect.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
+import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
+import { startDatasetScreen } from '../lib/evalScreenStart.js';
 import { type PairedOutcome, regressionVerdict } from '../lib/evalStats.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import { withRunlessCapScale } from '../lib/runlessBudget.js';
 import { ownerOfDataset, withSpendOwner } from '../lib/spendOwner.js';
+import { EVAL_WORKSPACE_IMAGE } from './evalWorkspaceImage.js';
 import { createWorkspace, type Workspace } from './workspace.js';
-
-/**
- * Base image for eval workspaces — pinned, and the only `createWorkspace` call
- * in the codebase that does not inherit the operator's configured image.
- *
- * That is the same frozen-fixture reasoning as `EvalCase.baselineSha`: a
- * benchmark score is comparable against its own history only if the environment
- * it ran in did not move. So this workspace deliberately ignores the
- * connection's `executorImage` and the `WORKSPACE_IMAGE` default, both of
- * which an operator can change at any time.
- *
- * Changing this constant silently rebases every stored eval score onto a
- * different environment — regressions and improvements measured across the
- * change are not comparable. Treat it as a benchmark epoch, not a config knob:
- * if it must move, expect to re-baseline.
- *
- * It is a named constant rather than an inline literal so the shape of the
- * exception is greppable, and so `scripts/check-invariants.mjs` can hold every
- * other call site to inheriting without maintaining a list of exemptions.
- */
-export const EVAL_WORKSPACE_IMAGE = 'node:24-alpine';
 
 export interface EvalCaseRow {
   id: string;
@@ -67,6 +50,26 @@ export interface EvalCaseRow {
   goldenTest: string;
   tags: string[];
   input: unknown; // EvalCase.input (Json) — task/prompt payload for the implementer
+}
+
+/** A case as the harness loads it: with its flake-screen state, which decides whether it is scored. */
+export interface HarnessCaseRow extends EvalCaseRow {
+  /** The reference passed every run of its flake screen. */
+  flakeScreened: boolean;
+  /** Runs of the last flake screen; 0 when the case was never screened. */
+  flakeRuns: number;
+}
+
+/**
+ * Set on every run's summary: the cases the harness did not score because they
+ * are not flake-screened — never screened yet, or screened and failed (a flaky
+ * or never-passing reference).
+ */
+export interface UnscreenedCasesSummary {
+  neverScreened: number;
+  neverScreenedCaseIds: string[];
+  screenFailed: number;
+  screenFailedCaseIds: string[];
 }
 
 export interface HarnessInput {
@@ -92,8 +95,8 @@ export interface CaseOutcome {
 }
 
 export interface HarnessDeps {
-  /** Resolve the dataset's cases. */
-  loadCases: (datasetId: string) => Promise<EvalCaseRow[]>;
+  /** Resolve the dataset's cases; only the flake-screened ones are scored. */
+  loadCases: (datasetId: string) => Promise<HarnessCaseRow[]>;
   /** Run one case under one arm (agent ref, optional runtime override). */
   runCase: (
     caseRow: EvalCaseRow,
@@ -104,14 +107,23 @@ export interface HarnessDeps {
   record?: typeof recordEvalResult;
   /** Finalize the EvalRun row. */
   finalize?: (evalRunId: string, status: string, summary: unknown) => Promise<void>;
+  /**
+   * Start (or join) the dataset's flake screen. Called when the run finds
+   * never-screened cases, so a dataset whose screen never started — cases that
+   * predate screening, a start lost to a Temporal outage — screens itself.
+   */
+  startScreen?: (datasetId: string) => Promise<void>;
 }
 
-async function defaultLoadCases(datasetId: string): Promise<EvalCaseRow[]> {
+async function defaultLoadCases(datasetId: string): Promise<HarnessCaseRow[]> {
   // Quarantined cases (stale references — see re-validation in docs/evals.md) are excluded from the
-  // gate so a dataset that has rotted doesn't fail candidates for non-agent reasons.
+  // gate so a dataset that has rotted doesn't fail candidates for non-agent reasons. Unscreened
+  // cases are loaded so the run can report them; `runEvalHarness` skips them.
   return prisma.evalCase.findMany({
     select: {
       baselineSha: true,
+      flakeRuns: true,
+      flakeScreened: true,
       goldenTest: true,
       id: true,
       input: true,
@@ -120,6 +132,34 @@ async function defaultLoadCases(datasetId: string): Promise<EvalCaseRow[]> {
     },
     where: { datasetId, quarantined: false },
   });
+}
+
+/** Split loaded cases into the scored (flake-screened) ones and the report of the rest. */
+function partitionScreened(loaded: HarnessCaseRow[]): {
+  cases: HarnessCaseRow[];
+  unscreened: UnscreenedCasesSummary;
+} {
+  const neverScreenedCaseIds: string[] = [];
+  const screenFailedCaseIds: string[] = [];
+  const cases: HarnessCaseRow[] = [];
+  for (const c of loaded) {
+    if (c.flakeScreened) {
+      cases.push(c);
+    } else if (c.flakeRuns === 0) {
+      neverScreenedCaseIds.push(c.id);
+    } else {
+      screenFailedCaseIds.push(c.id);
+    }
+  }
+  return {
+    cases,
+    unscreened: {
+      neverScreened: neverScreenedCaseIds.length,
+      neverScreenedCaseIds,
+      screenFailed: screenFailedCaseIds.length,
+      screenFailedCaseIds,
+    },
+  };
 }
 
 async function defaultFinalize(evalRunId: string, status: string, summary: unknown): Promise<void> {
@@ -295,6 +335,18 @@ export interface PartialRunSummary {
   notRunCaseIds: string[];
 }
 
+/**
+ * Set on the summary of an INCONCLUSIVE run: the dataset had cases, but none
+ * flake-screened, so no case was scored and there is no verdict.
+ */
+export interface InconclusiveRunSummary {
+  reason: 'unscreened';
+  /** Cases never screened: a screen is running or due, and they count once it passes. */
+  awaitingScreen: number;
+  /** Cases whose screen failed: they count only after an admin re-screen passes. */
+  screenFailed: number;
+}
+
 const isBudgetExceeded = (err: unknown) =>
   err instanceof ApplicationFailure && err.type === 'BUDGET_EXCEEDED';
 
@@ -317,7 +369,35 @@ const isOrgBudgetStop = (err: unknown) =>
 export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
   const record = deps.record ?? recordEvalResult;
   const finalize = deps.finalize ?? defaultFinalize;
-  const cases = await deps.loadCases(input.datasetId);
+  // A case whose reference was never screened, or failed its screen, is not
+  // scored: a flaky floor would move the verdict for reasons that are not the agent's.
+  const { cases, unscreened } = partitionScreened(await deps.loadCases(input.datasetId));
+  if (unscreened.neverScreened > 0 && deps.startScreen) {
+    // Best-effort: the run scores what is screened now either way, and the
+    // re-validation sweep screens what this start misses.
+    await deps.startScreen(input.datasetId).catch((err: unknown) => {
+      logWarn('eval: could not start the flake screen of unscreened cases', {
+        datasetId: input.datasetId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
+  const unscored = unscreened.neverScreened + unscreened.screenFailed;
+  if (cases.length === 0 && unscored > 0) {
+    // Nothing is screened yet, so there is nothing to compare: neither a pass nor a
+    // failure of the candidate. Typically a new dataset, or one whose screen has not finished.
+    const inconclusive: InconclusiveRunSummary = {
+      awaitingScreen: unscreened.neverScreened,
+      reason: 'unscreened',
+      screenFailed: unscreened.screenFailed,
+    };
+    await finalize(input.evalRunId, 'INCONCLUSIVE', {
+      inconclusive,
+      summary: `inconclusive: no case is flake-screened yet — ${inconclusive.awaitingScreen} await screening, ${inconclusive.screenFailed} failed their screen`,
+      unscreened,
+    });
+    return regressionVerdict([]);
+  }
 
   return withRunlessCapScale(cases.length, async () => {
     const pairs: PairedOutcome[] = [];
@@ -383,6 +463,7 @@ export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
       overall: verdict.overall,
       runtimes: { baseline: [...runtimes.baseline], candidate: [...runtimes.candidate] },
       summary: verdict.summary,
+      unscreened,
       ...(partial ? { partial } : {}),
     });
     return verdict;
@@ -406,6 +487,7 @@ export async function runEvalHarnessActivity(input: HarnessInput): Promise<void>
       return runEvalHarness(input, {
         loadCases: defaultLoadCases,
         runCase: (caseRow, ref, runtime) => runCaseDefault(caseRow, ref, scope, runtime),
+        startScreen: startDatasetScreen,
       });
     });
   } catch (err) {

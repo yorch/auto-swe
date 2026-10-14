@@ -13,6 +13,7 @@ import { WORKFLOW_RUN_FAILED, workflowRunFailedSource } from './sources/workflow
 import type { EventSource } from './types.js';
 
 export * from './inputs.js';
+export * from './ownerKey.js';
 export * from './sources/issueLabeled.js';
 export * from './sources/workflowRunFailed.js';
 export * from './types.js';

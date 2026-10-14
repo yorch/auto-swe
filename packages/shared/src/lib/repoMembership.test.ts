@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   allRepoMemberships,
   isRepoMember,
+  isRepoTeam,
   repoMembersSelect,
   repoMemberWhere,
 } from './repoMembership.js';
@@ -50,5 +51,15 @@ describe('repoMembership', () => {
         { shares: { some: { team: { memberships: { some: { userId: 'u' } } } } } },
       ],
     });
+  });
+});
+
+describe('team-level reach (a service principal belongs to a team, not to its members)', () => {
+  const repo = { shares: [{ teamId: 'shared' }], teamId: 'owner' };
+
+  it('counts the owning team and every team the repository is shared with', () => {
+    expect(isRepoTeam(repo, 'owner')).toBe(true);
+    expect(isRepoTeam(repo, 'shared')).toBe(true);
+    expect(isRepoTeam(repo, 'stranger')).toBe(false);
   });
 });

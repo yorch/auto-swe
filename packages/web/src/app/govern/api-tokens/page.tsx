@@ -75,12 +75,19 @@ export default function GovernAccessTokensPage() {
         : 'ACTIVE';
   const all = tokens ?? [];
   const activeCount = all.filter((t) => statusOf(t) === 'ACTIVE').length;
-  const userOptions = [...new Set(all.map((t) => t.user.email))].sort();
+  // A service principal's token has no user; it is filtered as its principal.
+  const ownerLabel = (t: (typeof all)[number]) =>
+    t.user
+      ? t.user.email
+      : t.servicePrincipal
+        ? `${t.servicePrincipal.name} (service · ${t.servicePrincipal.team.name})`
+        : '—';
+  const userOptions = [...new Set(all.map(ownerLabel))].sort();
   const query = search.trim().toLowerCase();
   const rows = all.filter(
     (t) =>
       (!statusFilter || statusOf(t) === statusFilter) &&
-      (!userFilter || t.user.email === userFilter) &&
+      (!userFilter || ownerLabel(t) === userFilter) &&
       (!query || t.name.toLowerCase().includes(query) || t.prefix.toLowerCase().includes(query))
   );
   const pageStart = Math.min(page * PAGE_SIZE, Math.max(0, rows.length - 1));
@@ -88,7 +95,7 @@ export default function GovernAccessTokensPage() {
 
   const header = (
     <PageHeader
-      subtitle="Platform admins can view and revoke any user's personal access token. Token values are never stored — only the non-secret prefix is shown."
+      subtitle="Platform admins can view and revoke any API token: people's personal access tokens and teams' service principal tokens. Token values are never stored — only the non-secret prefix is shown."
       title={navLabel('/govern/api-tokens')}
     />
   );
@@ -166,14 +173,14 @@ export default function GovernAccessTokensPage() {
             value={statusFilter}
           />
           <Select
-            aria-label="Filter by user"
+            aria-label="Filter by owner"
             className="h-8 w-full text-[13px] sm:w-56"
             onChange={(v) => {
               setUserFilter(v);
               setPage(0);
             }}
             options={[
-              { label: 'All users', value: '' },
+              { label: 'All owners', value: '' },
               ...userOptions.map((e) => ({ label: e, value: e })),
             ]}
             value={userFilter}
@@ -218,7 +225,19 @@ export default function GovernAccessTokensPage() {
                     </div>
                   </Td>
                   <Td className="px-4 py-3 text-[13px] text-paper-300" label="Owner">
-                    {t.user.email}
+                    {t.user ? (
+                      t.user.email
+                    ) : t.servicePrincipal ? (
+                      <>
+                        <div>{t.servicePrincipal.name}</div>
+                        <div className="mt-0.5 text-xs text-paper-500">
+                          Service principal · {t.servicePrincipal.team.name} ·{' '}
+                          <span className="font-mono">{t.scopes.join(' ')}</span>
+                        </div>
+                      </>
+                    ) : (
+                      '—'
+                    )}
                   </Td>
                   <Td className="px-4 py-3" label="Status">
                     <StatusChip status={status} />

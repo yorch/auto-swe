@@ -30,6 +30,7 @@ vi.mock('@temporalio/client', () => ({
   },
   ScheduleNotFoundError: class extends Error {},
   ScheduleOverlapPolicy: {},
+  WorkflowIdConflictPolicy: {},
   WorkflowIdReusePolicy: {},
 }));
 

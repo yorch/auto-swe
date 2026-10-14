@@ -25,6 +25,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export const TENANT_SCOPED_MODELS = new Set([
   'Agent',
   'AgentTrace',
+  'Automation',
   'AutonomyPolicy',
   'CallbackEndpoint',
   'ConfigPermission',
@@ -41,6 +42,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'OrganizationMembership',
   'ProviderCredential',
   'ScheduledWorkRequest',
+  'ServicePrincipal',
   'Skill',
   'SkillSource',
   'SlackChannel',

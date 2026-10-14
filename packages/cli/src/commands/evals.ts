@@ -1,6 +1,7 @@
 import {
   type EvalDatasetDetail,
   type EvalDatasetSummary,
+  type EvalRescreenResultDto,
   type EvalResultDto,
   type EvalRunDto,
   IMPLEMENTER_RUNTIMES,
@@ -8,20 +9,25 @@ import {
 } from '@auto-swe/shared/types/api';
 import { apiRequest, apiRequestFull, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
-import { parseFlags } from '../lib/flags.js';
+import { FLAG_PRESENT, parseFlags } from '../lib/flags.js';
 import { sleep } from '../lib/time.js';
 
 const SUB_HELP = `auto-swe evals — inspect eval datasets and run the regression gate
 
   evals list                          List eval datasets
   evals show <id>                     Print a dataset's cases
+  evals rescreen <id> [--case=<case-id>]
+                                      Reset a dataset's cases (or one) to unscreened and
+                                      start its flake screen; the harness skips them until
+                                      the new screen passes
   evals results [--run=<id>] [--source=GATE|REVIEW|MERGE] [--scorer=<s>] [--limit=N]
                                       Query captured eval signals
   evals run <dataset-slug> --candidate=<ref> --against=<ref>
             [--candidate-runtime=mastra|claude-code] [--against-runtime=mastra|claude-code]
                                       Start the nightly regression gate; exits 0 on SUCCESS,
-                                      1 on a regression, 2 when the run fails without a verdict
-                                      or the budget stopped it before every case ran. A runtime
+                                      1 on a regression, 2 when the run fails without a verdict,
+                                      is INCONCLUSIVE (no case flake-screened yet), or the budget
+                                      stopped it before every case ran. A runtime
                                       flag runs that side on the named implementer runtime
                                       instead of the one its agent resolves to
 `;
@@ -65,6 +71,9 @@ export async function runEvalsCommand(args: string[], env: CliEnv): Promise<numb
     if (sub === 'run') {
       return await cmdRun(rest, env);
     }
+    if (sub === 'rescreen') {
+      return await cmdRescreen(rest, env);
+    }
     return UNKNOWN_SUBCOMMAND;
   });
   if (handled !== UNKNOWN_SUBCOMMAND) {
@@ -98,9 +107,46 @@ async function cmdShow(rest: string[], env: CliEnv): Promise<number> {
   const data = await apiRequest<EvalDatasetDetail>(env, 'GET', `/api/v1/platform/evals/${id}`);
   process.stdout.write(`${data.name} (${data.slug}) — ${data.cases.length} cases\n`);
   for (const c of data.cases) {
-    const screened = c.flakeScreened ? '✓screened' : 'unscreened';
+    // flakeRuns > 0 without a pass is a failed screen; the harness skips it like an unscreened case.
+    const screened = c.flakeScreened
+      ? '✓screened'
+      : c.screenEnvironmentFailed
+        ? '✗uncheckable'
+        : c.flakeRuns > 0
+          ? '✗flaky'
+          : 'unscreened';
     process.stdout.write(`  ${c.id}  ${c.repoUrl}@${c.baselineSha.slice(0, 10)}  ${screened}\n`);
   }
+  return 0;
+}
+
+/** Reset a dataset's cases (or one, with --case) to never-screened and start the screen. */
+async function cmdRescreen(rest: string[], env: CliEnv): Promise<number> {
+  const { flags, positional } = parseFlags(rest);
+  const id = positional[0];
+  if (!id) {
+    process.stderr.write('Usage: evals rescreen <dataset-id> [--case=<case-id>]\n');
+    return 1;
+  }
+  // A bare `--case` parses to FLAG_PRESENT; `--case=true` is spelled out, so it
+  // is a value (if not a case id, the gateway answers 404).
+  if (
+    (flags.case === FLAG_PRESENT && !rest.some((a) => a.startsWith('--case='))) ||
+    flags.case === ''
+  ) {
+    process.stderr.write('Usage: evals rescreen <dataset-id> [--case=<case-id>]\n');
+    return 1;
+  }
+  const dataset = encodeURIComponent(id);
+  const path = flags.case
+    ? `/api/v1/platform/evals/${dataset}/cases/${encodeURIComponent(flags.case)}/rescreen`
+    : `/api/v1/platform/evals/${dataset}/rescreen`;
+  const data = await apiRequest<EvalRescreenResultDto>(env, 'POST', path, {});
+  process.stdout.write(
+    data.screenStarted
+      ? `Reset ${data.reset} case(s); the flake screen has started.\n`
+      : `Reset ${data.reset} case(s); the flake screen could not start now — the next eval run of the dataset starts it.\n`
+  );
   return 0;
 }
 
@@ -164,6 +210,12 @@ async function cmdRun(rest: string[], env: CliEnv): Promise<number> {
           `Partial verdict: ${completedCases} of ${totalCases} cases ran — ${error ?? 'stopped early'}\n`
         );
       }
+      const unscreened = summary.unscreened;
+      if (unscreened && unscreened.neverScreened + unscreened.screenFailed > 0) {
+        process.stdout.write(
+          `Not scored: ${unscreened.neverScreened} cases await flake screening, ${unscreened.screenFailed} failed it\n`
+        );
+      }
       return evalRunExitCode(run.status, summary.partial != null);
     }
     if (Date.now() > deadline) {
@@ -181,14 +233,17 @@ interface EvalRunSummary {
   runtimes?: { baseline: string[]; candidate: string[] };
   /** Set when the runless budget stopped the run before every case ran. */
   partial?: { completedCases: number; totalCases: number; error?: string };
+  /** The cases the run did not score: never flake-screened, or failed their screen. */
+  unscreened?: { neverScreened: number; screenFailed: number };
 }
 
 /**
  * Only a complete SUCCESS passes the gate. REGRESSION is the documented 1 —
  * also when partial, since the cases that ran already regressed. Any other
- * terminal status (FAILED — the harness crashed or was cancelled) means no
- * verdict was reached, and a partial SUCCESS covers only the cases the budget
- * reached; a CI gate must read neither as a pass, so both are 2.
+ * terminal status means no verdict was reached: FAILED (the harness crashed or
+ * was cancelled) and INCONCLUSIVE (no case was flake-screened yet, so none was
+ * scored). A partial SUCCESS covers only the cases the budget reached; a CI
+ * gate must read none of these as a pass, so all are 2.
  */
 export function evalRunExitCode(status: string, partial = false): number {
   if (status === 'SUCCESS') {
@@ -197,6 +252,7 @@ export function evalRunExitCode(status: string, partial = false): number {
   if (status === 'REGRESSION') {
     return 1;
   }
+  // INCONCLUSIVE, FAILED, and any status this CLI does not know.
   return 2;
 }
 

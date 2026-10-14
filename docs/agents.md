@@ -740,7 +740,7 @@ Mastra loop can — a built-in provider, or an OpenAI-compatible one whose crede
 `apiBase` (refused with `HARNESS_UNSUPPORTED_MODEL` before anything is built when it names none) —
 and the credential never enters the container. Each call is debited as it ends (`turn.callSpent`),
 at the Agent's spec, and a failed call's error is the one the turn fails with. Pi's own
-compaction, sessions on disk, settings, extensions, skills and prompt templates are not part of
+summarising compaction, sessions on disk, settings, extensions, skills and prompt templates are not part of
 this: nothing of Pi's touches the worker's filesystem.
 
 **Pi's prompt and context.** The system prompt opens with Pi's own (its tool list and guidelines,
@@ -751,6 +751,41 @@ While that file is loaded, `write` and `edit` may not change `AGENTS.md` or `CLA
 Turns after the first continue the same conversation, held in the worker. Every command the turn ran
 in the container carries the turn's exec tag, so the kill when the turn ends stops anything it left
 running.
+
+**Pi's context budget.** A conversation kept across turns would outgrow the model's context window, so
+the adapter fits it to `workspace.harnessContextTokens` (default 120,000 tokens; overridable per
+workflow template, team and organization) without a model call, which keeps metering exact. Before each
+model call, through Pi's `transformContext` hook, it estimates the system prompt, the tool definitions
+and the messages at three characters per token (code and JSON tokenise densely, so the estimate leans
+towards compacting early). Over the budget, it works in phases until the estimate is under it:
+
+1. In every exchange before the newest, oldest first, it replaces the text of each tool result with a
+   one-line stub naming the tool, and each large string in a `write` or `edit` call's arguments
+   (`content`, `oldText`, `newText`, `edits[]`) with a placeholder that says the content was elided and to read the file for it. A result keeps its call id,
+   tool name and error flag, and a call keeps its id, name and path, so every call still has its
+   result.
+2. It drops the oldest whole exchanges (a user message and everything up to the next one), so a call
+   and its result leave together and the history still begins with a user message.
+3. Only then does it stub inside the newest exchange, oldest first: first everything older than the
+   four most recent assistant turns, then everything but the last tool call and its result, then the
+   file content in the arguments of the last calls. The newest tool result is never stubbed: it is what
+   the model is about to react to.
+
+Compaction starts only when the estimate exceeds the budget and then goes on down to 85% of it, and
+within a turn the fitted prefix is kept and extended until the budget is exceeded again, so the
+prompt a provider caches does not change on every call. The current prompt is never dropped, and a
+newest exchange that alone exceeds the budget after every phase is sent as it is, for the provider to refuse or accept. At the end of each turn the session's
+history is compacted the same way, from scratch, and kept, so it does not grow without bound; a
+stubbed result or argument or a dropped exchange is gone for later turns, and the model re-runs a
+tool or re-reads a file when it needs the content again. That pass can choose different stubs than
+the calls inside the turn did, so the next turn's first call may not reuse the prompt the provider
+cached for the last one. The policy refuses a `write` whose content, or an `edit` whose new text,
+contains the argument placeholder, so a model imitating its history cannot write the placeholder
+into a file; the match is on the exact placeholder text, and a file whose real content includes it
+(the compaction module itself) can only be changed by an `edit` that leaves that text out. Each turn that compacted is traced as one `pi.context_compacted` activity
+event with the last compaction's estimates before and after, the results and call arguments stubbed,
+the messages dropped, and how many model calls of the turn were compacted. Choose a budget below the
+model's window with room for its reply; the estimate is a rule of thumb, not the provider's tokenizer.
 
 **Testing Pi.** `pi/runtime.test.ts` drives the adapter with a scripted AI SDK model and an in-memory
 container; `pi/runtime.docker.test.ts` runs the real runtime against a real container with the same
@@ -1330,9 +1365,12 @@ template override is never badged, because it may use a different model or crede
   worker instead. The verdict rests on what each CLI exposes for that callback; one that gains it
   fits the same seam.
 - **Pi runs without its own extras.** The Pi runtime is Pi's agent loop and its `read`, `write`,
-  `edit`, `ls` and `find` tools, and nothing else of Pi's: no compaction (a long session fails when
-  it outgrows the model's context window, where the Mastra loop starts each turn afresh), no
-  extensions, skills, prompt templates or settings from the repository or the worker, no images (a
+  `edit`, `ls` and `find` tools, and nothing else of Pi's: no summarising compaction (the
+  conversation is fitted to `workspace.harnessContextTokens` by stubbing old tool output and file
+  content in old `write`/`edit` calls and dropping the oldest exchanges, so a long session loses detail
+  from its early work rather than failing at the model's window; the estimate is characters over
+  three, tool-call arguments other than `write`/`edit` content are never shrunk, and a newest exchange
+  still over the budget once everything but its newest result is stubbed is sent whole), no extensions, skills, prompt templates or settings from the repository or the worker, no images (a
   file is read as text), and no reasoning (thinking is off).
 - **Pi's `grep` depends on the image.** With ripgrep in the executor image it honours `.gitignore`;
   without it, `grep -rn` searches everything but `.git` and `node_modules` (build output included),

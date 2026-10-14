@@ -286,28 +286,68 @@ model PullRequest {
   @@map("pull_requests")
 }
 
-/// Long-lived API token for CI / CLI use — a user's personal access token
-/// (Settings → API tokens). The plaintext token is returned exactly once on
-/// create (`ats_<random>` format); only the sha-256 hash is stored.
-/// `lastUsedAt` is updated best-effort on each successful auth so admins can
-/// prune stale tokens.
+/// Long-lived API token for CI / CLI use. Exactly one owner (the hand-written
+/// CHECK `api_tokens_exactly_one_owner`): a user — a personal access token
+/// (Settings → API tokens) — or a team's service principal. The plaintext token
+/// is returned exactly once on create (`ats_<random>` format); only the sha-256
+/// hash is stored. `lastUsedAt` is updated best-effort on each successful auth
+/// so admins can prune stale tokens.
 model ApiToken {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId     String    @map("user_id") @db.Uuid
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name       String
-  tokenHash  String    @unique @map("token_hash")
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String?           @map("user_id") @db.Uuid
+  user               User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  servicePrincipalId String?           @map("service_principal_id") @db.Uuid
+  servicePrincipal   ServicePrincipal? @relation(fields: [servicePrincipalId], references: [id], onDelete: Cascade)
+  /// What a service token may do (`SERVICE_TOKEN_SCOPES`). Empty, and ignored,
+  /// on a user's token, which acts with its user's role instead.
+  scopes             String[]          @default([])
+  name               String
+  tokenHash          String            @unique @map("token_hash")
   /// The first 12 chars of the plaintext token (`ats_` + 8 random chars).
   /// Non-secret — exists so the admin UI can disambiguate listed tokens
   /// without re-issuing them.
-  prefix     String
-  expiresAt  DateTime? @map("expires_at") @db.Timestamptz
-  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz
-  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  prefix             String
+  expiresAt          DateTime?         @map("expires_at") @db.Timestamptz
+  lastUsedAt         DateTime?         @map("last_used_at") @db.Timestamptz
+  revokedAt          DateTime?         @map("revoked_at") @db.Timestamptz
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([userId])
+  @@index([servicePrincipalId])
   @@map("api_tokens")
+}
+
+/// A team-owned machine identity: another service that starts and follows runs
+/// without acting as a person. It authenticates with `ApiToken` rows of its own
+/// and may launch only what its allowlists name — an empty list allows nothing.
+/// Its runs use the platform credential.
+model ServicePrincipal {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId        String     @map("team_id") @db.Uuid
+  team          Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name          String
+  description   String?
+  createdById   String?    @map("created_by_id") @db.Uuid
+  createdBy     User?      @relation("ServicePrincipalCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  /// Set while disabled: every token of a disabled principal is refused.
+  disabledAt    DateTime?  @map("disabled_at") @db.Timestamptz
+  /// Runs it may start in any 24 hours.
+  maxRunsPerDay Int        @default(50) @map("max_runs_per_day")
+  /// Runs of its own that may be in flight at once.
+  maxInFlight   Int        @default(5) @map("max_in_flight")
+  /// Connections it may launch on. Adding one is a launch decision of the lead who adds it.
+  connectionIds String[]   @default([]) @map("connection_ids") @db.Uuid
+  /// Workflow templates it may run through `POST /workflow-templates/:id/runs`.
+  templateIds   String[]   @default([]) @map("template_ids") @db.Uuid
+  createdAt     DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+
+  tokens      ApiToken[]
+  runRequests RunInput[] @relation("RunInputServiceRequester")
+
+  @@unique([teamId, name])
+  @@index([createdById])
+  @@map("service_principals")
 }
 
 /// Generic integration target (P3). Replaces the SWE-specific `Repository`.
@@ -754,6 +794,8 @@ model Organization {
   monthlyBudgetUsdCents       Int?     @map("monthly_budget_usd_cents")
   /// Percent of monthly cap at which to start warning (0-100). Null = no alert.
   budgetAlertThresholdPercent Int?     @map("budget_alert_threshold_percent")
+  /// When true, an ORG_ADMIN's invite creates an active, approved account. Platform-ADMIN-set only.
+  trustedInvites              Boolean  @default(false) @map("trusted_invites")
   createdAt                   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -810,10 +852,13 @@ model Team {
 
   memberships           TeamMembership[]
   repositories          Connection[]
+  servicePrincipals     ServicePrincipal[]
   /// Repositories other teams have shared with this one (see `ConnectionTeamShare`).
   sharedRepositories    ConnectionTeamShare[]
   /// Schedules this team owns (see `ScheduledWorkRequest.teamId`).
   scheduledWorkRequests ScheduledWorkRequest[] @relation("ScheduleTeam")
+  /// Event automations this team owns that belong to no repository (`Automation.teamId`).
+  automations           Automation[]
   workflowTemplates     WorkflowTemplate[]
   shellAudits           WorkflowShellAudit[]
   providerCredentials   ProviderCredential[]
@@ -1210,7 +1255,8 @@ model User {
   /// (set) from one still waiting in the approval queue (null): auto-approval
   /// only ever acts on the second, and deactivation therefore sticks.
   approvedAt           DateTime? @map("approved_at") @db.Timestamptz
-  /// Who approved: `admin`, or `github-org:<org>` for the auto-approval rule.
+  /// Who approved: `admin`, `org_admin` for a trusted organization's org-admin
+  /// invite, or `github-org:<org>` for the auto-approval rule.
   approvalSource       String?   @map("approval_source")
   createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt            DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
@@ -1235,6 +1281,7 @@ model User {
   skillSources          SkillSource[]            @relation("SkillSourceCreator")
   schedulesActingAs     ScheduledWorkRequest[]   @relation("ScheduleActsAs")
   automations           Automation[]             @relation("AutomationCreator")
+  servicePrincipals     ServicePrincipal[]       @relation("ServicePrincipalCreator")
   configPermissions     ConfigPermission[]
   repoAccess            RepoAccess[]
   connectionCredentials ConnectionCredential[]
@@ -1354,6 +1401,11 @@ model RunInput {
   /// webhook-originated requests without a platform user.
   requestedById           String?     @map("requested_by_id") @db.Uuid
   requestedBy             User?       @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+  /// The service principal that submitted the request, when a machine did
+  /// rather than a person (`requestedById` is then null). Attribution and
+  /// visibility only: the run uses the platform credential.
+  requestedByServiceId    String?           @map("requested_by_service_id") @db.Uuid
+  requestedByService      ServicePrincipal? @relation("RunInputServiceRequester", fields: [requestedByServiceId], references: [id], onDelete: SetNull)
   /// Caller-supplied `Idempotency-Key` on `POST /work-requests`. Unique per
   /// submitter; null (every key-less launch) never collides, since Postgres
   /// treats nulls as distinct in a unique index.
@@ -1377,6 +1429,7 @@ model RunInput {
   @@unique([requestedById, idempotencyKey])
   @@index([connectionId])
   @@index([requestedById])
+  @@index([requestedByServiceId, createdAt])
   @@index([externalTicketId])
   @@map("run_inputs")
 }
@@ -1449,14 +1502,19 @@ model ScheduledWorkRequest {
   @@map("scheduled_work_requests")
 }
 
-/// An event automation (docs/automations.md): when an occurrence of `source` on its repository
-/// matches `filters`, start `template` (null: the source's default) with `inputs`, within the
-/// limits. Managed by the repository's owning team. `filters` and `inputs` are JSON objects
-/// whose shape is the source's and the template's; both are checked on save and on every fire.
+/// An event automation (docs/automations.md): when an occurrence of `source` matches
+/// `filters`, start `template` (null: the source's default) with `inputs`, within the limits.
+/// It belongs to a repository (`connectionId`, managed by the repository's owning team) or, for
+/// a source whose automations target a team, to a team (`teamId`, no repository; managed by the
+/// team's leads). At least one is set (a hand-written CHECK); a row with a repository is a
+/// repository automation whatever else it names. `filters` and `inputs` are JSON objects whose
+/// shape is the source's and the template's; both are checked on save and on every fire.
 model Automation {
   id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  connectionId    String            @map("connection_id") @db.Uuid
-  connection      Connection        @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  connectionId    String?           @map("connection_id") @db.Uuid
+  connection      Connection?       @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  teamId          String?           @map("team_id") @db.Uuid
+  team            Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
   name            String
   enabled         Boolean           @default(true)
   /// An event source key (`EVENT_SOURCES`), e.g. `github.workflow_run.failed`.
@@ -1480,15 +1538,17 @@ model Automation {
   fires AutomationFire[]
 
   @@index([connectionId, source])
+  @@index([teamId, source])
   @@index([templateId])
   @@index([createdById])
   @@map("automations")
 }
 
 /// One decision an event automation made about one occurrence: started a run, or suppressed
-/// it and why. Also the record the limits are decided on, so it is keyed on the REPOSITORY
-/// (`repoKey`, `<host>/<owner>/<repo>` lowercased) and outlives the automation and the
-/// connection row: deleting and recreating either must not forget what was already done.
+/// it and why. Also the record the limits are decided on, so it is keyed on its OWNER
+/// (`ownerKey`: a repository as `<host>/<owner>/<repo>` lowercased, anything else as
+/// `@<kind>/<id>`) and outlives the automation and the connection row: deleting and recreating
+/// either must not forget what was already done.
 /// `dedupeKey` names the occurrence on its host; `subjectKey` is what one run is enough for (a
 /// commit); `scopeKey` what cooldown and in-flight count over (a branch); `producedKey` what a
 /// run itself produced (a pushed fix commit), never acted on again.
@@ -1498,7 +1558,9 @@ model AutomationFire {
   automation         Automation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
   connectionId       String?     @map("connection_id") @db.Uuid
   connection         Connection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
-  repoKey            String      @map("repo_key")
+  /// Stored in `repo_key`, the column's name from before owners other than repositories: a
+  /// rename would break every older gateway and worker still running during a rolling deploy.
+  ownerKey           String      @map("repo_key")
   source             String
   dedupeKey          String      @unique @map("dedupe_key")
   /// One of `AUTOMATION_OUTCOMES`.
@@ -1517,8 +1579,8 @@ model AutomationFire {
   createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([automationId, createdAt])
-  @@index([repoKey, scopeKey, createdAt])
-  @@index([repoKey, subjectKey])
+  @@index([ownerKey, scopeKey, createdAt])
+  @@index([ownerKey, subjectKey])
   @@index([producedKey])
   @@index([workRequestId])
   @@index([connectionId])
@@ -1858,6 +1920,9 @@ model EvalCase {
   /// Curation gate: true once the reference passes k× consistently.
   flakeScreened Boolean     @default(false) @map("flake_screened")
   flakeRuns     Int         @default(0) @map("flake_runs")
+  /// Screens that hit an infrastructure failure (killed, timed out, no workspace).
+  /// At the cap the case is recorded as a failed screen, so it stops being retried.
+  flakeScreenInfraErrors Int @default(0) @map("flake_screen_infra_errors")
   /// P3 re-validation: the reference stopped passing against current repo state
   /// (the case went stale, not the agent's fault) — excluded from the gate.
   quarantined   Boolean     @default(false)
@@ -1886,7 +1951,7 @@ model EvalRun {
   /// the setting.
   candidateRuntime String?     @map("candidate_runtime")
   baselineRuntime  String?     @map("baseline_runtime")
-  /// RUNNING | SUCCESS | FAILED | REGRESSION.
+  /// RUNNING | SUCCESS | FAILED | REGRESSION | INCONCLUSIVE (no case was flake-screened).
   status           String      @default("RUNNING")
   /// Paired-stats verdict: { delta, se, ci95, n, byTag, regression }.
   summary          Json?

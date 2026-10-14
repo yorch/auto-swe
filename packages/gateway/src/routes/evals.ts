@@ -10,11 +10,13 @@
 
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { evalScreenWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import {
   EVAL_SIGNAL_SOURCES,
   type EvalCaseDto,
   type EvalDatasetDetail,
   type EvalDatasetSummary,
+  type EvalRescreenResultDto,
   type EvalResultDto,
   type EvalRubricDto,
   type EvalRunDto,
@@ -24,7 +26,8 @@ import {
   IMPLEMENTER_RUNTIMES,
   toImplementerRuntime,
 } from '@auto-swe/shared/types/api';
-import type { FastifyPluginAsync } from 'fastify';
+import { FLAKE_SCREEN_MAX_INFRA_ERRORS } from '@auto-swe/shared/types/workflow';
+import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -45,10 +48,17 @@ import {
   sendTemporalUnavailable,
   temporalConnected,
 } from '../lib/temporalErrors.js';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { projectEvalResult } from './workflowProjections.js';
 
 const IdParam = z.object({ id: z.string().uuid() });
+const CaseParams = z.object({ caseId: z.string().uuid(), id: z.string().uuid() });
+
+/** What a re-screen answers 404 with, by code. */
+const RESCREEN_NOT_FOUND = {
+  CASE_NOT_FOUND: 'Eval case not found in this dataset',
+  DATASET_NOT_FOUND: 'Eval dataset not found',
+} as const;
 
 const CreateRubricBody = z.object({
   promptText: z.string().min(1).max(50_000),
@@ -150,6 +160,13 @@ const TrendsQuery = refineCustomRange(
   })
 );
 
+/**
+ * Case ids suite health lists per dataset and kind, oldest first. A dataset holds
+ * up to 10,000 cases, every one unscreened right after it is created; the counts
+ * beside the lists are the totals.
+ */
+const SUITE_HEALTH_CASE_IDS = 50;
+
 /** Did the harness record `summary.partial` — a verdict over only some of the cases? */
 function hasPartialVerdict(summary: unknown): boolean {
   return (
@@ -199,6 +216,7 @@ function toCaseDto(c: {
   tags: string[];
   flakeScreened: boolean;
   flakeRuns: number;
+  flakeScreenInfraErrors: number;
   createdAt: Date;
 }): EvalCaseDto {
   return {
@@ -212,6 +230,10 @@ function toCaseDto(c: {
     input: c.input,
     reference: c.reference,
     repoUrl: c.repoUrl,
+    screenEnvironmentFailed:
+      !c.flakeScreened &&
+      c.flakeRuns > 0 &&
+      c.flakeScreenInfraErrors >= FLAKE_SCREEN_MAX_INFRA_ERRORS,
     tags: c.tags,
   };
 }
@@ -277,6 +299,19 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: dataset.id,
         entityType: 'EvalDataset',
       });
+      // New cases start unscreened, and the harness scores only screened cases.
+      // Best-effort: a case this start misses is screened when an eval run of
+      // the dataset finds it unscreened, or by the re-validation sweep, so a
+      // Temporal outage never fails the create.
+      if (dataset._count.cases > 0) {
+        try {
+          await fastify.temporal.startEvalScreenWorkflow(evalScreenWorkflowId(dataset.id), {
+            datasetId: dataset.id,
+          });
+        } catch (err) {
+          request.log.error({ datasetId: dataset.id, err }, 'failed to start EvalScreenWorkflow');
+        }
+      }
       const data: EvalDatasetSummary = {
         caseCount: dataset._count.cases,
         createdAt: dataset.createdAt.toISOString(),
@@ -313,6 +348,103 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         slug: ds.slug,
       };
       return { data };
+    }
+  );
+
+  // ── Re-screen a dataset's cases, or one case ──
+  // Resets the flake-screen state (flakeRuns 0 marks a case never screened) and
+  // starts the dataset's screen, which joins one already running. For a case
+  // that failed its screen for a reason since fixed, or after the reference's
+  // environment changed. Until the new screen passes, the harness skips the case.
+  const rescreen = async (
+    actor: JwtPayload,
+    log: FastifyBaseLogger,
+    datasetId: string,
+    caseId: string | null
+  ): Promise<EvalRescreenResultDto | keyof typeof RESCREEN_NOT_FOUND> => {
+    const ds = await fastify.prisma.evalDataset.findUnique({
+      select: { id: true },
+      where: { id: datasetId },
+    });
+    if (!ds) {
+      return 'DATASET_NOT_FOUND';
+    }
+    // What the reset discards, for the audit: how many of the cases were screened,
+    // failed their screen, or were never screened. Counted in the reset's own
+    // repeatable-read transaction, so a screen recording a result meanwhile
+    // cannot skew them.
+    const scope = { datasetId: ds.id, ...(caseId ? { id: caseId } : {}) };
+    const count = await fastify.prisma.$transaction(
+      async (tx) => {
+        const screenedBefore = await tx.evalCase.count({
+          where: { ...scope, flakeScreened: true },
+        });
+        const failedBefore = await tx.evalCase.count({
+          where: { ...scope, flakeRuns: { gt: 0 }, flakeScreened: false },
+        });
+        const neverBefore = await tx.evalCase.count({ where: { ...scope, flakeRuns: 0 } });
+        const reset = await tx.evalCase.updateMany({
+          data: { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0 },
+          where: scope,
+        });
+        if (caseId && reset.count === 0) {
+          return 0;
+        }
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor,
+          after: { flakeRuns: 0, flakeScreened: false, rescreen: caseId ? { caseId } : 'dataset' },
+          before: { failed: failedBefore, neverScreened: neverBefore, screened: screenedBefore },
+          client: tx,
+          entityId: ds.id,
+          entityType: 'EvalDataset',
+        });
+        return reset.count;
+      },
+      // One snapshot for the counts and the reset, so the audit matches what was reset.
+      { isolationLevel: 'RepeatableRead' }
+    );
+    if (caseId && count === 0) {
+      return 'CASE_NOT_FOUND';
+    }
+    // Best-effort, like the start on create: the cases are reset either way, and
+    // the next eval run of the dataset or the re-validation sweep screens them.
+    let screenStarted = false;
+    if (count > 0) {
+      try {
+        await fastify.temporal.startEvalScreenWorkflow(evalScreenWorkflowId(ds.id), {
+          datasetId: ds.id,
+        });
+        screenStarted = true;
+      } catch (err) {
+        log.error({ datasetId: ds.id, err }, 'failed to start EvalScreenWorkflow');
+      }
+    }
+    return { reset: count, screenStarted };
+  };
+
+  app.post(
+    '/evals/:id/rescreen',
+    { onRequest: adminOnly, schema: { params: IdParam } },
+    async (request, reply) => {
+      const out = await rescreen(requireUser(request), request.log, request.params.id, null);
+      if (typeof out === 'string') {
+        return sendError(reply, 404, out, RESCREEN_NOT_FOUND[out]);
+      }
+      return reply.status(202).send({ data: out });
+    }
+  );
+
+  app.post(
+    '/evals/:id/cases/:caseId/rescreen',
+    { onRequest: adminOnly, schema: { params: CaseParams } },
+    async (request, reply) => {
+      const { caseId, id } = request.params;
+      const out = await rescreen(requireUser(request), request.log, id, caseId);
+      if (typeof out === 'string') {
+        return sendError(reply, 404, out, RESCREEN_NOT_FOUND[out]);
+      }
+      return reply.status(202).send({ data: out });
     }
   );
 
@@ -435,42 +567,83 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── Suite health ──
   // What the stored data can say about a benchmark's health: the share of each
-  // dataset's golden cases quarantined as stale (exact), and how many are flake-screened.
-  // One grouped read over the cases; the thresholds are the Tier-2 defaults the gate uses.
+  // dataset's golden cases quarantined as stale (exact), how many are flake-screened, and
+  // which the harness skips for want of a passing screen. Grouped counts over the cases plus,
+  // per dataset, a bounded read of the oldest unscreened ids; the thresholds are the Tier-2
+  // defaults the gate uses.
   app.get('/evals/suite-health', { onRequest: adminOnly }, async () => {
-    const [groups, datasets, defaults] = await Promise.all([
+    const [groups, neverGroups, datasets, defaults] = await Promise.all([
       fastify.prisma.evalCase.groupBy({
         _count: { _all: true },
         by: ['datasetId', 'quarantined', 'flakeScreened'],
+      }),
+      // flakeRuns = 0 marks a case never screened; above it, a screen that failed.
+      fastify.prisma.evalCase.groupBy({
+        _count: { _all: true },
+        by: ['datasetId'],
+        where: { flakeRuns: 0, flakeScreened: false, quarantined: false },
       }),
       runUnscoped('admin suite health spans every team', ['EvalDataset'], () =>
         fastify.prisma.evalDataset.findMany({ select: { id: true, name: true, slug: true } })
       ),
       resolveWorkflowDefaults(),
     ]);
-    const perDataset = new Map<string, { cases: number; quarantined: number; screened: number }>();
+    const perDataset = new Map<
+      string,
+      { cases: number; quarantined: number; screened: number; unscreened: number }
+    >();
     for (const g of groups) {
-      const acc = perDataset.get(g.datasetId) ?? { cases: 0, quarantined: 0, screened: 0 };
+      const acc = perDataset.get(g.datasetId) ?? {
+        cases: 0,
+        quarantined: 0,
+        screened: 0,
+        unscreened: 0,
+      };
       acc.cases += g._count._all;
       acc.quarantined += g.quarantined ? g._count._all : 0;
       acc.screened += g.flakeScreened ? g._count._all : 0;
+      acc.unscreened += !g.flakeScreened && !g.quarantined ? g._count._all : 0;
       perDataset.set(g.datasetId, acc);
     }
+    const neverCounts = new Map(neverGroups.map((g) => [g.datasetId, g._count._all]));
+    // The cases the harness skips: not quarantined (skipped for that already) and not screened.
+    const skippedIds = async (datasetId: string, failed: boolean): Promise<string[]> => {
+      const rows = await fastify.prisma.evalCase.findMany({
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { id: true },
+        take: SUITE_HEALTH_CASE_IDS,
+        where: {
+          datasetId,
+          flakeRuns: failed ? { gt: 0 } : 0,
+          flakeScreened: false,
+          quarantined: false,
+        },
+      });
+      return rows.map((r) => r.id);
+    };
+    // One dataset at a time: each may read two id lists, and firing them all at
+    // once for many datasets would outrun the connection pool.
+    const rows: EvalSuiteHealthDto['datasets'] = [];
+    for (const d of datasets) {
+      const acc = perDataset.get(d.id) ?? { cases: 0, quarantined: 0, screened: 0, unscreened: 0 };
+      const never = neverCounts.get(d.id) ?? 0;
+      const failed = Math.max(0, acc.unscreened - never);
+      rows.push({
+        cases: acc.cases,
+        datasetId: d.id,
+        flakeScreened: acc.screened,
+        name: d.name,
+        neverScreened: never,
+        neverScreenedCaseIds: never > 0 ? await skippedIds(d.id, false) : [],
+        quarantined: acc.quarantined,
+        screenFailed: failed,
+        screenFailedCaseIds: failed > 0 ? await skippedIds(d.id, true) : [],
+        slug: d.slug,
+        staleRate: acc.cases > 0 ? acc.quarantined / acc.cases : 0,
+      });
+    }
     const data: EvalSuiteHealthDto = {
-      datasets: datasets
-        .map((d) => {
-          const acc = perDataset.get(d.id) ?? { cases: 0, quarantined: 0, screened: 0 };
-          return {
-            cases: acc.cases,
-            datasetId: d.id,
-            flakeScreened: acc.screened,
-            name: d.name,
-            quarantined: acc.quarantined,
-            slug: d.slug,
-            staleRate: acc.cases > 0 ? acc.quarantined / acc.cases : 0,
-          };
-        })
-        .sort((a, b) => a.slug.localeCompare(b.slug)),
+      datasets: rows.sort((a, b) => a.slug.localeCompare(b.slug)),
       thresholds: {
         maxFlakeRate: defaults.evalHealthMaxFlakeRate,
         maxStaleRate: defaults.evalHealthMaxStaleRate,

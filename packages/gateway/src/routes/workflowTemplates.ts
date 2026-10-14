@@ -34,7 +34,11 @@ import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/date
 import { experimentBucket } from '../lib/experimentBucket.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
-import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
+import {
+  authorizeLaunch,
+  authorizeServiceLaunch,
+  sendLaunchRefusal,
+} from '../lib/launchAuthorization.js';
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import {
@@ -45,6 +49,12 @@ import {
 } from '../lib/runCallbackLaunch.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
+import {
+  idempotencyCallerScope,
+  sendServiceLaunchRefusal,
+  serviceLaunchableTemplateWhere,
+  servicePrincipalLaunchGuard,
+} from '../lib/servicePrincipals.js';
 import {
   assertShellAuthoringAllowed,
   assertShellImagesAllowed,
@@ -78,7 +88,7 @@ import {
 import { memberOrgs } from '../lib/tenantScope.js';
 import { isValidTicketId } from '../lib/ticketId.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
-import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
+import { type JwtPayload, requireAuth, requireCaller, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
 
 /**
@@ -1706,6 +1716,9 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/:id/runs',
     {
+      // Open to service principals: docs/service-principals.md. One handler for both kinds of
+      // caller, so a principal goes through every check a person does, plus its own.
+      config: { serviceScopes: ['runs:launch'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
         body: RunTemplateBody,
@@ -1714,7 +1727,9 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const user = requireUser(request);
+      const caller = requireCaller(request);
+      const user = caller.kind === 'user' ? caller.user : null;
+      const service = caller.kind === 'service' ? caller.principal : undefined;
       const tpl = await fastify.prisma.workflowTemplate.findFirst({
         select: {
           activeVersion: true,
@@ -1733,7 +1748,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           teamId: true,
           workspaceProvider: true,
         },
-        where: launchableTemplateWhere(user, request.params.id),
+        // A principal reaches only the templates on its allowlist, global or its team's.
+        where:
+          caller.kind === 'service'
+            ? serviceLaunchableTemplateWhere(caller.principal, request.params.id)
+            : launchableTemplateWhere(caller.user, request.params.id),
       });
       if (!tpl) {
         return sendTemplateNotLaunchable(reply);
@@ -1825,6 +1844,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           log: request.log,
           prisma: fastify.prisma,
           providerMeta,
+          ...(service ? { service } : {}),
           templateTeamId: tpl.teamId,
           user,
         },
@@ -1836,11 +1856,31 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // With a connection, `validateRunConnection` took the whole launch
       // decision against the connection's org. Without one the run spends its
       // template team's org, so that org's membership and cap apply instead.
-      if (!connectionResult.budgetOrgId && tpl.team?.organization) {
-        const authorization = await authorizeLaunch(fastify.prisma, user, {
-          gate: request.repoAccessGate,
-          log: request.log,
-          orgs: [tpl.team.organization],
+      if (caller.kind === 'user') {
+        if (!connectionResult.budgetOrgId && tpl.team?.organization) {
+          const authorization = await authorizeLaunch(fastify.prisma, caller.user, {
+            gate: request.repoAccessGate,
+            log: request.log,
+            orgs: [tpl.team.organization],
+            repos: [],
+          });
+          if (!authorization.ok) {
+            return sendLaunchRefusal(reply, authorization.refusal);
+          }
+        }
+      } else if (!connectionResult.budgetOrgId) {
+        // A principal's connection-less run is held to its own team's org cap as well as the
+        // template team's, so a global template with no repository is never a run no cap
+        // applies to.
+        const principalTeam = await fastify.prisma.team.findUnique({
+          select: { organization: { select: { id: true, monthlyBudgetUsdCents: true } } },
+          where: { id: caller.principal.teamId },
+        });
+        const orgs = [tpl.team?.organization, principalTeam?.organization].filter(
+          (o): o is { id: string; monthlyBudgetUsdCents: number | null } => !!o
+        );
+        const authorization = await authorizeServiceLaunch(fastify.prisma, caller.principal, {
+          orgs,
           repos: [],
         });
         if (!authorization.ok) {
@@ -1859,16 +1899,26 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // With an Idempotency-Key the ID is a pure function of the key, so the
       // unique index on ActiveWorkflow.temporalWorkflowId becomes a real dedup
       // gate. Without one, every request is a distinct run (previous behaviour).
+      // A person's key is scoped to the template, as it always was; a principal's also to the
+      // principal, so its keys are its own.
       const idempotencyKey = request.headers['idempotency-key'];
       const temporalWorkflowId = idempotencyKey
-        ? workflowIdFromIdempotencyKey('wf', shortTplId, idempotencyKey)
+        ? workflowIdFromIdempotencyKey(
+            'wf',
+            service ? `${shortTplId}-${idempotencyCallerScope(caller)}` : shortTplId,
+            idempotencyKey
+          )
         : `wf-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
 
       // Checked before anything is written; stored sealed beside the request, never in
       // `requestPayload` (the URL's query may carry the receiver's token).
       const callback = await resolveLaunchCallback(fastify.prisma, {
         callback: request.body.callback,
-        teams: () => callbackTeamsForUser(fastify.prisma, user),
+        // A service principal's callback is not wired up yet: it may use no team's endpoint.
+        teams: () =>
+          user
+            ? callbackTeamsForUser(fastify.prisma, user)
+            : Promise.resolve({ kind: 'teams' as const, teamIds: [] }),
         workflowId: temporalWorkflowId,
       });
       if (!callback.ok) {
@@ -1881,7 +1931,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         connectionId,
         description,
         externalTicketId,
-        launchedById: user.sub,
+        // A service principal's run uses the platform credential.
+        ...(user ? { launchedById: user.sub } : {}),
         payload,
         repoId: connectionId,
         requestPayload,
@@ -1912,7 +1963,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             externalTicketId,
             id: workRequestId,
             payload: payload as object,
-            requestedById: user.sub,
+            requestedById: user?.sub ?? null,
+            requestedByServiceId: service?.servicePrincipalId ?? null,
             requestPayload,
             templateId: tpl.id,
             templateVersion: resolvedVersion,
@@ -1927,11 +1979,22 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             templateVersion: resolvedVersion,
           }),
         {
+          ...(service
+            ? {
+                guard: servicePrincipalLaunchGuard(service.servicePrincipalId, {
+                  connectionId,
+                  templateId: tpl.id,
+                }),
+              }
+            : {}),
           log: fastify.log,
           sourceAuthorization: user ? { actor: user } : {},
         }
       );
       if (!launch.ok) {
+        if (launch.reason === 'GUARD_REFUSED') {
+          return sendServiceLaunchRefusal(reply, launch.refusal);
+        }
         return sendError(reply, 409, 'RUN_CONFLICT', 'A run with this workflow ID already exists');
       }
 

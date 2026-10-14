@@ -10,6 +10,12 @@
 # gateway/worker, but still set it if the bundled postgres service runs), and
 # see `.env.example` for swapping the object store to a hosted S3 provider.
 services:
+  # The production dynamic config: development-sql.yaml minus its dev-only
+  # setting. Compose merges `environment` by name, so only this entry changes.
+  temporal:
+    environment:
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/production-sql.yaml
+
   gateway:
     image: ${APP_IMAGE_GATEWAY:-ghcr.io/yorch/auto-swe/gateway:main}
     pull_policy: always
@@ -107,7 +113,7 @@ services:
   # surface, NOT the options of a container the worker is allowed to create:
   # see docs/deployment.md. Root only to open the socket; nothing else runs here.
   docker-socket-proxy:
-    image: ${DOCKER_SOCKET_PROXY_IMAGE:-haproxy:3.4-alpine}
+    image: ${DOCKER_SOCKET_PROXY_IMAGE:-haproxy:3.4-alpine@sha256:7af8255207ee9964ccb4eec8ce4b7a40b777769665e3ae83897fb01b24d8a43a}
     restart: unless-stopped
     user: root
     read_only: true

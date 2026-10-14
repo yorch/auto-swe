@@ -1,6 +1,7 @@
 /** Titles and one-line explanations for each setting group on the platform settings page. */
 export const GROUP_TITLES: Record<string, string> = {
   channel: 'Channel assistant',
+  evals: 'Eval benchmark',
   github: 'GitHub access',
   mcp: 'MCP server',
   memory: 'Semantic memory',
@@ -15,6 +16,8 @@ export const GROUP_TITLES: Record<string, string> = {
 export const GROUP_BLURBS: Record<string, string> = {
   channel:
     'How proactive the Slack assistant is and how much context it reads per turn. Overridable per channel, so one noisy channel can be tuned without touching the rest.',
+  evals:
+    'How thoroughly a benchmark case is checked for a flaky reference before the regression harness scores it.',
   github:
     'Which GitHub hosts repositories may use, and whether people can run work with their own GitHub token.',
   mcp: 'Whether the platform acts as an MCP server for outside clients, and how much they may do.',

@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { SchemaFieldInput, validatePayload } from '@/components/workflow/schemaForm';
 import {
+  type AutomationOwner,
   type AutomationTemplate,
   type EventAutomation,
   type EventAutomationInput,
@@ -135,25 +136,26 @@ function MatchTester({
 }
 
 /**
- * Create an event automation of `source` on a repository, or — given `automation` — edit one:
+ * Create an event automation of `source` on its owner (a repository, or a team for a source
+ * whose automations target one), or — given `automation` — edit one:
  * WHEN (the source's filters, rendered from its descriptor, with a tester), WHAT (a template and
  * that template's own options, rendered from its declared input schema) and LIMITS.
  */
 export function EventAutomationEditor({
-  connectionId,
+  owner,
   sourceKey,
   automation,
   templates,
   onDone,
 }: {
-  connectionId: string;
+  owner: AutomationOwner;
   sourceKey: string;
   automation?: EventAutomation;
   templates: AutomationTemplate[];
   onDone: () => void;
 }) {
-  const create = useCreateEventAutomation(connectionId);
-  const update = useUpdateEventAutomation(connectionId);
+  const create = useCreateEventAutomation(owner);
+  const update = useUpdateEventAutomation(owner);
   const source = eventSource(sourceKey);
   const builtIn = templates.find((t) => t.builtIn);
   const templateFor = (id: string | null) =>

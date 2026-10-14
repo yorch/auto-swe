@@ -1,0 +1,7 @@
+# Temporal dynamic config for production (docker-compose.prod.yml). The same
+# as development-sql.yaml without `system.forceSearchAttributesCacheRefreshOnRead`,
+# which upstream marks development-only: it refreshes the search-attribute
+# cache on every read. Keep the two files otherwise identical.
+limit.maxIDLength:
+  - value: 255
+    constraints: {}

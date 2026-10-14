@@ -28,7 +28,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [evals.md](./evals.md) | Output-quality measurement — the `eval` node, scorers, datasets, the regression harness, canary routing |
 | [agent-runs.md](./agent-runs.md) | Running one library agent against a repository on demand — the throwaway workspace, delivery as a branch or draft PR through a trusted container and a deterministic push policy, the tool-grant rule, bounds and concurrency |
 | [run-callbacks.md](./run-callbacks.md) | Telling the service that started a run how it went — team-registered callback endpoints, the `callback` field on agent runs, template runs and template webhooks, signed deliveries from a transactional outbox, retries, redelivery |
-| [automations.md](./automations.md) | What starts runs without a person: event automations on a repository (a source, its filters, a template and its options, limits), the decision ledger every event automation writes, how to add an event source, and the other kinds |
+| [automations.md](./automations.md) | What starts runs without a person: event automations on a repository or a team (a source, its filters, a template and its options, limits), the decision ledger every event automation writes and who owns its rows, how to add an event source, and the other kinds |
 | [ci-failure-triggers.md](./ci-failure-triggers.md) | A failed GitHub Actions run diagnosed from its logs and, when code can fix it, a draft fix into the branch that failed — the `ci-triage-and-fix` template, what it refuses to act on, and how untrusted log text is contained |
 | [channel-assistant.md](./channel-assistant.md) | The Slack channel teammate — a capability in its own right and the platform's conversational control surface; turns, ambient and reactive modes, channel memory, personas, budgets |
 | [memory.md](./memory.md) | Agent memory — lessons and channel memory in pgvector, how they are written, recalled, consolidated and gated |
@@ -39,6 +39,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [bundles.md](./bundles.md) | Signed, versioned distribution of reusable agents, skills, scanner patterns, and templates across deployments |
 | [repo-access-gating.md](./repo-access-gating.md) | Making repository access agree with GitHub — the permission projection, the sweep and webhook refresh, and the advisory-then-enforce rollout |
 | [repositories.md](./repositories.md) | What identifies a repository (host, owner, name), which hosts its URLs may point at, and sharing it with other teams |
+| [service-principals.md](./service-principals.md) | Team-owned machine identities that start and follow runs with scoped tokens of their own — the routes that accept them, what a launch checks, granting repositories as a lead's launch decision, attribution, token rotation |
 | [user-github-credentials.md](./user-github-credentials.md) | A user's own GitHub or GitHub Enterprise token for a repository — used only for runs they launch, the host allowlist, and how the access gate judges it |
 | [work-views.md](./work-views.md) | The pull-request and ticket views — the recorded PR lifecycle and its webhook events, the two list APIs, and how visibility is applied to every row and aggregate |
 

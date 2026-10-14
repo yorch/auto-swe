@@ -4,6 +4,7 @@ import { eventSource } from '@auto-swe/shared/automation';
 import Link from 'next/link';
 import { useState } from 'react';
 import { outcomeLabel, outcomeTone } from '@/components/automations/AutomationHistory';
+import { TeamAutomationsModal } from '@/components/automations/TeamAutomationsModal';
 import {
   type AutomationRepository,
   RepoAutomationsModal,
@@ -131,6 +132,7 @@ export default function GovernAutomationsPage() {
   const [query, setQuery] = useState('');
   const [picking, setPicking] = useState(false);
   const [openRepo, setOpenRepo] = useState<AutomationRepository | null>(null);
+  const [openTeam, setOpenTeam] = useState<{ id: string; name: string } | null>(null);
 
   const scheduleRows: AutomationSummary[] = (schedules.data ?? []).map((s) => ({
     canManage: s.canManage,
@@ -341,6 +343,15 @@ export default function GovernAutomationsPage() {
                                 <Button onClick={() => setOpenRepo(repo)} size="sm" variant="ghost">
                                   {r.canManage ? 'Manage' : 'View'}
                                 </Button>
+                              ) : r.kind === 'event' && r.team ? (
+                                // An automation with no repository belongs to its team.
+                                <Button
+                                  onClick={() => setOpenTeam(r.team)}
+                                  size="sm"
+                                  variant="ghost"
+                                >
+                                  {r.canManage ? 'Manage' : 'View'}
+                                </Button>
                               ) : href ? (
                                 <Link
                                   className="text-ember-400 text-sm hover:underline"
@@ -371,6 +382,7 @@ export default function GovernAutomationsPage() {
         />
       )}
       {openRepo && <RepoAutomationsModal onClose={() => setOpenRepo(null)} repo={openRepo} />}
+      {openTeam && <TeamAutomationsModal onClose={() => setOpenTeam(null)} team={openTeam} />}
     </div>
   );
 }
