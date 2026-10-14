@@ -1,6 +1,11 @@
 'use client';
 
-import { type EventSource, eventSource, type FilterField } from '@auto-swe/shared/automation';
+import {
+  type EventSource,
+  eventSource,
+  type FilterField,
+  INBOUND_EVENT,
+} from '@auto-swe/shared/automation';
 import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
@@ -18,7 +23,9 @@ import {
   useCreateEventAutomation,
   useUpdateEventAutomation,
 } from '@/hooks/useAutomations';
+import { useTeam } from '@/hooks/useTeams';
 import { errMsg } from '@/lib/errors';
+import { InboundEventFiltersForm } from './InboundEventFilters';
 
 /** A comma- or newline-separated list, trimmed, empties dropped. */
 export function splitList(text: string): string[] {
@@ -136,6 +143,41 @@ function MatchTester({
 }
 
 /**
+ * The repository a team automation's runs act on: none, or one the team owns or is shared.
+ * Choosing one is what lets an event's run change code there.
+ */
+function TargetRepositorySelect({
+  teamId,
+  value,
+  onChange,
+}: {
+  teamId: string;
+  value: string | null;
+  onChange: (id: string | null) => void;
+}) {
+  const { data: team } = useTeam(teamId);
+  const repos = [
+    ...(team?.repositories ?? []).map((r) => ({
+      label: `${r.organizationName}/${r.repoName}`,
+      value: r.id,
+    })),
+    ...(team?.sharedRepositories ?? []).map((r) => ({
+      label: `${r.organizationName}/${r.repoName} (shared by ${r.team.name})`,
+      value: r.id,
+    })),
+  ];
+  return (
+    <Select
+      hint="With a repository, the run acts on it with the platform credential and may open a draft pull request; without one, the template's own workspace."
+      label="Repository"
+      onChange={(v) => onChange(v === '' ? null : v)}
+      options={[{ label: 'No repository', value: '' }, ...repos]}
+      value={value ?? ''}
+    />
+  );
+}
+
+/**
  * Create an event automation of `source` on its owner (a repository, or a team for a source
  * whose automations target one), or — given `automation` — edit one:
  * WHEN (the source's filters, rendered from its descriptor, with a tester), WHAT (a template and
@@ -160,6 +202,17 @@ export function EventAutomationEditor({
   const builtIn = templates.find((t) => t.builtIn);
   const templateFor = (id: string | null) =>
     id === null ? builtIn : templates.find((t) => t.id === id);
+  // A source with no default template: the automation names one, the first by default.
+  const hasDefault = Boolean(source?.defaultTemplate);
+  const initialTemplateId =
+    automation?.templateId ?? (hasDefault ? null : (templates[0]?.id ?? null));
+  const custom = source?.key === INBOUND_EVENT && 'teamId' in owner;
+  const [customFilters, setCustomFilters] = useState<Record<string, unknown>>(
+    () => automation?.filters ?? { ...(source?.defaultFilters as Record<string, unknown>) }
+  );
+  const [targetConnectionId, setTargetConnectionId] = useState<string | null>(
+    automation?.targetConnectionId ?? null
+  );
   const [name, setName] = useState(automation?.name ?? '');
   const [filterValues, setFilterValues] = useState(() =>
     source
@@ -169,9 +222,9 @@ export function EventAutomationEditor({
         )
       : {}
   );
-  const [templateId, setTemplateId] = useState<string | null>(automation?.templateId ?? null);
+  const [templateId, setTemplateId] = useState<string | null>(initialTemplateId);
   const [options, setOptions] = useState<Record<string, unknown>>(() =>
-    startingOptions(templateFor(automation?.templateId ?? null)?.options, automation?.inputs ?? {})
+    startingOptions(templateFor(initialTemplateId)?.options, automation?.inputs ?? {})
   );
   const [cooldown, setCooldown] = useState(String(automation?.cooldownMinutes ?? 30));
   const [dailyCap, setDailyCap] = useState(String(automation?.maxRunsPerDay ?? 10));
@@ -181,7 +234,7 @@ export function EventAutomationEditor({
   }
   const template = templateFor(templateId);
   const optionErrors = template ? validatePayload(template.options, options) : {};
-  const filters = filtersFrom(source.filterFields, filterValues);
+  const filters = custom ? customFilters : filtersFrom(source.filterFields, filterValues);
   const filtersOk = source.filters.safeParse(filters).success;
   const body: EventAutomationInput = {
     cooldownMinutes: Number(cooldown),
@@ -191,6 +244,7 @@ export function EventAutomationEditor({
     maxRunsPerDay: Number(dailyCap),
     name: name.trim(),
     templateId,
+    ...('teamId' in owner ? { targetConnectionId } : {}),
   };
   const valid =
     template !== undefined &&
@@ -225,6 +279,14 @@ export function EventAutomationEditor({
 
       <fieldset className="space-y-3">
         <legend className="label-mono mb-1 block">When</legend>
+        {custom && 'teamId' in owner && (
+          <InboundEventFiltersForm
+            filters={customFilters}
+            onChange={setCustomFilters}
+            teamId={owner.teamId}
+            templateOptions={template?.options}
+          />
+        )}
         {source.filterFields.map((f) =>
           f.kind === 'choices' ? (
             <div className="space-y-1.5" key={f.key}>
@@ -262,7 +324,7 @@ export function EventAutomationEditor({
             />
           )
         )}
-        <MatchTester filters={filters} source={source} />
+        {!custom && <MatchTester filters={filters} source={source} />}
       </fieldset>
 
       <fieldset className="space-y-3">
@@ -277,15 +339,26 @@ export function EventAutomationEditor({
             setTemplateId(id);
           }}
           options={[
-            { label: `${builtIn?.name ?? source.defaultTemplate.name} (default)`, value: '' },
+            ...(source.defaultTemplate
+              ? [{ label: `${builtIn?.name ?? source.defaultTemplate.name} (default)`, value: '' }]
+              : []),
             ...templates.filter((t) => !t.builtIn).map((t) => ({ label: t.name, value: t.id })),
           ]}
           value={templateId ?? ''}
         />
+        {'teamId' in owner && (
+          <TargetRepositorySelect
+            onChange={setTargetConnectionId}
+            teamId={owner.teamId}
+            value={targetConnectionId}
+          />
+        )}
         {template === undefined && (
           <Alert>
             {templateId === null
-              ? `The default template (${source.defaultTemplate.name}) is not installed.`
+              ? source.defaultTemplate
+                ? `The default template (${source.defaultTemplate.name}) is not installed.`
+                : 'Choose the template this automation starts.'
               : 'This template can no longer be started by this automation; choose another.'}
           </Alert>
         )}

@@ -13,6 +13,7 @@ export type AuditEntityType =
   | 'EmbeddingConfig'
   | 'EvalDataset'
   | 'EvalRubric'
+  | 'EventEndpoint'
   | 'GitHubConfig'
   | 'GitHubHostCredential'
   | 'GitHubHostWebhookSecret'

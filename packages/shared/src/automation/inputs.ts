@@ -134,21 +134,36 @@ export function automationOptionsProblem<F, X>(
   source: EventSource<F, X>,
   filters: F,
   inputSchema: unknown,
-  inputs: unknown
+  inputs: unknown,
+  /** Whether the automation's runs act on a repository; by default, when its source targets one. */
+  onRepository: boolean = source.target !== 'team'
 ): string | null {
   // A key the occurrence fills is refused, not stored and silently overridden.
-  const filled = new Set<string>([...source.eventInputKeys, ...ALWAYS_FILLED]);
+  const filled = new Set<string>([
+    ...source.eventInputKeys,
+    ...ALWAYS_FILLED,
+    ...(source.filledKeys?.(filters) ?? []),
+  ]);
   const named = Object.keys(storedInputs(inputs)).filter((k) => filled.has(k));
   if (named.length > 0) {
     return named.map((k) => `'${k}' is filled by each occurrence and cannot be set`).join('; ');
   }
-  for (const facts of source.samples(filters)) {
+  if (isInputSchema(inputSchema) && source.templateProblem) {
+    const problem = source.templateProblem(filters, inputSchema);
+    if (problem) {
+      return problem;
+    }
+  }
+  for (const facts of source.samples(
+    filters,
+    isInputSchema(inputSchema) ? inputSchema : undefined
+  )) {
     const built = buildAutomationPayload(
       source,
       inputSchema,
       inputs,
-      // A stand-in repository for a source whose automations have one; none for a team's.
-      source.target === 'team' ? null : '00000000-0000-4000-8000-000000000000',
+      // A stand-in repository for an automation whose runs act on one; none otherwise.
+      onRepository ? '00000000-0000-4000-8000-000000000000' : null,
       facts
     );
     if (!built.ok) {

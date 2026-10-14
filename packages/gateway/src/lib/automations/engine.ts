@@ -257,6 +257,11 @@ export async function decideAndStart<F, X>(
     now: Date;
     retry: RetryScope;
     startRetryDelayMs: number;
+    /**
+     * Why the repository a team automation's runs act on cannot be used (inactive, or no longer
+     * the team's), recorded as `FAILED_TO_START`. Absent when there is none or it is usable.
+     */
+    targetUnavailable?: string;
   }
 ): Promise<AutomationResult> {
   const prisma = fastify.prisma;
@@ -318,6 +323,9 @@ export async function decideAndStart<F, X>(
     const unmet = source.precondition?.(facts);
     if (unmet) {
       return recordDecision(prisma, fireBase, 'SUPPRESSED_PRECONDITION', unmet);
+    }
+    if (args.targetUnavailable) {
+      return recordDecision(prisma, fireBase, 'FAILED_TO_START', args.targetUnavailable);
     }
     // A source that acts only for a platform member: the account on the host must be one.
     let requestedById: string | null = null;
@@ -798,6 +806,10 @@ export async function resolveAutomationTemplate<F, X>(
     inputSchema: true,
     workspaceProvider: true,
   } as const;
+  if (!templateId && !source.defaultTemplate) {
+    // A source with no default template: an automation must name its own.
+    return null;
+  }
   const row = templateId
     ? await prisma.workflowTemplate.findFirst({
         select,
@@ -811,7 +823,7 @@ export async function resolveAutomationTemplate<F, X>(
     : await prisma.workflowTemplate.findFirst({
         orderBy: [{ updatedAt: 'desc' }],
         select,
-        where: { name: source.defaultTemplate.name, status: 'ACTIVE', teamId: null },
+        where: { name: source.defaultTemplate?.name, status: 'ACTIVE', teamId: null },
       });
   if (
     !row ||

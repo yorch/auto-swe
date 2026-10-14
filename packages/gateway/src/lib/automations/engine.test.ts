@@ -17,6 +17,7 @@ vi.mock('../repositoryHost.js', () => ({
 vi.mock('../orgAccess.js', () => ({ isOrgOverBudget: vi.fn(async () => m.overBudget) }));
 
 import {
+  INBOUND_EVENT,
   WORKFLOW_RUN_FAILED,
   type WorkflowRunFailedFacts,
   workflowRunFailedSource,
@@ -31,6 +32,7 @@ import {
   handleOccurrence,
   ownerLockKey,
 } from './engine.js';
+import { handleInboundEvent, TARGET_UNAVAILABLE } from './inboundEvent.js';
 import { normalizeWorkflowRunEvent } from './workflowRunFailed.js';
 
 const REPO_ID = 42;
@@ -812,5 +814,158 @@ describe('owners that are not a repository', () => {
     expect(findFirst).not.toHaveBeenCalled();
     await actorLaunchDecision(prisma, 'ghe.example.com/acme/api', '123', 'conn');
     expect(JSON.stringify(findFirst.mock.calls[0]?.[0])).toContain('ghe.example.com:123');
+  });
+});
+
+describe('inbound events (inbound.event)', () => {
+  const ENDPOINT = 'eeeeeeee-0000-4000-8000-000000000001';
+  const TEAM = {
+    id: 'team-1',
+    organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+    orgId: 'org-1',
+  };
+  const template = {
+    activeVersion: 1,
+    id: 'tttttttt-0000-4000-8000-000000000003',
+    inputSchema: {
+      properties: {
+        count: { type: 'number' },
+        description: { type: 'string' },
+        severity: { enum: ['low', 'high'], type: 'string' },
+        ticketId: { type: 'string' },
+      },
+      required: [],
+      type: 'object',
+    },
+    workspaceProvider: null,
+  };
+  const automation = (over: Record<string, unknown> = {}) => ({
+    connectionId: null,
+    cooldownMinutes: 0,
+    createdAt: new Date(0),
+    enabled: true,
+    filters: {
+      endpointId: ENDPOINT,
+      eventTypes: ['alert.*'],
+      fields: { severity: '/severity' },
+      match: [{ op: 'eq', pointer: '/env', value: 'prod' }],
+    },
+    id: 'aaaaaaaa-0000-4000-8000-00000000000e',
+    inputs: {},
+    maxRunsPerDay: 10,
+    source: INBOUND_EVENT,
+    targetConnectionId: null,
+    teamId: 'team-1',
+    templateId: template.id,
+    ...over,
+  });
+  const event = (document: Record<string, unknown>, id = 'evt-1') => ({
+    document,
+    endpointId: ENDPOINT,
+    id,
+    scope: 'alert.fired',
+    subject: id,
+    type: 'alert.fired',
+  });
+  function withAutomations(rows: unknown[], over: { template?: unknown } = {}) {
+    const h = harness({ template: over.template ?? template });
+    Object.assign(h.db, {
+      automation: { findMany: vi.fn(async () => rows) },
+      connection: { ...h.db.connection, findFirst: vi.fn(async () => null) },
+    });
+    return h;
+  }
+  const handleEvent = (h: ReturnType<typeof harness>, doc: Record<string, unknown>, id?: string) =>
+    handleInboundEvent(
+      h.fastify as never,
+      { id: ENDPOINT, team: TEAM, teamId: 'team-1' },
+      event(doc, id),
+      new Date(),
+      0
+    );
+
+  it('starts one run per event, keyed and locked on the endpoint, however many automations match', async () => {
+    const second = automation({ id: 'aaaaaaaa-0000-4000-8000-00000000000f' });
+    const h = withAutomations([automation(), second]);
+    const result = await handleEvent(h, { env: 'prod', severity: 'high', text: 'x'.repeat(10) });
+    expect(result).toMatchObject({ automationId: automation().id, outcome: 'STARTED' });
+    expect(h.started).toHaveLength(1);
+    expect(h.fires[0]).toMatchObject({
+      connectionId: null,
+      dedupeKey: `@endpoint/${ENDPOINT}#evt-1`,
+      ownerKey: `@endpoint/${ENDPOINT}`,
+      scopeKey: 'alert.fired',
+      subjectKey: 'evt-1',
+    });
+    expect(h.db.$executeRaw.mock.calls[0]?.[1]).toBe(`automation-owner:@endpoint/${ENDPOINT}`);
+    // Only the extracted values are recorded, never the payload.
+    expect(
+      h.fires[0] && JSON.stringify((h.fires[0] as unknown as { facts: unknown }).facts)
+    ).not.toContain('xxxxxxxxxx');
+    const request = h.started[0]?.input.request as {
+      payload: Record<string, unknown>;
+      description: string;
+    };
+    expect(request.payload.severity).toBe('high');
+    expect(request.description).toContain('no person asked for it');
+    // The same event again, whichever automation would match it, is decided once.
+    await expect(handleEvent(h, { env: 'prod', severity: 'high' })).resolves.toEqual({
+      duplicate: true,
+    });
+    expect(h.started).toHaveLength(1);
+  });
+
+  it('ignores an event no automation selects, recording nothing', async () => {
+    const h = withAutomations([automation()]);
+    await expect(handleEvent(h, { env: 'staging' })).resolves.toMatchObject({ ignored: true });
+    expect(h.fires).toHaveLength(0);
+  });
+
+  it('ignores every event while the kill switch is off', async () => {
+    m.enabled = false;
+    const h = withAutomations([automation()]);
+    await expect(handleEvent(h, { env: 'prod' })).resolves.toMatchObject({ ignored: true });
+    expect(h.fires).toHaveLength(0);
+  });
+
+  it('records FAILED_TO_START when a mapped value does not fit the template', async () => {
+    const h = withAutomations([automation()]);
+    const result = await handleEvent(h, { env: 'prod', severity: 'catastrophic' });
+    expect(result).toMatchObject({ outcome: 'FAILED_TO_START' });
+    expect(h.fires[0]?.reason).toContain("'severity' must be one of");
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('records FAILED_TO_START when its repository is no longer the team’s', async () => {
+    const h = withAutomations([
+      automation({ targetConnectionId: 'cccccccc-0000-4000-8000-0000000000ff' }),
+    ]);
+    const result = await handleEvent(h, { env: 'prod', severity: 'low' });
+    expect(result).toMatchObject({ outcome: 'FAILED_TO_START', reason: TARGET_UNAVAILABLE });
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('acts on a target repository with its id in the payload', async () => {
+    const h = withAutomations([
+      automation({ targetConnectionId: 'cccccccc-0000-4000-8000-000000000001' }),
+    ]);
+    (h.db.connection as unknown as { findFirst: ReturnType<typeof vi.fn> }).findFirst = vi.fn(
+      async () => ({
+        id: 'cccccccc-0000-4000-8000-000000000001',
+        installation: null,
+        team: TEAM,
+        teamId: 'team-2',
+      })
+    );
+    await expect(handleEvent(h, { env: 'prod', severity: 'low' })).resolves.toMatchObject({
+      outcome: 'STARTED',
+    });
+    const request = h.started[0]?.input.request as Record<string, unknown>;
+    expect(request).toMatchObject({
+      connectionId: 'cccccccc-0000-4000-8000-000000000001',
+      workspaceProvider: 'git_repo',
+    });
+    // Still decided on the endpoint, not the repository.
+    expect(h.fires[0]?.ownerKey).toBe(`@endpoint/${ENDPOINT}`);
   });
 });

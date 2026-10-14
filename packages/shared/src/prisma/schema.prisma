@@ -449,6 +449,8 @@ model Connection {
   /// owning team (`teamId`) keeps management, budgets and settings.
   shares                ConnectionTeamShare[]
   automations           Automation[]
+  /// Team automations whose runs act on this repository (`Automation.targetConnectionId`).
+  targetedByAutomations Automation[]          @relation("AutomationTargetConnection")
   automationFires       AutomationFire[]
   knowledgeItems        KnowledgeItem[]
 
@@ -859,6 +861,8 @@ model Team {
   scheduledWorkRequests ScheduledWorkRequest[] @relation("ScheduleTeam")
   /// Event automations this team owns that belong to no repository (`Automation.teamId`).
   automations           Automation[]
+  /// URLs other services post signed events to (`EventEndpoint`).
+  eventEndpoints        EventEndpoint[]
   workflowTemplates     WorkflowTemplate[]
   shellAudits           WorkflowShellAudit[]
   providerCredentials   ProviderCredential[]
@@ -1282,6 +1286,7 @@ model User {
   schedulesActingAs     ScheduledWorkRequest[]   @relation("ScheduleActsAs")
   automations           Automation[]             @relation("AutomationCreator")
   servicePrincipals     ServicePrincipal[]       @relation("ServicePrincipalCreator")
+  eventEndpoints        EventEndpoint[]          @relation("EventEndpointCreator")
   configPermissions     ConfigPermission[]
   repoAccess            RepoAccess[]
   connectionCredentials ConnectionCredential[]
@@ -1515,6 +1520,11 @@ model Automation {
   connection      Connection?       @relation(fields: [connectionId], references: [id], onDelete: Cascade)
   teamId          String?           @map("team_id") @db.Uuid
   team            Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  /// For a team automation only: the repository its runs act on, one the team owns or is
+  /// shared. It does not make the automation a repository's: the team keeps it, and its
+  /// decisions stay on the source's owner key. Deleting the repository deletes the automation.
+  targetConnectionId String?        @map("target_connection_id") @db.Uuid
+  targetConnection   Connection?    @relation("AutomationTargetConnection", fields: [targetConnectionId], references: [id], onDelete: Cascade)
   name            String
   enabled         Boolean           @default(true)
   /// An event source key (`EVENT_SOURCES`), e.g. `github.workflow_run.failed`.
@@ -1539,9 +1549,57 @@ model Automation {
 
   @@index([connectionId, source])
   @@index([teamId, source])
+  @@index([targetConnectionId])
   @@index([templateId])
   @@index([createdById])
   @@map("automations")
+}
+
+/// A URL another service posts signed events to (docs/inbound-events.md). It belongs to a team,
+/// whose `inbound.event` automations decide what each event starts. The secret is sealed with
+/// the same AES-GCM envelope as every other stored credential; a rotation keeps the secret it
+/// replaced, accepted until `previousSecretExpiresAt`.
+model EventEndpoint {
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId                   String    @map("team_id") @db.Uuid
+  team                     Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name                     String
+  enabled                  Boolean   @default(true)
+  /// `autoswe-v1`, `hmac-sha256` or `shared-secret-header`.
+  scheme                   String
+  /// The header an `hmac-sha256` signature or a shared secret is sent in.
+  signatureHeader          String?   @map("signature_header")
+  /// Text before the value in that header (`sha256=`, `Bearer `).
+  signaturePrefix          String?   @map("signature_prefix")
+  /// `hex` or `base64`, for `hmac-sha256`.
+  signatureEncoding        String?   @map("signature_encoding")
+  /// `json` or `cloudevents`.
+  format                   String    @default("json")
+  /// JSON Pointers (RFC 6901) into the event document.
+  typePointer              String    @map("type_pointer")
+  idPointer                String?   @map("id_pointer")
+  subjectPointer           String?   @map("subject_pointer")
+  scopePointer             String?   @map("scope_pointer")
+  timePointer              String?   @map("time_pointer")
+  secretCiphertext         Bytes     @map("secret_ciphertext")
+  secretNonce              Bytes     @map("secret_nonce")
+  secretAuthTag            Bytes     @map("secret_auth_tag")
+  secretKeyVersion         Int       @map("secret_key_version")
+  secretLastFour           String    @map("secret_last_four")
+  previousSecretCiphertext Bytes?    @map("previous_secret_ciphertext")
+  previousSecretNonce      Bytes?    @map("previous_secret_nonce")
+  previousSecretAuthTag    Bytes?    @map("previous_secret_auth_tag")
+  previousSecretKeyVersion Int?      @map("previous_secret_key_version")
+  previousSecretLastFour   String?   @map("previous_secret_last_four")
+  previousSecretExpiresAt  DateTime? @map("previous_secret_expires_at") @db.Timestamptz
+  createdById              String?   @map("created_by_id") @db.Uuid
+  createdBy                User?     @relation("EventEndpointCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([teamId])
+  @@index([createdById])
+  @@map("event_endpoints")
 }
 
 /// One decision an event automation made about one occurrence: started a run, or suppressed

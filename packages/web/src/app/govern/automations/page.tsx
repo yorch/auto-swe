@@ -310,7 +310,7 @@ export default function GovernAutomationsPage() {
                             <Td label="Starts">
                               {r.template?.name ??
                                 (r.kind === 'event' && r.source
-                                  ? `${eventSource(r.source)?.defaultTemplate.name ?? '—'} (default)`
+                                  ? `${eventSource(r.source)?.defaultTemplate?.name ?? '—'} (default)`
                                   : r.kind === 'tracker_transition'
                                     ? 'the team’s default template'
                                     : '—')}

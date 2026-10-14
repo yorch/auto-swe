@@ -24,6 +24,13 @@ export interface EventAutomation {
   maxRunsPerDay: number;
   templateId: string | null;
   template: { id: string; name: string } | null;
+  /** For a team automation: the repository its runs act on. */
+  targetConnectionId?: string | null;
+  targetConnection?: {
+    id: string;
+    organizationName: string | null;
+    repoName: string | null;
+  } | null;
   createdAt: string;
 }
 
@@ -56,7 +63,7 @@ export interface AutomationTemplate {
 export type EventAutomationInput = Pick<
   EventAutomation,
   'name' | 'enabled' | 'filters' | 'inputs' | 'cooldownMinutes' | 'maxRunsPerDay' | 'templateId'
->;
+> & { targetConnectionId?: string | null };
 
 /** What event automations belong to: a repository, or a team (for a team-target source). */
 export type AutomationOwner = { connectionId: string } | { teamId: string };

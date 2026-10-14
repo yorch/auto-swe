@@ -74,6 +74,8 @@ function AutomationRow({
             {doing && `${doing} · `}cooldown {automation.cooldownMinutes} min · at most{' '}
             {automation.maxRunsPerDay} a day
             {automation.template && ` · template ${automation.template.name}`}
+            {automation.targetConnection &&
+              ` · on ${automation.targetConnection.organizationName}/${automation.targetConnection.repoName}`}
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">

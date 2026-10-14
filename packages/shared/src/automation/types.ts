@@ -163,13 +163,31 @@ export interface EventSource<Filters = unknown, Facts = unknown> {
    * Occurrences the filters could select, for checking an automation's options at save time
    * in every shape a real one can take.
    */
-  samples(filters: Filters): Facts[];
+  samples(filters: Filters, schema?: InputSchema): Facts[];
   /** The payload contract the source's runs are parsed with, beyond the template's schema. */
   contract?: z.ZodType;
   /** Whether a template's declared input schema can take this source's runs. */
   templateCompatible(schema: InputSchema): boolean;
-  /** The template an automation with no template starts. */
-  defaultTemplate: { name: string };
+  /**
+   * The template an automation with no template starts; null when the source has none, and an
+   * automation must name its template.
+   */
+  defaultTemplate: { name: string } | null;
+  /**
+   * Payload keys these filters fill from each occurrence, beyond `eventInputKeys` (an inbound
+   * event's mapped fields): an automation's options may not set them either.
+   */
+  filledKeys?(filters: Filters): string[];
+  /**
+   * Why these filters cannot start this template, beyond what building the payload checks (a
+   * mapped field the template does not declare), or null.
+   */
+  templateProblem?(filters: Filters, schema: InputSchema): string | null;
+  /**
+   * The owner key a decision is recorded under, when the occurrence names it (an inbound event's
+   * endpoint, `@endpoint/<id>`). Without it, a repository's key or the team's.
+   */
+  ownerKey?(facts: Facts): string;
   /**
    * The person on the host whose action is the occurrence (who added a label), when the source
    * acts only for a platform member. The engine then starts a run only when that account
