@@ -83,6 +83,16 @@ export interface BulkModelPlan {
   };
 }
 
+/** The outcome of an apply: the plan as it landed, and any audit entry that could not be written. */
+export interface BulkModelResult {
+  data: BulkModelPlan;
+  /**
+   * The changes are live; these audit entries are not. A governance record that silently failed to
+   * write is worse than one the operator knows is missing.
+   */
+  auditWarnings?: string[];
+}
+
 export interface BulkModelRequest {
   ids: string[];
   mode: 'SET' | 'REMAP';
@@ -204,9 +214,7 @@ export function useApplyBulkModel() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: BulkModelRequest) =>
-      api
-        .post<{ data: BulkModelPlan }>('/api/v1/platform/agent-library/bulk-model', body)
-        .then((r) => r.data),
+      api.post<BulkModelResult>('/api/v1/platform/agent-library/bulk-model', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

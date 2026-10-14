@@ -329,4 +329,95 @@ describe('BulkModelModal', () => {
       true
     );
   });
+
+  it('drops the preview when the selection changes under it', async () => {
+    setupFetchMock({
+      'POST /api/v1/platform/agent-library/bulk-model/preview': () => ({
+        data: { ...plan, changes: [change()], summary: { ...plan.summary, ok: 1, total: 1 } },
+      }),
+    });
+    const element = (agents: AgentRow[]) =>
+      withQuery(<BulkModelModal agents={agents} onClose={vi.fn()} open />);
+    const { rerender } = render(element([agent('a', 'openai/old')]));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Target model' }), {
+      target: { value: 'anthropic/new' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview changes' }));
+    expect(await screen.findByRole('button', { name: 'Apply 1 changes' })).toBeTruthy();
+
+    // A refetch leaves a different set selected, and the agents are part of the request.
+    rerender(element([agent('b', 'openai/old')]));
+    expect(screen.queryByRole('button', { name: 'Apply 1 changes' })).toBeNull();
+  });
+
+  it('holds the dialog shut while a batch is being written', async () => {
+    let release: ((response: Response) => void) | undefined;
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        calls += 1;
+        if (calls === 1) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                data: {
+                  ...plan,
+                  changes: [change()],
+                  summary: { ...plan.summary, ok: 1, total: 1 },
+                },
+              }),
+              { headers: { 'content-type': 'application/json' }, status: 200 }
+            )
+          );
+        }
+        return new Promise<Response>((resolve) => {
+          release = resolve;
+        });
+      })
+    );
+    render(
+      withQuery(<BulkModelModal agents={[agent('a', 'openai/old')]} onClose={vi.fn()} open />)
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: 'Target model' }), {
+      target: { value: 'anthropic/new' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview changes' }));
+    await screen.findByRole('button', { name: 'Apply 1 changes' });
+
+    // The header's close button is the affordance Escape and a backdrop click go through.
+    const headerClose = () => document.querySelector('dialog header button');
+    expect(headerClose()?.hasAttribute('disabled')).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Apply 1 changes' }));
+    await waitFor(() => expect(release).toBeDefined());
+    expect(headerClose()?.hasAttribute('disabled')).toBe(true);
+  });
+
+  it('says so when an applied change could not be audited', async () => {
+    setupFetchMock({
+      'POST /api/v1/platform/agent-library/bulk-model': () => ({
+        auditWarnings: ['a: audit store down'],
+        data: {
+          ...plan,
+          changes: [change({ newVersion: 2 })],
+          summary: { ...plan.summary, ok: 1, total: 1 },
+        },
+      }),
+      'POST /api/v1/platform/agent-library/bulk-model/preview': () => ({
+        data: { ...plan, changes: [change()], summary: { ...plan.summary, ok: 1, total: 1 } },
+      }),
+    });
+    render(
+      withQuery(<BulkModelModal agents={[agent('a', 'openai/old')]} onClose={vi.fn()} open />)
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: 'Target model' }), {
+      target: { value: 'anthropic/new' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview changes' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Apply 1 changes' }));
+
+    expect(await screen.findByText(/could not be recorded/)).toBeTruthy();
+    expect(screen.getByText('a: audit store down')).toBeTruthy();
+  });
 });

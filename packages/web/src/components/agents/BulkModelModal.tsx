@@ -138,10 +138,12 @@ export function BulkModelModal({
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [adaptRuntime, setAdaptRuntime] = useState(false);
   const [clearMismatchedCredentials, setClearMismatchedCredentials] = useState(false);
-  // A plan belongs to the inputs that produced it. Keying it that way means a preview that lands
-  // after the operator has edited something is never shown, and never applied, without every input
-  // having to remember to invalidate it.
+  // A plan belongs to the inputs that produced it, the selected agents included — they are part of
+  // the request. Keying it that way means a preview that lands after the operator has edited
+  // something, or after a refetch changed the selection, is never shown and never applied, without
+  // every input having to remember to invalidate it.
   const inputsKey = JSON.stringify([
+    agents.map((agent) => agent.id),
     mode,
     modelSpec,
     mapping,
@@ -154,6 +156,7 @@ export function BulkModelModal({
     plan: BulkModelPlan;
   } | null>(null);
   const [appliedPlan, setAppliedPlan] = useState<BulkModelPlan | null>(null);
+  const [auditWarnings, setAuditWarnings] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const preview = usePreviewBulkModel();
   const apply = useApplyBulkModel();
@@ -181,8 +184,9 @@ export function BulkModelModal({
     const body = request();
     try {
       const result = await preview.mutateAsync(body);
+      // The result of an apply already on screen is not replaced by this: it outranks a preview,
+      // and the dialog is remounted per opening, so nothing else has to clear it.
       setPreviewed({ body, key: inputsKey, plan: result });
-      setAppliedPlan(null);
     } catch (e) {
       setError(errMsg(e, 'Preview failed'));
     }
@@ -194,7 +198,9 @@ export function BulkModelModal({
       return;
     }
     try {
-      setAppliedPlan(await apply.mutateAsync(activePreview.body));
+      const result = await apply.mutateAsync(activePreview.body);
+      setAppliedPlan(result.data);
+      setAuditWarnings(result.auditWarnings ?? []);
     } catch (e) {
       setError(errMsg(e, 'Apply failed'));
     }
@@ -211,6 +217,10 @@ export function BulkModelModal({
       : Object.values(mapping).some((value) => value.trim());
   return (
     <Modal
+      // Escape and a backdrop click bypass the footer's disabled button, so they are what actually
+      // has to be held shut while a batch is being written: the report of a partial success is the
+      // only place the operator learns which agents landed.
+      dismissible={!apply.isPending}
       onClose={onClose}
       open={open}
       size="full"
@@ -219,6 +229,16 @@ export function BulkModelModal({
     >
       <div className="max-h-[70vh] space-y-5 overflow-y-auto pr-1">
         {error && <Alert variant="error">{error}</Alert>}
+        {auditWarnings.length > 0 && (
+          <Alert variant="warning">
+            These changes are applied, but their audit entries could not be recorded:
+            <ul className="mt-1 list-disc pl-5">
+              {auditWarnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          </Alert>
+        )}
         {!appliedPlan && (
           <>
             <div className="space-y-3">
