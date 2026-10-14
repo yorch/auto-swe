@@ -64,7 +64,8 @@ const MAX_SCREEN_PASSES = 5;
 
 export async function screenDatasetCases(
   datasetId: string,
-  deps: FlakeScreenDeps
+  deps: FlakeScreenDeps,
+  skipCaseIds: readonly string[] = []
 ): Promise<FlakeScreenResult> {
   const result: FlakeScreenResult = {
     erroredCaseIds: [],
@@ -76,7 +77,7 @@ export async function screenDatasetCases(
   // (cases added, or reset for a re-screen) relies on it to pick them up. A
   // recorded case is no longer loaded; one left unrecorded (an infrastructure
   // error, a concurrent change) is not retried by this screen, so it cannot loop.
-  const skip = new Set<string>();
+  const skip = new Set<string>(skipCaseIds);
   for (let pass = 0; pass < MAX_SCREEN_PASSES; pass += 1) {
     const cases = (await deps.loadCases(datasetId)).filter((c) => !skip.has(c.id));
     if (cases.length === 0) {
@@ -175,6 +176,21 @@ async function recordInfraFailure(
   return true;
 }
 
+async function defaultCountUnscreened(
+  datasetId: string,
+  skipCaseIds: readonly string[]
+): Promise<number> {
+  return prisma.evalCase.count({
+    where: {
+      datasetId,
+      flakeRuns: 0,
+      flakeScreenInfraErrors: { lt: FLAKE_SCREEN_MAX_INFRA_ERRORS },
+      id: { notIn: [...skipCaseIds] },
+      quarantined: false,
+    },
+  });
+}
+
 async function defaultLoadCases(datasetId: string): Promise<ScreenCaseRow[]> {
   const rows = await prisma.evalCase.findMany({
     orderBy: { createdAt: 'asc' },
@@ -243,13 +259,33 @@ async function defaultRecordScreen(
  * Activity entry: screen a dataset's never-screened cases with the real DB +
  * Docker deps. Idempotent across retries — a recorded case is no longer loaded.
  */
-export async function screenDatasetCasesActivity(datasetId: string): Promise<FlakeScreenResult> {
-  return screenDatasetCases(datasetId, {
-    heartbeat: (details) => heartbeat(details),
-    loadCases: defaultLoadCases,
-    recordInfraError: defaultRecordInfraError,
-    recordScreen: defaultRecordScreen,
-    runReference: runCaseReference,
-    runs: await resolveSetting('evals.flakeScreenRuns', {}),
-  });
+export async function screenDatasetCasesActivity(
+  datasetId: string,
+  skipCaseIds: readonly string[] = []
+): Promise<FlakeScreenResult> {
+  return screenDatasetCases(
+    datasetId,
+    {
+      heartbeat: (details) => heartbeat(details),
+      loadCases: defaultLoadCases,
+      recordInfraError: defaultRecordInfraError,
+      recordScreen: defaultRecordScreen,
+      runReference: runCaseReference,
+      runs: await resolveSetting('evals.flakeScreenRuns', {}),
+    },
+    skipCaseIds
+  );
+}
+
+/**
+ * Activity entry: how many cases a screen would still pick up — never screened,
+ * not quarantined, under the infrastructure-error cap — leaving out `skipCaseIds`.
+ * The screen workflow asks it after each screen, to catch cases that arrived once
+ * the activity's last load was done.
+ */
+export async function countUnscreenedCasesActivity(
+  datasetId: string,
+  skipCaseIds: readonly string[] = []
+): Promise<number> {
+  return defaultCountUnscreened(datasetId, skipCaseIds);
 }

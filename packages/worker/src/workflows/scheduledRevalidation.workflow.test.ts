@@ -17,6 +17,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const calls: string[] = [];
 let failingScreen = new Set<string>();
+/** What the count activity answers, one per call; 0 once exhausted. */
+let remaining: number[] = [];
 /** Screens in flight at once, and the most there ever were. */
 let activeScreens = 0;
 let maxActiveScreens = 0;
@@ -29,6 +31,10 @@ const screened = (datasetId: string): FlakeScreenResult => ({
 });
 
 const fakeActivities = {
+  async countUnscreenedCasesActivity(datasetId: string) {
+    calls.push(`count:${datasetId}`);
+    return remaining.shift() ?? 0;
+  },
   async getDatasetsForRevalidation() {
     return [{ datasetId: 'd1' }, { datasetId: 'd2' }];
   },
@@ -81,6 +87,7 @@ beforeEach((ctx: TestContext) => {
   }
   calls.length = 0;
   failingScreen = new Set();
+  remaining = [];
   maxActiveScreens = 0;
 });
 
@@ -139,6 +146,28 @@ describe('EvalScreenWorkflow', () => {
       workflowId: 'eval-screen-d1',
     });
     expect(result).toEqual(screened('d1'));
-    expect(calls).toEqual(['screen:d1']);
+    expect(calls).toEqual(['screen:d1', 'count:d1']);
+  });
+
+  it('screens again while cases that arrived after the last load remain', async () => {
+    remaining = [2, 1, 0];
+    const result = await env.client.workflow.execute('EvalScreenWorkflow', {
+      args: [{ datasetId: 'd1' }],
+      taskQueue: TASK_QUEUE,
+      workflowId: 'eval-screen-rounds',
+    });
+    expect(calls.filter((x) => x === 'screen:d1')).toHaveLength(3);
+    expect(result.screened).toBe(6);
+    expect(result.failedCaseIds).toEqual(['d1-flaky', 'd1-flaky', 'd1-flaky']);
+  });
+
+  it('stops after a bounded number of screens', async () => {
+    remaining = Array.from({ length: 20 }, () => 1);
+    await env.client.workflow.execute('EvalScreenWorkflow', {
+      args: [{ datasetId: 'd1' }],
+      taskQueue: TASK_QUEUE,
+      workflowId: 'eval-screen-bounded',
+    });
+    expect(calls.filter((x) => x === 'screen:d1')).toHaveLength(5);
   });
 });

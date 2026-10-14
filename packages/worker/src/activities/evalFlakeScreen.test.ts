@@ -108,6 +108,13 @@ describe('screenDatasetCases', () => {
     expect(r).toEqual({ erroredCaseIds: ['a'], failedCaseIds: [], passed: 1, screened: 1 });
   });
 
+  it('leaves out the cases it is told to skip', async () => {
+    const { d, recordScreen } = deps([c('a'), c('b')], async () => gate(true));
+    const r = await screenDatasetCases('d1', d, ['a']);
+    expect(recordScreen.mock.calls.map(([x]) => x.id)).toEqual(['b']);
+    expect(r.screened).toBe(1);
+  });
+
   it('heartbeats after every reference run', async () => {
     const heartbeat = vi.fn();
     const { d } = deps([c('a'), c('b')], async () => gate(true));
