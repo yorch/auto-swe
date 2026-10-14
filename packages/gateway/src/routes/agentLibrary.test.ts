@@ -183,7 +183,13 @@ describe('agentLibraryRoutes — admin', () => {
       version: 1,
     });
     const res = await app.inject({
-      body: { key: 'myAgent', name: 'My Agent', scope: 'GLOBAL', systemPrompt: 'hi' },
+      body: {
+        key: 'myAgent',
+        modelSpec: 'anthropic/claude-opus-5-5',
+        name: 'My Agent',
+        scope: 'GLOBAL',
+        systemPrompt: 'hi',
+      },
       headers: AUTH,
       method: 'POST',
       url: '/api/v1/platform/agent-library',
@@ -211,7 +217,13 @@ describe('agentLibraryRoutes — admin', () => {
       version: 1,
     });
     const res = await app.inject({
-      body: { key: 'myAgent', name: 'My Agent', scope: 'GLOBAL', systemPrompt: 'hi' },
+      body: {
+        key: 'myAgent',
+        modelSpec: 'anthropic/claude-opus-5-5',
+        name: 'My Agent',
+        scope: 'GLOBAL',
+        systemPrompt: 'hi',
+      },
       headers: AUTH,
       method: 'POST',
       url: '/api/v1/platform/agent-library',
@@ -270,7 +282,13 @@ describe('agentLibraryRoutes — admin', () => {
     mockPrisma.agent.findFirst.mockResolvedValue(null);
     mockPrisma.agent.create.mockResolvedValue({ id: 'mcp-1', key: 'mcpAgent', version: 1 });
     const res = await app.inject({
-      body: { key: 'mcpAgent', name: 'MCP Agent', scope: 'GLOBAL', toolKeys: ['bash', 'mcp'] },
+      body: {
+        key: 'mcpAgent',
+        modelSpec: 'anthropic/claude-opus-5-5',
+        name: 'MCP Agent',
+        scope: 'GLOBAL',
+        toolKeys: ['bash', 'mcp'],
+      },
       headers: AUTH,
       method: 'POST',
       url: '/api/v1/platform/agent-library',
@@ -305,6 +323,7 @@ describe('agentLibraryRoutes — admin', () => {
       body: {
         key: 'mcpA',
         mcpConnectionId: '22222222-2222-4222-8222-222222222222',
+        modelSpec: 'anthropic/claude-opus-5-5',
         name: 'MCP A',
         scope: 'GLOBAL',
         toolKeys: ['bash', 'mcp'],
@@ -371,6 +390,7 @@ describe('agentLibraryRoutes — admin', () => {
       body: {
         channelId: '44444444-4444-4444-8444-444444444444',
         key: 'channelAssistant',
+        modelSpec: 'anthropic/claude-opus-5-5',
         name: 'Channel Assistant',
         scope: 'CHANNEL',
       },
@@ -403,7 +423,12 @@ describe('agentLibraryRoutes — admin', () => {
     const { app, mockPrisma } = await buildAdminApp();
     mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 }); // maxVersion = 1
     const res = await app.inject({
-      body: { key: 'reviewer', name: 'Reviewer', scope: 'GLOBAL' },
+      body: {
+        key: 'reviewer',
+        modelSpec: 'anthropic/claude-opus-5-5',
+        name: 'Reviewer',
+        scope: 'GLOBAL',
+      },
       headers: AUTH,
       method: 'POST',
       url: '/api/v1/platform/agent-library',
@@ -597,7 +622,7 @@ describe('teamAgentLibraryRoutes — team owner', () => {
       version: 1,
     });
     const res = await app.inject({
-      body: { key: 'teamAgent', name: 'Team Agent' },
+      body: { inheritsModelFrom: 'reviewer', key: 'teamAgent', name: 'Team Agent' },
       headers: AUTH,
       method: 'POST',
       url: `/api/v1/teams/${TEAM}/agent-library`,
@@ -620,12 +645,12 @@ describe('teamAgentLibraryRoutes — team owner', () => {
 });
 
 describe('agent model spec', () => {
-  async function create(modelSpec: unknown) {
+  async function create(modelSpec: unknown, extra: Record<string, unknown> = {}) {
     const { app, mockPrisma } = await buildAdminApp();
     mockPrisma.agent.findFirst.mockResolvedValue(null);
     mockPrisma.agent.create.mockResolvedValue({ id: 'a-1', key: 'spec', version: 1 });
     const res = await app.inject({
-      body: { key: 'spec', modelSpec, name: 'Spec', scope: 'GLOBAL' },
+      body: { key: 'spec', modelSpec, name: 'Spec', scope: 'GLOBAL', ...extra },
       headers: AUTH,
       method: 'POST',
       url: '/api/v1/platform/agent-library',
@@ -651,7 +676,7 @@ describe('agent model spec', () => {
   });
 
   it('reads an empty spec as no model of its own', async () => {
-    const { mockPrisma, res } = await create('');
+    const { mockPrisma, res } = await create('', { inheritsModelFrom: 'reviewer' });
     expect(res.statusCode).toBe(201);
     expect(mockPrisma.agent.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ modelSpec: null }) })
@@ -992,6 +1017,108 @@ function teamAgentRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+describe('agent model required', () => {
+  it('refuses to create an agent with neither a model nor a parent to inherit one from', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    const res = await app.inject({
+      body: { key: 'myAgent', modelSpec: '', name: 'My Agent', scope: 'GLOBAL' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('MODEL_REQUIRED');
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('refuses a TEAM override with no model of its own and no parent', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    const res = await app.inject({
+      body: { key: 'teamAgent', name: 'Team Agent' },
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/teams/${TEAM}/agent-library`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('MODEL_REQUIRED');
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('refuses an edit that blanks the only model a TEAM override has', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ inheritsModelFrom: null }));
+    const res = await app.inject({
+      body: { modelSpec: null },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/teams/${TEAM}/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('MODEL_REQUIRED');
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('refuses an edit that clears both bindings on a platform agent', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue(
+      teamAgentRow({
+        inheritsModelFrom: 'reviewer',
+        modelSpec: null,
+        scope: 'GLOBAL',
+        teamId: null,
+      })
+    );
+    const res = await app.inject({
+      body: { inheritsModelFrom: null },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('MODEL_REQUIRED');
+    await app.close();
+  });
+
+  it('lets an edit switch from an own model to inheriting one', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ inheritsModelFrom: null }));
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({ id: 'v2', skillRefs: [], version: 2 });
+    const res = await app.inject({
+      body: { inheritsModelFrom: 'reviewer', modelSpec: null },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/teams/${TEAM}/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('still lets an older row that lacks a model have its other fields edited', async () => {
+    const { app, mockPrisma } = await buildTeamApp('ADMIN');
+    mockPrisma.agent.findUnique.mockResolvedValue(
+      teamAgentRow({ inheritsModelFrom: null, modelSpec: null })
+    );
+    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({ id: 'v2', skillRefs: [], version: 2 });
+    const res = await app.inject({
+      body: { description: 'edited' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/teams/${TEAM}/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+});
+
 describe('agent runtime', () => {
   it('lets an admin create an agent that runs on the harness', async () => {
     const { app, mockPrisma } = await buildAdminApp();
@@ -1019,7 +1146,7 @@ describe('agent runtime', () => {
     mockPrisma.agent.findFirst.mockResolvedValue(null);
     mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
     await app.inject({
-      body: { key: 'myAgent', name: 'My Agent', scope: 'GLOBAL' },
+      body: { inheritsModelFrom: 'reviewer', key: 'myAgent', name: 'My Agent', scope: 'GLOBAL' },
       headers: AUTH,
       method: 'POST',
       url: '/api/v1/platform/agent-library',
@@ -1033,7 +1160,13 @@ describe('agent runtime', () => {
     mockPrisma.agent.findFirst.mockResolvedValue(null);
     mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
     const res = await app.inject({
-      body: { key: 'myAgent', name: 'My Agent', reasoning: 'high', scope: 'GLOBAL' },
+      body: {
+        key: 'myAgent',
+        modelSpec: 'anthropic/claude-opus-5-5',
+        name: 'My Agent',
+        reasoning: 'high',
+        scope: 'GLOBAL',
+      },
       headers: AUTH,
       method: 'POST',
       url: '/api/v1/platform/agent-library',
@@ -1041,7 +1174,12 @@ describe('agent runtime', () => {
     expect(res.statusCode).toBe(201);
     expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.reasoning).toBe('high');
     await app.inject({
-      body: { key: 'other', name: 'Other', scope: 'GLOBAL' },
+      body: {
+        key: 'other',
+        modelSpec: 'anthropic/claude-opus-5-5',
+        name: 'Other',
+        scope: 'GLOBAL',
+      },
       headers: AUTH,
       method: 'POST',
       url: '/api/v1/platform/agent-library',
@@ -1158,7 +1296,12 @@ describe('agent runtime', () => {
     mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
     const create = (body: Record<string, unknown>) =>
       app.inject({
-        body: { key: 'implementer', name: 'Team implementer', ...body },
+        body: {
+          key: 'implementer',
+          modelSpec: 'anthropic/claude-opus-5-5',
+          name: 'Team implementer',
+          ...body,
+        },
         headers: AUTH,
         method: 'POST',
         url: `/api/v1/teams/${TEAM}/agent-library`,
@@ -1461,7 +1604,12 @@ describe('concurrent agent edits', () => {
     mockPrisma.agent.findFirst.mockResolvedValue(null); // no lineage when checked
     mockPrisma.agent.create.mockRejectedValue(uniqueViolation());
     const res = await app.inject({
-      body: { key: 'myAgent', name: 'My Agent', scope: 'GLOBAL' },
+      body: {
+        key: 'myAgent',
+        modelSpec: 'anthropic/claude-opus-5-5',
+        name: 'My Agent',
+        scope: 'GLOBAL',
+      },
       headers: AUTH,
       method: 'POST',
       url: '/api/v1/platform/agent-library',

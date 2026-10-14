@@ -66,6 +66,25 @@ describe('TeamAgentLibrarySection', () => {
     expect(screen.getByText(/agents on the Claude Code harness inherit this model/)).toBeTruthy();
   });
 
+  it('says a blank prompt falls back to the built-in default, not the platform-wide prompt', () => {
+    render(<TeamAgentLibrarySection teamId="t-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'New override' }));
+    expect(screen.getByText(/built-in default prompt/)).toBeTruthy();
+    expect(screen.queryByText(/inherit the global prompt/)).toBeNull();
+  });
+
+  it('shows the gateway’s refusal of an override with no model', async () => {
+    createMutation.mutateAsync.mockRejectedValueOnce(
+      new Error('An agent needs a model: set a model spec, or an agent to inherit the model from.')
+    );
+    render(<TeamAgentLibrarySection teamId="t-1" />);
+    fireEvent.click(screen.getByRole('button', { name: 'New override' }));
+    fireEvent.change(screen.getByLabelText(/^Key/), { target: { value: 'reviewer' } });
+    fireEvent.change(screen.getByLabelText(/^Name/), { target: { value: 'Reviewer' } });
+    fireEvent.click(screen.getByRole('button', { name: /^(Create|Save)/ }));
+    expect(await screen.findByText(/An agent needs a model/)).toBeTruthy();
+  });
+
   it('saves an edited reasoning level, and only what changed', async () => {
     teamAgents.data = [
       {

@@ -16,11 +16,13 @@ import {
   inheritingHarnessWarnings,
   listAgents,
   mergedRuntimeAndModel,
+  modelRequiredError,
   runtimeSaveError,
   updateAgent,
   validateAgentScopeRefs,
   validateCredentialRef,
   validateMcpConnectionRef,
+  writesModel,
 } from '../lib/agentLibraryService.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
@@ -254,6 +256,10 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         inheritsModelFrom: body.inheritsModelFrom ?? null,
         modelSpec: body.modelSpec ?? null,
       };
+      const modelError = modelRequiredError(named, true);
+      if (modelError) {
+        return sendError(reply, 400, 'MODEL_REQUIRED', modelError);
+      }
       const runtime =
         body.runtime !== undefined
           ? body.runtime
@@ -320,6 +326,10 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 400, 'INVALID_MCP_CONNECTION', mcpError);
       }
       const merged = mergedRuntimeAndModel(current, request.body);
+      const modelError = modelRequiredError(merged, writesModel(request.body));
+      if (modelError) {
+        return sendError(reply, 400, 'MODEL_REQUIRED', modelError);
+      }
       const runtimeError = await runtimeSaveError(fastify.prisma, merged);
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));
@@ -499,6 +509,10 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       if (runtimeChangeForbidden(actor.role, request.body.runtime, inherited)) {
         return reply.status(403).send(RUNTIME_ADMIN_ONLY);
       }
+      const modelError = modelRequiredError(named, true);
+      if (modelError) {
+        return sendError(reply, 400, 'MODEL_REQUIRED', modelError);
+      }
       const runtime = request.body.runtime !== undefined ? request.body.runtime : inherited;
       const runtimeError = await runtimeSaveError(fastify.prisma, { ...named, runtime });
       if (runtimeError) {
@@ -583,6 +597,10 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(403).send(RUNTIME_ADMIN_ONLY);
       }
       const merged = mergedRuntimeAndModel(current, request.body);
+      const modelError = modelRequiredError(merged, writesModel(request.body));
+      if (modelError) {
+        return sendError(reply, 400, 'MODEL_REQUIRED', modelError);
+      }
       const runtimeError = await runtimeSaveError(fastify.prisma, merged);
       if (runtimeError) {
         return reply.status(400).send(runtimeModelMismatch(runtimeError));

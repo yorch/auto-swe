@@ -51,16 +51,28 @@ const EMPTY: CreateTeamAgentBody = {
   toolKeys: null,
 };
 
+/**
+ * A blank prompt resolves to the agent's built-in default, not to the
+ * platform-wide row's prompt: the override replaces that row, field for field.
+ */
+export const OVERRIDE_PROMPT_HINT =
+  "Leave blank to use the agent's built-in default prompt. The platform-wide agent's prompt is not carried over; copy it here to build on it.";
+
 const CREATE_COPY: AgentFormCopy = {
   inheritsModelFrom: { hint: 'Agent whose model this one uses' },
   key: { hint: 'Global agent key to override (e.g. reviewer) or a new custom key' },
   mcpConnection: { hint: "Bind this MCP server's tools at run time" },
-  modelSpec: { hint: '<provider>/<model>, or blank to inherit' },
-  systemPrompt: { hint: 'Leave blank to inherit the global prompt' },
+  modelSpec: {
+    hint: "<provider>/<model>. Required — or choose Inherit to use another agent's model.",
+  },
+  systemPrompt: { hint: OVERRIDE_PROMPT_HINT },
 };
 
 const EDIT_COPY: AgentFormCopy = {
-  systemPrompt: { hint: 'Leave blank to inherit the global prompt' },
+  modelSpec: {
+    hint: "<provider>/<model>. Required — or choose Inherit to use another agent's model.",
+  },
+  systemPrompt: { hint: OVERRIDE_PROMPT_HINT },
 };
 
 /**

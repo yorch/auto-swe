@@ -198,6 +198,39 @@ describe('resolveModel — what a reasoning level puts on the wire', () => {
     }
   });
 
+  it('sends no thinking budget to a Google model that cannot think', async () => {
+    for (const [modelId, level] of [
+      ['gemini-2.0-flash', 'low'],
+      ['gemma-3-27b-it', 'high'],
+    ] as const) {
+      const body = await bodyOf(`google/${modelId}`, level);
+      expect(body.contents).toBeDefined();
+      const config = body.generationConfig as Record<string, unknown> | undefined;
+      expect(config?.thinkingConfig).toBeUndefined();
+    }
+  });
+
+  it('still sends a thinking budget to a Gemini 2.5 model', async () => {
+    const body = await bodyOf('google/gemini-2.5-flash', 'low');
+    const config = body.generationConfig as { thinkingConfig?: { thinkingBudget?: number } };
+    expect(config.thinkingConfig?.thinkingBudget).toBeGreaterThan(0);
+  });
+
+  it('sends no thinking to an Anthropic model that predates extended thinking', async () => {
+    for (const level of ['low', 'off'] as const) {
+      const body = await bodyOf('anthropic/claude-3-haiku-20240307', level);
+      expect(body.model).toBe('claude-3-haiku-20240307');
+      expect(body).not.toHaveProperty('thinking');
+      expect(body).not.toHaveProperty('output_config');
+    }
+  });
+
+  it('still sends adaptive thinking at the effort to a current Anthropic model', async () => {
+    const body = await bodyOf('anthropic/claude-opus-5-5', 'high');
+    expect(body.thinking).toMatchObject({ type: 'adaptive' });
+    expect(body.output_config).toMatchObject({ effort: 'high' });
+  });
+
   it('still sends a level the model takes', async () => {
     expect((await bodyOf('openai/o3', 'high')).reasoning).toMatchObject({ effort: 'high' });
   });

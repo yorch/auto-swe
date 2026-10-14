@@ -36,15 +36,15 @@ A missing GLOBAL row is a startup error, not a runtime condition — `assertConf
 
 ## Per-scope system prompts
 
-`Agent` has an optional `systemPrompt` field. When set, it replaces the agent's hardcoded system prompt for that scope. The cascade works identically to model selection:
+`Agent` has an optional `systemPrompt` field. When set, it replaces the agent's hardcoded system prompt. The prompt comes from the same row as the rest of the agent: `resolveAgent` picks the most specific active row through the cascade, and uses that row's `systemPrompt`:
 
 ```
-WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL → (use agent's built-in prompt)
+WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL
 ```
 
-`systemPrompt` cascades **independently of `modelSpec`**: a higher-scope row may set the model and leave `systemPrompt` null, in which case the search for a prompt continues down the cascade. So a team override can change the model without losing the global default prompt, and vice versa.
+A prompt does **not** fall through on its own: an override row whose `systemPrompt` is null runs on the agent's built-in prompt, not on the GLOBAL row's prompt. A team that overrides an agent to change its model and wants to keep a customised platform-wide prompt copies that prompt into its override.
 
-The null default (no row has a `systemPrompt`) means the agent uses its built-in prompt unchanged. Setting a prompt at GLOBAL scope overrides it system-wide; a TEAM, CHANNEL, or WORKFLOW_TEMPLATE row can further refine it for a narrower audience.
+Setting a prompt at GLOBAL scope overrides the built-in prompt system-wide, for runs that resolve the GLOBAL row; a TEAM, CHANNEL, or WORKFLOW_TEMPLATE row replaces it for a narrower audience.
 
 Common uses:
 

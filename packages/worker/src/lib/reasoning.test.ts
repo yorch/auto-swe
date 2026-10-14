@@ -25,6 +25,37 @@ describe('reasoningCallSetting', () => {
     }
   });
 
+  it('sends nothing to a model the adapter would ask to think but cannot', () => {
+    for (const spec of [
+      'anthropic/claude-3-haiku-20240307',
+      'anthropic/claude-3-5-sonnet-20241022',
+      'anthropic/claude-2.1',
+      'anthropic/claude-instant-1.2',
+      'google/gemini-2.0-flash',
+      'google/gemini-1.5-pro',
+      'google/gemma-3-27b-it',
+    ]) {
+      expect(reasoningCallSetting(spec, 'low')).toBeUndefined();
+      expect(reasoningCallSetting(spec, 'off')).toBeUndefined();
+    }
+  });
+
+  it('treats Claude 3.7, Claude 4 and later, Gemini 2.5 and Gemini 3 as able to think', () => {
+    for (const spec of [
+      'anthropic/claude-3-7-sonnet-20250219',
+      'anthropic/claude-sonnet-4-20250514',
+      'anthropic/claude-opus-4-1',
+      'anthropic/claude-haiku-4-5-20251001',
+      'anthropic/claude-fable-5-1',
+      'google/gemini-2.5-flash',
+      'google/gemini-2.5-pro',
+      'google/gemini-3.1-pro-preview',
+      'google/gemini-flash-latest',
+    ]) {
+      expect(reasoningCallSetting(spec, 'medium')).toBe('medium');
+    }
+  });
+
   it('sends off as none only where the adapter knows the model takes it', () => {
     expect(reasoningCallSetting('anthropic/claude-opus-5-5', 'off')).toBe('none');
     expect(reasoningCallSetting('anthropic/claude-haiku-4-5-20251001', 'off')).toBe('none');

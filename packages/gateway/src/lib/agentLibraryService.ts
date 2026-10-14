@@ -88,6 +88,32 @@ export function mergedRuntimeAndModel(
   };
 }
 
+/**
+ * Why a version may not be saved without a model, or null. `resolveAgent` binds
+ * the model of the most specific row it finds, and a row that names neither a
+ * `modelSpec` nor an `inheritsModelFrom` parent throws `ConfigMissingError` for
+ * every run that resolves it — at any scope, since an override replaces the
+ * platform-wide row rather than filling in its gaps. Checked on create, and on
+ * an edit that changes either field, so an older row that already lacks both
+ * can still have its other fields edited.
+ */
+export function modelRequiredError(
+  merged: { inheritsModelFrom: string | null; modelSpec: string | null },
+  changesModel: boolean
+): string | null {
+  if (!changesModel || merged.modelSpec?.trim() || merged.inheritsModelFrom?.trim()) {
+    return null;
+  }
+  return 'An agent needs a model: set a model spec, or an agent to inherit the model from.';
+}
+
+/** Whether a write names either model field. */
+export function writesModel(
+  base: Pick<AgentBaseInput, 'inheritsModelFrom' | 'modelSpec'>
+): boolean {
+  return base.modelSpec !== undefined || base.inheritsModelFrom !== undefined;
+}
+
 type AgentReader = Pick<PrismaClient, 'agent'>;
 
 /**

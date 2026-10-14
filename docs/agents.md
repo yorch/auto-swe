@@ -163,7 +163,7 @@ ORGANIZATION scope       →  (if the team belongs to an org)
 GLOBAL scope             →  (required — every referenced agent must resolve here)
 ```
 
-**`systemPrompt` cascades independently from `modelSpec`.** A higher-scope row may supply the model spec but leave `systemPrompt = null`, allowing the cascade to continue looking for a system prompt at lower scopes. This means a team override can change the model without losing the global default system prompt (and vice versa).
+**`systemPrompt` comes from the resolved row.** The most specific active row supplies the prompt along with everything else; a row whose `systemPrompt` is null runs on the agent's built-in prompt, not on a broader row's. A team override that changes the model and should keep a customised platform-wide prompt carries a copy of it.
 
 Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is found at any scope. Missing rows surface as a clear error message; credentials are managed at `/studio/models`, per-agent model specs at `/studio/agents/library`.
 
@@ -186,11 +186,18 @@ way, with no per-call-site option.
 `reasoningCallSetting(spec, level, apiBase)` is the one mapping. The cells say what the worker
 sends; the adapter then translates it per model:
 
-| Level | Anthropic | OpenAI (no `apiBase`) | Google |
+| Level | Anthropic (a model that can think) | OpenAI (no `apiBase`) | Google (a model that can think) |
 |---|---|---|---|
 | null (no opinion) | nothing: the model's default | nothing | nothing |
 | `off` | `none`: thinking disabled; a model that cannot turn thinking off (the adapter knows which) runs at its lowest setting | `none` (effort `none`) only for `gpt-6-sol` and `gpt-6-luna`, the models the adapter lists as taking it; nothing for any other model | nothing: the model's default |
-| `low` / `medium` / `high` | the level: adaptive thinking at that effort, or a thinking budget (with `max_tokens` raised to fit it) on a model that predates adaptive thinking | the level as the reasoning effort; the adapter drops an effort a GPT-6 model does not list, and sends none to a model that does not reason | the level as a thinking level, or a thinking budget |
+| `low` / `medium` / `high` | the level: adaptive thinking at that effort, or a thinking budget (with `max_tokens` raised to fit it) on a model that predates adaptive thinking | the level as the reasoning effort; the adapter drops an effort a GPT-6 model does not list, and sends none to a model that does not reason | the level as a thinking level (Gemini 3), or a thinking budget (Gemini 2.5) |
+
+"A model that can think" follows the adapter's own model patterns. For Anthropic it is Claude 3.7
+and every `claude-` id outside the Claude 2 and Claude 3 generations, an unrecognised newer id
+included, as the adapter treats it as the newest. For Google it is Gemini 2.5, and every `gemini-` id
+that is neither Gemini 2 nor older, which the adapter gives its Gemini 3 behaviour. Any other model
+under those providers — Claude 3 Haiku, Gemini 2.0, Gemma — is sent nothing at any level, because the
+adapter would ask it for a thinking budget it refuses.
 
 `off` is sent only where the installed adapter's own capability data says the model accepts it (or
 how to translate it). OpenAI's adapter sends `none` unchecked to an o-series or GPT-5 model, which
@@ -1417,7 +1424,12 @@ The single governed surface for per-key config. An Agent payload carries
 `modelSpec` / `inheritsModelFrom`, `reasoning`, `systemPrompt`, `credentialId`, ordered
 `skillRefs`, and `toolKeys` (`null` = all four workspace tools; values from
 `IMPLEMENTER_TOOL_IDS = ['readFile', 'writeFile', 'listDirectory', 'bash']`).
-Writes cut a new immutable `version`.
+Writes cut a new immutable `version`. A create, or an edit that changes `modelSpec` or
+`inheritsModelFrom`, is refused with `400 MODEL_REQUIRED` when the version would name neither:
+`resolveAgent` binds the model of the most specific row it finds, so such a row fails every run that
+resolves it, at any scope. An older row that already lacks both can still have its other fields
+edited. A blank `systemPrompt` resolves to the agent's built-in default prompt, not to a broader
+row's prompt.
 
 For admins, each row of the library table carries a "No credential" badge on its Model cell when the
 provider it calls has no usable credential (and the row is not pinned to its own `credentialId`). An embedding model pinned to another provider's credential (or one the platform cannot embed with) fails the embeddings readiness item but neither badges the provider it names nor marks it missing in the credentials checklist.
@@ -1486,9 +1498,13 @@ template override is never badged, because it may use a different model or crede
   three, tool-call arguments other than `write`/`edit` content are never shrunk, and a newest exchange
   still over the budget once everything but its newest result is stubbed is sent whole), no extensions, skills, prompt templates or settings from the repository or the worker, and no images (a
   file is read as text).
-- **A reasoning level is a request, not a guarantee.** `off` reaches only Anthropic models and the
-  two OpenAI models whose adapter lists the `none` effort; on every other OpenAI model and every
-  Google model it sends nothing, and the model thinks at its default. Where a level is sent, an
+- **A reasoning level is a request, not a guarantee.** No level reaches an Anthropic or Google model
+  the adapter's patterns do not count as able to think (Claude 2 and 3 other than 3.7, Gemini 2.0
+  and older, Gemma, any non-Gemini id under `google`): those run as if the level were unset. The
+  patterns are copied from the installed adapters, so a model they misfile is misfiled here too.
+  `off` reaches only Anthropic models that can think and the two OpenAI models whose adapter lists
+  the `none` effort; on every other OpenAI model and every Google model it sends nothing, and the
+  model thinks at its default. Where a level is sent, an
   adapter that cannot apply it to the model (a GPT-6 model without that effort, an Anthropic model
   that cannot turn thinking off) sends the nearest setting it can, or none, with an AI SDK warning
   the worker does not surface. An OpenAI-compatible provider, and an OpenAI credential with an
