@@ -10,6 +10,7 @@ import {
   type UnpricedReason,
 } from './costEstimator.js';
 import type { StepMetadata } from './registry-types.js';
+import { getStepMetadata, hasStep, listAllSteps } from './stepRegistry.js';
 import { makeSpec as spec } from './testHelpers.js';
 
 const REGISTRY: Record<string, StepMetadata> = {
@@ -320,5 +321,40 @@ describe('describeCostExclusions', () => {
     expect(sentence).toBe(
       'Excludes external calls (1 node) and retries (each node is counted once).'
     );
+  });
+});
+
+describe('the production registry', () => {
+  const productionLookup = (name: string): StepMetadata | undefined =>
+    hasStep(name) ? getStepMetadata(name) : undefined;
+
+  it('prices a declarative agent node from the real runAgentNode hint', () => {
+    // The fixture registry above would keep every other test here green if the
+    // production hint were removed, which is exactly the regression that made
+    // agent nodes cost $0 in the first place.
+    expect(getStepMetadata('runAgentNode').costHint?.role).toBeDefined();
+    const result = estimateSpecCost(
+      spec({
+        entry: 'a',
+        nodes: {
+          a: { agentRef: 'supportResponder', next: 't', type: 'agent' },
+          t: { status: 'SUCCESS', type: 'terminate' },
+        },
+      }),
+      { stepLookup: productionLookup }
+    );
+    expect(result.totalUsd).toBeGreaterThan(0);
+    expect(result.perStep.map((s) => s.step)).toEqual(['runAgentNode']);
+    expect(result.unpriced).toEqual([]);
+  });
+
+  it('puts every registered costHint role in the pricing table', () => {
+    // A role with no entry in DEFAULT_ROLE_PRICING prices at zero silently.
+    for (const meta of listAllSteps()) {
+      const role = meta.costHint?.role;
+      if (role) {
+        expect(DEFAULT_ROLE_PRICING[role], `role '${role}' (step ${meta.name})`).toBeDefined();
+      }
+    }
   });
 });
