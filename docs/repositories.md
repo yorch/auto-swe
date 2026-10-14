@@ -305,10 +305,14 @@ longer fit.
 - **An executor image is checked when it is saved, not when a run starts.** Only a platform admin
   may set one (see [`deployment.md`](./deployment.md)), but the worker runs whatever image the row
   holds, so an image already stored stays in use until an admin changes or clears it.
-- **A rebuilt executor image is chosen by its repository.** `build-executor.yml` builds from the
-  target repository's own `.auto-swe/Dockerfile` when it has one and writes the result to the
-  connection with an admin token, so anyone who can merge to that repository's default branch decides
-  what the next rebuilt image runs, and that image receives the run's GitHub credential.
+- **A rebuilt executor image is built from the platform's Dockerfile unless a run opts in.**
+  `build-executor.yml` builds `defaults/Dockerfile.node` by default and writes the result to the
+  connection with an admin token. Dispatching with `use_repo_dockerfile` (a `workflow_dispatch`
+  input, or the same field in a `repository_dispatch` `client_payload`) builds the target
+  repository's own `.auto-swe/Dockerfile` for that run instead, and fails if it has none. An opted-in
+  run lets anyone who can merge to that repository's default branch decide what the rebuilt image
+  runs, and that image receives the run's GitHub credential, so opt in only for repositories whose
+  merge access is trusted at that level.
 - **Executor images are not rebuilt on a schedule.** `build-executor.yml` builds one repository per
   run and only when dispatched with that repository's id (`workflow_dispatch` or a
   `build-executor` `repository_dispatch`); a run without one fails. Nothing lists the repositories

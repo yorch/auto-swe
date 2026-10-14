@@ -27,7 +27,8 @@ Only a platform admin may set a connection's executor image; a team lead may cle
 connection with the image it already has. The team shell-image allowlist does not apply: its entries
 are approved for sandboxed shell steps, which never hold a credential. `build-executor.yml` writes
 each freshly tagged image to its repository, so its `GATEWAY_TOKEN` must belong to a platform
-admin.
+admin. It builds `defaults/Dockerfile.node` unless a run sets `use_repo_dockerfile`, which builds the
+repository's own `.auto-swe/Dockerfile` instead.
 
 The workspace image tracks its own major, not the services'. It stays on `node:24-alpine` while the gateway, worker and web images run Node 26, because that image puts `yarn`, `pnpm` and `corepack` on `PATH` and the Node 26 image puts none of them there — Corepack is no longer bundled with the Node distribution.
 

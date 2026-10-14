@@ -6,6 +6,11 @@ on:
       repo_id:
         description: 'Repository UUID from the database'
         required: true
+      use_repo_dockerfile:
+        description: "Build the repository's own .auto-swe/Dockerfile instead of the platform default"
+        type: boolean
+        default: false
+  # client_payload: { repo_id, use_repo_dockerfile? } — the same opt-in, default off.
   repository_dispatch:
     types: [build-executor]
   # No schedule: a scheduled run carries no repo_id, and fanning a schedule out
@@ -78,21 +83,35 @@ jobs:
           # in .git/config where the build context (and the Dockerfile) sees it.
           persist-credentials: false
 
+      # The image receives the run's GitHub credential, so by default it is built
+      # only from the platform's own defaults/Dockerfile.node: anyone who can merge
+      # to the target repository must not choose the code that runs next to that
+      # credential. The repository's own .auto-swe/Dockerfile is used only when this
+      # run opts in (use_repo_dockerfile). The default Dockerfile is written outside
+      # the checkout so a file in the repository cannot shadow it.
       - name: Resolve Dockerfile
         id: dockerfile
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CONTROL_PLANE_REPO: ${{ github.repository }}
+          INPUT_USE_REPO_DOCKERFILE: ${{ github.event.inputs.use_repo_dockerfile }}
+          PAYLOAD_USE_REPO_DOCKERFILE: ${{ github.event.client_payload.use_repo_dockerfile }}
+          RUNNER_TEMP_DIR: ${{ runner.temp }}
         run: |
-          if [ -f ".auto-swe/Dockerfile" ]; then
+          set -euo pipefail
+          if [ "${INPUT_USE_REPO_DOCKERFILE}" = "true" ] || [ "${PAYLOAD_USE_REPO_DOCKERFILE}" = "true" ]; then
+            if [ ! -f ".auto-swe/Dockerfile" ]; then
+              echo "::error::use_repo_dockerfile was requested but the repository has no .auto-swe/Dockerfile"
+              exit 1
+            fi
+            echo "::warning::Building the repository's own .auto-swe/Dockerfile (use_repo_dockerfile)"
             echo "path=.auto-swe/Dockerfile" >> "$GITHUB_OUTPUT"
           else
-            # Fetch default executor Dockerfile from the control-plane repo
-            mkdir -p .auto-swe
+            # Fetch the default executor Dockerfile from the control-plane repo
             curl -sf -H "Authorization: Bearer ${GH_TOKEN}" \
               "https://raw.githubusercontent.com/${CONTROL_PLANE_REPO}/main/defaults/Dockerfile.node" \
-              -o .auto-swe/Dockerfile
-            echo "path=.auto-swe/Dockerfile" >> "$GITHUB_OUTPUT"
+              -o "${RUNNER_TEMP_DIR}/Dockerfile.node"
+            echo "path=${RUNNER_TEMP_DIR}/Dockerfile.node" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Configure AWS credentials (OIDC)
