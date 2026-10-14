@@ -55,7 +55,12 @@ beforeEach(() => {
     source: 'default',
   }));
   h.resolveAgent.mockResolvedValue({
-    model: { apiBase: 'https://gw.example/v1', apiKey: 'k', spec: 'anthropic/claude-opus-5-5' },
+    model: {
+      apiBase: 'https://gw.example/v1',
+      apiKey: 'k',
+      reasoning: 'high',
+      spec: 'anthropic/claude-opus-5-5',
+    },
   });
   h.buildImplementerForActivity.mockResolvedValue({
     agent: { generate: h.generate },
@@ -182,7 +187,12 @@ describe('buildImplementerTurnRunner', () => {
     expect(h.resolveAgent).toHaveBeenCalledWith('ciFixer', given.ctx);
     expect(h.resolveImplementerConfig).toHaveBeenCalledWith(given.ctx, 'ciFixer');
     expect(h.claudeCodeRuntime).toHaveBeenCalledWith({
-      access: { apiBase: 'https://gw.example/v1', apiKey: 'k', modelId: 'claude-opus-5-5' },
+      access: {
+        apiBase: 'https://gw.example/v1',
+        apiKey: 'k',
+        effort: 'high',
+        modelId: 'claude-opus-5-5',
+      },
       loadProjectSettings: true,
       maxToolOutputChars: 20_000,
       maxTurns: 42,
@@ -203,7 +213,12 @@ describe('buildImplementerTurnRunner', () => {
     expect(turns.runtime).toBe(h.piRuntime.mock.results[0]?.value);
     expect(h.claudeCodeRuntime).not.toHaveBeenCalled();
     expect(h.piRuntime).toHaveBeenCalledWith({
-      access: { apiBase: 'https://gw.example/v1', apiKey: 'k', spec: 'anthropic/claude-opus-5-5' },
+      access: {
+        apiBase: 'https://gw.example/v1',
+        apiKey: 'k',
+        reasoning: 'high',
+        spec: 'anthropic/claude-opus-5-5',
+      },
       loadProjectSettings: true,
       maxToolOutputChars: 20_000,
       maxTurns: 42,

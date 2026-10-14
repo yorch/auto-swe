@@ -1,4 +1,5 @@
 import { getSettingDefinition } from '@auto-swe/shared/config';
+import type { ReasoningLevel } from '@auto-swe/shared/types/api';
 import type { AgentMessage, AgentTool } from '@mariozechner/pi-agent-core';
 import type { AssistantMessage, Message, ToolResultMessage } from '@mariozechner/pi-ai';
 import type { LanguageModel } from 'ai';
@@ -41,6 +42,8 @@ export interface PiAccess {
   apiKey: string;
   /** `<provider>/<model>`, as the Agent resolved it. */
   spec: string;
+  /** The Agent's reasoning level, bound into the model; null/absent = the provider's default. */
+  reasoning?: ReasoningLevel | null;
 }
 
 export interface PiRuntimeOptions extends Omit<HarnessRuntimeOptions<PiAccess>, 'exactToolKeys'> {
@@ -228,7 +231,7 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
       const open = await openSession(turn);
       model ??=
         options.languageModel ??
-        resolveModel(access.spec, access.apiKey, access.apiBase ?? undefined);
+        resolveModel(access.spec, access.apiKey, access.apiBase ?? undefined, access.reasoning);
       const { runAgentLoop } = await import('@mariozechner/pi-agent-core');
       const streamFn = aiSdkStreamFn(
         {

@@ -5,6 +5,7 @@ import { createOpenAI, openai } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { modelCallFetch } from '@auto-swe/shared/lib/modelDiscovery';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
+import type { ReasoningLevel } from '@auto-swe/shared/types/api';
 import { ApplicationFailure } from '@temporalio/activity';
 import { type LanguageModel as AiLanguageModel, wrapLanguageModel } from 'ai';
 import { resolveAgent } from './config/agentResolver.js';
@@ -14,6 +15,7 @@ import type {
   ModelBackedAgentKey as ConfigModelBackedAgentKey,
   ResolveCtx,
 } from './config/types.js';
+import { reasoningCallSetting, reasoningMiddleware } from './reasoning.js';
 import { schemaInPromptMiddleware } from './schemaInPrompt.js';
 
 // The provider factories no longer agree on a return type: since
@@ -57,7 +59,7 @@ export async function getModel(
 ): Promise<LanguageModel> {
   const resolveCtx = { ...(await currentRequestContext()), ...ctx };
   const { model } = await resolveAgent(role, resolveCtx);
-  return buildModel(model.spec, model.apiKey, model.apiBase);
+  return buildModel(model.spec, model.apiKey, model.apiBase, model.reasoning);
 }
 
 /**
@@ -76,7 +78,7 @@ export async function getBoundModel(
   const resolveCtx = { ...(await currentRequestContext()), ...ctx };
   const { model } = await resolveAgent(role, resolveCtx);
   return {
-    model: buildModel(model.spec, model.apiKey, model.apiBase),
+    model: buildModel(model.spec, model.apiKey, model.apiBase, model.reasoning),
     spec: model.spec,
     systemPrompt: model.systemPrompt ?? null,
   };
@@ -85,11 +87,18 @@ export async function getBoundModel(
 /**
  * Builds a Vercel AI SDK LanguageModel from a `<provider>/<model>` spec and an
  * explicit API key. No env-default fallbacks — the caller MUST supply the
- * apiKey from the resolver. Exported for tests and ad-hoc CLI scripts that
+ * apiKey from the resolver. `reasoning` is the Agent version's level
+ * (`ResolvedModelConfig.reasoning`); every call through the model then asks for
+ * it (`lib/reasoning.ts`). Exported for tests and ad-hoc CLI scripts that
  * already have credentials in hand.
  */
-export function resolveModel(spec: string, apiKey: string, apiBase?: string): LanguageModel {
-  return buildModel(spec, apiKey, apiBase);
+export function resolveModel(
+  spec: string,
+  apiKey: string,
+  apiBase?: string,
+  reasoning?: ReasoningLevel | null
+): LanguageModel {
+  return buildModel(spec, apiKey, apiBase, reasoning);
 }
 
 // ── Cache of constructed LanguageModel instances ──
@@ -99,17 +108,28 @@ const MODEL_CACHE_MAX = 256;
 
 const modelCache = new Map<string, LanguageModel>();
 
-function cacheKeyForBuild(spec: string, apiKey: string, apiBase: string | undefined): string {
+function cacheKeyForBuild(
+  spec: string,
+  apiKey: string,
+  apiBase: string | undefined,
+  reasoning: string | undefined
+): string {
   // A digest of the whole key, never the key itself: two credentials that share
   // a spec and apiBase (two teams' keys for one OpenAI-compatible endpoint) must
   // not share a client, and a rotation in the DB must bust the entry. apiBase is
   // non-secret and included verbatim.
   const keyDigest = createHash('sha256').update(apiKey).digest('hex').slice(0, 32);
-  return `${spec}|${keyDigest}|${apiBase ?? ''}`;
+  return `${spec}|${keyDigest}|${apiBase ?? ''}|${reasoning ?? ''}`;
 }
 
-function buildModel(spec: string, apiKey: string, apiBase?: string): LanguageModel {
-  const key = cacheKeyForBuild(spec, apiKey, apiBase);
+function buildModel(
+  spec: string,
+  apiKey: string,
+  apiBase?: string,
+  level?: ReasoningLevel | null
+): LanguageModel {
+  const reasoning = reasoningCallSetting(spec, level);
+  const key = cacheKeyForBuild(spec, apiKey, apiBase, reasoning);
   const cached = modelCache.get(key);
   if (cached) {
     // Re-insert so Map iteration order tracks recency.
@@ -118,7 +138,10 @@ function buildModel(spec: string, apiKey: string, apiBase?: string): LanguageMod
     return cached;
   }
 
-  const built = buildModelUncached(spec, apiKey, apiBase);
+  const base = buildModelUncached(spec, apiKey, apiBase);
+  const built = reasoning
+    ? wrapLanguageModel({ middleware: reasoningMiddleware(reasoning), model: base })
+    : base;
   modelCache.set(key, built);
   if (modelCache.size > MODEL_CACHE_MAX) {
     const oldest = modelCache.keys().next().value;

@@ -76,6 +76,7 @@ describe('resolveAgentSpec — role path', () => {
         model: {
           apiBase: 'https://base',
           apiKey: 'k2',
+          reasoning: 'low',
           scope: 'GLOBAL',
           spec: 'openrouter/foo',
           systemPrompt: undefined,
@@ -86,7 +87,7 @@ describe('resolveAgentSpec — role path', () => {
 
     await resolveAgentSpec({ agentKey: 'reviewer', basePrompt: 'B' });
 
-    expect(resolveModel).toHaveBeenCalledWith('openrouter/foo', 'k2', 'https://base');
+    expect(resolveModel).toHaveBeenCalledWith('openrouter/foo', 'k2', 'https://base', 'low');
   });
 
   it('returns the base prompt unchanged when there are no skills', async () => {

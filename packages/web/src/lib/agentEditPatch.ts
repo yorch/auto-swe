@@ -51,6 +51,9 @@ export function buildAgentUpdate(original: AgentRow, draft: AgentRow): UpdateAge
   if ((draft.runtime ?? null) !== (original.runtime ?? null)) {
     body.runtime = draft.runtime ?? null;
   }
+  if ((draft.reasoning ?? null) !== (original.reasoning ?? null)) {
+    body.reasoning = draft.reasoning ?? null;
+  }
   const beforeSkills = original.skillRefs.map((r) => r.skillId);
   const afterSkills = draft.skillRefs.map((r) => r.skillId);
   if (!sameList(beforeSkills, afterSkills)) {

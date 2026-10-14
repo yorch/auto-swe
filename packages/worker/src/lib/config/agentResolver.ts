@@ -2,7 +2,12 @@ import { createHash } from 'node:crypto';
 import { configCacheTtlMs, fallThroughCacheTtlMs, withCache } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
-import { type ImplementerRuntimeKind, toImplementerRuntime } from '@auto-swe/shared/types/api';
+import {
+  type ImplementerRuntimeKind,
+  type ReasoningLevel,
+  toImplementerRuntime,
+  toReasoningLevel,
+} from '@auto-swe/shared/types/api';
 import { asyncLocalStorage } from '@temporalio/activity';
 import { persistActivityTrace } from '../activityContext.js';
 import { logWarn } from '../activityLog.js';
@@ -247,7 +252,9 @@ async function resolveModelForAgent(
   agent: AgentRow,
   ctx?: ResolveCtx
 ): Promise<{ model: ResolvedModelConfig; runtime: ImplementerRuntimeKind | null }> {
-  const { runtime, source } = await walkModelChain(agent, (key) => fetchActiveAgent(key, ctx));
+  const { reasoning, runtime, source } = await walkModelChain(agent, (key) =>
+    fetchActiveAgent(key, ctx)
+  );
   if (!source.modelSpec) {
     throw new ConfigMissingError(
       `Agent '${agent.key}' has no model: set a modelSpec (or an inheritsModelFrom chain that resolves one) at /studio/agents/library.`
@@ -261,6 +268,7 @@ async function resolveModelForAgent(
       apiBase: cred.apiBase,
       apiKey: cred.apiKey,
       credentialFellThrough: cred.fellThrough,
+      reasoning,
       scope: agent.scope,
       spec,
       systemPrompt: agent.systemPrompt ?? undefined,
@@ -305,14 +313,17 @@ interface ChainRow {
   inheritsModelFrom: string | null;
   key: string;
   modelSpec: string | null;
+  /** Absent where a lookup reads only what the runtime needs. */
+  reasoning?: string | null;
   runtime: string | null;
   version: number;
 }
 
 /**
  * Follow `inheritsModelFrom` from `agent` to the row that carries the model, and
- * read the runtime along the same chain. The runtime travels with the model:
- * the harness can only drive the model the chain resolves, so the first row on
+ * read the runtime and the reasoning level along the same chain. Both travel
+ * with the model: the harness can only drive the model the chain resolves, and
+ * a reasoning level is a setting of that model, so for each the first row on
  * the chain with an opinion decides. Throws `ConfigMissingError` for a parent
  * key with no active row. The one walk both the full resolution and the
  * run-start runtime snapshot use.
@@ -320,9 +331,14 @@ interface ChainRow {
 async function walkModelChain<Row extends ChainRow>(
   agent: Row,
   fetch: (key: string) => Promise<Row | null>
-): Promise<{ runtime: ImplementerRuntimeKind | null; source: Row }> {
+): Promise<{
+  reasoning: ReasoningLevel | null;
+  runtime: ImplementerRuntimeKind | null;
+  source: Row;
+}> {
   let source = agent;
   let runtime = runtimeOf(agent);
+  let reasoning = reasoningOf(agent);
   const seen = new Set<string>();
   while (!source.modelSpec && source.inheritsModelFrom) {
     if (seen.has(source.key)) {
@@ -337,8 +353,9 @@ async function walkModelChain<Row extends ChainRow>(
     }
     source = parent;
     runtime ??= runtimeOf(parent);
+    reasoning ??= reasoningOf(parent);
   }
-  return { runtime, source };
+  return { reasoning, runtime, source };
 }
 
 /**
@@ -388,6 +405,24 @@ function runtimeOf(agent: ChainRow): ImplementerRuntimeKind | null {
   logWarn('agent has an unknown runtime; ignoring it', {
     agentKey: agent.key,
     runtime: agent.runtime,
+    version: agent.version,
+  });
+  return null;
+}
+
+/**
+ * A row's reasoning level. The column is CHECK-constrained, so anything else is
+ * a row written around the API; it reads as no opinion, loudly, as an unknown
+ * runtime does.
+ */
+function reasoningOf(agent: ChainRow): ReasoningLevel | null {
+  const known = toReasoningLevel(agent.reasoning);
+  if (agent.reasoning == null || known) {
+    return known;
+  }
+  logWarn('agent has an unknown reasoning level; ignoring it', {
+    agentKey: agent.key,
+    reasoning: agent.reasoning,
     version: agent.version,
   });
   return null;

@@ -343,6 +343,17 @@ describe('agent runtimes', () => {
     ).toThrow();
   });
 
+  it('parses a known reasoning level, null, or none, and refuses an unknown one', () => {
+    for (const reasoning of ['off', 'low', 'medium', 'high', null, undefined]) {
+      expect(() =>
+        parseBundle(withAgents([{ key: 'a', name: 'A', reasoning } as never]))
+      ).not.toThrow();
+    }
+    expect(() =>
+      parseBundle(withAgents([{ key: 'a', name: 'A', reasoning: 'max' } as never]))
+    ).toThrow();
+  });
+
   it('refuses the harness on an agent whose own model is not Anthropic', () => {
     expect(
       validateBundleAgents(

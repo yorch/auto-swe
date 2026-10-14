@@ -3,6 +3,7 @@ import { isAnthropicSpec, parseProviderModelSpec } from '@auto-swe/shared/lib/mo
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   type ImplementerRuntimeKind,
+  type ReasoningLevel,
   runtimeModelError,
   toImplementerRuntime,
 } from '@auto-swe/shared/types/api';
@@ -58,6 +59,12 @@ export interface AgentBaseInput {
    * family, Mastra for agent runs). Platform-ADMIN only: the routes enforce it.
    */
   runtime?: ImplementerRuntimeKind | null;
+  /**
+   * How hard the model reasons before it answers. null = no opinion: the
+   * provider's default, or the parent's level for a persona that inherits its
+   * model.
+   */
+  reasoning?: ReasoningLevel | null;
 }
 
 export { runtimeModelError };
@@ -539,6 +546,7 @@ export async function createAgent(
           name: base.name,
           orgId: scopeWhere(key).orgId,
           origin: null,
+          reasoning: base.reasoning ?? null,
           runtime: base.runtime ?? null,
           scope: key.scope,
           systemPrompt: base.systemPrompt ?? null,
@@ -643,6 +651,7 @@ export async function updateAgent(
           name: pick(base.name, current.name),
           orgId: current.orgId,
           origin: current.origin,
+          reasoning: pick(base.reasoning, current.reasoning),
           runtime: pick(base.runtime, current.runtime),
           scope: current.scope,
           systemPrompt: pick(base.systemPrompt, current.systemPrompt),

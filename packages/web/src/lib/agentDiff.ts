@@ -67,6 +67,7 @@ type VersionContent = Pick<
   | 'mcpConnectionId'
   | 'credentialId'
   | 'runtime'
+  | 'reasoning'
   | 'skillRefs'
 >;
 
@@ -133,5 +134,6 @@ export function diffAgentVersions(
     named(after.credentialId, lookups.credentials)
   );
   text('Runtime', before.runtime ?? 'Default', after.runtime ?? 'Default');
+  text('Reasoning', before.reasoning ?? 'Default', after.reasoning ?? 'Default');
   return changes;
 }

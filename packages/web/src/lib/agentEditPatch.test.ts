@@ -40,6 +40,15 @@ describe('buildAgentUpdate', () => {
     expect(buildAgentUpdate(onHarness, { ...onHarness, runtime: null })).toEqual({ runtime: null });
   });
 
+  it('sends the reasoning level only when it changed, and clears it with null', () => {
+    const thinking: AgentRow = { ...BASE, reasoning: 'medium' };
+    expect(buildAgentUpdate(thinking, { ...thinking, name: 'R2' })).toEqual({ name: 'R2' });
+    expect(buildAgentUpdate(BASE, thinking)).toEqual({ reasoning: 'medium' });
+    expect(buildAgentUpdate(thinking, { ...thinking, reasoning: null })).toEqual({
+      reasoning: null,
+    });
+  });
+
   it('sends nothing when nothing changed', () => {
     expect(buildAgentUpdate(BASE, { ...BASE })).toEqual({});
   });

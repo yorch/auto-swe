@@ -1028,6 +1028,41 @@ describe('agent runtime', () => {
     await app.close();
   });
 
+  it('stores the reasoning level an agent asks for, and none when left out', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findFirst.mockResolvedValue(null);
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-1', version: 1 });
+    const res = await app.inject({
+      body: { key: 'myAgent', name: 'My Agent', reasoning: 'high', scope: 'GLOBAL' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(mockPrisma.agent.create.mock.calls[0]?.[0].data.reasoning).toBe('high');
+    await app.inject({
+      body: { key: 'other', name: 'Other', scope: 'GLOBAL' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    expect(mockPrisma.agent.create.mock.calls[1]?.[0].data.reasoning).toBeNull();
+    await app.close();
+  });
+
+  it('rejects a reasoning level it does not know', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    const res = await app.inject({
+      body: { key: 'myAgent', name: 'My Agent', reasoning: 'max', scope: 'GLOBAL' },
+      headers: AUTH,
+      method: 'POST',
+      url: '/api/v1/platform/agent-library',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
   it('rejects a runtime it does not know', async () => {
     const { app, mockPrisma } = await buildAdminApp();
     const res = await app.inject({

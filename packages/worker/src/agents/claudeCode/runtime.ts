@@ -74,6 +74,11 @@ export interface ClaudeCodeAccess {
   apiKey: string;
   /** The bare model id the harness passes to the API (`claude-opus-5-5`). */
   modelId: string;
+  /**
+   * The harness's effort, from the Agent's reasoning level (`claudeCodeEffort`).
+   * Absent leaves the harness at its own default for the model.
+   */
+  effort?: 'low' | 'medium' | 'high';
 }
 
 /**
@@ -383,6 +388,9 @@ export function claudeCodeAdapter(
         },
         maxTurns,
         model: access.modelId,
+        // The Agent's reasoning level as the harness's effort; the harness keeps
+        // its own thinking configuration for the model.
+        ...(access.effort ? { effort: access.effort } : {}),
         // Hook decisions grant each call; `bypassPermissions` would skip them,
         // and the harness refuses it as root anyway.
         permissionMode: 'default',

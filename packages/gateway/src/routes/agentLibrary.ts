@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { IMPLEMENTER_RUNTIMES } from '@auto-swe/shared/types/api';
+import { IMPLEMENTER_RUNTIMES, REASONING_LEVELS } from '@auto-swe/shared/types/api';
 import { AGENT_TOOL_KEYS } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -51,6 +51,7 @@ const AgentBaseFields = {
     .nullable()
     .optional(),
   name: z.string().min(1).max(200),
+  reasoning: z.enum(REASONING_LEVELS).nullable().optional(),
   runtime: z.enum(IMPLEMENTER_RUNTIMES).nullable().optional(),
   // A skill listed twice would hit the (agent, skill) unique index, which the
   // write reports as a conflicting edit; refuse it here as the bad input it is.
@@ -350,9 +351,15 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
-        after: { modelSpec: agent.modelSpec, runtime: agent.runtime, version: agent.version },
+        after: {
+          modelSpec: agent.modelSpec,
+          reasoning: agent.reasoning ?? null,
+          runtime: agent.runtime,
+          version: agent.version,
+        },
         before: {
           modelSpec: current.modelSpec,
+          reasoning: current.reasoning ?? null,
           runtime: current.runtime,
           version: current.version,
         },
@@ -624,10 +631,16 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
-        after: { modelSpec: agent.modelSpec, runtime: agent.runtime, version: agent.version },
+        after: {
+          modelSpec: agent.modelSpec,
+          reasoning: agent.reasoning ?? null,
+          runtime: agent.runtime,
+          version: agent.version,
+        },
         before: {
           key: current.key,
           modelSpec: current.modelSpec,
+          reasoning: current.reasoning ?? null,
           runtime: current.runtime,
           scope: 'TEAM',
           teamId: current.teamId,

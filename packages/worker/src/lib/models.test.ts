@@ -124,6 +124,22 @@ describe('resolveModel', () => {
   });
 });
 
+describe('resolveModel — reasoning', () => {
+  it('binds a level into a separately cached model, and none for no opinion', () => {
+    const plain = resolveModel('anthropic/claude-opus-5-5', 'sk-r');
+    expect(resolveModel('anthropic/claude-opus-5-5', 'sk-r', undefined, null)).toBe(plain);
+    const high = resolveModel('anthropic/claude-opus-5-5', 'sk-r', undefined, 'high');
+    expect(high).not.toBe(plain);
+    expect(resolveModel('anthropic/claude-opus-5-5', 'sk-r', undefined, 'high')).toBe(high);
+    expect(high.modelId).toBe('claude-opus-5-5');
+  });
+
+  it('leaves an OpenAI-compatible model unwrapped, whatever the level', () => {
+    const plain = resolveModel('ollama/llama-4', 'sk-x', 'http://localhost:11434/v1');
+    expect(resolveModel('ollama/llama-4', 'sk-x', 'http://localhost:11434/v1', 'high')).toBe(plain);
+  });
+});
+
 describe('resolveModel — OpenAI with a custom base', () => {
   it('uses the Responses API against OpenAI itself', () => {
     expect(resolveModel('openai/gpt-6-luna', 'sk-x').provider).toBe('openai.responses');

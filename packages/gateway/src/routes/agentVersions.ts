@@ -1,5 +1,5 @@
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { toImplementerRuntime } from '@auto-swe/shared/types/api';
+import { toImplementerRuntime, toReasoningLevel } from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -171,6 +171,7 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
             mcpConnectionId: source.mcpConnectionId,
             modelSpec: source.modelSpec,
             name: source.name,
+            reasoning: toReasoningLevel(source.reasoning),
             // Restore is admin-only, so it may restore the runtime too.
             runtime: toImplementerRuntime(source.runtime),
             skillRefs: source.skillRefs.map((r) => ({
