@@ -6,7 +6,9 @@ import { AGENT_TOOL_KEYS } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { advisoryWarnings } from '../lib/advisoryWarnings.js';
 import {
+  AgentInactiveError,
   AgentLineageExistsError,
   type AgentScope,
   type AgentScopeKey,
@@ -83,6 +85,11 @@ const AgentBaseFields = {
   credentialId: z.string().uuid().nullable().optional(),
   description: z.string().max(2_000).nullable().optional(),
   inheritsModelFrom: z.string().max(100).nullable().optional(),
+  /**
+   * Reactivates a deactivated lineage. `false` is not accepted: deactivating is the DELETE route,
+   * which switches off the whole lineage rather than one version of it.
+   */
+  isActive: z.literal(true).optional(),
   mcpConnectionId: z.string().uuid().nullable().optional(),
   // An empty string clears the model, as null does.
   modelSpec: z
@@ -124,6 +131,11 @@ function agentChanged(err: AgentVersionConflictError) {
   return { error: { code: 'AGENT_CHANGED', message: err.message } };
 }
 
+/** A deactivated lineage: switching it on is a separate, deliberate act. */
+function agentInactive(err: AgentInactiveError) {
+  return { error: { code: 'AGENT_INACTIVE', message: err.message } };
+}
+
 const RUNTIME_ADMIN_ONLY = {
   error: {
     code: 'FORBIDDEN',
@@ -161,24 +173,6 @@ async function pinnedCredentialError(
     scope: current.scope as AgentScope,
     teamId: current.teamId,
   });
-}
-
-/**
- * Harness-inheritance warnings for a save that has already committed. They are advisory, so a
- * failure here must not fail the request: the version is saved either way, and an error at this
- * point would also cost the audit entry that follows it.
- */
-async function harnessWarnings(
-  prisma: PrismaClient,
-  key: string,
-  modelSpec: string | null,
-  visibleToTeam?: string
-): Promise<string[]> {
-  try {
-    return await inheritingHarnessWarnings(prisma, key, modelSpec, visibleToTeam);
-  } catch {
-    return [];
-  }
 }
 
 const CreateAgentSchema = z
@@ -461,24 +455,33 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         if (err instanceof AgentVersionConflictError) {
           return reply.status(409).send(agentChanged(err));
         }
+        if (err instanceof AgentInactiveError) {
+          return reply.status(409).send(agentInactive(err));
+        }
         throw err;
       }
       const { agent, catalogWarnings, credentialWarnings, scanWarnings } = saved;
       // A new model can strand harness agents that inherit it: say so, refuse nothing.
       const runtimeWarnings =
         request.body.modelSpec !== undefined
-          ? await harnessWarnings(fastify.prisma, agent.key, agent.modelSpec)
+          ? await advisoryWarnings(
+              'harness inheritance',
+              () => inheritingHarnessWarnings(fastify.prisma, agent.key, agent.modelSpec),
+              []
+            )
           : [];
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
         after: {
+          isActive: agent.isActive,
           modelSpec: agent.modelSpec,
           reasoning: agent.reasoning ?? null,
           runtime: agent.runtime,
           version: agent.version,
         },
         before: {
+          isActive: current.isActive,
           modelSpec: current.modelSpec,
           reasoning: current.reasoning ?? null,
           runtime: current.runtime,
@@ -743,30 +746,40 @@ export const teamAgentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
         if (err instanceof AgentVersionConflictError) {
           return reply.status(409).send(agentChanged(err));
         }
+        if (err instanceof AgentInactiveError) {
+          return reply.status(409).send(agentInactive(err));
+        }
         throw err;
       }
       const { agent, catalogWarnings, credentialWarnings, scanWarnings } = saved;
       // A new model can strand harness agents that inherit it: say so, refuse nothing.
       const runtimeWarnings =
         request.body.modelSpec !== undefined
-          ? await harnessWarnings(
-              fastify.prisma,
-              agent.key,
-              agent.modelSpec,
-              // A team admin is not told about other teams' agents.
-              actor.role === 'ADMIN' ? undefined : request.params.id
+          ? await advisoryWarnings(
+              'harness inheritance',
+              () =>
+                inheritingHarnessWarnings(
+                  fastify.prisma,
+                  agent.key,
+                  agent.modelSpec,
+                  // A team admin is not told about other teams' agents.
+                  actor.role === 'ADMIN' ? undefined : request.params.id
+                ),
+              []
             )
           : [];
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor,
         after: {
+          isActive: agent.isActive,
           modelSpec: agent.modelSpec,
           reasoning: agent.reasoning ?? null,
           runtime: agent.runtime,
           version: agent.version,
         },
         before: {
+          isActive: current.isActive,
           key: current.key,
           modelSpec: current.modelSpec,
           reasoning: current.reasoning ?? null,

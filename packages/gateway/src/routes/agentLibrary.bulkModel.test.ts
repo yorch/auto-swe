@@ -40,6 +40,8 @@ function newMockPrisma() {
   // The service wraps agent + skill-ref writes in an interactive transaction;
   // hand the callback the same fake so the assertions below still see the calls.
   return Object.assign(prisma, {
+    // The lineage's advisory lock (CLAUDE.md §7) runs on the transaction client.
+    $executeRaw: vi.fn().mockResolvedValue(0),
     $transaction: async (arg: unknown) =>
       typeof arg === 'function'
         ? (arg as (tx: typeof prisma) => Promise<unknown>)(prisma)

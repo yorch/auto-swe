@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@auto-swe/shared';
+import type { Prisma, PrismaClient } from '@auto-swe/shared';
 import {
   isAnthropicSpec,
   normalizeModelSpec,
@@ -11,6 +11,7 @@ import {
   runtimeModelError,
   toImplementerRuntime,
 } from '@auto-swe/shared/types/api';
+import { advisoryWarnings } from './advisoryWarnings.js';
 import { BUILTIN_PROVIDERS } from './credentialService.js';
 import { catalogWarnings } from './modelCatalogService.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
@@ -69,6 +70,13 @@ export interface AgentBaseInput {
    * model.
    */
   reasoning?: ReasoningLevel | null;
+  /**
+   * Activation belongs to the lineage, not to a version: it is preserved, not set, unless the
+   * caller asks for it back. `true` reactivates a deactivated lineage deliberately — what a restore
+   * refuses to do as a side effect. There is no `false`: deactivating is `deactivateAgentLineage`,
+   * which does the whole lineage rather than one version of it.
+   */
+  isActive?: boolean;
 }
 
 export { runtimeModelError };
@@ -269,6 +277,27 @@ function scopeWhere(key: AgentScopeKey) {
     workflowTemplateId: key.scope === 'WORKFLOW_TEMPLATE' ? (key.workflowTemplateId ?? null) : null,
   };
 }
+
+/** The identity a lineage locks on: one key at one scope, its discriminators included. */
+function lineageLockKey(key: AgentScopeKey): string {
+  return [
+    'agent-lineage',
+    key.key,
+    key.scope,
+    key.teamId ?? '',
+    key.orgId ?? '',
+    key.channelId ?? '',
+    key.workflowTemplateId ?? '',
+  ].join('|');
+}
+
+// CLAUDE.md §7 exception: Prisma cannot express a transaction-scoped advisory lock.
+// Deactivating a lineage writes no new version, so a version check alone cannot order an edit
+// against it: an edit could read an active head, lose the race, and still write the lineage back
+// on. Every writer of a lineage's activation takes this lock, so the check and the write are one
+// step and the loser of the race sees what the winner did.
+export const lockAgentLineage = (tx: Prisma.TransactionClient, key: AgentScopeKey) =>
+  tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${lineageLockKey(key)}, 0))`;
 
 /** Highest existing version for a key+scope (0 when the lineage is new). */
 async function maxVersion(prisma: PrismaClient, key: AgentScopeKey): Promise<number> {
@@ -536,27 +565,6 @@ export async function agentCredentialWarnings(
 }
 
 /**
- * The advisory findings for a version that is already committed. A failure here must never
- * escape: the write has happened, so throwing would report a saved Agent as a failed save — and a
- * caller that audits only its successes would then record nothing at all. Advisories degrade
- * everywhere else in the platform; a save is not a place to fail closed.
- */
-async function committedAdvisories(
-  prisma: PrismaClient,
-  agent: AgentRow
-): Promise<{ catalogWarnings: string[]; credentialWarnings: string[] }> {
-  try {
-    return {
-      catalogWarnings: await agentCatalogWarnings(prisma, agent),
-      credentialWarnings: await agentCredentialWarnings(prisma, agent),
-    };
-  } catch {
-    // The new version is saved and resolvable either way; only the advice is missing.
-    return { catalogWarnings: [], credentialWarnings: [] };
-  }
-}
-
-/**
  * Create the first version of a new Agent lineage. Scans the system prompt
  * (custom content) and starts unverified. Throws if the lineage already exists
  * (the caller should 409) — overriding an existing lineage is {@link updateAgent}.
@@ -623,7 +631,16 @@ export async function createAgent(
     }),
     () => new AgentLineageExistsError(key.key, key.scope)
   );
-  const { catalogWarnings, credentialWarnings } = await committedAdvisories(prisma, agent);
+  const catalogWarnings = await advisoryWarnings(
+    'agent catalog',
+    () => agentCatalogWarnings(prisma, agent),
+    []
+  );
+  const credentialWarnings = await advisoryWarnings(
+    'agent credentials',
+    () => agentCredentialWarnings(prisma, agent),
+    []
+  );
   return { agent, catalogWarnings, credentialWarnings, scanWarnings };
 }
 
@@ -652,12 +669,8 @@ export async function updateAgent(
     workflowTemplateId: current.workflowTemplateId,
   };
   // `current` is the version the editor read. Merging over anything but the
-  // lineage head would silently undo every edit cut since, so refuse it.
-  const latestVersion = await maxVersion(prisma, key);
-  if (latestVersion !== current.version) {
-    throw new AgentVersionConflictError(current.key, current.version);
-  }
-  const nextVersion = latestVersion + 1;
+  // lineage head would silently undo every edit cut since, so it is checked
+  // against the head under the lineage's lock, inside the write below.
   const promptChanged = base.systemPrompt !== undefined;
   const scanWarnings =
     promptChanged && base.systemPrompt ? await scanSkillAdvisory(null, base.systemPrompt) : [];
@@ -680,6 +693,22 @@ export async function updateAgent(
   // A concurrent edit that cut this version number first wins; this one is stale.
   const agent = await onUniqueViolation(
     prisma.$transaction(async (tx) => {
+      // The check above ran outside this transaction, and a deactivation writes no version at all,
+      // so under it alone an edit could pass the check, lose to a deactivation, and still switch
+      // the lineage back on. Re-checking under the lineage's lock makes the two one step.
+      await lockAgentLineage(tx, key);
+      const head = await tx.agent.findFirst({
+        orderBy: { version: 'desc' },
+        where: scopeWhere(key),
+      });
+      if (!head || head.version !== current.version) {
+        throw new AgentVersionConflictError(current.key, current.version);
+      }
+      // Switching an agent on is a decision of its own — the reason a restore refuses to do it as
+      // a side effect — so an edit keeps the lineage's activation unless it is asked for.
+      if (!head.isActive && base.isActive !== true) {
+        throw new AgentInactiveError(current.key);
+      }
       const agentBase = await tx.agent.create({
         data: {
           channelId: current.channelId,
@@ -687,6 +716,8 @@ export async function updateAgent(
           credentialId: pick(base.credentialId, current.credentialId),
           description: pick(base.description, current.description),
           inheritsModelFrom: pick(base.inheritsModelFrom, current.inheritsModelFrom),
+          // Active, because the guard above admits only a lineage that is already active or a
+          // deliberate reactivation: no version decides its lineage's activation.
           isActive: true,
           isBuiltIn: current.isBuiltIn,
           // A prompt edit drops verification (mirrors the skill library); an
@@ -707,7 +738,7 @@ export async function updateAgent(
             base.toolKeys === undefined
               ? (current.toolKeys ?? undefined)
               : (base.toolKeys ?? undefined),
-          version: nextVersion,
+          version: head.version + 1,
           workflowTemplateId: current.workflowTemplateId,
         },
       });
@@ -727,23 +758,48 @@ export async function updateAgent(
     }),
     () => new AgentVersionConflictError(current.key, current.version)
   );
-  const { catalogWarnings, credentialWarnings } = await committedAdvisories(prisma, agent);
+  const catalogWarnings = await advisoryWarnings(
+    'agent catalog',
+    () => agentCatalogWarnings(prisma, agent),
+    []
+  );
+  const credentialWarnings = await advisoryWarnings(
+    'agent credentials',
+    () => agentCredentialWarnings(prisma, agent),
+    []
+  );
   return { agent, catalogWarnings, credentialWarnings, scanWarnings };
 }
 
 /**
  * Soft-delete an Agent lineage: deactivate every version at the key+scope so
  * resolveAgent stops finding it and falls through to the legacy config cascade.
+ * Takes the lineage's lock, so a concurrent edit either commits first (and this
+ * switches its new version off) or sees this and refuses.
  */
 export async function deactivateAgentLineage(
   prisma: PrismaClient,
   key: AgentScopeKey
 ): Promise<number> {
-  const res = await prisma.agent.updateMany({
-    data: { isActive: false },
-    where: scopeWhere(key),
+  return prisma.$transaction(async (tx) => {
+    await lockAgentLineage(tx, key);
+    const res = await tx.agent.updateMany({
+      data: { isActive: false },
+      where: scopeWhere(key),
+    });
+    return res.count;
   });
-  return res.count;
+}
+
+/**
+ * Thrown by {@link updateAgent} when the lineage is deactivated and the caller did not ask for it
+ * back. An edit that revives an agent by accident is worse than one that refuses and says so.
+ */
+export class AgentInactiveError extends Error {
+  constructor(key: string) {
+    super(`Agent '${key}' is deactivated. Reactivate it before changing it.`);
+    this.name = 'AgentInactiveError';
+  }
 }
 
 /**
@@ -1105,7 +1161,13 @@ export async function bulkUpdateAgentModels(
         change.newId = saved.agent.id;
         change.newVersion = saved.agent.version;
       } catch (err) {
-        change.status = err instanceof AgentVersionConflictError ? 'CONFLICT' : 'ERROR';
+        if (err instanceof AgentInactiveError) {
+          // Deactivated between the check above and the write. The lineage's lock is what makes
+          // this reliable rather than a guess, and the report says which rule refused it.
+          change.status = 'BLOCKED';
+        } else {
+          change.status = err instanceof AgentVersionConflictError ? 'CONFLICT' : 'ERROR';
+        }
         change.blockers.push(errorText(err));
       }
     } catch (err) {

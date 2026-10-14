@@ -64,6 +64,8 @@ function newMockPrisma() {
     user: { findMany: vi.fn().mockResolvedValue([{ email: 'a@x.dev', id: 'u1' }]) },
   };
   return Object.assign(prisma, {
+    // The lineage's advisory lock (CLAUDE.md §7) runs on the transaction client.
+    $executeRaw: vi.fn().mockResolvedValue(0),
     $transaction: async (arg: unknown) => (arg as (tx: typeof prisma) => Promise<unknown>)(prisma),
   });
 }
@@ -133,7 +135,7 @@ describe('POST /agent-library/:id/restore', () => {
     prisma.agent.findFirst
       .mockResolvedValueOnce(row(1, { skillRefs: [{ skillId: SKILL, sortOrder: 0 }] }))
       .mockResolvedValueOnce(row(2)) // latest
-      .mockResolvedValueOnce({ version: 2 }); // maxVersion
+      .mockResolvedValueOnce({ isActive: true, version: 2 }); // maxVersion
     const res = await app.inject({
       headers: AUTH,
       method: 'POST',
@@ -155,7 +157,7 @@ describe('POST /agent-library/:id/restore', () => {
     prisma.agent.findFirst
       .mockResolvedValueOnce(row(1, { runtime: 'claude-code' }))
       .mockResolvedValueOnce(row(2, { runtime: 'mastra' }))
-      .mockResolvedValueOnce({ version: 2 });
+      .mockResolvedValueOnce({ isActive: true, version: 2 });
     const res = await app.inject({
       headers: AUTH,
       method: 'POST',
@@ -171,7 +173,7 @@ describe('POST /agent-library/:id/restore', () => {
     prisma.agent.findFirst
       .mockResolvedValueOnce(row(1, { systemPrompt: 'same' }))
       .mockResolvedValueOnce(row(2, { systemPrompt: 'same' }))
-      .mockResolvedValueOnce({ version: 2 });
+      .mockResolvedValueOnce({ isActive: true, version: 2 });
     const res = await app.inject({
       headers: AUTH,
       method: 'POST',
@@ -235,7 +237,7 @@ describe('POST /agent-library/:id/restore', () => {
     prisma.agent.findFirst
       .mockResolvedValueOnce(row(1, { skillRefs: [{ skillId: SKILL, sortOrder: 0 }] }))
       .mockResolvedValueOnce(row(2))
-      .mockResolvedValueOnce({ version: 2 });
+      .mockResolvedValueOnce({ isActive: true, version: 2 });
     prisma.skill.findMany.mockResolvedValue([{ name: 'Careful reviewer' }]);
     const res = await app.inject({
       headers: AUTH,
