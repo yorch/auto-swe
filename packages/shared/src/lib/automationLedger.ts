@@ -7,6 +7,7 @@
  * The guards of event sources read only their own source's rows, so nothing here can suppress
  * an event automation. Best-effort: recording never fails the fire or the call it describes.
  */
+import { LEDGER_OWNER_KIND, sigilOwnerKey } from '../automation/ownerKey.js';
 import type { Prisma, PrismaClient } from '../index.js';
 
 /** The `source` of a schedule fire's row; its subject and scope are the schedule's id. */
@@ -33,6 +34,11 @@ export interface AutomationActivity {
   facts?: Record<string, string | number | null>;
 }
 
+/** The owner key of a schedule's or a template webhook's rows: `@owner/<its id>`. */
+export function ledgerOwnerKey(ownerId: string): string {
+  return sigilOwnerKey(LEDGER_OWNER_KIND, ownerId);
+}
+
 /** The key of a refusal: one row per owner, reason and hour. */
 export function refusalKey(source: string, ownerId: string, reason: string, now: Date): string {
   return `${source}:${ownerId}:${reason}:${now.toISOString().slice(0, 13)}`;
@@ -51,9 +57,10 @@ export async function recordAutomationActivity(
         dedupeKey: a.key.slice(0, 500),
         facts: a.facts ?? {},
         outcome: a.outcome,
+        // Not a repository decision: these rows are read by their owner's id (`subjectKey`),
+        // never by repository, so they carry a sigil key no repository can have.
+        ownerKey: ledgerOwnerKey(a.ownerId),
         reason: a.reason ? a.reason.slice(0, 500) : null,
-        // Not a repository decision: these rows are read by owner, never by repository.
-        repoKey: '',
         scopeKey: a.ownerId,
         source: a.source,
         subjectKey: a.ownerId,

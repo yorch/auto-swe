@@ -70,7 +70,8 @@ export type AutomationPayloadResult =
  *
  *   1. every option the template declares, at its declared `default`;
  *   2. over that, the automation's own options — only keys the template declares;
- *   3. over that, the repository and what the occurrence fills, which always win.
+ *   3. over that, the repository (when the automation has one) and what the occurrence fills,
+ *      which always win.
  *
  * The result must pass the template's declared input schema and, where the source has one,
  * its payload contract (what the worker parses), so a payload the run would refuse is refused
@@ -80,7 +81,8 @@ export function buildAutomationPayload<F, X>(
   source: EventSource<F, X>,
   inputSchema: unknown,
   inputs: unknown,
-  connectionId: string,
+  /** The repository the run acts on; null for an automation that has none (a team's). */
+  connectionId: string | null,
   facts: X
 ): AutomationPayloadResult {
   if (!isInputSchema(inputSchema)) {
@@ -103,7 +105,7 @@ export function buildAutomationPayload<F, X>(
   const payload: Record<string, unknown> = {
     ...defaults,
     ...given,
-    connectionId,
+    ...(connectionId === null ? {} : { connectionId }),
     description: run.description,
     ticketId: run.ticketId,
     ...run.fields,
@@ -145,7 +147,8 @@ export function automationOptionsProblem<F, X>(
       source,
       inputSchema,
       inputs,
-      '00000000-0000-4000-8000-000000000000',
+      // A stand-in repository for a source whose automations have one; none for a team's.
+      source.target === 'team' ? null : '00000000-0000-4000-8000-000000000000',
       facts
     );
     if (!built.ok) {

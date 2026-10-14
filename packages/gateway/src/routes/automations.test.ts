@@ -305,7 +305,7 @@ describe('automationRoutes (event automations)', () => {
       facts: FACTS,
       id: FIRE,
       outcome: 'FAILED_TO_START',
-      repoKey: 'github.com/acme/api',
+      ownerKey: 'github.com/acme/api',
       retriedAt: null,
       ...over,
     });
@@ -325,7 +325,7 @@ describe('automationRoutes (event automations)', () => {
       expect(res.json().data).toMatchObject({ outcome: 'STARTED' });
       expect(engine.decideAndStart.mock.calls[0]?.[2]).toMatchObject({
         facts: FACTS,
-        repoKey: 'github.com/acme/api',
+        ownerKey: 'github.com/acme/api',
         retry: { fireId: FIRE, kind: 'manual' },
       });
       expect(authorizeLaunch).toHaveBeenCalled();
@@ -355,6 +355,14 @@ describe('automationRoutes (event automations)', () => {
       const res = await retry();
       expect(res.statusCode).toBe(409);
       expect(res.json().error.code).toBe('NOT_RETRYABLE');
+      expect(engine.decideAndStart).not.toHaveBeenCalled();
+    });
+
+    it('refuses a decision recorded for an owner that is not a repository', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.automationFire.findFirst.mockResolvedValue(fire({ ownerKey: '@team/t1' }));
+      const res = await retry();
+      expect(res.statusCode).toBe(409);
       expect(engine.decideAndStart).not.toHaveBeenCalled();
     });
 
