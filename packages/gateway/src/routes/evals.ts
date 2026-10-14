@@ -604,7 +604,12 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     };
     const rows = await Promise.all(
       datasets.map(async (d) => {
-        const acc = perDataset.get(d.id) ?? { cases: 0, quarantined: 0, screened: 0 };
+        const acc = perDataset.get(d.id) ?? {
+          cases: 0,
+          quarantined: 0,
+          screened: 0,
+          unscreened: 0,
+        };
         const never = neverCounts.get(d.id) ?? 0;
         const failed = Math.max(0, acc.unscreened - never);
         return {

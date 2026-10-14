@@ -43,12 +43,12 @@ export interface FlakeScreenDeps {
   /** The dataset's never-screened, non-quarantined cases. */
   loadCases: (datasetId: string) => Promise<ScreenCaseRow[]>;
   /** Run the case's reference once. Throws on an infrastructure error. */
-  runReference: (c: EvalCaseRow) => Promise<GateResult>;
+  runReference: (c: ScreenCaseRow) => Promise<GateResult>;
   /**
    * Record the screen's outcome. Resolves false when the case was not written:
    * its reference changed, or another screen recorded it, while this one ran.
    */
-  recordScreen: (c: EvalCaseRow, flakeScreened: boolean, runs: number) => Promise<boolean>;
+  recordScreen: (c: ScreenCaseRow, flakeScreened: boolean, runs: number) => Promise<boolean>;
   /**
    * Count an infrastructure error on the case. At the cap
    * (`FLAKE_SCREEN_MAX_INFRA_ERRORS`) it also records the case as a failed
