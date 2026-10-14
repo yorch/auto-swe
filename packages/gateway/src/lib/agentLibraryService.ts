@@ -1,5 +1,10 @@
 import type { PrismaClient } from '@auto-swe/shared';
-import { isAnthropicSpec, parseProviderModelSpec } from '@auto-swe/shared/lib/modelSpec';
+import { lockAgentLineage } from '@auto-swe/shared/lib/agentLineageLock';
+import {
+  isAnthropicSpec,
+  normalizeModelSpec,
+  parseProviderModelSpec,
+} from '@auto-swe/shared/lib/modelSpec';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   type ImplementerRuntimeKind,
@@ -7,6 +12,7 @@ import {
   runtimeModelError,
   toImplementerRuntime,
 } from '@auto-swe/shared/types/api';
+import { advisoryWarnings } from './advisoryWarnings.js';
 import { BUILTIN_PROVIDERS } from './credentialService.js';
 import { catalogWarnings } from './modelCatalogService.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
@@ -65,6 +71,13 @@ export interface AgentBaseInput {
    * model.
    */
   reasoning?: ReasoningLevel | null;
+  /**
+   * Activation belongs to the lineage, not to a version: it is preserved, not set, unless the
+   * caller asks for it back. `true` reactivates a deactivated lineage deliberately — what a restore
+   * refuses to do as a side effect. There is no `false`: deactivating is `deactivateAgentLineage`,
+   * which does the whole lineage rather than one version of it.
+   */
+  isActive?: boolean;
 }
 
 export { runtimeModelError };
@@ -598,12 +611,17 @@ export async function createAgent(
     }),
     () => new AgentLineageExistsError(key.key, key.scope)
   );
-  return {
-    agent,
-    catalogWarnings: await agentCatalogWarnings(prisma, agent),
-    credentialWarnings: await agentCredentialWarnings(prisma, agent),
-    scanWarnings,
-  };
+  const catalogWarnings = await advisoryWarnings(
+    'agent catalog',
+    () => agentCatalogWarnings(prisma, agent),
+    []
+  );
+  const credentialWarnings = await advisoryWarnings(
+    'agent credentials',
+    () => agentCredentialWarnings(prisma, agent),
+    []
+  );
+  return { agent, catalogWarnings, credentialWarnings, scanWarnings };
 }
 
 /**
@@ -621,6 +639,12 @@ export async function updateAgent(
   catalogWarnings: string[];
   credentialWarnings: string[];
   scanWarnings: string[];
+  /**
+   * The activation the write observed under the lineage's lock. A caller that audits the change
+   * records this rather than the activation it read before locking, which a concurrent
+   * deactivation may since have changed.
+   */
+  wasActive: boolean;
 }> {
   const key: AgentScopeKey = {
     channelId: current.channelId,
@@ -631,12 +655,8 @@ export async function updateAgent(
     workflowTemplateId: current.workflowTemplateId,
   };
   // `current` is the version the editor read. Merging over anything but the
-  // lineage head would silently undo every edit cut since, so refuse it.
-  const latestVersion = await maxVersion(prisma, key);
-  if (latestVersion !== current.version) {
-    throw new AgentVersionConflictError(current.key, current.version);
-  }
-  const nextVersion = latestVersion + 1;
+  // lineage head would silently undo every edit cut since, so it is checked
+  // against the head under the lineage's lock, inside the write below.
   const promptChanged = base.systemPrompt !== undefined;
   const scanWarnings =
     promptChanged && base.systemPrompt ? await scanSkillAdvisory(null, base.systemPrompt) : [];
@@ -657,8 +677,24 @@ export async function updateAgent(
   }
 
   // A concurrent edit that cut this version number first wins; this one is stale.
-  const agent = await onUniqueViolation(
+  const { savedAgent: agent, wasActive } = await onUniqueViolation(
     prisma.$transaction(async (tx) => {
+      // The check above ran outside this transaction, and a deactivation writes no version at all,
+      // so under it alone an edit could pass the check, lose to a deactivation, and still switch
+      // the lineage back on. Re-checking under the lineage's lock makes the two one step.
+      await lockAgentLineage(tx, key);
+      const head = await tx.agent.findFirst({
+        orderBy: { version: 'desc' },
+        where: scopeWhere(key),
+      });
+      if (!head || head.version !== current.version) {
+        throw new AgentVersionConflictError(current.key, current.version);
+      }
+      // Switching an agent on is a decision of its own — the reason a restore refuses to do it as
+      // a side effect — so an edit keeps the lineage's activation unless it is asked for.
+      if (!head.isActive && base.isActive !== true) {
+        throw new AgentInactiveError(current.key);
+      }
       const agentBase = await tx.agent.create({
         data: {
           channelId: current.channelId,
@@ -666,6 +702,8 @@ export async function updateAgent(
           credentialId: pick(base.credentialId, current.credentialId),
           description: pick(base.description, current.description),
           inheritsModelFrom: pick(base.inheritsModelFrom, current.inheritsModelFrom),
+          // Active, because the guard above admits only a lineage that is already active or a
+          // deliberate reactivation: no version decides its lineage's activation.
           isActive: true,
           isBuiltIn: current.isBuiltIn,
           // A prompt edit drops verification (mirrors the skill library); an
@@ -686,7 +724,7 @@ export async function updateAgent(
             base.toolKeys === undefined
               ? (current.toolKeys ?? undefined)
               : (base.toolKeys ?? undefined),
-          version: nextVersion,
+          version: head.version + 1,
           workflowTemplateId: current.workflowTemplateId,
         },
       });
@@ -699,34 +737,58 @@ export async function updateAgent(
           })),
         });
       }
-      return tx.agent.findUniqueOrThrow({
-        include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
-        where: { id: agentBase.id },
-      });
+      return {
+        savedAgent: await tx.agent.findUniqueOrThrow({
+          include: { skillRefs: { include: { skill: { select: { id: true, name: true } } } } },
+          where: { id: agentBase.id },
+        }),
+        wasActive: head.isActive,
+      };
     }),
     () => new AgentVersionConflictError(current.key, current.version)
   );
-  return {
-    agent,
-    catalogWarnings: await agentCatalogWarnings(prisma, agent),
-    credentialWarnings: await agentCredentialWarnings(prisma, agent),
-    scanWarnings,
-  };
+  const catalogWarnings = await advisoryWarnings(
+    'agent catalog',
+    () => agentCatalogWarnings(prisma, agent),
+    []
+  );
+  const credentialWarnings = await advisoryWarnings(
+    'agent credentials',
+    () => agentCredentialWarnings(prisma, agent),
+    []
+  );
+  return { agent, catalogWarnings, credentialWarnings, scanWarnings, wasActive };
 }
 
 /**
  * Soft-delete an Agent lineage: deactivate every version at the key+scope so
  * resolveAgent stops finding it and falls through to the legacy config cascade.
+ * Takes the lineage's lock, so a concurrent edit either commits first (and this
+ * switches its new version off) or sees this and refuses.
  */
 export async function deactivateAgentLineage(
   prisma: PrismaClient,
   key: AgentScopeKey
 ): Promise<number> {
-  const res = await prisma.agent.updateMany({
-    data: { isActive: false },
-    where: scopeWhere(key),
+  return prisma.$transaction(async (tx) => {
+    await lockAgentLineage(tx, key);
+    const res = await tx.agent.updateMany({
+      data: { isActive: false },
+      where: scopeWhere(key),
+    });
+    return res.count;
   });
-  return res.count;
+}
+
+/**
+ * Thrown by {@link updateAgent} when the lineage is deactivated and the caller did not ask for it
+ * back. An edit that revives an agent by accident is worse than one that refuses and says so.
+ */
+export class AgentInactiveError extends Error {
+  constructor(key: string) {
+    super(`Agent '${key}' is deactivated. Reactivate it before changing it.`);
+    this.name = 'AgentInactiveError';
+  }
 }
 
 /**
@@ -755,4 +817,366 @@ export class AgentLineageExistsError extends Error {
     super(`An agent with key '${key}' already exists at scope ${scope}`);
     this.name = 'AgentLineageExistsError';
   }
+}
+
+export interface BulkModelRequest {
+  ids: string[];
+  mode: 'SET' | 'REMAP';
+  modelSpec?: string;
+  mapping?: Record<string, string>;
+  adaptRuntime?: boolean;
+  clearMismatchedCredentials?: boolean;
+}
+
+export type BulkModelStatus =
+  | 'OK'
+  | 'NOOP'
+  | 'UNMATCHED'
+  | 'INHERITS'
+  | 'BLOCKED'
+  | 'CONFLICT'
+  | 'ERROR';
+
+export interface BulkModelChange {
+  id: string;
+  key: string;
+  name: string;
+  /** The id of the version this change created; null until it is applied. */
+  newId: string | null;
+  /** Null when the agent's row could not be read, so its scope is not known. */
+  scope: AgentScope | null;
+  version: number;
+  from: string | null;
+  to: string | null;
+  status: BulkModelStatus;
+  blockers: string[];
+  warnings: string[];
+  shadowedBy: string[];
+  inheritedFrom: string | null;
+  runtimeChange: { from: string | null; to: string | null } | null;
+  credentialCleared: boolean;
+  newVersion: number | null;
+}
+
+export interface BulkModelPlan {
+  changes: BulkModelChange[];
+  summary: {
+    total: number;
+    ok: number;
+    noop: number;
+    unmatched: number;
+    inherits: number;
+    blocked: number;
+    conflict: number;
+    error: number;
+  };
+}
+
+/**
+ * The key a REMAP entry is looked up under: the canonical spelling of the agent's
+ * current model, lowercased so the operator's spelling need not match the stored one
+ * byte for byte. Null for a stored spec that no longer parses, which then only the
+ * `'*'` entry can match. The target keeps whatever spelling the operator wrote, since
+ * some endpoints are case-sensitive about a model id.
+ */
+function remapKeyFor(spec: string): string | null {
+  try {
+    return normalizeModelSpec(spec).toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** The message to show an operator for a thrown value. */
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** The scope cascade, most specific first — the order `resolveAgent` walks it. */
+const AGENT_SCOPE_RANK: readonly AgentScope[] = [
+  'WORKFLOW_TEMPLATE',
+  'CHANNEL',
+  'TEAM',
+  'ORGANIZATION',
+  'GLOBAL',
+];
+
+/**
+ * Whether an active row at `candidate` takes a run away from the selected row.
+ *
+ * Each run walks the cascade most-specific-first over its own context, so a narrower row wins
+ * whenever that context reaches it. A team row is reached by runs of that team, so it wins over a
+ * platform-wide row, and over an organization row when the team is inside that organization —
+ * `cascadeWheres` checks the team tier before the organization one. An organization row is reached
+ * by runs of teams inside it. Neither wins over a row at the other tenant scope, whose runs do not
+ * carry its id at all. A channel or workflow-template row is reached by its own context whatever it
+ * sits above, and every run reaches a GLOBAL row.
+ */
+function shadowsScope(
+  candidate: { scope: AgentScope; teamId: string | null },
+  selected: AgentScope,
+  teamsInSelectedOrg: ReadonlySet<string>
+): boolean {
+  if (AGENT_SCOPE_RANK.indexOf(candidate.scope) >= AGENT_SCOPE_RANK.indexOf(selected)) {
+    return false;
+  }
+  if (candidate.scope === 'ORGANIZATION') {
+    return selected === 'GLOBAL';
+  }
+  if (candidate.scope === 'TEAM') {
+    if (selected === 'GLOBAL') {
+      return true;
+    }
+    return (
+      selected === 'ORGANIZATION' &&
+      candidate.teamId !== null &&
+      teamsInSelectedOrg.has(candidate.teamId)
+    );
+  }
+  return true;
+}
+
+/** Each lineage fails independently; updateAgent remains the sole version-writing boundary. */
+export async function bulkUpdateAgentModels(
+  prisma: PrismaClient,
+  request: BulkModelRequest,
+  actorId: string,
+  opts: { dryRun: boolean }
+): Promise<BulkModelPlan> {
+  const rows: Array<{ error?: string; id: string; row: AgentRow | null }> = [];
+  for (const id of new Set(request.ids)) {
+    try {
+      rows.push({ id, row: await prisma.agent.findUnique({ where: { id } }) });
+    } catch (err) {
+      // A read that fails is this agent's outcome; it is no reason to abandon the others, whose
+      // rows may read perfectly well.
+      rows.push({ error: errorText(err), id, row: null });
+    }
+  }
+  // Deliberately cross-tenant: which narrower scopes hold a row for a key is a fact about the whole
+  // deployment, and naming them is the point of the warning. The caller is a platform admin. The
+  // read is advisory, so a failure reports no shadowing rather than refusing the batch.
+  let shadowing: Array<{ key: string; scope: string; teamId: string | null }> = [];
+  try {
+    shadowing = await runUnscoped(
+      'which narrower scopes hold an active row for a key is a deployment-wide fact; a platform admin edits rows at any scope',
+      ['Agent'],
+      () =>
+        prisma.agent.findMany({
+          select: { key: true, scope: true, teamId: true },
+          where: {
+            isActive: true,
+            key: { in: [...new Set(rows.flatMap(({ row }) => (row ? [row.key] : [])))] },
+          },
+        })
+    );
+  } catch {
+    // Advisory only: the plan is still accurate about what it will change.
+  }
+  // Ownership is only ever consulted for a team row over an organization row, so nothing is looked
+  // up unless an organization-scoped agent is actually selected — and then in one query, rather
+  // than one per candidate team, which a GLOBAL selection never needs and the request cap does not
+  // bound.
+  const selectedOrgIds = [
+    ...new Set(
+      rows
+        .filter(({ row }) => row?.scope === 'ORGANIZATION' && row.orgId)
+        .map(({ row }) => row?.orgId as string)
+    ),
+  ];
+  const teamsByOrg = new Map<string, Set<string>>();
+  if (selectedOrgIds.length > 0) {
+    try {
+      const teams = await runUnscoped(
+        'which teams belong to the organizations a selected agent is scoped to; a platform admin edits rows at any scope',
+        ['Team'],
+        () =>
+          prisma.team.findMany({
+            select: { id: true, orgId: true },
+            where: { orgId: { in: selectedOrgIds } },
+          })
+      );
+      for (const team of teams) {
+        const ids = teamsByOrg.get(team.orgId) ?? new Set<string>();
+        ids.add(team.id);
+        teamsByOrg.set(team.orgId, ids);
+      }
+    } catch {
+      // Unknown ownership: report no shadowing for it rather than fail the batch.
+    }
+  }
+  const changes: BulkModelChange[] = [];
+  for (const { error, id, row } of rows) {
+    const change: BulkModelChange = {
+      blockers: [],
+      credentialCleared: false,
+      from: row?.modelSpec ?? null,
+      id,
+      inheritedFrom: null,
+      key: row?.key ?? '',
+      name: row?.name ?? '',
+      newId: null,
+      newVersion: null,
+      runtimeChange: null,
+      // Unknown for an id whose row could not be read: say so rather than invent one.
+      scope: row ? (row.scope as AgentScope) : null,
+      shadowedBy: [],
+      status: 'ERROR',
+      to: null,
+      version: row?.version ?? 0,
+      warnings: [],
+    };
+    changes.push(change);
+    if (error) {
+      change.blockers.push(`Could not read this agent: ${error}`);
+      continue;
+    }
+    if (!row) {
+      change.blockers.push('Agent not found');
+      continue;
+    }
+    // Only the write further down is expected to fail per agent; anything else that throws
+    // here must not abandon the agents queued behind this one.
+    try {
+      const teamsInSelectedOrg =
+        row.scope === 'ORGANIZATION' && row.orgId
+          ? (teamsByOrg.get(row.orgId) ?? new Set<string>())
+          : new Set<string>();
+      change.shadowedBy = AGENT_SCOPE_RANK.filter((scope) =>
+        shadowing.some(
+          (candidate) =>
+            candidate.key === row.key &&
+            candidate.scope === scope &&
+            shadowsScope(
+              { scope, teamId: candidate.teamId },
+              row.scope as AgentScope,
+              teamsInSelectedOrg
+            )
+        )
+      );
+      const lineage: AgentScopeKey = { ...row, scope: row.scope as AgentScope };
+      const head = await prisma.agent.findFirst({
+        orderBy: { version: 'desc' },
+        where: scopeWhere(lineage),
+      });
+      if (!head || head.version !== row.version) {
+        change.status = 'CONFLICT';
+        change.blockers.push('changed since it was listed; reload the library');
+        continue;
+      }
+      // `updateAgent` writes `isActive: true`, so saving here would revive a lineage someone has
+      // since deactivated — and a deactivation changes no version, so the check above cannot see it.
+      if (!head.isActive) {
+        change.status = 'BLOCKED';
+        change.blockers.push('This agent is deactivated; reactivate it before changing its model.');
+        continue;
+      }
+      if (head.inheritsModelFrom && !head.modelSpec) {
+        change.status = 'INHERITS';
+        change.inheritedFrom = head.inheritsModelFrom;
+        continue;
+      }
+      // A row written before specs were validated can hold a spec that no longer parses. It
+      // matches no key of its own, but a catch-all entry still applies, so one malformed row
+      // cannot fail the batch it was selected in.
+      const currentKey = head.modelSpec ? remapKeyFor(head.modelSpec) : null;
+      const target =
+        request.mode === 'SET'
+          ? request.modelSpec
+          : ((currentKey ? request.mapping?.[currentKey] : undefined) ?? request.mapping?.['*']);
+      if (!target) {
+        change.status = 'UNMATCHED';
+        continue;
+      }
+      change.to = target;
+      if (target === head.modelSpec) {
+        change.status = 'NOOP';
+        continue;
+      }
+      const runtimeError = await runtimeSaveError(
+        prisma,
+        mergedRuntimeAndModel(head, { modelSpec: target })
+      );
+      if (runtimeError) {
+        if (request.adaptRuntime && head.runtime === 'claude-code' && !isAnthropicSpec(target)) {
+          change.runtimeChange = { from: head.runtime, to: 'mastra' };
+        } else {
+          change.blockers.push(runtimeError);
+        }
+      }
+      const credentialError = await validateCredentialRef(
+        prisma,
+        head.credentialId,
+        target,
+        lineage
+      );
+      if (credentialError) {
+        if (request.clearMismatchedCredentials) {
+          change.credentialCleared = true;
+        } else {
+          change.blockers.push(credentialError);
+        }
+      }
+      change.warnings = [
+        ...new Set(
+          [
+            ...(await agentCatalogWarnings(prisma, { modelSpec: target })),
+            ...(await agentCredentialWarnings(prisma, {
+              ...head,
+              credentialId: change.credentialCleared ? null : head.credentialId,
+              modelSpec: target,
+            })),
+            ...(!isAnthropicSpec(target)
+              ? await inheritingHarnessWarnings(prisma, head.key, target)
+              : []),
+          ].filter(Boolean)
+        ),
+      ];
+      if (change.blockers.length) {
+        change.status = 'BLOCKED';
+        continue;
+      }
+      change.status = 'OK';
+      if (opts.dryRun) {
+        continue;
+      }
+      try {
+        const base: AgentBaseInput = {
+          modelSpec: target,
+          ...(change.runtimeChange ? { runtime: 'mastra' as const } : {}),
+          ...(change.credentialCleared ? { credentialId: null } : {}),
+        };
+        const saved = await updateAgent(prisma, head, base, actorId);
+        change.newId = saved.agent.id;
+        change.newVersion = saved.agent.version;
+      } catch (err) {
+        if (err instanceof AgentInactiveError) {
+          // Deactivated between the check above and the write. The lineage's lock is what makes
+          // this reliable rather than a guess, and the report says which rule refused it.
+          change.status = 'BLOCKED';
+        } else {
+          change.status = err instanceof AgentVersionConflictError ? 'CONFLICT' : 'ERROR';
+        }
+        change.blockers.push(errorText(err));
+      }
+    } catch (err) {
+      change.status = 'ERROR';
+      change.blockers.push(errorText(err));
+    }
+  }
+  const count = (status: BulkModelStatus) =>
+    changes.filter((change) => change.status === status).length;
+  return {
+    changes,
+    summary: {
+      blocked: count('BLOCKED'),
+      conflict: count('CONFLICT'),
+      error: count('ERROR'),
+      inherits: count('INHERITS'),
+      noop: count('NOOP'),
+      ok: count('OK'),
+      total: changes.length,
+      unmatched: count('UNMATCHED'),
+    },
+  };
 }

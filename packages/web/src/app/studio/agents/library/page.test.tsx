@@ -1,0 +1,188 @@
+// @vitest-environment jsdom
+import { fireEvent, render, screen } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { AgentRow } from '@/hooks/useAgentLibrary';
+import { stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
+import AgentLibraryPage from './page';
+
+const { modalProps, state, updateAgent } = vi.hoisted(() => ({
+  modalProps: { current: null as null | { agents: AgentRow[]; open: boolean } },
+  state: { admin: true, agents: [] as AgentRow[] },
+  updateAgent: vi.fn(),
+}));
+
+const row = (id: string, name: string, key: string): AgentRow => ({
+  channelId: null,
+  createdAt: '',
+  credentialId: null,
+  description: null,
+  id,
+  inheritsModelFrom: null,
+  isActive: true,
+  isBuiltIn: false,
+  isVerified: true,
+  key,
+  mcpConnectionId: null,
+  modelSpec: 'anthropic/claude-opus-5-5',
+  name,
+  orgId: null,
+  origin: null,
+  runtime: 'mastra',
+  scope: 'GLOBAL',
+  skillRefs: [],
+  systemPrompt: null,
+  teamId: null,
+  toolKeys: null,
+  version: 1,
+  workflowTemplateId: null,
+});
+
+vi.mock('@/hooks/useAgentLibrary', () => ({
+  useAgentLibrary: () => ({
+    data: state.agents,
+    error: null,
+    isError: false,
+    isFetching: false,
+    isLoading: false,
+    refetch: vi.fn(),
+  }),
+  useCreateAgent: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useDeleteAgent: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useUpdateAgent: () => ({ isPending: false, mutateAsync: updateAgent }),
+}));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
+vi.mock('@/hooks/useAdmin', () => ({ useOrganizationDirectory: () => ({ data: [] }) }));
+vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => state.admin }));
+vi.mock('@/hooks/useMcpConnections', () => ({ useMcpConnections: () => ({ data: [] }) }));
+vi.mock('@/hooks/useModelConfig', () => ({ useAdminCredentials: () => ({ data: [] }) }));
+vi.mock('@/hooks/useReadiness', () => ({
+  useReadiness: () => ({ data: { items: [], providers: [] } }),
+}));
+vi.mock('@/hooks/useSkills', () => ({ useSkills: () => ({ data: [] }) }));
+vi.mock('@/hooks/useSlackChannels', () => ({ useSlackChannels: () => ({ data: [] }) }));
+vi.mock('@/hooks/useTeams', () => ({ useTeams: () => ({ data: [] }) }));
+vi.mock('@/hooks/useTemplates', () => ({ useWorkflowTemplates: () => ({ data: [] }) }));
+// The modal owns the model-change flow and is covered on its own; here it only reports what the
+// page handed it.
+vi.mock('@/components/agents/BulkModelModal', () => ({
+  BulkModelModal: (props: { agents: AgentRow[]; open: boolean }) => {
+    modalProps.current = props;
+    return null;
+  },
+}));
+
+beforeEach(() => {
+  stubDialogPrototype();
+  modalProps.current = null;
+  state.admin = true;
+  state.agents = [row('a1', 'Alpha', 'alpha'), row('b1', 'Beta', 'beta')];
+  updateAgent.mockReset();
+});
+
+describe('agent library — activation', () => {
+  it('marks inactive rows and leaves active rows unmarked', () => {
+    state.agents = [row('a1', 'Alpha', 'alpha'), { ...row('b1', 'Beta', 'beta'), isActive: false }];
+    render(withQuery(<AgentLibraryPage />));
+
+    expect(screen.getAllByText('Deactivated')).toHaveLength(1);
+    // The mark distinguishes the two, rather than appearing on whatever is in the table.
+    expect(screen.getAllByText('Deactivated')[0].closest('tr')?.textContent).toContain('Beta');
+  });
+
+  it('leaves active rows unmarked', () => {
+    render(withQuery(<AgentLibraryPage />));
+
+    expect(screen.queryByText('Deactivated')).toBeNull();
+  });
+
+  it('reactivates an inactive row through the update hook', async () => {
+    state.agents = [{ ...row('a1', 'Alpha', 'alpha'), isActive: false }];
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for alpha' }));
+    fireEvent.click(await screen.findByText('Reactivate'));
+    expect(updateAgent).toHaveBeenCalledWith({ body: { isActive: true }, id: 'a1' });
+  });
+
+  it('says so when a reactivation fails', async () => {
+    state.agents = [{ ...row('a1', 'Alpha', 'alpha'), isActive: false }];
+    updateAgent.mockRejectedValue(new Error('Agent changed since version 3 was read'));
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for alpha' }));
+    fireEvent.click(await screen.findByText('Reactivate'));
+    // Otherwise the row simply stays as it was and nothing says an attempt was made.
+    expect(await screen.findByText('Agent changed since version 3 was read')).toBeTruthy();
+  });
+
+  it('offers Deactivate only for active rows', async () => {
+    state.agents = [{ ...row('a1', 'Alpha', 'alpha'), isActive: false }, row('b1', 'Beta', 'beta')];
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for alpha' }));
+    expect(screen.queryByRole('menuitem', { name: 'Deactivate' })).toBeNull();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for beta' }));
+    expect(await screen.findByRole('menuitem', { name: 'Deactivate' })).toBeTruthy();
+  });
+
+  it('explains that an inactive row must be reactivated before editing', () => {
+    state.agents = [{ ...row('a1', 'Alpha', 'alpha'), isActive: false }];
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit alpha' }));
+    expect(screen.getByText('This agent is deactivated. Reactivate it to change it.')).toBeTruthy();
+  });
+});
+
+describe('agent library — bulk model change', () => {
+  it('offers a selection column and hands the selected agents to the modal', () => {
+    render(withQuery(<AgentLibraryPage />));
+
+    expect(screen.getByRole('checkbox', { name: 'Select all visible agents' })).toBeTruthy();
+    expect(screen.queryByText('1 selected')).toBeNull();
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select alpha' }));
+    expect(screen.getByText('1 selected')).toBeTruthy();
+
+    // The modal is mounted closed until the operator asks for it.
+    expect(modalProps.current?.open).toBe(false);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Change model' }));
+    expect(modalProps.current?.open).toBe(true);
+    expect(modalProps.current?.agents.map((a) => a.id)).toEqual(['a1']);
+  });
+
+  it('selects every visible row from the header checkbox and clears on demand', () => {
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all visible agents' }));
+    expect(screen.getByText('2 selected')).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }));
+    expect(screen.queryByText('2 selected')).toBeNull();
+  });
+
+  it('will not offer a change the gateway would refuse', () => {
+    state.agents = Array.from({ length: 201 }, (_, index) =>
+      row(`a${index}`, `Agent ${index}`, `agent-${index}`)
+    );
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all visible agents' }));
+    expect(screen.getByText(/At most 200 can be changed at once/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Change model' }).hasAttribute('disabled')).toBe(
+      true
+    );
+  });
+
+  it('gives a non-admin no selection column and no way to change models in bulk', () => {
+    state.admin = false;
+    render(withQuery(<AgentLibraryPage />));
+
+    expect(screen.queryByRole('checkbox', { name: 'Select all visible agents' })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: 'Select alpha' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Change model' })).toBeNull();
+    expect(modalProps.current).toBeNull();
+  });
+});

@@ -1450,10 +1450,16 @@ template override is never badged, because it may use a different model or crede
 | `GET` | `/api/v1/platform/agent-library/:id/versions` | `ADMIN` | Every version of the lineage `:id` belongs to, newest first, with skills and author |
 | `POST` | `/api/v1/platform/agent-library/:id/restore` | `ADMIN` | Cut a new version from an older one (`{ versionId }`); never rewrites history |
 | `DELETE` | `/api/v1/platform/agent-library/:id` | `ADMIN` | Delete / deactivate an Agent override |
+| `POST` | `/api/v1/platform/agent-library/bulk-model/preview` | `ADMIN` | Preview a bulk model set or remap; writes nothing |
+| `POST` | `/api/v1/platform/agent-library/bulk-model` | `ADMIN` | Apply a bulk model set or remap |
 | `GET` | `/api/v1/teams/:id/agent-library/options` | Team member | Agent keys, names and models an override may inherit from (GLOBAL plus the team's own); no prompts or tools |
 | `GET` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | List TEAM-scope Agent overrides |
 | `POST` | `/api/v1/teams/:id/agent-library` | Team `ADMIN` | Create a TEAM-scope Agent override |
 | `PUT` | `/api/v1/teams/:id/agent-library/:agentId` | Team `ADMIN` | Update a TEAM-scope Agent override |
+
+The bulk endpoints are admin-only. Preview writes nothing; apply uses the same version cut as a single edit, so every changed Agent gets a new immutable version and history is never rewritten. See [bulk model changes](model-configuration.md#changing-many-agents-models-at-once) for the operational details.
+
+`PUT` accepts `isActive: true` to reactivate a deactivated lineage, and nothing else: switching a lineage off is the `DELETE` route, which does the whole lineage rather than one version of it. A version preserves its lineage's activation, so an edit of a deactivated agent is refused with `409 AGENT_INACTIVE` instead of reviving it — see [reactivating a deactivated agent](model-configuration.md#reactivating-a-deactivated-agent).
 
 ---
 

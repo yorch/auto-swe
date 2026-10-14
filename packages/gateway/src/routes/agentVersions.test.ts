@@ -64,6 +64,8 @@ function newMockPrisma() {
     user: { findMany: vi.fn().mockResolvedValue([{ email: 'a@x.dev', id: 'u1' }]) },
   };
   return Object.assign(prisma, {
+    // The lineage's advisory lock (CLAUDE.md §7) runs on the transaction client.
+    $executeRaw: vi.fn().mockResolvedValue(0),
     $transaction: async (arg: unknown) => (arg as (tx: typeof prisma) => Promise<unknown>)(prisma),
   });
 }
@@ -133,7 +135,7 @@ describe('POST /agent-library/:id/restore', () => {
     prisma.agent.findFirst
       .mockResolvedValueOnce(row(1, { skillRefs: [{ skillId: SKILL, sortOrder: 0 }] }))
       .mockResolvedValueOnce(row(2)) // latest
-      .mockResolvedValueOnce({ version: 2 }); // maxVersion
+      .mockResolvedValueOnce({ isActive: true, version: 2 }); // maxVersion
     const res = await app.inject({
       headers: AUTH,
       method: 'POST',
@@ -155,7 +157,7 @@ describe('POST /agent-library/:id/restore', () => {
     prisma.agent.findFirst
       .mockResolvedValueOnce(row(1, { runtime: 'claude-code' }))
       .mockResolvedValueOnce(row(2, { runtime: 'mastra' }))
-      .mockResolvedValueOnce({ version: 2 });
+      .mockResolvedValueOnce({ isActive: true, version: 2 });
     const res = await app.inject({
       headers: AUTH,
       method: 'POST',
@@ -171,7 +173,7 @@ describe('POST /agent-library/:id/restore', () => {
     prisma.agent.findFirst
       .mockResolvedValueOnce(row(1, { systemPrompt: 'same' }))
       .mockResolvedValueOnce(row(2, { systemPrompt: 'same' }))
-      .mockResolvedValueOnce({ version: 2 });
+      .mockResolvedValueOnce({ isActive: true, version: 2 });
     const res = await app.inject({
       headers: AUTH,
       method: 'POST',
@@ -230,12 +232,31 @@ describe('POST /agent-library/:id/restore', () => {
     expect(prisma.agent.create).not.toHaveBeenCalled();
   });
 
+  it('reports a deactivation that lands before the write as a refusal, not a crash', async () => {
+    const { app, prisma } = await buildApp();
+    // The route's own check sees an active lineage; the read the service makes under its lock does
+    // not. The reason is the operator's to act on, so it must not surface as a 500.
+    prisma.agent.findFirst
+      .mockResolvedValueOnce(row(1))
+      .mockResolvedValueOnce(row(2))
+      .mockResolvedValueOnce({ isActive: false, version: 2 });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { versionId: V1 },
+      url: `/api/v1/platform/agent-library/${ID}/restore`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('AGENT_INACTIVE');
+    expect(prisma.agent.create).not.toHaveBeenCalled();
+  });
+
   it('warns, without failing, about a skill that has been deactivated', async () => {
     const { app, prisma } = await buildApp();
     prisma.agent.findFirst
       .mockResolvedValueOnce(row(1, { skillRefs: [{ skillId: SKILL, sortOrder: 0 }] }))
       .mockResolvedValueOnce(row(2))
-      .mockResolvedValueOnce({ version: 2 });
+      .mockResolvedValueOnce({ isActive: true, version: 2 });
     prisma.skill.findMany.mockResolvedValue([{ name: 'Careful reviewer' }]);
     const res = await app.inject({
       headers: AUTH,

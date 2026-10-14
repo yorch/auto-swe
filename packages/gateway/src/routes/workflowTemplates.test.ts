@@ -8,6 +8,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
+import * as specRefValidation from '../lib/specRefValidation.js';
 import { workflowTemplateRoutes } from './workflowTemplates.js';
 
 // The signing policy setting is read from the database; no override anywhere here.
@@ -510,6 +511,41 @@ describe('workflow-templates routes', () => {
       beforeJson: { webhookEnabled: true },
     });
     expect(JSON.stringify(audits)).not.toContain(token);
+  });
+
+  it('keeps a saved template and its audit when reference advice fails', async () => {
+    const lookup = vi
+      .spyOn(specRefValidation, 'validateSpecRefs')
+      .mockRejectedValueOnce(new Error('reference lookup unavailable'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'POST',
+        payload: {
+          name: 'reference-advice-failure',
+          spec: VALID_SPEC,
+          teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
+        },
+        url: '/api/v1/workflow-templates',
+      });
+      expect(res.statusCode).toBe(201);
+      expect(lookup).toHaveBeenCalledOnce();
+      const id = res.json().data.id;
+      expect(state.templates.some((t) => t.id === id)).toBe(true);
+      const audits = (state as unknown as { configAudits: Array<Record<string, unknown>> })
+        .configAudits;
+      expect(audits).toContainEqual(
+        expect.objectContaining({
+          action: 'CREATE',
+          entityId: id,
+          entityType: 'WorkflowTemplate',
+        })
+      );
+    } finally {
+      lookup.mockRestore();
+      warn.mockRestore();
+    }
   });
 
   it('saves an unparseable cond expression but surfaces it as a warning (non-blocking)', async () => {

@@ -10,6 +10,7 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { advisoryWarnings } from '../lib/advisoryWarnings.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import {
   BUILTIN_PROVIDERS,
@@ -410,7 +411,11 @@ export const modelConfigRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: EMBEDDING_CONFIG_SENTINEL_UUID,
         entityType: 'EmbeddingConfig',
       });
-      const warnings = await catalogWarnings(fastify.prisma, modelSpec, 'EMBEDDING');
+      const warnings = await advisoryWarnings(
+        'embedding catalog',
+        () => catalogWarnings(fastify.prisma, modelSpec, 'EMBEDDING'),
+        []
+      );
       return { data: updated, ...(warnings.length > 0 ? { catalogWarnings: warnings } : {}) };
     }
   );

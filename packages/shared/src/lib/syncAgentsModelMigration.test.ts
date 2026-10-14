@@ -141,6 +141,8 @@ function makeStore(
     update: vi.fn(async () => ({ id: 'row-id' })),
   };
   const client = {
+    // The lineage's advisory lock runs on the transaction client.
+    $executeRaw: vi.fn(async () => 0),
     agent,
     agentSkillRef,
     evalRubric: nullFinder,
@@ -193,6 +195,33 @@ describe('syncAgents — seeded model default upgrade', () => {
     expect(refs.filter((r) => r.agentId === v2.id)).toEqual([
       { agentId: v2.id, skillId: 'skill-tdd', sortOrder: 0 },
     ]);
+  });
+
+  it('leaves a lineage deactivated under its lock alone', async () => {
+    const v1 = seededRow({ key: 'implementer', modelSpec: 'anthropic/claude-opus-4-8' });
+    const { agents, prisma } = makeStore([v1]);
+    // Typed loosely: Prisma's own signature returns a lazy client, which is not what a fake has to
+    // stand in for here.
+    const readHead = prisma.agent.findFirst as unknown as {
+      getMockImplementation: () => ((args: unknown) => Promise<AgentRecord | null>) | undefined;
+      mockImplementation: (fn: (args: unknown) => Promise<AgentRecord | null>) => void;
+    };
+    const realFindFirst = readHead.getMockImplementation() as (
+      a: unknown
+    ) => Promise<AgentRecord | null>;
+    let reads = 0;
+    readHead.mockImplementation(async (args: unknown) => {
+      const row = await realFindFirst(args);
+      reads += 1;
+      // The read that decides the migration sees it active; the one under the lock does not.
+      return reads === 1 || !row ? row : { ...row, isActive: false };
+    });
+
+    await seedSweStarter(prisma);
+
+    // The deactivation wins, as it does for an edit: switching an agent on is a decision of its own.
+    expect(lineage(agents, 'implementer').map((r) => r.version)).toEqual([1]);
+    expect(prisma.$executeRaw).toHaveBeenCalled();
   });
 
   it('carries an admin-chosen runtime onto the new version', async () => {

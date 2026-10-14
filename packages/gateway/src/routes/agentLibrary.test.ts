@@ -43,6 +43,8 @@ function newMockPrisma() {
   // The service wraps agent + skill-ref writes in an interactive transaction;
   // hand the callback the same fake so the assertions below still see the calls.
   return Object.assign(prisma, {
+    // The lineage's advisory lock (CLAUDE.md §7) runs on the transaction client.
+    $executeRaw: vi.fn().mockResolvedValue(0),
     $transaction: async (arg: unknown) =>
       typeof arg === 'function'
         ? (arg as (tx: typeof prisma) => Promise<unknown>)(prisma)
@@ -256,7 +258,7 @@ describe('agentLibraryRoutes — admin', () => {
       version: 1,
       workflowTemplateId: null,
     });
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
     mockPrisma.agent.create.mockResolvedValue({ id: 'v2', key: 'reviewer', version: 2 });
     mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
       id: 'v2',
@@ -421,7 +423,7 @@ describe('agentLibraryRoutes — admin', () => {
 
   it('409s when the lineage already exists', async () => {
     const { app, mockPrisma } = await buildAdminApp();
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 }); // maxVersion = 1
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 }); // maxVersion = 1
     const res = await app.inject({
       body: {
         key: 'reviewer',
@@ -470,7 +472,7 @@ describe('agentLibraryRoutes — admin', () => {
       version: 1,
       workflowTemplateId: null,
     });
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 }); // maxVersion = 1
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 }); // maxVersion = 1
     mockPrisma.agent.create.mockResolvedValue({ id: 'v2', key: 'reviewer', version: 2 });
     mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
       id: 'v2',
@@ -514,7 +516,7 @@ describe('agentLibraryRoutes — admin', () => {
       version: 1,
       workflowTemplateId: null,
     });
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 }); // maxVersion = 1
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 }); // maxVersion = 1
     mockPrisma.agent.create.mockResolvedValue({ id: 'v2', key: 'reviewer', version: 2 });
     mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
       id: 'v2',
@@ -940,7 +942,7 @@ describe('agent credential pin', () => {
       teamId: null,
       version: 1,
     });
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
     mockPrisma.agent.create.mockResolvedValue({ id: 'a-2', key: 'pinned', version: 2 });
     await app.inject({
       body: { description: 'new words' },
@@ -1087,7 +1089,7 @@ describe('agent model required', () => {
   it('lets an edit switch from an own model to inheriting one', async () => {
     const { app, mockPrisma } = await buildTeamApp('ADMIN');
     mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ inheritsModelFrom: null }));
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
     mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
     mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({ id: 'v2', skillRefs: [], version: 2 });
     const res = await app.inject({
@@ -1105,7 +1107,7 @@ describe('agent model required', () => {
     mockPrisma.agent.findUnique.mockResolvedValue(
       teamAgentRow({ inheritsModelFrom: null, modelSpec: null })
     );
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
     mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
     mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({ id: 'v2', skillRefs: [], version: 2 });
     const res = await app.inject({
@@ -1256,7 +1258,7 @@ describe('agent runtime', () => {
     mockPrisma.agent.findUnique.mockResolvedValue(
       teamAgentRow({ runtime: 'claude-code', scope: 'GLOBAL', teamId: null })
     );
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
     mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
     mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
       id: 'v2',
@@ -1365,7 +1367,7 @@ describe('agent runtime', () => {
     mockPrisma.agent.findUnique.mockResolvedValue(
       teamAgentRow({ key: 'implementer', scope: 'GLOBAL', teamId: null })
     );
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
     mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
     mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
       id: 'v2',
@@ -1403,7 +1405,7 @@ describe('agent runtime', () => {
   it('names only platform-wide and own-team heirs to a team admin', async () => {
     const { app, mockPrisma } = await buildTeamApp('ADMIN');
     mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow());
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
     mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
     mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
       id: 'v2',
@@ -1458,7 +1460,7 @@ describe('agent runtime', () => {
   it('lets a team admin edit other fields, keeping the runtime an admin chose', async () => {
     const { app, mockPrisma } = await buildTeamApp('ADMIN');
     mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ runtime: 'claude-code' }));
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
     mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
     for (const body of [{ description: 'edited' }, { description: 'x', runtime: 'claude-code' }]) {
       mockPrisma.agent.create.mockClear();
@@ -1477,7 +1479,7 @@ describe('agent runtime', () => {
   it('audits a team admin edit like the platform route does', async () => {
     const { app, mockPrisma } = await buildTeamApp('ADMIN');
     mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ runtime: 'claude-code' }));
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
     mockPrisma.agent.create.mockResolvedValue({ id: 'v2', version: 2 });
     mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
       id: 'v2',
@@ -1528,13 +1530,141 @@ describe('agent runtime', () => {
   });
 });
 
+describe('activation belongs to the lineage', () => {
+  it('refuses an edit of a deactivated lineage', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ scope: 'GLOBAL', teamId: null }));
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: false, version: 1 });
+    const res = await app.inject({
+      body: { description: 'edited' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    // An edit that revives an agent by accident is worse than one that refuses and says so.
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('AGENT_INACTIVE');
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    expect(mockPrisma.configAuditLog.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('reactivates when asked, and records the switch', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue(
+      teamAgentRow({ isActive: false, scope: 'GLOBAL', teamId: null })
+    );
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: false, version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-2', isActive: true, version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'new-2',
+      isActive: true,
+      key: 'teamAgent',
+      skillRefs: [],
+      version: 2,
+    });
+    const res = await app.inject({
+      body: { isActive: true },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockPrisma.agent.create.mock.calls[0][0].data.isActive).toBe(true);
+    expect(mockPrisma.configAuditLog.create.mock.calls[0][0].data).toMatchObject({
+      afterJson: { isActive: true },
+      beforeJson: { isActive: false },
+    });
+    await app.close();
+  });
+
+  it('refuses to deactivate through an edit', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    // Switching off is the DELETE route: it does the whole lineage, not one version of it.
+    const res = await app.inject({
+      body: { isActive: false },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(mockPrisma.agent.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('records the activation the write saw, not the one it read before locking', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    // The editor's row says active; by the time the write holds the lock it does not, and the
+    // explicit request is what puts it back on. An audit reading the stale row would say it was
+    // never switched off.
+    mockPrisma.agent.findUnique.mockResolvedValue(
+      teamAgentRow({ isActive: true, scope: 'GLOBAL', teamId: null })
+    );
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: false, version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-4', isActive: true, version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'new-4',
+      isActive: true,
+      key: 'teamAgent',
+      skillRefs: [],
+      version: 2,
+    });
+    const res = await app.inject({
+      body: { isActive: true },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    expect(res.statusCode).toBe(200);
+    expect(mockPrisma.configAuditLog.create.mock.calls[0][0].data).toMatchObject({
+      afterJson: { isActive: true },
+      beforeJson: { isActive: false },
+    });
+    await app.close();
+  });
+
+  it('takes the lineage lock to edit and to deactivate', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ scope: 'GLOBAL', teamId: null }));
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
+    mockPrisma.agent.create.mockResolvedValue({ id: 'new-3', isActive: true, version: 2 });
+    mockPrisma.agent.findUniqueOrThrow.mockResolvedValue({
+      id: 'new-3',
+      isActive: true,
+      key: 'teamAgent',
+      skillRefs: [],
+      version: 2,
+    });
+    const edited = await app.inject({
+      body: { description: 'edited' },
+      headers: AUTH,
+      method: 'PUT',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    expect(edited.statusCode).toBe(200);
+    expect(mockPrisma.$executeRaw).toHaveBeenCalled();
+
+    // The same lock on the other side of the race is what makes the two one step.
+    mockPrisma.$executeRaw.mockClear();
+    mockPrisma.agent.updateMany.mockResolvedValue({ count: 1 });
+    const deleted = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/platform/agent-library/${AGENT_ID}`,
+    });
+    expect(deleted.statusCode).toBe(200);
+    expect(mockPrisma.$executeRaw).toHaveBeenCalled();
+    await app.close();
+  });
+});
+
 describe('concurrent agent edits', () => {
   const uniqueViolation = () => Object.assign(new Error('unique'), { code: 'P2002' });
 
   it('refuses an edit of a version that is no longer the newest of its lineage', async () => {
     const { app, mockPrisma } = await buildAdminApp();
     mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ scope: 'GLOBAL', teamId: null }));
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 2 }); // someone cut v2 since
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 2 }); // someone cut v2 since
     const res = await app.inject({
       body: { description: 'edited' },
       headers: AUTH,
@@ -1551,7 +1681,7 @@ describe('concurrent agent edits', () => {
   it('refuses a team admin edit of a stale version the same way', async () => {
     const { app, mockPrisma } = await buildTeamApp('ADMIN');
     mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow());
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 3 });
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 3 });
     const res = await app.inject({
       body: { description: 'edited' },
       headers: AUTH,
@@ -1586,7 +1716,7 @@ describe('concurrent agent edits', () => {
   it('answers 409, not 500, when a concurrent edit cut the same version first', async () => {
     const { app, mockPrisma } = await buildAdminApp();
     mockPrisma.agent.findUnique.mockResolvedValue(teamAgentRow({ scope: 'GLOBAL', teamId: null }));
-    mockPrisma.agent.findFirst.mockResolvedValue({ version: 1 });
+    mockPrisma.agent.findFirst.mockResolvedValue({ isActive: true, version: 1 });
     mockPrisma.agent.create.mockRejectedValue(uniqueViolation());
     const res = await app.inject({
       body: { description: 'edited' },

@@ -570,6 +570,43 @@ describe('PUT /embedding-config — model catalog warnings', () => {
     return res;
   }
 
+  it('keeps the committed save and audit when the catalog lookup rejects', async () => {
+    const { app, mockPrisma } = await buildAdminApp();
+    const updated = { id: 'default', modelSpec: 'openai/text-embedding-3-large' };
+    const upsert = vi.fn().mockResolvedValue(updated);
+    const lookup = vi.fn().mockRejectedValue(new Error('catalog unavailable'));
+    Object.assign(mockPrisma, {
+      embeddingConfig: { findUnique: vi.fn().mockResolvedValue(null), upsert },
+      modelCatalogEntry: { findUnique: lookup },
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const res = await app.inject({
+        body: { modelSpec: updated.modelSpec },
+        headers: AUTH,
+        method: 'PUT',
+        url: '/api/v1/platform/embedding-config',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ data: updated });
+      expect(upsert).toHaveBeenCalledOnce();
+      expect(lookup).toHaveBeenCalledOnce();
+      expect(mockPrisma.configAuditLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: 'CREATE',
+            afterJson: updated,
+            entityType: 'EmbeddingConfig',
+          }),
+        })
+      );
+      expect(upsert.mock.invocationCallOrder[0]).toBeLessThan(lookup.mock.invocationCallOrder[0]);
+    } finally {
+      warn.mockRestore();
+      await app.close();
+    }
+  });
+
   it('saves a built-in embedding model without warnings', async () => {
     const res = await saveEmbeddingSpec('openai/text-embedding-3-large');
     expect(res.statusCode).toBe(200);

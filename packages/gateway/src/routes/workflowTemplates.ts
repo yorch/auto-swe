@@ -29,6 +29,7 @@ import {
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { advisoryWarnings } from '../lib/advisoryWarnings.js';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
 import { experimentBucket } from '../lib/experimentBucket.js';
@@ -782,7 +783,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           entityType: 'WorkflowTemplate',
         });
         const warnings = [
-          ...(await validateSpecRefs(fastify.prisma, parsedSpec)),
+          ...(await advisoryWarnings(
+            'workflow spec references',
+            () => validateSpecRefs(fastify.prisma, parsedSpec),
+            []
+          )),
           ...specValidationWarnings(parsedSpec),
         ];
         return reply.status(201).send({
@@ -963,7 +968,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         });
         // Non-fatal: surface unresolved agent/mcp refs as warnings (never blocks save).
         const warnings = [
-          ...(await validateSpecRefs(fastify.prisma, parsedSpec)),
+          ...(await advisoryWarnings(
+            'workflow spec references',
+            () => validateSpecRefs(fastify.prisma, parsedSpec),
+            []
+          )),
           ...specValidationWarnings(parsedSpec),
         ];
         return reply.status(201).send({
@@ -1442,7 +1451,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       const warnings = [
-        ...(await validateSpecRefs(fastify.prisma, parsedSpec)),
+        ...(await advisoryWarnings(
+          'workflow spec references',
+          () => validateSpecRefs(fastify.prisma, parsedSpec),
+          []
+        )),
         ...specValidationWarnings(parsedSpec),
       ];
       return reply.status(201).send({
@@ -1624,7 +1637,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'WorkflowTemplate',
       });
       const warnings = [
-        ...(await validateSpecRefs(fastify.prisma, parsed as WorkflowSpec)),
+        ...(await advisoryWarnings(
+          'workflow spec references',
+          () => validateSpecRefs(fastify.prisma, parsed as WorkflowSpec),
+          []
+        )),
         ...specValidationWarnings(parsed as WorkflowSpec),
       ];
       return reply.status(201).send({

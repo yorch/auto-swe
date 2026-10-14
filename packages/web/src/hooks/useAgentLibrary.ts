@@ -40,6 +40,69 @@ export interface AgentRow {
   skillRefs: AgentSkillRef[];
 }
 
+export type BulkModelStatus =
+  | 'OK'
+  | 'NOOP'
+  | 'UNMATCHED'
+  | 'INHERITS'
+  | 'BLOCKED'
+  | 'CONFLICT'
+  | 'ERROR';
+
+export interface BulkModelChange {
+  id: string;
+  key: string;
+  name: string;
+  /** The id of the version the change created; null until it is applied. */
+  newId: string | null;
+  /** Null when the agent's row could not be read, so its scope is not known. */
+  scope: AgentScope | null;
+  version: number;
+  from: string | null;
+  to: string | null;
+  status: BulkModelStatus;
+  blockers: string[];
+  warnings: string[];
+  shadowedBy: string[];
+  inheritedFrom: string | null;
+  runtimeChange: { from: string | null; to: string | null } | null;
+  credentialCleared: boolean;
+  newVersion: number | null;
+}
+
+export interface BulkModelPlan {
+  changes: BulkModelChange[];
+  summary: {
+    total: number;
+    ok: number;
+    noop: number;
+    unmatched: number;
+    inherits: number;
+    blocked: number;
+    conflict: number;
+    error: number;
+  };
+}
+
+/** The outcome of an apply: the plan as it landed, and any audit entry that could not be written. */
+export interface BulkModelResult {
+  data: BulkModelPlan;
+  /**
+   * The changes are live; these audit entries are not. A governance record that silently failed to
+   * write is worse than one the operator knows is missing.
+   */
+  auditWarnings?: string[];
+}
+
+export interface BulkModelRequest {
+  ids: string[];
+  mode: 'SET' | 'REMAP';
+  modelSpec?: string;
+  mapping?: Record<string, string>;
+  adaptRuntime?: boolean;
+  clearMismatchedCredentials?: boolean;
+}
+
 export interface SkillRefInput {
   skillId: string;
   sortOrder: number;
@@ -66,7 +129,10 @@ export interface CreateAgentBody {
   reasoning?: ReasoningLevel | null;
 }
 
-export type UpdateAgentBody = Partial<Omit<CreateAgentBody, 'key' | 'scope'>>;
+// Activation is an update-only operation; creating an agent always starts it active.
+export type UpdateAgentBody = Partial<Omit<CreateAgentBody, 'key' | 'scope'>> & {
+  isActive?: boolean;
+};
 
 /**
  * Advisory findings on a save. The agent is saved either way; each list is absent when empty.
@@ -135,6 +201,24 @@ export function useDeleteAgent() {
       api.delete<{ data: { deactivated: number } }>(
         `/api/v1/platform/agent-library/${id}${force ? '?force=true' : ''}`
       ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function usePreviewBulkModel() {
+  return useMutation({
+    mutationFn: (body: BulkModelRequest) =>
+      api
+        .post<{ data: BulkModelPlan }>('/api/v1/platform/agent-library/bulk-model/preview', body)
+        .then((r) => r.data),
+  });
+}
+
+export function useApplyBulkModel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: BulkModelRequest) =>
+      api.post<BulkModelResult>('/api/v1/platform/agent-library/bulk-model', body),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }

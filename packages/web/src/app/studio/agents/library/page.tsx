@@ -10,6 +10,7 @@ import {
 import { AgentHistoryModal } from '@/components/agents/AgentHistoryModal';
 import { AgentScopeFields } from '@/components/agents/AgentScopeFields';
 import { broaderFallbacks } from '@/components/agents/agentFallback';
+import { BulkModelModal } from '@/components/agents/BulkModelModal';
 import { ModelSaveWarnings } from '@/components/agents/ModelSaveWarnings';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { ActionMenu } from '@/components/ui/ActionMenu';
@@ -17,6 +18,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
@@ -114,6 +116,12 @@ const EDIT_COPY: AgentFormCopy = {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+/**
+ * The gateway refuses a bulk model change naming more than this many agents in one request, so the
+ * page must never offer one. Changing more agents at once is a matter of narrowing the list first.
+ */
+const BULK_MODEL_LIMIT = 200;
+
 const SCOPE_NOUN: Record<AgentScope, string> = {
   CHANNEL: 'Slack channel',
   GLOBAL: 'deployment',
@@ -192,11 +200,18 @@ export default function AgentLibraryPage() {
   const [editingOriginal, setEditingOriginal] = useState<AgentRow | null>(null);
   const [deleting, setDeleting] = useState<AgentRow | null>(null);
   const [history, setHistory] = useState<AgentRow | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [bulkModelOpen, setBulkModelOpen] = useState(false);
+  // Bumped per opening so the dialog starts from a clean slate: its previous plan, or the result
+  // of a batch already applied, must not greet the next selection.
+  const [bulkModelSession, setBulkModelSession] = useState(0);
   // Set after a save the scanner or catalog commented on: the agent exists, and the dialog stays
   // open only so the findings are read rather than vanishing with the form.
   const [saved, setSaved] = useState<SavedNotice | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  // A row action that failed after the fact, where there is no form to hold the message.
+  const [actionError, setActionError] = useState<string | null>(null);
 
   function finishSave(title: string, res: AgentSaveWarnings & { runtimeWarnings?: string[] }) {
     const scanWarnings = res.scanWarnings ?? [];
@@ -294,6 +309,11 @@ export default function AgentLibraryPage() {
         SCOPE_ORDER.indexOf(a.scope) - SCOPE_ORDER.indexOf(b.scope)
     );
   const filtering = Boolean(scopeFilter || query);
+  const visibleIds = new Set(visibleAgents.map((agent) => agent.id));
+  const selectedVisibleIds = new Set([...selectedIds].filter((id) => visibleIds.has(id)));
+  const selectedAgents = visibleAgents.filter((agent) => selectedVisibleIds.has(agent.id));
+  const allVisibleSelected =
+    visibleAgents.length > 0 && selectedVisibleIds.size === visibleAgents.length;
   // Agents a sub-role can borrow a model from: those with a model of their own.
   const parentAgents = (agents ?? [])
     .filter((a) => a.scope === 'GLOBAL' && a.isActive && a.modelSpec)
@@ -352,13 +372,33 @@ export default function AgentLibraryPage() {
             label: 'Version history',
             onAction: () => setHistory(a),
           },
-          {
-            icon: 'trash',
-            id: 'deactivate',
-            label: 'Deactivate',
-            onAction: () => setDeleting(a),
-            tone: 'danger',
-          },
+          ...(!a.isActive
+            ? [
+                {
+                  icon: 'play' as const,
+                  id: 'reactivate',
+                  label: 'Reactivate',
+                  onAction: async () => {
+                    setActionError(null);
+                    try {
+                      await updateAgent.mutateAsync({ body: { isActive: true }, id: a.id });
+                    } catch (e) {
+                      // A reactivation that fails is otherwise invisible: the list simply stays as
+                      // it was, and the operator has no way to tell that anything was attempted.
+                      setActionError(errMsg(e, 'Reactivate failed'));
+                    }
+                  },
+                },
+              ]
+            : [
+                {
+                  icon: 'trash' as const,
+                  id: 'deactivate',
+                  label: 'Deactivate',
+                  onAction: () => setDeleting(a),
+                  tone: 'danger' as const,
+                },
+              ]),
         ]}
         label={`More actions for ${a.key}`}
       />
@@ -386,6 +426,11 @@ export default function AgentLibraryPage() {
       <SetupBanner items={['credentials']} />
 
       <Card className="p-4 sm:p-6">
+        {actionError && (
+          <Alert className="mb-3" variant="error">
+            {actionError}
+          </Alert>
+        )}
         <Toolbar
           end={
             agents && agents.length > 0 ? (
@@ -432,6 +477,33 @@ export default function AgentLibraryPage() {
             </Button>
           )}
         </Toolbar>
+        {selectedVisibleIds.size > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+            <span className="mr-auto text-paper-400">{selectedVisibleIds.size} selected</span>
+            {selectedVisibleIds.size > BULK_MODEL_LIMIT && (
+              <span className="text-amber-400">
+                At most {BULK_MODEL_LIMIT} can be changed at once — narrow the list with the
+                filters.
+              </span>
+            )}
+            {isAdmin && (
+              <Button
+                disabled={selectedVisibleIds.size > BULK_MODEL_LIMIT}
+                onClick={() => {
+                  setBulkModelSession((session) => session + 1);
+                  setBulkModelOpen(true);
+                }}
+                size="sm"
+                variant="secondary"
+              >
+                Change model
+              </Button>
+            )}
+            <Button onClick={() => setSelectedIds(new Set())} size="sm" variant="ghost">
+              Clear selection
+            </Button>
+          </div>
+        )}
         <QueryBoundary
           error={loadError}
           isError={isError}
@@ -474,6 +546,31 @@ export default function AgentLibraryPage() {
           ) : (
             <Table stacked>
               <THead>
+                {/* Only an admin can send a bulk change, so only an admin gets the selection column. */}
+                {isAdmin && (
+                  <Th className="w-10 pl-0" variant="plain">
+                    <Checkbox
+                      aria-label="Select all visible agents"
+                      checked={allVisibleSelected}
+                      label=""
+                      onChange={(event) => {
+                        setSelectedIds((current) => {
+                          const next = new Set([...current].filter((id) => visibleIds.has(id)));
+                          if (event.target.checked) {
+                            for (const id of visibleIds) {
+                              next.add(id);
+                            }
+                          } else {
+                            for (const id of visibleIds) {
+                              next.delete(id);
+                            }
+                          }
+                          return next;
+                        });
+                      }}
+                    />
+                  </Th>
+                )}
                 <Th className="pl-0" variant="plain">
                   Agent
                 </Th>
@@ -497,6 +594,28 @@ export default function AgentLibraryPage() {
                   const tools = toolKeysLabel(a.toolKeys);
                   return (
                     <TRow hover key={a.id}>
+                      {isAdmin && (
+                        <Td className="py-3 pr-1 align-top" label="Select">
+                          <Checkbox
+                            aria-label={`Select ${a.key}`}
+                            checked={selectedVisibleIds.has(a.id)}
+                            label=""
+                            onChange={(event) =>
+                              setSelectedIds((current) => {
+                                const next = new Set(
+                                  [...current].filter((id) => visibleIds.has(id))
+                                );
+                                if (event.target.checked) {
+                                  next.add(a.id);
+                                } else {
+                                  next.delete(a.id);
+                                }
+                                return next;
+                              })
+                            }
+                          />
+                        </Td>
+                      )}
                       <Td className="py-3 pr-4 align-top sm:max-w-[22rem]" primary>
                         <div className="flex min-w-0 items-baseline gap-2">
                           {sameKeyAsAbove && (
@@ -582,6 +701,11 @@ export default function AgentLibraryPage() {
                           >
                             {a.isVerified ? 'Verified' : 'Unverified'}
                           </Badge>
+                          {!a.isActive && (
+                            <Badge title="This agent is not in service" tone="muted">
+                              Deactivated
+                            </Badge>
+                          )}
                         </div>
                         <div className="mt-1 text-xs text-paper-500">{originLabel(a.origin)}</div>
                       </Td>
@@ -596,6 +720,18 @@ export default function AgentLibraryPage() {
           )}
         </QueryBoundary>
       </Card>
+
+      {isAdmin && (
+        <BulkModelModal
+          agents={selectedAgents}
+          key={bulkModelSession}
+          onClose={() => {
+            setBulkModelOpen(false);
+            setSelectedIds(new Set());
+          }}
+          open={bulkModelOpen}
+        />
+      )}
 
       {/* ── Create ── */}
       <Modal onClose={() => setCreateOpen(false)} open={createOpen} size="lg" title="New agent">
@@ -647,6 +783,11 @@ export default function AgentLibraryPage() {
       >
         {editing ? (
           <>
+            {!editing.isActive && (
+              <Alert variant="warning">
+                This agent is deactivated. Reactivate it to change it.
+              </Alert>
+            )}
             <AgentFormFields
               copy={EDIT_COPY}
               credentials={credentials ?? []}
