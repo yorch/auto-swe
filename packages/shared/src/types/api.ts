@@ -976,6 +976,11 @@ export interface EvalCaseDto {
   tags: string[];
   flakeScreened: boolean;
   flakeRuns: number;
+  /**
+   * The failed screen was recorded because the reference's runs kept being killed
+   * or timing out, not because a run failed: the case could not be checked.
+   */
+  screenEnvironmentFailed?: boolean;
   createdAt: string;
 }
 

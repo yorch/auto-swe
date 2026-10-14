@@ -110,6 +110,14 @@ describe('runEvalsCommand', () => {
               id: 'case-3',
               repoUrl: 'https://github.com/acme/api',
             },
+            {
+              baselineSha: 'abcdef0123456789',
+              flakeRuns: 3,
+              flakeScreened: false,
+              id: 'case-4',
+              repoUrl: 'https://github.com/acme/api',
+              screenEnvironmentFailed: true,
+            },
           ],
           createdAt: '2026-01-01T00:00:00.000Z',
           description: null,
@@ -127,6 +135,8 @@ describe('runEvalsCommand', () => {
     expect(out).toContain('case-1  https://github.com/acme/api@abcdef0123  ✓screened');
     expect(out).toContain('case-2  https://github.com/acme/api@abcdef0123  ✗flaky');
     expect(out).toContain('case-3  https://github.com/acme/api@abcdef0123  unscreened');
+    // Runs that kept being killed are not a flaky test.
+    expect(out).toContain('case-4  https://github.com/acme/api@abcdef0123  ✗uncheckable');
   });
 
   it('results builds the query string and reads meta.total from the full envelope', async () => {
@@ -194,6 +204,17 @@ describe('runEvalsCommand', () => {
     expect(code).toBe(0);
     expect(urls).toEqual(['http://gw/api/v1/platform/evals/ds-1/cases/c-9/rescreen']);
     expect(stdoutWrites.join('')).toContain('could not start now');
+  });
+
+  it('rescreen takes --case=true as a case id, not a bare flag', async () => {
+    const urls: string[] = [];
+    globalThis.fetch = vi.fn(async (url: string) => {
+      urls.push(url);
+      return jsonResponse({ data: { reset: 1, screenStarted: true } });
+    }) as typeof fetch;
+    const code = await runEvalsCommand(['rescreen', 'ds-1', '--case=true'], ENV);
+    expect(code).toBe(0);
+    expect(urls).toEqual(['http://gw/api/v1/platform/evals/ds-1/cases/true/rescreen']);
   });
 
   it('rescreen prints the usage error for --case without a value, and sends nothing', async () => {

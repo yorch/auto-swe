@@ -26,6 +26,7 @@ import {
   IMPLEMENTER_RUNTIMES,
   toImplementerRuntime,
 } from '@auto-swe/shared/types/api';
+import { FLAKE_SCREEN_MAX_INFRA_ERRORS } from '@auto-swe/shared/types/workflow';
 import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -215,6 +216,7 @@ function toCaseDto(c: {
   tags: string[];
   flakeScreened: boolean;
   flakeRuns: number;
+  flakeScreenInfraErrors: number;
   createdAt: Date;
 }): EvalCaseDto {
   return {
@@ -228,6 +230,10 @@ function toCaseDto(c: {
     input: c.input,
     reference: c.reference,
     repoUrl: c.repoUrl,
+    screenEnvironmentFailed:
+      !c.flakeScreened &&
+      c.flakeRuns > 0 &&
+      c.flakeScreenInfraErrors >= FLAKE_SCREEN_MAX_INFRA_ERRORS,
     tags: c.tags,
   };
 }
@@ -364,30 +370,36 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       return 'DATASET_NOT_FOUND';
     }
     // What the reset discards, for the audit: how many of the cases were screened,
-    // failed their screen, or were never screened.
+    // failed their screen, or were never screened. Counted in the reset's own
+    // transaction, so a screen recording a result meanwhile cannot skew them.
     const scope = { datasetId: ds.id, ...(caseId ? { id: caseId } : {}) };
-    const [screenedBefore, failedBefore, neverBefore] = await Promise.all([
-      fastify.prisma.evalCase.count({ where: { ...scope, flakeScreened: true } }),
-      fastify.prisma.evalCase.count({
+    const count = await fastify.prisma.$transaction(async (tx) => {
+      const screenedBefore = await tx.evalCase.count({ where: { ...scope, flakeScreened: true } });
+      const failedBefore = await tx.evalCase.count({
         where: { ...scope, flakeRuns: { gt: 0 }, flakeScreened: false },
-      }),
-      fastify.prisma.evalCase.count({ where: { ...scope, flakeRuns: 0 } }),
-    ]);
-    const { count } = await fastify.prisma.evalCase.updateMany({
-      data: { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0 },
-      where: scope,
+      });
+      const neverBefore = await tx.evalCase.count({ where: { ...scope, flakeRuns: 0 } });
+      const reset = await tx.evalCase.updateMany({
+        data: { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0 },
+        where: scope,
+      });
+      if (caseId && reset.count === 0) {
+        return 0;
+      }
+      await writeAuditLog(fastify, {
+        action: 'UPDATE',
+        actor,
+        after: { flakeRuns: 0, flakeScreened: false, rescreen: caseId ? { caseId } : 'dataset' },
+        before: { failed: failedBefore, neverScreened: neverBefore, screened: screenedBefore },
+        client: tx,
+        entityId: ds.id,
+        entityType: 'EvalDataset',
+      });
+      return reset.count;
     });
     if (caseId && count === 0) {
       return 'CASE_NOT_FOUND';
     }
-    await writeAuditLog(fastify, {
-      action: 'UPDATE',
-      actor,
-      after: { flakeRuns: 0, flakeScreened: false, rescreen: caseId ? { caseId } : 'dataset' },
-      before: { failed: failedBefore, neverScreened: neverBefore, screened: screenedBefore },
-      entityId: ds.id,
-      entityType: 'EvalDataset',
-    });
     // Best-effort, like the start on create: the cases are reset either way, and
     // the next eval run of the dataset or the re-validation sweep screens them.
     let screenStarted = false;

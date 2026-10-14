@@ -20,7 +20,11 @@ import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
 import { evalRoutes } from './evals.js';
 
 function newMockPrisma() {
-  return {
+  const prisma = {
+    // Interactive transactions run against the same double.
+    $transaction: vi.fn(
+      async (fn: (tx: unknown) => Promise<unknown>): Promise<unknown> => fn(prisma)
+    ),
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     evalCase: {
       count: vi.fn().mockResolvedValue(0),
@@ -50,6 +54,7 @@ function newMockPrisma() {
       update: vi.fn(),
     },
   };
+  return prisma;
 }
 
 async function buildApp(
@@ -880,6 +885,47 @@ describe('evalRoutes', () => {
         url: '/api/v1/platform/evals/suite-health',
       });
       expect(res.statusCode).toBe(403);
+    });
+  });
+
+  describe('GET /evals/:id', () => {
+    it('marks a case whose failed screen came from killed runs as not checkable', async () => {
+      const { app, prisma } = await buildApp();
+      const at = new Date('2026-09-01T00:00:00.000Z');
+      const base = {
+        baselineSha: 'abc',
+        createdAt: at,
+        datasetId: 'd1',
+        goldenTest: 'yarn test',
+        input: {},
+        reference: null,
+        repoUrl: 'https://x/y',
+        tags: [],
+      };
+      prisma.evalDataset.findUnique.mockResolvedValue({
+        _count: { cases: 2 },
+        cases: [
+          { ...base, flakeRuns: 3, flakeScreened: false, flakeScreenInfraErrors: 3, id: 'env' },
+          { ...base, flakeRuns: 3, flakeScreened: false, flakeScreenInfraErrors: 1, id: 'flaky' },
+        ],
+        createdAt: at,
+        description: null,
+        id: 'd1',
+        name: 'Golden',
+        scope: 'GLOBAL',
+        slug: 'golden',
+      });
+      const res = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/platform/evals/33333333-3333-4333-8333-333333333333',
+      });
+      expect(res.statusCode).toBe(200);
+      const cases = res.json().data.cases as { id: string; screenEnvironmentFailed: boolean }[];
+      expect(cases.map((c) => [c.id, c.screenEnvironmentFailed])).toEqual([
+        ['env', true],
+        ['flaky', false],
+      ]);
     });
   });
 

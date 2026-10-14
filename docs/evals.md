@@ -327,7 +327,8 @@ verdicts into trends per template, model, and prompt version.
   inside the golden-test command that fails exits like a failing test and marks the case flaky; an
   admin re-screen clears it. In the other direction, a test suite that itself dies on a signal, or
   hangs past the runner's timeout, reads as an infrastructure failure: it is retried by the next
-  screens and, after three, recorded as a failed screen, which a re-screen resets. A genuine
+  screens and, after three, recorded as a failed screen, which a re-screen resets. The dataset
+  page and `evals show` mark such a case as not checkable rather than flaky. A genuine
   outage of the workspace or registry can therefore fail cases that a re-screen then clears.
 - **A failed screen stands until an admin re-screens it.** Nothing re-screens a case on its own once
   its screen is recorded, except re-validation restoring a quarantined case. Changing

@@ -108,7 +108,13 @@ async function cmdShow(rest: string[], env: CliEnv): Promise<number> {
   process.stdout.write(`${data.name} (${data.slug}) — ${data.cases.length} cases\n`);
   for (const c of data.cases) {
     // flakeRuns > 0 without a pass is a failed screen; the harness skips it like an unscreened case.
-    const screened = c.flakeScreened ? '✓screened' : c.flakeRuns > 0 ? '✗flaky' : 'unscreened';
+    const screened = c.flakeScreened
+      ? '✓screened'
+      : c.screenEnvironmentFailed
+        ? '✗uncheckable'
+        : c.flakeRuns > 0
+          ? '✗flaky'
+          : 'unscreened';
     process.stdout.write(`  ${c.id}  ${c.repoUrl}@${c.baselineSha.slice(0, 10)}  ${screened}\n`);
   }
   return 0;
@@ -122,8 +128,12 @@ async function cmdRescreen(rest: string[], env: CliEnv): Promise<number> {
     process.stderr.write('Usage: evals rescreen <dataset-id> [--case=<case-id>]\n');
     return 1;
   }
-  // `--case` with no value parses to FLAG_PRESENT, which is not a case id.
-  if (flags.case === FLAG_PRESENT || flags.case === '') {
+  // A bare `--case` parses to FLAG_PRESENT; `--case=true` is spelled out, so it
+  // is a value (if not a case id, the gateway answers 404).
+  if (
+    (flags.case === FLAG_PRESENT && !rest.some((a) => a.startsWith('--case='))) ||
+    flags.case === ''
+  ) {
     process.stderr.write('Usage: evals rescreen <dataset-id> [--case=<case-id>]\n');
     return 1;
   }

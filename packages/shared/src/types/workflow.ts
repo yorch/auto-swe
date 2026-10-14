@@ -413,6 +413,12 @@ export interface ScheduledRevalidationInput {
 }
 
 /** What one flake screen of a dataset's never-screened cases did (`evalFlakeScreen.ts`). */
+/**
+ * Infrastructure errors (a reference run killed or timed out) after which a case's
+ * flake screen is recorded as failed, so it stops being retried.
+ */
+export const FLAKE_SCREEN_MAX_INFRA_ERRORS = 3;
+
 export interface FlakeScreenResult {
   /** Cases whose outcome this screen recorded. */
   screened: number;

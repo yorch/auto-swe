@@ -239,9 +239,11 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                             >
                               {c.flakeScreened
                                 ? `Checked (${c.flakeRuns} runs)`
-                                : c.flakeRuns > 0
-                                  ? `Flaky (failed a ${c.flakeRuns}-run check)`
-                                  : 'Not checked yet'}
+                                : c.screenEnvironmentFailed
+                                  ? "Couldn't be checked (its runs kept being killed or timing out)"
+                                  : c.flakeRuns > 0
+                                    ? `Flaky (failed a ${c.flakeRuns}-run check)`
+                                    : 'Not checked yet'}
                             </Badge>
                             {c.flakeRuns > 0 && (
                               <Button

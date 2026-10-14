@@ -20,14 +20,17 @@
 
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import type { FlakeScreenResult } from '@auto-swe/shared/types/workflow';
+import {
+  FLAKE_SCREEN_MAX_INFRA_ERRORS,
+  type FlakeScreenResult,
+} from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import type { EvalCaseRow } from './evalHarness.js';
 import { isInfrastructureFailure, runCaseReference } from './evalRevalidate.js';
 import type { GateResult } from './qualityGates.js';
 
 /** Infrastructure errors after which a case is recorded as a failed screen. */
-export const FLAKE_SCREEN_MAX_INFRA_ERRORS = 3;
+export { FLAKE_SCREEN_MAX_INFRA_ERRORS };
 
 /** A case to screen, with the infrastructure errors earlier screens counted on it. */
 export interface ScreenCaseRow extends EvalCaseRow {
