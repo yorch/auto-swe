@@ -14,6 +14,7 @@ import {
 import { type McpRelay, openMcpRelay } from '../harness/mcpRelay.js';
 import { type HarnessRuntime, harnessRuntime } from '../harness/runtime.js';
 import { summedCallsUsage, type UsageTotals } from '../harness/usage.js';
+import { compactMessages } from './compaction.js';
 import { piMcpTools } from './mcp.js';
 import { aiSdkStreamFn, piModelDescriptor } from './model.js';
 import {
@@ -235,16 +236,38 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
         () => open.agentTools
       );
       const prompt: AgentMessage = { content: user, role: 'user', timestamp: Date.now() };
+      const systemPrompt = piSystemPrompt({
+        extraTools: open.mcpTools,
+        projectContext: open.projectContext,
+        system,
+        tools,
+      });
+      const budgetTokens =
+        options.harnessContextTokens ??
+        getSettingDefinition('workspace.harnessContextTokens').defaultValue;
+      // Fit a conversation to the budget and trace it when that changed anything.
+      const compact = (messages: AgentMessage[], persisted: boolean) => {
+        const out = compactMessages({ budgetTokens, messages, systemPrompt });
+        if (out.messages !== messages) {
+          options.tracer.addActivityEvent({
+            name: 'pi.context_compacted',
+            outputJson: {
+              afterTokens: out.afterTokens,
+              beforeTokens: out.beforeTokens,
+              budgetTokens,
+              droppedMessages: out.droppedMessages,
+              elidedResults: out.elidedResults,
+              persisted,
+            },
+          });
+        }
+        return out.messages;
+      };
       const added = await runAgentLoop(
         [prompt],
         {
           messages: open.messages,
-          systemPrompt: piSystemPrompt({
-            extraTools: open.mcpTools,
-            projectContext: open.projectContext,
-            system,
-            tools,
-          }),
+          systemPrompt,
           tools: open.agentTools,
         },
         {
@@ -292,6 +315,9 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
           },
           // One call at a time, as the Mastra loop and the trace order them.
           toolExecution: 'sequential',
+          // Runs before every model call on a copy of the loop's messages, so it
+          // shapes what is sent and leaves what the loop holds alone.
+          transformContext: async (messages) => compact(messages, false),
         },
         () => turn.heartbeat(),
         turn.abort.signal,
@@ -310,6 +336,12 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
             )
         )
       );
+      // The session keeps what the next turn would send, so a long session does
+      // not carry history it would only elide or drop again.
+      const kept = compact(open.messages, true);
+      if (kept !== open.messages) {
+        open.messages.splice(0, open.messages.length, ...kept);
+      }
 
       if (ended?.stopReason === 'aborted' || turn.abort.signal.aborted) {
         turn.throwIfCancelled();

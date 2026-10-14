@@ -655,6 +655,19 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE),
   }),
+  'workspace.harnessContextTokens': defineSetting({
+    defaultValue: 150_000,
+    description:
+      "Token budget for the conversation a harness carries from one turn to the next, estimated at four characters per token and counted with the system prompt. Applies to the Pi runtime. Before each model call over the budget, the oldest tool output is replaced with a short stub, then the oldest whole exchanges (a prompt and the work that answered it) are dropped; the current prompt is always sent. Set it below the model's context window, leaving room for its reply. The Mastra loop starts each turn afresh and does not read it.",
+    group: 'workspace',
+    label: 'Harness context budget',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.min(1_000).max(2_000_000),
+    unit: 'tokens',
+  }),
   // Pinned because the runtime decides who executes the tool loop and which
   // credential enters the workspace: a run that began on one runtime must not
   // finish a later iteration on the other, and a re-run of the same history

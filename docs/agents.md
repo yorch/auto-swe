@@ -740,7 +740,7 @@ Mastra loop can — a built-in provider, or an OpenAI-compatible one whose crede
 `apiBase` (refused with `HARNESS_UNSUPPORTED_MODEL` before anything is built when it names none) —
 and the credential never enters the container. Each call is debited as it ends (`turn.callSpent`),
 at the Agent's spec, and a failed call's error is the one the turn fails with. Pi's own
-compaction, sessions on disk, settings, extensions, skills and prompt templates are not part of
+summarising compaction, sessions on disk, settings, extensions, skills and prompt templates are not part of
 this: nothing of Pi's touches the worker's filesystem.
 
 **Pi's prompt and context.** The system prompt opens with Pi's own (its tool list and guidelines,
@@ -751,6 +751,24 @@ While that file is loaded, `write` and `edit` may not change `AGENTS.md` or `CLA
 Turns after the first continue the same conversation, held in the worker. Every command the turn ran
 in the container carries the turn's exec tag, so the kill when the turn ends stops anything it left
 running.
+
+**Pi's context budget.** A conversation kept across turns would outgrow the model's context window, so
+the adapter fits it to `workspace.harnessContextTokens` (default 150,000 tokens; overridable per
+workflow template, team and organization) without a model call, which keeps metering exact. Before each
+model call, through Pi's `transformContext` hook, it estimates the system prompt plus the messages at
+four characters per token. Over the budget, it works in order until the estimate is under it: it
+replaces the text of tool results older than the four most recent assistant turns with a one-line stub
+naming the tool, oldest first, keeping each result's call id, tool name and error flag so every tool
+call still has its result; then it drops the oldest whole exchanges (a user message and everything up
+to the next one), so a call and its result leave together and the history still begins with a user
+message. The current prompt is never dropped, and a newest exchange that alone exceeds the budget is
+sent as it is, for the provider to refuse or accept. At the end of each turn the session keeps what
+that pass would send, so the history does not grow without bound; a stubbed result or a dropped
+exchange is gone for later turns, and the model re-runs a tool when it needs the output again. Each
+compaction is traced as a `pi.context_compacted` activity event with the estimates before and after,
+the results stubbed, the messages dropped and whether the session kept the result. Choose a budget
+below the model's window with room for its reply; the estimate is a rule of thumb, not the
+provider's tokenizer.
 
 **Testing Pi.** `pi/runtime.test.ts` drives the adapter with a scripted AI SDK model and an in-memory
 container; `pi/runtime.docker.test.ts` runs the real runtime against a real container with the same
@@ -1330,9 +1348,11 @@ template override is never badged, because it may use a different model or crede
   worker instead. The verdict rests on what each CLI exposes for that callback; one that gains it
   fits the same seam.
 - **Pi runs without its own extras.** The Pi runtime is Pi's agent loop and its `read`, `write`,
-  `edit`, `ls` and `find` tools, and nothing else of Pi's: no compaction (a long session fails when
-  it outgrows the model's context window, where the Mastra loop starts each turn afresh), no
-  extensions, skills, prompt templates or settings from the repository or the worker, no images (a
+  `edit`, `ls` and `find` tools, and nothing else of Pi's: no summarising compaction (the
+  conversation is fitted to `workspace.harnessContextTokens` by stubbing old tool output and dropping
+  the oldest exchanges, so a long session loses detail from its early turns rather than failing at the
+  model's window; the estimate is characters over four, and a single exchange larger than the budget
+  is still sent whole), no extensions, skills, prompt templates or settings from the repository or the worker, no images (a
   file is read as text), and no reasoning (thinking is off).
 - **Pi's `grep` depends on the image.** With ripgrep in the executor image it honours `.gitignore`;
   without it, `grep -rn` searches everything but `.git` and `node_modules` (build output included),

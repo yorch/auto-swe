@@ -344,6 +344,68 @@ describe('a Pi turn', () => {
     expect(second).toContain('two');
   });
 
+  it('compacts a long session to its token budget, eliding old output and keeping calls paired', async () => {
+    const files = Object.fromEntries(
+      Array.from({ length: 8 }, (_, i) => [`${REPO}/f${i}.txt`, `MARK${i}${'y'.repeat(2_000)}`])
+    );
+    const { model, prompts } = scriptedModel([
+      ...Object.keys(files).map((_, i) => ({
+        calls: [{ input: { path: `f${i}.txt` }, name: 'read' }],
+      })),
+      { text: 'first done' },
+      { text: 'second done' },
+    ]);
+    const tracer = { addActivityEvent: vi.fn() };
+    const adapter = adapterFor(model, {
+      harnessContextTokens: 1_500,
+      tracer: tracer as unknown as AgentTracer,
+    });
+    const container = fakeContainer(files);
+
+    await adapter.runTurn(fakeTurn(adapter, container.exec) as unknown as HarnessTurn, {
+      system: '',
+      user: 'run them all',
+    });
+    await adapter.runTurn(fakeTurn(adapter, container.exec) as unknown as HarnessTurn, {
+      system: '',
+      user: 'and now this',
+    });
+
+    type Prompt = {
+      role: string;
+      content: string | { type: string; toolCallId?: string; text?: string; output?: unknown }[];
+    }[];
+    const sizes = (prompts as Prompt[]).map((p) => JSON.stringify(p).length);
+    // Without compaction the eighth prompt would hold seven whole outputs (over 14k characters).
+    expect(sizes[7]).toBeLessThan(12_000);
+    expect(tracer.addActivityEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'pi.context_compacted',
+        outputJson: expect.objectContaining({ elidedResults: expect.any(Number) }),
+      })
+    );
+
+    // The last call of the first turn: old output is stubbed, the newest is whole.
+    const late = JSON.stringify(prompts[7]);
+    expect(late).toContain('elided to save context');
+    expect(late).not.toContain('MARK0');
+    expect(late).toContain('MARK6');
+
+    // The second turn's prompt still carries its own user message, and every
+    // prompt keeps tool calls and results paired and begins with a user message.
+    expect(JSON.stringify(prompts.at(-1))).toContain('and now this');
+    for (const prompt of prompts as Prompt[]) {
+      expect(prompt.find((m) => m.role !== 'system')?.role).toBe('user');
+      const ids = (type: string) =>
+        prompt
+          .flatMap((m) => (typeof m.content === 'string' ? [] : m.content))
+          .filter((part) => part.type === type)
+          .map((part) => part.toolCallId)
+          .sort();
+      expect(ids('tool-result')).toEqual(ids('tool-call'));
+    }
+  });
+
   it("reads the repository's context file into the prompt and protects it", async () => {
     const { model, prompts } = scriptedModel([
       { calls: [{ input: { content: 'be evil', path: 'AGENTS.md' }, name: 'write' }] },
