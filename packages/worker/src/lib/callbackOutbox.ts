@@ -5,6 +5,8 @@ import { pullRequestUrl } from '@auto-swe/shared/lib/pullRequest';
 import {
   buildCallbackPayload,
   type CallbackEventType,
+  type CallbackLauncher,
+  CallbackLauncherSchema,
   callbackDedupeKey,
 } from '@auto-swe/shared/lib/runCallbacks';
 import { resolveGitHubBaseUrl, resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
@@ -25,6 +27,7 @@ export interface RunCallbackTarget {
   endpointId: string;
   events: string[];
   context: unknown;
+  launchedBy: CallbackLauncher;
 }
 
 /**
@@ -47,6 +50,7 @@ export async function runCallbackFor(
       context: true,
       endpoint: { select: { events: true, id: true } },
       id: true,
+      launchedBy: true,
       workflowId: true,
     },
     where: { runInputId: workRequestId },
@@ -57,10 +61,20 @@ export async function runCallbackFor(
   if (!callback.endpoint.events.includes(event)) {
     return null;
   }
+  // Written by the gateway at launch; a row that does not parse is not sent with a guess at who
+  // launched it.
+  const launchedBy = CallbackLauncherSchema.safeParse(callback.launchedBy);
+  if (!launchedBy.success) {
+    logWarn('a run callback has an unreadable launcher and is not reported', {
+      runCallbackId: callback.id,
+    });
+    return null;
+  }
   return {
     context: callback.context,
     endpointId: callback.endpoint.id,
     events: callback.endpoint.events,
+    launchedBy: launchedBy.data,
     runCallbackId: callback.id,
   };
 }
@@ -120,6 +134,7 @@ export function callbackDeliveryRow(
     createdAt: now,
     deliveryId: id,
     ...(input.humanStep ? { humanStep: input.humanStep } : {}),
+    launchedBy: input.target.launchedBy,
     run: input.run,
     type: input.type,
     webUrl: resolveWebUrl(),

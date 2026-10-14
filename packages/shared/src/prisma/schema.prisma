@@ -3336,6 +3336,9 @@ model CallbackEndpoint {
   /// Waives the SSRF guard's private-address refusal for this origin only.
   /// Setting it true is platform-ADMIN only.
   allowPrivateNetwork             Boolean   @default(false) @map("allow_private_network")
+  /// Whether a call to a public template webhook (a token holder, not a signed-in
+  /// identity) may name this endpoint. Off by default.
+  acceptTemplateWebhookLaunches   Boolean   @default(false) @map("accept_template_webhook_launches")
   signingSecretCiphertext         Bytes     @map("signing_secret_ciphertext")
   signingSecretNonce              Bytes     @map("signing_secret_nonce")
   signingSecretAuthTag            Bytes     @map("signing_secret_auth_tag")
@@ -3386,6 +3389,9 @@ model RunCallback {
   urlKeyVersion Int               @map("url_key_version")
   /// The caller's opaque `context` (at most 1 KB serialised), echoed in every payload.
   context       Json?
+  /// Who launched the run: `{ kind, id, templateId? }` (`CallbackLauncher`), echoed in every
+  /// payload so a receiver can check it.
+  launchedBy    Json              @map("launched_by")
   createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz
 
   deliveries OutboundDelivery[]
@@ -3426,6 +3432,8 @@ model OutboundDelivery {
   /// Start of the current retry window (creation, or the last redelivery).
   retryWindowStartedAt DateTime               @default(now()) @map("retry_window_started_at") @db.Timestamptz
   lastAttemptAt        DateTime?              @map("last_attempt_at") @db.Timestamptz
+  /// Set by each claim; a result is written only by the claim that holds it.
+  claimToken           String?                @map("claim_token") @db.Uuid
   lastStatusCode       Int?                   @map("last_status_code")
   /// Fixed error class of the last failed attempt (`CALLBACK_DELIVERY_ERRORS`).
   lastError            String?                @map("last_error")

@@ -90,7 +90,19 @@ describe('normaliseCallbackPathPrefix', () => {
   });
 
   it('refuses dot segments, encoded separators, a query and a relative path', () => {
-    for (const bad of ['hooks', '/hooks/../admin', '/hooks/%2e%2e/x', '/a%2Fb', '/a?b', '/a\\b']) {
+    for (const bad of [
+      'hooks',
+      '/hooks/../admin',
+      '/hooks/%2e%2e/x',
+      '/a%2Fb',
+      '/a?b',
+      '/a\\b',
+      '/hooks/..;/admin',
+      '/hooks;x',
+      '/hooks/%252e%252e/admin',
+      '/hooks/.%00./x',
+      '/hooks/%7F',
+    ]) {
       expect(normaliseCallbackPathPrefix(bad).ok, bad).toBe(false);
     }
   });
@@ -117,6 +129,13 @@ describe('callback URL matching', () => {
     expect(matches('https://hooks.example.com/hooks/.%2e/admin', ep)).toBe(false);
     expect(matches('https://hooks.example.com/hooks%2F..%2Fadmin', ep)).toBe(false);
     expect(matches('https://hooks.example.com/hooks\\..\\admin', ep)).toBe(false);
+    // A path parameter, a double encoding, an encoded control character.
+    expect(matches('https://hooks.example.com/hooks/..;/admin', ep)).toBe(false);
+    expect(matches('https://hooks.example.com/hooks/%252e%252e/admin', ep)).toBe(false);
+    expect(matches('https://hooks.example.com/hooks/.%00./x', ep)).toBe(false);
+    expect(matches('https://hooks.example.com/hooks/%0a', ep)).toBe(false);
+    // Ordinary percent-encoding is still accepted.
+    expect(matches('https://hooks.example.com/hooks/caf%C3%A9', ep)).toBe(true);
   });
 
   it('refuses userinfo and a fragment', () => {
@@ -207,6 +226,7 @@ describe('payload', () => {
       context: { ticket: 'X-1' },
       createdAt: new Date('2026-10-14T00:00:00Z'),
       deliveryId: 'd-1',
+      launchedBy: { id: 'sp-1', kind: 'service_principal', templateId: 'tpl-1' },
       run: {
         costUsd: 1.23456789,
         endedAt: new Date('2026-10-14T00:10:00Z'),
@@ -224,6 +244,7 @@ describe('payload', () => {
       context: { ticket: 'X-1' },
       createdAt: '2026-10-14T00:00:00.000Z',
       id: 'd-1',
+      launchedBy: { id: 'sp-1', kind: 'service_principal', templateId: 'tpl-1' },
       run: {
         costUsd: 1.234568,
         dashboardUrl: 'https://app.example.com/runs/run-1',

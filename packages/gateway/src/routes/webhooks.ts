@@ -1337,7 +1337,9 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // Only the template's own team's endpoints: the caller holds a token, not an identity.
       const callback = await resolveLaunchCallback(fastify.prisma, {
         callback: callbackRequest,
+        launcher: { id: template.id, kind: 'template_webhook', templateId: template.id },
         teams: { kind: 'teams', teamIds: template.teamId ? [template.teamId] : [] },
+        viaTemplateWebhook: true,
         workflowId: temporalWorkflowId,
       });
       if (!callback.ok) {

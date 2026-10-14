@@ -38,6 +38,7 @@ const EVENT_LABELS: Record<CallbackEvent, string> = {
 };
 
 const EMPTY: CallbackEndpointInput = {
+  acceptTemplateWebhookLaunches: false,
   allowPrivateNetwork: false,
   events: ['run.completed'],
   name: '',
@@ -78,6 +79,7 @@ export function TeamCallbackEndpointsSection({
       row === 'new'
         ? EMPTY
         : {
+            acceptTemplateWebhookLaunches: row.acceptTemplateWebhookLaunches,
             allowPrivateNetwork: row.allowPrivateNetwork,
             events: row.events,
             name: row.name,
@@ -165,6 +167,11 @@ export function TeamCallbackEndpointsSection({
                   {row.disabled && (
                     <Badge className="ml-2" tone="muted">
                       Disabled
+                    </Badge>
+                  )}
+                  {row.acceptTemplateWebhookLaunches && (
+                    <Badge className="ml-2" tone="neutral">
+                      Webhooks
                     </Badge>
                   )}
                   {row.allowPrivateNetwork && (
@@ -273,6 +280,12 @@ export function TeamCallbackEndpointsSection({
               />
             ))}
           </fieldset>
+          <Checkbox
+            checked={form.acceptTemplateWebhookLaunches}
+            hint="A webhook URL is held by whoever has the token, not a signed-in identity. Leave this off unless the receiver checks launchedBy."
+            label="Accept callbacks from template webhooks"
+            onChange={(e) => setForm({ ...form, acceptTemplateWebhookLaunches: e.target.checked })}
+          />
           {(isPlatformAdmin || form.allowPrivateNetwork) && (
             <Checkbox
               checked={form.allowPrivateNetwork}
@@ -406,7 +419,8 @@ export function CallbackDeliveriesTable({
               <Td>
                 <Badge tone={STATUS_TONE[d.status]}>{d.status.toLowerCase()}</Badge>
                 <div className="mt-1 text-xs text-paper-500">
-                  {d.attempts} {d.attempts === 1 ? 'attempt' : 'attempts'}
+                  {d.attempts !== undefined &&
+                    `${d.attempts} ${d.attempts === 1 ? 'attempt' : 'attempts'}`}
                   {d.deadReason && ` · ${d.deadReason}`}
                   {d.status === 'PENDING' && d.nextAttemptAt && (
                     <>
@@ -418,13 +432,13 @@ export function CallbackDeliveriesTable({
               </Td>
               <Td className="text-xs">
                 {d.lastAttemptAt ? <RelativeTime value={d.lastAttemptAt} /> : '—'}
-                {(d.lastStatusCode !== null || d.lastError) && (
+                {(d.lastStatusCode != null || d.lastError) && (
                   <div className="font-mono text-paper-500">
                     {d.lastStatusCode ?? ''} {d.lastError ?? ''}
                   </div>
                 )}
               </Td>
-              {showRun && (
+              {showRun && d.workflowRunId && (
                 <Td className="text-xs">
                   <a className="underline" href={`/runs/${d.workflowRunId}`}>
                     View run

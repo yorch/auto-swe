@@ -55,6 +55,7 @@ describe('createHumanStep and the run.waiting_for_human callback', () => {
       context: { k: 1 },
       endpoint: { events: ['run.completed', 'run.waiting_for_human'], id: 'ep-1' },
       id: 'cb-1',
+      launchedBy: { id: 'user-1', kind: 'user' },
       workflowId: 'wf-1',
     });
   });
@@ -73,6 +74,7 @@ describe('createHumanStep and the run.waiting_for_human callback', () => {
     expect(row.payload).toMatchObject({
       context: { k: 1 },
       humanStep: { dashboardUrl: 'https://app.example.com/inbox', id: 'step-1', kind: 'APPROVAL' },
+      launchedBy: { id: 'user-1', kind: 'user' },
       run: { costUsd: 0.5, endedAt: null, status: 'RUNNING' },
       type: 'run.waiting_for_human',
     });
@@ -98,6 +100,7 @@ describe('createHumanStep and the run.waiting_for_human callback', () => {
       context: null,
       endpoint: { events: ['run.completed'], id: 'ep-1' },
       id: 'cb-1',
+      launchedBy: { id: 'user-1', kind: 'user' },
       workflowId: 'wf-1',
     });
     await createHumanStep(INPUT);

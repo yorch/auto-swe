@@ -98,8 +98,9 @@ function hasUnsafeChar(text: string): boolean {
   return false;
 }
 // An encoded `.`, `/` or `\`: a receiver that decodes before routing would read a different path
-// than the one matched against the prefix.
-const ENCODED_SEPARATOR_RE = /%(2e|2f|5c)/i;
+// than the one matched against the prefix. `%25` (an encoded `%`) is refused for the same reason
+// one decode later (`%252e%252e`), and so is an encoded control character (`.%00.`).
+const ENCODED_SEPARATOR_RE = /%(2e|2f|5c|25|[01][0-9a-f]|7f)/i;
 
 /** Rules a path (prefix or URL path) must meet; null when it meets them. */
 function pathRefusal(path: string): string | null {
@@ -110,7 +111,11 @@ function pathRefusal(path: string): string | null {
     return 'the path contains whitespace, a control character or a backslash';
   }
   if (ENCODED_SEPARATOR_RE.test(path)) {
-    return 'the path contains an encoded ".", "/" or "\\"';
+    return 'the path contains an encoded ".", "/", "\\", "%" or control character';
+  }
+  // A `;` starts a path parameter some servers strip before routing (`/hooks/..;/admin`).
+  if (path.includes(';')) {
+    return 'the path may not contain ;';
   }
   if (path.includes('?') || path.includes('#')) {
     return 'the path may not contain ? or #';
@@ -405,6 +410,26 @@ export function endpointSigningSecrets(endpoint: EndpointSecretColumns, now: Dat
 
 // ── Payload ─────────────────────────────────────────────────────────────────
 
+/**
+ * Who launched the run. The signature proves the platform sent a delivery, not
+ * who asked for it; this says who did, so a receiver can check it.
+ */
+export interface CallbackLauncher {
+  kind: 'user' | 'service_principal' | 'template_webhook' | 'automation';
+  /** The user, the service principal, the template (for a webhook) or the automation. */
+  id: string;
+  /** The template launched, when there is one. */
+  templateId?: string;
+}
+
+export const CallbackLauncherSchema = z
+  .object({
+    id: z.string().min(1),
+    kind: z.enum(['user', 'service_principal', 'template_webhook', 'automation']),
+    templateId: z.string().min(1).optional(),
+  })
+  .strict();
+
 /** What a payload says about the run. Never transcripts, traces or context snapshots. */
 export interface CallbackRunSummary {
   workRequestId: string | null;
@@ -426,6 +451,8 @@ export interface CallbackPayload {
   run: CallbackRunSummary;
   /** Present on `run.waiting_for_human`. */
   humanStep?: { id: string; kind: string; dashboardUrl: string };
+  /** Who launched the run. */
+  launchedBy: CallbackLauncher;
   /** The caller's `context`, as given; null when none was. */
   context: unknown;
 }
@@ -446,6 +473,7 @@ export interface BuildCallbackPayloadInput {
     pullRequestUrl?: string | null;
   };
   humanStep?: { id: string; kind: string };
+  launchedBy: CallbackLauncher;
   context: unknown;
 }
 
@@ -467,6 +495,7 @@ export function buildCallbackPayload(input: BuildCallbackPayloadInput): Callback
     context: input.context ?? null,
     createdAt: input.createdAt.toISOString(),
     id: input.deliveryId,
+    launchedBy: input.launchedBy,
     run,
     type: input.type,
     ...(input.humanStep

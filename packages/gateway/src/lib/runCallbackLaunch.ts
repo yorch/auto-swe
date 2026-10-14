@@ -1,5 +1,6 @@
 import type { Prisma } from '@auto-swe/shared';
 import {
+  type CallbackLauncher,
   type CallbackRequest,
   callbackUrlMatchesEndpoint,
   endpointUrl,
@@ -9,6 +10,7 @@ import {
 import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import type { RouteCaller } from '../plugins/auth.js';
 import { sendError } from './httpErrors.js';
 
 /**
@@ -56,6 +58,30 @@ export async function callbackTeamsForUser(
   return { kind: 'teams', teamIds: memberships.map((m) => m.teamId) };
 }
 
+/**
+ * Whose endpoints a signed-in caller may use, and who the payload says launched the run. A
+ * person: the teams they belong to (every team for a platform admin). A service principal: its
+ * own team's only — never another team's, whatever its token's scopes.
+ */
+export function callbackScopeForCaller(
+  prisma: FastifyInstance['prisma'],
+  caller: RouteCaller,
+  templateId?: string
+): { teams: () => Promise<CallbackTeams>; launcher: CallbackLauncher } {
+  const template = templateId ? { templateId } : {};
+  if (caller.kind === 'service') {
+    const teamId = caller.principal.teamId;
+    return {
+      launcher: { id: caller.principal.servicePrincipalId, kind: 'service_principal', ...template },
+      teams: async () => ({ kind: 'teams', teamIds: [teamId] }),
+    };
+  }
+  return {
+    launcher: { id: caller.user.sub, kind: 'user', ...template },
+    teams: () => callbackTeamsForUser(prisma, caller.user),
+  };
+}
+
 async function findEndpoints(
   prisma: FastifyInstance['prisma'],
   teams: CallbackTeams,
@@ -93,6 +119,13 @@ export async function resolveLaunchCallback(
     /** Whose endpoints may be used; a function is called only when a callback was asked for. */
     teams: CallbackTeams | (() => Promise<CallbackTeams>);
     workflowId: string;
+    /** Who launched the run; stored with the callback and sent in every payload. */
+    launcher: CallbackLauncher;
+    /**
+     * A call to a public template webhook: a token holder, not an identity. Only an endpoint
+     * that opted in (`acceptTemplateWebhookLaunches`) may be named.
+     */
+    viaTemplateWebhook?: boolean;
   }
 ): Promise<LaunchCallbackResult> {
   const { callback } = args;
@@ -100,15 +133,21 @@ export async function resolveLaunchCallback(
     return { create: null, ok: true, target: null };
   }
   const teams = typeof args.teams === 'function' ? await args.teams() : args.teams;
+  const scope: Prisma.CallbackEndpointWhereInput = args.viaTemplateWebhook
+    ? { acceptTemplateWebhookLaunches: true }
+    : {};
+  const webhookNote = args.viaTemplateWebhook
+    ? ' (a template webhook may only name an endpoint that accepts template webhook launches)'
+    : '';
   let endpoint: { id: string; origin: string; pathPrefix: string; allowPrivateNetwork: boolean };
   let url: string;
   let target: string;
   if (callback.endpointId) {
-    const [found] = await findEndpoints(prisma, teams, { id: callback.endpointId });
+    const [found] = await findEndpoints(prisma, teams, { ...scope, id: callback.endpointId });
     if (!found) {
       return refused(
         'CALLBACK_ENDPOINT_NOT_FOUND',
-        'No enabled callback endpoint with that id in a team you belong to'
+        `No enabled callback endpoint with that id in a team you belong to${webhookNote}`
       );
     }
     endpoint = found;
@@ -119,13 +158,13 @@ export async function resolveLaunchCallback(
     if (!parsed.ok) {
       return refused('INVALID_CALLBACK_URL', `callback.url refused: ${parsed.reason}`);
     }
-    const candidates = (await findEndpoints(prisma, teams, { origin: parsed.value.origin })).filter(
-      (e) => callbackUrlMatchesEndpoint(parsed.value, e)
-    );
+    const candidates = (
+      await findEndpoints(prisma, teams, { ...scope, origin: parsed.value.origin })
+    ).filter((e) => callbackUrlMatchesEndpoint(parsed.value, e));
     if (candidates.length === 0) {
       return refused(
         'CALLBACK_URL_NOT_REGISTERED',
-        'callback.url is not under an enabled callback endpoint of a team you belong to; register its origin and path prefix first'
+        `callback.url is not under an enabled callback endpoint of a team you belong to; register its origin and path prefix first${webhookNote}`
       );
     }
     // The most specific prefix decides; two endpoints with the same prefix (in two teams) would
@@ -155,6 +194,7 @@ export async function resolveLaunchCallback(
     create: {
       ...(callback.context != null ? { context: callback.context as object } : {}),
       endpointId: endpoint.id,
+      launchedBy: args.launcher as object,
       target,
       workflowId: args.workflowId,
       ...sealCallbackUrl(url),

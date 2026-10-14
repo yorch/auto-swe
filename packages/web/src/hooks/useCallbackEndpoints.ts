@@ -16,6 +16,8 @@ export interface CallbackEndpointRow {
   pathPrefix: string;
   events: CallbackEvent[];
   allowPrivateNetwork: boolean;
+  /** Whether a public template webhook call may name this endpoint. */
+  acceptTemplateWebhookLaunches: boolean;
   disabled: boolean;
   disabledAt: string | null;
   secretLastFour: string;
@@ -25,25 +27,28 @@ export interface CallbackEndpointRow {
   updatedAt: string;
 }
 
-/** One delivery's outcome: never its payload, a response body or error text. */
+/**
+ * One delivery's outcome: never its payload, a response body or error text. A run viewer
+ * outside the endpoint's team gets only `id`, `event`, `status`, the times and `target`.
+ */
 export interface CallbackDeliveryRow {
   id: string;
   event: CallbackEvent;
   status: 'PENDING' | 'DELIVERED' | 'DEAD';
-  attempts: number;
-  nextAttemptAt: string | null;
-  lastAttemptAt: string | null;
-  lastStatusCode: number | null;
-  lastError: string | null;
-  deadReason: string | null;
+  attempts?: number;
+  nextAttemptAt?: string | null;
+  lastAttemptAt?: string | null;
+  lastStatusCode?: number | null;
+  lastError?: string | null;
+  deadReason?: string | null;
   deliveredAt: string | null;
-  deadAt: string | null;
+  deadAt?: string | null;
   createdAt: string;
-  workflowRunId: string;
+  workflowRunId?: string;
   /** Origin and path the delivery posts to; never the query. */
   target: string | null;
-  endpoint: { id: string; name: string; teamId: string } | null;
-  canRedeliver: boolean;
+  endpoint?: { id: string; name: string; teamId: string } | null;
+  canRedeliver?: boolean;
 }
 
 export interface CallbackEndpointInput {
@@ -52,6 +57,7 @@ export interface CallbackEndpointInput {
   pathPrefix?: string;
   events: CallbackEvent[];
   allowPrivateNetwork: boolean;
+  acceptTemplateWebhookLaunches: boolean;
 }
 
 const base = (teamId: string) => `/api/v1/teams/${teamId}/callback-endpoints`;

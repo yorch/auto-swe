@@ -1637,6 +1637,7 @@ describe('run.completed callback outbox', () => {
     context: { ticket: 'OPS-7' },
     endpoint: { events: ['run.completed'], id: 'ep-1' },
     id: 'cb-1',
+    launchedBy: { id: 'user-9', kind: 'user', templateId: 'tpl-1' },
     workflowId: 'wf-callback',
     ...overrides,
   });
@@ -1705,6 +1706,7 @@ describe('run.completed callback outbox', () => {
     const payload = row.payload as Record<string, unknown>;
     expect(payload.id).toBe(row.id);
     expect(payload.context).toEqual({ ticket: 'OPS-7' });
+    expect(payload.launchedBy).toEqual({ id: 'user-9', kind: 'user', templateId: 'tpl-1' });
     expect(payload.run).toMatchObject({
       costUsd: 0.25,
       dashboardUrl: 'https://app.example.com/runs/run-cb',
@@ -1757,6 +1759,12 @@ describe('run.completed callback outbox', () => {
     );
     await finalizeRun('run-cb', 'SUCCESS', undefined, 'worker');
     findCallback.mockResolvedValue(callbackRow({ endpoint: null }) as never);
+    await finalizeRun('run-cb', 'SUCCESS', undefined, 'worker');
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
+  it('does not report with a guess when the stored launcher does not parse', async () => {
+    findCallback.mockResolvedValue(callbackRow({ launchedBy: { kind: 'nobody' } }) as never);
     await finalizeRun('run-cb', 'SUCCESS', undefined, 'worker');
     expect(createMany).not.toHaveBeenCalled();
   });

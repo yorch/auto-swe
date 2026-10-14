@@ -40,7 +40,7 @@ import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/id
 import { isOrgMember } from '../lib/orgAccess.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import {
-  callbackTeamsForUser,
+  callbackScopeForCaller,
   resolveLaunchCallback,
   sendCallbackRefusal,
 } from '../lib/runCallbackLaunch.js';
@@ -372,11 +372,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     // request, never in `requestPayload` (its query may carry the receiver's token).
     const callback = await resolveLaunchCallback(fastify.prisma, {
       callback: input.callback,
-      // A service principal's callback is not wired up yet: it may use no team's endpoint.
-      teams: () =>
-        user
-          ? callbackTeamsForUser(fastify.prisma, user)
-          : Promise.resolve({ kind: 'teams' as const, teamIds: [] }),
+      ...callbackScopeForCaller(fastify.prisma, input.caller),
       workflowId: temporalWorkflowId,
     });
     if (!callback.ok) {

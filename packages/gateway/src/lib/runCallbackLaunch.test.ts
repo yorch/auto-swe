@@ -2,7 +2,11 @@ import { randomBytes } from 'node:crypto';
 import { _resetKeyCacheForTests } from '@auto-swe/shared/lib/crypto';
 import { openCallbackUrl } from '@auto-swe/shared/lib/runCallbacks';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { resolveLaunchCallback, withoutCallback } from './runCallbackLaunch.js';
+import {
+  callbackScopeForCaller,
+  resolveLaunchCallback,
+  withoutCallback,
+} from './runCallbackLaunch.js';
 
 const ORIGINAL_KEY = process.env.CONFIG_ENCRYPTION_KEY;
 beforeAll(() => {
@@ -17,6 +21,7 @@ afterAll(() => {
 const EP_ID = '22222222-2222-4222-8222-222222222222';
 
 interface Endpoint {
+  acceptTemplateWebhookLaunches?: boolean;
   id: string;
   teamId: string;
   origin: string;
@@ -67,31 +72,46 @@ const prisma = {
       async ({
         where,
       }: {
-        where: { id?: string; origin?: string; disabledAt: null; teamId?: { in: string[] } };
+        where: {
+          acceptTemplateWebhookLaunches?: boolean;
+          id?: string;
+          origin?: string;
+          disabledAt: null;
+          teamId?: { in: string[] };
+        };
       }) =>
         ENDPOINTS.filter(
           (e) =>
             e.disabledAt === null &&
             (where.id === undefined || e.id === where.id) &&
             (where.origin === undefined || e.origin === where.origin) &&
-            (where.teamId === undefined || where.teamId.in.includes(e.teamId))
+            (where.teamId === undefined || where.teamId.in.includes(e.teamId)) &&
+            (where.acceptTemplateWebhookLaunches === undefined ||
+              e.acceptTemplateWebhookLaunches === where.acceptTemplateWebhookLaunches)
         )
     ),
   },
 } as unknown as Parameters<typeof resolveLaunchCallback>[0];
 
 const TEAM_A = { kind: 'teams' as const, teamIds: ['team-a'] };
+const USER = { id: 'user-1', kind: 'user' as const };
 
 describe('resolveLaunchCallback', () => {
   it('writes nothing when the launch asks for no callback', async () => {
     expect(
-      await resolveLaunchCallback(prisma, { callback: undefined, teams: TEAM_A, workflowId: 'wf' })
+      await resolveLaunchCallback(prisma, {
+        callback: undefined,
+        launcher: USER,
+        teams: TEAM_A,
+        workflowId: 'wf',
+      })
     ).toEqual({ create: null, ok: true, target: null });
   });
 
   it('seals the full URL, query included, and shows only origin and path', async () => {
     const result = await resolveLaunchCallback(prisma, {
       callback: { context: { k: 1 }, url: 'https://hooks.example.com/hooks/run?token=t0k' },
+      launcher: USER,
       teams: TEAM_A,
       workflowId: 'wf-1',
     });
@@ -103,6 +123,7 @@ describe('resolveLaunchCallback', () => {
     expect(result.create).toMatchObject({
       context: { k: 1 },
       endpointId: EP_ID,
+      launchedBy: USER,
       target: 'https://hooks.example.com/hooks/run',
       workflowId: 'wf-1',
     });
@@ -115,6 +136,7 @@ describe('resolveLaunchCallback', () => {
   it('picks the most specific matching prefix', async () => {
     const result = await resolveLaunchCallback(prisma, {
       callback: { url: 'https://hooks.example.com/hooks/deep/x' },
+      launcher: USER,
       teams: TEAM_A,
       workflowId: 'wf',
     });
@@ -124,6 +146,7 @@ describe('resolveLaunchCallback', () => {
   it('uses an endpoint by id as its origin and prefix', async () => {
     const result = await resolveLaunchCallback(prisma, {
       callback: { endpointId: EP_ID },
+      launcher: USER,
       teams: TEAM_A,
       workflowId: 'wf',
     });
@@ -143,6 +166,7 @@ describe('resolveLaunchCallback', () => {
   ])('refuses %s with %s', async (url, code) => {
     const result = await resolveLaunchCallback(prisma, {
       callback: { url },
+      launcher: USER,
       teams: TEAM_A,
       workflowId: 'wf',
     });
@@ -152,6 +176,7 @@ describe('resolveLaunchCallback', () => {
   it('refuses another team’s endpoint by id', async () => {
     const result = await resolveLaunchCallback(prisma, {
       callback: { endpointId: 'ep-other-team' },
+      launcher: USER,
       teams: TEAM_A,
       workflowId: 'wf',
     });
@@ -163,6 +188,7 @@ describe('resolveLaunchCallback', () => {
     try {
       const result = await resolveLaunchCallback(prisma, {
         callback: { url: 'https://hooks.example.com/hooks/x' },
+        launcher: USER,
         teams: { kind: 'any' },
         workflowId: 'wf',
       });
@@ -175,10 +201,74 @@ describe('resolveLaunchCallback', () => {
   it('refuses everything for a caller in no team', async () => {
     const result = await resolveLaunchCallback(prisma, {
       callback: { url: 'https://hooks.example.com/hooks' },
+      launcher: USER,
       teams: { kind: 'teams', teamIds: [] },
       workflowId: 'wf',
     });
     expect(result).toMatchObject({ code: 'CALLBACK_URL_NOT_REGISTERED', ok: false });
+  });
+});
+
+describe('who launched, and through what', () => {
+  it('stores the launcher with the callback', async () => {
+    const result = await resolveLaunchCallback(prisma, {
+      callback: { endpointId: EP_ID },
+      launcher: { id: 'tpl-9', kind: 'template_webhook', templateId: 'tpl-9' },
+      teams: TEAM_A,
+      workflowId: 'wf',
+    });
+    expect(result.ok && result.create?.launchedBy).toEqual({
+      id: 'tpl-9',
+      kind: 'template_webhook',
+      templateId: 'tpl-9',
+    });
+  });
+
+  it('lets a template webhook name only an endpoint that accepts webhook launches', async () => {
+    const asWebhook = (endpointId: string) =>
+      resolveLaunchCallback(prisma, {
+        callback: { endpointId },
+        launcher: { id: 'tpl-9', kind: 'template_webhook', templateId: 'tpl-9' },
+        teams: TEAM_A,
+        viaTemplateWebhook: true,
+        workflowId: 'wf',
+      });
+    expect(await asWebhook(EP_ID)).toMatchObject({
+      code: 'CALLBACK_ENDPOINT_NOT_FOUND',
+      ok: false,
+    });
+    ENDPOINTS.push({
+      ...(ENDPOINTS[0] as Endpoint),
+      acceptTemplateWebhookLaunches: true,
+      id: 'ep-wh',
+    });
+    try {
+      expect((await asWebhook('ep-wh')).ok).toBe(true);
+    } finally {
+      ENDPOINTS.pop();
+    }
+  });
+
+  it('scopes a service principal to its own team and records it as the launcher', async () => {
+    const scope = callbackScopeForCaller(
+      prisma,
+      {
+        kind: 'service',
+        principal: {
+          connectionIds: [],
+          kind: 'service',
+          name: 'bot',
+          scopes: ['runs:launch'],
+          servicePrincipalId: 'sp-1',
+          teamId: 'team-b',
+          templateIds: [],
+          tokenId: 'tok',
+        },
+      },
+      'tpl-1'
+    );
+    expect(scope.launcher).toEqual({ id: 'sp-1', kind: 'service_principal', templateId: 'tpl-1' });
+    expect(await scope.teams()).toEqual({ kind: 'teams', teamIds: ['team-b'] });
   });
 });
 

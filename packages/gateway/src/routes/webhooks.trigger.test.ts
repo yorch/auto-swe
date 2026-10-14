@@ -106,19 +106,38 @@ async function buildHarness(): Promise<Harness> {
     },
     // The template's team registered one callback endpoint.
     callbackEndpoint: {
-      findMany: async ({ where }: { where: { origin?: string; teamId?: { in: string[] } } }) =>
+      findMany: async ({
+        where,
+      }: {
+        where: {
+          acceptTemplateWebhookLaunches?: boolean;
+          origin?: string;
+          teamId?: { in: string[] };
+        };
+      }) =>
         [
           {
+            acceptTemplateWebhookLaunches: true,
             allowPrivateNetwork: false,
             id: 'cccccccc-3333-4333-8333-cccccccccccc',
             origin: 'https://hooks.example.com',
             pathPrefix: '/hooks',
             teamId: 'team-1',
           },
+          {
+            acceptTemplateWebhookLaunches: false,
+            allowPrivateNetwork: false,
+            id: 'dddddddd-4444-4444-8444-dddddddddddd',
+            origin: 'https://hooks.example.com',
+            pathPrefix: '/people-only',
+            teamId: 'team-1',
+          },
         ].filter(
           (e) =>
             (where.origin === undefined || e.origin === where.origin) &&
-            (where.teamId === undefined || where.teamId.in.includes(e.teamId))
+            (where.teamId === undefined || where.teamId.in.includes(e.teamId)) &&
+            (where.acceptTemplateWebhookLaunches === undefined ||
+              e.acceptTemplateWebhookLaunches === where.acceptTemplateWebhookLaunches)
         ),
     },
     connection: {
@@ -604,6 +623,7 @@ describe('POST /webhooks/:token with a callback', () => {
     expect(create).toMatchObject({
       context: { job: 7 },
       endpointId: 'cccccccc-3333-4333-8333-cccccccccccc',
+      launchedBy: { id: TEMPLATE_ID, kind: 'template_webhook', templateId: TEMPLATE_ID },
       target: 'https://hooks.example.com/hooks/done',
     });
     expect(create.workflowId).toBe(h.started[0]);
@@ -618,6 +638,13 @@ describe('POST /webhooks/:token with a callback', () => {
     expect(res.statusCode).toBe(400);
     expect(JSON.parse(res.payload).error.code).toBe('CALLBACK_URL_NOT_REGISTERED');
     expect(h.runInputs).toHaveLength(0);
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('refuses an endpoint of the team that does not accept webhook launches', async () => {
+    const res = await fireWith({ url: 'https://hooks.example.com/people-only/x' });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('CALLBACK_URL_NOT_REGISTERED');
     expect(h.started).toHaveLength(0);
   });
 

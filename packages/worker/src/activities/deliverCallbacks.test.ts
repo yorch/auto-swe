@@ -94,7 +94,7 @@ describe('attemptDelivery', () => {
   it('sends the stored body to the sealed URL and marks the claimed attempt DELIVERED', async () => {
     prisma.outboundDelivery.findUnique.mockResolvedValue(delivery());
     const outcome = await attemptDelivery(
-      { attempts: 1, id: 'd-1' },
+      { attempts: 1, claimToken: 'claim-1', id: 'd-1' },
       { now: () => NOW, send: sendOk }
     );
     expect(outcome).toBe('delivered');
@@ -104,8 +104,9 @@ describe('attemptDelivery', () => {
     expect(input.deliveryId).toBe('d-1');
     expect(input.secrets).toHaveLength(1);
     const update = lastUpdate();
-    // Only the attempt this sweep claimed: a redelivery in between resets `attempts`.
-    expect(update.where).toEqual({ attempts: 1, id: 'd-1', status: 'PENDING' });
+    // Only under this claim's token: a later claim of the same row (after the lease lapsed, or a
+    // redelivery) sets a new one, so this result cannot overwrite its.
+    expect(update.where).toEqual({ claimToken: 'claim-1', id: 'd-1', status: 'PENDING' });
     expect(update.data).toMatchObject({ lastStatusCode: 200, status: 'DELIVERED' });
   });
 
@@ -115,7 +116,10 @@ describe('attemptDelivery', () => {
     prisma.outboundDelivery.findUnique.mockResolvedValue(
       delivery({ endpoint: { ...ep.columns, ...rotated.data } })
     );
-    await attemptDelivery({ attempts: 1, id: 'd-1' }, { now: () => NOW, send: sendOk });
+    await attemptDelivery(
+      { attempts: 1, claimToken: 'claim-1', id: 'd-1' },
+      { now: () => NOW, send: sendOk }
+    );
     const input = (sendOk.mock.calls[0] as unknown as [SendCallbackInput])[0];
     expect(input.secrets).toEqual([rotated.secret, ep.secret]);
   });
@@ -123,7 +127,10 @@ describe('attemptDelivery', () => {
   it('schedules a retry with backoff and records only a status code and an error class', async () => {
     prisma.outboundDelivery.findUnique.mockResolvedValue(delivery());
     expect(
-      await attemptDelivery({ attempts: 3, id: 'd-1' }, { now: () => NOW, send: send500 })
+      await attemptDelivery(
+        { attempts: 3, claimToken: 'claim-1', id: 'd-1' },
+        { now: () => NOW, send: send500 }
+      )
     ).toBe('retrying');
     const update = lastUpdate();
     expect(update.data).toEqual({
@@ -138,7 +145,10 @@ describe('attemptDelivery', () => {
       delivery({ retryWindowStartedAt: new Date(NOW.getTime() - 23 * 3600_000) })
     );
     expect(
-      await attemptDelivery({ attempts: 11, id: 'd-1' }, { now: () => NOW, send: send500 })
+      await attemptDelivery(
+        { attempts: 11, claimToken: 'claim-1', id: 'd-1' },
+        { now: () => NOW, send: send500 }
+      )
     ).toBe('dead');
     expect(lastUpdate().data).toMatchObject({
       deadReason: 'RETRIES_EXHAUSTED',
@@ -162,7 +172,10 @@ describe('attemptDelivery', () => {
   ])('goes DEAD with %s without sending', async (reason, overrides) => {
     prisma.outboundDelivery.findUnique.mockResolvedValue(delivery(overrides()));
     expect(
-      await attemptDelivery({ attempts: 1, id: 'd-1' }, { now: () => NOW, send: sendOk })
+      await attemptDelivery(
+        { attempts: 1, claimToken: 'claim-1', id: 'd-1' },
+        { now: () => NOW, send: sendOk }
+      )
     ).toBe('dead');
     expect(sendOk).not.toHaveBeenCalled();
     expect(lastUpdate().data).toMatchObject({ deadReason: reason, status: 'DEAD' });
@@ -172,13 +185,29 @@ describe('attemptDelivery', () => {
     prisma.outboundDelivery.findUnique.mockResolvedValue(
       delivery({ endpoint: endpoint({ disabledAt: NOW }).columns })
     );
-    await attemptDelivery({ attempts: 1, id: 'd-1' }, { now: () => NOW, send: sendOk });
+    await attemptDelivery(
+      { attempts: 1, claimToken: 'claim-1', id: 'd-1' },
+      { now: () => NOW, send: sendOk }
+    );
     expect(JSON.stringify(vi.mocked(logWarn).mock.calls)).not.toContain('receiver-secret');
+  });
+
+  it('reports nothing when a later claim of the row holds the token', async () => {
+    prisma.outboundDelivery.findUnique.mockResolvedValue(delivery());
+    prisma.outboundDelivery.updateMany.mockResolvedValueOnce({ count: 0 });
+    expect(
+      await attemptDelivery(
+        { attempts: 1, claimToken: 'stale', id: 'd-1' },
+        { now: () => NOW, send: sendOk }
+      )
+    ).toBeNull();
   });
 
   it('leaves a row that is no longer pending alone', async () => {
     prisma.outboundDelivery.findUnique.mockResolvedValue(delivery({ status: 'DELIVERED' }));
-    expect(await attemptDelivery({ attempts: 1, id: 'd-1' }, { send: sendOk })).toBeNull();
+    expect(
+      await attemptDelivery({ attempts: 1, claimToken: 'claim-1', id: 'd-1' }, { send: sendOk })
+    ).toBeNull();
     expect(sendOk).not.toHaveBeenCalled();
     expect(prisma.outboundDelivery.updateMany).not.toHaveBeenCalled();
   });
@@ -191,8 +220,8 @@ describe('deliverCallbacks', () => {
 
   it('claims due rows with FOR UPDATE SKIP LOCKED and counts the outcomes', async () => {
     prisma.$queryRaw.mockResolvedValue([
-      { attempts: 1, id: 'd-1' },
-      { attempts: 1, id: 'd-2' },
+      { attempts: 1, claimToken: 'claim-1', id: 'd-1' },
+      { attempts: 1, claimToken: 'claim-2', id: 'd-2' },
     ]);
     prisma.outboundDelivery.findUnique.mockImplementation(
       async ({ where }: { where: { id: string } }) =>
@@ -203,5 +232,6 @@ describe('deliverCallbacks', () => {
     const sql = (prisma.$queryRaw.mock.calls[0] as unknown as [TemplateStringsArray])[0].join('?');
     expect(sql).toContain('FOR UPDATE SKIP LOCKED');
     expect(sql).toContain("status = 'PENDING'");
+    expect(sql).toContain('claim_token = gen_random_uuid()');
   });
 });

@@ -9,6 +9,7 @@ vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).n
 
 const BASE = '/api/v1/teams/t1/callback-endpoints';
 const ROW = {
+  acceptTemplateWebhookLaunches: false,
   allowPrivateNetwork: false,
   createdAt: '2026-10-01T00:00:00Z',
   disabled: false,
@@ -51,6 +52,8 @@ describe('TeamCallbackEndpointsSection', () => {
     fireEvent.click(screen.getAllByRole('button', { name: 'Add endpoint' }).at(-1) as HTMLElement);
     expect(await screen.findByText('whsec_once')).toBeTruthy();
     expect(bodyOf(fetchSpy, '/callback-endpoints')).toMatchObject({
+      // Off unless asked for: a webhook token holder is not an identity.
+      acceptTemplateWebhookLaunches: false,
       allowPrivateNetwork: false,
       events: ['run.completed'],
       name: 'ci',

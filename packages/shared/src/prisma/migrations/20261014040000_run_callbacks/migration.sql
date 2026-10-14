@@ -13,6 +13,7 @@ CREATE TABLE "callback_endpoints" (
     "path_prefix" TEXT NOT NULL DEFAULT '/',
     "events" TEXT[],
     "allow_private_network" BOOLEAN NOT NULL DEFAULT false,
+    "accept_template_webhook_launches" BOOLEAN NOT NULL DEFAULT false,
     "signing_secret_ciphertext" BYTEA NOT NULL,
     "signing_secret_nonce" BYTEA NOT NULL,
     "signing_secret_auth_tag" BYTEA NOT NULL,
@@ -44,6 +45,7 @@ CREATE TABLE "run_callbacks" (
     "url_auth_tag" BYTEA NOT NULL,
     "url_key_version" INTEGER NOT NULL,
     "context" JSONB,
+    "launched_by" JSONB NOT NULL,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "run_callbacks_pkey" PRIMARY KEY ("id")
@@ -63,6 +65,7 @@ CREATE TABLE "outbound_deliveries" (
     "next_attempt_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "retry_window_started_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "last_attempt_at" TIMESTAMPTZ,
+    "claim_token" UUID,
     "last_status_code" INTEGER,
     "last_error" TEXT,
     "dead_reason" TEXT,

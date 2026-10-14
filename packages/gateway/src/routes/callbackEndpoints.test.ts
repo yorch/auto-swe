@@ -24,6 +24,7 @@ afterAll(() => {
 
 function endpointRow(over: Record<string, unknown> = {}) {
   return {
+    acceptTemplateWebhookLaunches: false,
     allowPrivateNetwork: false,
     createdAt: new Date('2026-10-01'),
     createdById: 'user-1',
@@ -230,6 +231,44 @@ describe('callback endpoint management', () => {
     expect(JSON.parse(loopback.payload).error.code).toBe('BASE_URL_REFUSED');
   });
 
+  it('lets only a platform ADMIN move an endpoint that may reach a private network', async () => {
+    const privateEp = endpointRow({ allowPrivateNetwork: true, origin: 'http://10.0.0.5:8080' });
+    for (const payload of [
+      { origin: 'http://10.0.3.7:8500' },
+      { pathPrefix: '/admin' },
+      // Moving it and dropping the opt-in in one write is still a move of an approved destination.
+      { allowPrivateNetwork: false, origin: 'https://elsewhere.example.com' },
+    ]) {
+      lead.prisma.callbackEndpoint.findFirst.mockResolvedValue(privateEp);
+      const res = await lead.app.inject({
+        headers: AUTH,
+        method: 'PATCH',
+        payload,
+        url: `${BASE}/${EP}`,
+      });
+      expect(res.statusCode, JSON.stringify(payload)).toBe(403);
+      expect(JSON.parse(res.payload).error.code).toBe('PRIVATE_NETWORK_ADMIN_ONLY');
+    }
+    expect(lead.prisma.callbackEndpoint.update).not.toHaveBeenCalled();
+    // Renaming it, or only dropping the opt-in, stays open to the team's LEADs.
+    lead.prisma.callbackEndpoint.findFirst.mockResolvedValue(privateEp);
+    const rename = await lead.app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { allowPrivateNetwork: false, name: 'renamed' },
+      url: `${BASE}/${EP}`,
+    });
+    expect(rename.statusCode).toBe(200);
+    admin.prisma.callbackEndpoint.findFirst.mockResolvedValue(privateEp);
+    const byAdmin = await admin.app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { origin: 'http://10.0.3.7:8500' },
+      url: `${BASE}/${EP}`,
+    });
+    expect(byAdmin.statusCode).toBe(200);
+  });
+
   it('refuses a path prefix that is not canonical', async () => {
     const res = await lead.app.inject({
       headers: AUTH,
@@ -271,10 +310,23 @@ describe('callback endpoint management', () => {
       where: Record<string, unknown>;
     };
     expect(call.data).toMatchObject({ attempts: 0, deadReason: null, status: 'PENDING' });
-    expect(call.where).toMatchObject({ endpointId: EP, id: DELIVERY });
+    expect(call.where).toMatchObject({ endpointId: EP, id: DELIVERY, status: 'DEAD' });
+    expect(call.data).toMatchObject({ claimToken: null });
     expect(JSON.stringify(lead.prisma.configAuditLog.create.mock.calls)).toContain(
       'OutboundDelivery'
     );
+  });
+
+  it('does not redeliver a delivery that is still being retried', async () => {
+    lead.prisma.outboundDelivery.findFirst.mockResolvedValue({ id: DELIVERY, status: 'PENDING' });
+    const res = await lead.app.inject({
+      headers: AUTH,
+      method: 'POST',
+      url: `${BASE}/${EP}/deliveries/${DELIVERY}/redeliver`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(JSON.parse(res.payload).error.code).toBe('DELIVERY_PENDING');
+    expect(lead.prisma.outboundDelivery.updateMany).not.toHaveBeenCalled();
   });
 
   it('does not redeliver a delivered row, or to a disabled endpoint', async () => {
@@ -352,5 +404,32 @@ describe('a run’s callback deliveries', () => {
     expect(managed.data.deliveries[0].canRedeliver).toBe(true);
     await viewer.app.close();
     await manager.app.close();
+  });
+
+  it('show a viewer outside the endpoint’s team only where each went and how it ended', async () => {
+    const outsiderViewer = await buildApp('ENGINEER', null);
+    outsiderViewer.prisma.workflowRun.findFirst.mockResolvedValue({
+      id: RUN,
+      workflowId: 'wf-1',
+      workRequest: {
+        callback: { target: 'https://hooks.example.com/hooks/run', workflowId: 'wf-1' },
+      },
+    });
+    outsiderViewer.prisma.outboundDelivery.findMany.mockResolvedValue([deliveryRow()]);
+    const res = await outsiderViewer.app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${RUN}/callback-deliveries`,
+    });
+    const [row] = JSON.parse(res.payload).data.deliveries;
+    expect(row).toEqual({
+      createdAt: '2026-10-01T00:00:00.000Z',
+      deliveredAt: null,
+      event: 'run.completed',
+      id: DELIVERY,
+      status: 'DEAD',
+      target: 'https://hooks.example.com/hooks/run',
+    });
+    await outsiderViewer.app.close();
   });
 });

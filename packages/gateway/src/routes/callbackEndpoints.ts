@@ -41,6 +41,8 @@ const EventsSchema = z
   .refine((events) => new Set(events).size === events.length, 'events must not repeat');
 
 const CreateEndpointBody = z.object({
+  /** Whether a public template webhook call may name this endpoint. */
+  acceptTemplateWebhookLaunches: z.boolean().default(false),
   allowPrivateNetwork: z.boolean().default(false),
   events: EventsSchema.default(['run.completed']),
   name: z.string().trim().min(1).max(100),
@@ -49,6 +51,7 @@ const CreateEndpointBody = z.object({
 });
 
 const UpdateEndpointBody = z.object({
+  acceptTemplateWebhookLaunches: z.boolean().optional(),
   allowPrivateNetwork: z.boolean().optional(),
   /** True disables the endpoint (no launch may choose it, due deliveries go DEAD); false enables it. */
   disabled: z.boolean().optional(),
@@ -62,6 +65,7 @@ const DeliveriesQuery = paginationQuery({ defaultLimit: 50, maxLimit: 200 });
 
 /** The endpoint columns any view reads; never the secret envelope. */
 const ENDPOINT_VIEW_SELECT = {
+  acceptTemplateWebhookLaunches: true,
   allowPrivateNetwork: true,
   createdAt: true,
   createdById: true,
@@ -82,6 +86,7 @@ type EndpointViewRow = Prisma.CallbackEndpointGetPayload<{ select: typeof ENDPOI
 function endpointView(row: EndpointViewRow, now: Date = new Date()) {
   const previous = row.previousSigningSecretExpiresAt;
   return {
+    acceptTemplateWebhookLaunches: row.acceptTemplateWebhookLaunches,
     allowPrivateNetwork: row.allowPrivateNetwork,
     createdAt: row.createdAt,
     createdById: row.createdById,
@@ -102,6 +107,7 @@ function endpointView(row: EndpointViewRow, now: Date = new Date()) {
 /** What the audit log keeps: the configuration, never a secret. */
 function auditFields(row: EndpointViewRow) {
   return {
+    acceptTemplateWebhookLaunches: row.acceptTemplateWebhookLaunches,
     allowPrivateNetwork: row.allowPrivateNetwork,
     disabled: row.disabledAt !== null,
     events: row.events,
@@ -136,7 +142,7 @@ type DeliveryViewRow = Prisma.OutboundDeliveryGetPayload<{ select: typeof DELIVE
 function deliveryView(row: DeliveryViewRow, canRedeliver: boolean) {
   return {
     attempts: row.attempts,
-    canRedeliver: canRedeliver && row.status !== 'DELIVERED' && row.endpoint !== null,
+    canRedeliver: canRedeliver && row.status === 'DEAD' && row.endpoint !== null,
     createdAt: row.createdAt,
     deadAt: row.deadAt,
     deadReason: row.deadReason,
@@ -174,20 +180,38 @@ function refusePrivateNetwork(reply: FastifyReply) {
   );
 }
 
-/** Whether the caller manages endpoints of `teamId`: platform ADMIN, or LEAD+ in the team. */
-async function managesTeam(
+/**
+ * A delivery as a run viewer outside the endpoint's team sees it: where it went (origin and
+ * path) and how it went, nothing about the endpoint or its errors.
+ */
+function limitedDeliveryView(row: DeliveryViewRow) {
+  return {
+    createdAt: row.createdAt,
+    deliveredAt: row.deliveredAt,
+    event: row.event,
+    id: row.id,
+    status: row.status,
+    target: row.runCallback?.target ?? null,
+  };
+}
+
+/** The caller's standing on an endpoint's team: any membership, and LEAD+ (or platform ADMIN). */
+async function teamAccess(
   prisma: Parameters<FastifyPluginAsync>[0]['prisma'],
   user: JwtPayload,
   teamId: string
-): Promise<boolean> {
+): Promise<{ member: boolean; manages: boolean }> {
   if (user.role === 'ADMIN') {
-    return true;
+    return { manages: true, member: true };
   }
   const membership = await prisma.teamMembership.findUnique({
     select: { role: true },
     where: { userId_teamId: { teamId, userId: user.sub } },
   });
-  return !!membership && roleMeets(membership.role as Role, 'LEAD' as Role);
+  return {
+    manages: !!membership && roleMeets(membership.role as Role, 'LEAD' as Role),
+    member: !!membership,
+  };
 }
 
 /** `/api/v1/teams/:teamId/callback-endpoints`. */
@@ -235,6 +259,7 @@ export const callbackEndpointRoutes: FastifyPluginAsync = async (fastify) => {
           const created = await tx.callbackEndpoint.create({
             data: {
               ...sealed.data,
+              acceptTemplateWebhookLaunches: body.acceptTemplateWebhookLaunches,
               allowPrivateNetwork: body.allowPrivateNetwork,
               createdById: user.sub,
               events: body.events,
@@ -288,6 +313,19 @@ export const callbackEndpointRoutes: FastifyPluginAsync = async (fastify) => {
       ) {
         return refusePrivateNetwork(reply);
       }
+      // The opt-in was granted for one destination. Moving that destination while the opt-in
+      // stays would extend it to an origin or path no admin approved, so only an admin may.
+      const privateAfter = body.allowPrivateNetwork ?? existing.allowPrivateNetwork;
+      const movesDestination =
+        (body.origin !== undefined && body.origin !== existing.origin) ||
+        (body.pathPrefix !== undefined && body.pathPrefix !== existing.pathPrefix);
+      if (
+        movesDestination &&
+        (existing.allowPrivateNetwork || privateAfter) &&
+        user.role !== 'ADMIN'
+      ) {
+        return refusePrivateNetwork(reply);
+      }
       const allowPrivate = body.allowPrivateNetwork ?? existing.allowPrivateNetwork;
       const data: Prisma.CallbackEndpointUpdateInput = {};
       // The origin is checked whenever it changes or the opt-in is granted. A write that only
@@ -309,6 +347,9 @@ export const callbackEndpointRoutes: FastifyPluginAsync = async (fastify) => {
       }
       if (body.allowPrivateNetwork !== undefined) {
         data.allowPrivateNetwork = body.allowPrivateNetwork;
+      }
+      if (body.acceptTemplateWebhookLaunches !== undefined) {
+        data.acceptTemplateWebhookLaunches = body.acceptTemplateWebhookLaunches;
       }
       if (body.events !== undefined) {
         data.events = body.events;
@@ -482,18 +523,29 @@ export const callbackEndpointRoutes: FastifyPluginAsync = async (fastify) => {
       if (delivery.status === 'DELIVERED') {
         return sendError(reply, 409, 'ALREADY_DELIVERED', 'This delivery was already delivered');
       }
+      // A pending delivery is still being retried (and may be mid-send); resetting it would send
+      // it twice. Only a dead one is redelivered.
+      if (delivery.status === 'PENDING') {
+        return sendError(
+          reply,
+          409,
+          'DELIVERY_PENDING',
+          'This delivery is still being retried; redeliver it once it is dead'
+        );
+      }
       const now = new Date();
       const row = await fastify.prisma.$transaction(async (tx) => {
         const { count } = await tx.outboundDelivery.updateMany({
           data: {
             attempts: 0,
+            claimToken: null,
             deadAt: null,
             deadReason: null,
             nextAttemptAt: now,
             retryWindowStartedAt: now,
             status: 'PENDING',
           },
-          where: { endpointId: existing.id, id: delivery.id, status: { not: 'DELIVERED' } },
+          where: { endpointId: existing.id, id: delivery.id, status: 'DEAD' },
         });
         if (count === 0) {
           return null;
@@ -513,7 +565,12 @@ export const callbackEndpointRoutes: FastifyPluginAsync = async (fastify) => {
         });
       });
       if (!row) {
-        return sendError(reply, 409, 'ALREADY_DELIVERED', 'This delivery was already delivered');
+        return sendError(
+          reply,
+          409,
+          'DELIVERY_CHANGED',
+          'The delivery changed; reload and try again'
+        );
       }
       return { data: deliveryView(row, true) };
     }
@@ -551,15 +608,18 @@ export const runCallbackDeliveryRoutes: FastifyPluginAsync = async (fastify) => 
         take: 100,
         where: { workflowRunId: run.id },
       });
-      const manages = new Map<string, boolean>();
+      // Full detail (the endpoint, attempts, errors) for the endpoint's team and admins; anyone
+      // else who can see the run sees where each delivery went and how it ended.
+      const access = new Map<string, { member: boolean; manages: boolean }>();
       for (const teamId of new Set(rows.flatMap((r) => (r.endpoint ? [r.endpoint.teamId] : [])))) {
-        manages.set(teamId, await managesTeam(fastify.prisma, user, teamId));
+        access.set(teamId, await teamAccess(fastify.prisma, user, teamId));
       }
       return {
         data: {
-          deliveries: rows.map((r) =>
-            deliveryView(r, r.endpoint ? manages.get(r.endpoint.teamId) === true : false)
-          ),
+          deliveries: rows.map((r) => {
+            const a = r.endpoint ? access.get(r.endpoint.teamId) : undefined;
+            return a?.member ? deliveryView(r, a.manages) : limitedDeliveryView(r);
+          }),
           // The request's callback reports only the execution that asked for it, not a re-run.
           target:
             run.workRequest?.callback?.workflowId === run.workflowId

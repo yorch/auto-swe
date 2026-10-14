@@ -42,7 +42,7 @@ import {
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import {
-  callbackTeamsForUser,
+  callbackScopeForCaller,
   resolveLaunchCallback,
   sendCallbackRefusal,
   withoutCallback,
@@ -1914,11 +1914,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // `requestPayload` (the URL's query may carry the receiver's token).
       const callback = await resolveLaunchCallback(fastify.prisma, {
         callback: request.body.callback,
-        // A service principal's callback is not wired up yet: it may use no team's endpoint.
-        teams: () =>
-          user
-            ? callbackTeamsForUser(fastify.prisma, user)
-            : Promise.resolve({ kind: 'teams' as const, teamIds: [] }),
+        ...callbackScopeForCaller(fastify.prisma, caller, tpl.id),
         workflowId: temporalWorkflowId,
       });
       if (!callback.ok) {

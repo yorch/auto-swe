@@ -7,7 +7,7 @@
  * sweeps never send the same row at once and a sweep that dies mid-send leaves
  * the row to be retried when the lease lapses. The send happens outside any
  * transaction. The result is written only if the row is still the attempt this
- * sweep claimed (a redelivery in between resets `attempts`), so a stale result
+ * sweep claimed (its `claimToken`; every claim sets a fresh one), so a stale result
  * never overwrites a fresh one.
  *
  * Delivery is at least once: a receiver that answers 2xx after the platform
@@ -53,6 +53,8 @@ export interface DeliverCallbacksDeps extends SendCallbackDeps {
 interface Claimed {
   id: string;
   attempts: number;
+  /** Set by this claim only; a result is written under it, so a later claim's result wins. */
+  claimToken: string;
 }
 
 /** Claim up to `limit` due rows: one statement, so the lock and the lease are taken together. */
@@ -63,7 +65,8 @@ export async function claimDueDeliveries(limit: number, leaseMs: number): Promis
     UPDATE outbound_deliveries
     SET next_attempt_at = now() + ${Math.ceil(leaseMs / 1000)}::int * interval '1 second',
         attempts = attempts + 1,
-        last_attempt_at = now()
+        last_attempt_at = now(),
+        claim_token = gen_random_uuid()
     WHERE id IN (
       SELECT id FROM outbound_deliveries
       WHERE status = 'PENDING' AND next_attempt_at <= now()
@@ -71,7 +74,7 @@ export async function claimDueDeliveries(limit: number, leaseMs: number): Promis
       LIMIT ${limit}::int
       FOR UPDATE SKIP LOCKED
     )
-    RETURNING id, attempts
+    RETURNING id, attempts, claim_token AS "claimToken"
   `;
 }
 
@@ -156,7 +159,7 @@ export async function attemptDelivery(
   if (row?.status !== 'PENDING') {
     return null;
   }
-  const guard = { attempts: claimed.attempts, id: row.id, status: 'PENDING' as const };
+  const guard = { claimToken: claimed.claimToken, id: row.id, status: 'PENDING' as const };
   const dead = async (reason: CallbackDeadReason, attempt?: CallbackAttempt) => {
     const { count } = await prisma.outboundDelivery.updateMany({
       data: {
