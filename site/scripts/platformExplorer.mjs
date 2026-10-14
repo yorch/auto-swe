@@ -124,7 +124,10 @@ export function parseModels(schema, analysis) {
 /** Literal registrations/declarations only, not a runtime OpenAPI inventory. */
 export function parseRouteFamilies(gateway, routeFiles) {
   const imports = new Map();
-  for (const match of gateway.matchAll(/import \{ ([^}]+) \} from '\.\/routes\/([^']+)\.js';/g)) {
+  // `index.ts` imports `./routes/x.js`; `routes/register.ts`, which mounts them, imports `./x.js`.
+  for (const match of gateway.matchAll(
+    /import \{ ([^}]+) \} from '\.\/(?:routes\/)?([^']+)\.js';/g
+  )) {
     for (const name of match[1].split(',')) {
       imports.set(name.trim(), match[2]);
     }
@@ -398,7 +401,7 @@ export async function buildExplorerData({ analysis, commit, generatedAt } = {}) 
     nodeTypes: NodeSchema.options.map((option) => option.shape.type.value),
     packages,
     routes: parseRouteFamilies(
-      await readFile(join(REPO_ROOT, 'packages/gateway/src/index.ts'), 'utf8'),
+      await readFile(join(REPO_ROOT, 'packages/gateway/src/routes/register.ts'), 'utf8'),
       routeFiles
     ),
     settings: Object.entries(SETTING_DEFINITIONS).map(

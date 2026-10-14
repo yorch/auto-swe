@@ -1,7 +1,14 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type { Role } from '@auto-swe/shared';
+import { resolveSetting } from '@auto-swe/shared/config';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
+import {
+  ASSISTANT_ACTION_HEADER,
+  ASSISTANT_TOKEN_PREFIX,
+  ASSISTANT_TOKEN_TTL_SECONDS,
+  assistantActionDigest,
+} from '@auto-swe/shared/lib/assistantAction';
 import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import { SERVICE_TOKEN_SCOPES, type ServiceTokenScope } from '@auto-swe/shared/types/api';
@@ -9,6 +16,7 @@ import { normalizeIP } from '@fastify/rate-limit';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import jwt from 'jsonwebtoken';
+import { type AssistantAccess, assistantAccess } from '../lib/assistantPolicy.js';
 import { MCP_BRIDGE_HEADER } from '../lib/mcp/bridge.js';
 import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
 
@@ -51,10 +59,28 @@ declare module 'fastify' {
         token: string,
         purpose: OAuthStatePurpose
       ) => { sub: string; nonce?: string };
+      /**
+       * Mint the token the in-app assistant acts with for one conversation: the user's identity,
+       * bound to that conversation, for {@link ASSISTANT_TOKEN_TTL_SECONDS}. Only `requireAuth`'s
+       * assistant path accepts it, and only on routes `assistantPolicy.ts` admits.
+       */
+      signAssistantToken: (claims: { userId: string; conversationId: string }) => string;
+      /** Signature, expiry, audience and shape only — no database read, so not authorization. */
+      verifyAssistantTokenClaims: (token: string) => { sub: string; conversationId: string };
     };
   }
   interface FastifyRequest {
     user?: JwtPayload;
+    /**
+     * Set when the caller is the in-app assistant acting for `user`. Absent on every other request,
+     * so a handler can tell an action the person took from one their assistant took.
+     */
+    assistant?: AssistantCaller;
+    /**
+     * The digest of this request (`assistantActionDigest`), taken once the body is parsed. Set only
+     * on a request that presents an assistant token.
+     */
+    assistantBodyDigest?: string;
     teamRole?: string;
     /**
      * How the GitHub permission gate is configured for this request.
@@ -109,6 +135,15 @@ export interface ServicePrincipalCaller {
   tokenId: string;
   connectionIds: string[];
   templateIds: string[];
+}
+
+/** The in-app assistant, as `requireAuth` admitted it. */
+export interface AssistantCaller {
+  conversationId: string;
+  /** What `assistantPolicy.ts` allows on this route: never `never`, which is refused. */
+  access: Exclude<AssistantAccess, 'never'>;
+  /** The confirmed `AssistantAction` this request spent, on a `confirm` route. */
+  actionId?: string;
 }
 
 /** Who is calling a route that admits both people and service principals. */
@@ -177,6 +212,9 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // as an API bearer. Both are enforced at verify time.
 const ACCESS_TOKEN_AUDIENCE = 'auto-swe:api';
 const OAUTH_STATE_AUDIENCE = 'auto-swe:oauth-state';
+// The assistant's token is a JWT of its own audience behind a prefix, so it is never mistaken for an
+// API access token (whose audience it lacks) and `requireAuth` can route it before verifying.
+const ASSISTANT_AUDIENCE = 'auto-swe:assistant';
 /**
  * Each OAuth flow mints its own state purpose so a token minted by the
  * ENGINEER-level user-link flow can never complete the ADMIN-only bot
@@ -334,6 +372,8 @@ export async function loadTokenUser(
 
 const authPlugin: FastifyPluginAsync = async (fastify) => {
   fastify.addHook('onRoute', assertServiceScopesAdmissible);
+  fastify.addHook('onRoute', appendAssistantBackstop);
+  fastify.addHook('preValidation', checkAssistantGrantOnceParsed);
   const privateKey = getPrivateKey();
   const publicKey = getPublicKey();
   const algorithm = getAlgorithm();
@@ -348,6 +388,16 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
         audience: ACCESS_TOKEN_AUDIENCE,
         expiresIn: ACCESS_TOKEN_TTL,
       });
+    },
+
+    signAssistantToken({ userId, conversationId }) {
+      const signed = jwt.sign({ cid: conversationId }, privateKey, {
+        algorithm,
+        audience: ASSISTANT_AUDIENCE,
+        expiresIn: ASSISTANT_TOKEN_TTL_SECONDS,
+        subject: userId,
+      });
+      return `${ASSISTANT_TOKEN_PREFIX}${signed}`;
     },
 
     signOAuthState(sub: string, purpose: OAuthStatePurpose, nonce?: string): string {
@@ -382,6 +432,25 @@ const authPlugin: FastifyPluginAsync = async (fastify) => {
         algorithms: [algorithm],
         audience: ACCESS_TOKEN_AUDIENCE,
       }) as JwtPayload;
+    },
+
+    verifyAssistantTokenClaims(token) {
+      if (!token.startsWith(ASSISTANT_TOKEN_PREFIX)) {
+        throw new jwt.JsonWebTokenError('not an assistant token');
+      }
+      const decoded = jwt.verify(token.slice(ASSISTANT_TOKEN_PREFIX.length), publicKey, {
+        algorithms: [algorithm],
+        audience: ASSISTANT_AUDIENCE,
+      }) as { sub?: unknown; cid?: unknown };
+      if (
+        typeof decoded.sub !== 'string' ||
+        !UUID_RE.test(decoded.sub) ||
+        typeof decoded.cid !== 'string' ||
+        !UUID_RE.test(decoded.cid)
+      ) {
+        throw new jwt.JsonWebTokenError('malformed assistant token');
+      }
+      return { conversationId: decoded.cid, sub: decoded.sub };
     },
 
     verifyOAuthState(token: string, purpose: OAuthStatePurpose): { sub: string; nonce?: string } {
@@ -695,6 +764,15 @@ export function rateLimitKey(request: FastifyRequest): string {
   const authHeader = request.headers.authorization;
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
+    // Every assistant call comes from the worker's address, so an IP bucket would make every
+    // user's assistant share one limit.
+    if (token.startsWith(ASSISTANT_TOKEN_PREFIX)) {
+      try {
+        return `user:${request.server.auth.verifyAssistantTokenClaims(token).sub}`;
+      } catch {
+        return ipRateLimitKey(request);
+      }
+    }
     if (!token.startsWith(PAT_PREFIX)) {
       try {
         return `user:${request.server.auth.verifyAccessTokenClaims(token).sub}`;
@@ -892,6 +970,196 @@ async function admitServicePrincipal(
   request.repoAccessGate = gate ?? { mode: 'off', staleAfterHours: 0 };
 }
 
+type AssistantRefusal = { status: 400 | 401 | 403 | 503; code: string; message: string };
+
+/**
+ * Authenticate the in-app assistant, acting for the user its token names. In order:
+ *
+ * 1. the token's signature, audience, expiry and shape (else 401);
+ * 2. its user is active, and the payload carries the user's current role (else 401);
+ * 3. `assistant.enabled` is on (else 403 `ASSISTANT_DISABLED`; 503 if it cannot be read, so the
+ *    switch fails closed);
+ * 4. `assistantPolicy.ts` admits this route (else 403 `ASSISTANT_NOT_ALLOWED`).
+ *
+ * Then the route's own role checks run on the user as for any other credential. A `confirm` route
+ * also needs the user's confirmation of this exact request, which can only be checked once the body
+ * is parsed: here if `requireAuth` runs that late, else in {@link checkAssistantGrantOnceParsed}.
+ */
+async function admitAssistant(
+  request: FastifyRequest,
+  token: string
+): Promise<{ payload: JwtPayload } | AssistantRefusal> {
+  let claims: { sub: string; conversationId: string };
+  try {
+    claims = request.server.auth.verifyAssistantTokenClaims(token);
+  } catch (err: unknown) {
+    return { code: 'TOKEN_INVALID', message: bearerRejectionMessage(err), status: 401 };
+  }
+  const user = await loadTokenUser(request.server.prisma, claims.sub).catch((err: unknown) => {
+    throw new TokenUserLookupError(err);
+  });
+  if (!user?.isActive) {
+    return { code: 'TOKEN_INVALID', message: new TokenUserRevokedError().message, status: 401 };
+  }
+  let enabled: boolean;
+  try {
+    enabled = await resolveSetting('assistant.enabled');
+  } catch (err: unknown) {
+    request.log.error({ err }, 'assistant.enabled could not be read; refusing the assistant');
+    return { code: 'ASSISTANT_UNAVAILABLE', message: 'The assistant is unavailable', status: 503 };
+  }
+  if (!enabled) {
+    return {
+      code: 'ASSISTANT_DISABLED',
+      message: 'The in-app assistant is turned off',
+      status: 403,
+    };
+  }
+  const access = assistantAccess(request.method, request.routeOptions.url);
+  if (access === 'never') {
+    return {
+      code: 'ASSISTANT_NOT_ALLOWED',
+      message: 'The assistant may not call this route',
+      status: 403,
+    };
+  }
+  const now = Math.floor(Date.now() / 1000);
+  const payload: JwtPayload = {
+    exp: now + 60,
+    iat: now,
+    role: user.role,
+    ...(user.slackId ? { slackId: user.slackId } : {}),
+    sub: claims.sub,
+  };
+  // `requireAuth` can run twice on one request (a plugin-wide hook and the route's own). The first
+  // admission stands, so a confirmation it already spent is not looked for again.
+  request.assistant ??= { access, conversationId: claims.conversationId };
+  if (
+    request.assistant.access === 'confirm' &&
+    request.assistantBodyDigest !== undefined &&
+    !request.assistant.actionId
+  ) {
+    const refusal = await spendConfirmation(request, request.assistant, payload.sub);
+    if (refusal) {
+      return refusal;
+    }
+  }
+  return { payload };
+}
+
+/**
+ * The last `preHandler` on every route: an assistant admitted to a `confirm` route must have spent a
+ * confirmation by now, whichever hook admitted it. The spend itself happens earlier
+ * ({@link checkAssistantGrantOnceParsed}, or `admitAssistant` when `requireAuth` runs after parsing);
+ * this guarantees no handler runs an unconfirmed write if that wiring is ever changed.
+ */
+async function refuseUnspentAssistantWrite(request: FastifyRequest, reply: FastifyReply) {
+  if (request.assistant?.access === 'confirm' && !request.assistant.actionId) {
+    return reply.status(403).send({
+      error: {
+        code: 'ASSISTANT_CONFIRMATION_REQUIRED',
+        message: "This change needs the user's confirmation first",
+      },
+    });
+  }
+}
+
+/** Append {@link refuseUnspentAssistantWrite} after a route's own `preHandler`s. */
+export function appendAssistantBackstop(routeOptions: { preHandler?: unknown }): void {
+  const own = routeOptions.preHandler;
+  routeOptions.preHandler = [
+    ...(Array.isArray(own) ? own : own ? [own] : []),
+    refuseUnspentAssistantWrite,
+  ];
+}
+
+/** Never equal to a digest, so a body that cannot be canonicalized matches no confirmation. */
+const UNREADABLE_BODY = 'unreadable';
+
+/**
+ * Global `preValidation` hook: the first point at which the body is parsed and not yet rewritten by
+ * the route's schema. Records the request's digest for any request carrying an assistant token, and
+ * spends the confirmation when `requireAuth` has already admitted the assistant to a `confirm` route.
+ */
+async function checkAssistantGrantOnceParsed(request: FastifyRequest, reply: FastifyReply) {
+  const header = request.headers.authorization;
+  if (typeof header !== 'string' || !header.startsWith(`Bearer ${ASSISTANT_TOKEN_PREFIX}`)) {
+    return;
+  }
+  try {
+    request.assistantBodyDigest = assistantActionDigest({
+      body: request.body,
+      method: request.method,
+      url: request.url,
+    });
+  } catch {
+    request.assistantBodyDigest = UNREADABLE_BODY;
+  }
+  const assistant = request.assistant;
+  if (assistant?.access !== 'confirm' || assistant.actionId || !request.user) {
+    return;
+  }
+  const refusal = await spendConfirmation(request, assistant, request.user.sub);
+  if (refusal) {
+    return reply
+      .status(refusal.status)
+      .send({ error: { code: refusal.code, message: refusal.message } });
+  }
+}
+
+/**
+ * Spend the confirmed action named by the `x-assistant-action` header on this request. The row must
+ * be the user's, from this conversation, confirmed and unexpired; it is marked `EXECUTED` in the same
+ * statement that checks that, so two requests cannot both spend it. A request whose digest differs
+ * from the confirmed one still spends it and is refused: a confirmation authorizes one attempt.
+ */
+async function spendConfirmation(
+  request: FastifyRequest,
+  assistant: AssistantCaller,
+  userId: string
+): Promise<AssistantRefusal | null> {
+  const actionId = request.headers[ASSISTANT_ACTION_HEADER];
+  if (typeof actionId !== 'string' || !UUID_RE.test(actionId)) {
+    return {
+      code: 'ASSISTANT_CONFIRMATION_REQUIRED',
+      message: "This change needs the user's confirmation first",
+      status: 403,
+    };
+  }
+  const now = new Date();
+  const prisma = request.server.prisma;
+  const spent = await prisma.assistantAction.updateMany({
+    data: { executedAt: now, status: 'EXECUTED' },
+    where: {
+      conversationId: assistant.conversationId,
+      expiresAt: { gt: now },
+      id: actionId,
+      status: 'CONFIRMED',
+      userId,
+    },
+  });
+  if (spent.count !== 1) {
+    return {
+      code: 'ASSISTANT_CONFIRMATION_INVALID',
+      message: 'No confirmed, unexpired action matches this request',
+      status: 403,
+    };
+  }
+  const row = await prisma.assistantAction.findUnique({
+    select: { digest: true },
+    where: { id: actionId },
+  });
+  if (row?.digest !== request.assistantBodyDigest) {
+    return {
+      code: 'ASSISTANT_CONFIRMATION_MISMATCH',
+      message: 'This request differs from the change the user confirmed',
+      status: 403,
+    };
+  }
+  assistant.actionId = actionId;
+  return null;
+}
+
 export function requireAuth(options: RBACOptions = {}) {
   const hook = async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
@@ -910,35 +1178,45 @@ export function requireAuth(options: RBACOptions = {}) {
       }
       payload = outcome.payload;
     }
-    // Path 1: Authorization: Bearer <PAT or JWT>
+    // Path 1: Authorization: Bearer <assistant token, PAT or JWT>
     else if (authHeader?.startsWith('Bearer ')) {
       const token = authHeader.slice(7);
-      try {
-        if (token.startsWith(PAT_PREFIX)) {
-          const resolved = await verifyPatPayload(request, token);
-          if ('principal' in resolved) {
-            return admitServicePrincipal(request, reply, resolved.principal, options);
+      if (token.startsWith(ASSISTANT_TOKEN_PREFIX)) {
+        const outcome = await admitAssistant(request, token);
+        if ('status' in outcome) {
+          return reply
+            .status(outcome.status)
+            .send({ error: { code: outcome.code, message: outcome.message } });
+        }
+        payload = outcome.payload;
+      } else {
+        try {
+          if (token.startsWith(PAT_PREFIX)) {
+            const resolved = await verifyPatPayload(request, token);
+            if ('principal' in resolved) {
+              return admitServicePrincipal(request, reply, resolved.principal, options);
+            }
+            payload = resolved.user;
+          } else {
+            payload = await request.server.auth.verifyAccessToken(token);
           }
-          payload = resolved.user;
-        } else {
-          payload = await request.server.auth.verifyAccessToken(token);
+        } catch (err: unknown) {
+          if (err instanceof PatAuthError) {
+            return reply.status(401).send({ error: { code: err.code, message: err.message } });
+          }
+          // A failed user or token lookup is an outage, not a verdict on the
+          // caller, and its message is internal: surface it as a server error,
+          // not a 401 a client would treat as "sign in again".
+          if (err instanceof TokenUserLookupError || err instanceof ApiTokenLookupError) {
+            throw err;
+          }
+          if (!(err instanceof jwt.JsonWebTokenError || err instanceof TokenUserRevokedError)) {
+            request.log.warn({ err }, 'bearer token rejected by an unexpected error');
+          }
+          return reply.status(401).send({
+            error: { code: 'TOKEN_INVALID', message: bearerRejectionMessage(err) },
+          });
         }
-      } catch (err: unknown) {
-        if (err instanceof PatAuthError) {
-          return reply.status(401).send({ error: { code: err.code, message: err.message } });
-        }
-        // A failed user or token lookup is an outage, not a verdict on the
-        // caller, and its message is internal: surface it as a server error,
-        // not a 401 a client would treat as "sign in again".
-        if (err instanceof TokenUserLookupError || err instanceof ApiTokenLookupError) {
-          throw err;
-        }
-        if (!(err instanceof jwt.JsonWebTokenError || err instanceof TokenUserRevokedError)) {
-          request.log.warn({ err }, 'bearer token rejected by an unexpected error');
-        }
-        return reply.status(401).send({
-          error: { code: 'TOKEN_INVALID', message: bearerRejectionMessage(err) },
-        });
       }
     } else {
       // Path 2: better-auth session cookie — browser path that doesn't carry

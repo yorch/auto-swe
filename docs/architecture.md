@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 88 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 89 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | The consolidated `20260618000000_init` baseline (generated from `schema.prisma`) plus the hand-written `20260618000001_custom_constraints_and_indexes` beside it; new changes append their own migration once the schema is deployed |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -559,15 +559,17 @@ rather than throwing, and can freeze a value to a run. See
 
 ## 5. Authentication
 
-Three independent auth paths on every protected route:
+Four independent auth paths on every protected route:
 
 ```mermaid
 flowchart LR
     REQ[Incoming Request] --> SNIFF{Authorization\nheader?}
+    SNIFF -->|Bearer asst_...| ASST[Assistant path\nJWT + route policy]
     SNIFF -->|Bearer ats_...| PAT[PAT path\nSHA-256 hash lookup]
     SNIFF -->|Bearer eyJ...| JWT[JWT path\nHS256 or RS256]
     SNIFF -->|absent| COOKIE[Cookie path\nbetter-auth session\n60s in-memory cache]
-    PAT --> RBAC[requireAuth\nrole + team + org checks]
+    ASST --> RBAC[requireAuth\nrole + team + org checks]
+    PAT --> RBAC
     JWT --> RBAC
     COOKIE --> RBAC
     RBAC --> ROUTE[Route handler]
@@ -579,11 +581,22 @@ flowchart LR
 | PAT bearer | `ats_<base64url-32B>` | `api_tokens` (hash only) | Settings → API tokens |
 | Service principal bearer | `ats_<base64url-32B>` | `api_tokens` (hash only), owned by a `ServicePrincipal` | A team's Service principals card — see [service-principals.md](./service-principals.md) |
 | JWT bearer | `eyJ…` (HS256/RS256) | — | `POST /api/v1/auth/session-token`, which exchanges an active session cookie for a short-lived JWT |
+| Assistant bearer | `asst_` + a JWT of its own audience | — | `app.auth.signAssistantToken`, for one user and one in-app assistant conversation, 15 minutes |
 
 A service principal's token takes the PAT path but never becomes a user: it sets
 `request.principal`, and `requireAuth` refuses it (`401 SERVICE_TOKEN_NOT_ALLOWED`) on every route
 that does not declare `config.serviceScopes`. The ones that do are the agent-run and template-run launches and the
 run list, read and cancel routes.
+
+An assistant token acts as its user, with the user's current role, but only where
+`lib/assistantPolicy.ts` allows. That table decides, per route, whether the in-app assistant may call
+it freely (`read`), only with the user's confirmation (`confirm`), or not at all; a route with no
+entry, every `DELETE` and every deprecated alias are refused with `403 ASSISTANT_NOT_ALLOWED`, and so
+is every call while `assistant.enabled` is off. A `confirm` call must name, in `x-assistant-action`,
+an `AssistantAction` the user confirmed on their own session for exactly that method, URL and body;
+the gateway spends it once the body is parsed and refuses the request if it differs. `request.assistant`
+tells a handler the call came from the assistant. See
+[adr/in-app-assistant.md](./adr/in-app-assistant.md).
 
 A JWT's role claim is not trusted on its own: after verifying the signature, the gateway re-reads
 the user's current role and `isActive` flag (behind a 30 s in-process cache), so a demotion or
@@ -627,7 +640,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 88 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 89 models.
 
 ```mermaid
 erDiagram

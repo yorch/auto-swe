@@ -41,60 +41,8 @@ import authPlugin, {
 } from './plugins/auth.js';
 import prismaPlugin from './plugins/prisma.js';
 import temporalPlugin from './plugins/temporal.js';
-import { adminRoutes } from './routes/admin.js';
-import { agentLibraryRoutes, teamAgentLibraryRoutes } from './routes/agentLibrary.js';
-import { agentRunRoutes } from './routes/agentRuns.js';
-import { agentVersionRoutes } from './routes/agentVersions.js';
-import { automationRoutes } from './routes/automations.js';
-import { autonomyPolicyRoutes } from './routes/autonomyPolicies.js';
-import { bundleRoutes } from './routes/bundles.js';
-import { callbackEndpointRoutes, runCallbackDeliveryRoutes } from './routes/callbackEndpoints.js';
-import { configSettingsRoutes } from './routes/configSettings.js';
-import { connectionCredentialRoutes } from './routes/connectionCredentials.js';
-import { epicRoutes } from './routes/epics.js';
-import { evalRoutes } from './routes/evals.js';
-import { eventEndpointRoutes } from './routes/eventEndpoints.js';
-import { githubHostCredentialRoutes } from './routes/githubHostCredentials.js';
-import { githubInstallationRoutes } from './routes/githubInstallations.js';
-import { githubWebhookSecretRoutes } from './routes/githubWebhookSecrets.js';
-import { humanErrorBaselineRoutes } from './routes/humanErrorBaselines.js';
-import { humanStepRoutes } from './routes/humanSteps.js';
-import { inboundEventRoutes } from './routes/inboundEvents.js';
-import { knowledgeRoutes } from './routes/knowledge.js';
-import { lessonRoutes } from './routes/lessons.js';
 import { mcpRoutes } from './routes/mcp.js';
-import { mcpConnectionRoutes } from './routes/mcpConnections.js';
-import { meRoutes } from './routes/me.js';
-import { modelCatalogRoutes } from './routes/modelCatalog.js';
-import { modelConfigRoutes } from './routes/modelConfig.js';
-import { organizationRoutes } from './routes/organizations.js';
-import { orgBudgetRoutes } from './routes/orgBudget.js';
-import { orgMembersRoutes } from './routes/orgMembers.js';
-import { prdRunRoutes } from './routes/prdRuns.js';
-import { pullRequestRoutes } from './routes/pullRequests.js';
-import { readinessRoutes } from './routes/readiness.js';
-import { repoDependencyRoutes } from './routes/repoDependencies.js';
-import { repositoryRoutes } from './routes/repositories.js';
-import { scannerPatternRoutes } from './routes/scannerPatterns.js';
-import { scheduledWorkRequestRoutes } from './routes/scheduledWorkRequests.js';
-import { securityEventRoutes } from './routes/securityEvents.js';
-import { servicePrincipalRoutes } from './routes/servicePrincipals.js';
-import { skillRevisionRoutes } from './routes/skillRevisions.js';
-import { skillSourceRoutes } from './routes/skillSources.js';
-import { skillsRoutes, teamAgentSkillRoutes } from './routes/skills.js';
-import { slackRoutes } from './routes/slack.js';
-import { slackChannelRoutes } from './routes/slackChannels.js';
-import { systemConfigRoutes } from './routes/systemConfig.js';
-import { teamRoutes } from './routes/teams.js';
-import { ticketRoutes } from './routes/tickets.js';
-import { tokenRoutes } from './routes/tokens.js';
-import { usageRoutes } from './routes/usage.js';
-import { userRoutes } from './routes/users.js';
-import { webhookRoutes } from './routes/webhooks.js';
-import { stepRegistryRoutes, workflowRunRoutes } from './routes/workflowRuns.js';
-import { workflowRoutes } from './routes/workflows.js';
-import { workflowTemplateRoutes } from './routes/workflowTemplates.js';
-import { workRequestRoutes } from './routes/workRequests.js';
+import { registerApiRoutes } from './routes/register.js';
 
 async function start() {
   // Fail at boot, not on the first credential save: every DB-stored secret
@@ -289,104 +237,7 @@ async function start() {
     return { data: user };
   });
 
-  // ── Public routes (no auth) ──
-
-  // ── Personal access tokens (auth required, but self-service for engineers+) ──
-  await app.register(tokenRoutes, { prefix: '/api/v1/auth/tokens' });
-
-  // ── Protected routes ──
-  await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
-  await app.register(agentRunRoutes, { prefix: '/api/v1/agent-runs' });
-  await app.register(scheduledWorkRequestRoutes, { prefix: '/api/v1/scheduled-work-requests' });
-  await app.register(workflowRoutes, { prefix: '/api/v1/workflows' });
-  await app.register(pullRequestRoutes, { prefix: '/api/v1/pull-requests' });
-  await app.register(ticketRoutes, { prefix: '/api/v1/tickets' });
-  await app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
-  await app.register(humanErrorBaselineRoutes, { prefix: '/api/v1/human-error-baselines' });
-  await app.register(organizationRoutes, { prefix: '/api/v1/platform/organizations' });
-  // Deprecated alias — kept for one release.
-  await app.register(organizationRoutes, { prefix: '/api/v1/admin/organizations' });
-  await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
-  await app.register(runCallbackDeliveryRoutes, { prefix: '/api/v1/workflow-runs' });
-  await app.register(stepRegistryRoutes, { prefix: '/api/v1/workflow-steps' });
-  await app.register(webhookRoutes, { prefix: '/api/v1/webhooks' });
-  // Signed events from other services; reads bodies as bytes in its own plugin.
-  await app.register(inboundEventRoutes, { prefix: '/api/v1/webhooks/events' });
-  await app.register(teamRoutes, { prefix: '/api/v1/teams' });
-  await app.register(callbackEndpointRoutes, { prefix: '/api/v1/teams' });
-  await app.register(servicePrincipalRoutes, { prefix: '/api/v1/teams' });
-  await app.register(eventEndpointRoutes, { prefix: '/api/v1/teams' });
-  await app.register(userRoutes, { prefix: '/api/v1/users' });
-  await app.register(meRoutes, { prefix: '/api/v1/me' });
-  await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });
-  await app.register(repoDependencyRoutes, { prefix: '/api/v1/repositories' });
-  await app.register(automationRoutes, { prefix: '/api/v1/automations' });
-  await app.register(connectionCredentialRoutes, { prefix: '/api/v1/repositories' });
-  await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
-  await app.register(knowledgeRoutes, { prefix: '/api/v1/knowledge' });
-  await app.register(slackRoutes, { prefix: '/api/v1/auth/slack' });
-  await app.register(slackChannelRoutes, { prefix: '/api/v1/platform/slack-channels' });
-  // Deprecated alias — kept for one release.
-  await app.register(slackChannelRoutes, { prefix: '/api/v1/admin/slack-channels' });
-  await app.register(epicRoutes, { prefix: '/api/v1/epics' });
-  await app.register(prdRunRoutes, { prefix: '/api/v1/prd-runs' });
-  await app.register(adminRoutes, { prefix: '/api/v1/platform' });
-  // Deprecated alias — kept for one release.
-  await app.register(adminRoutes, { prefix: '/api/v1/admin' });
-  await app.register(modelConfigRoutes, { prefix: '/api/v1/platform' });
-  // Deprecated alias — kept for one release.
-  await app.register(modelConfigRoutes, { prefix: '/api/v1/admin' });
-  await app.register(modelCatalogRoutes, { prefix: '/api/v1/platform' });
-  await app.register(systemConfigRoutes, { prefix: '/api/v1/platform' });
-  // Deprecated alias — kept for one release.
-  await app.register(systemConfigRoutes, { prefix: '/api/v1/admin' });
-  await app.register(scannerPatternRoutes, { prefix: '/api/v1/platform' });
-  // Deprecated alias — kept for one release.
-  await app.register(scannerPatternRoutes, { prefix: '/api/v1/admin' });
-  await app.register(configSettingsRoutes, { prefix: '/api/v1/platform' });
-  // Deprecated alias — kept for one release.
-  await app.register(configSettingsRoutes, { prefix: '/api/v1/admin' });
-  await app.register(autonomyPolicyRoutes, { prefix: '/api/v1/platform' });
-  // Deprecated alias — kept for one release.
-  await app.register(autonomyPolicyRoutes, { prefix: '/api/v1/admin' });
-  await app.register(githubInstallationRoutes, { prefix: '/api/v1/platform' });
-  await app.register(githubInstallationRoutes, { prefix: '/api/v1/admin' });
-  await app.register(githubWebhookSecretRoutes, { prefix: '/api/v1/platform' });
-  await app.register(githubHostCredentialRoutes, { prefix: '/api/v1/platform' });
-  await app.register(mcpConnectionRoutes, { prefix: '/api/v1/platform' });
-  // Deprecated alias — kept for one release.
-  await app.register(mcpConnectionRoutes, { prefix: '/api/v1/admin' });
-  await app.register(bundleRoutes, { prefix: '/api/v1/platform' });
-  // Deprecated alias — kept for one release.
-  await app.register(bundleRoutes, { prefix: '/api/v1/admin' });
-  await app.register(securityEventRoutes, { prefix: '/api/v1/platform' });
-  // Deprecated alias — kept for one release.
-  await app.register(securityEventRoutes, { prefix: '/api/v1/admin' });
-  await app.register(usageRoutes, { prefix: '/api/v1/platform' });
-  await app.register(readinessRoutes, { prefix: '/api/v1/platform' });
-  await app.register(orgMembersRoutes, { prefix: '/api/v1/platform/organizations' });
-  // Deprecated alias — kept for one release.
-  await app.register(orgMembersRoutes, { prefix: '/api/v1/admin/organizations' });
-  await app.register(orgBudgetRoutes, { prefix: '/api/v1/platform/organizations' });
-  // Deprecated alias — kept for one release.
-  await app.register(orgBudgetRoutes, { prefix: '/api/v1/admin/organizations' });
-  await app.register(skillsRoutes, { prefix: '/api/v1/platform' });
-  // Deprecated alias — kept for one release.
-  await app.register(skillsRoutes, { prefix: '/api/v1/admin' });
-  await app.register(skillSourceRoutes, { prefix: '/api/v1/platform' });
-  await app.register(agentLibraryRoutes, { prefix: '/api/v1/platform' });
-  await app.register(agentVersionRoutes, { prefix: '/api/v1/platform' });
-  await app.register(skillRevisionRoutes, { prefix: '/api/v1/platform' });
-  // Deprecated alias — kept for one release.
-  await app.register(agentLibraryRoutes, { prefix: '/api/v1/admin' });
-  await app.register(evalRoutes, { prefix: '/api/v1/platform' });
-  // Deprecated alias — kept for one release.
-  await app.register(evalRoutes, { prefix: '/api/v1/admin' });
-  await app.register(teamAgentSkillRoutes, { prefix: '/api/v1/teams' });
-  await app.register(teamAgentLibraryRoutes, { prefix: '/api/v1/teams' });
-  await app.register(humanStepRoutes, { prefix: '/api/v1/human-steps' });
-  // Deprecated alias — kept for one release so existing CLI tokens and bookmarks keep working.
-  await app.register(humanStepRoutes, { prefix: '/api/v1/inbox' });
+  await registerApiRoutes(app);
 
   // Graceful shutdown: stop accepting connections, drain in-flight requests
   // (app.close() also runs plugin onClose hooks — prisma disconnect lives in

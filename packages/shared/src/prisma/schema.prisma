@@ -1269,6 +1269,7 @@ model User {
   memberships           TeamMembership[]
   orgMemberships        OrganizationMembership[]
   accessTokens          ApiToken[]
+  assistantActions      AssistantAction[]
   /// Better-auth relations.
   accounts              Account[]
   sessions              Session[]
@@ -3513,4 +3514,43 @@ model OutboundDelivery {
   @@index([workflowRunId])
   @@index([runCallbackId])
   @@map("outbound_deliveries")
+}
+
+/// A change the in-app assistant proposed on a user's behalf, and the user's answer to it.
+///
+/// The assistant may call a `confirm` route (`gateway/src/lib/assistantPolicy.ts`) only with the id
+/// of a row here that the user confirmed for exactly that request: `digest` covers the method, the
+/// URL with its query, and the body (`assistantActionDigest` in `shared/lib/assistantAction.ts`). The
+/// confirmation is made on the user's own session; an assistant token cannot confirm. A confirmed row
+/// is spent by the first request that presents it, matching or not, so it authorizes one call.
+model AssistantAction {
+  id             String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String                @map("user_id") @db.Uuid
+  user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The conversation the assistant token that proposed it was bound to.
+  conversationId String                @map("conversation_id") @db.Uuid
+  method         String
+  /// Path and query, as the assistant will send it: `/api/v1/...`.
+  url            String
+  body           Json?
+  /// The assistant's one-line description of the change, shown on the confirmation card.
+  summary        String
+  digest         String
+  status         AssistantActionStatus @default(PENDING)
+  /// A pending row may be answered until then; a confirmed one may be used until then.
+  expiresAt      DateTime              @map("expires_at") @db.Timestamptz
+  decidedAt      DateTime?             @map("decided_at") @db.Timestamptz
+  /// When a request spent the confirmation.
+  executedAt     DateTime?             @map("executed_at") @db.Timestamptz
+  createdAt      DateTime              @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId, conversationId, createdAt])
+  @@map("assistant_actions")
+}
+
+enum AssistantActionStatus {
+  PENDING
+  CONFIRMED
+  DECLINED
+  EXECUTED
 }

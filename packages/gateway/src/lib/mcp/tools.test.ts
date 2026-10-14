@@ -11,6 +11,7 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import authPlugin, { rateLimitKey, requireAuth } from '../../plugins/auth.js';
 import { mcpRoutes } from '../../routes/mcp.js';
+import { registerApiRoutes } from '../../routes/register.js';
 import {
   fakeVerifierDeps,
   makeSigningKey,
@@ -828,23 +829,14 @@ describe('the read tools', () => {
 
 describe('which routes an MCP token may reach', () => {
   it('registers mcpScope on the five read routes and the two write routes of the real route table and nowhere else', async () => {
-    // Every plugin `index.ts` registers. Each `.register(` call is cut out whole by matching its
-    // parentheses, so a call split over several lines reads like any other; one that is neither a
-    // route plugin with a literal prefix nor known infrastructure fails the test rather than being
-    // skipped.
+    // `index.ts` mounts infrastructure and hands every route plugin to `registerApiRoutes`. Each
+    // `.register(` call there is cut out whole by matching its parentheses, so a call split over
+    // several lines reads like any other; one that is not known infrastructure fails the test, so
+    // a route plugin mounted beside `registerApiRoutes` cannot slip past the walk below.
     const indexPath = fileURLToPath(new URL('../../index.ts', import.meta.url));
     const source = readFileSync(indexPath, 'utf8')
       .replace(/\/\*[\s\S]*?\*\//g, '')
       .replace(/^\s*\/\/.*$/gm, '');
-    const modules = new Map<string, string>();
-    for (const m of source.matchAll(/import\s*\{([^}]+)\}\s*from\s*'(\.\/routes\/[^']+)'/g)) {
-      for (const name of (m[1] as string)
-        .split(',')
-        .map((n) => n.trim())
-        .filter(Boolean)) {
-        modules.set(name, m[2] as string);
-      }
-    }
     const infrastructure = new Set([
       'cors',
       'fastifyRawBody',
@@ -858,7 +850,6 @@ describe('which routes an MCP token may reach', () => {
       'mcpBridgePlugin',
       'mcpRoutes',
     ]);
-    const mounts: Array<[string, string]> = [];
     const unaccounted: string[] = [];
     for (const m of source.matchAll(/\.register\s*\(/g)) {
       let depth = 0;
@@ -870,18 +861,15 @@ describe('which routes an MCP token may reach', () => {
         }
       }
       const call = source.slice(m.index + m[0].length, end);
-      const route = /^\s*(\w+)\s*,\s*\{\s*prefix:\s*'([^']+)'\s*,?\s*\}\s*$/.exec(call);
       const name = /^\s*(\w+)/.exec(call)?.[1];
-      if (route && modules.has(route[1] as string)) {
-        mounts.push([route[1] as string, route[2] as string]);
-      } else if (!(name && infrastructure.has(name))) {
+      if (!(name && infrastructure.has(name))) {
         unaccounted.push(call.replace(/\s+/g, ' ').slice(0, 80));
       }
     }
     expect(unaccounted, 'register() calls this test does not understand').toEqual([]);
-    // An inline route in index.ts would bypass the plugins above.
+    expect(source).toContain('await registerApiRoutes(app);');
+    // An inline route in index.ts would bypass the plugins below.
     expect(source).not.toContain('mcpScope');
-    expect(mounts.length).toBeGreaterThan(50);
 
     const app = Fastify();
     app.setValidatorCompiler(validatorCompiler);
@@ -891,22 +879,18 @@ describe('which routes an MCP token may reach', () => {
     app.decorate('temporal', stub as never);
     app.decorate('auth', stub as never);
     const seen: string[] = [];
+    let routes = 0;
     app.addHook('onRoute', (route) => {
+      routes += 1;
       const scope = route.config?.mcpScope;
       if (scope) {
         seen.push(`${[route.method].flat().join(',')} ${route.url.replace(/\/$/, '')} ${scope}`);
       }
     });
-    for (const [name, prefix] of mounts) {
-      const path = modules.get(name as string);
-      expect(path, `${name} is imported from ./routes`).toBeDefined();
-      const mod = await import(
-        /* @vite-ignore */ new URL(`../.${path}`.replace(/\.js$/, '.ts'), import.meta.url).href
-      );
-      await app.register(mod[name as string], { prefix: prefix as string });
-    }
+    await registerApiRoutes(app);
     await app.ready();
     await app.close();
+    expect(routes).toBeGreaterThan(250);
     expect([...new Set(seen)].sort()).toEqual([
       'GET /api/v1/human-steps read',
       // The same human-steps plugin is also mounted as the inbox alias.

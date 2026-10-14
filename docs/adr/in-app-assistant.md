@@ -58,6 +58,15 @@ its policy, and the test makes that decision part of adding the route. Enforcing
 rather than in the tool means the model's tool layer is not the control.
 **Alternatives considered**: Default-allow with a denylist. Rejected: a new secrets route that forgets
 the tag would be silently exposed.
+**Update (2026-10-14, implementation)**: The decisions live in one table,
+`gateway/src/lib/assistantPolicy.ts`, keyed by `METHOD /registered/pattern`, rather than on each
+route's `config`. `requireAuth` is attached three ways in this codebase — on the route, as a
+plugin-wide `onRequest` hook, and as a `preHandler` — so the route's options are not a reliable place
+to find it, and one file is easier to audit than ~290 scattered declarations. Deprecated aliases are
+refused by having no entry. A non-GET that stores nothing may be a read only with a written reason
+(`{ read: '…' }`). Because a `preHandler`-only `requireAuth` runs after the body is parsed, the
+confirmation is spent wherever the assistant is admitted last, and the auth plugin appends a final
+`preHandler` to every route that refuses an assistant write which reached it unconfirmed.
 
 ## D5 — 2026-10-14 — Tool design: curated plus a generic API tool
 
@@ -123,6 +132,9 @@ setting, default 30 days). Replies stream; tool calls show as collapsible steps.
 **Decision**: Turns are priced like any agent call and accrue to the user's organization monthly
 budget; a refused budget answers in the chat. Registry settings: `assistant.enabled` (default off),
 `assistant.maxStepsPerTurn`, `assistant.retentionDays`.
+**Update (2026-10-14, implementation)**: Each setting lands with the code that reads it, so the admin
+form never shows a knob that does nothing: `assistant.enabled` with the gateway enforcement,
+`assistant.maxStepsPerTurn` with the conversation workflow, `assistant.retentionDays` with the sweep.
 
 ## D10 — 2026-10-14 — First-version surface
 

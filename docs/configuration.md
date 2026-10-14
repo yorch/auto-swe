@@ -38,6 +38,10 @@ organization because a team on an isolated network may need its own mirror. The 
 `workspace.agentRunAllowWorkflowChanges`) are registry settings too, all ADMIN-only; see
 [agent-runs.md](./agent-runs.md#6-bounds).
 
+The `assistant` group holds `assistant.enabled` (ADMIN-only, default off), the switch for the in-app
+assistant: off, the gateway refuses every request made with an assistant token, including the next
+call of a conversation already under way. It is read per request through the settings cache.
+
 The `mcp` group holds the switches and bounds of the MCP server: `mcp.enabled`,
 `mcp.writeToolsEnabled`, `mcp.writeCallsPerMinute` and `mcp.maxConcurrentRuns`, all ADMIN-only and read
 per request, so they take effect within the settings cache's ~30 s with no restart; see

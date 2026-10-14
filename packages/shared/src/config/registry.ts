@@ -49,6 +49,23 @@ const githubOrgLogin = z
 const ratio = z.number().min(0).max(1);
 
 export const SETTING_DEFINITIONS = {
+  // ── In-app assistant ───────────────────────────────────────────────────────
+  // The kill switch for the dashboard assistant. Read by `requireAuth` on every
+  // request that carries an assistant token, so turning it off refuses the
+  // assistant's in-flight calls as well as new conversations.
+  'assistant.enabled': defineSetting({
+    defaultValue: false,
+    description:
+      'Whether the in-app assistant may act. Off, the gateway refuses every request made with an assistant token, so a conversation already running stops at its next call. Read through a ~30 s cache, so turning it off takes up to that long to apply on every replica.',
+    group: 'assistant',
+    label: 'Enable the in-app assistant',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+
   // ── Channel assistant ──────────────────────────────────────────────────────
   // The assistant's proactivity and context budgets. Every one of these was a
   // module-scope constant in `worker/src/activities/channel*.ts`, which made
