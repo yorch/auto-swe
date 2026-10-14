@@ -1,5 +1,21 @@
 import { describe, expect, it, vi } from 'vitest';
-import { type RevalCaseRow, type RevalidateDeps, revalidateDataset } from './evalRevalidate.js';
+
+const runGateStandalone = vi.fn(async (_input: unknown) => ({
+  exitCode: 0,
+  passed: true,
+  summary: 'ok',
+}));
+vi.mock('./standaloneGateRunner.js', () => ({
+  runGateStandalone: (input: unknown) => runGateStandalone(input),
+}));
+
+import {
+  type RevalCaseRow,
+  type RevalidateDeps,
+  revalidateDataset,
+  runCaseReference,
+} from './evalRevalidate.js';
+import { EVAL_WORKSPACE_IMAGE } from './evalWorkspaceImage.js';
 
 const c = (over: Partial<RevalCaseRow>): RevalCaseRow => ({
   baselineSha: 's',
@@ -52,5 +68,19 @@ describe('revalidateDataset', () => {
     expect(r.quarantined).toBe(0);
     expect(r.restored).toBe(0);
     expect(setQuarantined).not.toHaveBeenCalled();
+  });
+});
+
+describe('runCaseReference', () => {
+  it('runs the golden test at the pinned SHA in the image the harness scores in', async () => {
+    await runCaseReference(c({ baselineSha: 'abc', goldenTest: 'yarn test x', repoUrl: 'r1' }));
+    expect(runGateStandalone).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authedRepoUrl: 'r1',
+        checkoutSha: 'abc',
+        command: 'yarn test x',
+        image: EVAL_WORKSPACE_IMAGE,
+      })
+    );
   });
 });

@@ -40,28 +40,8 @@ import { type PairedOutcome, regressionVerdict } from '../lib/evalStats.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import { withRunlessCapScale } from '../lib/runlessBudget.js';
 import { ownerOfDataset, withSpendOwner } from '../lib/spendOwner.js';
+import { EVAL_WORKSPACE_IMAGE } from './evalWorkspaceImage.js';
 import { createWorkspace, type Workspace } from './workspace.js';
-
-/**
- * Base image for eval workspaces — pinned, and the only `createWorkspace` call
- * in the codebase that does not inherit the operator's configured image.
- *
- * That is the same frozen-fixture reasoning as `EvalCase.baselineSha`: a
- * benchmark score is comparable against its own history only if the environment
- * it ran in did not move. So this workspace deliberately ignores the
- * connection's `executorImage` and the `WORKSPACE_IMAGE` default, both of
- * which an operator can change at any time.
- *
- * Changing this constant silently rebases every stored eval score onto a
- * different environment — regressions and improvements measured across the
- * change are not comparable. Treat it as a benchmark epoch, not a config knob:
- * if it must move, expect to re-baseline.
- *
- * It is a named constant rather than an inline literal so the shape of the
- * exception is greppable, and so `scripts/check-invariants.mjs` can hold every
- * other call site to inheriting without maintaining a list of exemptions.
- */
-export const EVAL_WORKSPACE_IMAGE = 'node:24-alpine';
 
 export interface EvalCaseRow {
   id: string;

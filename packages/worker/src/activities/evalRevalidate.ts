@@ -15,6 +15,7 @@
 
 import { prisma } from '@auto-swe/shared/db';
 import type { EvalCaseRow } from './evalHarness.js';
+import { EVAL_WORKSPACE_IMAGE } from './evalWorkspaceImage.js';
 import type { GateResult } from './qualityGates.js';
 import { runGateStandalone } from './standaloneGateRunner.js';
 
@@ -73,9 +74,10 @@ async function defaultLoadCases(datasetId: string): Promise<RevalCaseRow[]> {
 }
 
 /**
- * Run a case's reference once: its golden test at the pinned SHA. Shared with
- * flake screening (`evalFlakeScreen.ts`), which runs it k times. Throws on an
- * infrastructure error (clone, workspace), like `runGateStandalone`.
+ * Run a case's reference once: its golden test at the pinned SHA, in the image
+ * the harness scores the case in. Shared with flake screening
+ * (`evalFlakeScreen.ts`), which runs it k times. Throws on an infrastructure
+ * error (clone, workspace), like `runGateStandalone`.
  */
 export function runCaseReference(c: EvalCaseRow): Promise<GateResult> {
   return runGateStandalone({
@@ -85,6 +87,7 @@ export function runCaseReference(c: EvalCaseRow): Promise<GateResult> {
     command: c.goldenTest,
     defaultBranch: 'main',
     gate: 'runTests',
+    image: EVAL_WORKSPACE_IMAGE,
   });
 }
 
