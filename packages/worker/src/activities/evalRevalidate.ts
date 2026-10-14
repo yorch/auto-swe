@@ -26,7 +26,7 @@ export interface RevalCaseRow extends EvalCaseRow {
 export interface RevalidateDeps {
   loadCases: (datasetId: string) => Promise<RevalCaseRow[]>;
   /** Does the case's reference still pass against current repo state? */
-  runReference: (c: RevalCaseRow) => Promise<boolean>;
+  runReference: (c: RevalCaseRow) => Promise<GateResult>;
   setQuarantined: (caseId: string, quarantined: boolean) => Promise<void>;
 }
 
@@ -46,7 +46,12 @@ export async function revalidateDataset(
   let quarantined = 0;
   let restored = 0;
   for (const c of cases) {
-    const passes = await deps.runReference(c);
+    const reference = await deps.runReference(c);
+    // A killed or timed-out run says nothing about the case: leave it as it is.
+    if (isInfrastructureFailure(reference)) {
+      continue;
+    }
+    const passes = reference.passed;
     if (!passes && !c.quarantined) {
       await deps.setQuarantined(c.id, true);
       quarantined += 1;
@@ -91,8 +96,29 @@ export function runCaseReference(c: EvalCaseRow): Promise<GateResult> {
   });
 }
 
-async function runReferenceDefault(c: RevalCaseRow): Promise<boolean> {
-  return (await runCaseReference(c)).passed;
+/**
+ * A reference run that says nothing about the test: killed by a signal or a
+ * timeout. `signal` is set when the runner killed the command (its timeout,
+ * exit 124) or could not start it; an exit of 128 to 254 is a process
+ * killed inside the container — 137 is SIGKILL, typically the out-of-memory
+ * killer, 143 SIGTERM. Exit 255 is what a test's own `exit(-1)` produces, so it
+ * is a test failure. Such a case is left unscreened for the next screen rather
+ * than marked flaky, until `FLAKE_SCREEN_MAX_INFRA_ERRORS` screens in a row have
+ * failed this way.
+ *
+ * Every other non-zero exit is a test failure. The runner sees only the golden
+ * test's exit status, so a dependency install or network fetch inside the
+ * test command that fails (exit 1) is indistinguishable from a failing test and
+ * marks the case flaky; an admin re-screen clears it. A test suite that itself
+ * dies on a signal is the reverse: it is retried until the error cap records it
+ * as a failed screen, which an admin re-screen resets.
+ */
+export function isInfrastructureFailure(r: GateResult): boolean {
+  return r.signal !== undefined || (r.exitCode >= 128 && r.exitCode < 255);
+}
+
+function runReferenceDefault(c: RevalCaseRow): Promise<GateResult> {
+  return runCaseReference(c);
 }
 
 async function defaultSetQuarantined(caseId: string, quarantined: boolean): Promise<void> {

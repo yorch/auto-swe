@@ -21,6 +21,7 @@ import {
   runCaseReference,
 } from './evalRevalidate.js';
 import { EVAL_WORKSPACE_IMAGE } from './evalWorkspaceImage.js';
+import type { GateResult } from './qualityGates.js';
 
 const c = (over: Partial<RevalCaseRow>): RevalCaseRow => ({
   baselineSha: 's',
@@ -33,12 +34,17 @@ const c = (over: Partial<RevalCaseRow>): RevalCaseRow => ({
   ...over,
 });
 
-function deps(cases: RevalCaseRow[], passes: (c: RevalCaseRow) => boolean) {
+function deps(cases: RevalCaseRow[], passes: (c: RevalCaseRow) => boolean | GateResult) {
   const setQuarantined = vi.fn(async () => {});
   return {
     deps: {
       loadCases: async () => cases,
-      runReference: async (x: RevalCaseRow) => passes(x),
+      runReference: async (x: RevalCaseRow): Promise<GateResult> => {
+        const p = passes(x);
+        return typeof p === 'boolean'
+          ? { exitCode: p ? 0 : 1, passed: p, summary: p ? 'ok' : 'failed' }
+          : p;
+      },
       setQuarantined,
     } satisfies RevalidateDeps,
     setQuarantined,
@@ -64,6 +70,25 @@ describe('revalidateDataset', () => {
     const { deps: d, setQuarantined } = deps([c({ id: 'a' })], () => true);
     const r = await revalidateDataset('d1', d);
     expect(r).toEqual({ checked: 1, quarantined: 0, restored: 0 });
+    expect(setQuarantined).not.toHaveBeenCalled();
+  });
+
+  const killedRuns: Array<[string, GateResult]> = [
+    ['a timeout', { exitCode: 124, passed: false, signal: 'SIGTERM', summary: 'timed out' }],
+    ['an out-of-memory kill', { exitCode: 137, passed: false, summary: 'exit 137' }],
+  ];
+  it.each(killedRuns)('does not quarantine a healthy case after %s', async (_label, killed) => {
+    const { deps: d, setQuarantined } = deps([c({ id: 'a' })], () => killed);
+    const r = await revalidateDataset('d1', d);
+    expect(r).toEqual({ checked: 1, quarantined: 0, restored: 0 });
+    expect(setQuarantined).not.toHaveBeenCalled();
+  });
+
+  it('does not restore a quarantined case after a killed run', async () => {
+    const killed: GateResult = { exitCode: 137, passed: false, summary: 'exit 137' };
+    const { deps: d, setQuarantined } = deps([c({ id: 'a', quarantined: true })], () => killed);
+    const r = await revalidateDataset('d1', d);
+    expect(r.restored).toBe(0);
     expect(setQuarantined).not.toHaveBeenCalled();
   });
 
