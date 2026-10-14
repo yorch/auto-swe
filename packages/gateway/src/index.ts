@@ -25,7 +25,7 @@ import {
   warnIfGitHubDotComWebhookSecret,
   warnIfReposOnUnusableHosts,
 } from './lib/repoIdentityIndexCheck.js';
-import { redactedRequestSerializer } from './lib/requestUrlRedaction.js';
+import { redactedRequestSerializer, redactingLogMethod } from './lib/requestUrlRedaction.js';
 import { syncSchedulesOnceConnected } from './lib/startupScheduleSync.js';
 import {
   healthBody,
@@ -109,7 +109,10 @@ async function start() {
 
   const app = Fastify({
     // A template webhook's URL is its credential: log every request URL with the token redacted.
-    logger: { serializers: { req: redactedRequestSerializer } },
+    logger: {
+      hooks: { logMethod: redactingLogMethod },
+      serializers: { req: redactedRequestSerializer },
+    },
     trustProxy: parseTrustProxy(process.env.TRUST_PROXY),
   });
 

@@ -377,7 +377,8 @@ await fetch(webhookUrl, {
 ```
 
 The webhook token is part of the URL, so the gateway's request log and its trace spans record the
-path with the token replaced by `[redacted]`.
+path with the token replaced by `[redacted]` — matched after percent-decoding, and also inside log
+messages that quote a URL, such as the not-found line for a mistyped webhook path.
 
 ## Limitations
 
