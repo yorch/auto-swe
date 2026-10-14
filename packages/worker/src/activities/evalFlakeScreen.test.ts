@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { type FlakeScreenDeps, screenDatasetCases } from './evalFlakeScreen.js';
+import {
+  type FlakeScreenDeps,
+  isInfrastructureFailure,
+  screenDatasetCases,
+} from './evalFlakeScreen.js';
 import type { EvalCaseRow } from './evalHarness.js';
 import type { GateResult } from './qualityGates.js';
 
@@ -39,6 +43,19 @@ function deps(
   };
   return { d, recordScreen };
 }
+
+describe('isInfrastructureFailure', () => {
+  it('reads a signal or a killed process as infrastructure, any other exit as the test', () => {
+    expect(isInfrastructureFailure({ ...gate(false), exitCode: 124, signal: 'SIGTERM' })).toBe(
+      true
+    );
+    expect(isInfrastructureFailure({ ...gate(false), exitCode: 137 })).toBe(true);
+    expect(isInfrastructureFailure({ ...gate(false), exitCode: 143 })).toBe(true);
+    expect(isInfrastructureFailure(gate(false))).toBe(false);
+    expect(isInfrastructureFailure({ ...gate(false), exitCode: 2 })).toBe(false);
+    expect(isInfrastructureFailure(gate(true))).toBe(false);
+  });
+});
 
 describe('screenDatasetCases', () => {
   it('marks a case screened only when its reference passes every run', async () => {
@@ -103,6 +120,26 @@ describe('screenDatasetCases', () => {
     const r = await screenDatasetCases('d1', d);
     expect(recordScreen.mock.calls.map(([x]) => x.id)).toEqual(['a', 'b']);
     expect(r.screened).toBe(2);
+  });
+
+  const killedRuns: Array<[string, GateResult]> = [
+    ['a timeout', { exitCode: 124, passed: false, signal: 'SIGTERM', summary: 'timed out' }],
+    ['an out-of-memory kill', { exitCode: 137, passed: false, summary: 'exit 137' }],
+    [
+      'a runner that could not start',
+      { exitCode: 127, passed: false, signal: 'SPAWN_ERROR', summary: 'x' },
+    ],
+  ];
+  it.each(killedRuns)('leaves a case unscreened after %s, not flaky', async (_label, killed) => {
+    const runReference = vi
+      .fn<FlakeScreenDeps['runReference']>()
+      .mockResolvedValueOnce(gate(true))
+      .mockResolvedValueOnce(killed);
+    const { d, recordScreen } = deps([c('a')], runReference);
+    const r = await screenDatasetCases('d1', d);
+    expect(runReference).toHaveBeenCalledTimes(2);
+    expect(recordScreen).not.toHaveBeenCalled();
+    expect(r).toEqual({ erroredCaseIds: ['a'], failedCaseIds: [], passed: 0, screened: 0 });
   });
 
   it('does not count a case whose reference changed while it was screened', async () => {

@@ -10,8 +10,9 @@
  *
  * Only never-screened, non-quarantined cases are screened: a quarantined case's
  * reference is known not to pass, and the harness skips it anyway. A case whose
- * reference run hit an infrastructure error is left unscreened for the next
- * sweep rather than recorded as flaky.
+ * reference run hit an infrastructure error — the workspace could not be
+ * provisioned, or the run was killed or timed out (`isInfrastructureFailure`)
+ * — is left unscreened for the next screen rather than recorded as flaky.
  */
 
 import { resolveSetting } from '@auto-swe/shared/config';
@@ -73,6 +74,24 @@ export async function screenDatasetCases(
   return result;
 }
 
+/**
+ * A reference run that says nothing about the test: killed by a signal or a
+ * timeout. `signal` is set when the runner killed the command (its timeout,
+ * exit 124) or could not start it; an exit of 128 and above is a process
+ * killed inside the container — 137 is SIGKILL, typically the out-of-memory
+ * killer, 143 SIGTERM. Such a case is left unscreened for the next screen
+ * rather than marked flaky.
+ *
+ * Every other non-zero exit is a test failure. The runner sees only the golden
+ * test's exit status, so a dependency install or network fetch inside the
+ * test command that fails (exit 1) is indistinguishable from a failing test and
+ * marks the case flaky; an admin re-screen clears it. A test suite that itself
+ * dies on a signal is the reverse: it never screens, and is retried each time.
+ */
+export function isInfrastructureFailure(r: GateResult): boolean {
+  return r.signal !== undefined || r.exitCode >= 128;
+}
+
 /** Screen one case; resolves whether its outcome was recorded. */
 async function screenOne(
   c: EvalCaseRow,
@@ -88,6 +107,10 @@ async function screenOne(
       // Per run: one reference run (a clone plus the golden test) can take
       // minutes, and the activity's heartbeat timeout is shorter than a case.
       deps.heartbeat?.({ caseId: c.id, run });
+      if (isInfrastructureFailure(r)) {
+        result.erroredCaseIds.push(c.id);
+        return false;
+      }
       if (!r.passed) {
         consistent = false;
         break;
