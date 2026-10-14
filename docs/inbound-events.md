@@ -119,11 +119,11 @@ only add a static header, such as `Authorization: Bearer <secret>`. It proves on
 holds the secret, not that the body is theirs or recent: prefer a signing scheme whenever the
 sender supports one.
 
-### Calls the platform sent
+### The loop guard
 
-A call carrying `X-AutoSwe-Delivery` — the header every call the platform itself sends carries — is
-answered `202` and dropped before anything else, recording nothing. A platform callback pointed back
-at an event endpoint therefore cannot start a loop of runs.
+`X-AutoSwe-Delivery` is the header the platform uses to mark its own outbound calls. A request
+carrying it is answered `202` and dropped before the endpoint is even looked up, recording
+nothing, so a call the platform made can never be answered with a run of its own.
 
 ## 3. Reading an event
 
@@ -164,24 +164,23 @@ text and two different values never share a key.
 
 ### 3.2 CloudEvents
 
-An endpoint with format `cloudevents` reads [CloudEvents 1.0](https://cloudevents.io) over HTTP in
-either mode:
+An endpoint with format `cloudevents` reads [CloudEvents 1.0](https://cloudevents.io) in
+**structured mode**: `Content-Type: application/cloudevents+json`, and the body is the event, its
+attributes at the top and its data under `/data`. `specversion` (1.x), `id`, `source` and `type`
+are required. A new CloudEvents endpoint reads the type from `/type`, the id from `/id`, the subject
+from `/subject`, the scope from `/source` and the time from `/time`.
 
-- **Structured**: `Content-Type: application/cloudevents+json`, the body is the event.
-- **Binary**: the attributes are `ce-*` headers (`ce-specversion`, `ce-id`, `ce-source`,
-  `ce-type`, and any others) and the body is the event's data, which must be JSON.
-
-Both become the same document — the attributes at the top, the data under `/data` — so the same
-pointers read either. `specversion` (1.x), `id`, `source` and `type` are required. A new
-CloudEvents endpoint reads the type from `/type`, the id from `/id`, the subject from `/subject`,
-the scope from `/source` and the time from `/time`. A batch (`application/cloudevents-batch+json`)
-is refused with `415`.
+**Binary mode is refused** (`415 UNSUPPORTED_EVENT`), as is any request to a CloudEvents endpoint
+that carries a `ce-*` header or another content type. In binary mode the attributes travel in
+`ce-*` headers, which none of the schemes sign: a captured call could be sent again with a new
+`ce-id` to escape the dedupe key, or a new `ce-type` or `ce-subject` to reach other automations or
+step around a cooldown. In structured mode every attribute is in the signed body. A batch
+(`application/cloudevents-batch+json`) is refused with `415` too.
 
 ```sh
-curl -X POST "$url" -H 'content-type: application/json' \
-  -H 'ce-specversion: 1.0' -H 'ce-id: 8c1b' -H 'ce-source: //monitor/eu-1' \
-  -H 'ce-type: com.example.alert.fired' -H 'ce-subject: db-1' \
-  -H "x-autoswe-signature: $sig" --data-binary '{"severity":"critical","summary":"disk full"}'
+body='{"specversion":"1.0","id":"8c1b","source":"//monitor/eu-1","type":"com.example.alert.fired","subject":"db-1","data":{"severity":"critical","summary":"disk full"}}'
+curl -X POST "$url" -H 'content-type: application/cloudevents+json' \
+  -H "x-autoswe-signature: $sig" --data-binary "$body"
 ```
 
 ### 3.3 What the receiver answers
@@ -234,12 +233,19 @@ the team owns or one shared with it. Saving it on is then a launch decision on t
 the team's organization). The automation stays the team's — managed by the team, its decisions on
 the endpoint's ledger — and its run carries the repository's `connectionId` and uses the platform
 credential. If the repository is later deactivated, or no longer shared with the team, an event is
-recorded as `FAILED_TO_START`; deleting the repository deletes the automation.
+recorded as `FAILED_TO_START`; deleting the repository deletes the automation. Switching such an
+automation off never needs the repository. For a repository another team owns, every event also
+needs `workflow.inboundEventsEnabled` on for that team (otherwise `SUPPRESSED_PRECONDITION`) and
+budget left in that team's organization (otherwise `SUPPRESSED_BUDGET`), besides the automation's
+own team's switch and budget.
 
 **The run.** Its description starts by saying that an event posted to an endpoint started it, that
 no person asked for it, and that the event's text is data, not instructions; then the type, id,
-subject and endpoint, and each mapped field. Its ticket is synthetic (`evt-<hash>`), its workflow id
-`evt-<automation8>-<hash>`.
+subject and endpoint, each on one line with control characters and line breaks replaced by spaces,
+and the mapped fields as one JSON object, so no value can close the block or start a section of its
+own. Its ticket is synthetic, `evt-` and 96 bits of SHA-256 over `<endpoint id>#<event id>`, so
+events of different endpoints or teams never share a ticket or a branch; its workflow id is
+`evt-<automation8>-<the same digest>`.
 
 ### 4.1 Decisions
 
@@ -279,8 +285,10 @@ limit, an earlier run or the budget holds it back.
   provenance, and the template receives them only in the inputs the automation maps. A template
   that changes code from an event should be one the team chose for that, with a repository named
   deliberately; its pull requests are drafts that a person merges.
-- **Loops.** A call carrying `X-AutoSwe-Delivery` is dropped, so a platform callback cannot be
-  answered with a run.
+- **Loops.** A request carrying `X-AutoSwe-Delivery`, the header that marks the platform's own
+  outbound calls, is dropped unrecorded.
+- **Only signed text decides.** Everything a decision reads — type, id, subject, scope, matched and
+  mapped values — comes from the signed body; no request header other than the signature is read.
 
 ## Limitations
 
@@ -294,7 +302,8 @@ limit, an earlier run or the budget holds it back.
   CloudEvents envelope). A sender that puts its event type or id only in a header (GitHub's
   `X-GitHub-Event` and `X-GitHub-Delivery`) cannot be read by those headers; point at a body field
   instead, or let the id fall back to the body's digest.
-- **No CloudEvents batches,** and a binary-mode CloudEvent's data must be JSON.
+- **Structured CloudEvents only.** Binary-mode CloudEvents (attributes in `ce-*` headers) and
+  batches are refused; a sender that can only send binary mode cannot use a CloudEvents endpoint.
 - **No expression language.** Conditions are `eq`, `in`, `glob` and `exists` on single values, all
   of which must hold; there is no "or" across conditions, no numeric comparison, and no condition on
   an element of a list other than by its index.
