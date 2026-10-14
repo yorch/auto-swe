@@ -977,14 +977,16 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       // Defence in depth: a decision is taken again only on the owner it was recorded for — a
-      // repository's on a repository key, and a team's on its own team's key. A source that names
-      // its owner from the occurrence (an inbound event's endpoint) is checked below, against an
-      // owner that must belong to the automation's team.
+      // repository's on a repository key, and a team's on its own team's key. Inbound events name
+      // their owner from the occurrence (the endpoint) and are checked below, against an endpoint
+      // that must belong to the automation's team. Any other source that names its owner has no
+      // such check here, so it is refused rather than let through.
       const ownerMatches =
-        source.ownerKey !== undefined ||
-        (access.kind === 'repository'
-          ? isRepositoryOwnerKey(fire.ownerKey)
-          : fire.ownerKey === teamOwnerKey(access.team.id));
+        source.key === INBOUND_EVENT ||
+        (source.ownerKey === undefined &&
+          (access.kind === 'repository'
+            ? isRepositoryOwnerKey(fire.ownerKey)
+            : fire.ownerKey === teamOwnerKey(access.team.id)));
       if (!ownerMatches) {
         return sendError(
           reply,

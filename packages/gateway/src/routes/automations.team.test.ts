@@ -24,7 +24,7 @@ vi.mock('../lib/launchAuthorization.js', () => ({
 
 import { WORKFLOW_RUN_FAILED } from '@auto-swe/shared/automation';
 import { authorizeLaunch } from '../lib/launchAuthorization.js';
-import { FAKE_TEAM_SOURCE } from '../test/fakeTeamSource.js';
+import { FAKE_TEAM_SOURCE, fakeTeamSource } from '../test/fakeTeamSource.js';
 import { automationRoutes } from './automations.js';
 
 const TEAM = '55555555-5555-4555-8555-555555555555';
@@ -312,6 +312,30 @@ describe('automationRoutes (team automations)', () => {
         expect(res.statusCode).toBe(409);
       }
       expect(engine.decideAndStart).not.toHaveBeenCalled();
+    });
+
+    it('refuses a retry for a source that names its owner without a check of its own', async () => {
+      ctx.prisma.team.findUnique.mockResolvedValue(teamRow('LEAD'));
+      ctx.prisma.automationFire.findFirst.mockResolvedValue({
+        facts: { eventId: 'e1', topic: 'deploys' },
+        id: FIRE,
+        outcome: 'SUPPRESSED_COOLDOWN',
+        ownerKey: `@team/${TEAM}`,
+        retriedAt: null,
+      });
+      const source = fakeTeamSource as { ownerKey?: (facts: unknown) => string };
+      source.ownerKey = () => `@team/${TEAM}`;
+      try {
+        const res = await ctx.app.inject({
+          headers: AUTH,
+          method: 'POST',
+          url: `${URL}/${AUTOMATION}/fires/${FIRE}/retry`,
+        });
+        expect(res.statusCode).toBe(409);
+        expect(engine.decideAndStart).not.toHaveBeenCalled();
+      } finally {
+        delete source.ownerKey;
+      }
     });
   });
 });
