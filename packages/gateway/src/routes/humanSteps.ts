@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
 import { syncSlackHumanStepOutcome } from '../lib/hitlSlackSync.js';
+import { sendError } from '../lib/httpErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import {
   buildWorkflowHumanStepControlFilter,
@@ -403,12 +404,12 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       // single user may hold before the response is hijacked.
       const openCount = openInboxStreams.get(user.sub) ?? 0;
       if (openCount >= MAX_INBOX_STREAMS_PER_USER) {
-        return reply.status(429).send({
-          error: {
-            code: 'TOO_MANY_STREAMS',
-            message: `At most ${MAX_INBOX_STREAMS_PER_USER} concurrent inbox streams per user`,
-          },
-        });
+        return sendError(
+          reply,
+          429,
+          'TOO_MANY_STREAMS',
+          `At most ${MAX_INBOX_STREAMS_PER_USER} concurrent inbox streams per user`
+        );
       }
       openInboxStreams.set(user.sub, openCount + 1);
       const releaseStream = () => {
@@ -550,9 +551,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
       if (!step) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Human step not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Human step not found');
       }
       return {
         data: {
@@ -611,9 +610,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         if (result.code === 'TEMPORAL_UNAVAILABLE') {
           return sendTemporalUnavailable(reply);
         }
-        return reply
-          .status(STATUS_BY_CODE[result.code])
-          .send({ error: { code: result.code, message: result.message } });
+        return sendError(reply, STATUS_BY_CODE[result.code], result.code, result.message);
       }
 
       await writeAuditLog(fastify, {

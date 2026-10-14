@@ -13,6 +13,7 @@ import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
 import {
@@ -762,27 +763,24 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
 
       const repo = await loadRepoWithMembership(fastify.prisma, body.repoId, user.sub);
       if (!repo?.isActive) {
-        return reply.status(404).send({
-          error: {
-            code: 'REPO_NOT_FOUND',
-            message: `Repository ${body.repoId} not found or inactive`,
-          },
-        });
+        return sendError(
+          reply,
+          404,
+          'REPO_NOT_FOUND',
+          `Repository ${body.repoId} not found or inactive`
+        );
       }
       if (!canCreate(user, repo)) {
-        return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message:
-              'Requires ADMIN role, or LEAD membership on the repository team or a team it is shared with',
-          },
-        });
+        return sendError(
+          reply,
+          403,
+          'FORBIDDEN',
+          'Requires ADMIN role, or LEAD membership on the repository team or a team it is shared with'
+        );
       }
       const owner = resolveCreateTeam(user, repo, body.teamId);
       if ('status' in owner) {
-        return reply
-          .status(owner.status)
-          .send({ error: { code: owner.code, message: owner.message } });
+        return sendError(reply, owner.status, owner.code, owner.message);
       }
       if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply, 'caller'))) {
         return;
@@ -803,9 +801,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         user
       );
       if ('error' in template) {
-        return reply
-          .status(422)
-          .send({ error: { code: 'TEMPLATE_NOT_RESOLVABLE', message: template.error } });
+        return sendError(reply, 422, 'TEMPLATE_NOT_RESOLVABLE', template.error);
       }
 
       const { branchPrefix } = await resolveWorkflowDefaults();
@@ -899,9 +895,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         if (isTemporalUnavailable(err)) {
           return sendTemporalUnavailable(reply);
         }
-        return reply.status(502).send({
-          error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not create Temporal schedule' },
-        });
+        return sendError(reply, 502, 'SCHEDULE_SYNC_FAILED', 'Could not create Temporal schedule');
       }
 
       const status = await fastify.temporal.getWorkRequestScheduleStatus(scheduleId).catch(() => ({
@@ -926,33 +920,27 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         where: { id: request.params.id },
       });
       if (!initial) {
-        return reply.status(404).send({
-          error: { code: 'SCHEDULE_NOT_FOUND', message: 'Scheduled work request not found' },
-        });
+        return sendError(reply, 404, 'SCHEDULE_NOT_FOUND', 'Scheduled work request not found');
       }
       // One attempt: decide on `existing`, sync Temporal, write conditionally.
       const patchOnce = async (existing: NonNullable<typeof initial>) => {
         const repo = await loadRepoWithMembership(fastify.prisma, existing.repoId, user.sub);
         if (!repo) {
-          return reply.status(404).send({
-            error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
-          });
+          return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
         }
         if (!canManage(user, repo, existing)) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE },
-          });
+          return sendError(reply, 403, 'FORBIDDEN', FORBIDDEN_MESSAGE);
         }
 
         if (!existing.workRequestId) {
           // Standing WorkRequest was deleted out-of-band — the schedule can no
           // longer fire safely (RunnableWorkflow would FK-fail). Recreate it.
-          return reply.status(409).send({
-            error: {
-              code: 'SCHEDULE_ORPHANED',
-              message: 'Standing work request is missing; delete and recreate this schedule',
-            },
-          });
+          return sendError(
+            reply,
+            409,
+            'SCHEDULE_ORPHANED',
+            'Standing work request is missing; delete and recreate this schedule'
+          );
         }
 
         const body = request.body;
@@ -979,9 +967,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           nextTemplateId !== existing.templateId ? user : null
         );
         if ('error' in template) {
-          return reply
-            .status(422)
-            .send({ error: { code: 'TEMPLATE_NOT_RESOLVABLE', message: template.error } });
+          return sendError(reply, 422, 'TEMPLATE_NOT_RESOLVABLE', template.error);
         }
 
         // Whoever changes what the schedule does, how often it does it, how much it
@@ -1026,9 +1012,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         // minute is a way to spend more, so it counts.
         if (rebinds && (takesOver || nextIsActive)) {
           if (nextIsActive && !repo.isActive) {
-            return reply.status(409).send({
-              error: { code: 'REPO_INACTIVE', message: 'Repository is no longer active' },
-            });
+            return sendError(reply, 409, 'REPO_INACTIVE', 'Repository is no longer active');
           }
           if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply, 'caller'))) {
             return;
@@ -1061,9 +1045,12 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           if (isTemporalUnavailable(err)) {
             return sendTemporalUnavailable(reply);
           }
-          return reply.status(502).send({
-            error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not update Temporal schedule' },
-          });
+          return sendError(
+            reply,
+            502,
+            'SCHEDULE_SYNC_FAILED',
+            'Could not update Temporal schedule'
+          );
         }
 
         // The row writes are conditional on the state this request read, so an
@@ -1222,27 +1209,23 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply.status(404).send({
-          error: { code: 'SCHEDULE_NOT_FOUND', message: 'Scheduled work request not found' },
-        });
+        return sendError(reply, 404, 'SCHEDULE_NOT_FOUND', 'Scheduled work request not found');
       }
       const repo = await loadRepoWithMembership(fastify.prisma, existing.repoId, user.sub);
       if (!repo || !canManage(user, repo, existing)) {
-        return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE },
-        });
+        return sendError(reply, 403, 'FORBIDDEN', FORBIDDEN_MESSAGE);
       }
       // A paused schedule cannot be fired by hand: Temporal would accept the
       // trigger, but the worker refuses every fire of an inactive row, so the
       // request would answer 202 and always fail, after a takeover had already
       // changed whose identity it runs as. Refused before any of that.
       if (!existing.isActive) {
-        return reply.status(409).send({
-          error: {
-            code: 'SCHEDULE_INACTIVE',
-            message: 'The schedule is paused; resume it before firing it',
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'SCHEDULE_INACTIVE',
+          'The schedule is paused; resume it before firing it'
+        );
       }
       // Whoever causes a fire is who it runs as, the same rule as editing. The
       // firer is judged as themselves ('caller') whether they are the author or
@@ -1250,9 +1233,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
       // run uses.
       const takesOver = user.sub !== existing.actsAsUserId;
       if (takesOver && !repo.isActive) {
-        return reply.status(409).send({
-          error: { code: 'REPO_INACTIVE', message: 'Repository is no longer active' },
-        });
+        return sendError(reply, 409, 'REPO_INACTIVE', 'Repository is no longer active');
       }
       if (!(await passesLaunchAuthorization(fastify, request, user, repo, reply, 'caller'))) {
         return;
@@ -1274,12 +1255,12 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
             })
           : null;
         if (!(workRequestId && synced?.templateId && synced.templateVersion)) {
-          return reply.status(409).send({
-            error: {
-              code: 'SCHEDULE_ORPHANED',
-              message: 'Standing work request is missing; delete and recreate this schedule',
-            },
-          });
+          return sendError(
+            reply,
+            409,
+            'SCHEDULE_ORPHANED',
+            'Standing work request is missing; delete and recreate this schedule'
+          );
         }
         const template = { templateId: synced.templateId, templateVersion: synced.templateVersion };
         try {
@@ -1291,9 +1272,12 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
           if (isTemporalUnavailable(err)) {
             return sendTemporalUnavailable(reply);
           }
-          return reply.status(502).send({
-            error: { code: 'SCHEDULE_SYNC_FAILED', message: 'Could not update Temporal schedule' },
-          });
+          return sendError(
+            reply,
+            502,
+            'SCHEDULE_SYNC_FAILED',
+            'Could not update Temporal schedule'
+          );
         }
         let claimed: number | null;
         try {
@@ -1432,12 +1416,12 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         if (isTemporalUnavailable(err)) {
           return sendTemporalUnavailable(reply);
         }
-        return reply.status(502).send({
-          error: {
-            code: 'SCHEDULE_TRIGGER_FAILED',
-            message: 'Could not trigger Temporal schedule',
-          },
-        });
+        return sendError(
+          reply,
+          502,
+          'SCHEDULE_TRIGGER_FAILED',
+          'Could not trigger Temporal schedule'
+        );
       }
       await fastify.prisma.scheduledWorkRequest.update({
         data: { lastFiredAt: new Date() },
@@ -1461,15 +1445,11 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply.status(404).send({
-          error: { code: 'SCHEDULE_NOT_FOUND', message: 'Scheduled work request not found' },
-        });
+        return sendError(reply, 404, 'SCHEDULE_NOT_FOUND', 'Scheduled work request not found');
       }
       const repo = await loadRepoWithMembership(fastify.prisma, existing.repoId, user.sub);
       if (!repo || !canManage(user, repo, existing)) {
-        return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: FORBIDDEN_MESSAGE },
-        });
+        return sendError(reply, 403, 'FORBIDDEN', FORBIDDEN_MESSAGE);
       }
 
       // Temporal first (idempotent — only not-found is swallowed), then the
@@ -1482,12 +1462,12 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
         if (isTemporalUnavailable(err)) {
           return sendTemporalUnavailable(reply);
         }
-        return reply.status(502).send({
-          error: {
-            code: 'SCHEDULE_SYNC_FAILED',
-            message: 'Could not remove the Temporal schedule; the scheduled request was kept',
-          },
-        });
+        return sendError(
+          reply,
+          502,
+          'SCHEDULE_SYNC_FAILED',
+          'Could not remove the Temporal schedule; the scheduled request was kept'
+        );
       }
       await fastify.prisma.scheduledWorkRequest.delete({ where: { id: existing.id } });
       return reply.send({ data: { deleted: true } });

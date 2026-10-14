@@ -5,6 +5,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 import {
@@ -273,9 +274,7 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!row) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Policy not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Policy not found');
       }
       return { data: toPolicyResponseDto(row) };
     }
@@ -302,9 +301,7 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Policy not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Policy not found');
       }
       const data = request.body;
       if (!validateScope({ ...existing, ...data })) {
@@ -354,9 +351,7 @@ export const autonomyPolicyRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Policy not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Policy not found');
       }
       await fastify.prisma.autonomyPolicy.delete({ where: { id: existing.id } });
       await writeAuditLog(fastify, {

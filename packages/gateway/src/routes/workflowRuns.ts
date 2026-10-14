@@ -355,14 +355,10 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
       if (!run) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'RUN_NOT_FOUND', message: 'Workflow run not found' } });
+        return sendError(reply, 404, 'RUN_NOT_FOUND', 'Workflow run not found');
       }
       if (run.status !== 'RUNNING') {
-        return reply.status(409).send({
-          error: { code: 'RUN_NOT_RUNNING', message: 'Only RUNNING runs can be cancelled' },
-        });
+        return sendError(reply, 409, 'RUN_NOT_RUNNING', 'Only RUNNING runs can be cancelled');
       }
       // Temporal first, then the rows. Marking the run CANCELLED before the
       // cancel reached Temporal left a workflow still running — pushing,
@@ -429,12 +425,12 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           where: { id: run.id },
         });
         if (current?.status !== 'CANCELLED') {
-          return reply.status(409).send({
-            error: {
-              code: 'RUN_NOT_RUNNING',
-              message: 'Run reached a terminal state before cancel',
-            },
-          });
+          return sendError(
+            reply,
+            409,
+            'RUN_NOT_RUNNING',
+            'Run reached a terminal state before cancel'
+          );
         }
       }
       if (run.workflowId) {
@@ -475,9 +471,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
       if (!run) {
-        return reply.status(404).send({
-          error: { code: 'RUN_NOT_FOUND', message: 'Workflow run not found' },
-        });
+        return sendError(reply, 404, 'RUN_NOT_FOUND', 'Workflow run not found');
       }
       const rows = await fastify.prisma.evalResult.findMany({
         orderBy: { createdAt: 'asc' },
@@ -515,9 +509,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
       if (!run) {
-        return reply.status(404).send({
-          error: { code: 'RUN_NOT_FOUND', message: 'Workflow run not found' },
-        });
+        return sendError(reply, 404, 'RUN_NOT_FOUND', 'Workflow run not found');
       }
       const { since } = request.query;
       const serverTime = new Date().toISOString();
@@ -586,9 +578,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
       if (!run) {
-        return reply.status(404).send({
-          error: { code: 'RUN_NOT_FOUND', message: 'Workflow run not found' },
-        });
+        return sendError(reply, 404, 'RUN_NOT_FOUND', 'Workflow run not found');
       }
       const traces = includeTraces
         ? await runUnscoped(
@@ -669,9 +659,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
       if (!run) {
-        return reply.status(404).send({
-          error: { code: 'RUN_NOT_FOUND', message: 'Workflow run not found' },
-        });
+        return sendError(reply, 404, 'RUN_NOT_FOUND', 'Workflow run not found');
       }
       const rows = await fastify.prisma.autonomyDecision.findMany({
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],

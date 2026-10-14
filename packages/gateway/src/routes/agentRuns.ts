@@ -30,6 +30,7 @@ import type { BudgetTier, RepoWorkRequest } from '@auto-swe/shared/types/workflo
 import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { isOrgMember } from '../lib/orgAccess.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
@@ -84,7 +85,7 @@ function agentScopeBranches(orgId: string | null) {
 const RerunParams = z.object({ workRequestId: z.string().uuid() });
 
 function error(reply: FastifyReply, status: number, code: string, message: string) {
-  return reply.status(status).send({ error: { code, message } });
+  return sendError(reply, status, code, message);
 }
 
 interface LaunchInput {

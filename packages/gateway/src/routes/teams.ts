@@ -168,12 +168,12 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         ? await fastify.prisma.organization.findUnique({ where: { id: orgId } })
         : await fastify.prisma.organization.findUnique({ where: { slug: 'default' } });
       if (!org) {
-        return reply.status(400).send({
-          error: {
-            code: 'ORG_NOT_FOUND',
-            message: orgId ? `Organization ${orgId} not found` : 'No default organization exists',
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'ORG_NOT_FOUND',
+          orgId ? `Organization ${orgId} not found` : 'No default organization exists'
+        );
       }
 
       // The findFirst above is a friendly pre-check; the unique indexes on
@@ -254,18 +254,14 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       if (!team) {
-        return reply.status(404).send({
-          error: { code: 'TEAM_NOT_FOUND', message: 'Team not found' },
-        });
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
 
       // Non-admins may only view teams they belong to
       if (user.role !== 'ADMIN') {
         const isMember = team.memberships.some((m) => m.user.id === user.sub);
         if (!isMember) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'You are not a member of this team' },
-          });
+          return sendError(reply, 403, 'FORBIDDEN', 'You are not a member of this team');
         }
       }
 
@@ -317,9 +313,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!team) {
-        return reply.status(404).send({
-          error: { code: 'TEAM_NOT_FOUND', message: 'Team not found' },
-        });
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
 
       // A rename onto another team's name trips the unique index on name.
@@ -384,9 +378,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!team) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'TEAM_NOT_FOUND', message: 'Team not found' } });
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
       return { data: { shellImageAllowlist: team.shellImageAllowlist } };
     }
@@ -408,9 +400,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!exists) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'TEAM_NOT_FOUND', message: 'Team not found' } });
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
       const updated = await fastify.prisma.team.update({
         data: { shellImageAllowlist: request.body.shellImageAllowlist },
@@ -463,9 +453,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!team) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'TEAM_NOT_FOUND', message: 'Team not found' } });
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
       return { data: { egressAllowlist: team.egressAllowlist } };
     }
@@ -487,9 +475,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!exists) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'TEAM_NOT_FOUND', message: 'Team not found' } });
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
       const updated = await fastify.prisma.team.update({
         data: { egressAllowlist: request.body.egressAllowlist },
@@ -520,9 +506,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!team) {
-        return reply.status(404).send({
-          error: { code: 'TEAM_NOT_FOUND', message: 'Team not found' },
-        });
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found');
       }
 
       await fastify.prisma.$transaction(async (tx) => {
@@ -582,12 +566,12 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
       const actorRole = (request.teamRole as Role | undefined) ?? requireUser(request).role;
 
       if (roleMeets(role, actorRole) && role !== actorRole) {
-        return reply.status(403).send({
-          error: {
-            code: 'PRIVILEGE_ESCALATION',
-            message: 'Cannot grant a role higher than your own',
-          },
-        });
+        return sendError(
+          reply,
+          403,
+          'PRIVILEGE_ESCALATION',
+          'Cannot grant a role higher than your own'
+        );
       }
 
       const existing = await fastify.prisma.teamMembership.findUnique({
@@ -651,9 +635,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         where: { userId_teamId: { teamId: request.params.id, userId: request.params.userId } },
       });
       if (!membership) {
-        return reply.status(404).send({
-          error: { code: 'MEMBER_NOT_FOUND', message: 'Membership not found' },
-        });
+        return sendError(reply, 404, 'MEMBER_NOT_FOUND', 'Membership not found');
       }
 
       const guard = guardTeamMembershipChange(
@@ -665,7 +647,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         request.body.role
       );
       if (guard) {
-        return reply.status(409).send({ error: { code: guard.code, message: guard.message } });
+        return sendError(reply, 409, guard.code, guard.message);
       }
 
       const result = await applyMembershipChange(
@@ -710,9 +692,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         where: { userId_teamId: { teamId: request.params.id, userId: request.params.userId } },
       });
       if (!membership) {
-        return reply.status(404).send({
-          error: { code: 'MEMBER_NOT_FOUND', message: 'Membership not found' },
-        });
+        return sendError(reply, 404, 'MEMBER_NOT_FOUND', 'Membership not found');
       }
 
       const guard = guardTeamMembershipChange(
@@ -723,7 +703,7 @@ export const teamRoutes: FastifyPluginAsync = async (fastify) => {
         'delete'
       );
       if (guard) {
-        return reply.status(409).send({ error: { code: guard.code, message: guard.message } });
+        return sendError(reply, 409, guard.code, guard.message);
       }
 
       const result = await applyMembershipChange(

@@ -8,6 +8,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { getDefaultClientOrigin } from '../lib/env.js';
+import { sendError } from '../lib/httpErrors.js';
 import { revokeMcpGrants } from '../lib/mcpGrants.js';
 import { invalidateUserAuthCache, requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -79,14 +80,12 @@ function replyOnUserUniqueViolation(err: unknown, reply: FastifyReply): FastifyR
   const t = e.meta?.target;
   const target = Array.isArray(t) ? t.join(',') : typeof t === 'string' ? t : '';
   const isSlack = target.includes('slack');
-  return reply.status(409).send({
-    error: {
-      code: isSlack ? 'SLACK_ID_TAKEN' : 'USER_EXISTS',
-      message: isSlack
-        ? 'This Slack ID is linked to another user'
-        : 'User with this email already exists',
-    },
-  });
+  return sendError(
+    reply,
+    409,
+    isSlack ? 'SLACK_ID_TAKEN' : 'USER_EXISTS',
+    isSlack ? 'This Slack ID is linked to another user' : 'User with this email already exists'
+  );
 }
 
 export const userRoutes: FastifyPluginAsync = async (fastify) => {
@@ -148,9 +147,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const user = candidates.find((u) => u.email.toLowerCase() === wanted);
       if (!user) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'USER_NOT_FOUND', message: 'No active user with that email' } });
+        return sendError(reply, 404, 'USER_NOT_FOUND', 'No active user with that email');
       }
       return { data: user };
     }
@@ -170,9 +167,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         where: { email: { equals: email, mode: 'insensitive' } },
       });
       if (existing) {
-        return reply.status(409).send({
-          error: { code: 'USER_EXISTS', message: 'User with this email already exists' },
-        });
+        return sendError(reply, 409, 'USER_EXISTS', 'User with this email already exists');
       }
 
       // slackId must be unique — a collision would make the Slack webhook/slash
@@ -180,9 +175,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       if (slackId) {
         const slackTaken = await fastify.prisma.user.findFirst({ where: { slackId } });
         if (slackTaken) {
-          return reply.status(409).send({
-            error: { code: 'SLACK_ID_TAKEN', message: 'This Slack ID is linked to another user' },
-          });
+          return sendError(reply, 409, 'SLACK_ID_TAKEN', 'This Slack ID is linked to another user');
         }
       }
 
@@ -277,9 +270,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         where: { email: { equals: email, mode: 'insensitive' } },
       });
       if (existing) {
-        return reply.status(409).send({
-          error: { code: 'USER_EXISTS', message: 'User with this email already exists' },
-        });
+        return sendError(reply, 409, 'USER_EXISTS', 'User with this email already exists');
       }
 
       const user = await fastify.prisma.user.create({
@@ -354,9 +345,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!user) {
-        return reply.status(404).send({
-          error: { code: 'USER_NOT_FOUND', message: 'User not found' },
-        });
+        return sendError(reply, 404, 'USER_NOT_FOUND', 'User not found');
       }
 
       // Prevent an admin from locking themselves (and potentially every
@@ -366,20 +355,20 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
       const actor = requireUser(request);
       if (actor.sub === request.params.id) {
         if (request.body.isActive === false) {
-          return reply.status(400).send({
-            error: {
-              code: 'CANNOT_SELF_DEACTIVATE',
-              message: 'You cannot deactivate your own account.',
-            },
-          });
+          return sendError(
+            reply,
+            400,
+            'CANNOT_SELF_DEACTIVATE',
+            'You cannot deactivate your own account.'
+          );
         }
         if (request.body.role !== undefined && request.body.role !== Role.ADMIN) {
-          return reply.status(400).send({
-            error: {
-              code: 'CANNOT_SELF_DEMOTE',
-              message: 'You cannot remove your own admin role.',
-            },
-          });
+          return sendError(
+            reply,
+            400,
+            'CANNOT_SELF_DEMOTE',
+            'You cannot remove your own admin role.'
+          );
         }
       }
 
@@ -389,9 +378,7 @@ export const userRoutes: FastifyPluginAsync = async (fastify) => {
           where: { id: { not: request.params.id }, slackId: request.body.slackId },
         });
         if (slackTaken) {
-          return reply.status(409).send({
-            error: { code: 'SLACK_ID_TAKEN', message: 'This Slack ID is linked to another user' },
-          });
+          return sendError(reply, 409, 'SLACK_ID_TAKEN', 'This Slack ID is linked to another user');
         }
       }
 

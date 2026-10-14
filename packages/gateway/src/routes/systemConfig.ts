@@ -13,6 +13,7 @@ import {
   GitHubAppPrivateKeySchema,
   GitHubTokenSchema,
 } from '../lib/githubCredentialSchemas.js';
+import { sendError } from '../lib/httpErrors.js';
 import {
   auditConfigWrite,
   BaseUrlRefusedError,
@@ -319,12 +320,12 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     async (req, reply) => {
       const { field, integration } = req.params;
       if (!(CLEARABLE_SECRETS[integration] as readonly string[]).includes(field)) {
-        return reply.status(400).send({
-          error: {
-            code: 'NOT_A_SECRET',
-            message: `'${field}' is not a secret field of ${integration}`,
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'NOT_A_SECRET',
+          `'${field}' is not a secret field of ${integration}`
+        );
       }
       const cleared = await clearStoredSecret(
         fastify.prisma,
@@ -334,9 +335,7 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         field
       );
       if (!cleared) {
-        return reply.status(404).send({
-          error: { code: 'NOT_STORED', message: 'No value is stored for this field' },
-        });
+        return sendError(reply, 404, 'NOT_STORED', 'No value is stored for this field');
       }
       return reply.send(await getIntegrationConfig(fastify.prisma, integration));
     }
@@ -418,12 +417,12 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     async (req, reply) => {
       const refusal = await issueTrackerBaseUrlRefusal(fastify.prisma, req.body);
       if (refusal) {
-        return reply.status(400).send({
-          error: {
-            code: 'BASE_URL_REFUSED',
-            message: `Base URL refused: ${refusal}. The private-network option permits private addresses only, never loopback, link-local or metadata addresses.`,
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'BASE_URL_REFUSED',
+          `Base URL refused: ${refusal}. The private-network option permits private addresses only, never loopback, link-local or metadata addresses.`
+        );
       }
       const result = await updateIssueTrackerConfig(fastify.prisma, req.body);
       await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
@@ -458,12 +457,12 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
         return reply.send(await detectJiraFields());
       } catch (err) {
         if (err instanceof BaseUrlRefusedError) {
-          return reply.status(400).send({
-            error: {
-              code: 'BASE_URL_REFUSED',
-              message: `Base URL refused: ${err.reason}. The private-network option permits private addresses only, never loopback, link-local or metadata addresses.`,
-            },
-          });
+          return sendError(
+            reply,
+            400,
+            'BASE_URL_REFUSED',
+            `Base URL refused: ${err.reason}. The private-network option permits private addresses only, never loopback, link-local or metadata addresses.`
+          );
         }
         throw err;
       }
@@ -482,12 +481,12 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
     async (req, reply) => {
       const refusal = await knowledgeBaseBaseUrlRefusal(fastify.prisma, req.body);
       if (refusal) {
-        return reply.status(400).send({
-          error: {
-            code: 'BASE_URL_REFUSED',
-            message: `Base URL refused: ${refusal}. The private-network option permits private addresses only, never loopback, link-local or metadata addresses.`,
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'BASE_URL_REFUSED',
+          `Base URL refused: ${refusal}. The private-network option permits private addresses only, never loopback, link-local or metadata addresses.`
+        );
       }
       const result = await updateKnowledgeBaseConfig(fastify.prisma, req.body);
       await auditConfigWrite(fastify.prisma, fastify.log, requireUser(req).sub, result);
@@ -675,12 +674,12 @@ export const systemConfigRoutes: FastifyPluginAsync = async (
           where: { isActive: true, key: agentKey, version: candidateVersion },
         });
         if (!agent) {
-          return reply.status(400).send({
-            error: {
-              code: 'CANARY_VERSION_NOT_FOUND',
-              message: `No active agent '${agentKey}' at version ${candidateVersion}`,
-            },
-          });
+          return sendError(
+            reply,
+            400,
+            'CANARY_VERSION_NOT_FOUND',
+            `No active agent '${agentKey}' at version ${candidateVersion}`
+          );
         }
       }
       const result = await updateCanaryConfig(fastify.prisma, req.body);

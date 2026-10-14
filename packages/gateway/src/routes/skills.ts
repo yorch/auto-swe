@@ -5,6 +5,7 @@ import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import {
   createSkill,
@@ -75,12 +76,12 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
     });
 
   const skillChanged = (reply: FastifyReply) =>
-    reply.status(409).send({
-      error: {
-        code: 'SKILL_CHANGED',
-        message: 'The skill changed since you read it; reload it and try again.',
-      },
-    });
+    sendError(
+      reply,
+      409,
+      'SKILL_CHANGED',
+      'The skill changed since you read it; reload it and try again.'
+    );
 
   // A revision-guarded write that matched no row (P2025) means one of three
   // things, and only one of them is a lost race: the skill was deleted (404), a
@@ -99,7 +100,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
       where: { id: readRow.id },
     });
     if (!now) {
-      return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
+      return sendError(reply, 404, 'NOT_FOUND', 'Skill not found');
     }
     if (now.currentRevision === readRow.currentRevision) {
       throw err;
@@ -211,7 +212,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!skill) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Skill not found');
       }
       return { data: { ...skill, usedByCount: skill._count.agentSkillRefs } };
     }
@@ -230,7 +231,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Skill not found');
       }
 
       if (
@@ -287,7 +288,7 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Skill not found');
       }
       if (request.body.revision !== existing.currentRevision) {
         return skillChanged(reply);
@@ -320,15 +321,15 @@ export const skillsRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Skill not found');
       }
       if (existing.isBuiltIn) {
-        return reply.status(403).send({
-          error: {
-            code: 'BUILTIN_SKILL',
-            message: 'Built-in skills cannot be deleted. Use the isActive flag to disable them.',
-          },
-        });
+        return sendError(
+          reply,
+          403,
+          'BUILTIN_SKILL',
+          'Built-in skills cannot be deleted. Use the isActive flag to disable them.'
+        );
       }
       await fastify.prisma.skill.delete({ where: { id: request.params.id } });
       await writeAuditLog(fastify, {
@@ -363,7 +364,7 @@ export const teamAgentSkillRoutes: FastifyPluginAsync = async (fastify) => {
 
       const access = await checkTeamAccess(fastify.prisma, user, teamId);
       if (!access.ok) {
-        return reply.status(403).send({ error: { code: 'FORBIDDEN', message: access.message } });
+        return sendError(reply, 403, 'FORBIDDEN', access.message);
       }
 
       const team = await fastify.prisma.team.findUnique({

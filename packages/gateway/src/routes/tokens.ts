@@ -3,6 +3,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { safePatAuditFields } from '../lib/patAuditFields.js';
 import { PAT_PREFIX, requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -125,9 +126,7 @@ export const tokenRoutes: FastifyPluginAsync = async (fastify) => {
         // Hide the row's existence from non-owners. Platform admins can
         // already see all tokens via list+select in a future admin UI; we
         // don't surface them here to keep the route boundary tight.
-        return reply.status(404).send({
-          error: { code: 'TOKEN_NOT_FOUND', message: 'Token not found' },
-        });
+        return sendError(reply, 404, 'TOKEN_NOT_FOUND', 'Token not found');
       }
       if (existing.revokedAt) {
         return { data: { id: existing.id, revokedAt: existing.revokedAt } };

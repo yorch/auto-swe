@@ -3,6 +3,7 @@ import { NEIGHBOR_SELECT } from '@auto-swe/shared/lib/repoDependencyResolver';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { sendError } from '../lib/httpErrors.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { isTemporalUnavailable, sendTemporalUnavailable } from '../lib/temporalErrors.js';
@@ -189,12 +190,12 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
         if (isTemporalUnavailable(err)) {
           return sendTemporalUnavailable(reply);
         }
-        return reply.status(503).send({
-          error: {
-            code: 'SCHEDULE_UNAVAILABLE',
-            message: 'The repo dependency scan schedule is not registered yet.',
-          },
-        });
+        return sendError(
+          reply,
+          503,
+          'SCHEDULE_UNAVAILABLE',
+          'The repo dependency scan schedule is not registered yet.'
+        );
       }
     }
   );
@@ -211,14 +212,10 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const repo = await loadRepo(fastify.prisma, request.params.id);
       if (repo?.type !== 'git_repo') {
-        return reply.status(404).send({
-          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
-        });
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
       if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
-        return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: 'Requires LEAD on this repository’s team' },
-        });
+        return sendError(reply, 403, 'FORBIDDEN', 'Requires LEAD on this repository’s team');
       }
       // The workflow id is derived from the repo, so Temporal rejects a second
       // start while one is already running. That is the desired behaviour — one
@@ -228,12 +225,12 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
         await fastify.temporal.startRepoDependencyInference(`repo-dep-infer-${repo.id}`, repo.id);
       } catch (err) {
         if (getErrorName(err) === 'WorkflowExecutionAlreadyStartedError') {
-          return reply.status(409).send({
-            error: {
-              code: 'INFERENCE_IN_PROGRESS',
-              message: 'Inference is already running for this repository.',
-            },
-          });
+          return sendError(
+            reply,
+            409,
+            'INFERENCE_IN_PROGRESS',
+            'Inference is already running for this repository.'
+          );
         }
         throw err;
       }
@@ -251,14 +248,10 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const repo = await loadRepo(fastify.prisma, request.params.id);
       if (repo?.type !== 'git_repo') {
-        return reply.status(404).send({
-          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
-        });
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
       if (!(await canViewRepo(fastify.prisma, user, repo))) {
-        return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: 'Not a member of this repository’s team' },
-        });
+        return sendError(reply, 403, 'FORBIDDEN', 'Not a member of this repository’s team');
       }
 
       // Edges are not tenant-scoped, so these read freely.
@@ -331,9 +324,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
       const { toRepoId, kind, detail } = request.body;
 
       if (request.params.id === toRepoId) {
-        return reply.status(400).send({
-          error: { code: 'SELF_EDGE', message: 'A repository cannot depend on itself' },
-        });
+        return sendError(reply, 400, 'SELF_EDGE', 'A repository cannot depend on itself');
       }
 
       const [from, to] = await Promise.all([
@@ -341,26 +332,24 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
         loadRepo(fastify.prisma, toRepoId),
       ]);
       if (from?.type !== 'git_repo' || !to || to.type !== 'git_repo') {
-        return reply.status(404).send({
-          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
-        });
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
       if (from.orgId !== to.orgId) {
-        return reply.status(400).send({
-          error: {
-            code: 'CROSS_ORG_EDGE',
-            message: 'Dependency edges cannot cross an organization boundary',
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'CROSS_ORG_EDGE',
+          'Dependency edges cannot cross an organization boundary'
+        );
       }
 
       if (!(await bothTeamsLead(fastify.prisma, user, from.teamId, to.teamId))) {
-        return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: 'Requires LEAD on both the dependent and the depended-upon repository’s team',
-          },
-        });
+        return sendError(
+          reply,
+          403,
+          'FORBIDDEN',
+          'Requires LEAD on both the dependent and the depended-upon repository’s team'
+        );
       }
 
       try {
@@ -380,9 +369,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(201).send({ data: edge });
       } catch (err) {
         if (isUniqueConstraintError(err)) {
-          return reply.status(409).send({
-            error: { code: 'EDGE_EXISTS', message: 'That dependency edge already exists' },
-          });
+          return sendError(reply, 409, 'EDGE_EXISTS', 'That dependency edge already exists');
         }
         throw err;
       }
@@ -406,35 +393,30 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
         request.params.id
       );
       if (!loaded) {
-        return reply.status(404).send({
-          error: { code: 'EDGE_NOT_FOUND', message: 'Dependency edge not found' },
-        });
+        return sendError(reply, 404, 'EDGE_NOT_FOUND', 'Dependency edge not found');
       }
       const { edge, from, to } = loaded;
       if (!from) {
-        return reply.status(404).send({
-          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
-        });
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
 
       if (request.body.status === 'active') {
         // Confirm / reactivate is a human claim of a relationship → both teams.
         if (!to) {
-          return reply.status(400).send({
-            error: {
-              code: 'UNRESOLVED_EDGE',
-              message:
-                'An unresolved suggestion cannot be activated until its repository is onboarded',
-            },
-          });
+          return sendError(
+            reply,
+            400,
+            'UNRESOLVED_EDGE',
+            'An unresolved suggestion cannot be activated until its repository is onboarded'
+          );
         }
         if (!(await bothTeamsLead(fastify.prisma, user, from.teamId, to.teamId))) {
-          return reply.status(403).send({
-            error: {
-              code: 'FORBIDDEN',
-              message: 'Requires LEAD on both teams to activate an edge',
-            },
-          });
+          return sendError(
+            reply,
+            403,
+            'FORBIDDEN',
+            'Requires LEAD on both teams to activate an edge'
+          );
         }
         const confirmed = await fastify.prisma.repoDependency.update({
           data: {
@@ -454,12 +436,12 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
       // dependent team's LEAD manages it.
       const vetoTeamId = to?.teamId ?? from.teamId;
       if (!(await canManageTeamRepos(fastify.prisma, user, vetoTeamId))) {
-        return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: 'Requires LEAD on the depended-upon repository’s team to dismiss',
-          },
-        });
+        return sendError(
+          reply,
+          403,
+          'FORBIDDEN',
+          'Requires LEAD on the depended-upon repository’s team to dismiss'
+        );
       }
       const dismissed = await fastify.prisma.repoDependency.update({
         data: { dismissedAt: new Date(), dismissedById: user.sub, status: 'dismissed' },
@@ -479,9 +461,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.edgeId },
       });
       if (!edge || !edgeInvolves(edge, request.params.id)) {
-        return reply.status(404).send({
-          error: { code: 'EDGE_NOT_FOUND', message: 'Dependency edge not found' },
-        });
+        return sendError(reply, 404, 'EDGE_NOT_FOUND', 'Dependency edge not found');
       }
       // ADMIN removes any edge; others need LEAD on either endpoint's team — so
       // only load the endpoint repos when we actually have to check membership.
@@ -495,9 +475,7 @@ export const repoDependencyRoutes: FastifyPluginAsync = async (fastify) => {
           await Promise.all(teamIds.map((t) => canManageTeamRepos(fastify.prisma, user, t)))
         ).some(Boolean);
         if (!allowed) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Requires LEAD on either repository’s team' },
-          });
+          return sendError(reply, 403, 'FORBIDDEN', 'Requires LEAD on either repository’s team');
         }
       }
       await fastify.prisma.repoDependency.delete({ where: { id: edge.id } });

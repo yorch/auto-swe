@@ -17,6 +17,7 @@ import { writeAuditLog } from '../lib/auditLog.js';
 import { sendConflict } from '../lib/conflict.js';
 import { redactConnection } from '../lib/connectionRedaction.js';
 import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
+import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
@@ -458,13 +459,12 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         repos = await listGitHubRepos();
       } catch (err) {
         if (err instanceof GitHubTokenMissingError) {
-          return reply.status(503).send({
-            error: {
-              code: 'GITHUB_NOT_CONFIGURED',
-              message:
-                'GitHub integration not configured. Visit /studio/integrations to add a PAT or GitHub App.',
-            },
-          });
+          return sendError(
+            reply,
+            503,
+            'GITHUB_NOT_CONFIGURED',
+            'GitHub integration not configured. Visit /studio/integrations to add a PAT or GitHub App.'
+          );
         }
         throw err;
       }
@@ -587,21 +587,21 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         request.body;
 
       if (type === 'git_repo' && (!organizationName || !repoName)) {
-        return reply.status(400).send({
-          error: {
-            code: 'VALIDATION_ERROR',
-            message: 'organizationName and repoName are required for git_repo connections',
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'VALIDATION_ERROR',
+          'organizationName and repoName are required for git_repo connections'
+        );
       }
 
       if (rejectsInstallationChange(user, request.body.installationId)) {
-        return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: 'Only a platform admin may choose the GitHub App installation',
-          },
-        });
+        return sendError(
+          reply,
+          403,
+          'FORBIDDEN',
+          'Only a platform admin may choose the GitHub App installation'
+        );
       }
 
       // Verify team exists
@@ -610,23 +610,17 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: teamId },
       });
       if (!team?.isActive) {
-        return reply.status(404).send({
-          error: { code: 'TEAM_NOT_FOUND', message: 'Team not found or inactive' },
-        });
+        return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Team not found or inactive');
       }
 
       // Non-admins may only onboard repos into teams they lead.
       if (!(await canManageTeamRepos(fastify.prisma, user, teamId))) {
-        return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: 'Requires LEAD role in the target team' },
-        });
+        return sendError(reply, 403, 'FORBIDDEN', 'Requires LEAD role in the target team');
       }
 
       const imageProblem = executorImageProblem(user, request.body.executorImage, null);
       if (imageProblem) {
-        return reply
-          .status(imageProblem.status)
-          .send({ error: { code: imageProblem.code, message: imageProblem.message } });
+        return sendError(reply, imageProblem.status, imageProblem.code, imageProblem.message);
       }
 
       const urls = await normaliseRepositoryUrls({
@@ -634,9 +628,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         githubUrl: request.body.githubUrl,
       });
       if (!urls.ok) {
-        return reply
-          .status(400)
-          .send({ error: { code: urls.code ?? 'REPO_HOST_NOT_ALLOWED', message: urls.message } });
+        return sendError(reply, 400, urls.code ?? 'REPO_HOST_NOT_ALLOWED', urls.message);
       }
 
       const installationProblem = await installationHostProblem(
@@ -645,9 +637,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         { githubApiUrl: urls.githubApiUrl ?? null, githubUrl: urls.githubUrl ?? null }
       );
       if (installationProblem) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'INSTALLATION_HOST_MISMATCH', message: installationProblem } });
+        return sendError(reply, 400, 'INSTALLATION_HOST_MISMATCH', installationProblem);
       }
 
       // Before the duplicate check, so someone without access to a repository
@@ -662,9 +652,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           repoName,
         });
         if (accessProblem) {
-          return reply
-            .status(accessProblem.status)
-            .send({ error: { code: accessProblem.code, message: accessProblem.message } });
+          return sendError(reply, accessProblem.status, accessProblem.code, accessProblem.message);
         }
       }
 
@@ -739,12 +727,12 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       if (rejectsInstallationChange(user, request.body.installationId)) {
-        return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: 'Only a platform admin may choose the GitHub App installation',
-          },
-        });
+        return sendError(
+          reply,
+          403,
+          'FORBIDDEN',
+          'Only a platform admin may choose the GitHub App installation'
+        );
       }
       const repo = await fastify.prisma.connection.findUnique({
         select: {
@@ -764,16 +752,12 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // MCP rows are invisible to this route (see CreateRepoSchema.type): their
       // `config.url` is only editable through the admin MCP routes.
       if (!repo || repo.type === 'mcp') {
-        return reply.status(404).send({
-          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
-        });
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
 
       // Non-admins must lead the repo's current team to edit it...
       if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
-        return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: "Requires LEAD role in this repository's team" },
-        });
+        return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
       // ...and, when reassigning to a different team, also lead the destination.
       const newTeamId = request.body.teamId;
@@ -783,14 +767,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           where: { id: newTeamId },
         });
         if (!destTeam?.isActive) {
-          return reply.status(404).send({
-            error: { code: 'TEAM_NOT_FOUND', message: 'Target team not found or inactive' },
-          });
+          return sendError(reply, 404, 'TEAM_NOT_FOUND', 'Target team not found or inactive');
         }
         if (!(await canManageTeamRepos(fastify.prisma, user, newTeamId))) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Requires LEAD role in the target team' },
-          });
+          return sendError(reply, 403, 'FORBIDDEN', 'Requires LEAD role in the target team');
         }
       }
 
@@ -800,9 +780,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         repo.executorImage
       );
       if (imageProblem) {
-        return reply
-          .status(imageProblem.status)
-          .send({ error: { code: imageProblem.code, message: imageProblem.message } });
+        return sendError(reply, imageProblem.status, imageProblem.code, imageProblem.message);
       }
 
       // Only the overrides this request sets; a row already pointing somewhere
@@ -812,9 +790,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         { githubApiUrl: repo.githubApiUrl, githubUrl: repo.githubUrl }
       );
       if (!urls.ok) {
-        return reply
-          .status(400)
-          .send({ error: { code: urls.code ?? 'REPO_HOST_NOT_ALLOWED', message: urls.message } });
+        return sendError(reply, 400, urls.code ?? 'REPO_HOST_NOT_ALLOWED', urls.message);
       }
 
       const {
@@ -846,9 +822,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           }
         );
         if (installationProblem) {
-          return reply
-            .status(400)
-            .send({ error: { code: 'INSTALLATION_HOST_MISMATCH', message: installationProblem } });
+          return sendError(reply, 400, 'INSTALLATION_HOST_MISMATCH', installationProblem);
         }
       }
 
@@ -868,9 +842,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           repoName: repo.repoName,
         });
         if (accessProblem) {
-          return reply
-            .status(accessProblem.status)
-            .send({ error: { code: accessProblem.code, message: accessProblem.message } });
+          return sendError(reply, accessProblem.status, accessProblem.code, accessProblem.message);
         }
       }
 
@@ -1031,14 +1003,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (repo?.type !== 'git_repo') {
-        return reply.status(404).send({
-          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
-        });
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
       if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
-        return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: "Requires LEAD role in this repository's team" },
-        });
+        return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
       const teams = await fastify.prisma.team.findMany({
         orderBy: { name: 'asc' },
@@ -1074,14 +1042,10 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // Repositories only: a shared MCP server or API connection would be a
       // way around the admin-only routes that manage those.
       if (repo?.type !== 'git_repo') {
-        return reply.status(404).send({
-          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
-        });
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
       if (!(await canManageTeamRepos(fastify.prisma, user, repo.teamId))) {
-        return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: "Requires LEAD role in this repository's team" },
-        });
+        return sendError(reply, 403, 'FORBIDDEN', "Requires LEAD role in this repository's team");
       }
 
       const teamIds = [...new Set(request.body.teamIds)].filter((id) => id !== repo.teamId);
@@ -1094,14 +1058,14 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (teams.length !== teamIds.length) {
         const found = new Set(teams.map((t) => t.id));
-        return reply.status(400).send({
-          error: {
-            code: 'INVALID_SHARE_TEAMS',
-            message: `These teams do not exist, are inactive, or are in another organization: ${teamIds
-              .filter((id) => !found.has(id))
-              .join(', ')}`,
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'INVALID_SHARE_TEAMS',
+          `These teams do not exist, are inactive, or are in another organization: ${teamIds
+            .filter((id) => !found.has(id))
+            .join(', ')}`
+        );
       }
 
       const before = repo.shares.map((s) => s.teamId).sort();

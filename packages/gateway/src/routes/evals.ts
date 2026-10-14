@@ -35,6 +35,7 @@ import {
   seriesBuckets,
   utcDayStart,
 } from '../lib/dateWindow.js';
+import { sendError } from '../lib/httpErrors.js';
 import { mapLimited } from '../lib/mapLimited.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import { paginationQuery } from '../lib/pagination.js';
@@ -299,9 +300,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!ds) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'DATASET_NOT_FOUND', message: 'Eval dataset not found' } });
+        return sendError(reply, 404, 'DATASET_NOT_FOUND', 'Eval dataset not found');
       }
       const data: EvalDatasetDetail = {
         caseCount: ds._count.cases,
@@ -514,9 +513,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!run) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'EVAL_RUN_NOT_FOUND', message: 'Eval run not found' } });
+        return sendError(reply, 404, 'EVAL_RUN_NOT_FOUND', 'Eval run not found');
       }
       return { data: toRunDto(run) };
     }
@@ -540,9 +537,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       const candidateRuntime = request.body.candidateRuntime ?? null;
       const ds = await fastify.prisma.evalDataset.findUnique({ where: { id: datasetId } });
       if (!ds) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'DATASET_NOT_FOUND', message: 'Eval dataset not found' } });
+        return sendError(reply, 404, 'DATASET_NOT_FOUND', 'Eval dataset not found');
       }
       const run = await fastify.prisma.evalRun.create({
         data: {
@@ -581,9 +576,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         if (isTemporalUnavailable(err)) {
           return sendTemporalUnavailable(reply);
         }
-        return reply.status(502).send({
-          error: { code: 'EVAL_START_FAILED', message: 'Could not start the eval run workflow' },
-        });
+        return sendError(reply, 502, 'EVAL_START_FAILED', 'Could not start the eval run workflow');
       }
       return reply.status(202).send({ data: toRunDto(run) });
     }

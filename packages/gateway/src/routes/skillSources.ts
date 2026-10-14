@@ -9,6 +9,7 @@ import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import {
   installIntoSource,
@@ -174,13 +175,16 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
     if (!(err instanceof SkillSourceError)) {
       throw err;
     }
-    return reply.status(STATUS_BY_CODE[err.code]).send({
-      error: { code: `SKILL_SOURCE_${err.code}`, message: SKILL_SOURCE_ERRORS[err.code] },
-    });
+    return sendError(
+      reply,
+      STATUS_BY_CODE[err.code],
+      `SKILL_SOURCE_${err.code}`,
+      SKILL_SOURCE_ERRORS[err.code]
+    );
   };
 
   const notFound = (reply: FastifyReply) =>
-    reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Skill source not found' } });
+    sendError(reply, 404, 'NOT_FOUND', 'Skill source not found');
 
   /** TEAM / ORGANIZATION sources need a real owner; a bad id is a 400, not a foreign-key 500. */
   async function ownerExists(body: z.infer<typeof SourceFields>): Promise<boolean> {
@@ -238,9 +242,7 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
       const actor = requireUser(request);
       const body = request.body;
       if (!(await ownerExists(body))) {
-        return reply.status(400).send({
-          error: { code: 'INVALID_OWNER', message: 'The team or organization does not exist' },
-        });
+        return sendError(reply, 400, 'INVALID_OWNER', 'The team or organization does not exist');
       }
       try {
         const { source, installed } = await installSkillSource(
@@ -284,12 +286,12 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
         if ((err as { code?: unknown } | null)?.code === 'P2002') {
-          return reply.status(409).send({
-            error: {
-              code: 'SKILL_SOURCE_EXISTS',
-              message: 'This repository path is already a skill source in this scope',
-            },
-          });
+          return sendError(
+            reply,
+            409,
+            'SKILL_SOURCE_EXISTS',
+            'This repository path is already a skill source in this scope'
+          );
         }
         return sourceError(err, reply);
       }
@@ -345,9 +347,7 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
         return notFound(reply);
       }
       if (existing.status === 'DISABLED') {
-        return reply.status(409).send({
-          error: { code: 'SKILL_SOURCE_DISABLED', message: SOURCE_DISABLED_MESSAGE },
-        });
+        return sendError(reply, 409, 'SKILL_SOURCE_DISABLED', SOURCE_DISABLED_MESSAGE);
       }
       const check = await checkSkillSource(fastify.prisma, existing);
       const updated = await fastify.prisma.skillSource.findUnique({
@@ -381,12 +381,12 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const sha = request.query.sha ?? existing.latestSha;
       if (!sha) {
-        return reply.status(409).send({
-          error: {
-            code: 'SKILL_SOURCE_NOT_CHECKED',
-            message: 'No newer commit has been recorded yet; check the source first.',
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'SKILL_SOURCE_NOT_CHECKED',
+          'No newer commit has been recorded yet; check the source first.'
+        );
       }
       try {
         if (request.query.full && request.query.skill) {

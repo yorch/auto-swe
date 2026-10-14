@@ -305,29 +305,23 @@ async function verifyWebhookOrReject(
   if (resolved.status === 'host_not_approved') {
     // Not the instance secret's to answer for: a host that lost its approval
     // verifies nothing.
-    reply.status(401).send({
-      error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Webhook host is not an approved host' },
-    });
+    sendError(reply, 401, 'WEBHOOK_AUTH_FAILED', 'Webhook host is not an approved host');
     return { ok: false };
   }
 
   const { host, secret } = resolved;
   if (!secret || !signature) {
-    reply
-      .status(401)
-      .send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Missing signature' } });
+    sendError(reply, 401, 'WEBHOOK_AUTH_FAILED', 'Missing signature');
     return { ok: false };
   }
 
   if (!request.rawBody) {
-    reply.status(400).send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Missing raw body' } });
+    sendError(reply, 400, 'WEBHOOK_AUTH_FAILED', 'Missing raw body');
     return { ok: false };
   }
 
   if (!verifyGitHubSignature(request.rawBody, signature, secret)) {
-    reply
-      .status(401)
-      .send({ error: { code: 'WEBHOOK_AUTH_FAILED', message: 'Invalid signature' } });
+    sendError(reply, 401, 'WEBHOOK_AUTH_FAILED', 'Invalid signature');
     return { ok: false };
   }
 
@@ -704,12 +698,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
                 'Merge rollback failed — PR stuck MERGED without a delivered signal'
               );
             });
-          return reply.status(503).send({
-            error: {
-              code: 'SIGNAL_FAILED',
-              message: 'Could not deliver the merge signal to the workflow — retry the delivery',
-            },
-          });
+          return sendError(
+            reply,
+            503,
+            'SIGNAL_FAILED',
+            'Could not deliver the merge signal to the workflow — retry the delivery'
+          );
         }
         signalSent = false;
         request.log.warn(
@@ -1148,12 +1142,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       if (failed.length > 0) {
-        return reply.status(503).send({
-          error: {
-            code: 'SIGNAL_FAILED',
-            message: `Could not deliver the CI signal to ${failed.length} of ${toSignal.length} workflow(s) — retry the delivery`,
-          },
-        });
+        return sendError(
+          reply,
+          503,
+          'SIGNAL_FAILED',
+          `Could not deliver the CI signal to ${failed.length} of ${toSignal.length} workflow(s) — retry the delivery`
+        );
       }
 
       return { data: { conclusion, signaled } };
@@ -1189,9 +1183,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         where: { webhookToken: token },
       });
       if (!template) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'WEBHOOK_NOT_FOUND', message: 'Webhook not found' } });
+        return sendError(reply, 404, 'WEBHOOK_NOT_FOUND', 'Webhook not found');
       }
       // What came of the call, in the template's decision history (docs/automations.md §5).
       // Only once the token named a template; a refusal is kept once an hour per reason.
@@ -1211,15 +1203,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         );
       if (template.status !== 'ACTIVE') {
         await refused('FAILED_TO_START', 'TEMPLATE_NOT_ACTIVE', 'the template is not active');
-        return reply
-          .status(409)
-          .send({ error: { code: 'TEMPLATE_NOT_ACTIVE', message: 'Template is not active' } });
+        return sendError(reply, 409, 'TEMPLATE_NOT_ACTIVE', 'Template is not active');
       }
       if (template.activeVersion === null) {
         await refused('FAILED_TO_START', 'NO_ACTIVE_VERSION', 'the template has no active version');
-        return reply.status(409).send({
-          error: { code: 'NO_ACTIVE_VERSION', message: 'Template has no active version' },
-        });
+        return sendError(reply, 409, 'NO_ACTIVE_VERSION', 'Template has no active version');
       }
 
       const payload = request.body ?? {};
@@ -1353,12 +1341,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           'a run with this idempotency key already exists',
           connectionId
         );
-        return reply.status(409).send({
-          error: {
-            code: 'RUN_CONFLICT',
-            message: 'A run with this workflow ID already exists',
-          },
-        });
+        return sendError(reply, 409, 'RUN_CONFLICT', 'A run with this workflow ID already exists');
       }
       await recordAutomationActivity(
         fastify.prisma,

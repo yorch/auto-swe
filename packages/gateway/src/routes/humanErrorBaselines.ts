@@ -2,6 +2,7 @@ import { Role } from '@auto-swe/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { sendError } from '../lib/httpErrors.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { memberOrgs } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -85,12 +86,7 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const { errorCount, orgId, sampleSize } = request.body;
       if (errorCount > sampleSize) {
-        return reply.status(400).send({
-          error: {
-            code: 'INVALID_BASELINE',
-            message: 'errorCount cannot exceed sampleSize',
-          },
-        });
+        return sendError(reply, 400, 'INVALID_BASELINE', 'errorCount cannot exceed sampleSize');
       }
 
       const membership = await fastify.prisma.organizationMembership.findFirst({
@@ -98,9 +94,7 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
         where: { orgId, userId: user.sub },
       });
       if (!membership && user.role !== 'ADMIN') {
-        return reply.status(403).send({
-          error: { code: 'FORBIDDEN', message: 'You are not a member of this organization' },
-        });
+        return sendError(reply, 403, 'FORBIDDEN', 'You are not a member of this organization');
       }
 
       const created = await fastify.prisma.humanErrorBaseline.create({
@@ -147,9 +141,7 @@ export const humanErrorBaselineRoutes: FastifyPluginAsync = async (fastify) => {
               },
       });
       if (!existing) {
-        return reply.status(404).send({
-          error: { code: 'NOT_FOUND', message: 'Baseline not found' },
-        });
+        return sendError(reply, 404, 'NOT_FOUND', 'Baseline not found');
       }
       await fastify.prisma.humanErrorBaseline.delete({
         where: { id: request.params.id },

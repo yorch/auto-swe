@@ -13,6 +13,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { getDefaultClientOrigin } from '../lib/env.js';
+import { sendError } from '../lib/httpErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 function memberAuditFields(row: { orgId: string; role: string; userId: string }) {
@@ -167,9 +168,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         return { status: 201 as const, value: created };
       });
       if ('guard' in result && result.guard) {
-        return reply
-          .status(409)
-          .send({ error: { code: result.guard.code, message: result.guard.message } });
+        return sendError(reply, 409, result.guard.code, result.guard.message);
       }
       return reply.status(result.status).send({ data: result.value });
     }
@@ -196,9 +195,7 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         where: { email: { equals: email, mode: 'insensitive' } },
       });
       if (existing) {
-        return reply
-          .status(409)
-          .send({ error: { code: 'USER_EXISTS', message: 'User with this email already exists' } });
+        return sendError(reply, 409, 'USER_EXISTS', 'User with this email already exists');
       }
 
       // Approving a sign-in is a platform admin's decision (`PATCH /users/:id`),
@@ -296,14 +293,10 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         return { value: updated };
       });
       if ('missing' in result) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Membership not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Membership not found');
       }
       if ('guard' in result && result.guard) {
-        return reply
-          .status(409)
-          .send({ error: { code: result.guard.code, message: result.guard.message } });
+        return sendError(reply, 409, result.guard.code, result.guard.message);
       }
       return { data: result.value };
     }
@@ -349,14 +342,10 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
         return { deleted: true as const };
       });
       if ('missing' in result) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Membership not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Membership not found');
       }
       if ('guard' in result && result.guard) {
-        return reply
-          .status(409)
-          .send({ error: { code: result.guard.code, message: result.guard.message } });
+        return sendError(reply, 409, result.guard.code, result.guard.message);
       }
       return reply.status(204).send();
     }

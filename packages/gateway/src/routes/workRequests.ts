@@ -27,6 +27,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { experimentBucket } from '../lib/experimentBucket.js';
+import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema } from '../lib/idempotency.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
@@ -468,13 +469,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           priorBudget !== budgetTier
         ) {
           return sent(
-            reply.status(422).send({
-              error: {
-                code: 'IDEMPOTENCY_KEY_MISMATCH',
-                message:
-                  'This Idempotency-Key was already used for a different request. Use a new key for a different ticket, repository, description or budget tier.',
-              },
-            })
+            sendError(
+              reply,
+              422,
+              'IDEMPOTENCY_KEY_MISMATCH',
+              'This Idempotency-Key was already used for a different request. Use a new key for a different ticket, repository, description or budget tier.'
+            )
           );
         }
         if (!prior.startedActiveWorkflowId) {
@@ -496,11 +496,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         // cap is deliberately not re-applied -- a replay starts and spends nothing.
         const priorRepo = await loadRepo(prior.connectionId as string);
         if (!priorRepo?.isActive) {
-          return sent(
-            reply.status(404).send({
-              error: { code: 'REPO_NOT_FOUND', message: 'Repository not found or inactive' },
-            })
-          );
+          return sent(sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found or inactive'));
         }
         const authorization = await authorizeLaunch(fastify.prisma, user, {
           gate: request.repoAccessGate,
@@ -528,12 +524,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
 
       const repo = await loadRepo(repoIds[0]);
       if (!repo?.isActive) {
-        return reply.status(404).send({
-          error: {
-            code: 'REPO_NOT_FOUND',
-            message: `Repository ${repoIds[0]} not found or inactive`,
-          },
-        });
+        return sendError(
+          reply,
+          404,
+          'REPO_NOT_FOUND',
+          `Repository ${repoIds[0]} not found or inactive`
+        );
       }
 
       // Repository access, org membership and the org's monthly cap — the one
@@ -553,12 +549,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // A SWE work request targets a git_repo connection (org/repo are nullable
       // on Connection since non-git types like `mcp` omit them).
       if (!isGitRepoConnection(repo)) {
-        return reply.status(400).send({
-          error: {
-            code: 'NOT_A_GIT_REPO',
-            message: `Connection ${repo.id} is not a git_repo connection`,
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'NOT_A_GIT_REPO',
+          `Connection ${repo.id} is not a git_repo connection`
+        );
       }
 
       // Generate deterministic workflow ID (includes org to prevent cross-org collisions).
@@ -609,7 +605,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
               },
             });
         }
-        return reply.status(409).send({ error: { code: 'WORKFLOW_ALREADY_EXISTS', message } });
+        return sendError(reply, 409, 'WORKFLOW_ALREADY_EXISTS', message);
       };
       if ('conflictWorkflowId' in allocated) {
         // A same-key request that committed after the lookup above is what this
@@ -647,12 +643,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         externalTicketId
       );
       if (!resolvedTemplate) {
-        return reply.status(500).send({
-          error: {
-            code: 'NO_DEFAULT_TEMPLATE',
-            message: 'No default workflow template configured. Run `yarn db:seed`.',
-          },
-        });
+        return sendError(
+          reply,
+          500,
+          'NO_DEFAULT_TEMPLATE',
+          'No default workflow template configured. Run `yarn db:seed`.'
+        );
       }
 
       // P3: build the generic run-input payload and validate it against the
@@ -846,12 +842,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (workRequest?.isCrossRepo) {
-        return reply.status(409).send({
-          error: {
-            code: 'EPIC_RETRY_REQUIRED',
-            message: 'Multi-repository work must be launched through the epic workflow',
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'EPIC_RETRY_REQUIRED',
+          'Multi-repository work must be launched through the epic workflow'
+        );
       }
       const latest = workRequest?.activeWorkflows.find((w) => w.repository);
       const repo = latest?.repository;
@@ -865,14 +861,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       if (!workRequest || !latest || !repo) {
-        return reply.status(404).send({
-          error: { code: 'WORK_REQUEST_NOT_FOUND', message: 'Work request not found' },
-        });
+        return sendError(reply, 404, 'WORK_REQUEST_NOT_FOUND', 'Work request not found');
       }
       if (!repo.isActive) {
-        return reply.status(409).send({
-          error: { code: 'REPO_INACTIVE', message: 'Repository is no longer active' },
-        });
+        return sendError(reply, 409, 'REPO_INACTIVE', 'Repository is no longer active');
       }
       // A re-run pushes, opens a pull request and spends exactly like a fresh
       // submission, so it takes the same decision. Skipping it would leave a
@@ -889,9 +881,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         return sendLaunchRefusal(reply, authorization.refusal);
       }
       if (!workRequest.templateId || !workRequest.templateVersion) {
-        return reply.status(409).send({
-          error: { code: 'NO_TEMPLATE_SNAPSHOT', message: 'Work request has no recorded template' },
-        });
+        return sendError(
+          reply,
+          409,
+          'NO_TEMPLATE_SNAPSHOT',
+          'Work request has no recorded template'
+        );
       }
       // An agent run keeps its launch parameters in the payload this endpoint
       // does not carry, and a re-run reusing its ticket id would collide with the
@@ -901,12 +896,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: workRequest.templateId },
       });
       if (snapshotTemplate && isSystemTemplate(snapshotTemplate)) {
-        return reply.status(409).send({
-          error: {
-            code: 'USE_AGENT_RUN_RERUN',
-            message: 'This is an agent run; re-run it with POST /api/v1/agent-runs/:id/rerun',
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'USE_AGENT_RUN_RERUN',
+          'This is an agent run; re-run it with POST /api/v1/agent-runs/:id/rerun'
+        );
       }
       // The same launch checks as a fresh template launch: the template must be
       // ACTIVE and visible to the caller, and a recorded payload must still
@@ -940,9 +935,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const retryTemplateVersion = workRequest.templateVersion;
 
       if (!isGitRepoConnection(repo)) {
-        return reply.status(400).send({
-          error: { code: 'NOT_A_GIT_REPO', message: 'Work request target is not a git_repo' },
-        });
+        return sendError(reply, 400, 'NOT_A_GIT_REPO', 'Work request target is not a git_repo');
       }
       const baseWorkflowId = generateWorkflowId(
         workRequest.externalTicketId,
@@ -954,12 +947,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // `otherRow`: the row belongs to another connection row, whose workflow id
       // the other 409s do not name either.
       const unconfirmedReply = (workflowId: string, otherRow = false) =>
-        reply.status(409).send({
-          error: {
-            code: 'WORKFLOW_ALREADY_EXISTS',
-            message: `Could not confirm whether ${otherRow ? 'a run' : workflowId} for ${workRequest.externalTicketId} has finished (Temporal unreachable); retry shortly`,
-          },
-        });
+        sendError(
+          reply,
+          409,
+          'WORKFLOW_ALREADY_EXISTS',
+          `Could not confirm whether ${otherRow ? 'a run' : workflowId} for ${workRequest.externalTicketId} has finished (Temporal unreachable); retry shortly`
+        );
 
       // A scheduled request's fires run under `sched-<id>-<ts>`, which the
       // allocator below never reads, and a re-run pushing the same branch while
@@ -972,12 +965,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       if (running) {
         return running.unconfirmed
           ? unconfirmedReply(running.temporalWorkflowId)
-          : reply.status(409).send({
-              error: {
-                code: 'WORKFLOW_ALREADY_EXISTS',
-                message: `Workflow still running for ${workRequest.externalTicketId} (${running.temporalWorkflowId})`,
-              },
-            });
+          : sendError(
+              reply,
+              409,
+              'WORKFLOW_ALREADY_EXISTS',
+              `Workflow still running for ${workRequest.externalTicketId} (${running.temporalWorkflowId})`
+            );
       }
 
       const allocate = () =>
@@ -1009,14 +1002,14 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         allocated = await allocate();
       }
       if ('conflictWorkflowId' in allocated) {
-        return reply.status(409).send({
-          error: {
-            code: 'WORKFLOW_ALREADY_EXISTS',
-            message: allocated.conflictOtherRow
-              ? `Workflow still running for ${workRequest.externalTicketId} for this repository`
-              : `Workflow still running for ${workRequest.externalTicketId} (${allocated.conflictWorkflowId})`,
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'WORKFLOW_ALREADY_EXISTS',
+          allocated.conflictOtherRow
+            ? `Workflow still running for ${workRequest.externalTicketId} for this repository`
+            : `Workflow still running for ${workRequest.externalTicketId} (${allocated.conflictWorkflowId})`
+        );
       }
 
       // Canary routing for re-runs: same determinism — same workRequestId
@@ -1077,12 +1070,12 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         { log: fastify.log }
       );
       if (!launch.ok) {
-        return reply.status(409).send({
-          error: {
-            code: 'WORKFLOW_ALREADY_EXISTS',
-            message: `Workflow already running for ${workRequest.externalTicketId}`,
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'WORKFLOW_ALREADY_EXISTS',
+          `Workflow already running for ${workRequest.externalTicketId}`
+        );
       }
       return reply.status(201).send({
         data: {

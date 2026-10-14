@@ -18,6 +18,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -239,9 +240,7 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Scanner pattern not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Scanner pattern not found');
       }
 
       const { label, pattern, flags, type, isActive } = request.body;
@@ -252,12 +251,12 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
         existing.isBuiltIn &&
         (label !== undefined || pattern !== undefined || flags !== undefined || type !== undefined)
       ) {
-        return reply.status(400).send({
-          error: {
-            code: 'BUILTIN_READONLY_FIELDS',
-            message: 'Built-in scanner patterns only allow toggling isActive',
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'BUILTIN_READONLY_FIELDS',
+          'Built-in scanner patterns only allow toggling isActive'
+        );
       }
       const updateData = existing.isBuiltIn
         ? { isActive: isActive ?? existing.isActive }
@@ -323,17 +322,15 @@ export const scannerPatternRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!existing) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Scanner pattern not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Scanner pattern not found');
       }
       if (existing.isBuiltIn) {
-        return reply.status(403).send({
-          error: {
-            code: 'BUILTIN_PATTERN',
-            message: 'Built-in scanner patterns cannot be deleted',
-          },
-        });
+        return sendError(
+          reply,
+          403,
+          'BUILTIN_PATTERN',
+          'Built-in scanner patterns cannot be deleted'
+        );
       }
       await fastify.prisma.scannerPattern.delete({ where: { id: request.params.id } });
       invalidateScannerPatternCache();

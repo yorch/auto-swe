@@ -7,6 +7,7 @@ import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify'
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { PG_INT_MAX } from '../lib/pgInt.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
@@ -252,7 +253,7 @@ async function assertChannelAccess(
     where: { userId_teamId: { teamId, userId: user.sub } },
   });
   if (!member) {
-    await reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+    await sendError(reply, 404, 'NOT_FOUND', 'Channel not found');
     return false;
   }
   return true;
@@ -401,7 +402,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
       where: { id: request.params.id },
     });
     if (!row) {
-      return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+      return sendError(reply, 404, 'NOT_FOUND', 'Channel not found');
     }
     if (!(await assertChannelAccess(fastify, user, row.teamId, reply))) {
       return reply;
@@ -435,9 +436,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       ]);
       if (!row) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Channel not found');
       }
       if (!(await assertChannelAccess(fastify, user, row.teamId, reply))) {
         return reply;
@@ -476,9 +475,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!row) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Channel not found');
       }
       const yearMonth = currentYearMonth();
       const [holdsOutstanding, usageBefore] = await Promise.all([
@@ -552,9 +549,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!row) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Channel not found');
       }
       if (!(await assertChannelAccess(fastify, user, row.teamId, reply))) {
         return reply;
@@ -610,9 +605,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.memoryId },
       });
       if (!item || item.channelId !== request.params.id) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Memory item not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Memory item not found');
       }
       // Forgetting follows the item into merged copies of it and restores what
       // only a retracted merge was hiding (`forgetMemoryItems`), in one
@@ -662,9 +655,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.memoryId },
       });
       if (!item || item.channelId !== request.params.id) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Memory item not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Memory item not found');
       }
 
       const updated = await fastify.prisma.memoryItem.update({
@@ -725,7 +716,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: body.teamId },
       });
       if (!team) {
-        return reply.status(400).send({ error: { code: 'NOT_FOUND', message: 'Team not found' } });
+        return sendError(reply, 400, 'NOT_FOUND', 'Team not found');
       }
 
       // Upsert the workspace (org from the team), then create the channel. A
@@ -739,13 +730,12 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         where: { slackTeamId: body.slackTeamId },
       });
       if (workspace.orgId !== team.orgId) {
-        return reply.status(400).send({
-          error: {
-            code: 'WORKSPACE_ORG_MISMATCH',
-            message:
-              'This Slack workspace already belongs to a different organization than the chosen team. Pick a team in the workspace’s org.',
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'WORKSPACE_ORG_MISMATCH',
+          'This Slack workspace already belongs to a different organization than the chosen team. Pick a team in the workspace’s org.'
+        );
       }
 
       const existing = await fastify.prisma.slackChannel.findUnique({
@@ -757,9 +747,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
       if (existing) {
-        return reply.status(409).send({
-          error: { code: 'CONFLICT', message: 'Channel already registered for this workspace' },
-        });
+        return sendError(reply, 409, 'CONFLICT', 'Channel already registered for this workspace');
       }
 
       const row = await fastify.prisma.slackChannel.create({
@@ -819,9 +807,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!current) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Channel not found');
       }
       // A change to whether or when a digest or poll runs needs Temporal. Refuse before
       // persisting, so the row and the schedules never diverge. The dashboard form sends
@@ -845,9 +831,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
           where: { id: body.teamId },
         });
         if (!team) {
-          return reply
-            .status(400)
-            .send({ error: { code: 'NOT_FOUND', message: 'Team not found' } });
+          return sendError(reply, 400, 'NOT_FOUND', 'Team not found');
         }
         nextOrgId = team.orgId;
       }
@@ -916,9 +900,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!channel) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Channel not found');
       }
       if (!(await assertChannelAccess(fastify, user, channel.teamId, reply))) {
         return reply;
@@ -944,7 +926,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.itemId },
       });
       if (!item || item.channelId !== request.params.id) {
-        return reply.status(404).send({ error: { code: 'NOT_FOUND', message: 'Item not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Item not found');
       }
       const updated = await fastify.prisma.channelOpenItem.update({
         data: { status: request.body.status },
@@ -974,9 +956,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!channel) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Channel not found');
       }
       if (!(await assertChannelAccess(fastify, user, channel.teamId, reply))) {
         return reply;
@@ -1050,9 +1030,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id },
       });
       if (!current) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Channel not found' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Channel not found');
       }
       // The memory relation is SetNull, which would leave the channel's lessons behind as
       // orphans no screen reaches; delete them in the same transaction as the channel so

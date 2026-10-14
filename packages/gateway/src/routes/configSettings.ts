@@ -15,6 +15,7 @@ import {
   type ScopeSelector,
   setSetting,
 } from '../lib/configSettingsService.js';
+import { sendError } from '../lib/httpErrors.js';
 import { writeSystemConfigAudit } from '../lib/systemConfigService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -106,12 +107,12 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
       // authorise writes, and there is nothing else guarding the ids in the
       // query string.
       if (!(await canReadScope(fastify.prisma, { id: actor.sub, role: actor.role }, selector))) {
-        return reply.status(403).send({
-          error: {
-            code: 'FORBIDDEN',
-            message: 'You are not a member of the team or organization for this scope.',
-          },
-        });
+        return sendError(
+          reply,
+          403,
+          'FORBIDDEN',
+          'You are not a member of the team or organization for this scope.'
+        );
       }
 
       const settings = await listSettings(
@@ -151,14 +152,15 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
       );
 
       if ('validationError' in result) {
-        return reply.status(400).send({
-          error: { code: 'SETTING_INVALID', message: result.validationError },
-        });
+        return sendError(reply, 400, 'SETTING_INVALID', result.validationError);
       }
       if (result.denial) {
-        return reply.status(denialStatus(result.denial.code)).send({
-          error: { code: result.denial.code, message: result.denial.message },
-        });
+        return sendError(
+          reply,
+          denialStatus(result.denial.code),
+          result.denial.code,
+          result.denial.message
+        );
       }
 
       await writeSystemConfigAudit(fastify.prisma, fastify.log, {
@@ -203,9 +205,12 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
         selector
       );
       if (result.denial) {
-        return reply.status(denialStatus(result.denial.code)).send({
-          error: { code: result.denial.code, message: result.denial.message },
-        });
+        return sendError(
+          reply,
+          denialStatus(result.denial.code),
+          result.denial.code,
+          result.denial.message
+        );
       }
       if (result.before !== undefined) {
         await writeSystemConfigAudit(fastify.prisma, fastify.log, {
@@ -261,31 +266,26 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
     async (req, reply) => {
       const body = req.body;
       if ((body.userId ? 1 : 0) + (body.role ? 1 : 0) !== 1) {
-        return reply.status(400).send({
-          error: {
-            code: 'GRANT_INVALID',
-            message: 'A grant names exactly one grantee: either userId or role.',
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'GRANT_INVALID',
+          'A grant names exactly one grantee: either userId or role.'
+        );
       }
       if (body.scope === 'TEAM' && !body.teamId) {
-        return reply
-          .status(400)
-          .send({ error: { code: 'GRANT_INVALID', message: 'A TEAM grant needs a teamId.' } });
+        return sendError(reply, 400, 'GRANT_INVALID', 'A TEAM grant needs a teamId.');
       }
       if (body.scope === 'ORGANIZATION' && !body.orgId) {
-        return reply.status(400).send({
-          error: { code: 'GRANT_INVALID', message: 'An ORGANIZATION grant needs an orgId.' },
-        });
+        return sendError(reply, 400, 'GRANT_INVALID', 'An ORGANIZATION grant needs an orgId.');
       }
       if (!isValidKeyPattern(body.keyPattern)) {
-        return reply.status(400).send({
-          error: {
-            code: 'GRANT_INVALID_KEY_PATTERN',
-            message:
-              "keyPattern must be '*', a known group wildcard (<group>.*), or an exact known setting key.",
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'GRANT_INVALID_KEY_PATTERN',
+          "keyPattern must be '*', a known group wildcard (<group>.*), or an exact known setting key."
+        );
       }
 
       const actor = requireUser(req);
@@ -327,13 +327,12 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
     async (req, reply) => {
       const { keyPattern } = req.query;
       if (!isValidKeyPattern(keyPattern)) {
-        return reply.status(400).send({
-          error: {
-            code: 'GRANT_INVALID_KEY_PATTERN',
-            message:
-              "keyPattern must be '*', a known group wildcard (<group>.*), or an exact known setting key.",
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'GRANT_INVALID_KEY_PATTERN',
+          "keyPattern must be '*', a known group wildcard (<group>.*), or an exact known setting key."
+        );
       }
       const keys = SETTING_KEYS.filter((key) => keyPatternMatches(keyPattern, key)).sort((a, b) =>
         a.localeCompare(b)
@@ -368,9 +367,7 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
         where: { id: req.params.id },
       });
       if (!existing) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'NOT_FOUND', message: 'Grant not found.' } });
+        return sendError(reply, 404, 'NOT_FOUND', 'Grant not found.');
       }
       await fastify.prisma.configPermission.delete({ where: { id: req.params.id } });
       const actor = requireUser(req);

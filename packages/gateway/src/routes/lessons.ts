@@ -5,6 +5,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
@@ -130,9 +131,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
           },
         });
         if (!accessibleRepo) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'You do not have access to this repository' },
-          });
+          return sendError(reply, 403, 'FORBIDDEN', 'You do not have access to this repository');
         }
       }
 
@@ -186,9 +185,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: repoId },
       });
       if (!repo) {
-        return reply.status(404).send({
-          error: { code: 'REPO_NOT_FOUND', message: 'Repository not found' },
-        });
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
       }
 
       const workflowId = `consolidate-lessons-${repoId}-${Date.now()}`;
@@ -307,9 +304,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, scope: LESSON_SCOPE },
       });
       if (!lesson) {
-        return reply.status(404).send({
-          error: { code: 'LESSON_NOT_FOUND', message: 'Lesson not found' },
-        });
+        return sendError(reply, 404, 'LESSON_NOT_FOUND', 'Lesson not found');
       }
 
       // Forgetting follows the lesson into every row that carries it — merged

@@ -499,9 +499,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       where: { id },
     });
     if (t && isSystemTemplate(t)) {
-      return reply.status(404).send({
-        error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
-      });
+      return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
     }
   });
 
@@ -678,20 +676,19 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         // Temporal unreachable → 503, rephrasing won't help). The author activity
         // tags the former with a stable marker in its thrown message.
         if (isAuthorGenerationFailure(err)) {
-          return reply.status(422).send({
-            error: {
-              code: 'GENERATION_FAILED',
-              message:
-                'The author agent could not produce a valid workflow from that description. Try rephrasing with more detail.',
-            },
-          });
+          return sendError(
+            reply,
+            422,
+            'GENERATION_FAILED',
+            'The author agent could not produce a valid workflow from that description. Try rephrasing with more detail.'
+          );
         }
-        return reply.status(503).send({
-          error: {
-            code: 'GENERATION_UNAVAILABLE',
-            message: 'Workflow generation is temporarily unavailable. Please try again shortly.',
-          },
-        });
+        return sendError(
+          reply,
+          503,
+          'GENERATION_UNAVAILABLE',
+          'Workflow generation is temporarily unavailable. Please try again shortly.'
+        );
       }
 
       // Defensive re-validation (the worker already validated against the schema).
@@ -700,9 +697,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         parsed = parseSpecOrThrow(generated.spec);
       } catch (err) {
         const e = err as Error & { statusCode?: number };
-        return reply
-          .status(e.statusCode ?? 400)
-          .send({ error: { code: 'INVALID_SPEC', message: e.message } });
+        return sendError(reply, e.statusCode ?? 400, 'INVALID_SPEC', e.message);
       }
 
       const parsedSpec = parsed as WorkflowSpec;
@@ -711,9 +706,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         parsedSpec.name = nameOverride;
       }
       if (nameOverride && isReservedTemplateName(nameOverride)) {
-        return reply.status(400).send({
-          error: { code: 'RESERVED_TEMPLATE_NAME', message: 'That template name is reserved' },
-        });
+        return sendError(reply, 400, 'RESERVED_TEMPLATE_NAME', 'That template name is reserved');
       }
       // A model-chosen name is not the caller's to refuse: keep it from colliding with the
       // reserved system template by renaming it.
@@ -770,12 +763,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       } catch (err: unknown) {
         const e = err as { code?: string };
         if (e.code === 'P2002') {
-          return reply.status(409).send({
-            error: {
-              code: 'NAME_CONFLICT',
-              message: `A template named "${name}" already exists — pass a different "name".`,
-            },
-          });
+          return sendError(
+            reply,
+            409,
+            'NAME_CONFLICT',
+            `A template named "${name}" already exists — pass a different "name".`
+          );
         }
         throw err;
       }
@@ -881,9 +874,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const { name, description, teamId, spec, workspaceProvider } = request.body;
       if (isReservedTemplateName(name)) {
-        return reply.status(400).send({
-          error: { code: 'RESERVED_TEMPLATE_NAME', message: 'That template name is reserved' },
-        });
+        return sendError(reply, 400, 'RESERVED_TEMPLATE_NAME', 'That template name is reserved');
       }
 
       let parsed: unknown;
@@ -891,18 +882,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         parsed = parseSpecOrThrow(spec);
       } catch (err) {
         const e = err as Error & { statusCode?: number };
-        return reply
-          .status(e.statusCode ?? 400)
-          .send({ error: { code: 'INVALID_SPEC', message: e.message } });
+        return sendError(reply, e.statusCode ?? 400, 'INVALID_SPEC', e.message);
       }
 
       // Non-admins may only create team-owned templates for teams they belong to,
       // and may not create global (teamId = null) templates.
       if (user.role !== 'ADMIN') {
         if (!teamId) {
-          return reply.status(403).send({
-            error: { code: 'FORBIDDEN', message: 'Only admins may create global templates' },
-          });
+          return sendError(reply, 403, 'FORBIDDEN', 'Only admins may create global templates');
         }
         if (!(await findTemplateAuthorMembership(fastify, user, teamId))) {
           return reply.status(403).send({ error: TEMPLATE_AUTHOR_REFUSAL });
@@ -954,9 +941,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       } catch (err: unknown) {
         const e = err as { code?: string; message?: string };
         if (e.code === 'P2002') {
-          return reply.status(409).send({
-            error: { code: 'NAME_CONFLICT', message: 'A template with this name already exists' },
-          });
+          return sendError(reply, 409, 'NAME_CONFLICT', 'A template with this name already exists');
         }
         throw err;
       }
@@ -988,9 +973,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           where: { id: templateId, ...templateWriteFilter(user) },
         });
         if (!tpl || isSystemTemplate(tpl)) {
-          return reply.status(404).send({
-            error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
-          });
+          return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
         }
         scopeTeamId = tpl.teamId;
       } else if (scopeTeamId && user.role !== 'ADMIN') {
@@ -1049,9 +1032,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, ...teamMembershipFilter(user) },
       });
       if (!tpl) {
-        return reply.status(404).send({
-          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
-        });
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
       const lastRuns = await loadLastRuns(
         fastify,
@@ -1095,17 +1076,13 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       if (request.body.name !== undefined && isReservedTemplateName(request.body.name)) {
-        return reply.status(400).send({
-          error: { code: 'RESERVED_TEMPLATE_NAME', message: 'That template name is reserved' },
-        });
+        return sendError(reply, 400, 'RESERVED_TEMPLATE_NAME', 'That template name is reserved');
       }
       const existing = await fastify.prisma.workflowTemplate.findFirst({
         where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!existing) {
-        return reply.status(404).send({
-          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
-        });
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
 
       // Experiment-config validation. Done at PATCH time (vs. a CHECK constraint)
@@ -1118,12 +1095,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           where: { templateId_version: { templateId: existing.id, version: expVersion } },
         });
         if (!v) {
-          return reply.status(400).send({
-            error: {
-              code: 'EXPERIMENT_VERSION_NOT_FOUND',
-              message: `Version ${expVersion} does not exist on this template`,
-            },
-          });
+          return sendError(
+            reply,
+            400,
+            'EXPERIMENT_VERSION_NOT_FOUND',
+            `Version ${expVersion} does not exist on this template`
+          );
         }
         // An experiment arm serves real runs exactly like the active version,
         // so it carries the same review requirement `/promote` enforces.
@@ -1172,12 +1149,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const nextExpVersion = expVersion !== undefined ? expVersion : existing.experimentVersion;
       const nextExpSplit = expSplit !== undefined ? expSplit : existing.experimentSplit;
       if (nextExpSplit !== null && nextExpSplit > 0 && nextExpVersion === null) {
-        return reply.status(400).send({
-          error: {
-            code: 'EXPERIMENT_VERSION_REQUIRED',
-            message: 'experimentSplit > 0 requires experimentVersion to be set',
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'EXPERIMENT_VERSION_REQUIRED',
+          'experimentSplit > 0 requires experimentVersion to be set'
+        );
       }
       if (
         nextExpSplit !== null &&
@@ -1257,25 +1234,21 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, ...teamMembershipFilter(user) },
       });
       if (!tpl) {
-        return reply.status(404).send({
-          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
-        });
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
       if (!tpl.activeVersion) {
-        return reply.status(400).send({
-          error: {
-            code: 'NO_ACTIVE_VERSION',
-            message: 'Template has no active version to explain',
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'NO_ACTIVE_VERSION',
+          'Template has no active version to explain'
+        );
       }
       const version = await fastify.prisma.workflowTemplateVersion.findUnique({
         where: { templateId_version: { templateId: tpl.id, version: tpl.activeVersion } },
       });
       if (!version) {
-        return reply.status(404).send({
-          error: { code: 'VERSION_NOT_FOUND', message: 'Active version not found' },
-        });
+        return sendError(reply, 404, 'VERSION_NOT_FOUND', 'Active version not found');
       }
       // Migrate an older stored spec to the current schema first (the codemod
       // path the interpreter runs at workflow start), then parse — so a viewable,
@@ -1285,7 +1258,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         parsedSpec = parseWorkflowSpec(migrateSpec(version.spec, SPEC_SCHEMA_VERSION));
       } catch (err) {
         const message = err instanceof Error ? err.message : 'invalid spec';
-        return reply.status(400).send({ error: { code: 'INVALID_SPEC', message } });
+        return sendError(reply, 400, 'INVALID_SPEC', message);
       }
 
       try {
@@ -1297,12 +1270,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         return { data: { explanation } };
       } catch (err) {
         request.log.error({ err }, 'workflow explanation failed');
-        return reply.status(503).send({
-          error: {
-            code: 'EXPLAIN_UNAVAILABLE',
-            message: 'Could not generate an explanation right now. Please try again shortly.',
-          },
-        });
+        return sendError(
+          reply,
+          503,
+          'EXPLAIN_UNAVAILABLE',
+          'Could not generate an explanation right now. Please try again shortly.'
+        );
       }
     }
   );
@@ -1330,9 +1303,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!tpl) {
-        return reply.status(404).send({
-          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
-        });
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
       // Refine the most recent version (the current draft state), not the
       // promoted one — that's what the user is iterating on.
@@ -1341,16 +1312,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         where: { templateId: tpl.id },
       });
       if (!latest) {
-        return reply.status(400).send({
-          error: { code: 'NO_VERSION', message: 'Template has no version to refine' },
-        });
+        return sendError(reply, 400, 'NO_VERSION', 'Template has no version to refine');
       }
       let baseSpec: WorkflowSpec;
       try {
         baseSpec = parseWorkflowSpec(migrateSpec(latest.spec, SPEC_SCHEMA_VERSION));
       } catch (err) {
         const message = err instanceof Error ? err.message : 'invalid spec';
-        return reply.status(400).send({ error: { code: 'INVALID_SPEC', message } });
+        return sendError(reply, 400, 'INVALID_SPEC', message);
       }
 
       // `allowShell` is a hint to the author agent (the real gate is
@@ -1377,20 +1346,19 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       } catch (err) {
         request.log.error({ err }, 'workflow refinement failed');
         if (isAuthorGenerationFailure(err)) {
-          return reply.status(422).send({
-            error: {
-              code: 'REFINE_FAILED',
-              message:
-                'The author agent could not apply that change. Try rephrasing the request with more detail.',
-            },
-          });
+          return sendError(
+            reply,
+            422,
+            'REFINE_FAILED',
+            'The author agent could not apply that change. Try rephrasing the request with more detail.'
+          );
         }
-        return reply.status(503).send({
-          error: {
-            code: 'REFINE_UNAVAILABLE',
-            message: 'Workflow refinement is temporarily unavailable. Please try again shortly.',
-          },
-        });
+        return sendError(
+          reply,
+          503,
+          'REFINE_UNAVAILABLE',
+          'Workflow refinement is temporarily unavailable. Please try again shortly.'
+        );
       }
 
       let parsed: unknown;
@@ -1398,9 +1366,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         parsed = parseSpecOrThrow(generated.spec);
       } catch (err) {
         const e = err as Error & { statusCode?: number };
-        return reply
-          .status(e.statusCode ?? 400)
-          .send({ error: { code: 'INVALID_SPEC', message: e.message } });
+        return sendError(reply, e.statusCode ?? 400, 'INVALID_SPEC', e.message);
       }
       const parsedSpec = parsed as WorkflowSpec;
       // Keep the spec name pinned to the template so a refinement can't silently
@@ -1429,9 +1395,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         templateId: tpl.id,
       });
       if (!created) {
-        return reply.status(409).send({
-          error: { code: 'VERSION_CONFLICT', message: 'Concurrent version writes — please retry' },
-        });
+        return sendError(
+          reply,
+          409,
+          'VERSION_CONFLICT',
+          'Concurrent version writes — please retry'
+        );
       }
       const warnings = [
         ...(await validateSpecRefs(fastify.prisma, parsedSpec)),
@@ -1470,9 +1439,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, ...teamMembershipFilter(user) },
       });
       if (!tpl) {
-        return reply.status(404).send({
-          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
-        });
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
       const version = await fastify.prisma.workflowTemplateVersion.findUnique({
         where: {
@@ -1480,9 +1447,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
       if (!version) {
-        return reply.status(404).send({
-          error: { code: 'VERSION_NOT_FOUND', message: 'Version not found' },
-        });
+        return sendError(reply, 404, 'VERSION_NOT_FOUND', 'Version not found');
       }
       return {
         data: {
@@ -1516,18 +1481,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!tpl) {
-        return reply.status(404).send({
-          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
-        });
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
       const target = await fastify.prisma.workflowTemplateVersion.findUnique({
         select: { createdBy: true, generatedBy: true, id: true },
         where: { templateId_version: { templateId: tpl.id, version: request.params.version } },
       });
       if (!target) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'VERSION_NOT_FOUND', message: 'Version not found' } });
+        return sendError(reply, 404, 'VERSION_NOT_FOUND', 'Version not found');
       }
       // Review is a second pair of eyes on what the author agent produced for
       // someone. The person who asked for the generation approving it is no
@@ -1574,9 +1535,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!tpl) {
-        return reply.status(404).send({
-          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
-        });
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
 
       let parsed: unknown;
@@ -1584,9 +1543,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         parsed = parseSpecOrThrow(request.body.spec);
       } catch (err) {
         const e = err as Error & { statusCode?: number };
-        return reply
-          .status(e.statusCode ?? 400)
-          .send({ error: { code: 'INVALID_SPEC', message: e.message } });
+        return sendError(reply, e.statusCode ?? 400, 'INVALID_SPEC', e.message);
       }
 
       const parsedSpec = parsed as WorkflowSpec;
@@ -1612,9 +1569,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         templateId: tpl.id,
       });
       if (!created) {
-        return reply.status(409).send({
-          error: { code: 'VERSION_CONFLICT', message: 'Concurrent version writes — please retry' },
-        });
+        return sendError(
+          reply,
+          409,
+          'VERSION_CONFLICT',
+          'Concurrent version writes — please retry'
+        );
       }
       await writeAuditLog(fastify, {
         action: 'UPDATE',
@@ -1657,9 +1617,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!tpl) {
-        return reply.status(404).send({
-          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
-        });
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
       const version = await fastify.prisma.workflowTemplateVersion.findUnique({
         where: {
@@ -1667,18 +1625,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         },
       });
       if (!version) {
-        return reply.status(404).send({
-          error: { code: 'VERSION_NOT_FOUND', message: 'Version not found' },
-        });
+        return sendError(reply, 404, 'VERSION_NOT_FOUND', 'Version not found');
       }
       if (version.generatedBy && !version.reviewedAt) {
-        return reply.status(409).send({
-          error: {
-            code: 'REVIEW_REQUIRED',
-            message:
-              'This AI-generated version must be reviewed and approved before it can be promoted to active.',
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'REVIEW_REQUIRED',
+          'This AI-generated version must be reviewed and approved before it can be promoted to active.'
+        );
       }
       const promoteErrors = specErrorsOf(version.spec);
       if (promoteErrors.length > 0) {
@@ -1755,21 +1710,20 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // The platform starts the Channel Assistant from Slack; a hand-launched run would
       // have no channel to answer in.
       if (isSystemManagedTemplate({ name: tpl.name, team: tpl.teamId ? {} : null })) {
-        return reply.status(409).send({
-          error: {
-            code: 'SYSTEM_MANAGED_TEMPLATE',
-            message:
-              'The Channel Assistant is started by the platform from Slack and cannot be run by hand.',
-          },
-        });
+        return sendError(
+          reply,
+          409,
+          'SYSTEM_MANAGED_TEMPLATE',
+          'The Channel Assistant is started by the platform from Slack and cannot be run by hand.'
+        );
       }
       if (!tpl.activeVersion) {
-        return reply.status(400).send({
-          error: {
-            code: 'NO_ACTIVE_VERSION',
-            message: 'Template has no active version — promote a version first',
-          },
-        });
+        return sendError(
+          reply,
+          400,
+          'NO_ACTIVE_VERSION',
+          'Template has no active version — promote a version first'
+        );
       }
 
       const payload = request.body.payload ?? {};
@@ -1938,9 +1892,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         }
       );
       if (!launch.ok) {
-        return reply.status(409).send({
-          error: { code: 'RUN_CONFLICT', message: 'A run with this workflow ID already exists' },
-        });
+        return sendError(reply, 409, 'RUN_CONFLICT', 'A run with this workflow ID already exists');
       }
 
       return reply.status(201).send({
@@ -1963,9 +1915,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, ...teamMembershipFilter(user) },
       });
       if (!tpl) {
-        return reply.status(404).send({
-          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
-        });
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
       const { limit, offset } = request.query;
       const [rows, total] = await Promise.all([
@@ -2011,9 +1961,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!existing) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' } });
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
       const token = crypto.randomUUID();
       await fastify.prisma.workflowTemplate.update({
@@ -2047,9 +1995,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!existing) {
-        return reply
-          .status(404)
-          .send({ error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' } });
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
       await fastify.prisma.workflowTemplate.update({
         data: { webhookToken: null },
@@ -2088,9 +2034,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, ...teamMembershipFilter(user) },
       });
       if (!tpl) {
-        return reply.status(404).send({
-          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
-        });
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
       const [verA, verB] = await Promise.all([
         fastify.prisma.workflowTemplateVersion.findUnique({
@@ -2101,9 +2045,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         }),
       ]);
       if (!verA || !verB) {
-        return reply.status(404).send({
-          error: { code: 'VERSION_NOT_FOUND', message: 'One or both versions not found' },
-        });
+        return sendError(reply, 404, 'VERSION_NOT_FOUND', 'One or both versions not found');
       }
       // `spec` is stored as parsed JSON; cast at the boundary. Both rows were
       // validated against WorkflowSpecSchema when they landed, so the cast is safe.
@@ -2142,9 +2084,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: request.params.id, ...teamMembershipFilter(user) },
       });
       if (!tpl) {
-        return reply.status(404).send({
-          error: { code: 'TEMPLATE_NOT_FOUND', message: 'Template not found' },
-        });
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
       // Whole UTC days, as the cross-template rollup and custom ranges are.
       const { start: windowStart } = resolveWindow({}, request.query.window);
