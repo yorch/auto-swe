@@ -41,8 +41,11 @@ export const WEBHOOK_SIGNING_SECRET_PREFIX = 'whsec_';
  */
 const MAX_HEADER_LENGTH = 2048;
 const MAX_SIGNATURES = 8;
-/** Twelve digits reach the year 33658; anything longer is not a timestamp. */
-const TIMESTAMP_RE = /^[0-9]{1,12}$/;
+/**
+ * Canonical decimal only: no sign, no leading zeros, at most twelve digits (the year 33658). The MAC
+ * is over the number's canonical text, so exactly one spelling of each timestamp exists.
+ */
+const TIMESTAMP_RE = /^(0|[1-9][0-9]{0,11})$/;
 const V1_RE = /^[0-9a-f]{64}$/;
 
 export type WebhookBody = string | Uint8Array;
@@ -64,6 +67,8 @@ export type WebhookSignatureResult =
       timestamp: number;
       /** Which of `secrets` matched — 0 is the first (by convention, current). */
       secretIndex: number;
+      /** The `v1` digest that matched, lowercase hex. */
+      matchedDigest: string;
     }
   | { ok: false; reason: WebhookSignatureFailure };
 
@@ -196,7 +201,12 @@ export function verifyWebhookSignature(input: VerifyWebhookSignatureInput): Webh
     for (const candidate of parsed.signatures) {
       // Both are 64 ASCII hex bytes (the parser enforces it), so the lengths match.
       if (timingSafeEqual(expected, candidate)) {
-        return { ok: true, secretIndex: i, timestamp: parsed.timestamp };
+        return {
+          matchedDigest: candidate.toString('utf8'),
+          ok: true,
+          secretIndex: i,
+          timestamp: parsed.timestamp,
+        };
       }
     }
   }
