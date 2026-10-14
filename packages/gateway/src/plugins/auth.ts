@@ -211,6 +211,39 @@ class TokenUserLookupError extends Error {
   }
 }
 
+/**
+ * The `api_tokens` lookup behind a PAT check failed — an outage, a pool
+ * timeout, or a relation missing mid-deploy. Like {@link TokenUserLookupError}
+ * it says nothing about the token, so the hook rethrows it as a server error
+ * rather than answering 401 (and its cause, which is database text, is logged,
+ * never sent).
+ */
+class ApiTokenLookupError extends Error {
+  constructor(cause: unknown) {
+    super('Could not load this access token', { cause });
+    this.name = 'ApiTokenLookupError';
+  }
+}
+
+/**
+ * The fixed 401 message for a bearer token that failed verification. Only the
+ * platform's own errors carry text meant for the caller; anything else — a
+ * library error, an unexpected throw — gets a fixed message, so a 401 never
+ * echoes internal error text.
+ */
+function bearerRejectionMessage(err: unknown): string {
+  if (err instanceof TokenUserRevokedError) {
+    return err.message;
+  }
+  if (err instanceof jwt.TokenExpiredError) {
+    return 'Access token expired';
+  }
+  if (err instanceof jwt.JsonWebTokenError) {
+    return 'Invalid access token';
+  }
+  return 'Invalid token';
+}
+
 /** The live user fields an access token's claims are re-checked against. */
 export interface TokenUserState {
   isActive: boolean;
@@ -364,10 +397,14 @@ class PatAuthError extends Error {
  */
 async function verifyPatPayload(request: FastifyRequest, token: string): Promise<JwtPayload> {
   const hash = request.server.auth.hashToken(token);
-  const pat = await request.server.prisma.apiToken.findUnique({
-    include: { user: true },
-    where: { tokenHash: hash },
-  });
+  const pat = await request.server.prisma.apiToken
+    .findUnique({
+      include: { user: true },
+      where: { tokenHash: hash },
+    })
+    .catch((err: unknown) => {
+      throw new ApiTokenLookupError(err);
+    });
   if (!pat || pat.revokedAt || !pat.user.isActive) {
     throw new PatAuthError('TOKEN_INVALID', 'Invalid or revoked access token');
   }
@@ -690,13 +727,17 @@ export function requireAuth(options: RBACOptions = {}) {
         if (err instanceof PatAuthError) {
           return reply.status(401).send({ error: { code: err.code, message: err.message } });
         }
-        // A failed user lookup is an outage, not a verdict on the caller, and
-        // its message is internal: surface it as a server error, not a 401.
-        if (err instanceof TokenUserLookupError) {
+        // A failed user or token lookup is an outage, not a verdict on the
+        // caller, and its message is internal: surface it as a server error,
+        // not a 401 a client would treat as "sign in again".
+        if (err instanceof TokenUserLookupError || err instanceof ApiTokenLookupError) {
           throw err;
         }
+        if (!(err instanceof jwt.JsonWebTokenError || err instanceof TokenUserRevokedError)) {
+          request.log.warn({ err }, 'bearer token rejected by an unexpected error');
+        }
         return reply.status(401).send({
-          error: { code: 'TOKEN_INVALID', message: getErrorMessage(err) || 'Invalid token' },
+          error: { code: 'TOKEN_INVALID', message: bearerRejectionMessage(err) },
         });
       }
     } else {
