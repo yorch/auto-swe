@@ -39,8 +39,20 @@ export interface StandaloneGateInput {
  * capture the result, and tear the workspace down. Never throws on a non-zero
  * exit — returns `{ passed: false }`, like `runGate`.
  */
+/**
+ * A command that runs nothing is not a command: `sh -c '   '` exits 0, which
+ * would read as a gate that ran and passed. Whitespace-only is therefore absent,
+ * exactly as `resolveCommand` treats a whitespace-only step override.
+ */
+function normaliseCommand(value: string | null | undefined): string | null {
+  return value && value.trim().length > 0 ? value : null;
+}
+
 export async function runGateStandalone(input: StandaloneGateInput): Promise<GateResult> {
-  const command = input.command ?? DEFAULT_COMMANDS[input.gate];
+  // Step override first, then the gate's built-in default — the same precedence
+  // the workflow path uses, so a whitespace-only override falls back rather than
+  // silently disabling the gate.
+  const command = normaliseCommand(input.command) ?? normaliseCommand(DEFAULT_COMMANDS[input.gate]);
   if (!command) {
     return noCommandResult(input.gate);
   }

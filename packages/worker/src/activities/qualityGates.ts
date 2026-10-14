@@ -193,7 +193,13 @@ export async function resolveCommand(
     where: { id: requireRepoId(request, 'qualityGate') },
   });
   const repoOverrides = (repo.gateCommands ?? null) as Record<string, string> | null;
-  if (repoOverrides && typeof repoOverrides[gate] === 'string' && repoOverrides[gate].length > 0) {
+  // Whitespace-only counts as absent, like the step override above: a command
+  // that runs nothing must not read as a gate that ran and passed.
+  if (
+    repoOverrides &&
+    typeof repoOverrides[gate] === 'string' &&
+    repoOverrides[gate].trim().length > 0
+  ) {
     return repoOverrides[gate];
   }
 

@@ -128,6 +128,23 @@ describe('resolveCommand precedence', () => {
     const cmd = await resolveCommand('runLint', baseRequest, '   ');
     expect(cmd).toBe(DEFAULT_COMMANDS.runLint);
   });
+
+  it('treats a whitespace-only repository override as missing, not as a passing command', async () => {
+    // `sh -c '   '` exits 0, so accepting this would leave the gate reporting a
+    // pass for a command that ran nothing.
+    mockedFindUnique.mockResolvedValue({ gateCommands: { runTests: '   ' } } as never);
+    const cmd = await resolveCommand('runTests', baseRequest, undefined);
+    expect(cmd).toBe(DEFAULT_COMMANDS.runTests);
+  });
+
+  it('treats a whitespace-only repository override as missing for runPerfBench too', async () => {
+    mockedFindUnique.mockResolvedValue({ gateCommands: { runPerfBench: '\t' } } as never);
+    const cmd = await resolveCommand('runPerfBench', baseRequest, undefined);
+    expect(cmd).toBeNull();
+    const result = await runPerfBench({ request: baseRequest });
+    expect(result.passed).toBe(false);
+    expect(fakeWorkspace.execCapture).not.toHaveBeenCalled();
+  });
 });
 
 describe('truncate', () => {
