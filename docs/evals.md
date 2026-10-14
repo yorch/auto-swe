@@ -74,6 +74,24 @@ the repo's `executorImage`, and executes the gate command. Any non-executable pa
 exec error — records `passed: false`. A floor scorer must never green-light unverified code by
 silently passing.
 
+That branch is the run's own work branch (`<branchPrefix>/<ticketId>`) unless the node names one with
+`candidateRef`, a binding resolved like `target`:
+
+```jsonc
+{
+  "type": "eval",
+  "candidateRef": { "from": "nodes.implement.output.branch" },
+  "target": { "from": "nodes.implement.output.diff" },
+  "scorers": [{ "kind": "gate", "gate": "runTests" }]
+}
+```
+
+A per-branch fan-out subtask pushes `<branchPrefix>/<ticketId>/<subtask>`, and a launch that named a
+`baseBranch` does not work on `<branchPrefix>/<ticketId>` at all. Without `candidateRef` a `gate`
+scorer in either case checks out whatever that branch happens to hold and reports a failure the
+change never caused — a floor scorer fails safe, so the wrong branch reads as a broken change. Leave
+`candidateRef` off to accept the default.
+
 ---
 
 ## 3. Offline harness

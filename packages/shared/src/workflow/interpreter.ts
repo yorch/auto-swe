@@ -677,6 +677,12 @@ const DISPATCH_PACKERS: {
         scorers: node.scorers,
         targetValue: resolveInputs({ target: node.target }, ctx).target,
       };
+      // A `gate` scorer runs against a branch; resolving `candidateRef` here (the
+      // activity has no context) lets a spec point it at the branch a previous
+      // node pushed rather than the run's default work branch.
+      if (node.candidateRef !== undefined) {
+        config.candidateRef = resolveBinding(node.candidateRef, ctx);
+      }
       if (node.judgeAdvisory !== undefined) {
         config.judgeAdvisory = node.judgeAdvisory;
       }

@@ -60,6 +60,12 @@ const SCORER_KIND_SOURCE: Record<
 
 export interface RunEvalNodeInput {
   targetValue: unknown;
+  /**
+   * Branch holding the candidate's code, for a `gate` scorer. Defaults to the
+   * run's own work branch (`<branchPrefix>/<ticketId>`), which is wrong for a
+   * per-branch fan-out subtask or a run that named a `baseBranch`.
+   */
+  candidateRef?: string;
   scorers: EvalScorer[];
   judgeAdvisory?: boolean;
   spanName?: string;
@@ -79,7 +85,9 @@ type EvaluatedScore = ScoreInput & { costUsd?: number; judgeModel?: string };
 async function evaluateScorer(
   scorer: EvalScorer,
   targetValue: unknown,
-  runId: string | undefined
+  runId: string | undefined,
+  /** Branch holding the candidate, for `gate`; defaults to the run's work branch. */
+  candidateRef?: string
 ): Promise<EvaluatedScore> {
   switch (scorer.kind) {
     case 'assert': {
@@ -177,7 +185,11 @@ async function evaluateScorer(
           where: { id: connectionId },
         });
         const defaults = await resolveWorkflowDefaults();
-        const branch = `${defaults.branchPrefix}/${externalTicketId}`;
+        // The run's own work branch unless the node named the candidate's ref —
+        // a per-branch fan-out subtask does not live on `<prefix>/<ticketId>`,
+        // and scoring the wrong branch fails safe, which reads as the change
+        // breaking a gate it never touched.
+        const branch = candidateRef ?? `${defaults.branchPrefix}/${externalTicketId}`;
         const repoRef = toRepoRef(repo);
         const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
         const result = await runGateStandalone({
@@ -321,11 +333,13 @@ async function runEvalNodeImpl(input: RunEvalNodeInput): Promise<RunEvalNodeResu
   const nonJudge = input.scorers.filter((s) => s.kind !== 'judge');
   const judges = input.scorers.filter((s) => s.kind === 'judge');
   const baseInputs = await Promise.all(
-    nonJudge.map((s) => evaluateScorer(s, input.targetValue, runId))
+    nonJudge.map((s) => evaluateScorer(s, input.targetValue, runId, input.candidateRef))
   );
   const floorOk = evaluateFloor(baseInputs);
   const judgeInputs = floorOk
-    ? await Promise.all(judges.map((s) => evaluateScorer(s, input.targetValue, runId)))
+    ? await Promise.all(
+        judges.map((s) => evaluateScorer(s, input.targetValue, runId, input.candidateRef))
+      )
     : [];
   const scoreInputs = [...baseInputs, ...judgeInputs];
 

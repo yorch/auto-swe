@@ -256,6 +256,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     'runEvalNode',
     ({ config }) =>
       evalNodeActivities.runEvalNode({
+        candidateRef: config.candidateRef as string | undefined,
         judgeAdvisory: config.judgeAdvisory as boolean | undefined,
         scorers: config.scorers as Parameters<typeof evalNodeActivities.runEvalNode>[0]['scorers'],
         spanName: config.spanName as string | undefined,
