@@ -113,7 +113,7 @@ packages/
 | `src/lib/idempotency.ts` | `Idempotency-Key` support for the two generic triggers — hashes the caller's key into a deterministic workflow ID so the dedup gate above has something stable to fire on. `POST /work-requests` reuses only its header schema: it keeps its ticket-derived workflow ID and stores the key on `RunInput` (unique per submitter) instead — see [product overview](./product-overview.md) |
 | `src/lib/github.ts` | GitHub webhook HMAC verification + the paginated repository listing behind repo import (plain `fetch`; the gateway carries no Octokit) |
 | `src/lib/slack.ts` | Slack request-signature verification + Web API helpers (post a message, publish App Home, open a view) |
-| `src/routes/slack.ts` | Slack slash-command, events, and interactive handlers (mounted at `/api/v1/auth/slack`) |
+| `src/routes/slack.ts`, `src/routes/slack/` | Slack OAuth, slash-command, events, and interactive routes (mounted at `/api/v1/auth/slack`); their logic lives in `src/lib/slack/` |
 | `src/lib/launchAuthorization.ts` | `authorizeLaunch` — the one launch decision (repository access, org membership, org monthly cap) every launch path takes |
 | `src/lib/orgAccess.ts` | Org membership and monthly-cap checks behind `authorizeLaunch`, plus `assertOrgAccess` / `assertOrgBudget` for handlers that derive their org from the body rather than a route param |
 | `src/lib/auditLog.ts` | `writeAuditLog()` — `ConfigAuditLog` rows for every config mutation |

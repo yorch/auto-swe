@@ -6060,7 +6060,7 @@
       "before": 0,
       "id": "hitlSlackButton",
       "lines": 10,
-      "path": "packages/gateway/src/routes/slack.ts",
+      "path": "packages/gateway/src/lib/slack/hitlActions.ts",
       "title": "Slack resolution (button or modal) also edits the message"
     },
     {
@@ -6140,7 +6140,7 @@
       "before": 7,
       "id": "hitlSlackModalOpen",
       "lines": 70,
-      "path": "packages/gateway/src/routes/slack.ts",
+      "path": "packages/gateway/src/lib/slack/hitlActions.ts",
       "title": "Approve and reject open a modal after a lookup of the steps the clicker may act on"
     },
     {
@@ -6148,7 +6148,7 @@
       "before": 5,
       "id": "hitlSlackModalSign",
       "lines": 44,
-      "path": "packages/gateway/src/routes/slack.ts",
+      "path": "packages/gateway/src/lib/slack/hitlModal.ts",
       "title": "Modal metadata is signed and verified"
     },
     {
@@ -6156,7 +6156,7 @@
       "before": 6,
       "id": "hitlSlackModalSubmit",
       "lines": 44,
-      "path": "packages/gateway/src/routes/slack.ts",
+      "path": "packages/gateway/src/lib/slack/hitlActions.ts",
       "title": "A submission must match the signed metadata and the Slack user"
     },
     {
@@ -6252,7 +6252,7 @@
       "before": 0,
       "id": "hitlModalThread",
       "lines": 15,
-      "path": "packages/gateway/src/routes/slack.ts",
+      "path": "packages/gateway/src/lib/slack/hitlActions.ts",
       "title": "A pending-approval note from a modal goes to the message’s thread"
     },
     {
@@ -6276,7 +6276,7 @@
       "before": 0,
       "id": "hitlApproveModal",
       "lines": 10,
-      "path": "packages/gateway/src/routes/slack.ts",
+      "path": "packages/gateway/src/lib/slack/hitlActions.ts",
       "title": "Approve and reject always open the modal; only decision options resolve in one click"
     },
     {
@@ -6284,7 +6284,7 @@
       "before": 6,
       "id": "slackReplyBestEffort",
       "lines": 40,
-      "path": "packages/gateway/src/routes/slack.ts",
+      "path": "packages/gateway/src/lib/slack/respond.ts",
       "title": "Slack replies are best effort: failures are swallowed"
     },
     {

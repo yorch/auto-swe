@@ -18,7 +18,7 @@ import { CRON_5_FIELD_RE } from './scheduledWorkRequests.js';
 
 /**
  * SlackChannel admin management (channel assistant, Phase 1). Phase 0 auto-provisions a
- * channel on the first @mention (see routes/slack.ts `provisionChannel`); this
+ * channel on the first @mention (see lib/slack/channelProvision.ts `provisionChannel`); this
  * surface lets admins register/retune channels explicitly: which Agent drives
  * the channel, ambient mode + cron, the per-channel budget cap, and the owning
  * team (which governs the team tier of the config cascade + RBAC).

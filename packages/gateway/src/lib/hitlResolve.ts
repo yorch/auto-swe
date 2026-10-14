@@ -13,7 +13,7 @@ import type { ConnectionScopeGate } from './tenantScope.js';
 /**
  * Shared HITL resolve core, used by:
  *   - `routes/humanSteps.ts` — POST /api/v1/human-steps/:id/respond (human step API)
- *   - `routes/slack.ts`      — `hitl_resolve` Block Kit button interactions
+ *   - `lib/slack/hitlActions.ts` — `hitl_resolve` Block Kit button interactions
  *
  * Both entry points enforce the SAME authorization (run control via
  * {@link buildWorkflowHumanStepControlFilter}), the same action validation, the same atomic

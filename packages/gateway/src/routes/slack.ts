@@ -35,11 +35,10 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
     /* parser already registered at a parent scope */
   }
 
+  // Called directly rather than via `fastify.register`, so every route stays in this
+  // plugin's single encapsulation scope, under the parser above.
   await registerOauthRoutes(fastify);
-
   await registerInteractiveRoutes(fastify);
-
   await registerCommandRoutes(fastify);
-
   await registerEventRoutes(fastify);
 };

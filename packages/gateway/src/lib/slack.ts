@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 
 /**
  * Shared Slack helpers used by:
- *   - `routes/slack.ts` (interactive webhook + OAuth + slash command)
+ *   - `routes/slack.ts` and `routes/slack/` (interactive webhook + OAuth + slash command)
  *   - any future activity that needs to post into Slack from the gateway
  *
  * The signature verification + replay window are extracted here so both the

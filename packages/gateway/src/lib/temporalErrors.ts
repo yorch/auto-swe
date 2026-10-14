@@ -14,7 +14,7 @@ import { getErrorName } from '../plugins/auth.js';
  * describing reality incorrectly and invite an unclearable retry loop: the write
  * stands and the caller reports success-with-caveat (`signalSent: false`).
  *
- * Shared by `routes/webhooks.ts` (PR merge / CI verdicts), `routes/slack.ts`
+ * Shared by `routes/webhooks.ts` (PR merge / CI verdicts), `lib/slack/`
  * (thread steering), and `lib/hitlResolve.ts` (inbox + Slack HITL resolve) so
  * the three cannot disagree about which failures are worth retrying.
  */
