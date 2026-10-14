@@ -656,9 +656,9 @@ export const SETTING_DEFINITIONS = {
     schema: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE),
   }),
   'workspace.harnessContextTokens': defineSetting({
-    defaultValue: 150_000,
+    defaultValue: 120_000,
     description:
-      "Token budget for the conversation a harness carries from one turn to the next, estimated at four characters per token and counted with the system prompt. Applies to the Pi runtime. Before each model call over the budget, the oldest tool output is replaced with a short stub, then the oldest whole exchanges (a prompt and the work that answered it) are dropped; the current prompt is always sent. Set it below the model's context window, leaving room for its reply. The Mastra loop starts each turn afresh and does not read it.",
+      "Token budget for the conversation a harness carries from one turn to the next, estimated at three characters per token and counted with the system prompt and tool definitions. Applies to the Pi runtime. Before each model call over the budget, old tool output and old file content in write/edit calls are replaced with short stubs, then the oldest whole exchanges (a prompt and the work that answered it) are dropped, then the current exchange is stubbed oldest first; the current prompt is always sent. Set it below the model's context window, leaving room for its reply. The Mastra loop starts each turn afresh and does not read it.",
     group: 'workspace',
     label: 'Harness context budget',
     overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],

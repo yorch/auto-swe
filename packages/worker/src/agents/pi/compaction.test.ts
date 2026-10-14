@@ -1,12 +1,17 @@
 import type { AgentMessage } from '@mariozechner/pi-agent-core';
 import { describe, expect, it } from 'vitest';
-import { compactMessages, elisionStub, estimateTokens } from './compaction.js';
+import { compactMessages, elisionStub, estimateTokens, toolDefinitionChars } from './compaction.js';
 
 const user = (text: string): AgentMessage => ({ content: text, role: 'user', timestamp: 0 });
-const assistant = (...calls: { id: string; name: string }[]): AgentMessage =>
+const assistant = (...calls: { id: string; name: string; args?: object }[]): AgentMessage =>
   ({
     content: calls.length
-      ? calls.map((c) => ({ arguments: { n: 1 }, id: c.id, name: c.name, type: 'toolCall' }))
+      ? calls.map((c) => ({
+          arguments: c.args ?? { n: 1 },
+          id: c.id,
+          name: c.name,
+          type: 'toolCall',
+        }))
       : [{ text: 'done', type: 'text' }],
     role: 'assistant',
     stopReason: calls.length ? 'toolUse' : 'stop',
@@ -23,7 +28,7 @@ const result = (id: string, name: string, text: string, isError = false): AgentM
     toolName: name,
   }) as unknown as AgentMessage;
 
-const BIG = 'x'.repeat(4_000); // 1000 tokens
+const BIG = 'x'.repeat(4_000); // about 1333 tokens
 
 /** `exchanges` user prompts, each with `steps` tool calls returning BIG. */
 function conversation(exchanges: number, steps: number): AgentMessage[] {
@@ -38,9 +43,20 @@ function conversation(exchanges: number, steps: number): AgentMessage[] {
   return out;
 }
 
+const roleOf = (m: AgentMessage) => (m as { role: string }).role;
+const resultsOf = (messages: AgentMessage[]) =>
+  messages.filter((m) => roleOf(m) === 'toolResult') as unknown as {
+    content: { text: string }[];
+    isError: boolean;
+    toolCallId: string;
+    toolName: string;
+    details?: unknown;
+  }[];
+const isWhole = (r: { content: { text: string }[] }) => r.content[0]?.text.length === 4_000;
+
 /** The invariants every compacted conversation keeps. */
 function expectWellFormed(messages: AgentMessage[]) {
-  expect((messages[0] as { role: string }).role).toBe('user');
+  expect(roleOf(messages[0] as AgentMessage)).toBe('user');
   const calls = new Set<string>();
   const results = new Set<string>();
   for (const m of messages as unknown as {
@@ -62,13 +78,15 @@ function expectWellFormed(messages: AgentMessage[]) {
 }
 
 describe('estimateTokens', () => {
-  it('counts the system prompt and every kind of message part', () => {
+  it('counts the system prompt, the tool definitions and every kind of message part', () => {
     expect(estimateTokens('', [])).toBe(0);
-    expect(estimateTokens('x'.repeat(400), [])).toBe(100);
-    expect(estimateTokens('', [user('x'.repeat(40)), result('a', 'read', 'y'.repeat(40))])).toBe(
+    expect(estimateTokens('x'.repeat(300), [])).toBe(100);
+    expect(estimateTokens('', [], 300)).toBe(100);
+    expect(estimateTokens('', [user('x'.repeat(30)), result('a', 'read', 'y'.repeat(30))])).toBe(
       20
     );
     expect(estimateTokens('', [assistant({ id: 'a', name: 'read' })])).toBeGreaterThan(0);
+    expect(toolDefinitionChars([{ description: 'abc', name: 'ab', parameters: {} }])).toBe(7);
   });
 });
 
@@ -81,45 +99,73 @@ describe('compactMessages', () => {
     expect(out.droppedMessages).toBe(0);
   });
 
-  it('elides old tool results first, oldest first, keeping ids and error flags', () => {
+  it('counts the tool definitions against the budget', () => {
+    const messages = conversation(1, 1);
+    const total = estimateTokens('', messages);
+    expect(compactMessages({ budgetTokens: total, messages, systemPrompt: '' }).messages).toBe(
+      messages
+    );
+    const out = compactMessages({
+      budgetTokens: total,
+      messages,
+      overheadChars: 3_000,
+      systemPrompt: '',
+    });
+    expect(out.beforeTokens).toBe(total + 1_000);
+  });
+
+  it('elides tool results oldest first inside a single exchange, keeping ids and error flags', () => {
     const messages = conversation(1, 8);
     messages[2] = result('c0-0', 'read', BIG, true);
-    const total = estimateTokens('', messages);
-    const out = compactMessages({ budgetTokens: total - 2_500, messages, systemPrompt: '' });
+    const budget = estimateTokens('', messages) - 2_500;
+    const out = compactMessages({ budgetTokens: budget, messages, systemPrompt: '' });
 
     expect(out.droppedMessages).toBe(0);
-    expect(out.elidedResults).toBe(3);
-    const results = out.messages.filter(
-      (m) => (m as { role: string }).role === 'toolResult'
-    ) as unknown as {
-      content: { text: string }[];
-      isError: boolean;
-      toolCallId: string;
-      toolName: string;
-      details?: unknown;
-    }[];
-    expect(results.slice(0, 3).map((r) => r.content[0]?.text)).toEqual(
-      Array(3).fill(elisionStub('read'))
+    expect(out.elidedResults).toBe(2);
+    const results = resultsOf(out.messages);
+    expect(results.slice(0, 2).map((r) => r.content[0]?.text)).toEqual(
+      Array(2).fill(elisionStub('read'))
     );
     expect(results[0]).toMatchObject({ isError: true, toolCallId: 'c0-0', toolName: 'read' });
     expect(results[0]?.details).toBeUndefined();
-    expect(results[3]?.content[0]?.text).toBe(BIG);
-    expect(out.afterTokens).toBeLessThanOrEqual(total - 2_500);
-    expect(out.afterTokens).toBeLessThan(out.beforeTokens);
+    expect(isWhole(results[2] as never)).toBe(true);
+    expect(out.afterTokens).toBeLessThanOrEqual(budget);
     expectWellFormed(out.messages);
   });
 
-  it('never elides the results of the most recent assistant turns', () => {
+  it('spares the recent assistant turns, then the last call, until nothing else is left', () => {
     const messages = conversation(1, 6);
-    const out = compactMessages({ budgetTokens: 1, messages, systemPrompt: '' });
-    const results = out.messages.filter(
-      (m) => (m as { role: string }).role === 'toolResult'
-    ) as unknown as {
-      content: { text: string }[];
-    }[];
-    // 6 calls + a final answer: the last 4 assistant turns are the last 3 calls and the answer.
-    expect(results.filter((r) => r.content[0]?.text === BIG)).toHaveLength(3);
-    expect(results.filter((r) => r.content[0]?.text !== BIG)).toHaveLength(3);
+    const total = estimateTokens('', messages);
+    // Room is made by the three results older than the four recent turns alone.
+    const spared = compactMessages({ budgetTokens: total - 3_800, messages, systemPrompt: '' });
+    expect(resultsOf(spared.messages).filter(isWhole)).toHaveLength(3);
+    // Then everything but the last call and its result.
+    const tight = compactMessages({ budgetTokens: 3_500, messages, systemPrompt: '' });
+    const results = resultsOf(tight.messages);
+    expect(results.filter(isWhole)).toHaveLength(1);
+    expect(isWhole(results.at(-1) as never)).toBe(true);
+    expectWellFormed(tight.messages);
+    // The last result goes only when the budget cannot be met without it.
+    const last = compactMessages({ budgetTokens: 1, messages, systemPrompt: '' });
+    expect(resultsOf(last.messages).filter(isWhole)).toHaveLength(0);
+    expectWellFormed(last.messages);
+  });
+
+  it('elides inside a session with fewer than four assistant turns, the last result last', () => {
+    const messages: AgentMessage[] = [
+      user('go'),
+      assistant({ id: 'a', name: 'read' }),
+      result('a', 'read', BIG),
+      assistant({ id: 'b', name: 'read' }),
+      result('b', 'read', BIG),
+    ];
+    const out = compactMessages({ budgetTokens: 1_600, messages, systemPrompt: '' });
+    expect(out.elidedResults).toBe(1);
+    expect(resultsOf(out.messages).map(isWhole)).toEqual([false, true]);
+    expect(out.afterTokens).toBeLessThanOrEqual(1_600);
+    const lastResort = compactMessages({ budgetTokens: 100, messages, systemPrompt: '' });
+    expect(resultsOf(lastResort.messages).map(isWhole)).toEqual([false, false]);
+    expectWellFormed(lastResort.messages);
   });
 
   it('drops the oldest whole exchanges when eliding is not enough, keeping the current prompt', () => {
@@ -132,16 +178,13 @@ describe('compactMessages', () => {
     expect(out.messages.at(-1)).toBe(messages.at(-1));
     expect(JSON.stringify(out.messages)).toContain('prompt 4');
     expect(JSON.stringify(out.messages)).not.toContain('prompt 0');
-    // What survives is a suffix of whole exchanges: it begins at a user message.
     expectWellFormed(out.messages);
   });
 
   it('sends the newest exchange even when it alone exceeds the budget', () => {
     const messages = conversation(3, 6);
     const out = compactMessages({ budgetTokens: 10, messages, systemPrompt: 'sys' });
-    expect(out.messages[0]).toBe(
-      [...messages].reverse().find((m) => (m as { role: string }).role === 'user')
-    );
+    expect(out.messages[0]).toBe([...messages].reverse().find((m) => roleOf(m) === 'user'));
     expect(out.afterTokens).toBeGreaterThan(10);
     expectWellFormed(out.messages);
   });
@@ -163,5 +206,110 @@ describe('compactMessages', () => {
     });
     expect(twice.messages).toEqual(once.messages);
     expect(twice.elidedResults).toBe(0);
+  });
+
+  it('spends an old exchange before the current one: old bulk goes first, current output stays', () => {
+    const old: AgentMessage[] = [
+      user('old'),
+      assistant({ args: { content: 'w'.repeat(400_000), path: 'a.ts' }, id: 'w', name: 'write' }),
+      result('w', 'write', 'ok'),
+      assistant(),
+    ];
+    const current: AgentMessage[] = [user('now')];
+    for (let k = 0; k < 6; k++) {
+      current.push(
+        assistant({ id: `n${k}`, name: 'bash' }),
+        result(`n${k}`, 'bash', 'y'.repeat(20_000))
+      );
+    }
+    const out = compactMessages({
+      budgetTokens: 120_000,
+      messages: [...old, ...current],
+      systemPrompt: 'z'.repeat(20_000),
+    });
+    expect(out.afterTokens).toBeLessThanOrEqual(120_000);
+    expect(out.elidedArguments).toBe(1);
+    expect(out.droppedMessages).toBe(0);
+    expect(out.elidedResults).toBe(0);
+    expect(resultsOf(out.messages).filter((r) => r.content[0]?.text.startsWith('y'))).toHaveLength(
+      6
+    );
+    expectWellFormed(out.messages);
+  });
+
+  it('stubs write and edit arguments, keeping the call id, name and path', () => {
+    const big = 'q'.repeat(5_000);
+    const messages: AgentMessage[] = [
+      user('first'),
+      assistant(
+        { args: { content: big, path: 'a.ts' }, id: 'w', name: 'write' },
+        {
+          args: {
+            edits: [
+              { newText: big, oldText: big },
+              { newText: 'x', oldText: 'y' },
+            ],
+            path: 'b.ts',
+          },
+          id: 'e',
+          name: 'edit',
+        },
+        { args: { newText: big, oldText: big, path: 'c.ts' }, id: 'l', name: 'edit' },
+        { args: { command: big }, id: 'b', name: 'bash' }
+      ),
+      result('w', 'write', 'ok'),
+      result('e', 'edit', 'ok'),
+      result('l', 'edit', 'ok'),
+      result('b', 'bash', 'ok'),
+      assistant(),
+      user('second'),
+    ];
+    const out = compactMessages({ budgetTokens: 2_000, messages, systemPrompt: '' });
+    const calls = (
+      out.messages[1] as unknown as {
+        content: { id: string; name: string; arguments: Record<string, unknown> }[];
+      }
+    ).content;
+    expect(calls.map((c) => c.id)).toEqual(['w', 'e', 'l', 'b']);
+    expect(calls[0]?.arguments).toEqual({ content: '[5000 chars elided]', path: 'a.ts' });
+    expect(calls[1]?.arguments).toEqual({
+      edits: [
+        { newText: '[5000 chars elided]', oldText: '[5000 chars elided]' },
+        { newText: 'x', oldText: 'y' },
+      ],
+      path: 'b.ts',
+    });
+    expect(calls[2]?.arguments).toEqual({
+      newText: '[5000 chars elided]',
+      oldText: '[5000 chars elided]',
+      path: 'c.ts',
+    });
+    expect(calls[3]?.arguments).toEqual({ command: big });
+    expectWellFormed(out.messages);
+  });
+
+  it('keeps one long turn of large writes within budget', () => {
+    const budget = 100_000;
+    const messages: AgentMessage[] = [user('long job')];
+    let largest = 0;
+    for (let k = 0; k < 50; k++) {
+      const out = compactMessages({
+        budgetTokens: budget,
+        messages,
+        systemPrompt: 'z'.repeat(20_000),
+      });
+      largest = Math.max(largest, out.afterTokens);
+      messages.push(
+        assistant({
+          args: { content: 'w'.repeat(16_000), path: `f${k}.ts` },
+          id: `w${k}`,
+          name: 'write',
+        }),
+        result(`w${k}`, 'write', 'r'.repeat(2_000))
+      );
+    }
+    expect(largest).toBeLessThanOrEqual(budget);
+    // Without compaction the same turn is far over it.
+    expect(estimateTokens('z'.repeat(20_000), messages)).toBeGreaterThan(budget);
   });
 });

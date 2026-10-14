@@ -357,7 +357,7 @@ describe('a Pi turn', () => {
     ]);
     const tracer = { addActivityEvent: vi.fn() };
     const adapter = adapterFor(model, {
-      harnessContextTokens: 1_500,
+      harnessContextTokens: 3_500,
       tracer: tracer as unknown as AgentTracer,
     });
     const container = fakeContainer(files);
@@ -378,12 +378,18 @@ describe('a Pi turn', () => {
     const sizes = (prompts as Prompt[]).map((p) => JSON.stringify(p).length);
     // Without compaction the eighth prompt would hold seven whole outputs (over 14k characters).
     expect(sizes[7]).toBeLessThan(12_000);
-    expect(tracer.addActivityEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: 'pi.context_compacted',
-        outputJson: expect.objectContaining({ elidedResults: expect.any(Number) }),
-      })
-    );
+    // One event per turn that compacted, however many of its model calls did.
+    const events = tracer.addActivityEvent.mock.calls
+      .map(([event]) => event as { name: string; outputJson: Record<string, number> })
+      .filter((event) => event.name === 'pi.context_compacted');
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.length).toBeLessThanOrEqual(2);
+    expect(events[0]?.outputJson.compactingCalls).toBeGreaterThan(1);
+    expect(events[0]?.outputJson).toMatchObject({
+      afterTokens: expect.any(Number),
+      beforeTokens: expect.any(Number),
+      elidedResults: expect.any(Number),
+    });
 
     // The last call of the first turn: old output is stubbed, the newest is whole.
     const late = JSON.stringify(prompts[7]);
