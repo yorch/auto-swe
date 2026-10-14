@@ -441,7 +441,7 @@ Two optional choices let a bulk change handle writes the gateway otherwise refus
 
 Every changed agent gets a new immutable version through the same versioning path as a single edit, and no earlier version is rewritten. A run started before the change is pinned to the platform-wide version it resolved, so changing a platform-wide agent does not reach it. A narrower override is not pinned: a run that resolves one picks up that override's newest version on its next resolve, which is what makes changing an override affect a run already in flight. See [Agent version history](agents.md#92-agent-library-model--prompt--skills--tools).
 
-An agent at a narrower scope — team, organization, channel or workflow template — replaces the broader row for runs in that scope. Changing a platform-wide row therefore does not reach a team with its own override. The preview names the narrower scopes holding a row for the same key that would win over the selected one for their own runs; a team or organization row only does so over a platform-wide row, since it wins for its own runs and no others.
+An agent at a narrower scope — team, organization, channel or workflow template — replaces the broader row for runs that resolve through it. Changing a platform-wide row therefore does not reach a team with its own override. The preview names the narrower scopes holding a row for the same key. A channel or workflow-template row wins in its own context whatever it sits above; a team row wins over a platform-wide row for that team, and over an organization row for teams inside that organization, because the resolver tries the team tier before the organization one.
 
 ### Rotating an API key
 
@@ -651,6 +651,12 @@ forced delete.
 
 ## Limitations
 
+- **A bulk apply can still revive a lineage deactivated between the preview and the write.** The
+  apply refuses a head that is no longer active, but that check and the write are not atomic: a
+  deactivation landing in between goes unseen and the new version is written active. The same race
+  exists on a single edit, which does not check activity at all, and `updateAgent` writing
+  `isActive: true` is what reactivates — closing it properly needs a lock held across the check and
+  the write.
 - **Bulk model preview and apply are separate operations, not an atomic transaction.** Each agent
   is handled independently during apply: a version conflict or unexpected write failure is
   reported for that agent, while successful changes to other agents remain applied.
