@@ -18,6 +18,8 @@ export {
 } from './lib/connectionToken.js';
 export {
   CONNECTION_TYPES,
+  type ConfluenceConnectionConfig,
+  ConfluenceConnectionConfigSchema,
   type ConnectionType,
   type ConnectionTypeMetadata,
   ConnectionTypeSchema,
@@ -30,6 +32,7 @@ export {
   listConnectionTypes,
   type NotionConnectionConfig,
   NotionConnectionConfigSchema,
+  parseConfluenceConnectionConfig,
   parseIssueTrackerConnectionConfig,
   parseNotionConnectionConfig,
   parseSlackConnectionConfig,

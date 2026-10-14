@@ -43,7 +43,10 @@ describe('workspaceProviders', () => {
 
   it('maps providers to their supported connection types', () => {
     expect(getWorkspaceProviderMetadata('git_repo').connectionTypes).toEqual(['git_repo']);
-    expect(getWorkspaceProviderMetadata('document').connectionTypes).toEqual(['notion']);
+    expect(getWorkspaceProviderMetadata('document').connectionTypes).toEqual([
+      'notion',
+      'confluence',
+    ]);
     expect(getWorkspaceProviderMetadata('issue_tracker').connectionTypes).toEqual([
       'issue_tracker',
     ]);
