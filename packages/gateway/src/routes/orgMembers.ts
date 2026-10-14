@@ -204,11 +204,23 @@ const orgMembersPlugin: FastifyPluginAsync = async (fastify) => {
       // queue. Their invitee waits in that queue like any other sign-up, and
       // the address is verified when the invitee follows the magic link, not
       // vouched for by the inviter. A platform admin's invite is the approval,
-      // as it is on `POST /users/invite`.
-      const approved = requireUser(request).role === 'ADMIN';
+      // as it is on `POST /users/invite`. The exception is an organization a
+      // platform admin has marked `trustedInvites`: there an org admin's invite
+      // is the approval too, recorded as `org_admin`. Trust is read here, per
+      // invite, so clearing it takes effect on the next one.
+      let approvalSource: 'admin' | 'org_admin' | null =
+        requireUser(request).role === 'ADMIN' ? 'admin' : null;
+      if (!approvalSource) {
+        const org = await fastify.prisma.organization.findUnique({
+          select: { trustedInvites: true },
+          where: { id: orgId },
+        });
+        approvalSource = org?.trustedInvites ? 'org_admin' : null;
+      }
+      const approved = approvalSource !== null;
       const user = await fastify.prisma.user.create({
         data: {
-          ...(approved ? { approvalSource: 'admin', approvedAt: new Date() } : {}),
+          ...(approvalSource ? { approvalSource, approvedAt: new Date() } : {}),
           email,
           emailVerified: approved,
           isActive: approved,

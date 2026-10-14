@@ -753,10 +753,12 @@ model Organization {
   monthlyBudgetUsdCents       Int?     @map("monthly_budget_usd_cents")
   /// Percent of monthly cap at which to start warning (0-100). Null = no alert.
   budgetAlertThresholdPercent Int?     @map("budget_alert_threshold_percent")
+  /// When true, an ORG_ADMIN's invite creates an active, approved account. Platform-ADMIN-set only.
+  trustedInvites              Boolean  @default(false) @map("trusted_invites")
   createdAt                   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
-  teams               Team[]
+  teams              Team[]
   agents              Agent[]
   providerCredentials ProviderCredential[]
   memberships         OrganizationMembership[]

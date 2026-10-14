@@ -18,6 +18,8 @@ const PatchOrgSchema = z.object({
     .max(120)
     .regex(/^[a-z0-9-]+$/, 'slug must be lowercase kebab-case')
     .optional(),
+  // Platform-ADMIN only: an org must not be able to trust its own invites.
+  trustedInvites: z.boolean().optional(),
 });
 
 function computeAlert(
@@ -118,6 +120,7 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
           monthlyBudgetUsdCents: true,
           name: true,
           slug: true,
+          trustedInvites: true,
         },
         where: { id: orgId },
       });
@@ -128,7 +131,8 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // PATCH /api/v1/platform/organizations/:orgId — ORG_ADMIN can update name/slug.
+  // PATCH /api/v1/platform/organizations/:orgId — ORG_ADMIN can update name/slug;
+  // `trustedInvites` is a platform ADMIN's decision.
   app.patch(
     '/:orgId',
     {
@@ -141,9 +145,17 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
       if (Object.keys(body).length === 0) {
         return sendError(reply, 400, 'INVALID_BODY', 'No fields to update');
       }
+      if (body.trustedInvites !== undefined && requireUser(request).role !== 'ADMIN') {
+        return sendError(
+          reply,
+          403,
+          'FORBIDDEN',
+          'Only a platform admin can change whether an organization is trusted'
+        );
+      }
 
       const existing = await fastify.prisma.organization.findUnique({
-        select: { id: true, name: true, slug: true },
+        select: { id: true, name: true, slug: true, trustedInvites: true },
         where: { id: orgId },
       });
       if (!existing) {
@@ -153,14 +165,22 @@ export const organizationRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         const updated = await fastify.prisma.organization.update({
           data: body,
-          select: { id: true, name: true, slug: true },
+          select: { id: true, name: true, slug: true, trustedInvites: true },
           where: { id: orgId },
         });
         await writeAuditLog(fastify, {
           action: 'UPDATE',
           actor: requireUser(request),
-          after: { name: updated.name, slug: updated.slug },
-          before: { name: existing.name, slug: existing.slug },
+          after: {
+            name: updated.name,
+            slug: updated.slug,
+            trustedInvites: updated.trustedInvites,
+          },
+          before: {
+            name: existing.name,
+            slug: existing.slug,
+            trustedInvites: existing.trustedInvites,
+          },
           entityId: orgId,
           entityType: 'Organization',
         });
