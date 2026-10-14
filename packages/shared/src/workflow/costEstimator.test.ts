@@ -31,11 +31,19 @@ const REGISTRY: Record<string, StepMetadata> = {
     name: 'implement',
   },
   noHint: {
-    category: 'control',
+    // A model-backed step, which is the only kind whose missing hint is a gap.
+    category: 'agent',
     configFields: [],
     description: '',
     label: '',
     name: 'noHint',
+  },
+  plainGate: {
+    category: 'gate',
+    configFields: [],
+    description: '',
+    label: '',
+    name: 'plainGate',
   },
   // Mirrors the real registry: the declarative `agent` node is priced from this
   // step's hint, since the referenced Agent's own model is not statically known.
@@ -108,6 +116,21 @@ describe('estimateSpecCost', () => {
     // Not silently dropped: an unpriced step is reported so the editor can say
     // what the number leaves out.
     expect(result.unpriced).toEqual([{ nodeId: 'n', reason: 'no-cost-hint' }]);
+  });
+
+  it('does not report a gate or control step as unpriced, because zero is its answer', () => {
+    const result = estimateSpecCost(
+      spec({
+        entry: 'g',
+        nodes: {
+          g: { next: 't', step: 'plainGate', type: 'step' },
+          t: { status: 'SUCCESS', type: 'terminate' },
+        },
+      }),
+      { pricing: PRICING, stepLookup: lookup }
+    );
+    expect(result.totalUsd).toBe(0);
+    expect(result.unpriced).toEqual([]);
   });
 
   it('prices a declarative agent node from the runAgentNode hint', () => {

@@ -467,6 +467,39 @@ register({
 
 register({
   category: 'gate',
+  configFields: [
+    {
+      description:
+        'Gates to run, in order. Each is the same gate a single-gate step runs, with its own result, log and trusted-evidence row.',
+      key: 'gates',
+      label: 'Gates',
+      required: true,
+      type: 'json',
+    },
+    {
+      description:
+        'One workspace for every gate (default) or one per gate. A shared workspace is the point of this step — lint, typecheck and tests would otherwise clone and install the repository three times — but the commands then share a tree, so one that mutates files affects the gates after it.',
+      enumValues: ['shared', 'per-gate'],
+      key: 'isolation',
+      label: 'Isolation',
+      type: 'enum',
+    },
+    {
+      description: 'Stop at the first failing gate instead of running the rest.',
+      key: 'stopOnFailure',
+      label: 'Stop on failure',
+      type: 'boolean',
+    },
+  ],
+  description:
+    'Run several quality gates, provisioning one workspace for all of them. Results are per-gate at ' +
+    'output.gates.<name>; output.passed is true only when every gate ran and passed.',
+  label: 'Run quality gates',
+  name: 'runQualityGates',
+});
+
+register({
+  category: 'gate',
   configFields: GATE_CONFIG_FIELDS,
   description:
     'Run an operator-provided performance benchmark. No default command: a node with no ' +

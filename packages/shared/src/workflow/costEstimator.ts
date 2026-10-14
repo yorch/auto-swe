@@ -139,9 +139,10 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
         const usd = stepUsd(meta, pricing);
         if (usd > 0) {
           perStep.push({ nodeId, step: node.step, usd });
-        } else {
-          // A step the registry prices at zero: either it is a container or
-          // external step (which has its own node type) or the hint is missing.
+        } else if (meta?.category === 'agent') {
+          // Only a model-backed step is a *gap* when it costs nothing: a gate, a
+          // VCS or a control step runs no model, so zero is the answer rather
+          // than a missing hint. Reporting those would bury the real case.
           unpriced.push({ nodeId, reason: 'no-cost-hint' });
         }
         return usd + walk(node.next);

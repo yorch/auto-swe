@@ -81,6 +81,7 @@ export const BUILTIN_STEPS = [
   'runBuild',
   'runVulnScan',
   'runPerfBench',
+  'runQualityGates',
   'executeGateFixImplementation',
   // Feature decomposition + branch merging (used by fan-out)
   'planDecomposition',

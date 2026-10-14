@@ -35,6 +35,7 @@ import {
   contextActivities,
   evalNodeActivities,
   gateActivities,
+  gateBatchActivities,
   genericActivities,
   githubActivities,
   knowledgeActivities,
@@ -578,6 +579,31 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ['runBuild', gateExecutor],
   ['runVulnScan', gateExecutor],
   ['runPerfBench', gateExecutor],
+  [
+    // Several gates, one workspace (the step exists to stop lint + typecheck +
+    // tests cloning the repository three times). Per-gate results stay
+    // addressable at `output.gates.<name>`; `output.passed` is the aggregate the
+    // interpreter's gate-failure branch reads.
+    'runQualityGates',
+    ({ config, ctx, inputs, request }) => {
+      const branchOverride =
+        (inputs.branch as string | undefined) ??
+        (config.branch as string | undefined) ??
+        (lookupPath(ctx, 'context.currentCodeResult.branch') as string | undefined);
+      const isolation = inputs.isolation ?? config.isolation;
+      const stopOnFailure = inputs.stopOnFailure ?? config.stopOnFailure;
+      const gates = (inputs.gates ?? config.gates) as
+        | Parameters<typeof gateBatchActivities.runQualityGates>[0]['gates']
+        | undefined;
+      return gateBatchActivities.runQualityGates({
+        ...(branchOverride ? { branch: branchOverride } : {}),
+        gates: Array.isArray(gates) ? gates : [],
+        ...(isolation === 'shared' || isolation === 'per-gate' ? { isolation } : {}),
+        request,
+        ...(typeof stopOnFailure === 'boolean' ? { stopOnFailure } : {}),
+      });
+    },
+  ],
   [
     'planDecomposition',
     ({ request, config }) =>

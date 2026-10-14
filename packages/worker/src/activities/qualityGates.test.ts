@@ -60,8 +60,10 @@ import {
   resolveCommand,
   runLint,
   runPerfBench,
+  runQualityGates,
   truncate,
 } from './qualityGates.js';
+import { createWorkspace } from './workspace.js';
 
 const baseRequest: RepoWorkRequest = {
   description: 'test',
@@ -354,5 +356,105 @@ describe('gate workspace provisioning', () => {
       expect(result.evidenceCorrelation).toBeUndefined();
       expect(result.activityAttempt).toBeUndefined();
     }
+  });
+});
+
+describe('runQualityGates', () => {
+  // The step exists to stop a template that gates three times from cloning and
+  // installing the repository three times, so the assertion that matters most is
+  // how many workspaces were provisioned.
+  // The file already mocks `createWorkspace`; count the calls instead of adding
+  // a second mock (which would replace it for every test in the file).
+  const provisioned = vi.mocked(createWorkspace);
+
+  function gateWorkspace(exitFor: (command: string) => number) {
+    return {
+      destroy: vi.fn(async () => {}),
+      exec: vi.fn(async () => ''),
+      execCapture: vi.fn(async (command: string) => ({
+        exitCode: exitFor(command),
+        stderr: exitFor(command) === 0 ? '' : 'boom',
+        stdout: exitFor(command) === 0 ? 'ok' : '',
+      })),
+      gitAuthed: vi.fn(async () => ''),
+    };
+  }
+
+  beforeEach(() => {
+    // `afterEach` resets this mock, so each test here re-establishes the
+    // repository row the gate resolver and provisioning both read.
+    mockedFindUnique.mockResolvedValue({ defaultBranch: 'main', gateCommands: null } as never);
+    provisioned.mockReset();
+    provisioned.mockResolvedValue(gateWorkspace(() => 0) as never);
+  });
+
+  it('provisions one workspace for every gate and reports each result', async () => {
+    provisioned.mockResolvedValue(gateWorkspace((c) => (c === 'yarn lint' ? 1 : 0)) as never);
+
+    const result = await runQualityGates({
+      gates: [
+        { name: 'runTypecheck' },
+        { command: 'yarn lint', name: 'runLint' },
+        { name: 'runTests' },
+      ],
+      request: baseRequest,
+    });
+
+    expect(provisioned).toHaveBeenCalledTimes(1);
+    expect(result.passed).toBe(false);
+    expect(result.failed).toBe(1);
+    expect(result.gates.runLint?.passed).toBe(false);
+    expect(result.gates.runTypecheck?.passed).toBe(true);
+    expect(result.gates.runTests?.passed).toBe(true);
+    expect(result.summary).toContain('runLint');
+    // Per-gate commands are resolved independently, so a step-level override
+    // still wins for the gate it names.
+    expect(result.gates.runLint?.command).toBe('yarn lint');
+    expect(result.gates.runTests?.command).toBe(DEFAULT_COMMANDS.runTests);
+  });
+
+  it('stops after the first failure when asked to, and names what it skipped', async () => {
+    provisioned.mockResolvedValue(gateWorkspace(() => 1) as never);
+
+    const result = await runQualityGates({
+      gates: [{ name: 'runLint' }, { name: 'runTests' }],
+      request: baseRequest,
+      stopOnFailure: true,
+    });
+
+    expect(result.gates.runLint?.passed).toBe(false);
+    expect(result.gates.runTests).toBeUndefined();
+    expect(result.skipped).toEqual(['runTests']);
+    expect(result.passed).toBe(false);
+  });
+
+  it('fails a gate with no command without provisioning a workspace for it', async () => {
+    const result = await runQualityGates({
+      gates: [{ name: 'runPerfBench' }, { name: 'runLint' }],
+      request: baseRequest,
+    });
+
+    expect(result.passed).toBe(false);
+    expect(result.gates.runPerfBench?.summary).toMatch(/no command configured/);
+    // The gate that cannot run does not cost a clone, but the one that can still
+    // gets its workspace.
+    expect(provisioned).toHaveBeenCalledTimes(1);
+  });
+
+  it('gives each gate its own workspace under per-gate isolation', async () => {
+    const result = await runQualityGates({
+      gates: [{ name: 'runLint' }, { name: 'runTests' }],
+      isolation: 'per-gate',
+      request: baseRequest,
+    });
+
+    expect(result.passed).toBe(true);
+    expect(provisioned).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses an empty gate list rather than reporting a pass', async () => {
+    const result = await runQualityGates({ gates: [], request: baseRequest });
+    expect(result.passed).toBe(false);
+    expect(result.summary).toMatch(/nothing was verified/);
   });
 });
