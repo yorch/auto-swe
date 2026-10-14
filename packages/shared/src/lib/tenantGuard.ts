@@ -27,6 +27,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'AgentTrace',
   'Automation',
   'AutonomyPolicy',
+  'CallbackEndpoint',
   'ConfigPermission',
   'ConfigSetting',
   'Connection',

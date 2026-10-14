@@ -16,6 +16,7 @@ import { installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
 import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
+import { type CallbackRequest, CallbackRequestSchema } from '@auto-swe/shared/lib/runCallbacks';
 import {
   resolveGitHubConfig,
   resolveIssueTrackerConfig,
@@ -45,6 +46,11 @@ import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/id
 import { applyInstallationEvent, INSTALLATION_EVENT_TYPES } from '../lib/installationWebhook.js';
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
+import {
+  resolveLaunchCallback,
+  sendCallbackRefusal,
+  withoutCallback,
+} from '../lib/runCallbackLaunch.js';
 import {
   captureRawBodyBytes,
   checkTemplateSignature,
@@ -1248,7 +1254,38 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 409, 'NO_ACTIVE_VERSION', 'Template has no active version');
       }
 
-      const payload = request.body ?? {};
+      // A top-level `callback` object is the launch's callback (docs/run-callbacks.md), not
+      // template input: it is taken out before the payload is validated or stored.
+      const body = request.body ?? {};
+      const callbackRequested = isPlainObject(body.callback);
+      const payload = callbackRequested ? withoutCallback(body) : body;
+      let callbackRequest: CallbackRequest | undefined;
+      if (callbackRequested) {
+        if (!template.teamId) {
+          await refused(
+            'FAILED_TO_START',
+            'CALLBACKS_UNAVAILABLE',
+            'a global template webhook cannot report to a callback'
+          );
+          return sendError(
+            reply,
+            400,
+            'CALLBACKS_UNAVAILABLE',
+            "Callbacks need a team's registered endpoint; a global template's webhook has no team"
+          );
+        }
+        const parsedCallback = CallbackRequestSchema.safeParse(body.callback);
+        if (!parsedCallback.success) {
+          await refused('FAILED_TO_START', 'INVALID_CALLBACK', 'the callback is malformed');
+          return sendError(
+            reply,
+            400,
+            'INVALID_CALLBACK',
+            'callback needs exactly one of endpointId or url, and a context of at most 1 KB'
+          );
+        }
+        callbackRequest = parsedCallback.data;
+      }
 
       if (template.inputSchema && isInputSchema(template.inputSchema)) {
         const result = validateInputPayload(template.inputSchema, payload);
@@ -1319,6 +1356,22 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
         );
         return;
       }
+      // Only the template's own team's endpoints: the caller holds a token, not an identity.
+      const callback = await resolveLaunchCallback(fastify.prisma, {
+        callback: callbackRequest,
+        launcher: { id: template.id, kind: 'template_webhook', templateId: template.id },
+        teams: { kind: 'teams', teamIds: template.teamId ? [template.teamId] : [] },
+        viaTemplateWebhook: true,
+        workflowId: temporalWorkflowId,
+      });
+      if (!callback.ok) {
+        await refused(
+          'FAILED_TO_START',
+          callback.code,
+          'the callback is not a registered endpoint'
+        );
+        return sendCallbackRefusal(reply, callback);
+      }
       const budgetOrgId = connectionResult.budgetOrgId ?? template.team?.organization?.id;
       const budgetCap =
         connectionResult.budgetCap ?? template.team?.organization?.monthlyBudgetUsdCents;
@@ -1358,6 +1411,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             templateId: template.id,
             templateVersion,
             ticketIsSynthetic: externalTicketId === workRequestId,
+            ...(callback.create ? { callback: { create: callback.create } } : {}),
           },
         },
         () =>
@@ -1403,7 +1457,12 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       );
 
       return reply.status(201).send({
-        data: { temporalWorkflowId, workflowId: launch.activeWorkflowId, workRequestId },
+        data: {
+          ...(callback.target ? { callback: { target: callback.target } } : {}),
+          temporalWorkflowId,
+          workflowId: launch.activeWorkflowId,
+          workRequestId,
+        },
       });
     }
   );
@@ -1601,3 +1660,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 };
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

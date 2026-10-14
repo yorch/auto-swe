@@ -48,6 +48,8 @@ export const MODEL_DISCOVERY_SCHEDULE_ID = 'auto-swe-model-discovery';
 export const RUN_REAPER_SCHEDULE_ID = 'auto-swe-run-reaper';
 export const AUTOMATION_DECISION_PRUNE_SCHEDULE_ID = 'auto-swe-automation-decision-prune';
 export const SKILL_SOURCE_SYNC_SCHEDULE_ID = 'auto-swe-skill-source-sync';
+export const CALLBACK_DELIVERY_SCHEDULE_ID = 'auto-swe-callback-delivery';
+export const CALLBACK_DELIVERY_PRUNE_SCHEDULE_ID = 'auto-swe-callback-delivery-prune';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -216,6 +218,16 @@ export interface AutomationDecisionPruneScheduleConfig {
 }
 
 /**
+ * The run-callback sweeps: one sends due deliveries, one deletes old ones. Each
+ * workflow reads the outbox (and its retention setting) itself, so the
+ * schedules carry no arguments.
+ */
+export interface CallbackDeliveryScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
+/**
  * The skill-source sweep. The workflow reads the tracked sources itself, so the
  * schedule carries no arguments.
  */
@@ -337,6 +349,8 @@ declare module 'fastify' {
       syncRepoAccessSyncSchedule: (config: RepoAccessSyncScheduleConfig) => Promise<void>;
       syncModelDiscoverySchedule: (config: ModelDiscoveryScheduleConfig) => Promise<void>;
       syncRunReaperSchedule: (config: RunReaperScheduleConfig) => Promise<void>;
+      syncCallbackDeliverySchedule: (config: CallbackDeliveryScheduleConfig) => Promise<void>;
+      syncCallbackDeliveryPruneSchedule: (config: CallbackDeliveryScheduleConfig) => Promise<void>;
       syncAutomationDecisionPruneSchedule: (
         config: AutomationDecisionPruneScheduleConfig
       ) => Promise<void>;
@@ -511,6 +525,16 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
       workflowType: 'ScheduledAutomationDecisionPruneWorkflow',
+    };
+  }
+
+  // Run-callback sweep actions. Each workflow reads the outbox itself.
+  function makeSweepAction(workflowType: string) {
+    return {
+      args: [] as unknown[],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType,
     };
   }
 
@@ -1094,6 +1118,24 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
     ): Promise<void> {
       await upsertSchedule(AUTOMATION_DECISION_PRUNE_SCHEDULE_ID, {
         action: makeAutomationDecisionPruneScheduleAction(),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    async syncCallbackDeliveryPruneSchedule(config: CallbackDeliveryScheduleConfig): Promise<void> {
+      await upsertSchedule(CALLBACK_DELIVERY_PRUNE_SCHEDULE_ID, {
+        action: makeSweepAction('ScheduledCallbackDeliveryPruneWorkflow'),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    // ── Run callbacks (two system-wide Temporal Schedules) ──
+
+    async syncCallbackDeliverySchedule(config: CallbackDeliveryScheduleConfig): Promise<void> {
+      await upsertSchedule(CALLBACK_DELIVERY_SCHEDULE_ID, {
+        action: makeSweepAction('ScheduledCallbackDeliveryWorkflow'),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

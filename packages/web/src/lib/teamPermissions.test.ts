@@ -5,10 +5,17 @@ describe('teamPermissions', () => {
   it('lets a platform ADMIN do everything, whatever their team role', () => {
     expect(teamPermissions('ADMIN', undefined)).toEqual({
       canEditAllowlists: true,
+      canManageCallbacks: true,
       canManageMembers: true,
       canManageTeamAgents: true,
       grantableRoles: ['ENGINEER', 'LEAD', 'ADMIN'],
     });
+  });
+
+  it('lets a team LEAD manage run-callback endpoints, and not a team ENGINEER', () => {
+    expect(teamPermissions('ENGINEER', 'LEAD').canManageCallbacks).toBe(true);
+    expect(teamPermissions('LEAD', 'ENGINEER').canManageCallbacks).toBe(false);
+    expect(teamPermissions('ENGINEER', undefined).canManageCallbacks).toBe(false);
   });
 
   it('does not let a platform LEAD manage a team they do not lead', () => {

@@ -223,6 +223,8 @@ describe('POST /api/v1/work-requests', () => {
       },
       startWorkflowAuthorJob: async () => {},
       syncAutomationDecisionPruneSchedule: async () => {},
+      syncCallbackDeliveryPruneSchedule: async () => {},
+      syncCallbackDeliverySchedule: async () => {},
       syncChannelAmbientSchedule: async () => {},
       syncChannelReactiveSchedule: async () => {},
       syncConsolidationSchedule: async () => {},

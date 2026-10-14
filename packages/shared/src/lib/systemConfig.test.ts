@@ -663,6 +663,8 @@ describe('systemConfig resolvers', () => {
     it('defaults: the access sync is off, the dependency scan and model discovery are on', () => {
       expect(resolveScheduledSweeps()).toEqual({
         automationDecisionPrune: { cronExpression: '37 4 * * *', enabled: true },
+        callbackDelivery: { cronExpression: '* * * * *', enabled: true },
+        callbackDeliveryPrune: { cronExpression: '47 4 * * *', enabled: true },
         modelDiscovery: { cronExpression: '17 3 * * *', enabled: true },
         repoAccess: { cronExpression: '23 * * * *', enabled: false },
         repoDependency: { cronExpression: '0 4 * * *', enabled: true },
@@ -684,8 +686,14 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('SKILL_SOURCE_SYNC_CRON', '7 6 * * 2');
       vi.stubEnv('AUTOMATION_DECISION_PRUNE_ENABLED', 'false');
       vi.stubEnv('AUTOMATION_DECISION_PRUNE_CRON', '1 2 * * *');
+      vi.stubEnv('CALLBACK_DELIVERY_ENABLED', 'false');
+      vi.stubEnv('CALLBACK_DELIVERY_CRON', '*/2 * * * *');
+      vi.stubEnv('CALLBACK_DELIVERY_PRUNE_ENABLED', 'false');
+      vi.stubEnv('CALLBACK_DELIVERY_PRUNE_CRON', '3 3 * * *');
       expect(resolveScheduledSweeps()).toEqual({
         automationDecisionPrune: { cronExpression: '1 2 * * *', enabled: false },
+        callbackDelivery: { cronExpression: '*/2 * * * *', enabled: false },
+        callbackDeliveryPrune: { cronExpression: '3 3 * * *', enabled: false },
         modelDiscovery: { cronExpression: '0 5 * * 1', enabled: false },
         repoAccess: { cronExpression: '5 * * * *', enabled: true },
         repoDependency: { cronExpression: '30 2 * * 1', enabled: false },

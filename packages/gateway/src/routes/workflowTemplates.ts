@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { Prisma } from '@auto-swe/shared';
 import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
 import { inputSchemaProblems } from '@auto-swe/shared/lib/inputSchema';
+import { CallbackRequestSchema } from '@auto-swe/shared/lib/runCallbacks';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   getWorkspaceProviderMetadata,
@@ -40,6 +41,12 @@ import {
 } from '../lib/launchAuthorization.js';
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
+import {
+  callbackScopeForCaller,
+  resolveLaunchCallback,
+  sendCallbackRefusal,
+  withoutCallback,
+} from '../lib/runCallbackLaunch.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import {
@@ -1700,6 +1707,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   // the template's declared inputSchema (if any). Non-SWE templates that don't
   // need a connectionId may omit it; externalTicketId is auto-generated.
   const RunTemplateBody = z.object({
+    /** Where to report the run's outcome (docs/run-callbacks.md). */
+    callback: CallbackRequestSchema.optional(),
     label: z.string().max(200).optional(),
     payload: z.record(z.string(), z.unknown()).optional().default({}),
   });
@@ -1901,6 +1910,18 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           )
         : `wf-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
 
+      // Checked before anything is written; stored sealed beside the request, never in
+      // `requestPayload` (the URL's query may carry the receiver's token).
+      const callback = await resolveLaunchCallback(fastify.prisma, {
+        callback: request.body.callback,
+        ...callbackScopeForCaller(fastify.prisma, caller, tpl.id),
+        workflowId: temporalWorkflowId,
+      });
+      if (!callback.ok) {
+        return sendCallbackRefusal(reply, callback);
+      }
+      const requestPayload = JSON.stringify(withoutCallback(request.body));
+
       const repoWorkRequest: RepoWorkRequest = {
         budgetTier,
         connectionId,
@@ -1910,7 +1931,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         ...(user ? { launchedById: user.sub } : {}),
         payload,
         repoId: connectionId,
-        requestPayload: JSON.stringify(request.body),
+        requestPayload,
         workRequestId,
         workspaceProvider: tpl.workspaceProvider as WorkspaceProviderType | null,
       };
@@ -1940,10 +1961,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             payload: payload as object,
             requestedById: user?.sub ?? null,
             requestedByServiceId: service?.servicePrincipalId ?? null,
-            requestPayload: JSON.stringify(request.body),
+            requestPayload,
             templateId: tpl.id,
             templateVersion: resolvedVersion,
             ticketIsSynthetic: externalTicketId === workRequestId,
+            ...(callback.create ? { callback: { create: callback.create } } : {}),
           },
         },
         () =>
@@ -1973,7 +1995,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       return reply.status(201).send({
-        data: { temporalWorkflowId, workflowId: launch.activeWorkflowId, workRequestId },
+        data: {
+          ...(callback.target ? { callback: { target: callback.target } } : {}),
+          temporalWorkflowId,
+          workflowId: launch.activeWorkflowId,
+          workRequestId,
+        },
       });
     }
   );

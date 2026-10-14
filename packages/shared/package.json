@@ -26,6 +26,8 @@
     "./lib/agentRun": "./dist/lib/agentRun.js",
     "./lib/agentRunAdmission": "./dist/lib/agentRunAdmission.js",
     "./lib/agentRunFailure": "./dist/lib/agentRunFailure.js",
+    "./lib/canonicalPath": "./dist/lib/canonicalPath.js",
+    "./lib/runCallbacks": "./dist/lib/runCallbacks.js",
     "./lib/skillScanner": "./dist/lib/skillScanner.js",
     "./lib/skillRevision": "./dist/lib/skillRevision.js",
     "./lib/memoryForget": "./dist/lib/memoryForget.js",

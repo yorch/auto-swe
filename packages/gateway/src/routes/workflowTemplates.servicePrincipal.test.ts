@@ -9,6 +9,9 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
 
 import { workflowTemplateRoutes } from './workflowTemplates.js';
 
+// A callback's URL is sealed with the config envelope.
+process.env.CONFIG_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
+
 /**
  * `POST /workflow-templates/:id/runs` with a service principal's token: the template allowlist,
  * the team term on the template, the org cap of a connection-less run, attribution and the
@@ -84,6 +87,30 @@ function harness(s: State) {
       }),
       update: async () => ({}),
     },
+    // One endpoint in the principal's team, one in another team, on the same origin.
+    callbackEndpoint: {
+      findMany: async ({ where }: { where: { origin?: string; teamId?: { in: string[] } } }) =>
+        [
+          {
+            allowPrivateNetwork: false,
+            id: 'ep-own',
+            origin: 'https://hooks.example.com',
+            pathPrefix: '/own',
+            teamId: SP_TEAM,
+          },
+          {
+            allowPrivateNetwork: false,
+            id: 'ep-other',
+            origin: 'https://hooks.example.com',
+            pathPrefix: '/other',
+            teamId: OTHER_TEAM,
+          },
+        ].filter(
+          (e) =>
+            (where.origin === undefined || e.origin === where.origin) &&
+            (where.teamId === undefined || where.teamId.in.includes(e.teamId))
+        ),
+    },
     orgMonthlyUsage: {
       findUnique: async () => (s.orgOverBudget ? { costUsdAccrued: 100 } : null),
     },
@@ -156,7 +183,14 @@ function harness(s: State) {
       payload: { payload: { description: 'write the notes' } },
       url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
     });
-  return { app, run, runInputs, started, templateWheres };
+  const runWithCallback = (url: string) =>
+    app.inject({
+      headers: { authorization: 'Bearer ats_service' },
+      method: 'POST',
+      payload: { callback: { url }, payload: { description: 'write the notes' } },
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+  return { app, run, runInputs, runWithCallback, started, templateWheres };
 }
 
 describe('POST /workflow-templates/:id/runs with a service principal token', () => {
@@ -266,6 +300,37 @@ describe('POST /workflow-templates/:id/runs with a service principal token', () 
     });
     expect(res.statusCode).toBe(401);
     expect(res.json().error.code).toBe('SERVICE_TOKEN_NOT_ALLOWED');
+    await h.app.close();
+  });
+});
+
+describe('a service principal launch with a callback', () => {
+  const s: State = {
+    orgOverBudget: false,
+    runsLastDay: 0,
+    templateIds: [TEMPLATE_ID],
+    templateTeamId: SP_TEAM,
+  };
+
+  it('reports to its own team’s endpoint, recorded as launched by the principal', async () => {
+    const h = harness(s);
+    const res = await h.runWithCallback('https://hooks.example.com/own/done');
+    expect(res.statusCode).toBe(201);
+    const create = (h.runInputs[0]?.callback as { create?: Record<string, unknown> } | undefined)
+      ?.create;
+    expect(create).toMatchObject({
+      endpointId: 'ep-own',
+      launchedBy: { id: SP, kind: 'service_principal', templateId: TEMPLATE_ID },
+    });
+    await h.app.close();
+  });
+
+  it('may not name another team’s endpoint', async () => {
+    const h = harness(s);
+    const res = await h.runWithCallback('https://hooks.example.com/other/done');
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('CALLBACK_URL_NOT_REGISTERED');
+    expect(h.started).toHaveLength(0);
     await h.app.close();
   });
 });

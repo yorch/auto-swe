@@ -24,6 +24,8 @@ const SYNCS = [
   'syncModelDiscoverySchedule',
   'syncRunReaperSchedule',
   'syncAutomationDecisionPruneSchedule',
+  'syncCallbackDeliverySchedule',
+  'syncCallbackDeliveryPruneSchedule',
   'syncSkillSourceSyncSchedule',
   'syncEvalSchedule',
   'syncRevalidationSchedule',

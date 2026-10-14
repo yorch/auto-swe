@@ -31,6 +31,7 @@ Request body:
 | `baseBranch` | Optional. The branch the checkout is cut from and a draft PR targets, instead of the repository's default branch. Refused (`400`) when it is not a valid branch name or is one of the platform's `<branchPrefix>/…` work branches. A re-run keeps it |
 | `maxSteps`, `maxWallClockSeconds` | Optional caps. They can only **lower** the platform ceilings (section 6) |
 | `budgetTier` | `STANDARD` (default), `LARGE`, `EPIC`, as for any run |
+| `callback` | Optional. `{ endpointId }` or `{ url }` under a callback endpoint of a team the caller belongs to, plus an optional `context` echoed back; the platform POSTs a signed body there when the run waits for a human and when it ends ([run-callbacks.md](./run-callbacks.md)). A re-run does not inherit it |
 
 The response carries `workRequestId`, the Temporal workflow id, and `effective` (the limits the run
 will actually use). The run row appears once a worker picks the workflow up; find it with

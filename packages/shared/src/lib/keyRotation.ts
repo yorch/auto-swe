@@ -75,6 +75,7 @@ function fieldsFor(prefix: string): EncryptedField {
  * moment the old key is dropped.
  */
 export const ENCRYPTED_FIELDS: Record<string, EncryptedField[]> = {
+  callbackEndpoint: [fieldsFor('signingSecret'), fieldsFor('previousSigningSecret')],
   // Connection stores an encrypted API token without a last-four column.
   connection: [
     {
@@ -105,6 +106,15 @@ export const ENCRYPTED_FIELDS: Record<string, EncryptedField[]> = {
   knowledgeBaseConfig: [fieldsFor('apiToken')],
   // The one irregular row: its version and last-four columns are unprefixed.
   providerCredential: [{ ...fieldsFor('apiKey'), keyVersion: 'keyVersion', lastFour: 'lastFour' }],
+  // A callback URL has no last-four column: the tail of a URL may be part of a receiver's token.
+  runCallback: [
+    {
+      authTag: 'urlAuthTag',
+      ciphertext: 'urlCiphertext',
+      keyVersion: 'urlKeyVersion',
+      nonce: 'urlNonce',
+    },
+  ],
   slackConfig: [fieldsFor('clientSecret'), fieldsFor('signingSecret'), fieldsFor('botToken')],
   slackWorkspace: [fieldsFor('botToken')],
   workflowTemplate: [fieldsFor('webhookSigningSecret'), fieldsFor('webhookPreviousSigningSecret')],

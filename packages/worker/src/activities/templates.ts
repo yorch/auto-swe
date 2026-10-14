@@ -16,6 +16,12 @@ import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/s
 import { Context } from '@temporalio/activity';
 import { currentTemporalRunId } from '../lib/activityContext.js';
 import { logError, logWarn } from '../lib/activityLog.js';
+import {
+  callbackDeliveryRow,
+  insertCallbackDelivery,
+  runCallbackFor,
+  runPullRequestUrl,
+} from '../lib/callbackOutbox.js';
 import { backfillPinnedSettings } from '../lib/config/pinnedSettings.js';
 import { type EndRunOutcome, endWorkflowRun } from '../lib/endRun.js';
 import { recordRunFinalized } from '../lib/metrics.js';
@@ -823,6 +829,7 @@ export async function finalizeRun(
       connection: { select: { team: { select: { orgId: true } } } },
       connectionId: true,
       endedAt: true,
+      startedAt: true,
       workflowId: true,
       workRequest: {
         select: {
@@ -848,6 +855,7 @@ export async function finalizeRun(
           ticketIsSynthetic: true,
         },
       },
+      workRequestId: true,
     },
     where: { id: runId },
   });
@@ -933,6 +941,33 @@ export async function finalizeRun(
     return false;
   }
 
+  // A `run.completed` callback (docs/run-callbacks.md), read now and inserted in the terminal
+  // transaction below, so it is recorded exactly when — and only when — this call ends the run.
+  // The reaper reaches here too, and a reaped run reports like any other: a caller waiting for
+  // the outcome still wants it, however late.
+  const completionCallback = run
+    ? await runCallbackFor(run.workRequestId, run.workflowId, 'run.completed')
+    : null;
+  const completionPullRequestUrl =
+    completionCallback && run ? await runPullRequestUrl(run.workflowId) : null;
+  const completionDelivery = (endedWith: string, endedAt: Date) =>
+    completionCallback && run
+      ? callbackDeliveryRow({
+          run: {
+            costUsd: costUsdAccrued,
+            endedAt,
+            id: runId,
+            pullRequestUrl: completionPullRequestUrl,
+            startedAt: run.startedAt,
+            status: endedWith,
+            workflowId: run.workflowId,
+            workRequestId: run.workRequestId,
+          },
+          target: completionCallback,
+          type: 'run.completed',
+        })
+      : null;
+
   // An epic's work request targets no single connection, so an epic child
   // reaches its org through its own run's connection; a run with no connection
   // anywhere, through its own ledger row's repository. The order
@@ -1006,6 +1041,10 @@ export async function finalizeRun(
         return ended; // already finalized by a concurrent attempt
       }
       const endedWith = endedStatus(ended);
+      const delivery = completionDelivery(endedWith, terminalUpdate.endedAt);
+      if (delivery) {
+        await insertCallbackDelivery(tx, delivery);
+      }
       const terminalStatus = activeWorkflowStatus(endedWith);
       if (terminalStatus && run?.workflowId) {
         await tx.activeWorkflow.updateMany({
@@ -1038,6 +1077,10 @@ export async function finalizeRun(
       const ended = await endWorkflowRun(tx, runId, terminalUpdate);
       if (ended === 'alreadyEnded') {
         return ended; // already finalized by a concurrent attempt
+      }
+      const delivery = completionDelivery(endedStatus(ended), terminalUpdate.endedAt);
+      if (delivery) {
+        await insertCallbackDelivery(tx, delivery);
       }
       const terminalStatus = activeWorkflowStatus(endedStatus(ended));
       if (terminalStatus && run?.workflowId) {

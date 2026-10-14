@@ -12,6 +12,8 @@ export interface TeamPermissions {
   canEditAllowlists: boolean;
   /** The team-owner agent library — team ADMIN, or platform ADMIN. */
   canManageTeamAgents: boolean;
+  /** Run-callback endpoints — team LEAD or ADMIN, or platform ADMIN. */
+  canManageCallbacks: boolean;
 }
 
 /**
@@ -24,6 +26,7 @@ export interface TeamPermissions {
  *    the actor's role is their team role, or ADMIN for a platform ADMIN.
  *  - The allowlist PUTs require platform ADMIN.
  *  - The team agent library requires team ADMIN (platform ADMIN bypasses).
+ *  - Run-callback endpoints require team LEAD (platform ADMIN bypasses).
  */
 export function teamPermissions(
   platformRole: string | null | undefined,
@@ -37,6 +40,7 @@ export function teamPermissions(
     canManageMembers && actorRole ? ROLES_LOW_TO_HIGH.filter((r) => hasRole(actorRole, r)) : [];
   return {
     canEditAllowlists: platformAdmin,
+    canManageCallbacks: platformAdmin || hasRole(teamRole, 'LEAD'),
     canManageMembers,
     canManageTeamAgents: platformAdmin || hasRole(teamRole, 'ADMIN'),
     grantableRoles,

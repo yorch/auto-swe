@@ -12,6 +12,10 @@ export { InferRepoDependenciesWorkflow } from './inferRepoDependencies.js';
 export { ReembedMemoryWorkflow, ReembedStaleMemoryWorkflow } from './reembedMemory.js';
 export { RunnableWorkflow } from './runnable.js';
 export { ScheduledAutomationDecisionPruneWorkflow } from './scheduledAutomationDecisionPrune.js';
+export {
+  ScheduledCallbackDeliveryPruneWorkflow,
+  ScheduledCallbackDeliveryWorkflow,
+} from './scheduledCallbackDelivery.js';
 export { ScheduledConsolidationWorkflow } from './scheduledConsolidation.js';
 export { ScheduledEvalWorkflow } from './scheduledEval.js';
 export { ScheduledModelDiscoveryWorkflow } from './scheduledModelDiscovery.js';

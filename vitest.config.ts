@@ -184,6 +184,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/ciTrigger.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/canonicalPath',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/canonicalPath.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/runCallbacks',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/runCallbacks.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/automationLedger',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/automationLedger.ts'),
       },

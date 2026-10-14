@@ -23,6 +23,7 @@ import {
 import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
 import { BaseBranchSchema, isPlatformWorkBranch } from '@auto-swe/shared/lib/gitRef';
+import { type CallbackRequest, CallbackRequestSchema } from '@auto-swe/shared/lib/runCallbacks';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { generateBranchName } from '@auto-swe/shared/lib/workflowId';
@@ -38,6 +39,11 @@ import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
 import { isOrgMember } from '../lib/orgAccess.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
+import {
+  callbackScopeForCaller,
+  resolveLaunchCallback,
+  sendCallbackRefusal,
+} from '../lib/runCallbackLaunch.js';
 import { validateRunConnection } from '../lib/runConnection.js';
 import {
   idempotencyCallerScope,
@@ -64,6 +70,8 @@ const CreateAgentRunBody = z.object({
   /** Branch to cut the checkout from and open a draft PR into. Unset: the default branch. */
   baseBranch: BaseBranchSchema.optional(),
   budgetTier: z.enum(BUDGET_TIERS).default('STANDARD'),
+  /** Where to report the run's outcome (docs/run-callbacks.md). */
+  callback: CallbackRequestSchema.optional(),
   /** `none` shows the diff, `branch` pushes a branch, `draft_pr` also opens a DRAFT pull request. */
   deliver: z.enum(AGENT_RUN_DELIVERIES).default('none'),
   /** Can only lower the platform ceiling. */
@@ -101,6 +109,8 @@ interface LaunchInput {
   agent: string;
   baseBranch?: string;
   budgetTier: BudgetTier;
+  /** A fresh launch only; a re-run reuses its request and reports nowhere. */
+  callback?: CallbackRequest;
   deliver: AgentRunPayload['deliver'];
   idempotencyKey: string | undefined;
   maxSteps?: number;
@@ -358,6 +368,16 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         `baseBranch '${input.baseBranch}' is a platform work branch; a run may not be based on one`
       );
     }
+    // The callback is checked before anything is written; it is stored sealed beside the
+    // request, never in `requestPayload` (its query may carry the receiver's token).
+    const callback = await resolveLaunchCallback(fastify.prisma, {
+      callback: input.callback,
+      ...callbackScopeForCaller(fastify.prisma, input.caller),
+      workflowId: temporalWorkflowId,
+    });
+    if (!callback.ok) {
+      return sendCallbackRefusal(reply, callback);
+    }
     const requestPayload = JSON.stringify({
       agent: input.agent,
       ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
@@ -419,6 +439,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
                 templateVersion: template.activeVersion,
                 // `agent-<id>` is generated here, not a tracker ticket.
                 ticketIsSynthetic: true,
+                ...(callback.create ? { callback: { create: callback.create } } : {}),
               },
             }),
       },
@@ -448,6 +469,8 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     }
     return reply.status(201).send({
       data: {
+        // Where the outcome will be reported: origin and path, never the query.
+        ...(callback.target ? { callback: { target: callback.target } } : {}),
         effective: {
           deliver: payload.deliver,
           maxSteps: Math.min(payload.maxSteps ?? ceilings.maxSteps, ceilings.maxSteps),
@@ -624,6 +647,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         agent: b.agent,
         ...(b.baseBranch ? { baseBranch: b.baseBranch } : {}),
         budgetTier: b.budgetTier,
+        ...(b.callback ? { callback: b.callback } : {}),
         caller,
         deliver: b.deliver,
         idempotencyKey: request.headers['idempotency-key'],

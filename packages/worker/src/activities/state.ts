@@ -1,6 +1,13 @@
 import { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { waitDurationMs } from '@auto-swe/shared/workflow';
+import {
+  type CallbackDeliveryInput,
+  callbackDeliveryRow,
+  insertCallbackDelivery,
+  type RunCallbackTarget,
+  runCallbackFor,
+} from '../lib/callbackOutbox.js';
 import { notifySlackHumanStep } from '../lib/slackNotify.js';
 
 /**
@@ -81,26 +88,48 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
   // Note: we intentionally do NOT return early on P2002 — the Slack notification must
   // reach the user even when the DB create was skipped.
   let stepId: string | undefined;
+  // A `run.waiting_for_human` callback (docs/run-callbacks.md) is inserted in the same
+  // transaction as the step, so it is recorded once: a retry whose create hits the unique index
+  // rolls back with it and writes none.
+  const waiting = await waitingCallback(input.runId);
   try {
     const timeoutAt =
       input.timeout && waitDurationMs(input.timeout) > 0
         ? new Date(Date.now() + waitDurationMs(input.timeout))
         : undefined;
-    const created = await prisma.workflowHumanStep.create({
-      data: {
-        context: input.context !== undefined ? (input.context as Prisma.InputJsonValue) : undefined,
-        description: input.description,
-        fields: input.fields !== undefined ? (input.fields as Prisma.InputJsonValue) : undefined,
-        kind: input.kind,
-        nodeId: input.nodeId,
-        options: input.options !== undefined ? (input.options as Prisma.InputJsonValue) : undefined,
-        requiredApprovers: input.requiredApprovers,
-        runId: input.runId,
-        signalName: input.signalName,
-        timeoutAt,
-        title: input.title,
-      },
-    });
+    const create = (db: Prisma.TransactionClient) =>
+      db.workflowHumanStep.create({
+        data: {
+          context:
+            input.context !== undefined ? (input.context as Prisma.InputJsonValue) : undefined,
+          description: input.description,
+          fields: input.fields !== undefined ? (input.fields as Prisma.InputJsonValue) : undefined,
+          kind: input.kind,
+          nodeId: input.nodeId,
+          options:
+            input.options !== undefined ? (input.options as Prisma.InputJsonValue) : undefined,
+          requiredApprovers: input.requiredApprovers,
+          runId: input.runId,
+          signalName: input.signalName,
+          timeoutAt,
+          title: input.title,
+        },
+      });
+    const created = waiting
+      ? await prisma.$transaction(async (tx) => {
+          const step = await create(tx);
+          await insertCallbackDelivery(
+            tx,
+            callbackDeliveryRow({
+              humanStep: { id: step.id, kind: step.kind },
+              run: waiting.run,
+              target: waiting.target,
+              type: 'run.waiting_for_human',
+            })
+          );
+          return step;
+        })
+      : await create(prisma);
     stepId = created.id;
   } catch (err) {
     // Unique constraint violation — another Temporal attempt already created the PENDING row.
@@ -129,4 +158,41 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
     stepId,
     title: input.title,
   });
+}
+
+/**
+ * The run's `run.waiting_for_human` callback, if it has one: the callback
+ * target and the run summary its payload carries. The cost is the run's own
+ * ledger row so far (the run row's total is only written at the end).
+ */
+async function waitingCallback(
+  runId: string
+): Promise<{ target: RunCallbackTarget; run: CallbackDeliveryInput['run'] } | null> {
+  const run = await prisma.workflowRun.findUnique({
+    select: { startedAt: true, status: true, workflowId: true, workRequestId: true },
+    where: { id: runId },
+  });
+  if (!run) {
+    return null;
+  }
+  const target = await runCallbackFor(run.workRequestId, run.workflowId, 'run.waiting_for_human');
+  if (!target) {
+    return null;
+  }
+  const ledger = await prisma.activeWorkflow.findFirst({
+    select: { costUsdAccrued: true },
+    where: { temporalWorkflowId: run.workflowId },
+  });
+  return {
+    run: {
+      costUsd: ledger?.costUsdAccrued ?? 0,
+      endedAt: null,
+      id: runId,
+      startedAt: run.startedAt,
+      status: run.status,
+      workflowId: run.workflowId,
+      workRequestId: run.workRequestId,
+    },
+    target,
+  };
 }
