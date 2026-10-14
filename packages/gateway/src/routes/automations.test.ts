@@ -305,7 +305,7 @@ describe('automationRoutes (event automations)', () => {
       facts: FACTS,
       id: FIRE,
       outcome: 'FAILED_TO_START',
-      repoKey: 'github.com/acme/api',
+      ownerKey: 'github.com/acme/api',
       retriedAt: null,
       ...over,
     });
@@ -325,7 +325,7 @@ describe('automationRoutes (event automations)', () => {
       expect(res.json().data).toMatchObject({ outcome: 'STARTED' });
       expect(engine.decideAndStart.mock.calls[0]?.[2]).toMatchObject({
         facts: FACTS,
-        repoKey: 'github.com/acme/api',
+        ownerKey: 'github.com/acme/api',
         retry: { fireId: FIRE, kind: 'manual' },
       });
       expect(authorizeLaunch).toHaveBeenCalled();

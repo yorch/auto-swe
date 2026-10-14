@@ -12,6 +12,11 @@ vi.mock('@/components/repositories/RepoAutomationsModal', () => ({
     <div>automations of {repo.repoName}</div>
   ),
 }));
+vi.mock('@/components/automations/TeamAutomationsModal', () => ({
+  TeamAutomationsModal: ({ team }: { team: { name: string } }) => (
+    <div>team automations of {team.name}</div>
+  ),
+}));
 
 import GovernAutomationsPage from './page';
 
@@ -105,6 +110,21 @@ describe('GovernAutomationsPage', () => {
     const eventTr = (await screen.findByText('mainline CI')).closest('tr') as HTMLElement;
     fireEvent.click(within(eventTr).getByRole('button', { name: 'Manage' }));
     expect(await screen.findByText('automations of api')).toBeTruthy();
+  });
+
+  it('shows a team’s event automation on its team, and opens the team’s automations', async () => {
+    setupFetchMock({
+      'GET /api/v1/automations': () => ({
+        data: [{ ...eventRow, name: 'team rule', repository: null, source: 'test.team.event' }],
+      }),
+      'GET /api/v1/repositories': () => ({ data: [] }),
+      'GET /api/v1/scheduled-work-requests': () => ({ data: [] }),
+    });
+    render(withQuery(<GovernAutomationsPage />));
+    const tr = (await screen.findByText('team rule')).closest('tr') as HTMLElement;
+    expect(within(tr).getByText('Payments')).toBeTruthy();
+    fireEvent.click(within(tr).getByRole('button', { name: 'Manage' }));
+    expect(await screen.findByText('team automations of Payments')).toBeTruthy();
   });
 
   it('shows a schedule whose Temporal schedule is gone as off, with its stored last fire', async () => {

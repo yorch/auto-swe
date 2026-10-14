@@ -56,7 +56,7 @@ export const workflowRunFailedSource: EventSource<
   WorkflowRunFailedFacts
 > = {
   contract: CiTriagePayloadSchema,
-  dedupeKey: (repoKey, x) => `${repoKey}#${x.runId}/${x.runAttempt}`.toLowerCase(),
+  dedupeKey: (ownerKey, x) => `${ownerKey}#${x.runId}/${x.runAttempt}`.toLowerCase(),
   defaultFilters: {
     branchPatterns: ['main', 'release/*'],
     events: ['push'],
@@ -184,6 +184,7 @@ export const workflowRunFailedSource: EventSource<
     })),
   summary:
     'A GitHub Actions run of a push, pull request or schedule fails: diagnose it, and optionally fix it.',
+  target: 'repository',
   templateCompatible(schema: InputSchema) {
     if (!('githubRunId' in schema.properties)) {
       return false;

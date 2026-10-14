@@ -10,6 +10,7 @@ import { Icon } from '@/components/ui/Icon';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
+  type AutomationOwner,
   type EventAutomation,
   useAutomationTemplates,
   useDeleteEventAutomation,
@@ -21,19 +22,19 @@ import { AutomationHistory } from './AutomationHistory';
 import { EventAutomationEditor } from './EventAutomationEditor';
 
 function AutomationRow({
-  connectionId,
+  owner,
   automation,
   canManage,
   onEdit,
   onRemove,
 }: {
-  connectionId: string;
+  owner: AutomationOwner;
   automation: EventAutomation;
   canManage: boolean;
   onEdit: () => void;
   onRemove: () => void;
 }) {
-  const update = useUpdateEventAutomation(connectionId);
+  const update = useUpdateEventAutomation(owner);
   const [showHistory, setShowHistory] = useState(false);
   const source = eventSource(automation.source);
   const parsed = source?.filters.safeParse(automation.filters);
@@ -103,17 +104,17 @@ function AutomationRow({
 
 /** The editor for one source, once that source's templates are loaded. */
 function EditorFor({
-  connectionId,
+  owner,
   sourceKey,
   automation,
   onDone,
 }: {
-  connectionId: string;
+  owner: AutomationOwner;
   sourceKey: string;
   automation?: EventAutomation;
   onDone: () => void;
 }) {
-  const templates = useAutomationTemplates(connectionId, sourceKey);
+  const templates = useAutomationTemplates(owner, sourceKey);
   if (templates.isLoading) {
     return <SkeletonRows rows={3} />;
   }
@@ -123,8 +124,8 @@ function EditorFor({
   return (
     <EventAutomationEditor
       automation={automation}
-      connectionId={connectionId}
       onDone={onDone}
+      owner={owner}
       sourceKey={sourceKey}
       templates={templates.data ?? []}
     />
@@ -132,13 +133,19 @@ function EditorFor({
 }
 
 /**
- * A repository's event automations: what each reacts to, what it starts, its on/off switch and
- * what it decided. Members read; the owning team's leads and admins manage — the server answers
- * `canManage`.
+ * An owner's event automations — a repository's, or a team's for sources whose automations
+ * target a team: what each reacts to, what it starts, its on/off switch and what it decided.
+ * Members read; the owning team's leads and admins manage — the server answers `canManage`.
+ * Only sources whose automations belong to this kind of owner can be added.
  */
-export function EventAutomationsPanel({ connectionId }: { connectionId: string }) {
-  const { data, isLoading, isError, error } = useEventAutomations(connectionId);
-  const remove = useDeleteEventAutomation(connectionId);
+export function EventAutomationsPanel({ owner }: { owner: AutomationOwner }) {
+  const { data, isLoading, isError, error } = useEventAutomations(owner);
+  const remove = useDeleteEventAutomation(owner);
+  const onRepository = 'connectionId' in owner;
+  const sourceKeys = EVENT_SOURCE_KEYS.filter(
+    (key) => eventSource(key)?.target === (onRepository ? 'repository' : 'team')
+  );
+  const where = onRepository ? 'this repository' : 'this team';
   const [pendingRemove, setPendingRemove] = useState<EventAutomation | null>(null);
   // null: list only; a source key: adding one; an automation: editing it.
   const [editing, setEditing] = useState<EventAutomation | { add: string } | null>(null);
@@ -148,7 +155,7 @@ export function EventAutomationsPanel({ connectionId }: { connectionId: string }
     return <SkeletonRows rows={3} />;
   }
   if (isError) {
-    return <Alert>{errMsg(error, 'Could not load this repository’s automations.')}</Alert>;
+    return <Alert>{errMsg(error, `Could not load ${where}’s automations.`)}</Alert>;
   }
   return (
     <div className="space-y-5">
@@ -159,22 +166,23 @@ export function EventAutomationsPanel({ connectionId }: { connectionId: string }
             <AutomationRow
               automation={a}
               canManage={canManage}
-              connectionId={connectionId}
               key={a.id}
               onEdit={() => setEditing(a)}
               onRemove={() => setPendingRemove(a)}
+              owner={owner}
             />
           ))}
         </ul>
       ) : (
         <p className="text-paper-500 text-sm">
-          No event automations: nothing that happens on this repository starts a run.
+          No event automations: nothing that happens {onRepository ? 'on' : 'for'} {where} starts a
+          run.
         </p>
       )}
       {canManage &&
         (editing === null ? (
           <div className="flex flex-wrap gap-2">
-            {EVENT_SOURCE_KEYS.map((key) => (
+            {sourceKeys.map((key) => (
               <Button key={key} onClick={() => setEditing({ add: key })} variant="secondary">
                 <Icon name="plus" size={14} />
                 {eventSource(key)?.label ?? key}
@@ -183,17 +191,17 @@ export function EventAutomationsPanel({ connectionId }: { connectionId: string }
           </div>
         ) : 'add' in editing ? (
           <EditorFor
-            connectionId={connectionId}
             key={`add:${editing.add}`}
             onDone={() => setEditing(null)}
+            owner={owner}
             sourceKey={editing.add}
           />
         ) : (
           <EditorFor
             automation={editing}
-            connectionId={connectionId}
             key={editing.id}
             onDone={() => setEditing(null)}
+            owner={owner}
             sourceKey={editing.source}
           />
         ))}
@@ -201,7 +209,7 @@ export function EventAutomationsPanel({ connectionId }: { connectionId: string }
         <ConfirmModal
           confirmLabel="Remove"
           dangerous
-          message={`Remove "${pendingRemove.name}"? Its decisions stay in the repository’s history, which its limits keep reading.`}
+          message={`Remove "${pendingRemove.name}"? Its decisions stay in ${onRepository ? 'the repository’s' : 'the team’s'} history, which its limits keep reading.`}
           onClose={() => setPendingRemove(null)}
           onConfirm={() => remove.mutate(pendingRemove.id)}
           open

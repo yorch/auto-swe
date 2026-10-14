@@ -66,6 +66,22 @@ describe('buildAutomationPayload', () => {
     });
   });
 
+  it('names no repository for an automation that has none', () => {
+    // The CI template and contract need a repository; one that does not stands in here.
+    const { connectionId: _, ...properties } = CI_TRIAGE_INPUT_SCHEMA.properties;
+    const repoless: InputSchema = {
+      ...CI_TRIAGE_INPUT_SCHEMA,
+      properties,
+      required: (CI_TRIAGE_INPUT_SCHEMA.required ?? []).filter((k) => k !== 'connectionId'),
+    };
+    const built = buildAutomationPayload({ ...ci, contract: undefined }, repoless, {}, null, push);
+    expect(built.ok).toBe(true);
+    if (built.ok) {
+      expect('connectionId' in built.payload).toBe(false);
+      expect(built.payload.ticketId).toBe('ci-1-1');
+    }
+  });
+
   it('lets the occurrence win over a stored key it fills, and drops a stored PR number', () => {
     const built = buildAutomationPayload(
       ci,

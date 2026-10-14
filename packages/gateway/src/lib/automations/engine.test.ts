@@ -22,7 +22,15 @@ import {
   workflowRunFailedSource,
 } from '@auto-swe/shared/automation';
 import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
-import { automationMatches, handleOccurrence } from './engine.js';
+import { FAKE_TEAM_SOURCE, fakeTeamSource } from '../../test/fakeTeamSource.js';
+import {
+  actorLaunchDecision,
+  automationMatches,
+  decideAndStart,
+  decideUnderLock,
+  handleOccurrence,
+  ownerLockKey,
+} from './engine.js';
 import { normalizeWorkflowRunEvent } from './workflowRunFailed.js';
 
 const REPO_ID = 42;
@@ -143,7 +151,7 @@ interface Fire {
   id: string;
   dedupeKey: string;
   automationId: string;
-  repoKey: string;
+  ownerKey: string;
   outcome: string;
   scopeKey: string;
   subjectKey: string;
@@ -199,7 +207,7 @@ function harness(
       'id',
       'dedupeKey',
       'automationId',
-      'repoKey',
+      'ownerKey',
       'outcome',
       'subjectKey',
       'scopeKey',
@@ -225,7 +233,9 @@ function harness(
   };
 
   const db = {
-    $executeRaw: vi.fn(async () => 0),
+    $executeRaw: vi.fn(async (..._args: unknown[]) => 0),
+    // The team knowledge-source snapshot of a run with no repository: no row, UNKNOWN source.
+    $queryRaw: vi.fn(async (..._args: unknown[]) => []),
     $transaction: vi.fn(async (cb: (tx: unknown) => Promise<unknown>) => cb(db)),
     activeWorkflow: {
       create: vi.fn(
@@ -412,7 +422,7 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
       dedupeKey: 'x',
       id: 'fire-x',
       outcome: 'STARTED',
-      repoKey: 'github.com/acme/api',
+      ownerKey: 'github.com/acme/api',
       scopeKey: 'release/1.4',
       source: 'github.something.else',
       subjectKey: failed.headSha,
@@ -428,8 +438,8 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
       dedupeKey: 'y',
       id: 'fire-y',
       outcome: 'STARTED',
+      ownerKey: 'github.com/acme/old-name',
       producedKey: failed.headSha,
-      repoKey: 'github.com/acme/old-name',
       scopeKey: 'release/1.4',
       source: 'github.workflow_run.failed',
       subjectKey: 'b'.repeat(40),
@@ -674,5 +684,117 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
     const h = harness();
     await handle(h);
     expect(h.db.$executeRaw).toHaveBeenCalled();
+    // Byte for byte the lock earlier gateways take, so a rolling deploy serialises on it.
+    expect(h.db.$executeRaw.mock.calls[0]?.[1]).toBe('automation-repo:github.com/acme/api');
+  });
+});
+
+describe('owners that are not a repository', () => {
+  const TEAM = {
+    id: 'team-1',
+    organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+    orgId: 'org-1',
+  };
+  const OWNER = '@team/team-1';
+  const teamAutomation = {
+    cooldownMinutes: 0,
+    enabled: true,
+    filters: { topics: ['deploys'] },
+    id: 'bbbbbbbb-0000-4000-8000-000000000001',
+    inputs: {},
+    maxRunsPerDay: 10,
+    source: FAKE_TEAM_SOURCE,
+    templateId: null,
+  };
+  /** A template that needs no repository. */
+  const repoless = {
+    activeVersion: 1,
+    id: 'tttttttt-0000-4000-8000-000000000002',
+    inputSchema: {
+      properties: { description: { type: 'string' }, ticketId: { type: 'string' } },
+      required: [],
+      type: 'object',
+    },
+    workspaceProvider: null,
+  };
+  const decide = (h: ReturnType<typeof harness>, eventId = 'e1') =>
+    decideAndStart(h.fastify as never, fakeTeamSource, {
+      automation: teamAutomation,
+      connection: null,
+      facts: { eventId, topic: 'deploys' },
+      now: new Date(),
+      ownerKey: OWNER,
+      retry: { kind: 'redelivery' },
+      startRetryDelayMs: 0,
+      team: TEAM,
+    });
+
+  it('locks a repository by its old name and anything else under its own', () => {
+    expect(ownerLockKey('github.com/acme/api')).toBe('automation-repo:github.com/acme/api');
+    expect(ownerLockKey(OWNER)).toBe('automation-owner:@team/team-1');
+  });
+
+  it('starts a team automation’s run with no repository, recorded under its owner', async () => {
+    const h = harness({ template: repoless });
+    await expect(decide(h)).resolves.toMatchObject({ outcome: 'STARTED' });
+    const request = h.started[0]?.input.request as Record<string, unknown>;
+    expect(request).toMatchObject({ connectionId: null, repoId: null, workspaceProvider: null });
+    expect(request.payload).not.toHaveProperty('connectionId');
+    expect(h.fires[0]).toMatchObject({
+      connectionId: null,
+      dedupeKey: `${OWNER}#e1`,
+      outcome: 'STARTED',
+      ownerKey: OWNER,
+    });
+    expect(h.db.$executeRaw.mock.calls[0]?.[1]).toBe('automation-owner:@team/team-1');
+    // A redelivery of the same occurrence is decided once, on its owner.
+    await expect(decide(h)).resolves.toEqual({ duplicate: true });
+  });
+
+  it('matches own output within a non-repository owner only', async () => {
+    const h = harness();
+    const scope = {
+      automation: { cooldownMinutes: 0, id: teamAutomation.id, maxRunsPerDay: 10 },
+      ownerKey: OWNER,
+    };
+    const produced = (ownerKey: string) => ({
+      automationId: 'x',
+      createdAt: new Date(),
+      dedupeKey: `${ownerKey}#p`,
+      id: `fire-${ownerKey}`,
+      outcome: 'STARTED',
+      ownerKey,
+      producedKey: 'e9',
+      scopeKey: 'other',
+      source: FAKE_TEAM_SOURCE,
+      subjectKey: 'p',
+    });
+    const run = () =>
+      decideUnderLock(
+        h.db as never,
+        scope,
+        fakeTeamSource,
+        { scope: 'deploys', subject: 'e9' },
+        new Date(),
+        async () => true
+      );
+    // Another team's output is not this team's.
+    h.fires.push(produced('@team/team-2'));
+    await expect(run()).resolves.toBeNull();
+    h.fires.push(produced(OWNER));
+    await expect(run()).resolves.toMatchObject({ outcome: 'SUPPRESSED_OWN_OUTPUT' });
+  });
+
+  it('derives a host for a person’s account only from a repository key', async () => {
+    const findFirst = vi.fn(async (_args: unknown) => null);
+    const prisma = { user: { findFirst } } as never;
+    await expect(actorLaunchDecision(prisma, OWNER, '123', 'conn')).resolves.toHaveProperty(
+      'refused'
+    );
+    // A sigil that looks like a host never names one.
+    await actorLaunchDecision(prisma, '@endpoint/github.com', '123', 'conn');
+    expect(findFirst).not.toHaveBeenCalled();
+    await actorLaunchDecision(prisma, 'ghe.example.com/acme/api', '123', 'conn');
+    expect(JSON.stringify(findFirst.mock.calls[0]?.[0])).toContain('ghe.example.com:123');
   });
 });

@@ -814,6 +814,8 @@ model Team {
   sharedRepositories    ConnectionTeamShare[]
   /// Schedules this team owns (see `ScheduledWorkRequest.teamId`).
   scheduledWorkRequests ScheduledWorkRequest[] @relation("ScheduleTeam")
+  /// Event automations this team owns that belong to no repository (`Automation.teamId`).
+  automations           Automation[]
   workflowTemplates     WorkflowTemplate[]
   shellAudits           WorkflowShellAudit[]
   providerCredentials   ProviderCredential[]
@@ -1443,14 +1445,19 @@ model ScheduledWorkRequest {
   @@map("scheduled_work_requests")
 }
 
-/// An event automation (docs/automations.md): when an occurrence of `source` on its repository
-/// matches `filters`, start `template` (null: the source's default) with `inputs`, within the
-/// limits. Managed by the repository's owning team. `filters` and `inputs` are JSON objects
-/// whose shape is the source's and the template's; both are checked on save and on every fire.
+/// An event automation (docs/automations.md): when an occurrence of `source` matches
+/// `filters`, start `template` (null: the source's default) with `inputs`, within the limits.
+/// It belongs to a repository (`connectionId`, managed by the repository's owning team) or, for
+/// a source whose automations target a team, to a team (`teamId`, no repository; managed by the
+/// team's leads). At least one is set (a hand-written CHECK); a row with a repository is a
+/// repository automation whatever else it names. `filters` and `inputs` are JSON objects whose
+/// shape is the source's and the template's; both are checked on save and on every fire.
 model Automation {
   id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  connectionId    String            @map("connection_id") @db.Uuid
-  connection      Connection        @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  connectionId    String?           @map("connection_id") @db.Uuid
+  connection      Connection?       @relation(fields: [connectionId], references: [id], onDelete: Cascade)
+  teamId          String?           @map("team_id") @db.Uuid
+  team            Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
   name            String
   enabled         Boolean           @default(true)
   /// An event source key (`EVENT_SOURCES`), e.g. `github.workflow_run.failed`.
@@ -1474,15 +1481,17 @@ model Automation {
   fires AutomationFire[]
 
   @@index([connectionId, source])
+  @@index([teamId, source])
   @@index([templateId])
   @@index([createdById])
   @@map("automations")
 }
 
 /// One decision an event automation made about one occurrence: started a run, or suppressed
-/// it and why. Also the record the limits are decided on, so it is keyed on the REPOSITORY
-/// (`repoKey`, `<host>/<owner>/<repo>` lowercased) and outlives the automation and the
-/// connection row: deleting and recreating either must not forget what was already done.
+/// it and why. Also the record the limits are decided on, so it is keyed on its OWNER
+/// (`ownerKey`: a repository as `<host>/<owner>/<repo>` lowercased, anything else as
+/// `@<kind>/<id>`) and outlives the automation and the connection row: deleting and recreating
+/// either must not forget what was already done.
 /// `dedupeKey` names the occurrence on its host; `subjectKey` is what one run is enough for (a
 /// commit); `scopeKey` what cooldown and in-flight count over (a branch); `producedKey` what a
 /// run itself produced (a pushed fix commit), never acted on again.
@@ -1492,7 +1501,7 @@ model AutomationFire {
   automation         Automation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
   connectionId       String?     @map("connection_id") @db.Uuid
   connection         Connection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
-  repoKey            String      @map("repo_key")
+  ownerKey           String      @map("owner_key")
   source             String
   dedupeKey          String      @unique @map("dedupe_key")
   /// One of `AUTOMATION_OUTCOMES`.
@@ -1511,8 +1520,8 @@ model AutomationFire {
   createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([automationId, createdAt])
-  @@index([repoKey, scopeKey, createdAt])
-  @@index([repoKey, subjectKey])
+  @@index([ownerKey, scopeKey, createdAt])
+  @@index([ownerKey, subjectKey])
   @@index([producedKey])
   @@index([workRequestId])
   @@index([connectionId])
