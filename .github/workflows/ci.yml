@@ -135,6 +135,31 @@ jobs:
           AGENT_RUN_DOCKER_TEST: '1'
         run: yarn test packages/worker/src/activities/agentRunFinalize.docker.test.ts
 
+      # The same suites through the socket proxy the worker uses in compose, with
+      # the same API flags and idle timeout: proves `run`, `exec -i`, `cp` and the
+      # volume calls all pass the filter, and that the image tag resolves.
+      - name: Start the Docker socket proxy
+        run: |
+          docker run -d --name docker-socket-proxy --read-only --tmpfs /run \
+            -e CONTAINERS=1 -e EXEC=1 -e IMAGES=1 -e POST=1 -e TIMEOUT=65m -e VOLUMES=1 \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -p 127.0.0.1:2375:2375 lscr.io/linuxserver/socket-proxy:latest
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:2375/_ping && exit 0
+            sleep 1
+          done
+          docker logs docker-socket-proxy
+          exit 1
+
+      - name: Docker-backed tests through the socket proxy
+        env:
+          AGENT_RUN_DOCKER_TEST: '1'
+          CLAUDE_CODE_DOCKER_TEST: '1'
+          DOCKER_HOST: tcp://127.0.0.1:2375
+        run: >-
+          yarn test packages/worker/src/agents/claudeCode/runtime.docker.test.ts
+          packages/worker/src/activities/agentRunFinalize.docker.test.ts
+
   # Real-database job: applies every migration to a fresh Postgres+pgvector
   # and runs the seed. The unit-test job deliberately uses an unreachable
   # DATABASE_URL (all Prisma access is mocked), so without this nothing in CI

@@ -112,18 +112,24 @@ services:
   #   POST        every non-GET method: create, start, exec, delete
   # Everything else stays denied, including NETWORKS: joining an existing network
   # by name is resolved by the daemon, not through the API.
+  # TIMEOUT: a foreground `docker run` waits on /containers/{id}/wait and a quiet
+  # `docker exec` stream sends nothing for minutes, so the proxy's idle timeout
+  # must outlast the longest step (1 h in the spec) or it cuts them off mid-run.
   docker-socket-proxy:
-    image: tecnativa/docker-socket-proxy:${DOCKER_SOCKET_PROXY_VERSION:-0.3.0}
+    image: ${DOCKER_SOCKET_PROXY_IMAGE:-lscr.io/linuxserver/socket-proxy:latest}
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /run
     environment:
       CONTAINERS: 1
       EXEC: 1
       IMAGES: 1
       POST: 1
-      VERSION: 1
+      TIMEOUT: 65m
       VOLUMES: 1
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - docker-proxy
 
