@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { Prisma } from '@auto-swe/shared';
 import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
-import { inputSchemaProblems } from '@auto-swe/shared/lib/inputSchema';
+import { inputSchemaProblems, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { CallbackRequestSchema } from '@auto-swe/shared/lib/runCallbacks';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
@@ -1841,7 +1841,9 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         {
           connectionId,
           gate: request.repoAccessGate,
+          inputSchema: isInputSchema(tpl.inputSchema) ? tpl.inputSchema : null,
           log: request.log,
+          payload,
           prisma: fastify.prisma,
           providerMeta,
           ...(service ? { service } : {}),

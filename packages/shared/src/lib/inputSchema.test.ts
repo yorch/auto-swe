@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  declaredConnectionInputs,
   type InputSchema,
   inputSchemaProblems,
   isInputSchema,
@@ -223,5 +224,52 @@ describe('inputSchemaProblems', () => {
 
   it('reports a schema without the outline', () => {
     expect(inputSchemaProblems({ properties: [] })).toHaveLength(1);
+  });
+});
+
+describe('declaredConnectionInputs', () => {
+  const schema: InputSchema = {
+    properties: {
+      connectionId: { connectionType: 'issue_tracker', type: 'connection' },
+      docConnectionId: { connectionType: 'confluence', type: 'connection' },
+      issueId: { type: 'string' },
+    },
+    required: ['connectionId'],
+    type: 'object',
+  };
+
+  it('reports every connection-typed field the payload fills', () => {
+    expect(
+      declaredConnectionInputs(schema, {
+        connectionId: 'jira-1',
+        docConnectionId: 'wiki-1',
+        issueId: 'P-1',
+      })
+    ).toEqual([
+      { connectionId: 'jira-1', expectedType: 'issue_tracker', field: 'connectionId' },
+      { connectionId: 'wiki-1', expectedType: 'confluence', field: 'docConnectionId' },
+    ]);
+  });
+
+  it('reports nothing for a field the payload omits or leaves empty', () => {
+    expect(declaredConnectionInputs(schema, { issueId: 'P-1' })).toEqual([]);
+    expect(declaredConnectionInputs(schema, { docConnectionId: '' })).toEqual([]);
+    expect(declaredConnectionInputs(schema, { docConnectionId: 42 })).toEqual([]);
+  });
+
+  it('reports nothing without a schema or a payload object', () => {
+    expect(declaredConnectionInputs(null, { docConnectionId: 'wiki-1' })).toEqual([]);
+    expect(declaredConnectionInputs(schema, null)).toEqual([]);
+    expect(declaredConnectionInputs(schema, ['wiki-1'])).toEqual([]);
+  });
+
+  it('leaves the expected type off a field that names none', () => {
+    const open: InputSchema = {
+      properties: { any: { type: 'connection' } },
+      type: 'object',
+    };
+    expect(declaredConnectionInputs(open, { any: 'conn-1' })).toEqual([
+      { connectionId: 'conn-1', field: 'any' },
+    ]);
   });
 });
