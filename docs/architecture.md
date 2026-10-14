@@ -1032,6 +1032,22 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **Step records are cut, not spilled.** A string over 8,000 characters in a step's recorded inputs,
   outputs or error is truncated in `workflow_steps`; only the run's final context keeps the full
   value (as an artifact), so a value a later node overwrote survives only in its truncated record.
+- **Control-flow nodes are recorded only when they fail.** `set`, `cond` and `terminate` write no
+  `workflow_steps` row on the happy path, so the nodes that decide a run's shape are largely absent
+  from the per-step table. Analytics also skips `PENDING`, `RUNNING` and `SKIPPED`, and a fan-out
+  branch records under a prefixed id (`fan[0]/impl`), so one node's failure rate is split across its
+  branches rather than aggregated.
+- **Five node types have no editor form.** `eval` and the four human node types are offered on the
+  palette and are fully authorable in a spec, but the inspector shows raw JSON for them (and for
+  `terminate.result`, a shell's `timeoutMs`, and a container step's resource and transport fields).
+  A `humanDecision` option or a `humanInput` field can be retargeted from the canvas but not
+  added.
+- **A run's branch name is recomputed by every activity, not pinned.** `branchPrefix` lives on the
+  `WorkflowDefaults` singleton, and `executeImplementation`, the quality gates, the CI steps and a
+  shell step each resolve it when they run. An edit between two steps of one run makes the later
+  step compute a different work branch than the earlier one pushed to; a gate then refuses rather
+  than checking the wrong tree. Unlike the interpreter's bounds, this is not a run-pinned setting —
+  see [configuration.md §4](./configuration.md#4-run-pinned-settings) for what is pinned and why.
 - **`Idempotency-Key` on `POST /work-requests` has an in-progress window and never expires.** The
   ledger rows are written before the Temporal start, so a same-key request that arrives while the
   start is in flight gets `409 IDEMPOTENCY_KEY_IN_PROGRESS` (`Retry-After`), not success: the key only

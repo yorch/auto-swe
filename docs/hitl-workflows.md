@@ -412,5 +412,15 @@ lifecycle changes and delegated configuration grants are managed under `/govern/
   not re-checked against current membership, so someone who launched a run can still see it, cancel
   it and resolve its steps after being removed from the team that owns its repository. Revoking
   that means deactivating the user.
+- **`approverCount` is the one binding no lint rule reads.** `validateSpec` collects the paths that
+  must resolve (`inputs`, `set.values`, `eval.target`, `fanOut.over`, `terminate.result`) but not a
+  `humanApproval`'s `approverCount`, and `normalizeApproverCount` reads anything that is not a
+  positive integer as **one** approver. A mistyped path therefore silently turns a multi-approver
+  gate into a single-approver one. `humanReview.contentFrom` and a `humanDecision` option's `value`
+  are likewise unchecked.
+- **The four human node types have no canvas form.** The editor's inspector offers raw JSON for
+  them, so a `humanDecision` option or a `humanInput` field can be retargeted but not added or
+  removed from the form. See
+  [architecture.md §10](./architecture.md#10-limitations).
 - **Approval ownership is not delegated or escalated.** The inbox supports due/overdue visibility,
   but there are no reassignment chains, on-call schedules, holiday calendars, or SLA automation.
