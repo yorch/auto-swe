@@ -1,3 +1,4 @@
+import { BUDGET_TIERS } from '@auto-swe/shared/types/workflow';
 import { metrics } from '@opentelemetry/api';
 
 /**
@@ -31,7 +32,6 @@ const RUN_SOURCES = {
   worker: ['SUCCESS', 'FAILED', 'TIMED_OUT', 'SKIPPED', 'CANCELLED'],
 } as const;
 export type RunFinalizedSource = keyof typeof RUN_SOURCES;
-const BUDGET_TIERS = ['STANDARD', 'LARGE', 'EPIC'] as const;
 
 function createInstruments() {
   const meter = metrics.getMeter('auto-swe-worker');

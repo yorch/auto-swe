@@ -1,5 +1,6 @@
 import type { InputSchema } from '../../lib/inputSchema.js';
 import type { WorkspaceProviderType } from '../../lib/workspaceProviders.js';
+import { BUDGET_TIERS } from '../../types/workflow.js';
 import { DEFAULT_ENGINEERING_SPEC } from '../defaultEngineeringSpec.js';
 import type { WorkflowSpec } from '../spec.js';
 import { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
@@ -49,7 +50,7 @@ export interface BuiltinTemplate {
  */
 export const SWE_INPUT_SCHEMA: InputSchema = {
   properties: {
-    budget: { enum: ['STANDARD', 'LARGE', 'EPIC'], type: 'string' },
+    budget: { enum: [...BUDGET_TIERS], type: 'string' },
     // `connection`, not a uuid-format string: validation is identical (both
     // must be a UUID), but the run form renders a picker of git_repo
     // connections instead of a field asking the user to paste an id.

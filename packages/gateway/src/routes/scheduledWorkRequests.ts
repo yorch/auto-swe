@@ -9,7 +9,7 @@ import type { RunIdentity } from '@auto-swe/shared/lib/repoAccessGate';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { generateBranchName } from '@auto-swe/shared/lib/workflowId';
-import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import { BUDGET_TIERS, type RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -59,7 +59,7 @@ export const CRON_5_FIELD_RE = new RegExp(`^${CRON_FIELD}( ${CRON_FIELD}){4}$`);
 const CRON_MESSAGE =
   'must be a 5-field cron expression (minute hour day-of-month month day-of-week) using numbers, *, ranges, steps and lists only';
 
-const BudgetTierSchema = z.enum(['STANDARD', 'LARGE', 'EPIC']);
+const BudgetTierSchema = z.enum(BUDGET_TIERS);
 
 const CreateScheduleSchema = z.object({
   budgetTier: BudgetTierSchema.optional().default('STANDARD'),

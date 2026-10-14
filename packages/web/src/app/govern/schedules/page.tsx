@@ -1,6 +1,7 @@
 'use client';
 
-import type { ScheduledWorkRequestSummary } from '@auto-swe/shared/types/api';
+import type { BudgetTier, ScheduledWorkRequestSummary } from '@auto-swe/shared/types/api';
+import { BUDGET_TIERS } from '@auto-swe/shared/types/workflow';
 import { useId, useState } from 'react';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
@@ -54,7 +55,7 @@ type ScheduleForm = {
   teamId: string;
   description: string;
   externalTicketPrefix: string;
-  budgetTier: 'STANDARD' | 'LARGE' | 'EPIC';
+  budgetTier: BudgetTier;
   templateId: string;
 };
 
@@ -71,8 +72,7 @@ const EMPTY_FORM: ScheduleForm = {
 
 function formFromSchedule(s: ScheduledWorkRequestSummary): ScheduleForm {
   return {
-    budgetTier:
-      (['STANDARD', 'LARGE', 'EPIC'] as const).find((t) => t === s.budgetTier) ?? 'STANDARD',
+    budgetTier: BUDGET_TIERS.find((t) => t === s.budgetTier) ?? 'STANDARD',
     cronExpression: s.cronExpression,
     description: s.description,
     externalTicketPrefix: s.externalTicketPrefix,

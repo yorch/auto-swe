@@ -1,4 +1,4 @@
-import type { RepositorySummary } from '@auto-swe/shared/types/api';
+import type { BudgetTier, RepositorySummary } from '@auto-swe/shared/types/api';
 import { apiRequest, apiRequestFull, runWithExitCodes } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { missingValue, parseFlags } from '../lib/flags.js';
@@ -133,9 +133,9 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     return 1;
   }
 
-  const validBudgets = ['STANDARD', 'LARGE', 'EPIC'];
+  const validBudgets: readonly BudgetTier[] = ['STANDARD', 'LARGE', 'EPIC'];
   const budget = flags.budget?.toUpperCase() ?? 'STANDARD';
-  if (!validBudgets.includes(budget)) {
+  if (!validBudgets.some((t) => t === budget)) {
     process.stderr.write(`--budget must be one of: ${validBudgets.join(', ')}\n`);
     return 1;
   }

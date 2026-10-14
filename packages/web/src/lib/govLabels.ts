@@ -2,6 +2,7 @@
  * Plain-language names for the enums the govern pages show. The wire values
  * (`ORG_ADMIN`, `STANDARD`) stay in requests and filters; people read these.
  */
+import { BUDGET_TIERS, type BudgetTier } from '@auto-swe/shared/types/workflow';
 import type { OrgRole } from '@/hooks/useOrg';
 
 const ORG_ROLE_LABELS: Record<OrgRole, string> = {
@@ -18,7 +19,7 @@ export const ORG_ROLE_OPTIONS = (['ORG_MEMBER', 'ORG_ADMIN'] as const).map((valu
   value,
 }));
 
-export type BudgetTier = 'STANDARD' | 'LARGE' | 'EPIC';
+export type { BudgetTier };
 
 const BUDGET_TIER_LABELS: Record<BudgetTier, string> = {
   EPIC: 'Epic',
@@ -30,7 +31,7 @@ export function budgetTierLabel(tier: string): string {
   return BUDGET_TIER_LABELS[tier as BudgetTier] ?? tier;
 }
 
-export const BUDGET_TIER_OPTIONS = (['STANDARD', 'LARGE', 'EPIC'] as const).map((value) => ({
+export const BUDGET_TIER_OPTIONS = BUDGET_TIERS.map((value) => ({
   label: BUDGET_TIER_LABELS[value],
   value,
 }));

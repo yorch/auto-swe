@@ -22,7 +22,7 @@ import {
   generateWorkflowId,
   legacyWorkflowIdBases,
 } from '@auto-swe/shared/lib/workflowId';
-import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import { BUDGET_TIERS, type RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -303,7 +303,7 @@ export async function resolveDefaultTemplate(
 }
 
 const CreateWorkRequestSchema = z.object({
-  budgetTier: z.enum(['STANDARD', 'LARGE', 'EPIC']).optional().default('STANDARD'),
+  budgetTier: z.enum(BUDGET_TIERS).optional().default('STANDARD'),
   description: z
     .string()
     .min(1, 'description is required — tell the agent what to implement')

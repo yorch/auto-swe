@@ -9,7 +9,11 @@ import {
   WorkspaceProviderTypeSchema,
 } from '@auto-swe/shared/lib/workspaceProviders';
 import { WORKFLOW_TEMPLATE_STATUSES } from '@auto-swe/shared/types/api';
-import type { BudgetTier, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
+import {
+  BUDGET_TIERS,
+  type BudgetTier,
+  type RepoWorkRequest,
+} from '@auto-swe/shared/types/workflow';
 import {
   computeAnalytics,
   computeDailyRunSeries,
@@ -1740,11 +1744,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const description =
         typeof payload.description === 'string' ? payload.description : (request.body.label ?? '');
       const workRequestId = crypto.randomUUID();
-      const budgetTier = (
-        ['STANDARD', 'LARGE', 'EPIC'].includes(payload.budget as string)
-          ? (payload.budget as BudgetTier)
-          : 'STANDARD'
-      ) satisfies BudgetTier;
+      const budgetTier: BudgetTier = BUDGET_TIERS.find((t) => t === payload.budget) ?? 'STANDARD';
       // Correlation key, not a ticket. A timestamp fallback used to make this
       // unique but useless — two runs a millisecond apart were indistinguishable
       // in the run list and nothing linked the key back to the run it named.

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import type { AgentRunDelivery } from '@auto-swe/shared/lib/agentRun';
 import {
+  type BudgetTier,
   isTerminalWorkflowRunStatus,
   type WorkflowRunDetail,
   type WorkflowRunSummary,
@@ -38,7 +39,7 @@ const SUB_HELP = `auto-swe agent — run a library agent on a repository
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DELIVERIES: readonly AgentRunDelivery[] = ['none', 'branch', 'draft_pr'];
-const BUDGETS = ['STANDARD', 'LARGE', 'EPIC'];
+const BUDGETS: readonly BudgetTier[] = ['STANDARD', 'LARGE', 'EPIC'];
 
 interface LaunchResponse {
   workRequestId: string;
@@ -187,7 +188,7 @@ async function cmdRun(rawArgs: string[], env: CliEnv): Promise<number> {
     return 1;
   }
   const budget = (flags.budget ?? 'STANDARD').toUpperCase();
-  if (!BUDGETS.includes(budget)) {
+  if (!BUDGETS.some((t) => t === budget)) {
     process.stderr.write(`--budget must be one of: ${BUDGETS.join(', ')}\n`);
     return 1;
   }
