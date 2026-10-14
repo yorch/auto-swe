@@ -19,7 +19,7 @@ describe('EvalDatasetPage', () => {
     const spy = setupFetchMock({
       [`GET /api/v1/platform/evals/${DS_ID}`]: () => ({
         data: {
-          caseCount: 1,
+          caseCount: 2,
           cases: [
             {
               baselineSha: 'abcdef1234567890',
@@ -33,6 +33,19 @@ describe('EvalDatasetPage', () => {
               reference: null,
               repoUrl: 'https://github.com/acme/api',
               tags: ['auth'],
+            },
+            {
+              baselineSha: 'abcdef1234567890',
+              createdAt: '2026-09-01T00:00:00.000Z',
+              datasetId: DS_ID,
+              flakeRuns: 3,
+              flakeScreened: false,
+              goldenTest: 'yarn test web',
+              id: 'case-2',
+              input: {},
+              reference: null,
+              repoUrl: 'https://github.com/acme/web',
+              tags: [],
             },
           ],
           createdAt: '2026-09-01T00:00:00.000Z',
@@ -64,6 +77,7 @@ describe('EvalDatasetPage', () => {
     expect(await screen.findByText('Auth bench')).toBeTruthy();
     expect(await screen.findByText('https://github.com/acme/api')).toBeTruthy();
     expect(screen.getByText('Checked (5 runs)')).toBeTruthy();
+    expect(screen.getByText('Flaky (failed a 3-run check)')).toBeTruthy();
     expect(await screen.findByText('feat/x')).toBeTruthy();
     const runLink = screen
       .getAllByRole('link')

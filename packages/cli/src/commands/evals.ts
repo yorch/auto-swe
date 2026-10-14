@@ -98,7 +98,8 @@ async function cmdShow(rest: string[], env: CliEnv): Promise<number> {
   const data = await apiRequest<EvalDatasetDetail>(env, 'GET', `/api/v1/platform/evals/${id}`);
   process.stdout.write(`${data.name} (${data.slug}) — ${data.cases.length} cases\n`);
   for (const c of data.cases) {
-    const screened = c.flakeScreened ? '✓screened' : 'unscreened';
+    // flakeRuns > 0 without a pass is a failed screen; the harness skips it like an unscreened case.
+    const screened = c.flakeScreened ? '✓screened' : c.flakeRuns > 0 ? '✗flaky' : 'unscreened';
     process.stdout.write(`  ${c.id}  ${c.repoUrl}@${c.baselineSha.slice(0, 10)}  ${screened}\n`);
   }
   return 0;

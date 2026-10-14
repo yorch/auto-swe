@@ -87,12 +87,27 @@ describe('runEvalsCommand', () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse({
         data: {
-          caseCount: 1,
+          caseCount: 3,
           cases: [
             {
               baselineSha: 'abcdef0123456789',
+              flakeRuns: 3,
               flakeScreened: true,
               id: 'case-1',
+              repoUrl: 'https://github.com/acme/api',
+            },
+            {
+              baselineSha: 'abcdef0123456789',
+              flakeRuns: 3,
+              flakeScreened: false,
+              id: 'case-2',
+              repoUrl: 'https://github.com/acme/api',
+            },
+            {
+              baselineSha: 'abcdef0123456789',
+              flakeRuns: 0,
+              flakeScreened: false,
+              id: 'case-3',
               repoUrl: 'https://github.com/acme/api',
             },
           ],
@@ -108,8 +123,10 @@ describe('runEvalsCommand', () => {
     const code = await runEvalsCommand(['show', 'ds-1'], ENV);
     expect(code).toBe(0);
     const out = stdoutWrites.join('');
-    expect(out).toContain('Golden set (golden) — 1 cases');
+    expect(out).toContain('Golden set (golden) — 3 cases');
     expect(out).toContain('case-1  https://github.com/acme/api@abcdef0123  ✓screened');
+    expect(out).toContain('case-2  https://github.com/acme/api@abcdef0123  ✗flaky');
+    expect(out).toContain('case-3  https://github.com/acme/api@abcdef0123  unscreened');
   });
 
   it('results builds the query string and reads meta.total from the full envelope', async () => {

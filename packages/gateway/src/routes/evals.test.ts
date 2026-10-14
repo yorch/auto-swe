@@ -22,7 +22,7 @@ import { evalRoutes } from './evals.js';
 function newMockPrisma() {
   return {
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
-    evalCase: { groupBy: vi.fn().mockResolvedValue([]) },
+    evalCase: { findMany: vi.fn().mockResolvedValue([]), groupBy: vi.fn().mockResolvedValue([]) },
     evalDataset: {
       create: vi.fn(),
       findMany: vi.fn().mockResolvedValue([]),
@@ -767,7 +767,7 @@ describe('evalRoutes', () => {
   });
 
   describe('GET /evals/suite-health', () => {
-    it('reports each dataset’s quarantined share beside the gate thresholds', async () => {
+    it('reports each dataset’s quarantined share and unscreened cases beside the thresholds', async () => {
       const { app, prisma } = await buildApp();
       prisma.evalDataset.findMany.mockResolvedValue([
         { id: 'd2', name: 'Empty', slug: 'empty' },
@@ -777,6 +777,12 @@ describe('evalRoutes', () => {
         { _count: { _all: 6 }, datasetId: 'd1', flakeScreened: true, quarantined: false },
         { _count: { _all: 1 }, datasetId: 'd1', flakeScreened: true, quarantined: true },
         { _count: { _all: 1 }, datasetId: 'd1', flakeScreened: false, quarantined: true },
+        { _count: { _all: 2 }, datasetId: 'd1', flakeScreened: false, quarantined: false },
+      ]);
+      // flakeRuns 0: never screened; above 0: a screen that failed.
+      prisma.evalCase.findMany.mockResolvedValue([
+        { datasetId: 'd1', flakeRuns: 0, id: 'c9' },
+        { datasetId: 'd1', flakeRuns: 3, id: 'c10' },
       ]);
       const res = await app.inject({
         headers: AUTH,
@@ -784,23 +790,34 @@ describe('evalRoutes', () => {
         url: '/api/v1/platform/evals/suite-health',
       });
       expect(res.statusCode).toBe(200);
+      expect(prisma.evalCase.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { flakeScreened: false, quarantined: false } })
+      );
       expect(JSON.parse(res.payload).data).toEqual({
         datasets: [
           {
-            cases: 8,
+            cases: 10,
             datasetId: 'd1',
             flakeScreened: 7,
             name: 'Bench',
+            neverScreened: 1,
+            neverScreenedCaseIds: ['c9'],
             quarantined: 2,
+            screenFailed: 1,
+            screenFailedCaseIds: ['c10'],
             slug: 'bench',
-            staleRate: 0.25,
+            staleRate: 0.2,
           },
           {
             cases: 0,
             datasetId: 'd2',
             flakeScreened: 0,
             name: 'Empty',
+            neverScreened: 0,
+            neverScreenedCaseIds: [],
             quarantined: 0,
+            screenFailed: 0,
+            screenFailedCaseIds: [],
             slug: 'empty',
             staleRate: 0,
           },

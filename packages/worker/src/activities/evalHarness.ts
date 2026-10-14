@@ -69,6 +69,26 @@ export interface EvalCaseRow {
   input: unknown; // EvalCase.input (Json) — task/prompt payload for the implementer
 }
 
+/** A case as the harness loads it: with its flake-screen state, which decides whether it is scored. */
+export interface HarnessCaseRow extends EvalCaseRow {
+  /** The reference passed every run of its flake screen. */
+  flakeScreened: boolean;
+  /** Runs of the last flake screen; 0 when the case was never screened. */
+  flakeRuns: number;
+}
+
+/**
+ * Set on every run's summary: the cases the harness did not score because they
+ * are not flake-screened — never screened yet, or screened and failed (a flaky
+ * or never-passing reference).
+ */
+export interface UnscreenedCasesSummary {
+  neverScreened: number;
+  neverScreenedCaseIds: string[];
+  screenFailed: number;
+  screenFailedCaseIds: string[];
+}
+
 export interface HarnessInput {
   evalRunId: string;
   datasetId: string;
@@ -92,8 +112,8 @@ export interface CaseOutcome {
 }
 
 export interface HarnessDeps {
-  /** Resolve the dataset's cases. */
-  loadCases: (datasetId: string) => Promise<EvalCaseRow[]>;
+  /** Resolve the dataset's cases; only the flake-screened ones are scored. */
+  loadCases: (datasetId: string) => Promise<HarnessCaseRow[]>;
   /** Run one case under one arm (agent ref, optional runtime override). */
   runCase: (
     caseRow: EvalCaseRow,
@@ -106,12 +126,15 @@ export interface HarnessDeps {
   finalize?: (evalRunId: string, status: string, summary: unknown) => Promise<void>;
 }
 
-async function defaultLoadCases(datasetId: string): Promise<EvalCaseRow[]> {
+async function defaultLoadCases(datasetId: string): Promise<HarnessCaseRow[]> {
   // Quarantined cases (stale references — see re-validation in docs/evals.md) are excluded from the
-  // gate so a dataset that has rotted doesn't fail candidates for non-agent reasons.
+  // gate so a dataset that has rotted doesn't fail candidates for non-agent reasons. Unscreened
+  // cases are loaded so the run can report them; `runEvalHarness` skips them.
   return prisma.evalCase.findMany({
     select: {
       baselineSha: true,
+      flakeRuns: true,
+      flakeScreened: true,
       goldenTest: true,
       id: true,
       input: true,
@@ -120,6 +143,34 @@ async function defaultLoadCases(datasetId: string): Promise<EvalCaseRow[]> {
     },
     where: { datasetId, quarantined: false },
   });
+}
+
+/** Split loaded cases into the scored (flake-screened) ones and the report of the rest. */
+function partitionScreened(loaded: HarnessCaseRow[]): {
+  cases: HarnessCaseRow[];
+  unscreened: UnscreenedCasesSummary;
+} {
+  const neverScreenedCaseIds: string[] = [];
+  const screenFailedCaseIds: string[] = [];
+  const cases: HarnessCaseRow[] = [];
+  for (const c of loaded) {
+    if (c.flakeScreened) {
+      cases.push(c);
+    } else if (c.flakeRuns === 0) {
+      neverScreenedCaseIds.push(c.id);
+    } else {
+      screenFailedCaseIds.push(c.id);
+    }
+  }
+  return {
+    cases,
+    unscreened: {
+      neverScreened: neverScreenedCaseIds.length,
+      neverScreenedCaseIds,
+      screenFailed: screenFailedCaseIds.length,
+      screenFailedCaseIds,
+    },
+  };
 }
 
 async function defaultFinalize(evalRunId: string, status: string, summary: unknown): Promise<void> {
@@ -317,7 +368,9 @@ const isOrgBudgetStop = (err: unknown) =>
 export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
   const record = deps.record ?? recordEvalResult;
   const finalize = deps.finalize ?? defaultFinalize;
-  const cases = await deps.loadCases(input.datasetId);
+  // A case whose reference was never screened, or failed its screen, is not
+  // scored: a flaky floor would move the verdict for reasons that are not the agent's.
+  const { cases, unscreened } = partitionScreened(await deps.loadCases(input.datasetId));
 
   return withRunlessCapScale(cases.length, async () => {
     const pairs: PairedOutcome[] = [];
@@ -383,6 +436,7 @@ export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
       overall: verdict.overall,
       runtimes: { baseline: [...runtimes.baseline], candidate: [...runtimes.candidate] },
       summary: verdict.summary,
+      unscreened,
       ...(partial ? { partial } : {}),
     });
     return verdict;

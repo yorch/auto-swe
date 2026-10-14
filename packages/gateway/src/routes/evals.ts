@@ -447,13 +447,20 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
 
   // ── Suite health ──
   // What the stored data can say about a benchmark's health: the share of each
-  // dataset's golden cases quarantined as stale (exact), and how many are flake-screened.
-  // One grouped read over the cases; the thresholds are the Tier-2 defaults the gate uses.
+  // dataset's golden cases quarantined as stale (exact), how many are flake-screened, and
+  // which the harness skips for want of a passing screen. One grouped read over the cases plus
+  // the unscreened ids; the thresholds are the Tier-2 defaults the gate uses.
   app.get('/evals/suite-health', { onRequest: adminOnly }, async () => {
-    const [groups, datasets, defaults] = await Promise.all([
+    const [groups, unscreened, datasets, defaults] = await Promise.all([
       fastify.prisma.evalCase.groupBy({
         _count: { _all: true },
         by: ['datasetId', 'quarantined', 'flakeScreened'],
+      }),
+      // The cases the harness skips: not quarantined (skipped for that already) and not screened.
+      fastify.prisma.evalCase.findMany({
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        select: { datasetId: true, flakeRuns: true, id: true },
+        where: { flakeScreened: false, quarantined: false },
       }),
       runUnscoped('admin suite health spans every team', ['EvalDataset'], () =>
         fastify.prisma.evalDataset.findMany({ select: { id: true, name: true, slug: true } })
@@ -468,16 +475,28 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       acc.screened += g.flakeScreened ? g._count._all : 0;
       perDataset.set(g.datasetId, acc);
     }
+    // flakeRuns = 0 marks a case never screened; above it, a screen that failed.
+    const skipped = new Map<string, { never: string[]; failed: string[] }>();
+    for (const c of unscreened) {
+      const acc = skipped.get(c.datasetId) ?? { failed: [], never: [] };
+      (c.flakeRuns === 0 ? acc.never : acc.failed).push(c.id);
+      skipped.set(c.datasetId, acc);
+    }
     const data: EvalSuiteHealthDto = {
       datasets: datasets
         .map((d) => {
           const acc = perDataset.get(d.id) ?? { cases: 0, quarantined: 0, screened: 0 };
+          const skip = skipped.get(d.id) ?? { failed: [], never: [] };
           return {
             cases: acc.cases,
             datasetId: d.id,
             flakeScreened: acc.screened,
             name: d.name,
+            neverScreened: skip.never.length,
+            neverScreenedCaseIds: skip.never,
             quarantined: acc.quarantined,
+            screenFailed: skip.failed.length,
+            screenFailedCaseIds: skip.failed,
             slug: d.slug,
             staleRate: acc.cases > 0 ? acc.quarantined / acc.cases : 0,
           };

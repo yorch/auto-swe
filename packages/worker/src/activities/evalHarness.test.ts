@@ -93,15 +93,18 @@ import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import {
   _defaults,
   type EvalCaseRow,
+  type HarnessCaseRow,
   type HarnessDeps,
   runCaseDefault,
   runEvalHarness,
   runEvalHarnessActivity,
 } from './evalHarness.js';
 
-const cases: EvalCaseRow[] = [
+const cases: HarnessCaseRow[] = [
   {
     baselineSha: 's1',
+    flakeRuns: 3,
+    flakeScreened: true,
     goldenTest: 'yarn test',
     id: 'c1',
     input: { description: 'x' },
@@ -110,6 +113,8 @@ const cases: EvalCaseRow[] = [
   },
   {
     baselineSha: 's2',
+    flakeRuns: 3,
+    flakeScreened: true,
     goldenTest: 'yarn test',
     id: 'c2',
     input: { description: 'x' },
@@ -118,6 +123,8 @@ const cases: EvalCaseRow[] = [
   },
   {
     baselineSha: 's3',
+    flakeRuns: 3,
+    flakeScreened: true,
     goldenTest: 'yarn test',
     id: 'c3',
     input: { description: 'x' },
@@ -194,6 +201,42 @@ describe('runEvalHarness', () => {
     expect(d.records).toHaveLength(3);
     expect(d.finals).toHaveLength(1);
     expect(d.finals[0].status).toBe('SUCCESS');
+  });
+
+  it('scores only flake-screened cases and reports the rest', async () => {
+    const d = deps({
+      loadCases: async () => [
+        cases[0],
+        { ...cases[1], flakeRuns: 0, flakeScreened: false },
+        { ...cases[2], flakeRuns: 3, flakeScreened: false },
+      ],
+      runCase: vi.fn(async () => outcome(1)) as HarnessDeps['runCase'],
+    });
+    const verdict = await runEvalHarness(input, d);
+    expect(vi.mocked(d.runCase).mock.calls.map(([c]) => c.id)).toEqual(['c1', 'c1']);
+    expect(verdict.overall.n).toBe(1);
+    expect(d.records).toHaveLength(1);
+    expect(d.finals[0].summary).toMatchObject({
+      unscreened: {
+        neverScreened: 1,
+        neverScreenedCaseIds: ['c2'],
+        screenFailed: 1,
+        screenFailedCaseIds: ['c3'],
+      },
+    });
+  });
+
+  it('reports no unscreened cases when every case is screened', async () => {
+    const d = deps();
+    await runEvalHarness(input, d);
+    expect(d.finals[0].summary).toMatchObject({
+      unscreened: {
+        neverScreened: 0,
+        neverScreenedCaseIds: [],
+        screenFailed: 0,
+        screenFailedCaseIds: [],
+      },
+    });
   });
 
   it('marks REGRESSION when the candidate is consistently worse', async () => {

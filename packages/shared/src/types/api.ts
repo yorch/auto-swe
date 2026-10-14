@@ -1053,7 +1053,17 @@ export interface EvalSuiteHealthDto {
     cases: number;
     /** Cases quarantined by re-validation: their reference stopped passing. */
     quarantined: number;
+    /** Cases whose reference passed every run of its flake screen. */
     flakeScreened: number;
+    /**
+     * Cases not quarantined and never flake-screened. The harness does not score
+     * them until a screen passes.
+     */
+    neverScreened: number;
+    neverScreenedCaseIds: string[];
+    /** Cases not quarantined whose flake screen failed. The harness does not score them. */
+    screenFailed: number;
+    screenFailedCaseIds: string[];
     /** `quarantined / cases`, 0 for an empty dataset. */
     staleRate: number;
   }>;

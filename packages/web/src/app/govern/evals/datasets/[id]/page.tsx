@@ -212,10 +212,17 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                             )}
                           </Td>
                           <Td className="px-4 py-2.5" label="Stability check">
-                            <Badge dot tone={c.flakeScreened ? 'moss' : 'muted'} variant="text">
+                            {/* A failed check (runs recorded, no pass) is skipped like an unchecked case. */}
+                            <Badge
+                              dot
+                              tone={c.flakeScreened ? 'moss' : c.flakeRuns > 0 ? 'amber' : 'muted'}
+                              variant="text"
+                            >
                               {c.flakeScreened
                                 ? `Checked (${c.flakeRuns} runs)`
-                                : 'Not checked yet'}
+                                : c.flakeRuns > 0
+                                  ? `Flaky (failed a ${c.flakeRuns}-run check)`
+                                  : 'Not checked yet'}
                             </Badge>
                           </Td>
                         </TRow>
