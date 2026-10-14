@@ -15,6 +15,7 @@ import type { Prisma, Role } from '@auto-swe/shared';
 import {
   AutomationInputsSchema,
   automationOptionsProblem,
+  ENDPOINT_OWNER_KIND,
   EVENT_SOURCE_KEYS,
   type EventSource,
   eventSource,
@@ -22,6 +23,7 @@ import {
   type InboundEventFilters,
   isRepositoryOwnerKey,
   optionsSchema,
+  parseOwnerKey,
   storedInputs,
   teamOwnerKey,
 } from '@auto-swe/shared/automation';
@@ -814,7 +816,13 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         body.targetConnectionId === undefined
           ? (existing.targetConnectionId ?? null)
           : body.targetConnectionId;
-      const target = await targetRepository(request, reply, access, targetConnectionId);
+      // A repository kept as it was on an automation that ends up off is not checked again: an
+      // unreachable one must not stop the automation being switched off.
+      const keepsTargetWhileOff =
+        body.targetConnectionId === undefined && (body.enabled ?? existing.enabled) === false;
+      const target = keepsTargetWhileOff
+        ? null
+        : await targetRepository(request, reply, access, targetConnectionId);
       if (target === false) {
         return;
       }
@@ -969,13 +977,14 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       // Defence in depth: a decision is taken again only on the owner it was recorded for — a
-      // repository's on a repository key, a team's on its own team's key, and a source that names
-      // its owner from the occurrence (an inbound event's endpoint) on exactly that key.
-      const ownerMatches = source.ownerKey
-        ? fire.ownerKey === source.ownerKey(facts.data)
-        : access.kind === 'repository'
+      // repository's on a repository key, and a team's on its own team's key. A source that names
+      // its owner from the occurrence (an inbound event's endpoint) is checked below, against an
+      // owner that must belong to the automation's team.
+      const ownerMatches =
+        source.ownerKey !== undefined ||
+        (access.kind === 'repository'
           ? isRepositoryOwnerKey(fire.ownerKey)
-          : fire.ownerKey === teamOwnerKey(access.team.id);
+          : fire.ownerKey === teamOwnerKey(access.team.id));
       if (!ownerMatches) {
         return sendError(
           reply,
@@ -985,11 +994,15 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         );
       }
       if (source.key === INBOUND_EVENT) {
-        // The endpoint must still be the team's and on: a refused event is not taken again
-        // through a manager's retry.
-        const endpointId = (facts.data as { endpointId: string }).endpointId;
+        // The decision's owner must be an endpoint of the automation's team, still on, and the
+        // one the recorded event names: a row whose owner key was written for another endpoint
+        // (or another team's) is not taken again here.
+        const owner = parseOwnerKey(fire.ownerKey);
+        const endpointId =
+          owner && owner.kind === ENDPOINT_OWNER_KIND && 'id' in owner ? owner.id : null;
+        const recorded = (facts.data as { endpointId: string }).endpointId;
         const endpoint =
-          access.kind === 'team'
+          access.kind === 'team' && endpointId !== null && endpointId === recorded
             ? await fastify.prisma.eventEndpoint.findFirst({
                 select: { enabled: true },
                 where: { id: endpointId, teamId: access.team.id },

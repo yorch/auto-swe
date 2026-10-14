@@ -13,7 +13,16 @@
  */
 
 /** Path segments under the prefix that name a route, not a token. */
-const NAMED_WEBHOOK_ROUTES: ReadonlySet<string> = new Set(['access', 'ci', 'git', 'jira', 'slack']);
+const NAMED_WEBHOOK_ROUTES: ReadonlySet<string> = new Set([
+  'access',
+  'ci',
+  // Event endpoints: the id in the path names the endpoint, it is not a credential (the
+  // endpoint's secret is), so it stays readable in the log.
+  'events',
+  'git',
+  'jira',
+  'slack',
+]);
 
 export const REDACTED_SEGMENT = '[redacted]';
 

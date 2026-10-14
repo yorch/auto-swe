@@ -272,4 +272,33 @@ describe('automationRoutes (inbound.event)', () => {
       targetUnavailable: expect.stringContaining('no longer owned by or shared with'),
     });
   });
+
+  it('lets an automation whose repository became unreachable be switched off', async () => {
+    ctx.prisma.automation.findUnique.mockResolvedValue(stored({ targetConnectionId: REPO }));
+    // The repository is gone from the team's reach.
+    ctx.prisma.connection.findFirst.mockResolvedValue(null);
+    const off = await ctx.app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { enabled: false },
+      url: `${URL}/${AUTOMATION}`,
+    });
+    expect(off.statusCode).toBe(200);
+    expect(ctx.prisma.automation.update).toHaveBeenCalled();
+    // Keeping it on, or naming the repository again, still checks it.
+    const on = await ctx.app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { name: 'renamed' },
+      url: `${URL}/${AUTOMATION}`,
+    });
+    expect(on.json().error.code).toBe('TARGET_REPOSITORY_NOT_REACHABLE');
+    const renamed = await ctx.app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { enabled: false, targetConnectionId: REPO },
+      url: `${URL}/${AUTOMATION}`,
+    });
+    expect(renamed.json().error.code).toBe('TARGET_REPOSITORY_NOT_REACHABLE');
+  });
 });
