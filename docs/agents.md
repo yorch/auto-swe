@@ -163,7 +163,7 @@ ORGANIZATION scope       →  (if the team belongs to an org)
 GLOBAL scope             →  (required — every referenced agent must resolve here)
 ```
 
-**`systemPrompt` comes from the resolved row.** The most specific active row supplies the prompt along with everything else; a row whose `systemPrompt` is null runs on the agent's built-in prompt, not on a broader row's. A team override that changes the model and should keep a customised platform-wide prompt carries a copy of it.
+**`systemPrompt` comes from the resolved row.** The most specific active row supplies the prompt along with everything else; a row whose `systemPrompt` is null runs on the agent's built-in prompt, not on a broader row's. A team override that changes the model and should keep a customised platform-wide prompt carries a copy of it. The review personas are the exception: one with no prompt of its own falls back to the parent `reviewer` row's prompt ([§4](#4-the-review-network)).
 
 Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is found at any scope. Missing rows surface as a clear error message; credentials are managed at `/studio/models`, per-agent model specs at `/studio/agents/library`.
 
@@ -189,12 +189,13 @@ sends; the adapter then translates it per model:
 | Level | Anthropic (a model that can think) | OpenAI (no `apiBase`) | Google (a model that can think) |
 |---|---|---|---|
 | null (no opinion) | nothing: the model's default | nothing | nothing |
-| `off` | `none`: thinking disabled; a model that cannot turn thinking off (the adapter knows which) runs at its lowest setting | `none` (effort `none`) only for `gpt-6-sol` and `gpt-6-luna`, the models the adapter lists as taking it; nothing for any other model | nothing: the model's default |
+| `off` | `none`: thinking disabled; a model that cannot turn thinking off (the adapter knows which) runs at its lowest setting | `none` (effort `none`) only for `gpt-6-sol` and `gpt-6-luna`, the models the adapter lists as taking it; nothing for any other model, `gpt-6.1-sol` included | nothing: the model's default |
 | `low` / `medium` / `high` | the level: adaptive thinking at that effort, or a thinking budget (with `max_tokens` raised to fit it) on a model that predates adaptive thinking | the level as the reasoning effort; the adapter drops an effort a GPT-6 model does not list, and sends none to a model that does not reason | the level as a thinking level (Gemini 3), or a thinking budget (Gemini 2.5) |
 
 "A model that can think" follows the adapter's own model patterns. For Anthropic it is Claude 3.7
-and every `claude-` id outside the Claude 2 and Claude 3 generations, an unrecognised newer id
-included, as the adapter treats it as the newest. For Google it is Gemini 2.5, and every `gemini-` id
+and every `claude-` id outside the Claude 2 and Claude 3 generations (number-first ids such as
+`claude-3-haiku-…` and family-first ones such as `claude-haiku-3-5-…` alike), an unrecognised newer id
+included, as the adapter treats it as the newest. For Google it is Gemini 2.5 (not its `-image` and `-tts` variants), and every `gemini-` id
 that is neither Gemini 2 nor older, which the adapter gives its Gemini 3 behaviour. Any other model
 under those providers — Claude 3 Haiku, Gemini 2.0, Gemma — is sent nothing at any level, because the
 adapter would ask it for a thinking budget it refuses.

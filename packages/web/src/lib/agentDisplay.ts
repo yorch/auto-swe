@@ -9,7 +9,7 @@ export function modelLabel(a: Pick<AgentRow, 'modelSpec' | 'inheritsModelFrom'>)
   if (a.inheritsModelFrom) {
     return `↳ inherits ${a.inheritsModelFrom}`;
   }
-  return '— (role default)';
+  return '— (no model)';
 }
 
 const SCOPE_LABELS: Record<AgentScope, string> = {

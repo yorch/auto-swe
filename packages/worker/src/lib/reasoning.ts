@@ -20,9 +20,11 @@ const OPENAI_NONE_EFFORT_MODELS = new Set(['gpt-6-sol', 'gpt-6-luna']);
  * Anthropic ids the adapter's capability table (`getModelCapabilities` in
  * `@ai-sdk/anthropic`, not exported) files with the Claude 2 and Claude 3
  * generations, none of which has extended thinking — except Claude 3.7, which
- * that pattern also matches and which does think.
+ * that pattern also matches and which does think. Claude 3 ids come number-first
+ * (`claude-3-haiku-…`) and family-first (`claude-haiku-3-5-…`).
  */
-const ANTHROPIC_PRE_THINKING = /claude-(?:instant(?:-|$)|v?2(?=$|[-.:])|3(?=$|[-.]))/;
+const ANTHROPIC_PRE_THINKING =
+  /claude-(?:instant(?:-|$)|v?2(?=$|[-.:])|(?:(?:haiku|sonnet|opus)-)?3(?=$|[-.]))/;
 const ANTHROPIC_THINKING_3_7 = /claude-3-7(?:-|$)/;
 
 /**
@@ -47,6 +49,8 @@ function anthropicThinks(modelId: string): boolean {
  * Gemma included, which those models refuse.
  */
 const GEMINI_25 = /(^|\/)gemini-2\.5(?:[.-]|$)/i;
+/** Gemini 2.5 image-generation and speech variants, which do not think. */
+const GEMINI_NON_THINKING_VARIANT = /-(?:image|tts)(?:-|$)/i;
 const GEMINI_ANY = /(^|\/)gemini-/i;
 const GEMINI_2 = /(^|\/)gemini-2(?:[.-]|$)/i;
 const GEMINI_PRE_2 = [
@@ -57,7 +61,7 @@ const GEMINI_PRE_2 = [
 
 function googleThinks(modelId: string): boolean {
   if (GEMINI_25.test(modelId)) {
-    return true;
+    return !GEMINI_NON_THINKING_VARIANT.test(modelId);
   }
   return (
     GEMINI_ANY.test(modelId) &&

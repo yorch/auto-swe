@@ -6,6 +6,7 @@ import { z } from 'zod';
 import {
   type AgentScope,
   AgentVersionConflictError,
+  modelRequiredError,
   updateAgent,
   validateCredentialRef,
   validateMcpConnectionRef,
@@ -126,6 +127,12 @@ export const agentVersionRoutes: FastifyPluginAsync = async (fastify) => {
           'AGENT_INACTIVE',
           'This agent is deactivated. Reactivate it before restoring a version.'
         );
+      }
+      // A version cut before a model was required may name neither field; restoring it would
+      // make every run that resolves the agent throw, so refuse as create and edit do.
+      const modelError = modelRequiredError(source, true);
+      if (modelError) {
+        return sendError(reply, 400, 'MODEL_REQUIRED', modelError);
       }
       // The same reference check an edit gets: the connection may have been deactivated or
       // belong to another team since that version was current.

@@ -80,7 +80,7 @@ function modelText(v: VersionContent): string {
   if (v.modelSpec) {
     return v.modelSpec;
   }
-  return v.inheritsModelFrom ? `Inherits from ${v.inheritsModelFrom}` : 'Role default';
+  return v.inheritsModelFrom ? `Inherits from ${v.inheritsModelFrom}` : 'No model';
 }
 
 function toolsText(keys: string[] | null): string[] {

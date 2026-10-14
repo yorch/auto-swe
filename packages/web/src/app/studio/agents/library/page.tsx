@@ -90,7 +90,7 @@ const CREATE_COPY: AgentFormCopy = {
     hint: "The agent can call this server's tools when it runs. The 'mcp' tool is ticked for you if the tool list is custom.",
   },
   modelSpec: {
-    hint: '<provider>/<model>, or leave blank to inherit',
+    hint: "<provider>/<model>. Required — or choose Inherit to use another agent's model.",
     placeholder: 'anthropic/claude-opus-5-5',
   },
   name: { placeholder: 'Code Reviewer' },
@@ -105,7 +105,9 @@ const EDIT_COPY: AgentFormCopy = {
   mcpConnection: {
     hint: "The agent can call this server's tools. The 'mcp' tool is ticked for you if the tool list is custom.",
   },
-  modelSpec: { hint: 'Leave blank to inherit from the role default' },
+  modelSpec: {
+    hint: "<provider>/<model>. Required — or choose Inherit to use another agent's model.",
+  },
   skills: { hint: SKILLS_HINT },
   systemPrompt: { hint: 'A change here resets verification and triggers a content scan.' },
 };
