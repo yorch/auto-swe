@@ -129,7 +129,10 @@ export interface CreateAgentBody {
   reasoning?: ReasoningLevel | null;
 }
 
-export type UpdateAgentBody = Partial<Omit<CreateAgentBody, 'key' | 'scope'>>;
+// Activation is an update-only operation; creating an agent always starts it active.
+export type UpdateAgentBody = Partial<Omit<CreateAgentBody, 'key' | 'scope'>> & {
+  isActive?: boolean;
+};
 
 /**
  * Advisory findings on a save. The agent is saved either way; each list is absent when empty.

@@ -210,6 +210,8 @@ export default function AgentLibraryPage() {
   const [saved, setSaved] = useState<SavedNotice | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  // A row action that failed after the fact, where there is no form to hold the message.
+  const [actionError, setActionError] = useState<string | null>(null);
 
   function finishSave(title: string, res: AgentSaveWarnings & { runtimeWarnings?: string[] }) {
     const scanWarnings = res.scanWarnings ?? [];
@@ -370,13 +372,33 @@ export default function AgentLibraryPage() {
             label: 'Version history',
             onAction: () => setHistory(a),
           },
-          {
-            icon: 'trash',
-            id: 'deactivate',
-            label: 'Deactivate',
-            onAction: () => setDeleting(a),
-            tone: 'danger',
-          },
+          ...(!a.isActive
+            ? [
+                {
+                  icon: 'play' as const,
+                  id: 'reactivate',
+                  label: 'Reactivate',
+                  onAction: async () => {
+                    setActionError(null);
+                    try {
+                      await updateAgent.mutateAsync({ body: { isActive: true }, id: a.id });
+                    } catch (e) {
+                      // A reactivation that fails is otherwise invisible: the list simply stays as
+                      // it was, and the operator has no way to tell that anything was attempted.
+                      setActionError(errMsg(e, 'Reactivate failed'));
+                    }
+                  },
+                },
+              ]
+            : [
+                {
+                  icon: 'trash' as const,
+                  id: 'deactivate',
+                  label: 'Deactivate',
+                  onAction: () => setDeleting(a),
+                  tone: 'danger' as const,
+                },
+              ]),
         ]}
         label={`More actions for ${a.key}`}
       />
@@ -404,6 +426,11 @@ export default function AgentLibraryPage() {
       <SetupBanner items={['credentials']} />
 
       <Card className="p-4 sm:p-6">
+        {actionError && (
+          <Alert className="mb-3" variant="error">
+            {actionError}
+          </Alert>
+        )}
         <Toolbar
           end={
             agents && agents.length > 0 ? (
@@ -674,6 +701,11 @@ export default function AgentLibraryPage() {
                           >
                             {a.isVerified ? 'Verified' : 'Unverified'}
                           </Badge>
+                          {!a.isActive && (
+                            <Badge title="This agent is not in service" tone="muted">
+                              Deactivated
+                            </Badge>
+                          )}
                         </div>
                         <div className="mt-1 text-xs text-paper-500">{originLabel(a.origin)}</div>
                       </Td>
@@ -751,6 +783,11 @@ export default function AgentLibraryPage() {
       >
         {editing ? (
           <>
+            {!editing.isActive && (
+              <Alert variant="warning">
+                This agent is deactivated. Reactivate it to change it.
+              </Alert>
+            )}
             <AgentFormFields
               copy={EDIT_COPY}
               credentials={credentials ?? []}

@@ -2,12 +2,13 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRow } from '@/hooks/useAgentLibrary';
-import { withQuery } from '@/test/rtl-helpers';
+import { stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import AgentLibraryPage from './page';
 
-const { modalProps, state } = vi.hoisted(() => ({
+const { modalProps, state, updateAgent } = vi.hoisted(() => ({
   modalProps: { current: null as null | { agents: AgentRow[]; open: boolean } },
   state: { admin: true, agents: [] as AgentRow[] },
+  updateAgent: vi.fn(),
 }));
 
 const row = (id: string, name: string, key: string): AgentRow => ({
@@ -47,7 +48,7 @@ vi.mock('@/hooks/useAgentLibrary', () => ({
   }),
   useCreateAgent: () => ({ isPending: false, mutateAsync: vi.fn() }),
   useDeleteAgent: () => ({ isPending: false, mutateAsync: vi.fn() }),
-  useUpdateAgent: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useUpdateAgent: () => ({ isPending: false, mutateAsync: updateAgent }),
 }));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('@/hooks/useAdmin', () => ({ useOrganizationDirectory: () => ({ data: [] }) }));
@@ -71,9 +72,67 @@ vi.mock('@/components/agents/BulkModelModal', () => ({
 }));
 
 beforeEach(() => {
+  stubDialogPrototype();
   modalProps.current = null;
   state.admin = true;
   state.agents = [row('a1', 'Alpha', 'alpha'), row('b1', 'Beta', 'beta')];
+  updateAgent.mockReset();
+});
+
+describe('agent library — activation', () => {
+  it('marks inactive rows and leaves active rows unmarked', () => {
+    state.agents = [row('a1', 'Alpha', 'alpha'), { ...row('b1', 'Beta', 'beta'), isActive: false }];
+    render(withQuery(<AgentLibraryPage />));
+
+    expect(screen.getAllByText('Deactivated')).toHaveLength(1);
+    // The mark distinguishes the two, rather than appearing on whatever is in the table.
+    expect(screen.getAllByText('Deactivated')[0].closest('tr')?.textContent).toContain('Beta');
+  });
+
+  it('leaves active rows unmarked', () => {
+    render(withQuery(<AgentLibraryPage />));
+
+    expect(screen.queryByText('Deactivated')).toBeNull();
+  });
+
+  it('reactivates an inactive row through the update hook', async () => {
+    state.agents = [{ ...row('a1', 'Alpha', 'alpha'), isActive: false }];
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for alpha' }));
+    fireEvent.click(await screen.findByText('Reactivate'));
+    expect(updateAgent).toHaveBeenCalledWith({ body: { isActive: true }, id: 'a1' });
+  });
+
+  it('says so when a reactivation fails', async () => {
+    state.agents = [{ ...row('a1', 'Alpha', 'alpha'), isActive: false }];
+    updateAgent.mockRejectedValue(new Error('Agent changed since version 3 was read'));
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for alpha' }));
+    fireEvent.click(await screen.findByText('Reactivate'));
+    // Otherwise the row simply stays as it was and nothing says an attempt was made.
+    expect(await screen.findByText('Agent changed since version 3 was read')).toBeTruthy();
+  });
+
+  it('offers Deactivate only for active rows', async () => {
+    state.agents = [{ ...row('a1', 'Alpha', 'alpha'), isActive: false }, row('b1', 'Beta', 'beta')];
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for alpha' }));
+    expect(screen.queryByRole('menuitem', { name: 'Deactivate' })).toBeNull();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for beta' }));
+    expect(await screen.findByRole('menuitem', { name: 'Deactivate' })).toBeTruthy();
+  });
+
+  it('explains that an inactive row must be reactivated before editing', () => {
+    state.agents = [{ ...row('a1', 'Alpha', 'alpha'), isActive: false }];
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Edit alpha' }));
+    expect(screen.getByText('This agent is deactivated. Reactivate it to change it.')).toBeTruthy();
+  });
 });
 
 describe('agent library — bulk model change', () => {
