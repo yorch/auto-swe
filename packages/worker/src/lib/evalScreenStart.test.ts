@@ -25,14 +25,16 @@ describe('startDatasetScreen', () => {
   });
 
   it('treats an already-started screen as joined', async () => {
-    start.mockRejectedValue(
-      Object.assign(new Error('started'), { name: 'WorkflowExecutionAlreadyStartedError' })
-    );
+    start.mockImplementationOnce(async () => {
+      throw Object.assign(new Error('started'), { name: 'WorkflowExecutionAlreadyStartedError' });
+    });
     await expect(startDatasetScreen('d1')).resolves.toBeUndefined();
   });
 
   it('surfaces any other failure to its caller', async () => {
-    start.mockRejectedValue(new Error('unreachable'));
+    start.mockImplementationOnce(async () => {
+      throw new Error('unreachable');
+    });
     await expect(startDatasetScreen('d1')).rejects.toThrow('unreachable');
   });
 });

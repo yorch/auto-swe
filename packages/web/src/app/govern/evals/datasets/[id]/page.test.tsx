@@ -1,11 +1,22 @@
 // @vitest-environment jsdom
 
 import { fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import EvalDatasetPage from './page';
 
 afterEach(() => vi.unstubAllGlobals());
+
+// jsdom implements <dialog> without showModal()/close(); stand in for the browser's.
+beforeAll(() => {
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+    this.setAttribute('open', '');
+  };
+  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+    this.removeAttribute('open');
+    this.dispatchEvent(new Event('close'));
+  };
+});
 
 const DS_ID = '11111111-1111-4111-8111-111111111111';
 

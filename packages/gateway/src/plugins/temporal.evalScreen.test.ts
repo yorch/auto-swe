@@ -42,18 +42,20 @@ describe('startEvalScreenWorkflow', () => {
   });
 
   it('treats an already-started screen as joined', async () => {
-    start.mockRejectedValue(
-      Object.assign(new Error('started'), { name: 'WorkflowExecutionAlreadyStartedError' })
-    );
     const app = await build();
+    start.mockImplementationOnce(async () => {
+      throw Object.assign(new Error('started'), { name: 'WorkflowExecutionAlreadyStartedError' });
+    });
     await expect(
       app.temporal.startEvalScreenWorkflow('eval-screen-d1', { datasetId: 'd1' })
     ).resolves.toBeUndefined();
   });
 
   it('still surfaces any other start failure', async () => {
-    start.mockRejectedValue(new Error('unreachable'));
     const app = await build();
+    start.mockImplementationOnce(async () => {
+      throw new Error('unreachable');
+    });
     await expect(
       app.temporal.startEvalScreenWorkflow('eval-screen-d1', { datasetId: 'd1' })
     ).rejects.toThrow('unreachable');
