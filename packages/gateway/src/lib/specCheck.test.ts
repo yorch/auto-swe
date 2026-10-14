@@ -73,15 +73,14 @@ describe('collectShellNodes', () => {
 
   it('collects a first-class shell node with its command and image', () => {
     const nodes = collectShellNodes(SHELL_SPEC as unknown as WorkflowSpec);
-    expect(nodes).toEqual([
-      { id: 'sh', node: { command: 'echo hi', image: 'alpine:latest', network: undefined } },
-    ]);
+    // A shell node is passed through whole.
+    expect(nodes).toEqual([{ id: 'sh', node: SHELL_SPEC.nodes.sh }]);
   });
 
   it('collects a containerStep node, defaulting a missing command to an empty string', () => {
     const s = spec({
-      done,
       c: { image: 'python:3.13-alpine', network: 'none', next: 'done', type: 'containerStep' },
+      done,
     });
     expect(collectShellNodes(s as unknown as WorkflowSpec)).toEqual([
       { id: 'c', node: { command: '', image: 'python:3.13-alpine', network: 'none' } },
@@ -123,6 +122,7 @@ describe('collectShellNodes', () => {
       },
     });
     const [found] = collectShellNodes(s as unknown as WorkflowSpec);
+    expect(found?.id).toBe('s');
     expect(found?.node.network).toBeUndefined();
   });
 

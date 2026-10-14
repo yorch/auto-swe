@@ -12,6 +12,7 @@ import {
   canReadScope,
   clearSetting,
   listSettings,
+  scopeColumns,
   type ScopeSelector,
   setSetting,
 } from '../lib/configSettingsService.js';
@@ -96,11 +97,22 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
   /// "why is this run behaving that way", which had no answer before.
   f.get(
     '/config/settings',
-    { schema: { querystring: ScopeQuery, response: { 200: z.any(), 403: z.any() } } },
+    { schema: { querystring: ScopeQuery, response: { 200: z.any(), 400: z.any(), 403: z.any() } } },
     async (req, reply) => {
       const query = req.query;
       const actor = requireUser(req);
       const selector = selectorFrom(query);
+
+      // A scoped view that names no id has nothing to resolve against; answering
+      // with GLOBAL values labelled as that scope would mislead, admins included.
+      if (!scopeColumns(selector)) {
+        return sendError(
+          reply,
+          400,
+          'SCOPE_NOT_ALLOWED',
+          `A ${selector.scope} view needs the matching id.`
+        );
+      }
 
       // A scoped read exposes another tenant's resolved configuration, so it
       // needs the same membership check a scoped write gets — grants only

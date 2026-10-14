@@ -218,7 +218,7 @@ describe('setSetting authorisation', () => {
 
   it('refuses a grant whose key pattern does not cover the key', async () => {
     prisma.configPermission.findMany.mockResolvedValue([
-      grant({ keyPattern: 'workflow.*', scope: 'GLOBAL', role: 'LEAD' }),
+      grant({ keyPattern: 'workflow.*', role: 'LEAD', scope: 'GLOBAL' }),
     ]);
     const result = await setSetting(asPrisma(prisma), LEAD, LEAD_KEY, TEAM, 50);
     expect(result).toEqual({
@@ -236,7 +236,7 @@ describe('setSetting authorisation', () => {
 
   it('refuses an ENGINEER on a LEAD-floor key even with a deployment-wide grant', async () => {
     prisma.configPermission.findMany.mockResolvedValue([
-      grant({ keyPattern: '*', userId: 'user-1', scope: 'GLOBAL' }),
+      grant({ keyPattern: '*', scope: 'GLOBAL', userId: 'user-1' }),
     ]);
     const result = await setSetting(asPrisma(prisma), ENGINEER, LEAD_KEY, TEAM, 50);
     expect(result).toEqual({
@@ -247,7 +247,7 @@ describe('setSetting authorisation', () => {
 
   it('refuses a LEAD on an ADMIN-floor key even with a grant covering it', async () => {
     prisma.configPermission.findMany.mockResolvedValue([
-      grant({ keyPattern: '*', userId: 'user-1', scope: 'GLOBAL' }),
+      grant({ keyPattern: '*', scope: 'GLOBAL', userId: 'user-1' }),
     ]);
     const result = await setSetting(asPrisma(prisma), LEAD, ADMIN_KEY, TEAM, true);
     expect(result).toEqual({
