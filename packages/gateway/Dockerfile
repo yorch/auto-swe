@@ -39,7 +39,15 @@ COPY packages/worker/package.json packages/worker/
 # native dependency builds working.
 COPY packages/shared/prisma.config.ts packages/shared/
 COPY packages/shared/src/prisma packages/shared/src/prisma
-RUN yarn workspaces focus auto-swe @auto-swe/shared @auto-swe/gateway
+# The one network-dependent step in this stage: the install fetches the whole
+# dependency tree, so a transient fetch failure ends the build. The log shows a
+# bare `write ECONNRESET` followed by an assertion from Yarn's cancellation
+# machinery, which reads as a Yarn bug rather than a lost connection. Retry
+# once after a pause; a failure that is not transient fails on the second
+# attempt too.
+RUN yarn workspaces focus auto-swe @auto-swe/shared @auto-swe/gateway \
+    || (echo 'dependency install failed; retrying once' >&2 && sleep 5 \
+      && yarn workspaces focus auto-swe @auto-swe/shared @auto-swe/gateway)
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
@@ -68,8 +76,13 @@ COPY packages/sdk/package.json packages/sdk/
 COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
+# Same retry as the builder stage — the fetch is the network-dependent step.
 RUN yarn workspaces focus @auto-swe/gateway --production \
-  && mkdir -p packages/shared/node_modules packages/gateway/node_modules
+    || (echo 'dependency install failed; retrying once' >&2 && sleep 5 \
+      && yarn workspaces focus @auto-swe/gateway --production)
+# Both are COPY sources in the runtime stage, and COPY fails on a missing path
+# — a focused install need not create either directory.
+RUN mkdir -p packages/shared/node_modules packages/gateway/node_modules
 
 # ── Stage 3: Runtime ──
 FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a

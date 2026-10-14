@@ -45,7 +45,15 @@ COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
 COPY packages/worker/package.json packages/worker/
 
-RUN yarn workspaces focus auto-swe @auto-swe/shared @auto-swe/web
+# The one network-dependent step in this stage: the install fetches the whole
+# dependency tree, so a transient fetch failure ends the build. The log shows a
+# bare `write ECONNRESET` followed by an assertion from Yarn's cancellation
+# machinery, which reads as a Yarn bug rather than a lost connection. Retry
+# once after a pause; a failure that is not transient fails on the second
+# attempt too.
+RUN yarn workspaces focus auto-swe @auto-swe/shared @auto-swe/web \
+    || (echo 'dependency install failed; retrying once' >&2 && sleep 5 \
+      && yarn workspaces focus auto-swe @auto-swe/shared @auto-swe/web)
 
 COPY tsconfig.base.json ./
 COPY packages/shared/ packages/shared/
