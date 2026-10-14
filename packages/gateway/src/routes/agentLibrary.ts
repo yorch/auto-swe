@@ -240,7 +240,9 @@ export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
                 runtime: change.runtimeChange?.from ?? current?.runtime ?? null,
                 version: change.version,
               },
-              entityId: change.id,
+              // Anchor to the version this change created, as a single edit does: the before-state
+              // belongs to the row it replaced, but the after-state lives on the new one.
+              entityId: change.newId ?? change.id,
               entityType: 'Agent',
             });
           }

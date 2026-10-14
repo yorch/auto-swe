@@ -72,10 +72,11 @@ function agent(id = A) {
     credentialId: null as string | null,
     id,
     inheritsModelFrom: null as string | null,
+    isActive: true,
     key: id,
     modelSpec: FROM as string | null,
     name: id,
-    orgId: null,
+    orgId: null as string | null,
     reasoning: null as string | null,
     runtime: null as string | null,
     scope: 'GLOBAL',
@@ -135,7 +136,8 @@ describe('bulk agent model changes', () => {
     expect(p.configAuditLog.create.mock.calls[0][0].data).toMatchObject({
       afterJson: { modelSpec: TO, reasoning: 'high', runtime: null, version: 3 },
       beforeJson: { modelSpec: FROM, reasoning: 'high', runtime: null, version: 2 },
-      entityId: A,
+      // The after-state lives on the new version, so that is the row the entry is anchored to.
+      entityId: 'new',
     });
     await app.close();
   });
@@ -284,6 +286,61 @@ describe('bulk agent model changes', () => {
     const res = await post({}, true);
     expect(res.json().data.changes[0].shadowedBy).toEqual(['TEAM']);
     expect(p.agent.findMany.mock.calls.filter(([args]) => args.where.key)).toHaveLength(1);
+    await app.close();
+  });
+  it('refuses to revive a deactivated lineage', async () => {
+    const { app, p, post } = await setup([{ ...agent(), isActive: false }]);
+    const res = await post();
+    expect(res.json().data.changes[0]).toMatchObject({
+      blockers: ['This agent is deactivated; reactivate it before changing its model.'],
+      status: 'BLOCKED',
+    });
+    // updateAgent writes isActive: true, so saving here would undo the deactivation.
+    expect(p.agent.create).not.toHaveBeenCalled();
+    expect(p.configAuditLog.create).not.toHaveBeenCalled();
+    await app.close();
+  });
+  it('carries on when something outside the write throws', async () => {
+    const { app, p, post } = await setup([agent(), agent(B)]);
+    p.providerCredential.findMany.mockRejectedValueOnce(new Error('advisory query down'));
+    const res = await post();
+    expect(res.json().data.changes).toMatchObject([
+      { blockers: ['advisory query down'], status: 'ERROR' },
+      { status: 'OK' },
+    ]);
+    expect(p.agent.create).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+  it('does not report a committed change as failed when an advisory query breaks', async () => {
+    const { app, p, post } = await setup();
+    // The catalog answers the pre-write lookup, then breaks once the version is committed —
+    // updateAgent computes advisories after its transaction, so a throw there proves nothing
+    // about the write.
+    p.modelCatalogEntry.findUnique
+      .mockResolvedValueOnce(null)
+      .mockRejectedValue(new Error('catalog unavailable'));
+    const res = await post();
+    expect(res.json().data.changes[0]).toMatchObject({ newVersion: 3, status: 'OK' });
+    expect(p.agent.create).toHaveBeenCalledTimes(1);
+    expect(p.configAuditLog.create).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+  it('counts a narrower row as shadowing only where it can win', async () => {
+    const { app, p, post } = await setup([
+      { ...agent(), orgId: 'org-1', scope: 'ORGANIZATION' as const },
+    ]);
+    p.agent.findMany.mockImplementation(async ({ where }) =>
+      where.key
+        ? [
+            { key: A, scope: 'TEAM' },
+            { key: A, scope: 'CHANNEL' },
+          ]
+        : []
+    );
+    const res = await post({}, true);
+    // A channel row wins in its own context whatever it sits above; a team row only wins for its
+    // own runs, which never resolved this organization's row.
+    expect(res.json().data.changes[0].shadowedBy).toEqual(['CHANNEL']);
     await app.close();
   });
   it.each([true, false])('refuses non-admins (preview=%s)', async (preview) => {
