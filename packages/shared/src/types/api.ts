@@ -715,7 +715,72 @@ export interface AdminTokenSummary {
   expiresAt: string | null;
   lastUsedAt: string | null;
   revokedAt: string | null;
-  user: { id: string; email: string };
+  /** The owner when this is a person's token; null for a service principal's. */
+  user: { id: string; email: string } | null;
+  /** The owner when this is a service principal's token; null for a person's. */
+  servicePrincipal: { id: string; name: string; team: { id: string; name: string } } | null;
+  /** Empty on a person's token, which acts with its user's role. */
+  scopes: string[];
+}
+
+// ── Service principals ──
+
+/**
+ * What a service principal's token may do. A route opts in by declaring the scopes it needs
+ * (`config.serviceScopes`); every other route refuses a service token.
+ *
+ * `runs:agent` is separate from `runs:launch` because an agent run takes a free-form prompt and
+ * an agent of the caller's choosing (the implementer, with a shell): a repository grant alone
+ * would otherwise let a principal run anything there. `runs:launch` starts only the templates on
+ * the principal's template allowlist.
+ */
+export const SERVICE_TOKEN_SCOPES = [
+  'runs:launch',
+  'runs:agent',
+  'runs:read',
+  'runs:cancel',
+] as const;
+export type ServiceTokenScope = (typeof SERVICE_TOKEN_SCOPES)[number];
+
+/** A service token's longest lifetime, in days. Every service token expires. */
+export const SERVICE_TOKEN_MAX_DAYS = 365;
+
+/** Tokens a principal may hold at once (unrevoked, unexpired): one live plus one rotating in. */
+export const SERVICE_TOKEN_MAX_LIVE = 2;
+
+/** One row of GET /api/v1/teams/:teamId/service-principals. */
+export interface ServicePrincipalSummary {
+  id: string;
+  teamId: string;
+  name: string;
+  description: string | null;
+  disabledAt: string | null;
+  maxRunsPerDay: number;
+  maxInFlight: number;
+  connectionIds: string[];
+  templateIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  createdBy: { id: string; email: string } | null;
+  /** Unrevoked, unexpired tokens. */
+  liveTokenCount: number;
+}
+
+/** One row of GET …/service-principals/:id/tokens — never the plaintext. */
+export interface ServiceTokenSummary {
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: ServiceTokenScope[];
+  createdAt: string;
+  expiresAt: string;
+  lastUsedAt: string | null;
+  revokedAt: string | null;
+}
+
+/** POST …/service-principals/:id/tokens: the plaintext appears here exactly once. */
+export interface ServiceTokenCreated extends ServiceTokenSummary {
+  token: string;
 }
 
 // ── Personal access tokens ──

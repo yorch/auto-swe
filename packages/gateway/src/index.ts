@@ -74,6 +74,7 @@ import { repositoryRoutes } from './routes/repositories.js';
 import { scannerPatternRoutes } from './routes/scannerPatterns.js';
 import { scheduledWorkRequestRoutes } from './routes/scheduledWorkRequests.js';
 import { securityEventRoutes } from './routes/securityEvents.js';
+import { servicePrincipalRoutes } from './routes/servicePrincipals.js';
 import { skillRevisionRoutes } from './routes/skillRevisions.js';
 import { skillSourceRoutes } from './routes/skillSources.js';
 import { skillsRoutes, teamAgentSkillRoutes } from './routes/skills.js';
@@ -298,6 +299,7 @@ async function start() {
   await app.register(stepRegistryRoutes, { prefix: '/api/v1/workflow-steps' });
   await app.register(webhookRoutes, { prefix: '/api/v1/webhooks' });
   await app.register(teamRoutes, { prefix: '/api/v1/teams' });
+  await app.register(servicePrincipalRoutes, { prefix: '/api/v1/teams' });
   await app.register(userRoutes, { prefix: '/api/v1/users' });
   await app.register(meRoutes, { prefix: '/api/v1/me' });
   await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });

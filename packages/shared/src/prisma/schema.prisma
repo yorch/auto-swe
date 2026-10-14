@@ -286,28 +286,68 @@ model PullRequest {
   @@map("pull_requests")
 }
 
-/// Long-lived API token for CI / CLI use — a user's personal access token
-/// (Settings → API tokens). The plaintext token is returned exactly once on
-/// create (`ats_<random>` format); only the sha-256 hash is stored.
-/// `lastUsedAt` is updated best-effort on each successful auth so admins can
-/// prune stale tokens.
+/// Long-lived API token for CI / CLI use. Exactly one owner (the hand-written
+/// CHECK `api_tokens_exactly_one_owner`): a user — a personal access token
+/// (Settings → API tokens) — or a team's service principal. The plaintext token
+/// is returned exactly once on create (`ats_<random>` format); only the sha-256
+/// hash is stored. `lastUsedAt` is updated best-effort on each successful auth
+/// so admins can prune stale tokens.
 model ApiToken {
-  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId     String    @map("user_id") @db.Uuid
-  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name       String
-  tokenHash  String    @unique @map("token_hash")
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId             String?           @map("user_id") @db.Uuid
+  user               User?             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  servicePrincipalId String?           @map("service_principal_id") @db.Uuid
+  servicePrincipal   ServicePrincipal? @relation(fields: [servicePrincipalId], references: [id], onDelete: Cascade)
+  /// What a service token may do (`SERVICE_TOKEN_SCOPES`). Empty, and ignored,
+  /// on a user's token, which acts with its user's role instead.
+  scopes             String[]          @default([])
+  name               String
+  tokenHash          String            @unique @map("token_hash")
   /// The first 12 chars of the plaintext token (`ats_` + 8 random chars).
   /// Non-secret — exists so the admin UI can disambiguate listed tokens
   /// without re-issuing them.
-  prefix     String
-  expiresAt  DateTime? @map("expires_at") @db.Timestamptz
-  lastUsedAt DateTime? @map("last_used_at") @db.Timestamptz
-  revokedAt  DateTime? @map("revoked_at") @db.Timestamptz
-  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  prefix             String
+  expiresAt          DateTime?         @map("expires_at") @db.Timestamptz
+  lastUsedAt         DateTime?         @map("last_used_at") @db.Timestamptz
+  revokedAt          DateTime?         @map("revoked_at") @db.Timestamptz
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([userId])
+  @@index([servicePrincipalId])
   @@map("api_tokens")
+}
+
+/// A team-owned machine identity: another service that starts and follows runs
+/// without acting as a person. It authenticates with `ApiToken` rows of its own
+/// and may launch only what its allowlists name — an empty list allows nothing.
+/// Its runs use the platform credential.
+model ServicePrincipal {
+  id            String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId        String     @map("team_id") @db.Uuid
+  team          Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name          String
+  description   String?
+  createdById   String?    @map("created_by_id") @db.Uuid
+  createdBy     User?      @relation("ServicePrincipalCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  /// Set while disabled: every token of a disabled principal is refused.
+  disabledAt    DateTime?  @map("disabled_at") @db.Timestamptz
+  /// Runs it may start in any 24 hours.
+  maxRunsPerDay Int        @default(50) @map("max_runs_per_day")
+  /// Runs of its own that may be in flight at once.
+  maxInFlight   Int        @default(5) @map("max_in_flight")
+  /// Connections it may launch on. Adding one is a launch decision of the lead who adds it.
+  connectionIds String[]   @default([]) @map("connection_ids") @db.Uuid
+  /// Workflow templates it may run through `POST /workflow-templates/:id/runs`.
+  templateIds   String[]   @default([]) @map("template_ids") @db.Uuid
+  createdAt     DateTime   @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime   @updatedAt @map("updated_at") @db.Timestamptz
+
+  tokens      ApiToken[]
+  runRequests RunInput[] @relation("RunInputServiceRequester")
+
+  @@unique([teamId, name])
+  @@index([createdById])
+  @@map("service_principals")
 }
 
 /// Generic integration target (P3). Replaces the SWE-specific `Repository`.
@@ -812,6 +852,7 @@ model Team {
 
   memberships           TeamMembership[]
   repositories          Connection[]
+  servicePrincipals     ServicePrincipal[]
   /// Repositories other teams have shared with this one (see `ConnectionTeamShare`).
   sharedRepositories    ConnectionTeamShare[]
   /// Schedules this team owns (see `ScheduledWorkRequest.teamId`).
@@ -1239,6 +1280,7 @@ model User {
   skillSources          SkillSource[]            @relation("SkillSourceCreator")
   schedulesActingAs     ScheduledWorkRequest[]   @relation("ScheduleActsAs")
   automations           Automation[]             @relation("AutomationCreator")
+  servicePrincipals     ServicePrincipal[]       @relation("ServicePrincipalCreator")
   configPermissions     ConfigPermission[]
   repoAccess            RepoAccess[]
   connectionCredentials ConnectionCredential[]
@@ -1357,6 +1399,11 @@ model RunInput {
   /// webhook-originated requests without a platform user.
   requestedById           String?     @map("requested_by_id") @db.Uuid
   requestedBy             User?       @relation(fields: [requestedById], references: [id], onDelete: SetNull)
+  /// The service principal that submitted the request, when a machine did
+  /// rather than a person (`requestedById` is then null). Attribution and
+  /// visibility only: the run uses the platform credential.
+  requestedByServiceId    String?           @map("requested_by_service_id") @db.Uuid
+  requestedByService      ServicePrincipal? @relation("RunInputServiceRequester", fields: [requestedByServiceId], references: [id], onDelete: SetNull)
   /// Caller-supplied `Idempotency-Key` on `POST /work-requests`. Unique per
   /// submitter; null (every key-less launch) never collides, since Postgres
   /// treats nulls as distinct in a unique index.
@@ -1376,6 +1423,7 @@ model RunInput {
   @@unique([requestedById, idempotencyKey])
   @@index([connectionId])
   @@index([requestedById])
+  @@index([requestedByServiceId, createdAt])
   @@index([externalTicketId])
   @@map("run_inputs")
 }

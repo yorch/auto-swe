@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { use, useState } from 'react';
 import { AddMemberModal } from '@/components/teams/AddMemberModal';
 import { EgressAllowlistEditor } from '@/components/teams/EgressAllowlistEditor';
+import { ServicePrincipalsSection } from '@/components/teams/ServicePrincipalsSection';
 import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
 import { TeamAgentLibrarySection } from '@/components/teams/TeamAgentLibrarySection';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
@@ -31,7 +32,8 @@ import { teamPermissions } from '@/lib/teamPermissions';
 import { plural } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 
-const SUBTITLE = 'Members, repositories, sandbox allowlists and agent overrides for one team.';
+const SUBTITLE =
+  'Members, repositories, service principals, sandbox allowlists and agent overrides for one team.';
 
 /** Header-only frame for the branches that have no team to show. */
 function TeamFrame({ children }: { children: React.ReactNode }) {
@@ -389,6 +391,15 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
         </Card>
       )}
 
+      {canManage && (
+        <ServicePrincipalsSection
+          repositories={[...repositories.filter((r) => r.isActive), ...shared].map((r) => ({
+            id: r.id,
+            label: `${r.organizationName}/${r.repoName}`,
+          }))}
+          teamId={id}
+        />
+      )}
       {canManageTeamAgents && <TeamAgentLibrarySection teamId={id} />}
       {canEditAllowlists && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">

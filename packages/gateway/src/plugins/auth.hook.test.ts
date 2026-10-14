@@ -1,7 +1,7 @@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { describe, expect, it, vi } from 'vitest';
 import type { JwtPayload } from './auth.js';
-import { hasRole, requireAuth } from './auth.js';
+import { assertServiceScopesAdmissible, hasRole, requireAuth } from './auth.js';
 
 /**
  * Exercises the pure/decidable authz surface of `plugins/auth.ts` directly —
@@ -51,6 +51,8 @@ interface RequestOpts {
   verifyAccessToken?: (token: string) => JwtPayload;
   hashToken?: (token: string) => string;
   prisma?: Record<string, unknown>;
+  /** The route's `config`, as `request.routeOptions.config` carries it. */
+  config?: Record<string, unknown>;
 }
 
 function makeRequest(opts: RequestOpts = {}): FastifyRequest {
@@ -66,6 +68,7 @@ function makeRequest(opts: RequestOpts = {}): FastifyRequest {
     headers: opts.authorization ? { authorization: opts.authorization } : {},
     log: { warn: vi.fn() },
     params: opts.params ?? {},
+    routeOptions: { config: opts.config ?? {} },
     server: { auth, prisma: opts.prisma ?? {} },
   };
   return request as unknown as FastifyRequest;
@@ -186,10 +189,12 @@ describe('requireAuth — PAT (ats_ prefix) path', () => {
     await requireAuth()(request, reply as unknown as FastifyReply);
 
     expect(verifyAccessToken).not.toHaveBeenCalled();
-    expect(findUnique).toHaveBeenCalledWith({
-      include: { user: true },
-      where: { tokenHash: 'hash:ats_abcdef123456' },
-    });
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        include: expect.objectContaining({ user: true }),
+        where: { tokenHash: 'hash:ats_abcdef123456' },
+      })
+    );
     expect(request.user).toMatchObject({ role: 'ENGINEER', sub: 'user-9' });
     expect(reply.statusCode).toBeUndefined();
   });
@@ -256,6 +261,185 @@ describe('requireAuth — PAT (ats_ prefix) path', () => {
 
     expect(reply.statusCode).toBe(401);
     expect(errorCode(reply)).toBe('TOKEN_EXPIRED');
+  });
+});
+
+// ─── requireAuth: service principal tokens ─────────────────────────────────
+
+describe('requireAuth — service principal tokens', () => {
+  const SP_ID = '33333333-3333-4333-8333-333333333333';
+  const TEAM_ID = '22222222-2222-4222-8222-222222222222';
+
+  function serviceToken(
+    over: {
+      scopes?: string[];
+      disabledAt?: Date | null;
+      teamActive?: boolean;
+      orgActive?: boolean;
+      expiresAt?: Date | null;
+      revokedAt?: Date | null;
+    } = {}
+  ) {
+    return {
+      expiresAt: 'expiresAt' in over ? over.expiresAt : new Date(Date.now() + 86_400_000),
+      id: 'tok-1',
+      revokedAt: over.revokedAt ?? null,
+      scopes: over.scopes ?? ['runs:launch', 'runs:read'],
+      servicePrincipal: {
+        connectionIds: ['conn-1'],
+        disabledAt: over.disabledAt ?? null,
+        id: SP_ID,
+        name: 'deployer',
+        team: {
+          isActive: over.teamActive ?? true,
+          organization: { isActive: over.orgActive ?? true },
+        },
+        teamId: TEAM_ID,
+        templateIds: [],
+      },
+      servicePrincipalId: SP_ID,
+      user: null,
+      userId: null,
+    };
+  }
+
+  async function call(row: unknown, config: Record<string, unknown>, options = {}) {
+    const request = makeRequest({
+      authorization: 'Bearer ats_service',
+      config,
+      prisma: {
+        apiToken: {
+          findUnique: vi.fn().mockResolvedValue(row),
+          update: vi.fn().mockResolvedValue({}),
+        },
+      },
+    });
+    const reply = makeReply();
+    await requireAuth({ requiredRole: 'ENGINEER', ...options })(
+      request,
+      reply as unknown as FastifyReply
+    );
+    return { reply, request };
+  }
+
+  it('refuses a service token on a route that does not opt in: 401 SERVICE_TOKEN_NOT_ALLOWED', async () => {
+    const { reply, request } = await call(serviceToken(), {});
+    expect(reply.statusCode).toBe(401);
+    expect(errorCode(reply)).toBe('SERVICE_TOKEN_NOT_ALLOWED');
+    expect(request.user).toBeUndefined();
+    expect(request.principal).toBeUndefined();
+  });
+
+  it('refuses it on an MCP-only route too: mcpScope is not an opt-in for machines', async () => {
+    const { reply } = await call(serviceToken(), { mcpScope: 'read' });
+    expect(reply.statusCode).toBe(401);
+    expect(errorCode(reply)).toBe('SERVICE_TOKEN_NOT_ALLOWED');
+  });
+
+  it('admits it on an opted-in route as request.principal, never request.user', async () => {
+    const { reply, request } = await call(serviceToken(), { serviceScopes: ['runs:launch'] });
+    expect(reply.statusCode).toBeUndefined();
+    expect(request.user).toBeUndefined();
+    expect(request.principal).toMatchObject({
+      kind: 'service',
+      scopes: ['runs:launch', 'runs:read'],
+      servicePrincipalId: SP_ID,
+      teamId: TEAM_ID,
+    });
+  });
+
+  it('answers 403 INSUFFICIENT_SCOPE when the token lacks a scope the route declares', async () => {
+    const { reply, request } = await call(serviceToken({ scopes: ['runs:read'] }), {
+      serviceScopes: ['runs:cancel'],
+    });
+    expect(reply.statusCode).toBe(403);
+    expect(errorCode(reply)).toBe('INSUFFICIENT_SCOPE');
+    expect(request.principal).toBeUndefined();
+  });
+
+  it('ignores a stored scope this build does not know', async () => {
+    const { reply } = await call(serviceToken({ scopes: ['admin:everything'] }), {
+      serviceScopes: ['runs:launch'],
+    });
+    expect(reply.statusCode).toBe(403);
+  });
+
+  it.each([
+    ['a disabled principal', { disabledAt: new Date() }, 'TOKEN_INVALID'],
+    ['an inactive team', { teamActive: false }, 'TOKEN_INVALID'],
+    ['an inactive organization', { orgActive: false }, 'TOKEN_INVALID'],
+    ['a revoked token', { revokedAt: new Date() }, 'TOKEN_INVALID'],
+    ['an expired token', { expiresAt: new Date(Date.now() - 1000) }, 'TOKEN_EXPIRED'],
+    ['a token with no expiry', { expiresAt: null }, 'TOKEN_EXPIRED'],
+  ])('refuses %s with 401 even on an opted-in route', async (_label, over, code) => {
+    const { reply, request } = await call(serviceToken(over), { serviceScopes: ['runs:read'] });
+    expect(reply.statusCode).toBe(401);
+    expect(errorCode(reply)).toBe(code);
+    expect(request.principal).toBeUndefined();
+  });
+
+  it('refuses a principal on a route that needs a team role, which it cannot hold', async () => {
+    const { reply } = await call(
+      serviceToken(),
+      { serviceScopes: ['runs:read'] },
+      { requiredTeamRole: 'LEAD', teamIdParam: 'id' }
+    );
+    expect(reply.statusCode).toBe(403);
+  });
+
+  it('refuses a principal on a route that requires a platform role above ENGINEER', async () => {
+    const { reply, request } = await call(
+      serviceToken(),
+      { serviceScopes: ['runs:read'] },
+      { requiredRole: 'LEAD' }
+    );
+    expect(reply.statusCode).toBe(403);
+    expect(request.principal).toBeUndefined();
+  });
+
+  it('refuses at registration a route that opts in behind a role a principal cannot hold', () => {
+    expect(() =>
+      assertServiceScopesAdmissible({
+        config: { serviceScopes: ['runs:read'] },
+        onRequest: requireAuth({ requiredRole: 'LEAD' }),
+        url: '/x',
+      })
+    ).toThrow(/serviceScopes/);
+    expect(() =>
+      assertServiceScopesAdmissible({
+        config: { serviceScopes: ['runs:read'] },
+        onRequest: [requireAuth({ requiredTeamRole: 'ENGINEER' })],
+        url: '/y',
+      })
+    ).toThrow();
+    expect(() =>
+      assertServiceScopesAdmissible({
+        config: { serviceScopes: ['runs:read'] },
+        onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+        url: '/z',
+      })
+    ).not.toThrow();
+    // Without the opt-in there is nothing to check.
+    expect(() =>
+      assertServiceScopesAdmissible({ onRequest: requireAuth({ requiredRole: 'ADMIN' }) })
+    ).not.toThrow();
+  });
+
+  it("leaves a person's token alone: scopes are ignored and the route needs no opt-in", async () => {
+    const { reply, request } = await call(
+      {
+        expiresAt: null,
+        id: 'pat-1',
+        revokedAt: null,
+        scopes: [],
+        servicePrincipal: null,
+        user: { id: 'user-9', isActive: true, role: 'ENGINEER' },
+      },
+      {}
+    );
+    expect(reply.statusCode).toBeUndefined();
+    expect(request.user).toMatchObject({ sub: 'user-9' });
+    expect(request.principal).toBeUndefined();
   });
 });
 

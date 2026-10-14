@@ -30,8 +30,14 @@ const CreateTokenBody = z.object({
 
 const TokenIdParam = z.object({ id: z.string().uuid() });
 
-function generateToken(): string {
+/** A new `ats_` token. One generator for a person's tokens and a service principal's. */
+export function generateToken(): string {
   return `${PAT_PREFIX}${crypto.randomBytes(PAT_BYTES).toString('base64url')}`;
+}
+
+/** The token's non-secret prefix, as stored and listed: `ats_` + 8 chars. */
+export function tokenPrefix(plaintext: string): string {
+  return plaintext.slice(0, 12);
 }
 
 export const tokenRoutes: FastifyPluginAsync = async (fastify) => {
@@ -68,7 +74,7 @@ export const tokenRoutes: FastifyPluginAsync = async (fastify) => {
       const { name, expiresInDays } = request.body;
       const plaintext = generateToken();
       const tokenHash = fastify.auth.hashToken(plaintext);
-      const prefix = plaintext.slice(0, 12); // `ats_` + 8 chars
+      const prefix = tokenPrefix(plaintext);
       const expiresAt = expiresInDays
         ? new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000)
         : null;
