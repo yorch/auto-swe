@@ -59,8 +59,8 @@ content hash and verifies the detached signature against the deployment's trust 
 | `UNVERIFIED` | No signature, or no matching trusted key; install is still allowed but flagged |
 
 A bundle whose content hash does not match its manifest is not installed as unverified: the install is
-refused with `400`. Likewise a bundle that declares a dependency on a connection type other than
-`git_repo` or `mcp` is refused, and `validateBundle` in the SDK reports both before shipping.
+refused with `400`. Likewise a bundle that declares a dependency on a connection type with no
+connector behind it is refused, and `validateBundle` in the SDK reports both before shipping.
 
 `BUNDLE_TRUSTED_KEYS` is env-only (a JSON array of `{ id, publicKeyPem }`) so that DB write access
 does not let an attacker mark arbitrary content as verified. `BUNDLE_MAX_BYTES` caps the size of a
@@ -90,7 +90,7 @@ const { ok, errors } = validateBundle(signed);
 ```
 
 `validateBundle` checks the schema, re-derives the content hash, refuses a dependency on a connection
-type other than `git_repo` or `mcp`, and runs the same scanner-pattern safety gate the server applies. It is intentionally pure and synchronous so it runs in CI.
+type with no connector behind it, and runs the same scanner-pattern safety gate the server applies. It is intentionally pure and synchronous so it runs in CI.
 
 The CLI also scaffolds, validates, and signs:
 
@@ -193,10 +193,12 @@ separately.
   "the version the previous install wrote" is the newest authorless version. After a forced install
   over a built-in template, the next built-in sync and the next bundle install each see the other's
   version as the previous one.
-- **Bundles do not export connection instances.** A template that needs a repository or an MCP
-  server only declares `dependencies[].connectionType` (`git_repo` or `mcp`, the only types a bundle
-  may name); the installer must map those to local `Connection` rows. A bundle cannot declare a
-  dependency on Zendesk, Slack or any other connector type.
+- **Bundles do not export connection instances.** A template that needs a repository, an issue
+  tracker, a document store or an MCP server only declares `dependencies[].connectionType` — one of
+  the types a generic step can actually reach (`git_repo`, `mcp`, `issue_tracker`, `notion`,
+  `confluence`, `zendesk`, `slack_workspace`); the installer must map those to local `Connection`
+  rows. A bundle cannot declare a dependency on a type whose connector is still a placeholder
+  (`http_api`, `hubspot`), because installing it would produce a template that silently does nothing.
 - **No central registry.** There is no auto-swe marketplace or hosted registry; distribution is
   file/URL based and trust is pinned to ed25519 public keys.
 - **MCP connection IDs are not portable.** A template spec referencing an `mcp` connection will

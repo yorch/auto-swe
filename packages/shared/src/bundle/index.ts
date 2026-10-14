@@ -406,8 +406,22 @@ export function verifyContentHash(manifest: BundleManifest): {
  * Connection types a bundle may declare as dependencies: the ones the platform can run
  * at the code level. The server refuses an install naming any other, and the SDK validator
  * applies the same list so an author learns it before shipping.
+ *
+ * A type belongs here when a generic step can actually reach it — `readSource`,
+ * `writeOutcome` or `runTool` has a real implementation, not the placeholder that
+ * reports `ok: true` for `http_api` and `hubspot`. Without them a bundle could not
+ * ship any of the non-engineering templates the platform already runs, which is
+ * exactly what a repository-free workflow pack is made of.
  */
-export const SUPPORTED_BUNDLE_CONNECTION_TYPES: readonly string[] = ['git_repo', 'mcp'];
+export const SUPPORTED_BUNDLE_CONNECTION_TYPES: readonly string[] = [
+  'git_repo',
+  'mcp',
+  'issue_tracker',
+  'notion',
+  'confluence',
+  'zendesk',
+  'slack_workspace',
+];
 
 /** The declared dependency types this deployment cannot satisfy; empty means all are supported. */
 export function unsupportedBundleDependencies(manifest: BundleManifest): string[] {
