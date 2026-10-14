@@ -145,6 +145,7 @@ jobs:
           image=$(sed -n 's/.*DOCKER_SOCKET_PROXY_IMAGE:-\([^}]*\)}.*/\1/p' docker-compose.prod.yml)
           if [ -z "$image" ]; then echo "::error::no proxy image default in docker-compose.prod.yml"; exit 1; fi
           docker run -d --name docker-socket-proxy --read-only --user root \
+            --cap-drop ALL --security-opt no-new-privileges:true \
             -v "$PWD/infra/docker-socket-proxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro" \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -p 127.0.0.1:2375:2375 "$image"
@@ -167,10 +168,20 @@ jobs:
             echo "::error::the socket proxy answered a dot-segment path with $status, not 403"
             exit 1
           fi
-          # The worker's calls the suites below do not make: a volume, a
+          for path in volumes/prune images/x/push; do
+            status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://127.0.0.1:2375/$path")
+            if [ "$status" != "403" ]; then
+              echo "::error::the socket proxy answered POST /$path with $status, not 403"
+              exit 1
+            fi
+          done
+          # The worker's calls the suites below do not make: an image pull (the
+          # direct runs above cached it, so drop it first), a volume, a
           # foreground `run --rm` (attach + wait), and `docker port`.
+          docker image rm -f alpine:3.22
           (
             export DOCKER_HOST=tcp://127.0.0.1:2375
+            docker pull alpine:3.22
             docker volume create proxy-smoke
             docker run --rm -v proxy-smoke:/x alpine:3.22 sh -c 'echo ok > /x/f && cat /x/f'
             docker volume rm proxy-smoke

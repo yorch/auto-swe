@@ -549,8 +549,8 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 
 - **Production runs the development Temporal dynamic config.** `docker-compose.infra.yml` mounts `infra/dynamicconfig/development-sql.yaml` for every deployment. That file sets `system.forceSearchAttributesCacheRefreshOnRead`, which upstream marks as a development setting not to enable in production (it refreshes the search-attribute cache on every read, trading server load for immediacy). It is left as is because the Temporal server and its configuration are outside what this project changes; `DYNAMIC_CONFIG_FILE_PATH` is a literal in that compose file, so a deployment that wants a production file supplies it through a compose override of the `temporal` service.
 - **The Docker socket proxy narrows the API, not container options.** See §0: a worker that can create containers can still request privileged mode or host bind mounts.
-- **The Docker socket proxy runs as root.** It must open the host socket, which is root-owned; the container is read-only and runs nothing but haproxy. CI exercises the worker's Docker calls through the same image and config.
-- **The proxy's allowlist is by path prefix, not by operation.** Within each allowed group every operation passes, including ones the worker does not use: `containers` allows `kill` and `export`, `images` allows push and prune, `volumes` allows prune.
+- **The Docker socket proxy runs as root.** It must open the host socket, which is root-owned; the container is read-only, drops every capability and runs nothing but haproxy. CI exercises the worker's Docker calls through the same image and config.
+- **The proxy's allowlist is by path prefix, not by operation.** It refuses the bulk and exfiltrating operations (prune, push, load, image export and import from a URL), but every other operation in an allowed group passes, including ones the worker does not use, such as `kill`, `rename` and image delete.
 - **The base images are tag-pinned, not digest-pinned.** Dependabot bumps the tags weekly; pinning digests needs a networked environment to resolve them.
 
 ---
