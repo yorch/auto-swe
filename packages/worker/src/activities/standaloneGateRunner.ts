@@ -8,7 +8,12 @@
  * optional pinned SHA directly.
  */
 
-import { DEFAULT_COMMANDS, type GateName, type GateResult } from './qualityGates.js';
+import {
+  DEFAULT_COMMANDS,
+  type GateName,
+  type GateResult,
+  noCommandResult,
+} from './qualityGates.js';
 import { createWorkspace } from './workspace.js';
 
 export interface StandaloneGateInput {
@@ -37,11 +42,7 @@ export interface StandaloneGateInput {
 export async function runGateStandalone(input: StandaloneGateInput): Promise<GateResult> {
   const command = input.command ?? DEFAULT_COMMANDS[input.gate];
   if (!command) {
-    return {
-      exitCode: 0,
-      passed: true,
-      summary: `${input.gate}: no command configured; treating as no-op`,
-    };
+    return noCommandResult(input.gate);
   }
 
   const workspace = await createWorkspace(

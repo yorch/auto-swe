@@ -468,7 +468,9 @@ register({
 register({
   category: 'gate',
   configFields: GATE_CONFIG_FIELDS,
-  description: 'Run an operator-provided performance benchmark. No default command.',
+  description:
+    'Run an operator-provided performance benchmark. No default command: a node with no ' +
+    "`command` fails rather than passing, so give it one or set `onFail: 'warn'` to make it optional.",
   label: 'Run perf bench',
   name: 'runPerfBench',
 });

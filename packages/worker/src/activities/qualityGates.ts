@@ -93,7 +93,7 @@ export interface GateResult {
 export const DEFAULT_COMMANDS: Record<GateName, string | null> = {
   runBuild: 'yarn build',
   runLint: 'yarn lint',
-  // runPerfBench has no sensible default — operators must supply one or skip the step.
+  // runPerfBench has no sensible default: the operator supplies one.
   runPerfBench: null,
   runTests: 'yarn test',
   runTypecheck: 'yarn typecheck',
@@ -174,8 +174,10 @@ export function truncate(s: string, maxBytes: number): string {
 
 /**
  * Resolve gate command from step config → repo override → default. Returns
- * null when no command is configured anywhere; the caller should report this
- * as a non-failure SKIP via `passed: true` so the spec can decide policy.
+ * null when no command is configured anywhere, which the caller reports as a
+ * FAILED gate (see {@link noCommandResult}): a gate that cannot run has not
+ * verified anything, and its node's `onFail: 'warn'` is the supported way to
+ * make it optional. Only `runPerfBench` has no built-in default.
  */
 export async function resolveCommand(
   gate: GateName,
@@ -196,6 +198,28 @@ export async function resolveCommand(
   }
 
   return DEFAULT_COMMANDS[gate];
+}
+
+/**
+ * The verdict for a gate with no command to run, after step config → repo
+ * override → built-in default all came back empty. It is a FAILURE, not a
+ * no-op: the step's whole job is to verify something and it verified nothing.
+ *
+ * This is reachable only for a gate with no built-in default (`runPerfBench`).
+ * A template that wants such a gate to be optional says so in the spec with
+ * `onFail: 'warn'`, which keeps the choice visible where it is made instead of
+ * hiding behind an unset command — and does not report an unrun benchmark as a
+ * pass to a `cond` branching on `nodes.<id>.output.passed`.
+ */
+export function noCommandResult(gate: GateName): GateResult {
+  return {
+    exitCode: 0,
+    passed: false,
+    summary:
+      `${gate}: no command configured, so the gate cannot run. Set 'command' on the step, ` +
+      `'${gate}' in the repository's gate commands, or give the node \`onFail: 'warn'\` to ` +
+      'make it optional.',
+  };
 }
 
 /**
@@ -264,11 +288,7 @@ async function runGate(gate: GateName, input: GateInput): Promise<GateResult> {
   const command = await resolveCommand(gate, input.request, input.command);
 
   if (!command) {
-    return {
-      exitCode: 0,
-      passed: true,
-      summary: `${gate}: no command configured; treating as no-op`,
-    };
+    return noCommandResult(gate);
   }
 
   const { workspace } = await provisionGateWorkspace(input.request, gate, input.branch);

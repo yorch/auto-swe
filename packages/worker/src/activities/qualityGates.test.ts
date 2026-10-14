@@ -110,6 +110,19 @@ describe('resolveCommand precedence', () => {
     expect(cmd).toBeNull();
   });
 
+  it('fails a gate that has no command anywhere, rather than reporting a pass', async () => {
+    // A requested benchmark that never ran must not read as green: a `cond`
+    // branching on `nodes.<perf>.output.passed` would otherwise take the
+    // success path. `onFail: 'warn'` on the node is the supported way to make
+    // a gate optional.
+    mockedFindUnique.mockResolvedValue({ gateCommands: null } as never);
+    const result = await runPerfBench({ request: baseRequest });
+    expect(result.passed).toBe(false);
+    expect(result.summary).toMatch(/no command configured/);
+    expect(result.summary).toMatch(/onFail: 'warn'/);
+    expect(fakeWorkspace.execCapture).not.toHaveBeenCalled();
+  });
+
   it('treats an empty step-config override as missing and falls back', async () => {
     mockedFindUnique.mockResolvedValue({ gateCommands: null } as never);
     const cmd = await resolveCommand('runLint', baseRequest, '   ');
@@ -234,7 +247,7 @@ describe('gate workspace provisioning', () => {
     });
   });
 
-  it('does not record failed, no-op, or missing-artifact gates', async () => {
+  it('does not record a failed, unconfigured, or artifact-less gate', async () => {
     await runWithActivityNodeTag(
       { recordingId: 'tests', specNodeId: 'tests', stepAttempt: 1 },
       async () => {
