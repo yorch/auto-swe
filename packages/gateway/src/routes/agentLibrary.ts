@@ -1,4 +1,5 @@
 import type { PrismaClient } from '@auto-swe/shared';
+import { normalizeModelSpec } from '@auto-swe/shared/lib/modelSpec';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { IMPLEMENTER_RUNTIMES, REASONING_LEVELS } from '@auto-swe/shared/types/api';
 import { AGENT_TOOL_KEYS } from '@auto-swe/shared/workflow';
@@ -10,6 +11,7 @@ import {
   type AgentScope,
   type AgentScopeKey,
   AgentVersionConflictError,
+  bulkUpdateAgentModels,
   createAgent,
   deactivateAgentLineage,
   defaultOverrideRuntime,
@@ -32,6 +34,41 @@ import { checkTeamAccess } from '../lib/skillAssignmentService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const AGENT_SCOPES = ['GLOBAL', 'ORGANIZATION', 'TEAM', 'CHANNEL', 'WORKFLOW_TEMPLATE'] as const;
+
+// REMAP source labels match case-insensitively; target model ids retain endpoint-specific spelling.
+const MappingKeySchema = z
+  .string()
+  .min(1)
+  .transform((value, ctx) => {
+    if (value === '*') {
+      return value;
+    }
+    try {
+      return normalizeModelSpec(value).toLowerCase();
+    } catch {
+      ctx.addIssue({ code: 'custom', message: 'must be <provider>/<model-id> or *' });
+      return z.NEVER;
+    }
+  });
+
+const BulkModelRequestSchema = z
+  .object({
+    adaptRuntime: z.boolean().optional(),
+    clearMismatchedCredentials: z.boolean().optional(),
+    ids: z.array(z.string().uuid()).min(1).max(200),
+    mapping: z.record(MappingKeySchema, ModelSpecSchema).optional(),
+    mode: z.enum(['SET', 'REMAP']),
+    modelSpec: ModelSpecSchema.optional(),
+  })
+  .refine(
+    (body) =>
+      body.mode === 'SET'
+        ? body.modelSpec !== undefined && body.mapping === undefined
+        : body.modelSpec === undefined &&
+          body.mapping !== undefined &&
+          Object.keys(body.mapping).length > 0,
+    'SET requires modelSpec only; REMAP requires a non-empty mapping only'
+  );
 
 const ListQuery = z.object({
   all: booleanQueryParam(false),
@@ -169,6 +206,49 @@ const IdParams = z.object({ id: z.string().uuid() });
 export const agentLibraryRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const adminOnly = requireAuth({ requiredRole: 'ADMIN' });
+
+  for (const dryRun of [true, false]) {
+    app.post(
+      dryRun ? '/agent-library/bulk-model/preview' : '/agent-library/bulk-model',
+      { onRequest: adminOnly, schema: { body: BulkModelRequestSchema } },
+      async (request) => {
+        const actor = requireUser(request);
+        const plan = await bulkUpdateAgentModels(fastify.prisma, request.body, actor.sub, {
+          dryRun,
+        });
+        if (!dryRun) {
+          for (const change of plan.changes) {
+            if (change.status !== 'OK' || change.newVersion === null) {
+              continue;
+            }
+            // The old row remains immutable, so its runtime is safe to read after versioning.
+            const current = await fastify.prisma.agent.findUnique({ where: { id: change.id } });
+            await writeAuditLog(fastify, {
+              action: 'UPDATE',
+              actor,
+              after: {
+                modelSpec: change.to,
+                // This operation never touches the reasoning level; the payload mirrors what a
+                // single edit records, so a reader of the audit log sees the same shape.
+                reasoning: current?.reasoning ?? null,
+                runtime: change.runtimeChange?.to ?? current?.runtime ?? null,
+                version: change.newVersion,
+              },
+              before: {
+                modelSpec: change.from,
+                reasoning: current?.reasoning ?? null,
+                runtime: change.runtimeChange?.from ?? current?.runtime ?? null,
+                version: change.version,
+              },
+              entityId: change.id,
+              entityType: 'Agent',
+            });
+          }
+        }
+        return { data: plan };
+      }
+    );
+  }
 
   app.get(
     '/agent-library',
