@@ -22,8 +22,10 @@ import {
   type WorkflowRunFailedFacts,
   workflowRunFailedSource,
 } from '@auto-swe/shared/automation';
+import { resolveSetting } from '@auto-swe/shared/config';
 import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
 import { FAKE_TEAM_SOURCE, fakeTeamSource } from '../../test/fakeTeamSource.js';
+import { isOrgOverBudget } from '../orgAccess.js';
 import {
   actorLaunchDecision,
   automationMatches,
@@ -943,6 +945,62 @@ describe('inbound events (inbound.event)', () => {
     const result = await handleEvent(h, { env: 'prod', severity: 'low' });
     expect(result).toMatchObject({ outcome: 'FAILED_TO_START', reason: TARGET_UNAVAILABLE });
     expect(h.started).toHaveLength(0);
+  });
+
+  /** A repository another team (another organization) owns and shares with this one. */
+  function sharedTarget(h: ReturnType<typeof harness>) {
+    (h.db.connection as unknown as { findFirst: ReturnType<typeof vi.fn> }).findFirst = vi.fn(
+      async () => ({
+        id: 'cccccccc-0000-4000-8000-000000000002',
+        installation: null,
+        team: {
+          id: 'team-2',
+          organization: { id: 'org-2', monthlyBudgetUsdCents: 100 },
+          orgId: 'org-2',
+        },
+        teamId: 'team-2',
+      })
+    );
+  }
+
+  it('suppresses a run on a shared repository whose own team has inbound events off', async () => {
+    const h = withAutomations([
+      automation({ targetConnectionId: 'cccccccc-0000-4000-8000-000000000002' }),
+    ]);
+    sharedTarget(h);
+    vi.mocked(resolveSetting).mockImplementation(
+      (async (_key: string, ctx: { teamId?: string }) => ctx.teamId !== 'team-2') as never
+    );
+    try {
+      const result = await handleEvent(h, { env: 'prod', severity: 'low' });
+      expect(result).toMatchObject({ outcome: 'SUPPRESSED_PRECONDITION' });
+      expect(h.fires[0]?.reason).toContain('switched off for the repository’s team');
+      expect(h.started).toHaveLength(0);
+    } finally {
+      vi.mocked(resolveSetting).mockImplementation((async () => m.enabled) as never);
+    }
+  });
+
+  it('suppresses a run on a shared repository whose organization is over budget', async () => {
+    const h = withAutomations([
+      automation({ targetConnectionId: 'cccccccc-0000-4000-8000-000000000002' }),
+    ]);
+    sharedTarget(h);
+    vi.mocked(isOrgOverBudget).mockImplementation(async (_p, orgId) => orgId === 'org-2');
+    try {
+      const result = await handleEvent(h, { env: 'prod', severity: 'low' });
+      expect(result).toMatchObject({
+        outcome: 'SUPPRESSED_BUDGET',
+        reason: 'the repository’s organization is over its monthly budget',
+      });
+      expect(h.started).toHaveLength(0);
+      // With budget, the same event starts on the shared repository.
+      vi.mocked(isOrgOverBudget).mockImplementation(async () => false);
+      const again = await handleEvent(h, { env: 'prod', severity: 'low' }, 'evt-2');
+      expect(again).toMatchObject({ outcome: 'STARTED' });
+    } finally {
+      vi.mocked(isOrgOverBudget).mockImplementation(async () => m.overBudget);
+    }
   });
 
   it('acts on a target repository with its id in the payload', async () => {

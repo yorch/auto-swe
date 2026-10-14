@@ -327,6 +327,23 @@ export async function decideAndStart<F, X>(
     if (args.targetUnavailable) {
       return recordDecision(prisma, fireBase, 'FAILED_TO_START', args.targetUnavailable);
     }
+    // A team automation acting on a repository another team owns (shared with it): the
+    // repository's own team must allow the source too, and its organization must have budget.
+    const foreignTarget = connection && connection.team.id !== team.id ? connection.team : null;
+    if (foreignTarget) {
+      const allowed = await resolveSetting(source.killSwitch, {
+        ...(foreignTarget.orgId ? { orgId: foreignTarget.orgId } : {}),
+        teamId: foreignTarget.id,
+      });
+      if (allowed !== true) {
+        return recordDecision(
+          prisma,
+          fireBase,
+          'SUPPRESSED_PRECONDITION',
+          `${source.label} automations are switched off for the repository’s team`
+        );
+      }
+    }
     // A source that acts only for a platform member: the account on the host must be one.
     let requestedById: string | null = null;
     if (source.actor) {
@@ -353,6 +370,19 @@ export async function decideAndStart<F, X>(
         fireBase,
         'SUPPRESSED_BUDGET',
         'the organization is over its monthly budget'
+      );
+    }
+    const targetOrg = foreignTarget?.organization;
+    if (
+      targetOrg &&
+      targetOrg.id !== org?.id &&
+      (await isOrgOverBudget(prisma, targetOrg.id, targetOrg.monthlyBudgetUsdCents))
+    ) {
+      return recordDecision(
+        prisma,
+        fireBase,
+        'SUPPRESSED_BUDGET',
+        'the repository’s organization is over its monthly budget'
       );
     }
     const template = await resolveAutomationTemplate(
