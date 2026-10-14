@@ -174,7 +174,7 @@ export const T_60M: Duration = '60m';
 export const T_2_MINUTES: Duration = '2 minutes';
 /** `'30 minutes'` — lesson consolidation + dataset re-validation (long-form literal). */
 export const T_30_MINUTES: Duration = '30 minutes';
-/** `'5 minutes'` — eval harness heartbeat (long-form literal). */
+/** `'5 minutes'` — eval harness and flake-screen heartbeat (long-form literal). */
 export const T_5_MINUTES: Duration = '5 minutes';
 /** `'4 hours'` — full offline eval benchmark; flake screening of a dataset's cases. */
 export const T_4_HOURS: Duration = '4 hours';

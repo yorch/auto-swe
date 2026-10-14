@@ -17,10 +17,10 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import type { FlakeScreenResult } from '@auto-swe/shared/types/workflow';
+import { heartbeat } from '@temporalio/activity';
 import type { EvalCaseRow } from './evalHarness.js';
 import { runCaseReference } from './evalRevalidate.js';
 import type { GateResult } from './qualityGates.js';
-import { screenGateConsistency } from './standaloneGateRunner.js';
 
 export interface FlakeScreenDeps {
   /** k: how many times each reference runs. */
@@ -34,6 +34,8 @@ export interface FlakeScreenDeps {
    * its reference changed, or another screen recorded it, while this one ran.
    */
   recordScreen: (c: EvalCaseRow, flakeScreened: boolean, runs: number) => Promise<boolean>;
+  /** Report progress after each reference run (the activity's heartbeat). */
+  heartbeat?: (details: { caseId: string; run: number }) => void;
 }
 
 /**
@@ -77,9 +79,20 @@ async function screenOne(
   deps: FlakeScreenDeps,
   result: FlakeScreenResult
 ): Promise<boolean> {
-  let consistent: boolean;
+  // Consistent only when every one of the k runs passed, so the first failure
+  // decides the case and the remaining runs are not paid for.
+  let consistent = deps.runs > 0;
   try {
-    ({ consistent } = await screenGateConsistency(deps.runs, () => deps.runReference(c)));
+    for (let run = 1; run <= deps.runs; run += 1) {
+      const r = await deps.runReference(c);
+      // Per run: one reference run (a clone plus the golden test) can take
+      // minutes, and the activity's heartbeat timeout is shorter than a case.
+      deps.heartbeat?.({ caseId: c.id, run });
+      if (!r.passed) {
+        consistent = false;
+        break;
+      }
+    }
   } catch {
     result.erroredCaseIds.push(c.id);
     return false;
@@ -137,6 +150,7 @@ async function defaultRecordScreen(
  */
 export async function screenDatasetCasesActivity(datasetId: string): Promise<FlakeScreenResult> {
   return screenDatasetCases(datasetId, {
+    heartbeat: (details) => heartbeat(details),
     loadCases: defaultLoadCases,
     recordScreen: defaultRecordScreen,
     runReference: runCaseReference,

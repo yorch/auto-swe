@@ -1,8 +1,8 @@
 /**
  * ScheduledRevalidationWorkflow and EvalScreenWorkflow in Temporal's
  * time-skipping test server, against fake activities. They guard the sweep's
- * shape: every dataset is re-validated and then flake-screened, and a failure in
- * one dataset's screen is recorded without aborting the others.
+ * shape: every dataset is re-validated and then flake-screened, one dataset at a
+ * time, and a failure in one dataset's screen is recorded without aborting the others.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +17,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const calls: string[] = [];
 let failingScreen = new Set<string>();
+/** Screens in flight at once, and the most there ever were. */
+let activeScreens = 0;
+let maxActiveScreens = 0;
 
 const screened = (datasetId: string): FlakeScreenResult => ({
   erroredCaseIds: [],
@@ -35,10 +38,17 @@ const fakeActivities = {
   },
   async screenDatasetCasesActivity(datasetId: string): Promise<FlakeScreenResult> {
     calls.push(`screen:${datasetId}`);
-    if (failingScreen.has(datasetId)) {
-      throw ApplicationFailure.nonRetryable('docker unavailable');
+    activeScreens += 1;
+    maxActiveScreens = Math.max(maxActiveScreens, activeScreens);
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (failingScreen.has(datasetId)) {
+        throw ApplicationFailure.nonRetryable('docker unavailable');
+      }
+      return screened(datasetId);
+    } finally {
+      activeScreens -= 1;
     }
-    return screened(datasetId);
   },
 };
 
@@ -71,6 +81,7 @@ beforeEach((ctx: TestContext) => {
   }
   calls.length = 0;
   failingScreen = new Set();
+  maxActiveScreens = 0;
 });
 
 afterAll(async () => {
@@ -93,6 +104,16 @@ describe('ScheduledRevalidationWorkflow', () => {
     for (const id of ['d1', 'd2']) {
       expect(calls.indexOf(`revalidate:${id}`)).toBeLessThan(calls.indexOf(`screen:${id}`));
     }
+  });
+
+  it('screens one dataset at a time, after every re-validation', async () => {
+    await env.client.workflow.execute('ScheduledRevalidationWorkflow', {
+      args: [{}],
+      taskQueue: TASK_QUEUE,
+      workflowId: 'revalidation-screens-sequential',
+    });
+    expect(maxActiveScreens).toBe(1);
+    expect(calls.slice(2)).toEqual(['screen:d1', 'screen:d2']);
   });
 
   it("records one dataset's screen failure without aborting the others", async () => {

@@ -50,7 +50,7 @@ describe('screenDatasetCases', () => {
     expect(r).toEqual({ erroredCaseIds: [], failedCaseIds: [], passed: 1, screened: 1 });
   });
 
-  it('records a failed screen when any run fails', async () => {
+  it('records a failed screen at the first failing run, without the runs left', async () => {
     const runReference = vi
       .fn<FlakeScreenDeps['runReference']>()
       .mockResolvedValueOnce(gate(true))
@@ -58,6 +58,7 @@ describe('screenDatasetCases', () => {
       .mockResolvedValueOnce(gate(true));
     const { d, recordScreen } = deps([c('a')], runReference);
     const r = await screenDatasetCases('d1', d);
+    expect(runReference).toHaveBeenCalledTimes(2);
     expect(recordScreen).toHaveBeenCalledWith(c('a'), false, 3);
     expect(r).toEqual({ erroredCaseIds: [], failedCaseIds: ['a'], passed: 0, screened: 1 });
   });
@@ -74,6 +75,20 @@ describe('screenDatasetCases', () => {
     expect(recordScreen).toHaveBeenCalledTimes(1);
     expect(recordScreen).toHaveBeenCalledWith(c('b'), true, 3);
     expect(r).toEqual({ erroredCaseIds: ['a'], failedCaseIds: [], passed: 1, screened: 1 });
+  });
+
+  it('heartbeats after every reference run', async () => {
+    const heartbeat = vi.fn();
+    const { d } = deps([c('a'), c('b')], async () => gate(true));
+    await screenDatasetCases('d1', { ...d, heartbeat });
+    expect(heartbeat.mock.calls.map(([x]) => x)).toEqual([
+      { caseId: 'a', run: 1 },
+      { caseId: 'a', run: 2 },
+      { caseId: 'a', run: 3 },
+      { caseId: 'b', run: 1 },
+      { caseId: 'b', run: 2 },
+      { caseId: 'b', run: 3 },
+    ]);
   });
 
   it('picks up a case that became unscreened while it ran', async () => {

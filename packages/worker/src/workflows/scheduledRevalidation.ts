@@ -34,19 +34,13 @@ const { screenDatasetCasesActivity: screenDatasetCases } = proxyActivities<{
  */
 export const FLAKE_SCREEN_SWEEP_PATCH = 'eval-flake-screen-sweep';
 
-interface DatasetOutcome {
-  caseResult: ScheduledRevalidationResult['caseResults'][number];
-  screenResult?: ScheduledRevalidationResult['screenResults'][number];
-}
-
 /**
  * Fan-out re-validation workflow triggered by the Temporal Schedule.
  * Fetches all datasets (optionally filtered by slug) and runs
  * revalidateDatasetActivity for each as an independent activity call, so
- * failures are isolated per dataset. After a dataset's re-validation it
- * flake-screens the dataset's never-screened cases, so a case added while
- * Temporal was unavailable, or whose screen hit an infrastructure error, is
- * screened on the next sweep.
+ * failures are isolated per dataset. Then it flake-screens each dataset's
+ * never-screened cases, so a case whose screen never started, or hit an
+ * infrastructure error, is screened on the next sweep.
  */
 export async function ScheduledRevalidationWorkflow(
   input: ScheduledRevalidationInput
@@ -56,40 +50,37 @@ export async function ScheduledRevalidationWorkflow(
 
   // Run all dataset re-validations concurrently. A failure in one dataset
   // does not abort the others — each error is captured in the result.
-  const results = await Promise.all(
-    datasets.map(async (d): Promise<DatasetOutcome> => {
-      let caseResult: DatasetOutcome['caseResult'];
+  const caseResults = await Promise.all(
+    datasets.map(async (d) => {
       try {
         const result = await revalidateDataset(d.datasetId);
-        caseResult = { datasetId: d.datasetId, result };
+        return { datasetId: d.datasetId, result };
       } catch (err) {
-        caseResult = {
+        return {
           datasetId: d.datasetId,
           result: { error: err instanceof Error ? err.message : String(err) },
         };
       }
-      if (!screen) {
-        return { caseResult };
-      }
-      // After re-validation, so a case it just quarantined is not screened.
-      try {
-        const result = await screenDatasetCases(d.datasetId);
-        return { caseResult, screenResult: { datasetId: d.datasetId, result } };
-      } catch (err) {
-        return {
-          caseResult,
-          screenResult: {
-            datasetId: d.datasetId,
-            result: { error: err instanceof Error ? err.message : String(err) },
-          },
-        };
-      }
     })
   );
+  if (!screen) {
+    return { caseResults, datasetsProcessed: datasets.length, screenResults: [] };
+  }
 
-  return {
-    caseResults: results.map((r) => r.caseResult),
-    datasetsProcessed: datasets.length,
-    screenResults: results.flatMap((r) => (r.screenResult ? [r.screenResult] : [])),
-  };
+  // After every re-validation, so a case it just quarantined is not screened.
+  // One dataset at a time: a screen runs k reference runs per case, each a
+  // workspace, and screening every dataset at once would provision them all together.
+  const screenResults: ScheduledRevalidationResult['screenResults'] = [];
+  for (const d of datasets) {
+    try {
+      const result = await screenDatasetCases(d.datasetId);
+      screenResults.push({ datasetId: d.datasetId, result });
+    } catch (err) {
+      screenResults.push({
+        datasetId: d.datasetId,
+        result: { error: err instanceof Error ? err.message : String(err) },
+      });
+    }
+  }
+  return { caseResults, datasetsProcessed: datasets.length, screenResults };
 }
