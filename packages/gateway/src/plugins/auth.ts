@@ -4,6 +4,7 @@ import type { Role } from '@auto-swe/shared';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
 import type { RepoAccessGate } from '@auto-swe/shared/lib/repoAccessGate';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
+import { SERVICE_TOKEN_SCOPES, type ServiceTokenScope } from '@auto-swe/shared/types/api';
 import { normalizeIP } from '@fastify/rate-limit';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
@@ -70,6 +71,12 @@ declare module 'fastify' {
      * consent, with which effective scopes. Absent on every other request.
      */
     mcpBridge?: { clientId: string; consentId: string; scopes: string[] };
+    /**
+     * Set, instead of `user`, when the caller authenticated with a service principal's token.
+     * A service token never becomes `request.user`: every handler that reads the user is closed
+     * to it, and only a route that declares `config.serviceScopes` is reached at all.
+     */
+    principal?: ServicePrincipalCaller;
   }
   interface FastifyContextConfig {
     /**
@@ -77,8 +84,37 @@ declare module 'fastify' {
      * declare this, and on one that declares `read` when the token has no `mcp:read`.
      */
     mcpScope?: 'read' | 'write';
+    /**
+     * Opt a route in to service principal tokens: the scopes a service token must carry to call
+     * it. A route that does not declare this answers a service token with 401
+     * `SERVICE_TOKEN_NOT_ALLOWED`, so a new route is closed to machines until someone decides
+     * otherwise. A user's token and session ignore it.
+     */
+    serviceScopes?: readonly ServiceTokenScope[];
   }
 }
+
+/**
+ * The caller behind a service principal's token, as `requireAuth` loaded it at the start of the
+ * request. The allowlists and limits here are for early refusals only; a launch re-reads them
+ * under the principal's row lock (`servicePrincipalLaunchGuard`).
+ */
+export interface ServicePrincipalCaller {
+  kind: 'service';
+  servicePrincipalId: string;
+  name: string;
+  teamId: string;
+  /** The token's scopes. */
+  scopes: ServiceTokenScope[];
+  tokenId: string;
+  connectionIds: string[];
+  templateIds: string[];
+}
+
+/** Who is calling a route that admits both people and service principals. */
+export type RouteCaller =
+  | { kind: 'user'; user: JwtPayload }
+  | { kind: 'service'; principal: ServicePrincipalCaller };
 
 // Role hierarchy: ADMIN > LEAD > ENGINEER. The ladder itself lives in
 // `@auto-swe/shared/config/permissions`, because the settings registry's
@@ -107,6 +143,18 @@ export function requireUser(request: FastifyRequest): JwtPayload {
     throw new Error('requireUser called without requireAuth middleware');
   }
   return request.user;
+}
+
+/**
+ * The caller of a route that declares `config.serviceScopes`: a person, or a service principal.
+ * Use instead of {@link requireUser} on exactly those routes; everywhere else a service token
+ * never reaches the handler.
+ */
+export function requireCaller(request: FastifyRequest): RouteCaller {
+  if (request.principal) {
+    return { kind: 'service', principal: request.principal };
+  }
+  return { kind: 'user', user: requireUser(request) };
 }
 
 function getErrorMessage(err: unknown): string {
@@ -357,34 +405,85 @@ class PatAuthError extends Error {
   }
 }
 
+const SCOPE_SET: ReadonlySet<string> = new Set(SERVICE_TOKEN_SCOPES);
+
 /**
- * Resolve a `ats_*` personal access token into a synthesized `JwtPayload`
- * so downstream RBAC behaves identically to JWT auth. Throws {@link PatAuthError}
- * with a typed code on rejection; the caller maps it to a 401 response.
+ * Resolve a `ats_*` token. A personal access token becomes a synthesized `JwtPayload`, so
+ * downstream RBAC behaves identically to JWT auth; a service principal's token becomes a
+ * {@link ServicePrincipalCaller}, never a user. Throws {@link PatAuthError} with a typed code on
+ * rejection; the caller maps it to a 401 response.
+ *
+ * A service token is refused when it is revoked or expired (every service token has an expiry),
+ * or when its principal is disabled, its team inactive or its team's organization inactive.
  */
-async function verifyPatPayload(request: FastifyRequest, token: string): Promise<JwtPayload> {
+async function verifyPatPayload(
+  request: FastifyRequest,
+  token: string
+): Promise<{ user: JwtPayload } | { principal: ServicePrincipalCaller }> {
   const hash = request.server.auth.hashToken(token);
   const pat = await request.server.prisma.apiToken.findUnique({
-    include: { user: true },
+    include: {
+      servicePrincipal: {
+        select: {
+          connectionIds: true,
+          disabledAt: true,
+          id: true,
+          name: true,
+          team: { select: { isActive: true, organization: { select: { isActive: true } } } },
+          teamId: true,
+          templateIds: true,
+        },
+      },
+      user: true,
+    },
     where: { tokenHash: hash },
   });
-  if (!pat || pat.revokedAt || !pat.user.isActive) {
+  if (!pat || pat.revokedAt) {
     throw new PatAuthError('TOKEN_INVALID', 'Invalid or revoked access token');
   }
-  if (pat.expiresAt && pat.expiresAt < new Date()) {
+  const sp = pat.servicePrincipal;
+  if (pat.user ? !pat.user.isActive : !sp || sp.disabledAt || !sp.team.isActive) {
+    throw new PatAuthError('TOKEN_INVALID', 'Invalid or revoked access token');
+  }
+  if (sp && !sp.team.organization.isActive) {
+    throw new PatAuthError('TOKEN_INVALID', 'Invalid or revoked access token');
+  }
+  // A service token without an expiry cannot be minted; one that somehow has none is refused
+  // rather than treated as eternal.
+  if ((pat.expiresAt && pat.expiresAt < new Date()) || (sp && !pat.expiresAt)) {
     throw new PatAuthError('TOKEN_EXPIRED', 'Access token expired');
   }
   // Fire-and-forget `lastUsedAt` update so a slow write can't add latency.
   request.server.prisma.apiToken
     .update({ data: { lastUsedAt: new Date() }, where: { id: pat.id } })
     .catch(() => {});
+  if (sp) {
+    return {
+      principal: {
+        connectionIds: sp.connectionIds,
+        kind: 'service',
+        name: sp.name,
+        // Only the scopes this build knows; an unknown stored value grants nothing.
+        scopes: pat.scopes.filter((s): s is ServiceTokenScope => SCOPE_SET.has(s)),
+        servicePrincipalId: sp.id,
+        teamId: sp.teamId,
+        templateIds: sp.templateIds,
+        tokenId: pat.id,
+      },
+    };
+  }
+  if (!pat.user) {
+    throw new PatAuthError('TOKEN_INVALID', 'Invalid or revoked access token');
+  }
   const now = Math.floor(Date.now() / 1000);
   return {
-    exp: now + 60,
-    iat: now,
-    role: pat.user.role,
-    ...(pat.user.slackId ? { slackId: pat.user.slackId } : {}),
-    sub: pat.user.id,
+    user: {
+      exp: now + 60,
+      iat: now,
+      role: pat.user.role,
+      ...(pat.user.slackId ? { slackId: pat.user.slackId } : {}),
+      sub: pat.user.id,
+    },
   };
 }
 
@@ -661,6 +760,52 @@ async function authenticateBridgedCall(
   };
 }
 
+/**
+ * Admit a service principal's token to this route, or refuse it. Secure by default: a route that
+ * declares no `config.serviceScopes` answers 401 `SERVICE_TOKEN_NOT_ALLOWED`, whatever the token
+ * carries — so a new route is closed to machines until it opts in. A route that does declare them
+ * needs every one on the token (else 403 `INSUFFICIENT_SCOPE`). A team or organization role
+ * requirement on the route refuses a principal outright: it holds no role to check.
+ *
+ * The principal is set on `request.principal` and `request.user` stays unset, so a handler that
+ * reads the user cannot mistake a machine for a person.
+ */
+async function admitServicePrincipal(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  principal: ServicePrincipalCaller,
+  options: RBACOptions
+) {
+  const required = request.routeOptions.config?.serviceScopes;
+  if (!required || required.length === 0) {
+    return reply.status(401).send({
+      error: {
+        code: 'SERVICE_TOKEN_NOT_ALLOWED',
+        message: 'This route does not accept service principal tokens',
+      },
+    });
+  }
+  const missing = required.filter((scope) => !principal.scopes.includes(scope));
+  if (missing.length > 0) {
+    return reply.status(403).send({
+      error: {
+        code: 'INSUFFICIENT_SCOPE',
+        message: `This call needs the ${missing.join(', ')} scope`,
+      },
+    });
+  }
+  if (options.requiredTeamRole || options.requiredOrgRole) {
+    return reply.status(403).send({
+      error: { code: 'FORBIDDEN', message: 'This route needs a team or organization role' },
+    });
+  }
+  request.principal = principal;
+  // A principal's runs use the platform credential, so the gate has nothing of its own to judge;
+  // it is resolved anyway so a handler shared with people reads the same value it would for them.
+  const gate = await resolveRepoAccessGateOrLastKnown();
+  request.repoAccessGate = gate ?? { mode: 'off', staleAfterHours: 0 };
+}
+
 export function requireAuth(options: RBACOptions = {}) {
   return async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
@@ -683,9 +828,15 @@ export function requireAuth(options: RBACOptions = {}) {
     else if (authHeader?.startsWith('Bearer ')) {
       const token = authHeader.slice(7);
       try {
-        payload = token.startsWith(PAT_PREFIX)
-          ? await verifyPatPayload(request, token)
-          : await request.server.auth.verifyAccessToken(token);
+        if (token.startsWith(PAT_PREFIX)) {
+          const resolved = await verifyPatPayload(request, token);
+          if ('principal' in resolved) {
+            return admitServicePrincipal(request, reply, resolved.principal, options);
+          }
+          payload = resolved.user;
+        } else {
+          payload = await request.server.auth.verifyAccessToken(token);
+        }
       } catch (err: unknown) {
         if (err instanceof PatAuthError) {
           return reply.status(401).send({ error: { code: err.code, message: err.message } });

@@ -35,6 +35,8 @@ interface RunShape {
   connection: Repo | null;
   workRequest: {
     requestedById: string | null;
+    /** Members of the team whose service principal requested it, when a machine did. */
+    requestedByService?: { members: string[] } | null;
     repos: Repo[];
     connection: Repo | null;
     /** Epics and PRD runs; defaults to false. */
@@ -118,6 +120,13 @@ function matchesRun(where: Record<string, unknown>, run: RunShape): boolean {
           if (wk === 'requestedById') {
             return wr.requestedById === wv;
           }
+          if (wk === 'requestedByService') {
+            const { team, ...rest } = wv as { team?: Record<string, unknown> };
+            if (Object.keys(rest).length > 0 || !team) {
+              throw new Error(`unrecognised requestedByService predicate: ${JSON.stringify(wv)}`);
+            }
+            return !!wr.requestedByService && matchesTeam(team, wr.requestedByService.members);
+          }
           if (wk === 'isCrossRepo') {
             return (wr.isCrossRepo ?? false) === wv;
           }
@@ -155,6 +164,37 @@ function run(overrides: Partial<RunShape> = {}): RunShape {
 const engineer = { role: 'ENGINEER', sub: ME };
 const visible = (r: RunShape) =>
   matchesRun(buildWorkflowRunVisibilityFilter(engineer, undefined), r);
+
+describe('runs a service principal requested', () => {
+  const byMyTeamsPrincipal = run({
+    workRequest: {
+      connection: otherRepo,
+      repos: [otherRepo],
+      requestedById: null,
+      requestedByService: { members: [ME] },
+    },
+  });
+  const byOtherTeamsPrincipal = run({
+    workRequest: {
+      connection: otherRepo,
+      repos: [otherRepo],
+      requestedById: null,
+      requestedByService: { members: [OTHER] },
+    },
+  });
+
+  it("are visible to the principal's team, on whatever repository they ran", () => {
+    expect(visible(byMyTeamsPrincipal)).toBe(true);
+    expect(visible(byOtherTeamsPrincipal)).toBe(false);
+  });
+
+  it("are controlled by the principal's team, as a launcher controls their own run", () => {
+    const controls = (r: RunShape) =>
+      matchesRun(buildWorkflowRunControlFilter(engineer, undefined), r);
+    expect(controls(byMyTeamsPrincipal)).toBe(true);
+    expect(controls(byOtherTeamsPrincipal)).toBe(false);
+  });
+});
 
 describe('buildWorkflowRunVisibilityFilter', () => {
   it('ADMIN sees everything', () => {

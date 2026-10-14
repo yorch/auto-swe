@@ -26,7 +26,7 @@ import {
   isTerminalSignalError,
   sendTemporalUnavailable,
 } from '../lib/temporalErrors.js';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { type RouteCaller, requireAuth, requireCaller, requireUser } from '../plugins/auth.js';
 import { requestWorkspaceRoutes } from './requestWorkspace.js';
 import {
   AutonomyDecisionSchema,
@@ -250,6 +250,25 @@ const ListRunsQuery = RunListPaginationQuery.extend({
   workRequestId: z.string().uuid().optional(),
 });
 
+/**
+ * The runs a service principal may read and cancel: the ones it launched, and no others. A
+ * principal belongs to a team but is not a member of it, so the team-based terms of the people's
+ * filters do not apply to it.
+ */
+function servicePrincipalRunFilter(principalId: string): Prisma.WorkflowRunWhereInput {
+  return { workRequest: { requestedByServiceId: principalId } };
+}
+
+/** Run-level read filter for either kind of caller. */
+function runVisibilityFor(
+  caller: RouteCaller,
+  gate: Parameters<typeof buildWorkflowRunVisibilityFilter>[1]
+): Prisma.WorkflowRunWhereInput {
+  return caller.kind === 'service'
+    ? servicePrincipalRunFilter(caller.principal.servicePrincipalId)
+    : buildWorkflowRunVisibilityFilter(caller.user, gate);
+}
+
 export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   await fastify.register(requestWorkspaceRoutes);
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -258,12 +277,12 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
-      config: { mcpScope: 'read' },
+      config: { mcpScope: 'read', serviceScopes: ['runs:read'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { querystring: ListRunsQuery, response: { 200: RunListResponseSchema } },
     },
     async (request) => {
-      const user = requireUser(request);
+      const caller = requireCaller(request);
       const {
         failedNodeId,
         includeChannel,
@@ -275,9 +294,12 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         templateVersion,
         workRequestId,
       } = request.query;
-      const teamFilter = buildWorkflowRunVisibilityFilter(user, request.repoAccessGate);
-      const visibilityFilter: Prisma.WorkflowRunWhereInput =
-        user.role === 'ADMIN' && scope === 'ALL'
+      const teamFilter = runVisibilityFor(caller, request.repoAccessGate);
+      // A service principal sees only its own runs whatever `scope` says.
+      const user = caller.kind === 'user' ? caller.user : null;
+      const visibilityFilter: Prisma.WorkflowRunWhereInput = !user
+        ? teamFilter
+        : user.role === 'ADMIN' && scope === 'ALL'
           ? {}
           : scope === 'MINE'
             ? { AND: [teamFilter, { workRequest: { requestedById: user.sub } }] }
@@ -312,7 +334,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.workflowRun.count({ where }),
       ]);
       return {
-        data: rows.map((r) => projectRunSummary(r, user.sub)),
+        data: rows.map((r) => projectRunSummary(r, user?.sub)),
         meta: { limit, offset, total },
       };
     }
@@ -324,7 +346,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
     {
       // An MCP write tool reaches this route through the bridge; `assertMcpWriteAllowed` below
       // is what bounds it, and the hook writes its audit row.
-      config: { mcpScope: 'write' },
+      config: { mcpScope: 'write', serviceScopes: ['runs:cancel'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       onSend: mcpWriteAuditHook,
       preValidation: mcpWriteBegin('cancel_run'),
@@ -340,7 +362,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const user = requireUser(request);
+      const caller = requireCaller(request);
       const mcpWrite = await assertMcpWriteAllowed(request, reply, {
         tool: 'cancel_run',
       });
@@ -351,7 +373,9 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         include: { template: { select: { name: true, teamId: true } } },
         where: {
           id: request.params.id,
-          ...buildWorkflowRunControlFilter(user, request.repoAccessGate),
+          ...(caller.kind === 'service'
+            ? servicePrincipalRunFilter(caller.principal.servicePrincipalId)
+            : buildWorkflowRunControlFilter(caller.user, request.repoAccessGate)),
         },
       });
       if (!run) {
@@ -441,8 +465,14 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       }
       await writeAuditLog(fastify, {
         action: 'UPDATE',
-        actor: user,
-        after: { status: 'CANCELLED' },
+        // A principal is no user: the row names it in its body instead.
+        actor: caller.kind === 'user' ? caller.user : null,
+        after: {
+          status: 'CANCELLED',
+          ...(caller.kind === 'service'
+            ? { servicePrincipalId: caller.principal.servicePrincipalId }
+            : {}),
+        },
         before: { status: run.status },
         entityId: run.id,
         entityType: 'WorkflowRun',
@@ -551,7 +581,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id',
     {
-      config: { mcpScope: 'read' },
+      config: { mcpScope: 'read', serviceScopes: ['runs:read'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
         params: RunIdParam,
@@ -560,7 +590,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const user = requireUser(request);
+      const caller = requireCaller(request);
       const { fullTraces, includeSpec } = request.query;
       const includeTraces = request.query.includeTraces || fullTraces;
       const run = await fastify.prisma.workflowRun.findFirst({
@@ -574,7 +604,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         omit: { specSnapshot: !includeSpec },
         where: {
           id: request.params.id,
-          ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+          ...runVisibilityFor(caller, request.repoAccessGate),
         },
       });
       if (!run) {

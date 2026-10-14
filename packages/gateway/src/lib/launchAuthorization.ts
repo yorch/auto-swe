@@ -23,6 +23,7 @@ import {
   repoAccessErrorBody,
 } from '@auto-swe/shared/lib/repoAccessDecision';
 import type { RepoAccessGate, RunIdentity } from '@auto-swe/shared/lib/repoAccessGate';
+import { isRepoTeam, type RepoTeams } from '@auto-swe/shared/lib/repoMembership';
 import type { FastifyReply } from 'fastify';
 import { isOrgMember, isOrgOverBudget, ORG_ACCESS_REFUSAL, orgBudgetRefusal } from './orgAccess.js';
 
@@ -132,17 +133,7 @@ export async function authorizeLaunch(
     };
   }
 
-  const orgs = new Map<string, number | null>();
-  for (const repo of input.repos) {
-    if (!orgs.has(repo.team.orgId)) {
-      orgs.set(repo.team.orgId, repo.team.organization?.monthlyBudgetUsdCents ?? null);
-    }
-  }
-  for (const org of input.orgs ?? []) {
-    if (!orgs.has(org.id)) {
-      orgs.set(org.id, org.monthlyBudgetUsdCents);
-    }
-  }
+  const orgs = launchOrgs(input.repos, input.orgs);
 
   for (const orgId of orgs.keys()) {
     if (!(await isOrgMember(prisma, actor, orgId))) {
@@ -152,6 +143,33 @@ export async function authorizeLaunch(
       };
     }
   }
+  return decideOrgBudgets(prisma, orgs);
+}
+
+/** Every org a launch spends against, each with its cap, the repositories' orgs first. */
+function launchOrgs(
+  repos: Array<{ team: ServiceLaunchRepo['team'] }>,
+  extra: LaunchOrg[] | undefined
+): Map<string, number | null> {
+  const orgs = new Map<string, number | null>();
+  for (const repo of repos) {
+    if (!orgs.has(repo.team.orgId)) {
+      orgs.set(repo.team.orgId, repo.team.organization?.monthlyBudgetUsdCents ?? null);
+    }
+  }
+  for (const org of extra ?? []) {
+    if (!orgs.has(org.id)) {
+      orgs.set(org.id, org.monthlyBudgetUsdCents);
+    }
+  }
+  return orgs;
+}
+
+/** The monthly cap of every org a launch spends against: the last step of every launch decision. */
+async function decideOrgBudgets(
+  prisma: PrismaClient,
+  orgs: Map<string, number | null>
+): Promise<LaunchDecision> {
   for (const [orgId, cap] of orgs) {
     if (cap != null && (await isOrgOverBudget(prisma, orgId, cap))) {
       return {
@@ -161,6 +179,70 @@ export async function authorizeLaunch(
     }
   }
   return { ok: true };
+}
+
+/** A repository as a service principal's launch decision reads it. */
+export interface ServiceLaunchRepo extends RepoTeams {
+  id: string;
+  team: { orgId: string; organization: { monthlyBudgetUsdCents: number | null } | null };
+}
+
+/** The principal half of a service launch decision. */
+export interface ServiceLaunchActor {
+  teamId: string;
+  /** The principal's connection allowlist, as loaded for this request. */
+  connectionIds: readonly string[];
+}
+
+/**
+ * The launch decision for a service principal, the machine counterpart of
+ * {@link authorizeLaunch}: every repository must be on the principal's allowlist and reachable by
+ * its team (owned by it, or shared with it), and every org the launch spends against must be under
+ * its monthly cap.
+ *
+ * There is no GitHub permission check and no org membership check: a machine has no login for the
+ * access gate to judge and no membership to hold. Both were judged when a lead put the repository
+ * on the allowlist — that grant is the launch decision (`authorizeLaunch` with the platform run
+ * identity, for the lead who made it). The run uses the platform credential.
+ */
+export async function authorizeServiceLaunch(
+  prisma: PrismaClient,
+  principal: ServiceLaunchActor,
+  input: { repos: ServiceLaunchRepo[]; orgs?: LaunchOrg[] }
+): Promise<LaunchDecision> {
+  for (const repo of input.repos) {
+    if (!principal.connectionIds.includes(repo.id)) {
+      return {
+        ok: false,
+        refusal: {
+          body: {
+            error: {
+              code: 'SERVICE_CONNECTION_NOT_ALLOWED',
+              message: "This connection is not on the service principal's allowlist",
+            },
+          },
+          kind: 'repo-access',
+          status: 403,
+        },
+      };
+    }
+    if (!isRepoTeam(repo, principal.teamId)) {
+      return {
+        ok: false,
+        refusal: {
+          body: {
+            error: {
+              code: 'SERVICE_CONNECTION_NOT_ALLOWED',
+              message: "The service principal's team neither owns nor shares this connection",
+            },
+          },
+          kind: 'repo-access',
+          status: 403,
+        },
+      };
+    }
+  }
+  return decideOrgBudgets(prisma, launchOrgs(input.repos, input.orgs));
 }
 
 /** Send a refusal from {@link authorizeLaunch} as the HTTP response. */

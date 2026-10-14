@@ -30,6 +30,8 @@ export interface VisibilityActor {
  * - it is a channel-assistant run in a Slack channel owned by one of their
  *   teams — the same audience `assertChannelAccess` admits to the channel's
  *   config and its audit feed, which links to these runs.
+ * - a service principal of one of their teams requested it — the team owns the
+ *   machine identity, so it sees what that identity launched wherever it ran.
  *
  * What a run's *template* is shared with is deliberately not a term. GLOBAL
  * templates — every built-in, and the default any team falls back to — are
@@ -83,6 +85,7 @@ export function buildWorkflowRunVisibilityFilter(
       { connection: reachableConnections(actor, gate) },
       { template: { team: memberTeams(actor) } },
       { channel: { team: memberTeams(actor) } },
+      { workRequest: { requestedByService: { team: memberTeams(actor) } } },
     ],
   };
 }
@@ -94,6 +97,10 @@ export function buildWorkflowRunVisibilityFilter(
  * steer the owning team's. So the repository branches are the owning team's
  * members only, plus whoever launched the run, which keeps a shared-team
  * member in control of the runs they started.
+ *
+ * A run a service principal requested is controlled by the principal's team,
+ * as a run someone launched is controlled by them: the team owns the identity
+ * that started it.
  *
  * Repository ownership is matched per run, exactly as visibility does, and for
  * the same reason: every child of an epic links the epic's work request, and
@@ -122,6 +129,7 @@ export function buildWorkflowRunControlFilter(
     OR: [
       { template: { team: memberTeams(actor) } },
       { launchedById: actor.sub },
+      { workRequest: { requestedByService: { team: memberTeams(actor) } } },
       {
         workRequest: {
           activeWorkflows: { some: { repository: ownedRepository } },
