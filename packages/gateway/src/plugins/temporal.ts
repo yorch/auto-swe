@@ -10,6 +10,7 @@ import type {
   ChannelAssistantTurnInput,
   ConsolidateLessonsInput,
   EpicRequest,
+  EvalScreenInput,
   RepoWorkRequest,
   ScheduledConsolidationInput,
   ScheduledEvalInput,
@@ -298,6 +299,8 @@ declare module 'fastify' {
           baselineRuntime?: ImplementerRuntimeKind | null;
         }
       ) => Promise<void>;
+      /** Flake-screen a dataset's never-screened cases (EvalScreenWorkflow). */
+      startEvalScreenWorkflow: (workflowId: string, input: EvalScreenInput) => Promise<void>;
       startConsolidationWorkflow: (
         workflowId: string,
         input: ConsolidateLessonsInput
@@ -996,6 +999,14 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         args: [input],
         taskQueue: 'engineering-workflow',
         workflowExecutionTimeout: '5h',
+        workflowId,
+      });
+    },
+
+    async startEvalScreenWorkflow(workflowId: string, input: EvalScreenInput): Promise<void> {
+      await client.workflow.start('EvalScreenWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
         workflowId,
       });
     },

@@ -60,11 +60,12 @@ async function buildApp(
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
-  app.decorate('temporal', { startEvalRunWorkflow } as unknown as never);
+  const startEvalScreenWorkflow = vi.fn(async (_id: string, _input: { datasetId: string }) => {});
+  app.decorate('temporal', { startEvalRunWorkflow, startEvalScreenWorkflow } as unknown as never);
   app.decorate('temporalConnection', { state: () => temporalState } as unknown as never);
   await app.register(evalRoutes, { prefix: '/api/v1/platform' });
   await app.ready();
-  return { app, prisma };
+  return { app, prisma, startEvalScreenWorkflow };
 }
 
 const AUTH = { authorization: 'Bearer fake' };
@@ -133,6 +134,80 @@ describe('evalRoutes', () => {
       repoUrl: 'https://x/y',
     });
     expect(prisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('starts a flake screen of the new cases', async () => {
+    const { app, prisma, startEvalScreenWorkflow } = await buildApp();
+    prisma.evalDataset.create.mockResolvedValue({
+      _count: { cases: 1 },
+      createdAt: new Date('2026-06-24T00:00:00Z'),
+      description: null,
+      id: 'd2',
+      name: 'New',
+      scope: 'GLOBAL',
+      slug: 'new-set',
+    });
+    const payload = {
+      cases: [{ baselineSha: 'abc', goldenTest: 'yarn test', input: {}, repoUrl: 'https://x/y' }],
+      name: 'New',
+      slug: 'new-set',
+    };
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload,
+      url: '/api/v1/platform/evals',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(startEvalScreenWorkflow).toHaveBeenCalledWith('eval-screen-d2', { datasetId: 'd2' });
+  });
+
+  it('still creates the dataset when the flake screen cannot start', async () => {
+    const { app, prisma, startEvalScreenWorkflow } = await buildApp();
+    startEvalScreenWorkflow.mockRejectedValue(new Error('temporal unreachable'));
+    prisma.evalDataset.create.mockResolvedValue({
+      _count: { cases: 1 },
+      createdAt: new Date('2026-06-24T00:00:00Z'),
+      description: null,
+      id: 'd2',
+      name: 'New',
+      scope: 'GLOBAL',
+      slug: 'new-set',
+    });
+    const payload = {
+      cases: [{ baselineSha: 'abc', goldenTest: 'yarn test', input: {}, repoUrl: 'https://x/y' }],
+      name: 'New',
+      slug: 'new-set',
+    };
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload,
+      url: '/api/v1/platform/evals',
+    });
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('starts no flake screen for a dataset created without cases', async () => {
+    const { app, prisma, startEvalScreenWorkflow } = await buildApp();
+    prisma.evalDataset.create.mockResolvedValue({
+      _count: { cases: 0 },
+      createdAt: new Date('2026-06-24T00:00:00Z'),
+      description: null,
+      id: 'd3',
+      name: 'Empty',
+      scope: 'GLOBAL',
+      slug: 'empty',
+    });
+    const payload = { name: 'Empty', slug: 'empty' };
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload,
+      url: '/api/v1/platform/evals',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(startEvalScreenWorkflow).not.toHaveBeenCalled();
   });
 
   it('rejects an invalid slug', async () => {

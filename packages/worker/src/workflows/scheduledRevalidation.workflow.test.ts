@@ -1,0 +1,123 @@
+/**
+ * ScheduledRevalidationWorkflow and EvalScreenWorkflow in Temporal's
+ * time-skipping test server, against fake activities. They guard the sweep's
+ * shape: every dataset is re-validated and then flake-screened, and a failure in
+ * one dataset's screen is recorded without aborting the others.
+ */
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import type { FlakeScreenResult } from '@auto-swe/shared/types/workflow';
+import { ApplicationFailure } from '@temporalio/activity';
+import { TestWorkflowEnvironment } from '@temporalio/testing';
+import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, type TestContext } from 'vitest';
+
+const TASK_QUEUE = 'scheduled-revalidation-workflow-test';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const calls: string[] = [];
+let failingScreen = new Set<string>();
+
+const screened = (datasetId: string): FlakeScreenResult => ({
+  erroredCaseIds: [],
+  failedCaseIds: [`${datasetId}-flaky`],
+  passed: 1,
+  screened: 2,
+});
+
+const fakeActivities = {
+  async getDatasetsForRevalidation() {
+    return [{ datasetId: 'd1' }, { datasetId: 'd2' }];
+  },
+  async revalidateDatasetActivity(datasetId: string) {
+    calls.push(`revalidate:${datasetId}`);
+    return { checked: 2, quarantined: 0, restored: 0 };
+  },
+  async screenDatasetCasesActivity(datasetId: string): Promise<FlakeScreenResult> {
+    calls.push(`screen:${datasetId}`);
+    if (failingScreen.has(datasetId)) {
+      throw ApplicationFailure.nonRetryable('docker unavailable');
+    }
+    return screened(datasetId);
+  },
+};
+
+let env: TestWorkflowEnvironment;
+let worker: Worker | undefined;
+let workerRun: Promise<void> | undefined;
+
+beforeAll(async () => {
+  Runtime.install({ logger: new DefaultLogger('WARN') });
+  try {
+    env = await TestWorkflowEnvironment.createTimeSkipping();
+  } catch (e) {
+    if (/Failed to start ephemeral server|Forbidden|ECONNREFUSED/.test(String(e))) {
+      return;
+    }
+    throw e;
+  }
+  worker = await Worker.create({
+    activities: fakeActivities,
+    connection: env.nativeConnection,
+    taskQueue: TASK_QUEUE,
+    workflowsPath: path.resolve(__dirname, './index.ts'),
+  });
+  workerRun = worker.run();
+}, 240_000);
+
+beforeEach((ctx: TestContext) => {
+  if (!env || !worker) {
+    ctx.skip();
+  }
+  calls.length = 0;
+  failingScreen = new Set();
+});
+
+afterAll(async () => {
+  worker?.shutdown();
+  await workerRun?.catch(() => {});
+  await env?.teardown();
+}, 60_000);
+
+describe('ScheduledRevalidationWorkflow', () => {
+  it('flake-screens each dataset after re-validating it', async () => {
+    const result = await env.client.workflow.execute('ScheduledRevalidationWorkflow', {
+      args: [{}],
+      taskQueue: TASK_QUEUE,
+      workflowId: 'revalidation-screens',
+    });
+    expect(result.screenResults).toEqual([
+      { datasetId: 'd1', result: screened('d1') },
+      { datasetId: 'd2', result: screened('d2') },
+    ]);
+    for (const id of ['d1', 'd2']) {
+      expect(calls.indexOf(`revalidate:${id}`)).toBeLessThan(calls.indexOf(`screen:${id}`));
+    }
+  });
+
+  it("records one dataset's screen failure without aborting the others", async () => {
+    failingScreen = new Set(['d1']);
+    const result = await env.client.workflow.execute('ScheduledRevalidationWorkflow', {
+      args: [{}],
+      taskQueue: TASK_QUEUE,
+      workflowId: 'revalidation-screen-failure',
+    });
+    expect(result.caseResults).toHaveLength(2);
+    expect(result.screenResults).toEqual([
+      { datasetId: 'd1', result: { error: expect.any(String) } },
+      { datasetId: 'd2', result: screened('d2') },
+    ]);
+  });
+});
+
+describe('EvalScreenWorkflow', () => {
+  it("screens the dataset's never-screened cases", async () => {
+    const result = await env.client.workflow.execute('EvalScreenWorkflow', {
+      args: [{ datasetId: 'd1' }],
+      taskQueue: TASK_QUEUE,
+      workflowId: 'eval-screen-d1',
+    });
+    expect(result).toEqual(screened('d1'));
+    expect(calls).toEqual(['screen:d1']);
+  });
+});

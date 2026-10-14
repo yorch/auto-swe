@@ -15,6 +15,7 @@
 
 import { prisma } from '@auto-swe/shared/db';
 import type { EvalCaseRow } from './evalHarness.js';
+import type { GateResult } from './qualityGates.js';
 import { runGateStandalone } from './standaloneGateRunner.js';
 
 export interface RevalCaseRow extends EvalCaseRow {
@@ -71,8 +72,13 @@ async function defaultLoadCases(datasetId: string): Promise<RevalCaseRow[]> {
   });
 }
 
-async function runReferenceDefault(c: RevalCaseRow): Promise<boolean> {
-  const r = await runGateStandalone({
+/**
+ * Run a case's reference once: its golden test at the pinned SHA. Shared with
+ * flake screening (`evalFlakeScreen.ts`), which runs it k times. Throws on an
+ * infrastructure error (clone, workspace), like `runGateStandalone`.
+ */
+export function runCaseReference(c: EvalCaseRow): Promise<GateResult> {
+  return runGateStandalone({
     authedRepoUrl: c.repoUrl,
     branch: 'eval-reval',
     checkoutSha: c.baselineSha,
@@ -80,7 +86,10 @@ async function runReferenceDefault(c: RevalCaseRow): Promise<boolean> {
     defaultBranch: 'main',
     gate: 'runTests',
   });
-  return r.passed;
+}
+
+async function runReferenceDefault(c: RevalCaseRow): Promise<boolean> {
+  return (await runCaseReference(c)).passed;
 }
 
 async function defaultSetQuarantined(caseId: string, quarantined: boolean): Promise<void> {

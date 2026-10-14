@@ -277,6 +277,18 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: dataset.id,
         entityType: 'EvalDataset',
       });
+      // New cases start unscreened, and the harness scores only screened cases.
+      // Best-effort: a case this start misses is screened by the re-validation
+      // sweep, so a Temporal outage never fails the create.
+      if (dataset._count.cases > 0) {
+        try {
+          await fastify.temporal.startEvalScreenWorkflow(`eval-screen-${dataset.id}`, {
+            datasetId: dataset.id,
+          });
+        } catch (err) {
+          request.log.error({ datasetId: dataset.id, err }, 'failed to start EvalScreenWorkflow');
+        }
+      }
       const data: EvalDatasetSummary = {
         caseCount: dataset._count.cases,
         createdAt: dataset.createdAt.toISOString(),

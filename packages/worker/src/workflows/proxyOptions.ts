@@ -123,8 +123,8 @@ export const RETRY_RUN_RECORD = {
  * 3 attempts, 5s → 30s backoff. Scheduled fan-out reads + memory re-embedding.
  * `{ backoffCoefficient: 2, initialInterval: '5s', maximumAttempts: 3, maximumInterval: '30s' }`
  * Used by: reembedMemoryItemActivity (reembedMemory); getReposForConsolidation
- * (scheduledConsolidation); getDatasetsForRevalidation + revalidateDatasetActivity
- * (scheduledRevalidation).
+ * (scheduledConsolidation); getDatasetsForRevalidation + revalidateDatasetActivity +
+ * screenDatasetCasesActivity (scheduledRevalidation, evalScreen).
  */
 export const RETRY_SCHEDULED = {
   backoffCoefficient: 2,
@@ -176,7 +176,7 @@ export const T_2_MINUTES: Duration = '2 minutes';
 export const T_30_MINUTES: Duration = '30 minutes';
 /** `'5 minutes'` — eval harness heartbeat (long-form literal). */
 export const T_5_MINUTES: Duration = '5 minutes';
-/** `'4 hours'` — full offline eval benchmark (many multi-minute Docker + LLM cases). */
+/** `'4 hours'` — full offline eval benchmark; flake screening of a dataset's cases. */
 export const T_4_HOURS: Duration = '4 hours';
 
 // ── Agent run activity timeout ──────────────────────────────────────────────
