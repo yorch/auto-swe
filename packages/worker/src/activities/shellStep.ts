@@ -70,6 +70,15 @@ export interface ShellStepInput {
 }
 
 export interface ShellStepResult {
+  /**
+   * Whether the step achieved its outcome: the command exited 0 AND, when it
+   * changed files, those changes reached the branch. A push that failed leaves
+   * the changes only in the discarded volume, so the run must not report the
+   * step as green — the same reasoning that makes a gate refuse to run against
+   * the wrong tree rather than pass. A spec that wants the command's own exit
+   * code to be the only verdict, or that is not trying to land a change, says so
+   * with `onFail: 'warn'`.
+   */
   passed: boolean;
   summary: string;
   exitCode: number;
@@ -79,9 +88,8 @@ export interface ShellStepResult {
   committedSha?: string;
   /**
    * False when the command succeeded but the auto-commit push failed, so the
-   * changes exist only in the discarded volume. `passed` stays true in that
-   * case (the command itself did not fail); specs that need the changes on
-   * the branch can `cond` on this instead of parsing the summary.
+   * changes exist only in the discarded volume. Distinguished from a command
+   * failure by `exitCode` and this field; both make `passed` false.
    */
   persisted: boolean;
   /** Files touched relative to the prior HEAD. Empty when the command made no changes. */
@@ -422,7 +430,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       runId,
     }).catch(() => null);
 
-    const passed = result.exitCode === 0 && !result.signal;
+    const commandPassed = result.exitCode === 0 && !result.signal;
 
     // The command text leaves this activity twice: in the auto-commit message
     // pushed to the repository, and in the lesson recalled into later
@@ -435,7 +443,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     );
     let finalize: FinalizeResult = { filesChanged: [] };
     let pushError: string | undefined;
-    if (passed) {
+    if (commandPassed) {
       heartbeat('shell-step: finalizing workspace');
       try {
         finalize = await finalizeWorkspaceVolume(
@@ -448,9 +456,10 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
           meta.gitAuthHeader
         );
       } catch (err) {
-        // A push failure shouldn't mask a successful command run, but the
-        // caller needs to know changes weren't persisted. Surface the
-        // (token-redacted) error in the summary alongside passed=true.
+        // Recorded rather than rethrown: the author's command may not be
+        // idempotent, so the step must not invite an activity-level retry that
+        // re-runs it. The failure still reaches the node's `onFail` policy
+        // through `passed` below, which is where a deliberate retry lives.
         const e = err as { stderr?: unknown; message?: unknown };
         const raw =
           (typeof e.stderr === 'string' && e.stderr) ||
@@ -466,13 +475,13 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     // full token string.
     const tail = truncate(`${redactedStderr || redactedStdout}`.trim(), 4000);
     const passSummary = pushError
-      ? `shell step ran (exit 0) but git push failed — changes NOT persisted: ${pushError}`
+      ? `shell step ran (exit 0) but git push failed — changes NOT persisted, step failed: ${pushError}`
       : `shell step passed (exit 0; ${finalize.filesChanged.length} files changed)`;
 
     // Phase-8 memory hook: a shell step that actually changed files + pushed
     // is worth remembering — usually a codemod or auto-fix the team will want
     // future runs to know about. Fire-and-forget; never fails the step.
-    if (passed && !pushError && finalize.filesChanged.length > 0) {
+    if (commandPassed && !pushError && finalize.filesChanged.length > 0) {
       // 5-second cap so a slow embedding provider can't extend the shell-step
       // activity past its timeout after the real work has already succeeded.
       await recordLessonBackground({
@@ -490,16 +499,23 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       });
     }
 
-    const summary = passed
-      ? passSummary
-      : `shell step failed (exit ${result.exitCode}${result.signal ? `, signal ${result.signal}` : ''}): ${tail}`;
+    // `passed` is the step's outcome, not just the command's verdict: a command
+    // that succeeded but whose changes never reached the branch has not done
+    // what the step is for. `persisted` still separates the two failure kinds,
+    // and `exitCode` carries the command's own result.
+    const persisted = !pushError;
+    const passed = commandPassed && persisted;
+
+    const summary = !commandPassed
+      ? `shell step failed (exit ${result.exitCode}${result.signal ? `, signal ${result.signal}` : ''}): ${tail}`
+      : passSummary;
 
     return {
       artifactId: artifact?.id,
       exitCode: result.exitCode,
       filesChanged: finalize.filesChanged,
       passed,
-      persisted: !pushError,
+      persisted,
       ...(result.signal ? { signal: result.signal } : {}),
       ...(finalize.committedSha ? { committedSha: finalize.committedSha } : {}),
       // Defense in depth: every summary built from `tail`/`passSummary` below
