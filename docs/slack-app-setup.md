@@ -53,11 +53,18 @@ One Slack app can be installed into **many workspaces**, each with its own bot
 token, via the install flow (`/studio/integrations → Slack → Add to Slack`):
 
 1. An admin clicks **Add to Slack**, which hits `GET /api/v1/auth/slack/install`
-   and redirects to Slack's `oauth/v2/authorize` with the app's bot scopes.
+   and redirects to Slack's `oauth/v2/authorize` with the app's bot scopes. The
+   signed state carries a random nonce, and the same nonce is set in a short-lived
+   (10 minute) `httpOnly`, `SameSite=Lax` cookie scoped to the install callback
+   path (`Secure` when the public URL is https).
 2. Slack redirects back to `GET /api/v1/auth/slack/install/callback`, which
    exchanges the code via `oauth.v2.access` and stores the returned `xoxb-…` bot
    token **encrypted** (AES-256-GCM, `CONFIG_ENCRYPTION_KEY`) on the
-   `SlackWorkspace` row, along with `appId` / `botUserId` / `installedAt`.
+   `SlackWorkspace` row, along with `appId` / `botUserId` / `installedAt`. The
+   callback requires the cookie nonce to match the state's (timing-safe compare)
+   and clears the cookie on every outcome, so an authorize URL handed to another
+   browser cannot complete the install (`403 STATE_MISMATCH`). It also re-checks
+   that the installer is still an active admin.
 3. The admin lands back on the integrations page; the Slack tab lists each
    workspace's install status (own token vs. singleton fallback).
 

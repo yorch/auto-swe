@@ -127,12 +127,20 @@ const SLACK_LINK_COOKIE = 'auto_swe_slack_link';
 /** Matches the state token's lifetime: a flow cannot outlive either. */
 const SLACK_LINK_COOKIE_MAX_AGE_S = 10 * 60;
 
-/** The account-link callback URL, and the cookie options scoped to its path. */
-function slackLinkCallback(): {
+/**
+ * The bot-install flow's own binding cookie. Same reasoning as the link cookie: the
+ * signed state names the admin who started the install, not the browser that finishes
+ * it, and the install writes a workspace bot token.
+ */
+const SLACK_INSTALL_COOKIE = 'auto_swe_slack_install';
+const SLACK_INSTALL_CALLBACK_PATH = '/api/v1/auth/slack/install/callback';
+
+/** A flow callback URL (default: the account-link one), and cookie options scoped to its path. */
+function slackLinkCallback(path = '/api/v1/auth/slack/callback'): {
   redirectUri: string;
   cookie: { httpOnly: true; path: string; sameSite: 'lax'; secure: boolean };
 } {
-  const redirectUri = `${resolvePublicUrl()}/api/v1/auth/slack/callback`;
+  const redirectUri = `${resolvePublicUrl()}${path}`;
   const url = new URL(redirectUri);
   return {
     cookie: {
@@ -392,10 +400,16 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
       const user = requireUser(request);
-      // Single-purpose, short-lived signed state (not a bearer credential).
-      const state = fastify.auth.signOAuthState(user.sub, 'slack-install');
-      const redirectUri = `${resolvePublicUrl()}/api/v1/auth/slack/install/callback`;
+      // Single-purpose, short-lived signed state (not a bearer credential). The nonce
+      // binds it to this browser (SLACK_INSTALL_COOKIE).
+      const nonce = crypto.randomBytes(32).toString('base64url');
+      const state = fastify.auth.signOAuthState(user.sub, 'slack-install', nonce);
+      const { cookie, redirectUri } = slackLinkCallback(SLACK_INSTALL_CALLBACK_PATH);
       const url = `https://slack.com/oauth/v2/authorize?client_id=${clientId}&scope=${encodeURIComponent(SLACK_INSTALL_BOT_SCOPES)}&state=${state}&redirect_uri=${encodeURIComponent(redirectUri)}`;
+      reply.setCookie(SLACK_INSTALL_COOKIE, nonce, {
+        ...cookie,
+        maxAge: SLACK_LINK_COOKIE_MAX_AGE_S,
+      });
       return reply.redirect(url);
     }
   );
@@ -405,17 +419,35 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
   // workspace row. Redirects back to the admin integrations page on success.
   fastify.get('/install/callback', async (request, reply) => {
     const { code, state } = request.query as { code?: string; state?: string };
+    // The install must finish in the browser that started it (SLACK_INSTALL_COOKIE).
+    // One use only: cleared whatever the outcome.
+    const { cookie, redirectUri } = slackLinkCallback(SLACK_INSTALL_CALLBACK_PATH);
+    const browserNonce = request.cookies[SLACK_INSTALL_COOKIE];
+    reply.clearCookie(SLACK_INSTALL_COOKIE, cookie);
+
     if (!code || !state) {
       return reply.status(400).send({
         error: { code: 'INVALID_CALLBACK', message: 'Missing code or state' },
       });
     }
     let installerId: string;
+    let stateNonce: string | undefined;
     try {
-      installerId = fastify.auth.verifyOAuthState(state, 'slack-install').sub;
+      const payload = fastify.auth.verifyOAuthState(state, 'slack-install');
+      installerId = payload.sub;
+      stateNonce = payload.nonce;
     } catch {
       return reply.status(400).send({
         error: { code: 'INVALID_STATE', message: 'Invalid state parameter' },
+      });
+    }
+    if (!(stateNonce && browserNonce && sameNonce(stateNonce, browserNonce))) {
+      return reply.status(403).send({
+        error: {
+          code: 'STATE_MISMATCH',
+          message:
+            'This install was not started in this browser. Start it again from the admin page.',
+        },
       });
     }
     // The state proves who started the flow; re-check that they are still an
@@ -437,7 +469,6 @@ export const slackRoutes: FastifyPluginAsync = async (fastify) => {
         error: { code: 'SLACK_NOT_CONFIGURED', message: 'Slack OAuth credentials missing' },
       });
     }
-    const redirectUri = `${resolvePublicUrl()}/api/v1/auth/slack/install/callback`;
     const tokenData = await exchangeSlackOAuthCode(clientId, clientSecret, code, redirectUri);
     // A bot install returns the bot token as the top-level `access_token` plus the
     // installing `team`. Bail clearly if either is missing (e.g. a user-scope grant).
