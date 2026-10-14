@@ -45,7 +45,9 @@ export const SignatureHeaderSchema = z
     (h) =>
       !['content-type', 'content-length', 'host', 'x-autoswe-delivery'].includes(h.toLowerCase()),
     'not a header that can carry a signature'
-  );
+  )
+  // CloudEvents attributes travel in ce-* headers, which the receiver refuses outright.
+  .refine((h) => !h.toLowerCase().startsWith('ce-'), 'a ce-* header is a CloudEvents attribute');
 
 export const JsonPointerSchema = z
   .string()

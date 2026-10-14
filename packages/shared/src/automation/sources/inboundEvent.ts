@@ -304,12 +304,30 @@ function eventDigest(x: Pick<InboundEventFacts, 'endpointId' | 'id'>): string {
   return sha256Hex(`${x.endpointId}#${x.id}`).slice(0, 24);
 }
 
-/** Text from the event on one line: control characters (newlines included) become spaces. */
-function oneLine(text: string): string {
+/**
+ * Characters that can make text read as something else: line and paragraph breaks, other
+ * control characters, bidirectional overrides and isolates (which reorder what a reader sees),
+ * zero-width characters and the byte-order mark.
+ */
+function isDeceptive(c: number): boolean {
+  return (
+    c < 0x20 ||
+    (c >= 0x7f && c <= 0x9f) ||
+    c === 0x061c ||
+    (c >= 0x200b && c <= 0x200f) ||
+    c === 0x2028 ||
+    c === 0x2029 ||
+    (c >= 0x202a && c <= 0x202e) ||
+    (c >= 0x2066 && c <= 0x2069) ||
+    c === 0xfeff
+  );
+}
+
+/** Text from the event on one line: every deceptive character becomes a space. */
+export function oneLine(text: string): string {
   let out = '';
   for (const ch of text) {
-    const c = ch.codePointAt(0) ?? 0;
-    out += c < 0x20 || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029 ? ' ' : ch;
+    out += isDeceptive(ch.codePointAt(0) ?? 0) ? ' ' : ch;
   }
   return out;
 }
@@ -335,8 +353,15 @@ function sampleValue(prop: InputSchemaProperty | undefined): Scalar {
  * Mapped field values in a run's description, as one JSON object: every value JSON-encoded, so
  * no value can end the block or start a section of its own.
  */
-function fieldsBlock(fields: Record<string, Scalar>): string {
-  return JSON.stringify(fields, null, 2);
+export function fieldsBlock(fields: Record<string, Scalar>): string {
+  // JSON leaves U+2028/2029, bidi and zero-width characters as they are; escape them too, so
+  // the block reads exactly as its bytes say.
+  let out = '';
+  for (const ch of JSON.stringify(fields, null, 2)) {
+    const c = ch.codePointAt(0) ?? 0;
+    out += c >= 0x7f && isDeceptive(c) ? `\\u${c.toString(16).padStart(4, '0')}` : ch;
+  }
+  return out;
 }
 
 /**

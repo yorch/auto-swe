@@ -8,16 +8,19 @@ import {
   isCloudEventEnvelope,
   MAX_EVENT_FACTS_CHARS,
   MAX_EVENT_VALUE_CHARS,
+  SignatureHeaderSchema,
 } from '../inboundEvent.js';
 import { automationOptionsProblem, buildAutomationPayload } from '../inputs.js';
 import { parseOwnerKey } from '../ownerKey.js';
 import {
   endpointOwnerKey,
+  fieldsBlock,
   InboundEventFactsSchema,
   type InboundEventFilters,
   InboundEventFiltersSchema,
   inboundEventFacts,
   matchesWildcards,
+  oneLine,
   inboundEventSource as src,
   wildcardMatch,
 } from './inboundEvent.js';
@@ -360,6 +363,27 @@ describe('keys and payload', () => {
     expect(
       description.split('\n').filter((l) => l.startsWith('Fields from the event'))
     ).toHaveLength(1);
+  });
+
+  it('replaces bidi, zero-width and line-break characters in event text', () => {
+    const tricky = ['‮', '⁦', '⁩', '‎', '‏', '؜', '﻿', '​', '‍', ' ', '\u0085'];
+    for (const ch of tricky) {
+      expect(oneLine(`a${ch}b`)).toBe('a b');
+    }
+    expect(oneLine('café ✓')).toBe('café ✓');
+  });
+
+  it('escapes those characters in the mapped-fields block, which stays one JSON object', () => {
+    const block = fieldsBlock({ note: 'x‮y z​﻿' });
+    expect(block).toContain('x\\u202ey\\u2028z\\u200b\\ufeff');
+    expect(block).not.toMatch(/[\u2028\u202e\u200b\ufeff]/);
+    expect(JSON.parse(block)).toEqual({ note: 'x‮y z​﻿' });
+  });
+
+  it('refuses a ce-* header as where a signature travels', () => {
+    expect(SignatureHeaderSchema.safeParse('ce-signature').success).toBe(false);
+    expect(SignatureHeaderSchema.safeParse('CE-Id').success).toBe(false);
+    expect(SignatureHeaderSchema.safeParse('X-Signature').success).toBe(true);
   });
 
   it('has no default template', () => {
