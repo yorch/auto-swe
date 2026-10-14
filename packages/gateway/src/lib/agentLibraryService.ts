@@ -798,7 +798,8 @@ export interface BulkModelChange {
   name: string;
   /** The id of the version this change created; null until it is applied. */
   newId: string | null;
-  scope: AgentScope;
+  /** Null when the agent's row could not be read, so its scope is not known. */
+  scope: AgentScope | null;
   version: number;
   from: string | null;
   to: string | null;
@@ -859,17 +860,17 @@ const AGENT_SCOPE_RANK: readonly AgentScope[] = [
  * Whether an active row at `candidate` takes a run away from the selected row.
  *
  * Each run walks the cascade most-specific-first over its own context, so a narrower row wins
- * whenever that context reaches it. A team or organization row is only reached by runs of that team
- * or organization — so a team row wins over an organization row only when the team is inside that
- * organization, since `cascadeWheres` checks the team tier first — and neither ever wins over a row
- * at the other tenant scope, whose runs do not carry its id at all. A channel or workflow-template
- * row is reached by its own context whatever it sits above, and every run reaches a GLOBAL row.
+ * whenever that context reaches it. A team row is reached by runs of that team, so it wins over a
+ * platform-wide row, and over an organization row when the team is inside that organization —
+ * `cascadeWheres` checks the team tier before the organization one. An organization row is reached
+ * by runs of teams inside it. Neither wins over a row at the other tenant scope, whose runs do not
+ * carry its id at all. A channel or workflow-template row is reached by its own context whatever it
+ * sits above, and every run reaches a GLOBAL row.
  */
 function shadowsScope(
   candidate: { scope: AgentScope; teamId: string | null },
   selected: AgentScope,
-  selectedOrgId: string | null,
-  teamOrg: Map<string, string | null>
+  teamsInSelectedOrg: ReadonlySet<string>
 ): boolean {
   if (AGENT_SCOPE_RANK.indexOf(candidate.scope) >= AGENT_SCOPE_RANK.indexOf(selected)) {
     return false;
@@ -878,11 +879,13 @@ function shadowsScope(
     return selected === 'GLOBAL';
   }
   if (candidate.scope === 'TEAM') {
+    if (selected === 'GLOBAL') {
+      return true;
+    }
     return (
-      selected === 'GLOBAL' ||
-      (selected === 'ORGANIZATION' &&
-        Boolean(selectedOrgId) &&
-        teamOrg.get(candidate.teamId ?? '') === selectedOrgId)
+      selected === 'ORGANIZATION' &&
+      candidate.teamId !== null &&
+      teamsInSelectedOrg.has(candidate.teamId)
     );
   }
   return true;
@@ -925,14 +928,34 @@ export async function bulkUpdateAgentModels(
   } catch {
     // Advisory only: the plan is still accurate about what it will change.
   }
-  // A team row may only win over an organization row when the team is inside that organization.
-  const teamOrg = new Map<string, string | null>();
-  for (const teamId of new Set(
-    shadowing.filter((r) => r.scope === 'TEAM' && r.teamId).map((r) => r.teamId as string)
-  )) {
+  // Ownership is only ever consulted for a team row over an organization row, so nothing is looked
+  // up unless an organization-scoped agent is actually selected — and then in one query, rather
+  // than one per candidate team, which a GLOBAL selection never needs and the request cap does not
+  // bound.
+  const selectedOrgIds = [
+    ...new Set(
+      rows
+        .filter(({ row }) => row?.scope === 'ORGANIZATION' && row.orgId)
+        .map(({ row }) => row?.orgId as string)
+    ),
+  ];
+  const teamsByOrg = new Map<string, Set<string>>();
+  if (selectedOrgIds.length > 0) {
     try {
-      const team = await prisma.team.findUnique({ select: { orgId: true }, where: { id: teamId } });
-      teamOrg.set(teamId, team?.orgId ?? null);
+      const teams = await runUnscoped(
+        'which teams belong to the organizations a selected agent is scoped to; a platform admin edits rows at any scope',
+        ['Team'],
+        () =>
+          prisma.team.findMany({
+            select: { id: true, orgId: true },
+            where: { orgId: { in: selectedOrgIds } },
+          })
+      );
+      for (const team of teams) {
+        const ids = teamsByOrg.get(team.orgId) ?? new Set<string>();
+        ids.add(team.id);
+        teamsByOrg.set(team.orgId, ids);
+      }
     } catch {
       // Unknown ownership: report no shadowing for it rather than fail the batch.
     }
@@ -950,7 +973,8 @@ export async function bulkUpdateAgentModels(
       newId: null,
       newVersion: null,
       runtimeChange: null,
-      scope: (row?.scope ?? 'GLOBAL') as AgentScope,
+      // Unknown for an id whose row could not be read: say so rather than invent one.
+      scope: row ? (row.scope as AgentScope) : null,
       shadowedBy: [],
       status: 'ERROR',
       to: null,
@@ -969,15 +993,23 @@ export async function bulkUpdateAgentModels(
     // Only the write further down is expected to fail per agent; anything else that throws
     // here must not abandon the agents queued behind this one.
     try {
+      const teamsInSelectedOrg =
+        row.scope === 'ORGANIZATION' && row.orgId
+          ? (teamsByOrg.get(row.orgId) ?? new Set<string>())
+          : new Set<string>();
       change.shadowedBy = AGENT_SCOPE_RANK.filter((scope) =>
         shadowing.some(
           (candidate) =>
             candidate.key === row.key &&
             candidate.scope === scope &&
-            shadowsScope({ scope, teamId: candidate.teamId }, change.scope, row.orgId, teamOrg)
+            shadowsScope(
+              { scope, teamId: candidate.teamId },
+              row.scope as AgentScope,
+              teamsInSelectedOrg
+            )
         )
       );
-      const lineage: AgentScopeKey = { ...row, scope: change.scope };
+      const lineage: AgentScopeKey = { ...row, scope: row.scope as AgentScope };
       const head = await prisma.agent.findFirst({
         orderBy: { version: 'desc' },
         where: scopeWhere(lineage),

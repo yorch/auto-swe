@@ -33,7 +33,7 @@ function newMockPrisma() {
     organization: { findUnique: vi.fn() },
     providerCredential: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     slackChannel: { findUnique: vi.fn() },
-    team: { findUnique: vi.fn() },
+    team: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
     workflowTemplate: { findUnique: vi.fn() },
   };
@@ -339,7 +339,7 @@ describe('bulk agent model changes', () => {
     );
     // A channel row wins in its own context whatever it sits above. A team row wins over an
     // organization row for a run in that team, and the resolver tries the team tier first.
-    p.team.findUnique.mockResolvedValue({ orgId: 'org-1' });
+    p.team.findMany.mockResolvedValue([{ id: 'team-1', orgId: 'org-1' }]);
     const res = await post({}, true);
     expect(res.json().data.changes[0].shadowedBy).toEqual(['CHANNEL', 'TEAM']);
     await app.close();
@@ -352,9 +352,21 @@ describe('bulk agent model changes', () => {
       where.key ? [{ key: A, scope: 'TEAM', teamId: 'team-2' }] : []
     );
     // Runs of that team carry its own organization, so they never resolved this row.
-    p.team.findUnique.mockResolvedValue({ orgId: 'org-2' });
+    p.team.findMany.mockResolvedValue([]);
     const res = await post({}, true);
     expect(res.json().data.changes[0].shadowedBy).toEqual([]);
+    await app.close();
+  });
+  it('asks about ownership only when an organization row is selected', async () => {
+    const { app, p, post } = await setup([agent()]);
+    p.agent.findMany.mockImplementation(async ({ where }) =>
+      where.key ? [{ key: A, scope: 'TEAM', teamId: 'team-1' }] : []
+    );
+    const res = await post({}, true);
+    // Every run reaches a platform-wide row, so a team row shadows it without any ownership
+    // question — and a request naming hundreds of agents must not fan out into lookups for them.
+    expect(res.json().data.changes[0].shadowedBy).toEqual(['TEAM']);
+    expect(p.team.findMany).not.toHaveBeenCalled();
     await app.close();
   });
   it('reports a failed read as that agent’s outcome rather than the batch’s', async () => {
@@ -370,7 +382,15 @@ describe('bulk agent model changes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.json().data.changes).toMatchObject([
       { id: A, status: 'OK' },
-      { blockers: ['Could not read this agent: read failed'], id: B, status: 'ERROR' },
+      // Nothing is known about a row that could not be read — including its scope.
+      {
+        blockers: ['Could not read this agent: read failed'],
+        id: B,
+        key: '',
+        name: '',
+        scope: null,
+        status: 'ERROR',
+      },
     ]);
     expect(p.agent.create).toHaveBeenCalledTimes(1);
     await app.close();
