@@ -12,6 +12,7 @@ import { PinoInstrumentation } from '@opentelemetry/instrumentation-pino';
 import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
 import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
+import { redactRequestUrl } from './requestUrlRedaction.js';
 
 export function initTelemetry(serviceName: string): { shutdown: () => Promise<void> } {
   const endpoint = resolveOtelExporterEndpoint();
@@ -20,7 +21,16 @@ export function initTelemetry(serviceName: string): { shutdown: () => Promise<vo
     // Undici is global `fetch` (Octokit, the tracker and knowledge-base
     // connectors); `http` never sees it.
     instrumentations: [
-      new HttpInstrumentation(),
+      new HttpInstrumentation({
+        // The server span's `url.path` would otherwise carry a template webhook's token, which
+        // is that webhook's credential. Hook attributes override the instrumentation's own.
+        startIncomingSpanHook: (request) => {
+          const url = 'url' in request && typeof request.url === 'string' ? request.url : '';
+          const path = url.split('?')[0] ?? '';
+          const redacted = redactRequestUrl(path);
+          return redacted === path ? {} : { 'url.path': redacted };
+        },
+      }),
       new FastifyInstrumentation(),
       new UndiciInstrumentation(),
       // Fastify's logger is pino. This stamps trace_id/span_id on every line it
