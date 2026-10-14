@@ -1,7 +1,6 @@
 import {
   type ConnectionType,
   decryptConnectionApiToken,
-  type Prisma,
   parseConfluenceConnectionConfig,
   parseIssueTrackerConnectionConfig,
   parseNotionConnectionConfig,
@@ -9,7 +8,7 @@ import {
   parseZendeskConnectionConfig,
 } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
-import { ApplicationFailure, Context } from '@temporalio/activity';
+import { ApplicationFailure } from '@temporalio/activity';
 import { z } from 'zod';
 import {
   createConfluencePage,
@@ -25,25 +24,17 @@ import {
 } from '../connectors/notion.js';
 import { postSlackMessage } from '../connectors/slack.js';
 import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
+import {
+  assertApprovalSatisfied,
+  findRecordedOutcome,
+  isMutatingToolCall,
+  mutationScope,
+  type OutcomeKey,
+  recordOutcome,
+} from '../lib/externalWrite.js';
 
 const ConnectionIdSchema = z.string().uuid();
 const ToolNameSchema = z.string().min(1);
-
-/**
- * Connection tools that only read.
- *
- * `runTool` names its tool as a string, so nothing in the type system says
- * whether it writes. Everything not listed here is treated as a mutation and has
- * to satisfy the same approval gate `writeOutcome` does — a new tool is gated by
- * default rather than by someone remembering to gate it. Reading is not gated: a
- * run whose policy demanded approval for a write has still not asked for one to
- * look a ticket up.
- */
-const READ_ONLY_CONNECTION_TOOLS: ReadonlySet<string> = new Set([
-  'fetchIssue',
-  'fetchPage',
-  'fetchTicket',
-]);
 
 function validateInput<T>(schema: z.ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(value);
@@ -94,6 +85,12 @@ export interface WriteOutcomeResult {
 export interface RunToolInput {
   connectionId: string;
   inputs?: unknown;
+  /**
+   * The step's recording id (the interpreter's `dispatchKey`). Keys the outcome
+   * ledger, so a retry of a mutating tool returns the first call's result
+   * instead of posting twice.
+   */
+  nodeId?: string;
   tool: string;
 }
 
@@ -129,19 +126,6 @@ function getApiToken(connection: {
     apiKeyNonce: connection.apiKeyNonce,
     apiKeyVersion: connection.apiKeyVersion,
   });
-}
-
-/**
- * The `WorkflowRun` row for the executing workflow, or null when the workflow
- * keeps none. Read by the approval gate: a recorded `require_approval` decision
- * refuses a mutation whether it goes through `writeOutcome` or `runTool`.
- */
-async function currentRun(): Promise<{ id: string } | null> {
-  const workflowId = Context.current().info.workflowExecution?.workflowId;
-  if (!workflowId) {
-    return null;
-  }
-  return prisma.workflowRun.findUnique({ select: { id: true }, where: { workflowId } });
 }
 
 // ── Read source ─────────────────────────────────────────────────────────────
@@ -574,32 +558,6 @@ async function genericWriteOutcome(
  * Write a validated outcome to the target connection. Placeholder for non-git
  * types pending the domain-specific activity packs.
  */
-/**
- * Refuse a write while the run's latest `publishOutcome` decision requires approval
- * and no approval has been recorded since. A template that records the decision but
- * routes straight to `writeOutcome` would otherwise write anyway while the audit log
- * says approval was required. A run with no recorded decision is not gated.
- */
-async function assertApprovalSatisfied(runId: string): Promise<void> {
-  const published = await prisma.autonomyDecision.findFirst({
-    orderBy: { createdAt: 'desc' },
-    where: { event: 'publish', runId },
-  });
-  const payload = published?.payload as { decision?: string } | null | undefined;
-  if (!published || payload?.decision !== 'require_approval') {
-    return;
-  }
-  const approved = await prisma.autonomyDecision.findFirst({
-    where: { createdAt: { gte: published.createdAt }, event: 'approve', runId },
-  });
-  if (!approved) {
-    throw ApplicationFailure.nonRetryable(
-      `writeOutcome refused: policy '${published.policyName ?? 'unknown'}' requires human approval for '${published.riskClass ?? 'this action'}' and none was recorded`,
-      'APPROVAL_REQUIRED'
-    );
-  }
-}
-
 export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutcomeResult> {
   const { connectionId, data, nodeId } = validateInput(
     z.object({
@@ -610,19 +568,18 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
     input
   );
 
-  // Side-effects to external systems (Notion, Zendesk, issue tracker, Slack) are
-  // not idempotent by default. A Temporal activity retry after a successful write
-  // would duplicate the write unless we remember it. The ledger is looked up by
-  // (run, node, connection) — deliberately NOT by attempt: a retry is by
-  // definition a new attempt number, so keying on it could never find the row
-  // the previous attempt wrote. `attempt` is still stored for audit.
-  const attempt = Context.current().info.attempt;
-  const run = await currentRun();
-  const runId = nodeId ? run?.id : undefined;
+  // Governance + idempotency for an external effect (see lib/externalWrite.ts):
+  // a write is refused when the recorded policy requires an approval that never
+  // came, and a retry after a successful write returns the stored result rather
+  // than writing twice. `lib/externalWrite.ts` owns both guards, so `writeOutcome`,
+  // `runTool` and `mcpCallTool` cannot drift apart.
+  const scope = await mutationScope();
+  const ledgerKey: OutcomeKey | null =
+    nodeId && scope.runId ? { connectionId, nodeId, runId: scope.runId } : null;
 
   async function perform(): Promise<WriteOutcomeResult> {
-    if (run) {
-      await assertApprovalSatisfied(run.id);
+    if (scope.runId) {
+      await assertApprovalSatisfied(scope.runId);
     }
     const connection = await loadConnection(connectionId);
     const token = getApiToken(connection);
@@ -650,28 +607,17 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
     }
   }
 
-  if (!runId || !nodeId) {
+  if (!ledgerKey) {
     return perform();
   }
 
-  const existing = await prisma.workflowOutcomeReference.findFirst({
-    orderBy: { attempt: 'asc' },
-    where: { connectionId, nodeId, runId },
-  });
+  const existing = await findRecordedOutcome<WriteOutcomeResult>(ledgerKey);
   if (existing) {
-    return existing.result as unknown as WriteOutcomeResult;
+    return existing;
   }
 
   const result = await perform();
-  await prisma.workflowOutcomeReference.create({
-    data: {
-      attempt,
-      connectionId,
-      nodeId,
-      result: result as unknown as Prisma.InputJsonValue,
-      runId,
-    },
-  });
+  await recordOutcome({ ...ledgerKey, attempt: scope.attempt, result });
   return result;
 }
 
@@ -860,47 +806,65 @@ async function genericRunTool(
 /**
  * Run an arbitrary tool against the target connection. Placeholder for non-git
  * types pending the domain-specific activity packs.
+ *
+ * Governed exactly like `writeOutcome`: `postComment`, `postMessage` and
+ * `createIssue` change state outside the platform, so they are recorded against
+ * the same outcome ledger and refused when the recorded policy requires an
+ * approval that was never given. Reads (`fetchTicket`, `fetchIssue`) skip both —
+ * they change nothing and a retry should observe current state.
  */
 export async function runTool(input: RunToolInput): Promise<RunToolResult> {
-  const { connectionId, tool, inputs } = validateInput(
+  const { connectionId, nodeId, tool, inputs } = validateInput(
     z.object({
       connectionId: ConnectionIdSchema,
       inputs: z.unknown().optional(),
+      nodeId: z.string().min(1).optional(),
       tool: ToolNameSchema,
     }),
     input
   );
-  // A tool that writes is subject to the approval the policy recorded, exactly as
-  // `writeOutcome` is: `publishOutcome` can say `require_approval` and a template
-  // that then calls `runTool(createPage)` would otherwise publish anyway, with the
-  // audit log saying approval was required.
-  if (!READ_ONLY_CONNECTION_TOOLS.has(tool)) {
-    const run = await currentRun();
-    if (run) {
-      await assertApprovalSatisfied(run.id);
+  const mutating = isMutatingToolCall(tool);
+  const scope = await mutationScope();
+  const ledgerKey: OutcomeKey | null =
+    mutating && nodeId && scope.runId ? { connectionId, nodeId, runId: scope.runId } : null;
+
+  async function perform(): Promise<RunToolResult> {
+    if (mutating && scope.runId) {
+      await assertApprovalSatisfied(scope.runId);
+    }
+    const connection = await loadConnection(connectionId);
+    const token = getApiToken(connection);
+    switch (connection.type) {
+      case 'git_repo':
+        return gitRepoRunTool(connection, tool, inputs);
+      case 'zendesk':
+        return zendeskRunTool(connection, token, tool, inputs);
+      case 'slack_workspace':
+        return slackRunTool(connection, token, tool, inputs);
+      case 'issue_tracker':
+        return issueTrackerRunTool(connection, token, tool, inputs);
+      case 'confluence':
+        return confluenceRunTool(connection, token, tool, inputs);
+      case 'http_api':
+      case 'hubspot':
+      case 'mcp':
+      case 'notion':
+        return genericRunTool(connection.type, connection, token);
+      default:
+        throw ApplicationFailure.nonRetryable(
+          `Unsupported connection type for runTool: ${connection.type}`
+        );
     }
   }
-  const connection = await loadConnection(connectionId);
-  const token = getApiToken(connection);
-  switch (connection.type) {
-    case 'git_repo':
-      return gitRepoRunTool(connection, tool, inputs);
-    case 'zendesk':
-      return zendeskRunTool(connection, token, tool, inputs);
-    case 'slack_workspace':
-      return slackRunTool(connection, token, tool, inputs);
-    case 'issue_tracker':
-      return issueTrackerRunTool(connection, token, tool, inputs);
-    case 'confluence':
-      return confluenceRunTool(connection, token, tool, inputs);
-    case 'http_api':
-    case 'hubspot':
-    case 'mcp':
-    case 'notion':
-      return genericRunTool(connection.type, connection, token);
-    default:
-      throw ApplicationFailure.nonRetryable(
-        `Unsupported connection type for runTool: ${connection.type}`
-      );
+
+  if (!ledgerKey) {
+    return perform();
   }
+  const existing = await findRecordedOutcome<RunToolResult>(ledgerKey);
+  if (existing) {
+    return existing;
+  }
+  const result = await perform();
+  await recordOutcome({ ...ledgerKey, attempt: scope.attempt, result });
+  return result;
 }

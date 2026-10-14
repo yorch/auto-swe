@@ -215,6 +215,91 @@ describe('writeOutcome approval guard', () => {
   });
 });
 
+describe('runTool governance', () => {
+  const ZENDESK = 'e9108636-3b75-440c-a4f9-987449669502';
+  const publishedAt = new Date('2026-01-01T00:00:00Z');
+  const postInputs = { body: 'reply', public: false, ticketId: '42' };
+
+  function requireApprovalThenNothing() {
+    (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        createdAt: publishedAt,
+        payload: { decision: 'require_approval' },
+        policyName: 'default',
+        riskClass: 'external_communication',
+      })
+      .mockResolvedValueOnce(null);
+  }
+
+  beforeEach(() => {
+    (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'run-1' });
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('zendesk', { config: { email: 'a@b.com', subdomain: 'x' }, token: true })
+    );
+    (postZendeskComment as ReturnType<typeof vi.fn>).mockResolvedValue({
+      comment: {},
+      ticketId: '42',
+    });
+    (fetchZendeskTicket as ReturnType<typeof vi.fn>).mockResolvedValue({ ticket: { id: 42 } });
+  });
+
+  // A tool that changes state outside the platform is governed exactly like
+  // writeOutcome. Before this, a template could record a require_approval
+  // decision and then post through `runTool`, so the audit log claimed a gate
+  // that never happened.
+  it('refuses a mutating tool when the recorded policy requires an approval that never came', async () => {
+    requireApprovalThenNothing();
+
+    await expect(
+      runTool({
+        connectionId: ZENDESK,
+        inputs: postInputs,
+        nodeId: 'notify',
+        tool: 'postComment',
+      })
+    ).rejects.toThrow(/requires human approval/);
+    expect(postZendeskComment).not.toHaveBeenCalled();
+  });
+
+  it('lets a read-only tool through under the same policy', async () => {
+    requireApprovalThenNothing();
+
+    const result = await runTool({
+      connectionId: ZENDESK,
+      inputs: { ticketId: '42' },
+      nodeId: 'lookup',
+      tool: 'fetchTicket',
+    });
+    expect(result.ok).toBe(true);
+    // A read changes nothing, so it is neither gated nor recorded.
+    expect(prisma.autonomyDecision.findFirst).not.toHaveBeenCalled();
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+  });
+
+  it('records the effect, so a retry returns it instead of posting twice', async () => {
+    (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    (prisma.workflowOutcomeReference.findFirst as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ result: { connectionType: 'zendesk', ok: true, output: 'first' } });
+
+    const args = {
+      connectionId: ZENDESK,
+      inputs: postInputs,
+      nodeId: 'notify',
+      tool: 'postComment',
+    };
+    const first = await runTool(args);
+    const second = await runTool(args);
+
+    expect(first.ok).toBe(true);
+    expect(second.output).toBe('first');
+    expect(postZendeskComment).toHaveBeenCalledTimes(1);
+    expect(prisma.workflowOutcomeReference.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ connectionId: ZENDESK, nodeId: 'notify', runId: 'run-1' }),
+    });
+  });
+});
+
 describe('writeOutcome', () => {
   it('throws for a notion connection without a token', async () => {
     (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(

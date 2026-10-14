@@ -1234,11 +1234,15 @@ Current constraints of the system as built. Deliberate product boundaries are in
   registered. The generic trigger endpoints propagate the validated `payload` and `connectionId`
   through `RunInput` and the `RepoWorkRequest` that starts `RunnableWorkflow`, and the interpreter
   dispatches `resolveWorkspace`, `readSource`, `writeOutcome`, and `runTool` as built-in steps.
-  `writeOutcome` keys its idempotency ledger on the run, the node's recording id (its visit number
-  on a loop's later passes) and the connection, so a second visit to the same write node reuses the
-  recorded result instead of writing again, while two write nodes, two fan-out branches, or two
-  passes of a loop each write — a loop's *second visit* is a different node id, so it writes. That
-  is a guard for a retry of the same visit, not exactly-once. A write node
+  The three steps that change something outside the platform — `writeOutcome`, a mutating `runTool`,
+  and a non-read-only `mcpCallTool` — gate on the run's recorded autonomy decision and key the same
+  idempotency ledger on the run, the node's recording id (its visit number on a loop's later passes)
+  and the connection, so a retry of the same visit reuses the recorded result instead of acting
+  again, while two write nodes, two fan-out branches, or two passes of a loop each act — a loop's
+  *second visit* is a different node id, so it acts. That is a guard for a retry of the same visit,
+  not exactly-once: the remote call and the ledger row are not one transaction (see
+  [autonomy-policies.md §4.1](./autonomy-policies.md#41-the-mutation-boundary)).
+  A write node
   that names no explicit payload writes its own inputs, less `connectionId`. Notion, Confluence, Zendesk, Slack, and issue-tracker outcomes are concrete;
   `http_api`, `hubspot`, and `mcp` still return placeholder results pending provider-specific
   activity packs. The `record` workspace provider metadata currently targets `zendesk` only.

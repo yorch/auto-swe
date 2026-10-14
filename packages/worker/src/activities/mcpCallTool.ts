@@ -7,6 +7,13 @@ import {
   throwIfActivityCancelled,
   withHeartbeat,
 } from '../lib/execUtils.js';
+import {
+  assertApprovalSatisfied,
+  findRecordedOutcome,
+  mutationScope,
+  type OutcomeKey,
+  recordOutcome,
+} from '../lib/externalWrite.js';
 
 export interface McpCallToolInput {
   /** Id of an `mcp`-type Connection (its `config.url` is the server URL). */
@@ -15,6 +22,12 @@ export interface McpCallToolInput {
   tool: string;
   /** Resolved tool arguments (from the node's `inputs` mapping). */
   inputs?: Record<string, unknown>;
+  /**
+   * The step's recording id (the interpreter's `dispatchKey`). Keys the outcome
+   * ledger so a retried call returns the first result instead of invoking the
+   * remote tool twice.
+   */
+  nodeId?: string;
   /** OTel span / attribution name. */
   spanName?: string;
 }
@@ -40,6 +53,27 @@ export async function mcpCallTool(input: McpCallToolInput): Promise<McpCallToolR
 
 async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResult> {
   throwIfActivityCancelled();
+
+  // An MCP tool's semantics belong to the remote server: we cannot tell a read
+  // from a write, so every call is governed as a mutation — refused when the run
+  // recorded a policy decision requiring an approval that never came, and
+  // recorded against the outcome ledger so an activity retry returns the first
+  // result rather than calling the remote tool twice.
+  const scope = await mutationScope();
+  const ledgerKey: OutcomeKey | null =
+    input.nodeId && scope.runId
+      ? { connectionId: input.connectionRef, nodeId: input.nodeId, runId: scope.runId }
+      : null;
+  if (scope.runId) {
+    await assertApprovalSatisfied(scope.runId);
+  }
+  if (ledgerKey) {
+    const existing = await findRecordedOutcome<McpCallToolResult>(ledgerKey);
+    if (existing) {
+      return existing;
+    }
+  }
+
   const target = await mcpUrlForConnection(input.connectionRef);
   if (!target) {
     throw new Error(
@@ -79,6 +113,9 @@ async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResu
     // The MCP call takes no abort signal, so a cancel abandons it rather than
     // waiting out its timeout; the client is still closed in `finally`.
     const result = await raceActivityCancellation(execute(input.inputs ?? {}));
+    if (ledgerKey) {
+      await recordOutcome({ ...ledgerKey, attempt: scope.attempt, result });
+    }
     return { result };
   } finally {
     await loaded.close();

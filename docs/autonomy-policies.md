@@ -97,6 +97,28 @@ action.
 A `require_approval` decision does not fail the run. It converts the step into a wait, which the
 inbox and the Slack teammate both surface the same way any other human gate is surfaced.
 
+### 4.1 The mutation boundary
+
+A recorded decision is only a gate if the step that performs the action checks it. That check lives
+in `packages/worker/src/lib/externalWrite.ts` and covers every step that changes something outside
+the platform — `writeOutcome`, `runTool` and `mcpCallTool` — so recording a `require_approval`
+decision and then writing through a differently-named step cannot happen:
+
+- Before a mutation, the latest `publish` decision for the run is read. If it is `require_approval`
+  and no `approve` was recorded after it, the step is refused with a non-retryable
+  `APPROVAL_REQUIRED`. A run that recorded no `publish` decision is not gated — the policy exists
+  where something asked for it.
+- Connector tools that only read (`fetchTicket`, `fetchIssue`) are exempt: they change nothing, so
+  they are neither gated nor recorded. Every other tool — including every MCP tool, whose semantics
+  belong to the remote server — is treated as a mutation.
+- A mutation is also recorded against the outcome ledger (see
+  [architecture.md §4](./architecture.md#4-workflow-engine)), so an activity retry returns the first
+  result instead of repeating the external effect.
+
+Reads and container steps are outside this: `shell` and `containerStep` reach the network through
+the sandbox rather than a connector, and are governed by the image allowlist and egress policy
+instead.
+
 ---
 
 ## 5. The decision log

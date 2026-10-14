@@ -266,10 +266,11 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   [
     // P2/WS4 declarative mcp node: call one MCP tool as a workflow step.
     'mcpCallTool',
-    ({ config, inputs }) =>
+    ({ config, inputs, dispatchKey }) =>
       mcpNodeActivities.mcpCallTool({
         connectionRef: config.connectionRef as string,
         inputs,
+        nodeId: dispatchKey,
         spanName: config.spanName as string | undefined,
         tool: config.tool as string,
       }),
@@ -815,10 +816,11 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'runTool',
-    ({ inputs, ctx, step }) =>
+    ({ inputs, ctx, step, dispatchKey }) =>
       genericActivities.runTool({
         connectionId: resolveConnectionId(step, ctx, inputs),
         inputs: inputs.inputs,
+        nodeId: dispatchKey,
         tool: inputs.tool as string,
       }),
   ],
