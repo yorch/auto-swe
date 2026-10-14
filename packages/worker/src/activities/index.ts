@@ -95,6 +95,8 @@ export {
   resolveMergeConflict,
   subtaskBranchName,
 } from './decomposition.js';
+export type { DeliverCallbacksResult } from './deliverCallbacks.js';
+export { deliverCallbacks } from './deliverCallbacks.js';
 // Repo dependency graph — deterministic manifest/git-signal detection
 export type {
   DetectRepoDependenciesInput,
@@ -177,6 +179,8 @@ export {
 export { prepareScheduledEvalRun } from './prepareScheduledEvalRun.js';
 export type { PruneAutomationDecisionsResult } from './pruneAutomationDecisions.js';
 export { pruneAutomationDecisions } from './pruneAutomationDecisions.js';
+export type { PruneCallbackDeliveriesResult } from './pruneCallbackDeliveries.js';
+export { pruneCallbackDeliveries } from './pruneCallbackDeliveries.js';
 export type {
   PublishOutcomeInput,
   PublishOutcomeResult,

@@ -445,6 +445,7 @@ const GUARDED_FETCH_MODULES = [
   'packages/shared/src/lib/skillSource/github.ts',
   'packages/worker/src/agents/claudeCode/modelProxy.ts',
   'packages/worker/src/agents/mcpTools.ts',
+  'packages/worker/src/lib/callbackSender.ts',
   'packages/worker/src/lib/scm/github.ts',
 ];
 

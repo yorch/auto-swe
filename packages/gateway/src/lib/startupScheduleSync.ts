@@ -13,7 +13,7 @@ import type { FastifyInstance } from 'fastify';
  * logged. Consolidation, eval regression and revalidation can be re-saved from the
  * admin UI; the environment-driven schedules (repository dependency scan,
  * repository access sync, model discovery, run reaper, automation decision prune,
- * skill-source sync) are next synced at the following gateway start.
+ * skill-source sync, run-callback delivery and its prune) are next synced at the following gateway start.
  *
  * Only these system schedules are re-synced here. Per-channel and
  * per-work-request schedules are reconciled when their own rows are written
@@ -48,6 +48,13 @@ export async function syncSchedulesOnceConnected(
   app.temporal
     .syncAutomationDecisionPruneSchedule(sweeps.automationDecisionPrune)
     .catch(warn('automation decision prune'));
+  // Sends due run callbacks; it only sends what a launch asked for. On by default.
+  app.temporal
+    .syncCallbackDeliverySchedule(sweeps.callbackDelivery)
+    .catch(warn('callback delivery'));
+  app.temporal
+    .syncCallbackDeliveryPruneSchedule(sweeps.callbackDeliveryPrune)
+    .catch(warn('callback delivery prune'));
   // One cheap request per tracked source; it only flags. On by default.
   app.temporal.syncSkillSourceSyncSchedule(sweeps.skillSourceSync).catch(warn('skill source sync'));
   // The nightly eval benchmark: off by default, needs a seeded dataset and a Docker-capable worker.

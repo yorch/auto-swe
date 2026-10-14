@@ -471,6 +471,22 @@ export const SETTING_DEFINITIONS = {
     unit: 'days',
   }),
 
+  // ── Run callbacks ──────────────────────────────────────────────────────────
+  // Read by the daily outbox sweep, which has no team: GLOBAL only.
+  'workflow.callbackDeliveryRetentionDays': defineSetting({
+    defaultValue: 30,
+    description:
+      'How long delivered and dead run-callback deliveries are kept, with their status codes and error classes, before the daily sweep deletes them. Pending deliveries are never deleted. A delivery older than this can no longer be redelivered from its history.',
+    group: 'workflow',
+    label: 'Run callback delivery retention',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(3650),
+    unit: 'days',
+  }),
+
   // ── Workflow interpreter ───────────────────────────────────────────────────
   // These bound how a single run may expand. They are run-pinned: the
   // interpreter runs inside the Temporal V8 isolate and cannot read the

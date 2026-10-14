@@ -3,6 +3,9 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { beforeEach, describe, expect, it } from 'vitest';
 import { workflowTemplateRoutes } from './workflowTemplates.js';
 
+// A callback's URL is sealed with the config envelope.
+process.env.CONFIG_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
+
 /**
  * `POST /workflow-templates/:id/runs` — the generic (non-SWE) run trigger.
  *
@@ -60,6 +63,20 @@ function buildHarness(opts?: { inputSchema?: unknown; name?: string }): Harness 
         h.activeWorkflows = h.activeWorkflows.filter((a) => a.id !== where.id);
         return {};
       },
+    },
+    callbackEndpoint: {
+      findMany: async ({ where }: { where: { origin?: string } }) =>
+        where.origin === 'https://hooks.example.com'
+          ? [
+              {
+                allowPrivateNetwork: false,
+                id: 'cccccccc-3333-4333-8333-cccccccccccc',
+                origin: 'https://hooks.example.com',
+                pathPrefix: '/',
+                teamId: 'team-1',
+              },
+            ]
+          : [],
     },
     runInput: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
@@ -231,5 +248,45 @@ describe('POST /workflow-templates/:id/runs', () => {
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('INVALID_INPUT');
     expect(strict.started).toHaveLength(0);
+  });
+});
+
+describe('POST /workflow-templates/:id/runs with a callback', () => {
+  it('stores the sealed callback with the request, and not in its raw payload', async () => {
+    const h = buildHarness();
+    await h.app.ready();
+    const res = await h.app.inject({
+      headers: { authorization: 'Bearer t' },
+      method: 'POST',
+      payload: {
+        callback: { url: 'https://hooks.example.com/done?token=receiver-token' },
+        payload: { description: 'do the thing' },
+      },
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().data.callback).toEqual({ target: 'https://hooks.example.com/done' });
+    const runInput = h.runInputs[0] as Record<string, unknown>;
+    expect((runInput.callback as { create: Record<string, unknown> }).create).toMatchObject({
+      target: 'https://hooks.example.com/done',
+      workflowId: h.started[0],
+    });
+    expect(String(runInput.requestPayload)).not.toContain('receiver-token');
+    expect(String(runInput.requestPayload)).not.toContain('callback');
+  });
+
+  it('refuses an unregistered URL before writing anything', async () => {
+    const h = buildHarness();
+    await h.app.ready();
+    const res = await h.app.inject({
+      headers: { authorization: 'Bearer t' },
+      method: 'POST',
+      payload: { callback: { url: 'https://evil.example.com/x' }, payload: {} },
+      url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error.code).toBe('CALLBACK_URL_NOT_REGISTERED');
+    expect(h.runInputs).toHaveLength(0);
+    expect(h.started).toHaveLength(0);
   });
 });

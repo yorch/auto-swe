@@ -104,6 +104,23 @@ async function buildHarness(): Promise<Harness> {
         return data;
       },
     },
+    // The template's team registered one callback endpoint.
+    callbackEndpoint: {
+      findMany: async ({ where }: { where: { origin?: string; teamId?: { in: string[] } } }) =>
+        [
+          {
+            allowPrivateNetwork: false,
+            id: 'cccccccc-3333-4333-8333-cccccccccccc',
+            origin: 'https://hooks.example.com',
+            pathPrefix: '/hooks',
+            teamId: 'team-1',
+          },
+        ].filter(
+          (e) =>
+            (where.origin === undefined || e.origin === where.origin) &&
+            (where.teamId === undefined || where.teamId.in.includes(e.teamId))
+        ),
+    },
     connection: {
       findUnique: async ({ where }: { where: { id: string } }) =>
         h.connection && where.id === h.connection.id ? h.connection : null,
@@ -558,5 +575,66 @@ describe('POST /webhooks/:token — signatures', () => {
     const res = await send();
     expect(res.statusCode).toBe(401);
     expect(res.json().error.code).toBe('SIGNATURE_INVALID');
+  });
+});
+
+describe('POST /webhooks/:token with a callback', () => {
+  let h: Harness;
+  beforeEach(async () => {
+    h = await buildHarness();
+  });
+  const fireWith = (callback: unknown) =>
+    h.app.inject({
+      method: 'POST',
+      payload: { callback, description: 'nightly sweep' },
+      url: `/api/v1/webhooks/${TOKEN}`,
+    });
+
+  it('stores the callback beside the request and keeps it out of the payload', async () => {
+    const res = await fireWith({
+      context: { job: 7 },
+      url: 'https://hooks.example.com/hooks/done?token=receiver-token',
+    });
+    expect(res.statusCode).toBe(201);
+    expect(JSON.parse(res.payload).data.callback).toEqual({
+      target: 'https://hooks.example.com/hooks/done',
+    });
+    const runInput = h.runInputs[0] as Record<string, unknown>;
+    const create = (runInput.callback as { create: Record<string, unknown> }).create;
+    expect(create).toMatchObject({
+      context: { job: 7 },
+      endpointId: 'cccccccc-3333-4333-8333-cccccccccccc',
+      target: 'https://hooks.example.com/hooks/done',
+    });
+    expect(create.workflowId).toBe(h.started[0]);
+    // Neither the stored request nor the workflow input (Temporal history) carries it.
+    expect(JSON.stringify(runInput.payload)).not.toContain('callback');
+    expect(String(runInput.requestPayload)).not.toContain('receiver-token');
+    expect(JSON.stringify(h.startInputs)).not.toContain('receiver-token');
+  });
+
+  it('refuses a URL the template’s team has not registered, before anything is written', async () => {
+    const res = await fireWith({ url: 'https://evil.example.com/hooks' });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('CALLBACK_URL_NOT_REGISTERED');
+    expect(h.runInputs).toHaveLength(0);
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('refuses a callback on a global template’s webhook', async () => {
+    h.template = { ...h.template, team: null, teamId: null };
+    const res = await fireWith({ url: 'https://hooks.example.com/hooks' });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('CALLBACKS_UNAVAILABLE');
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('refuses a malformed callback', async () => {
+    const res = await fireWith({
+      endpointId: 'cccccccc-3333-4333-8333-cccccccccccc',
+      url: 'https://x',
+    });
+    expect(res.statusCode).toBe(400);
+    expect(JSON.parse(res.payload).error.code).toBe('INVALID_CALLBACK');
   });
 });

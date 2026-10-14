@@ -48,6 +48,7 @@ import { agentVersionRoutes } from './routes/agentVersions.js';
 import { automationRoutes } from './routes/automations.js';
 import { autonomyPolicyRoutes } from './routes/autonomyPolicies.js';
 import { bundleRoutes } from './routes/bundles.js';
+import { callbackEndpointRoutes, runCallbackDeliveryRoutes } from './routes/callbackEndpoints.js';
 import { configSettingsRoutes } from './routes/configSettings.js';
 import { connectionCredentialRoutes } from './routes/connectionCredentials.js';
 import { epicRoutes } from './routes/epics.js';
@@ -300,9 +301,11 @@ async function start() {
   // Deprecated alias — kept for one release.
   await app.register(organizationRoutes, { prefix: '/api/v1/admin/organizations' });
   await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
+  await app.register(runCallbackDeliveryRoutes, { prefix: '/api/v1/workflow-runs' });
   await app.register(stepRegistryRoutes, { prefix: '/api/v1/workflow-steps' });
   await app.register(webhookRoutes, { prefix: '/api/v1/webhooks' });
   await app.register(teamRoutes, { prefix: '/api/v1/teams' });
+  await app.register(callbackEndpointRoutes, { prefix: '/api/v1/teams' });
   await app.register(userRoutes, { prefix: '/api/v1/users' });
   await app.register(meRoutes, { prefix: '/api/v1/me' });
   await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });

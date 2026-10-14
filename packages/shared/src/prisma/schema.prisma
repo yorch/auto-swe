@@ -823,6 +823,7 @@ model Team {
   configPermissions     ConfigPermission[]
   memoryItems           MemoryItem[]           @relation("TeamMemoryItems")
   agentTraces           AgentTrace[]           @relation("TeamAgentTraces")
+  callbackEndpoints     CallbackEndpoint[]
   autonomyPolicies      AutonomyPolicy[]
   skills                Skill[]
   skillSources          SkillSource[]
@@ -1241,6 +1242,7 @@ model User {
   knowledgeEvents       KnowledgeItemEvent[]    @relation("KnowledgeEventActor")
   launchedRuns          WorkflowRun[]            @relation("WorkflowRunLauncher")
   createdShares         ConnectionTeamShare[]    @relation("ConnectionShareCreator")
+  createdCallbackEndpoints CallbackEndpoint[]    @relation("CallbackEndpointCreator")
 
   @@map("users")
 }
@@ -1367,6 +1369,10 @@ model RunInput {
   activeWorkflows       ActiveWorkflow[]
   workflowRuns          WorkflowRun[]
   scheduledWorkRequests ScheduledWorkRequest[]
+  /// Where the run's outcome is reported, when the launch asked for a callback
+  /// (docs/run-callbacks.md). Its own table, so a whole-row read of the request
+  /// never carries the sealed URL or the caller's context.
+  callback              RunCallback?
 
   @@unique([requestedById, idempotencyKey])
   @@index([connectionId])
@@ -1696,6 +1702,7 @@ model WorkflowRun {
   evalResults       EvalResult[]
   outcomeReferences WorkflowOutcomeReference[]
   autonomyDecisions AutonomyDecision[]
+  outboundDeliveries OutboundDelivery[]
 
   @@index([templateId])
   @@index([workRequestId])
@@ -3239,4 +3246,134 @@ model Jwks {
   crv        String?
 
   @@map("jwks")
+}
+
+// ─── Run callbacks (docs/run-callbacks.md) ────────────────────────────────────
+
+/// A team's registered receiver for run callbacks. A launch may only report to
+/// a URL under an enabled endpoint of a team its caller belongs to: exact
+/// `origin`, and a path at or under `pathPrefix`. Every delivery is signed with
+/// `X-AutoSwe-Signature` using the endpoint's secret (and, for 24 h after a
+/// rotation, the one it replaced).
+model CallbackEndpoint {
+  id                              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId                          String    @map("team_id") @db.Uuid
+  team                            Team      @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  name                            String
+  /// Normalised `scheme://host[:port]` (the URL standard's origin: lowercase
+  /// host, default port elided). https unless `allowPrivateNetwork`.
+  origin                          String
+  /// Canonical absolute path, `/` by default; a callback URL's path must equal
+  /// it or sit under it on a segment boundary.
+  pathPrefix                      String    @default("/") @map("path_prefix")
+  /// Subscribed event types (`CALLBACK_EVENT_TYPES`); never empty.
+  events                          String[]
+  /// Waives the SSRF guard's private-address refusal for this origin only.
+  /// Setting it true is platform-ADMIN only.
+  allowPrivateNetwork             Boolean   @default(false) @map("allow_private_network")
+  signingSecretCiphertext         Bytes     @map("signing_secret_ciphertext")
+  signingSecretNonce              Bytes     @map("signing_secret_nonce")
+  signingSecretAuthTag            Bytes     @map("signing_secret_auth_tag")
+  signingSecretKeyVersion         Int       @map("signing_secret_key_version")
+  signingSecretLastFour           String    @map("signing_secret_last_four")
+  /// The secret the last rotation replaced: deliveries are also signed with it
+  /// until `previousSigningSecretExpiresAt`.
+  previousSigningSecretCiphertext Bytes?    @map("previous_signing_secret_ciphertext")
+  previousSigningSecretNonce      Bytes?    @map("previous_signing_secret_nonce")
+  previousSigningSecretAuthTag    Bytes?    @map("previous_signing_secret_auth_tag")
+  previousSigningSecretKeyVersion Int?      @map("previous_signing_secret_key_version")
+  previousSigningSecretLastFour   String?   @map("previous_signing_secret_last_four")
+  previousSigningSecretExpiresAt  DateTime? @map("previous_signing_secret_expires_at") @db.Timestamptz
+  /// Set while the endpoint is disabled: no launch may choose it, and a due
+  /// delivery to it goes DEAD (redeliverable once it is enabled again).
+  disabledAt                      DateTime? @map("disabled_at") @db.Timestamptz
+  createdById                     String?   @map("created_by_id") @db.Uuid
+  createdBy                       User?     @relation("CallbackEndpointCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt                       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  runCallbacks RunCallback[]
+  deliveries   OutboundDelivery[]
+
+  @@unique([teamId, name])
+  @@index([createdById])
+  @@map("callback_endpoints")
+}
+
+/// The callback one launch asked for. Belongs to the request, but reports only
+/// the execution that asked (`workflowId`): a re-run reuses the request and is
+/// a new decision by whoever re-runs it, so it does not inherit the callback.
+model RunCallback {
+  id            String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runInputId    String            @unique @map("run_input_id") @db.Uuid
+  runInput      RunInput          @relation(fields: [runInputId], references: [id], onDelete: Cascade)
+  endpointId    String?           @map("endpoint_id") @db.Uuid
+  endpoint      CallbackEndpoint? @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  /// The Temporal workflow id of the launch that asked for the callback.
+  workflowId    String            @map("workflow_id")
+  /// Origin and path of the URL, for display and logs. Never the query, which
+  /// may carry a receiver's token.
+  target        String
+  /// The full URL, query included, sealed with the AES-GCM config envelope.
+  urlCiphertext Bytes             @map("url_ciphertext")
+  urlNonce      Bytes             @map("url_nonce")
+  urlAuthTag    Bytes             @map("url_auth_tag")
+  urlKeyVersion Int               @map("url_key_version")
+  /// The caller's opaque `context` (at most 1 KB serialised), echoed in every payload.
+  context       Json?
+  createdAt     DateTime          @default(now()) @map("created_at") @db.Timestamptz
+
+  deliveries OutboundDelivery[]
+
+  @@index([endpointId])
+  @@map("run_callbacks")
+}
+
+enum OutboundDeliveryStatus {
+  PENDING
+  DELIVERED
+  DEAD
+}
+
+/// The run-callback outbox. A row is written in the same transaction as the
+/// event it reports (the run's guarded terminal write; a human step's
+/// creation), so an event is recorded exactly once, and the delivery sweep
+/// sends it at least once. Holds the status code and a fixed error class of the
+/// last attempt — never a response body or a transport error's text.
+model OutboundDelivery {
+  id                   String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  endpointId           String?                @map("endpoint_id") @db.Uuid
+  endpoint             CallbackEndpoint?      @relation(fields: [endpointId], references: [id], onDelete: SetNull)
+  runCallbackId        String?                @map("run_callback_id") @db.Uuid
+  runCallback          RunCallback?           @relation(fields: [runCallbackId], references: [id], onDelete: SetNull)
+  workflowRunId        String                 @map("workflow_run_id") @db.Uuid
+  workflowRun          WorkflowRun            @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+  /// One row per event: `<runId>:run.completed`, `<runId>:run.waiting_for_human:<stepId>`.
+  dedupeKey            String                 @unique @map("dedupe_key")
+  /// `run.completed` | `run.waiting_for_human`.
+  event                String
+  /// The JSON body, fixed when the event happened; a redelivery sends the same bytes.
+  payload              Json
+  status               OutboundDeliveryStatus @default(PENDING)
+  attempts             Int                    @default(0)
+  /// When the sweep may next claim the row; a claim pushes it out by a lease.
+  nextAttemptAt        DateTime               @default(now()) @map("next_attempt_at") @db.Timestamptz
+  /// Start of the current retry window (creation, or the last redelivery).
+  retryWindowStartedAt DateTime               @default(now()) @map("retry_window_started_at") @db.Timestamptz
+  lastAttemptAt        DateTime?              @map("last_attempt_at") @db.Timestamptz
+  lastStatusCode       Int?                   @map("last_status_code")
+  /// Fixed error class of the last failed attempt (`CALLBACK_DELIVERY_ERRORS`).
+  lastError            String?                @map("last_error")
+  /// Why the row is DEAD (`CALLBACK_DEAD_REASONS`).
+  deadReason           String?                @map("dead_reason")
+  deliveredAt          DateTime?              @map("delivered_at") @db.Timestamptz
+  deadAt               DateTime?              @map("dead_at") @db.Timestamptz
+  createdAt            DateTime               @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([status, nextAttemptAt])
+  @@index([status, createdAt])
+  @@index([endpointId, createdAt])
+  @@index([workflowRunId])
+  @@index([runCallbackId])
+  @@map("outbound_deliveries")
 }

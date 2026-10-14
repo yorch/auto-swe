@@ -6,6 +6,7 @@ import { AddMemberModal } from '@/components/teams/AddMemberModal';
 import { EgressAllowlistEditor } from '@/components/teams/EgressAllowlistEditor';
 import { ShellAllowlistEditor } from '@/components/teams/ShellAllowlistEditor';
 import { TeamAgentLibrarySection } from '@/components/teams/TeamAgentLibrarySection';
+import { TeamCallbackEndpointsSection } from '@/components/teams/TeamCallbackEndpointsSection';
 import { TeamFormModal } from '@/components/teams/TeamFormModal';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
@@ -89,6 +90,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
     grantableRoles,
     canEditAllowlists,
     canManageTeamAgents,
+    canManageCallbacks,
   } = teamPermissions(platformRole, ownTeamRole);
   const updateTeam = useUpdateTeam(id ?? '');
 
@@ -390,6 +392,9 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       )}
 
       {canManageTeamAgents && <TeamAgentLibrarySection teamId={id} />}
+      {canManageCallbacks && (
+        <TeamCallbackEndpointsSection isPlatformAdmin={platformRole === 'ADMIN'} teamId={id} />
+      )}
       {canEditAllowlists && (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
           <ShellAllowlistEditor teamId={id} />

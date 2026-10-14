@@ -20,6 +20,7 @@ vi.mock('@temporalio/activity', () => ({
 }));
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveGitHubBaseUrl: async () => 'https://github.com',
   resolveIssueTrackerConfig: async () => null,
   resolveSlackBotTokenForSlackChannel: async () => null,
   resolveSlackConfig: async () => ({
@@ -28,6 +29,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     clientSecret: null,
     signingSecret: null,
   }),
+  resolveWebUrl: () => 'https://app.example.com',
   resolveWorkflowDefaults: async () => ({
     branchPrefix: 'auto',
     defaultTeamSlug: 'default',
@@ -120,9 +122,11 @@ vi.mock('@auto-swe/shared/db', () => {
     orgMonthlyUsage: {
       upsert: vi.fn(),
     },
+    outboundDelivery: { createMany: vi.fn(async () => ({ count: 1 })) },
     pullRequest: {
       findFirst: vi.fn(),
     },
+    runCallback: { findUnique: vi.fn(async () => null) },
     runInput: {
       findUnique: vi.fn(async () => null),
     },
@@ -1624,6 +1628,144 @@ describe('finalizeWorkflowRun', () => {
     findRun.mockReset();
     mockNotifySlack.mockReset();
     mockTrackerSync.mockReset();
+  });
+});
+
+describe('run.completed callback outbox', () => {
+  const STARTED = new Date('2026-10-14T00:00:00Z');
+  const callbackRow = (overrides: Record<string, unknown> = {}) => ({
+    context: { ticket: 'OPS-7' },
+    endpoint: { events: ['run.completed'], id: 'ep-1' },
+    id: 'cb-1',
+    workflowId: 'wf-callback',
+    ...overrides,
+  });
+  const runRow = {
+    endedAt: null,
+    startedAt: STARTED,
+    workflowId: 'wf-callback',
+    workRequest: {
+      activeWorkflows: [{ costUsdAccrued: 0.25, temporalWorkflowId: 'wf-callback' }],
+      connectionId: null,
+      payload: null,
+    },
+    workRequestId: 'wr-1',
+  };
+  const createMany = vi.mocked(prisma.outboundDelivery.createMany);
+  const findCallback = vi.mocked(prisma.runCallback.findUnique);
+  const findRun = vi.mocked(prisma.workflowRun.findUnique);
+  /** The run status in the first delivery written outside a test-local transaction. */
+  const firstRunStatus = () => {
+    const arg = createMany.mock.calls[0]?.[0] as unknown as
+      | { data: Array<{ payload: { run: { status: string } } }> }
+      | undefined;
+    return arg?.data[0]?.payload.run.status;
+  };
+
+  beforeEach(() => {
+    createMany.mockClear();
+    findCallback.mockReset().mockResolvedValue(callbackRow() as never);
+    findRun.mockReset().mockResolvedValue(runRow as never);
+    vi.mocked(prisma.pullRequest.findFirst)
+      .mockReset()
+      .mockResolvedValue({
+        prNumber: 12,
+        repository: { githubUrl: null, organizationName: 'acme', repoName: 'api' },
+      } as never);
+    updateManyRuns.mockReset().mockResolvedValue({ count: 1 } as never);
+  });
+
+  it('writes one delivery inside the transaction that ends the run', async () => {
+    const txCreate = vi.fn(async () => ({ count: 1 }));
+    vi.mocked(prisma.$transaction).mockImplementationOnce(async (callback) =>
+      (callback as (tx: unknown) => unknown)({
+        ...prisma,
+        outboundDelivery: { createMany: txCreate },
+      })
+    );
+    expect(
+      await finalizeRun('run-cb', 'SUCCESS', { transcript: 'secret-snapshot' }, 'worker')
+    ).toBe(true);
+    expect(createMany).not.toHaveBeenCalled();
+    expect(txCreate).toHaveBeenCalledTimes(1);
+    const arg = (
+      txCreate.mock.calls[0] as unknown as [
+        { data: Record<string, unknown>[]; skipDuplicates: boolean },
+      ]
+    )[0];
+    expect(arg.skipDuplicates).toBe(true);
+    const row = arg.data[0] as Record<string, unknown>;
+    expect(row).toMatchObject({
+      dedupeKey: 'run-cb:run.completed',
+      endpointId: 'ep-1',
+      event: 'run.completed',
+      runCallbackId: 'cb-1',
+      workflowRunId: 'run-cb',
+    });
+    const payload = row.payload as Record<string, unknown>;
+    expect(payload.id).toBe(row.id);
+    expect(payload.context).toEqual({ ticket: 'OPS-7' });
+    expect(payload.run).toMatchObject({
+      costUsd: 0.25,
+      dashboardUrl: 'https://app.example.com/runs/run-cb',
+      pullRequestUrl: 'https://github.com/acme/api/pull/12',
+      startedAt: STARTED.toISOString(),
+      status: 'SUCCESS',
+      temporalWorkflowId: 'wf-callback',
+      workflowRunId: 'run-cb',
+      workRequestId: 'wr-1',
+    });
+    // The context snapshot (and anything like it) never reaches the receiver.
+    expect(JSON.stringify(payload)).not.toContain('secret-snapshot');
+  });
+
+  it('writes nothing when another attempt already ended the run', async () => {
+    updateManyRuns.mockResolvedValue({ count: 0 } as never);
+    expect(await finalizeRun('run-cb', 'SUCCESS', undefined, 'worker')).toBe(false);
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
+  it('writes nothing for a run that was already finalized before the read', async () => {
+    findRun.mockResolvedValue({ ...runRow, endedAt: new Date() } as never);
+    expect(await finalizeRun('run-cb', 'SUCCESS', undefined, 'worker')).toBe(false);
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
+  it('reports a run the reaper ends, even with its user-facing notices off', async () => {
+    expect(await finalizeRun('run-cb', 'FAILED', undefined, 'reaper', false)).toBe(true);
+    expect(createMany).toHaveBeenCalledTimes(1);
+    expect(firstRunStatus()).toBe('FAILED');
+  });
+
+  it('reports a cancelled run as CANCELLED, whatever the workflow said', async () => {
+    updateManyRuns
+      .mockResolvedValueOnce({ count: 0 } as never)
+      .mockResolvedValueOnce({ count: 1 } as never);
+    await finalizeRun('run-cb', 'FAILED', undefined, 'worker');
+    expect(firstRunStatus()).toBe('CANCELLED');
+  });
+
+  it('does not report a re-run of the request', async () => {
+    findCallback.mockResolvedValue(callbackRow({ workflowId: 'wf-original' }) as never);
+    await finalizeRun('run-cb', 'SUCCESS', undefined, 'worker');
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
+  it('does not report to an endpoint that did not subscribe, or no longer exists', async () => {
+    findCallback.mockResolvedValue(
+      callbackRow({ endpoint: { events: ['run.waiting_for_human'], id: 'ep-1' } }) as never
+    );
+    await finalizeRun('run-cb', 'SUCCESS', undefined, 'worker');
+    findCallback.mockResolvedValue(callbackRow({ endpoint: null }) as never);
+    await finalizeRun('run-cb', 'SUCCESS', undefined, 'worker');
+    expect(createMany).not.toHaveBeenCalled();
+  });
+
+  it('reads no callback for a run without a request', async () => {
+    findRun.mockResolvedValue({ ...runRow, workRequest: null, workRequestId: null } as never);
+    await finalizeRun('run-cb', 'SUCCESS', undefined, 'worker');
+    expect(findCallback).not.toHaveBeenCalled();
+    expect(createMany).not.toHaveBeenCalled();
   });
 });
 

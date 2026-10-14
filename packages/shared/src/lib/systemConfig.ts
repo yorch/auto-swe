@@ -1038,6 +1038,10 @@ export interface ScheduledSweepsConfig {
   /// Finalizes runs whose workflow ended in Temporal without finalizing them.
   runReaper: SweepSchedule;
   automationDecisionPrune: SweepSchedule;
+  /// Sends due run callbacks (docs/run-callbacks.md).
+  callbackDelivery: SweepSchedule;
+  /// Deletes delivered and dead run callbacks past their retention.
+  callbackDeliveryPrune: SweepSchedule;
   /// Refreshes the repo dependency graph from manifests and git signals.
   repoDependency: SweepSchedule;
   /// Asks each tracked skill source which commit its ref names now; only flags, never updates.
@@ -1074,6 +1078,10 @@ function envCron(name: string, fallback: string): string {
 ///   SKILL_SOURCE_SYNC_ENABLED     default true — one cheap request per source, and
 ///                                 it only flags: it never changes a skill
 ///   SKILL_SOURCE_SYNC_CRON        default `41 5 * * *`
+///   CALLBACK_DELIVERY_ENABLED     default true — it only sends what a launch asked for
+///   CALLBACK_DELIVERY_CRON        default `* * * * *` — a callback waits at most this long
+///   CALLBACK_DELIVERY_PRUNE_ENABLED default true
+///   CALLBACK_DELIVERY_PRUNE_CRON  default `47 4 * * *`
 ///
 /// Lenient, like `resolveWorkspaceInfra`: a bad value falls back to its default.
 /// `assertScheduledSweepsEnv()` is the strict check the gateway runs at boot.
@@ -1082,6 +1090,14 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
     automationDecisionPrune: {
       cronExpression: envCron('AUTOMATION_DECISION_PRUNE_CRON', '37 4 * * *'),
       enabled: envFlag('AUTOMATION_DECISION_PRUNE_ENABLED', true),
+    },
+    callbackDelivery: {
+      cronExpression: envCron('CALLBACK_DELIVERY_CRON', '* * * * *'),
+      enabled: envFlag('CALLBACK_DELIVERY_ENABLED', true),
+    },
+    callbackDeliveryPrune: {
+      cronExpression: envCron('CALLBACK_DELIVERY_PRUNE_CRON', '47 4 * * *'),
+      enabled: envFlag('CALLBACK_DELIVERY_PRUNE_ENABLED', true),
     },
     modelDiscovery: {
       cronExpression: envCron('MODEL_DISCOVERY_CRON', '17 3 * * *'),
@@ -1136,6 +1152,10 @@ export function validateScheduledSweepsEnv(): string[] {
   );
   check('SKILL_SOURCE_SYNC_ENABLED', flag, "'true' or 'false'");
   check('SKILL_SOURCE_SYNC_CRON', cron, 'a five-field cron expression such as "41 5 * * *"');
+  check('CALLBACK_DELIVERY_ENABLED', flag, "'true' or 'false'");
+  check('CALLBACK_DELIVERY_CRON', cron, 'a five-field cron expression such as "* * * * *"');
+  check('CALLBACK_DELIVERY_PRUNE_ENABLED', flag, "'true' or 'false'");
+  check('CALLBACK_DELIVERY_PRUNE_CRON', cron, 'a five-field cron expression such as "47 4 * * *"');
   return problems;
 }
 
