@@ -172,7 +172,10 @@ deployment at `/govern/workflow-defaults`.
 
 **Golden-set re-validation.** `ScheduledRevalidationWorkflow` fans out over datasets due for
 re-validation and quarantines cases that have gone stale, so the benchmark does not silently decay
-into measuring the wrong thing. A quarantined case whose reference passes again is restored, and
+into measuring the wrong thing. A reference run that was killed by a signal or timed out says
+nothing about the case, so the case is left as it is — neither quarantined nor restored — using the
+same classification as flake screening (below). A quarantined case whose reference passes again is
+restored, and
 its flake screen is reset to never-screened: it passed its last screen in an older repository
 state, so it is scored again only after a new one passes. Managed at `/govern/workflow-defaults`,
 with `GET`/`PUT /api/v1/admin/config/revalidation` and a manual trigger endpoint
@@ -193,24 +196,32 @@ Screening starts itself. `EvalScreenWorkflow` runs under one id per dataset
 (`eval-screen-<datasetId>`), and every starter joins a screen already running instead of starting a
 second: creating a dataset with cases, an eval run that finds never-screened cases in its dataset
 (§3), and an admin re-screen. A running screen reloads the dataset's never-screened cases when it
-has worked through them, so a case added or reset while it ran is screened too. Every re-validation
-sweep also screens each dataset's never-screened cases, one dataset at a time, after all its
-re-validations.
+has worked through them, so a case added or reset while it ran is screened too. A start can still
+join a screen whose activity has made its last load, so when the activity returns the workflow
+counts the cases still never screened and screens again while any remain, up to five screens per
+run; a case that hit an infrastructure error in the run is left for the next one. Every
+re-validation sweep also screens each dataset's never-screened cases, one dataset at a time, after
+all its re-validations.
 
 A run that could not say anything about the test leaves the case unscreened for the next screen
 rather than marking it flaky: a workspace that could not be provisioned or cloned, and a run killed
 by a signal or a timeout — the runner's own timeout, or an exit status of 128 and above, such as
-137 for the out-of-memory killer. Every other non-zero exit is a test failure. The activity
+137 for the out-of-memory killer, up to 254. Every other non-zero exit, 255 included — what a
+test's own `exit(-1)` produces — is a test failure. Each such error is counted on the case
+(`flakeScreenInfraErrors`); at the third the case is recorded as a failed screen
+(`flakeRuns > 0`, not `flakeScreened`), so a test that always dies stops being retried and shows
+as failed. The activity
 heartbeats after every reference run, under a five-minute heartbeat timeout. Quarantined cases are
 not screened. A screen's result is written only if the case is still unscreened and its repository,
 commit and golden test are still the ones it ran. A case's reference cannot be edited through the
 API, so a new reference is a new case, which starts unscreened.
 
 **Re-screening.** An admin resets a dataset's cases, or one case, to never-screened
-(`flakeRuns = 0`, `flakeScreened = false`) and starts the dataset's screen with
+(`flakeRuns = 0`, `flakeScreened = false`, `flakeScreenInfraErrors = 0`) and starts the dataset's screen with
 `POST /api/v1/platform/evals/:id/rescreen` or `POST /api/v1/platform/evals/:id/cases/:caseId/rescreen`,
 the re-check buttons on the dataset page, or `auto-swe evals rescreen <dataset-id> [--case=<id>]`.
-The reset is audited against the dataset. When the screen cannot start (Temporal unreachable) the
+The reset is audited against the dataset, with how many of the cases were screened, failed their
+screen, or were never screened before it. When the screen cannot start (Temporal unreachable) the
 cases stay reset, and the next eval run of the dataset or the next sweep screens them. Until a new
 screen passes, the harness does not score a reset case.
 
@@ -237,7 +248,7 @@ page and `auto-swe evals show` mark each case as screened, flaky, or not checked
 |---|---|
 | `EvalResult` | One row per scorer — normalized `value`, `passed`, `rationale`, for a judge row the model and cost of its call, and for a harness row the implementer `runtime` the candidate ran on. Indexed for per-scorer and per-day trend queries |
 | `EvalDataset` | A versioned, scope-cascaded benchmark |
-| `EvalCase` | One case — `input`, optional `reference`, `sourceRunId` provenance, tags, its flake-screen state (`flakeScreened`, `flakeRuns`) and whether re-validation quarantined it |
+| `EvalCase` | One case — `input`, optional `reference`, `sourceRunId` provenance, tags, its flake-screen state (`flakeScreened`, `flakeRuns`, `flakeScreenInfraErrors`) and whether re-validation quarantined it |
 | `EvalRun` | One execution of a dataset — status, candidate/baseline refs, each side's optional runtime override, aggregate statistics |
 | `EvalRubric` | A versioned judging rubric; `code-review-quality` ships seeded |
 
@@ -309,12 +320,15 @@ verdicts into trends per template, model, and prompt version.
   its retries and later starts, which skip the cases already recorded. A sweep screens a dataset in
   its own activity, not through the dataset's `EvalScreenWorkflow`, so a sweep and a screen started
   by a run can work on the same dataset at once and run one case's reference twice; only one result
-  is recorded.
+  is recorded. Screens of different datasets are not limited together: each dataset has its own
+  workflow, so datasets screened at once provision their workspaces at once; only a sweep screens
+  its datasets one at a time.
 - **The runner sees only the golden test's exit status.** A dependency install or network fetch
   inside the golden-test command that fails exits like a failing test and marks the case flaky; an
   admin re-screen clears it. In the other direction, a test suite that itself dies on a signal, or
-  hangs past the runner's timeout, reads as an infrastructure failure, so the case is never screened
-  and is retried by every screen.
+  hangs past the runner's timeout, reads as an infrastructure failure: it is retried by the next
+  screens and, after three, recorded as a failed screen, which a re-screen resets. A genuine
+  outage of the workspace or registry can therefore fail cases that a re-screen then clears.
 - **A failed screen stands until an admin re-screens it.** Nothing re-screens a case on its own once
   its screen is recorded, except re-validation restoring a quarantined case. Changing
   `evals.flakeScreenRuns` does not re-screen cases already screened; a dataset re-screen does.
