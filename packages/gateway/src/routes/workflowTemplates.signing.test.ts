@@ -35,6 +35,8 @@ interface Harness {
   updateWheres: Row[];
   /** Runs after the route's read: another request's write landing in between. */
   afterRead?: () => void;
+  /** The template is deleted (or leaves the caller's reach) after the route's read. */
+  gone?: boolean;
 }
 
 async function build(): Promise<Harness> {
@@ -73,7 +75,8 @@ async function build(): Promise<Harness> {
     },
     workflowTemplate: {
       findFirst: async ({ select, where }: { select?: Row; where: Row }) => {
-        const row = where.id === ID ? { ...h.row } : null;
+        const id = where.id ?? ((where.AND as Row[] | undefined)?.[0]?.id as string | undefined);
+        const row = id === ID && !h.gone ? { ...h.row } : null;
         // The preHandler's system-template probe selects fields; only the route's read races.
         if (row && !select) {
           h.afterRead?.();
@@ -109,7 +112,7 @@ async function build(): Promise<Harness> {
             }
             return true;
           });
-        if (!((where.AND as Row[]) ?? [where]).every(holds)) {
+        if (h.gone || !((where.AND as Row[]) ?? [where]).every(holds)) {
           return { count: 0 };
         }
         Object.assign(h.row, data);
@@ -246,6 +249,32 @@ describe('template webhook signing routes', () => {
     const res = await call(h, 'PUT', '/webhook/require-signature', { required: true });
     expect(res.statusCode).toBe(409);
     expect(h.row.webhookRequireSignature).toBe(false);
+  });
+
+  it.each([
+    ['POST', '/webhook/signing-secret/rotate', undefined],
+    ['DELETE', '/webhook/signing-secret', undefined],
+    ['PUT', '/webhook/require-signature', { required: false }],
+  ] as const)(
+    '%s %s on a template that vanished mid-request is 404, not 409',
+    async (method, suffix, payload) => {
+      h.afterRead = () => {
+        h.gone = true;
+      };
+      const res = await call(h, method, suffix, payload);
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('TEMPLATE_NOT_FOUND');
+      expect(h.audits).toHaveLength(0);
+    }
+  );
+
+  it('answers require-signature from the row as written', async () => {
+    await call(h, 'POST', '/webhook/signing-secret/rotate');
+    const res = await call(h, 'PUT', '/webhook/require-signature', { required: true });
+    expect(res.json().data.webhookSigning).toMatchObject({
+      configured: true,
+      requireSignature: true,
+    });
   });
 
   it('every write carries the caller’s write filter', async () => {

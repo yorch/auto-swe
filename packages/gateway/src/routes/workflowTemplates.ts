@@ -2050,27 +2050,35 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   };
   /**
    * Update one template's signing columns only if `condition` still holds, through the caller's
-   * write filter. Returns the number of rows written (0 or 1). The row was already loaded
-   * through the same filter; the guard cannot read `templateWriteFilter`'s spread (an ADMIN's is
-   * empty, and a global template has no team), so the call is marked rather than filtered.
+   * write filter, then re-read the row through the same filter. `gone` means the template no
+   * longer exists or the caller may no longer edit it (404); `conflict` means it exists but the
+   * condition no longer held (409); `ok` carries the row as written, which responses and the
+   * audit log are built from. The guard cannot read `templateWriteFilter`'s spread (an ADMIN's
+   * is empty, and a global template has no team), so the calls are marked rather than filtered.
    */
   const updateSigningIf = async (
     user: JwtPayload,
     id: string,
     data: Prisma.WorkflowTemplateUpdateManyMutationInput,
     condition: Prisma.WorkflowTemplateWhereInput
-  ): Promise<number> => {
-    const { count } = await runUnscoped(
+  ) =>
+    runUnscoped(
       'one template by id, constrained by the caller’s write filter',
       ['WorkflowTemplate'],
-      () =>
-        fastify.prisma.workflowTemplate.updateMany({
+      async () => {
+        const { count } = await fastify.prisma.workflowTemplate.updateMany({
           data,
           where: { AND: [{ id }, templateWriteFilter(user), condition] },
-        })
+        });
+        const row = await fastify.prisma.workflowTemplate.findFirst({
+          where: { AND: [{ id }, templateWriteFilter(user)] },
+        });
+        if (!row) {
+          return { status: 'gone' as const };
+        }
+        return count === 0 ? { row, status: 'conflict' as const } : { row, status: 'ok' as const };
+      }
     );
-    return count;
-  };
   const signingAudit = (state: WebhookSigningState) => ({
     webhookRequireSignature: state.requireSignature,
     webhookSigningPreviousActive: state.previousExpiresAt !== null,
@@ -2096,12 +2104,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const rotated = rotatedSigningColumns(existing, now);
       // Conditional on the secret read: two rotations racing would otherwise both hand out a
       // secret, and the one written first would be silently replaced.
-      const count = await updateSigningIf(user, existing.id, rotated.data, {
+      const write = await updateSigningIf(user, existing.id, rotated.data, {
         webhookSigningSecretNonce: existing.webhookSigningSecretNonce
           ? { equals: existing.webhookSigningSecretNonce }
           : null,
       });
-      if (count === 0) {
+      if (write.status === 'gone') {
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+      }
+      if (write.status === 'conflict') {
         return sendError(
           reply,
           409,
@@ -2109,10 +2120,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           'The signing secret changed while it was being rotated; try again'
         );
       }
-      const after = webhookSigningState(
-        { ...existing, ...(rotated.data as Partial<typeof existing>) },
-        now
-      );
+      const after = webhookSigningState(write.row, now);
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,
@@ -2158,7 +2166,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const cleared = await updateSigningIf(user, existing.id, CLEARED_SIGNING_COLUMNS, {
         webhookRequireSignature: false,
       });
-      if (cleared === 0) {
+      if (cleared.status === 'gone') {
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+      }
+      if (cleared.status === 'conflict') {
         return sendError(
           reply,
           409,
@@ -2169,7 +2180,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,
-        after: signingAudit(webhookSigningState({}, now)),
+        after: signingAudit(webhookSigningState(cleared.row, now)),
         before: signingAudit(webhookSigningState(existing, now)),
         entityId: existing.id,
         entityType: 'WorkflowTemplate',
@@ -2210,7 +2221,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         { webhookRequireSignature: required },
         required ? { webhookSigningSecretCiphertext: { not: null } } : {}
       );
-      if (changed === 0) {
+      if (changed.status === 'gone') {
+        return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+      }
+      if (changed.status === 'conflict') {
         return sendError(
           reply,
           409,
@@ -2218,7 +2232,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           'Generate a signing secret before requiring signed calls'
         );
       }
-      const updated = { ...existing, webhookRequireSignature: required };
+      const updated = changed.row;
       if (existing.webhookRequireSignature !== required) {
         await writeAuditLog(fastify, {
           action: 'UPDATE',
