@@ -793,6 +793,67 @@ scripted model and no API key: `PI_DOCKER_TEST=1 yarn vitest run
 packages/worker/src/agents/pi/runtime.docker.test.ts` (`PI_DOCKER_TEST_IMAGE` names an image other
 than `node:24-alpine`). The `docker-tests` job in `ci.yml` runs it with the flag set.
 
+**Running one real turn.** `yarn pi:smoke` runs a single Pi implementer turn against a real model,
+outside Temporal and without a database. It starts a workspace container, puts the repository in it,
+builds `piRuntime` with the real `resolveModel`, and calls `runTurn` once. It prints each tool call
+with the worker's decision, each model call's tokens, the final text, the diff stat, the wall time
+and a cost estimate from `BUILTIN_MODELS` (the model catalog lives in the database and is not
+consulted), and writes the full trace as JSON.
+
+```bash
+yarn workspace @auto-swe/shared build   # the script imports the shared package's build output
+PI_SMOKE_API_KEY=<provider key> yarn pi:smoke --model anthropic/claude-sonnet-5-5 --no-db-scanners
+```
+
+The key is read only from `PI_SMOKE_API_KEY`, never a flag, and is removed from the process
+environment before anything is started, so neither Docker nor git inherits it. `--api-base` points
+an OpenAI-compatible provider at its endpoint; `--image`, `--repo` or `--dir`, `--prompt`,
+`--max-steps`, `--deadline-seconds` and `--trace-file` set the rest (`--help` lists them, and each
+reads a `PI_SMOKE_<NAME>` variable too). Relative `--dir` and `--trace-file` paths mean the
+directory the command was run from. The trace defaults to a file under the system temp directory,
+mode 0600, whose path is printed: it holds the prompt, tool output and the diff. URL credentials in
+`--repo` and `--api-base` are replaced with `***` in the log, the trace and error messages.
+
+The scanners load their patterns from the database, so the tool refuses to start without
+`DATABASE_URL` unless `--no-db-scanners` is given. That mode makes them read
+`BUILTIN_SCANNER_PATTERNS` instead and says so in the report; patterns an admin added or disabled
+at `/govern/scanner` do not apply. `--mock` swaps in a scripted model that writes a file and
+answers, for checking the tool itself with no key or network (`pi/smoke.docker.test.ts` runs it in
+CI under the same `PI_DOCKER_TEST` flag).
+
+What the container is and is not. It is created with `createWorkspace`'s settings: the memory, CPU
+and pids limits, DNS and network from `resolveWorkspaceInfra()` (`WORKSPACE_*`), `--init`,
+`--cap-drop=ALL`, `no-new-privileges`, the two GCP metadata hostnames blackholed, and the
+metadata-IP blackhole sidecar, run from `WORKSPACE_METADATA_BLOCK_IMAGE` (best effort, as there; a
+failure is logged and the run continues).
+It does not get the harness model proxy's host alias, because the model is called from the script.
+The repository is cloned (shallow) or copied on the host and `docker cp`'d in, so the image needs no
+git, then handed to the container's root by one privileged `chown -R -h` (`docker cp` keeps the host
+user's uid, which the capability-less root could not write), so the image needs a `chown`. The repository's own `.git` is never carried over, for `--repo` or `--dir`: the script makes a
+fresh baseline commit, so the diff shows only what the agent changed. `--dir` also leaves out
+`node_modules` and every file whose name starts with `.env` (`.env`, `.env.local`, `.envrc`) or ends
+with `.env` (`prod.env`); names ending `.example`, `.sample`, `.template` or `.dist` are kept.
+Everything else under `--dir` is copied, and `--include-env` copies the excluded files too, which
+puts those secrets within reach of a model-driven container.
+
+Nothing that comes out of the container is trusted by host git. The diff compares the container's
+tree, with every `.git` entry deleted, against a git directory the host made before the container
+existed, using a scratch index and a minimal environment, with `core.fsmonitor` and hooks disabled
+and a timeout on every call. The tree is copied out with `docker cp <container>:/workspace/target-repo/.`
+into a directory made on the host, so Docker resolves the path inside the container and a symlink
+the agent left at the checkout path cannot point the copy at a host directory. The container and
+the temporary directories are removed however the run ends, including on SIGINT and SIGTERM, which
+wait for an in-flight `docker run` (an image pull included) to settle before removing the container;
+a second signal removes the container by name and exits at once, without waiting.
+
+Once a turn has run cleanly, compare the runtime with the Mastra loop on the same prompt, model and
+skills, as [evals.md "Comparing runtimes"](./evals.md#comparing-runtimes) describes:
+
+```bash
+auto-swe evals run golden --candidate=implementer@N --candidate-runtime=pi \
+  --against=implementer@N --against-runtime=mastra
+```
+
 **Other harnesses.** Claude Code and Pi are the harnesses registered. Codex CLI, OpenCode, Gemini CLI
 and Pi were each checked for what the registry requires: a callback the worker answers,
 synchronously, before every tool call, that nothing inside the container can bypass. None of the
