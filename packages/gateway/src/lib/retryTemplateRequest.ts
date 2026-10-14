@@ -55,6 +55,7 @@ export async function retryTemplateRequest(
       id: true,
       inputSchema: true,
       origin: true,
+      team: { select: { organization: { select: { id: true, monthlyBudgetUsdCents: true } } } },
       teamId: true,
       workspaceProvider: true,
     },
@@ -96,14 +97,22 @@ export async function retryTemplateRequest(
   }
   // A connection-less retry reuses the request, so it is billed to the org its first launch
   // charged the request to (`billingOrgId`) — and gated against that same org, not whatever
-  // the template's team is now, so the decision and the bill name one organization.
-  const billingOrg =
+  // the template's team is now, so the decision and the bill name one organization. A request
+  // charged to no org (its connection was deleted, its org was deleted, or its template had no
+  // team at launch) is gated against the template team's org, as a fresh launch would be, and
+  // that org is recorded on the request with the retry's ledger row (`stampOrg` below) so the
+  // retry is billed where it was gated.
+  const stampedOrg =
     !input.connectionId && input.billingOrgId
       ? await app.prisma.organization.findUnique({
           select: { id: true, monthlyBudgetUsdCents: true },
           where: { id: input.billingOrgId },
         })
       : null;
+  const billingOrg = input.connectionId
+    ? null
+    : (stampedOrg ?? template.team?.organization ?? null);
+  const stampOrg = billingOrg && billingOrg.id !== input.billingOrgId ? billingOrg.id : null;
   if (billingOrg) {
     const authorization = await authorizeLaunch(app.prisma, user, {
       gate: request.repoAccessGate,
@@ -166,7 +175,27 @@ export async function retryTemplateRequest(
         templateId: input.templateId as string,
         templateVersion: input.templateVersion as number,
       }),
-    { log: app.log }
+    {
+      // In the ledger transaction, so the request is charged to the gated org exactly when the
+      // retry's row is written. Only a request still charged as it was read is changed: a
+      // concurrent retry that stamped first is left alone.
+      ...(stampOrg
+        ? {
+            guard: async (tx: Prisma.TransactionClient) => {
+              await tx.runInput.updateMany({
+                data: { billingOrgId: stampOrg },
+                where: {
+                  billingOrgId: input.billingOrgId ?? null,
+                  connectionId: null,
+                  id: input.id,
+                },
+              });
+              return null;
+            },
+          }
+        : {}),
+      log: app.log,
+    }
   );
   if (!launched.ok) {
     return reply

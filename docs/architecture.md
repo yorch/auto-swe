@@ -714,7 +714,11 @@ A launch with no connection that spends against an org — a template run or tem
 (the template team's org), a service principal's template run (its own team's org), a team
 automation (the team's org) — records that org on the request as `RunInput.billingOrgId`, so the run
 is billed to, counted under and capped by the org its launch was gated against. A re-run reuses the
-request, and so the org; a connection-less re-run is gated against that recorded org.
+request, and so the org: a connection-less re-run is gated against the org the request is charged
+to — for a service principal's run, the principal's team's org, so the person re-running it must be
+a member of that org. A request charged to no org (its connection or org was deleted, or its
+template had no team when it launched) is gated against its template team's org, as a fresh launch
+is, and that org is recorded on the request in the transaction that writes the re-run's ledger row.
 The spend the cap reads is `orgMonthSpend` (`@auto-swe/shared/lib/billing`): `OrgMonthlyUsage`, plus
 what each unfinalized run billed to the org has accrued so far (its own ledger row, or its trace
 rows when it has none), plus this month's trace rows of runless workflows attributed to the org.

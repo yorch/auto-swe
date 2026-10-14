@@ -97,7 +97,8 @@ A run with no connection is billed to the organization of the principal's own te
 launches only global templates and its own team's, so that is the template team's organization
 whenever the template has a team. The request records it (`RunInput.billingOrgId`), so the run is
 billed to it at finalization, counts toward its in-flight spend and is capped mid-run against it,
-like a run on a repository.
+like a run on a repository. A person who re-runs such a run is gated against that same organization,
+so they must be a member of the principal's team's organization.
 
 A connection that is not on the principal's list answers `404 CONNECTION_NOT_FOUND`, the answer a
 connection that does not exist gets, before anything is looked up, so a principal cannot probe which
