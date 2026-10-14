@@ -10,6 +10,7 @@ import { writeAuditLog } from '../lib/auditLog.js';
 import { getDefaultClientOrigin } from '../lib/env.js';
 import { sendError } from '../lib/httpErrors.js';
 import { revokeMcpGrants } from '../lib/mcpGrants.js';
+import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { invalidateUserAuthCache, requireAuth, requireUser } from '../plugins/auth.js';
 
 // better-auth looks accounts up by lower-cased email, so every stored address is too.
@@ -73,10 +74,10 @@ function replyOnUserUniqueViolation(err: unknown, reply: FastifyReply): FastifyR
   if (typeof err !== 'object' || err === null) {
     return null;
   }
-  const e = err as { code?: string; meta?: { target?: unknown } };
-  if (e.code !== 'P2002') {
+  if (!isUniqueConstraintError(err)) {
     return null;
   }
+  const e = err as { meta?: { target?: unknown } };
   const t = e.meta?.target;
   const target = Array.isArray(t) ? t.join(',') : typeof t === 'string' ? t : '';
   const isSlack = target.includes('slack');

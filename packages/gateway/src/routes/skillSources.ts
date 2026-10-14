@@ -10,6 +10,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
+import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import {
   installIntoSource,
@@ -285,7 +286,7 @@ export const skillSourceRoutes: FastifyPluginAsync = async (fastify) => {
             },
           });
         }
-        if ((err as { code?: unknown } | null)?.code === 'P2002') {
+        if (isUniqueConstraintError(err)) {
           return sendError(
             reply,
             409,

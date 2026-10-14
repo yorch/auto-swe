@@ -14,6 +14,7 @@ import {
   safeDisplayPath,
 } from '@auto-swe/shared/lib/skillSource';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { isRecordNotFoundError } from './prismaErrors.js';
 import {
   findConflicts,
   lockSkillSource,
@@ -572,7 +573,7 @@ export async function acceptSkillUpdate(
           where: { id: source.id, latestSha: input.sha, status: { not: 'DISABLED' } },
         });
       } catch (err) {
-        if ((err as { code?: unknown } | null)?.code === 'P2025') {
+        if (isRecordNotFoundError(err)) {
           throw new SkillUpdateRefusal('SOURCE_CHANGED');
         }
         throw err;
