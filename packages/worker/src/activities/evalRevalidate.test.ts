@@ -8,8 +8,13 @@ const runGateStandalone = vi.fn(async (_input: unknown) => ({
 vi.mock('./standaloneGateRunner.js', () => ({
   runGateStandalone: (input: unknown) => runGateStandalone(input),
 }));
+const evalCaseUpdate = vi.fn(async (_args: unknown) => ({}));
+vi.mock('@auto-swe/shared/db', () => ({
+  prisma: { evalCase: { update: (args: unknown) => evalCaseUpdate(args) } },
+}));
 
 import {
+  _defaults,
   type RevalCaseRow,
   type RevalidateDeps,
   revalidateDataset,
@@ -68,6 +73,26 @@ describe('revalidateDataset', () => {
     expect(r.quarantined).toBe(0);
     expect(r.restored).toBe(0);
     expect(setQuarantined).not.toHaveBeenCalled();
+  });
+});
+
+describe('defaultSetQuarantined', () => {
+  it('quarantines without touching the screen state', async () => {
+    evalCaseUpdate.mockClear();
+    await _defaults.defaultSetQuarantined('a', true);
+    expect(evalCaseUpdate).toHaveBeenCalledWith({
+      data: { quarantined: true },
+      where: { id: 'a' },
+    });
+  });
+
+  it('sends a restored case back to unscreened, so a new screen must pass', async () => {
+    evalCaseUpdate.mockClear();
+    await _defaults.defaultSetQuarantined('a', false);
+    expect(evalCaseUpdate).toHaveBeenCalledWith({
+      data: { flakeRuns: 0, flakeScreened: false, quarantined: false },
+      where: { id: 'a' },
+    });
   });
 });
 

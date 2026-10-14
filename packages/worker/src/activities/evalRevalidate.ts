@@ -96,10 +96,15 @@ async function runReferenceDefault(c: RevalCaseRow): Promise<boolean> {
 }
 
 async function defaultSetQuarantined(caseId: string, quarantined: boolean): Promise<void> {
-  await prisma.evalCase
-    .update({ data: { quarantined }, where: { id: caseId } })
-    .catch(() => undefined);
+  // A restored case passes again in a different repo state than its last flake
+  // screen saw, so that screen says nothing now: it goes back to unscreened, and
+  // the harness scores it only once a new screen (the sweep's, right after this)
+  // passes.
+  const data = quarantined ? { quarantined } : { flakeRuns: 0, flakeScreened: false, quarantined };
+  await prisma.evalCase.update({ data, where: { id: caseId } }).catch(() => undefined);
 }
+
+export const _defaults = { defaultSetQuarantined };
 
 /** Activity entry: re-validate a dataset with the real DB + Docker deps. */
 export async function revalidateDatasetActivity(datasetId: string): Promise<RevalidateResult> {
