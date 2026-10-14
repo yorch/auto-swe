@@ -4,7 +4,7 @@ const { adminTracker } = vi.hoisted(() => ({
   adminTracker: { allowPrivateNetwork: false, baseUrl: null as string | null },
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
-  resolveIssueTrackerConfig: vi.fn(async () => adminTracker),
+  resolveIssueTrackerOrigin: vi.fn(async () => adminTracker),
 }));
 
 import { assertSafeJiraBaseUrl, createIssue, fetchIssue } from './issueTracker.js';

@@ -2,8 +2,11 @@ import type { Binding } from '../../spec.js';
 import type { NodeMap } from './common.js';
 
 export interface SourceHeadOptions {
-  /** The workspace provider the run resolves (`document` for Notion pages, `record` for tickets). */
-  provider: 'document' | 'record';
+  /**
+   * The workspace provider the run resolves: `document` for a Notion or Confluence
+   * page, `issue_tracker` for a Jira or Linear issue, `record` for a ticket.
+   */
+  provider: 'document' | 'issue_tracker' | 'record';
   /** What to read, beyond the connection (`{ pageId: … }` or `{ ticketId: … }`). */
   read: Record<string, Binding>;
   /** Node that follows the read. */

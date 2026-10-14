@@ -36,7 +36,7 @@ const METADATA: Record<WorkspaceProviderType, WorkspaceProviderMetadata> = {
     label: 'API-only',
   },
   document: {
-    connectionTypes: ['notion'],
+    connectionTypes: ['notion', 'confluence'],
     description: 'Load source documents, draft and review content, and publish the result.',
     key: 'document',
     label: 'Document workspace',

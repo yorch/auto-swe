@@ -730,7 +730,9 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
             ? { pageId: inputs.pageId as string }
             : inputs.ticketId !== undefined
               ? { ticketId: inputs.ticketId as string }
-              : inputs.query,
+              : inputs.issueId !== undefined
+                ? { issueId: inputs.issueId as string }
+                : inputs.query,
       }),
   ],
   [
@@ -772,6 +774,13 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       // nothing, the write must fail rather than land somewhere else (a Notion
       // `text` with no `pageId` would otherwise go to the connection's source
       // page). `connectionId` picks the target and is not part of what is written.
+      //
+      // Deliberately NOT exempted for Confluence. A Confluence node that binds
+      // `bodyText` flat (as the built-in template does) reaches this branch because
+      // `bodyText` is not one of the shapes above; exempting the case where one of
+      // them *is* bound but resolved to nothing would admit the same map on a
+      // Notion or issue-tracker connection, where it creates a page or an issue
+      // from a write that was meant to be refused.
       if (data === undefined && !EXPLICIT_PAYLOAD_INPUTS.some((key) => key in inputs)) {
         const fields = Object.fromEntries(
           Object.entries(inputs).filter(([key, v]) => key !== 'connectionId' && v !== undefined)

@@ -15,6 +15,7 @@ import { FOUR_EYES_SPEC } from './fourEyes.js';
 import { FULL_SUPERVISED_SPEC } from './fullSupervised.js';
 import { HOTFIX_SPEC } from './hotfix.js';
 import { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
+import { ISSUE_TO_CONFLUENCE_PAGE_SPEC } from './issueToConfluencePage.js';
 import { MIGRATION_SPEC } from './migration.js';
 import { MODEL_CATALOG_REFRESH_SPEC } from './modelCatalogRefresh.js';
 import { NOTION_CONTENT_BRAND_REVIEW_SPEC } from './notionContentBrandReview.js';
@@ -284,6 +285,33 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     workspaceProvider: 'issue_tracker',
   },
 
+  // ── Issue tracker -> document (Jira/Linear issue -> Confluence page) ──────
+  {
+    description: ISSUE_TO_CONFLUENCE_PAGE_SPEC.description,
+    inputSchema: {
+      properties: {
+        connectionId: { connectionType: 'issue_tracker', type: 'connection' },
+        docConnectionId: { connectionType: 'confluence', type: 'connection' },
+        instructions: { type: 'string' },
+        issueId: { type: 'string' },
+        spaceKey: { type: 'string' },
+        targetPageId: { type: 'string' },
+        title: { type: 'string' },
+        // The version the caller read before drafting. Supplying it makes the write
+        // refuse rather than replace a page that moved on meanwhile. A form leaves
+        // an untouched optional number out of the payload entirely
+        // (`buildInitialPayload`), so declaring it here does not make a normal
+        // launch fail validation.
+        version: { integer: true, minimum: 1, type: 'number' },
+      },
+      required: ['connectionId', 'docConnectionId', 'issueId'],
+      type: 'object',
+    },
+    name: ISSUE_TO_CONFLUENCE_PAGE_SPEC.name,
+    spec: ISSUE_TO_CONFLUENCE_PAGE_SPEC,
+    workspaceProvider: 'issue_tracker',
+  },
+
   // ── PRD workflow ─────────────────────────────────────────────────────────
   {
     description: PRD_DECOMPOSITION_SPEC.description,
@@ -316,6 +344,7 @@ export { FOUR_EYES_SPEC } from './fourEyes.js';
 export { FULL_SUPERVISED_SPEC } from './fullSupervised.js';
 export { HOTFIX_SPEC } from './hotfix.js';
 export { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
+export { ISSUE_TO_CONFLUENCE_PAGE_SPEC } from './issueToConfluencePage.js';
 export { MIGRATION_SPEC } from './migration.js';
 export { MODEL_CATALOG_REFRESH_SPEC } from './modelCatalogRefresh.js';
 export { NOTION_CONTENT_BRAND_REVIEW_SPEC } from './notionContentBrandReview.js';

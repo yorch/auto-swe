@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { Prisma } from '@auto-swe/shared';
+import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import {
   getWorkspaceProviderMetadata,
   isWorkspaceProviderType,
@@ -79,7 +80,11 @@ export async function retryTemplateRequest(
     {
       connectionId: input.connectionId,
       gate: request.repoAccessGate,
+      inputSchema: isInputSchema(template.inputSchema) ? template.inputSchema : null,
       log: request.log,
+      // A retry re-uses the recorded payload, so its declared connections are
+      // authorized again rather than trusted because the first launch passed.
+      payload: input.payload,
       prisma: app.prisma,
       providerMeta,
       templateTeamId: template.teamId,

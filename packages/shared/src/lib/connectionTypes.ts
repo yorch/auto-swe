@@ -13,6 +13,7 @@ export const CONNECTION_TYPES = [
   'git_repo',
   'issue_tracker',
   'notion',
+  'confluence',
   'zendesk',
   'hubspot',
   'slack_workspace',
@@ -33,6 +34,13 @@ export interface ConnectionTypeMetadata {
 }
 
 const METADATA: Record<ConnectionType, ConnectionTypeMetadata> = {
+  confluence: {
+    description: 'Confluence space for reading pages and creating or updating them.',
+    isWorkspaceTarget: true,
+    key: 'confluence',
+    label: 'Confluence',
+    supportsConfig: true,
+  },
   git_repo: {
     description: 'A git repository hosted on GitHub or another Git provider.',
     isWorkspaceTarget: true,
@@ -164,5 +172,39 @@ export type IssueTrackerConnectionConfig = z.infer<typeof IssueTrackerConnection
 
 export function parseIssueTrackerConnectionConfig(config: unknown): IssueTrackerConnectionConfig {
   const parsed = IssueTrackerConnectionConfigSchema.safeParse(config ?? {});
+  return parsed.success ? parsed.data : {};
+}
+
+/**
+ * Confluence config stored in `Connection.config`.
+ *
+ * Every field is optional so a half-filled row can exist; the worker's connector
+ * refuses at use with a message naming what is missing, exactly like the
+ * `issue_tracker` config it sits beside.
+ *
+ * There is deliberately **no `allowPrivateNetwork` here**. `baseUrl` is on the
+ * `Connection` row, which a team LEAD can edit, and the worker sends the
+ * connection's token to it — so a self-service private-address opt-in would be
+ * no guard at all. The worker's SSRF check honours the opt-in only for the exact
+ * origin an ADMIN configured at /studio/integrations → Knowledge Base, the same
+ * narrower rule the tracker connection follows.
+ */
+export const ConfluenceConnectionConfigSchema = z.object({
+  /**
+   * The site root, e.g. `https://acme.atlassian.net` — API paths are appended to
+   * it, so a `/wiki` suffix (or any other) produces a doubled path and a 404.
+   */
+  baseUrl: z.string().url().optional(),
+  email: z.string().email().optional(),
+  /** Default parent page for a created page when the step does not name one. */
+  parentPageId: z.string().min(1).optional(),
+  /** Default space for a created page when the step does not name one. */
+  spaceKey: z.string().min(1).optional(),
+});
+
+export type ConfluenceConnectionConfig = z.infer<typeof ConfluenceConnectionConfigSchema>;
+
+export function parseConfluenceConnectionConfig(config: unknown): ConfluenceConnectionConfig {
+  const parsed = ConfluenceConnectionConfigSchema.safeParse(config ?? {});
   return parsed.success ? parsed.data : {};
 }

@@ -68,6 +68,46 @@ export function isInputSchema(value: unknown): value is InputSchema {
   return v.type === 'object' && typeof v.properties === 'object' && v.properties !== null;
 }
 
+/**
+ * The connection IDs a payload supplies for the schema's `connection`-typed
+ * fields, keyed by field name.
+ *
+ * A template may declare more than one connection — an issue tracker to read
+ * from and a document store to write to — and each of them is a credential the
+ * run will be handed. Every declared one therefore has to be authorized at
+ * launch, exactly like the run's own `connectionId`; a field this function does
+ * not report is a field nothing checks.
+ *
+ * Only non-empty strings are reported: validation has already rejected a
+ * malformed value by the time this is consulted, and an absent optional field
+ * simply names no connection.
+ */
+export function declaredConnectionInputs(
+  schema: InputSchema | null | undefined,
+  payload: unknown
+): Array<{ field: string; connectionId: string; expectedType?: string }> {
+  if (!schema || typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    return [];
+  }
+  const values = payload as Record<string, unknown>;
+  const found: Array<{ field: string; connectionId: string; expectedType?: string }> = [];
+  for (const [field, prop] of Object.entries(schema.properties)) {
+    if (prop.type !== 'connection') {
+      continue;
+    }
+    const value = values[field];
+    if (typeof value !== 'string' || value.length === 0) {
+      continue;
+    }
+    found.push({
+      connectionId: value,
+      ...(prop.connectionType ? { expectedType: prop.connectionType } : {}),
+      field,
+    });
+  }
+  return found;
+}
+
 function typeOf(value: unknown): InputFieldType | 'null' | 'object' {
   if (value === null) {
     return 'null';

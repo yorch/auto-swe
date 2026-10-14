@@ -1,8 +1,8 @@
 import type { IssueTrackerConnectionConfig } from '@auto-swe/shared';
 import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
-import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
-import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import { resolveIssueTrackerOrigin } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
+import { assertSafeConnectionBaseUrl } from './baseUrlGuard.js';
 
 const ISSUE_TRACKER_TIMEOUT_MS = 30_000;
 
@@ -42,44 +42,17 @@ function requireBaseUrl(config: IssueTrackerConnectionConfig): string {
 }
 
 /**
- * The SSRF check for a Jira connection's `baseUrl`. That URL is on the
- * `Connection` row, which a team LEAD can edit, and the worker sends the
- * connection's credential to it — so an unchecked URL let a LEAD aim the
- * worker (and the token) at loopback, a cloud metadata endpoint or any
- * internal service.
- *
- * The same SSRF guard as the platform's own tracker integration.
- * Its `allowPrivateNetwork` opt-in is honoured only for the exact origin an
- * ADMIN configured at /studio/integrations → Tracker: an opt-in a LEAD could
- * set on their own connection would be no guard at all. The opt-in waives
- * only the private-address refusal (`checkProbeUrl`); loopback, metadata and
- * unspecified addresses and malformed or non-http(s) URLs are always refused.
+ * The SSRF check for a Jira connection's `baseUrl`, with the admin tracker
+ * integration supplying the private-address opt-in. See
+ * {@link assertSafeConnectionBaseUrl} for the rule and why the opt-in may not
+ * come from the connection row.
  */
 export async function assertSafeJiraBaseUrl(baseUrl: string): Promise<{ allowPrivate: boolean }> {
-  const safety = checkProbeUrl(baseUrl);
-  const admin = await resolveIssueTrackerConfig().catch(() => null);
-  // The opt-in is per origin and applies whether or not the text check passed: a named host that
-  // resolves to a private address passes the text check and is refused only at connect time.
-  const optedIn = Boolean(
-    admin?.allowPrivateNetwork && admin.baseUrl && sameOrigin(admin.baseUrl, baseUrl)
-  );
-  if (safety.ok) {
-    return { allowPrivate: optedIn };
-  }
-  if (optedIn && checkProbeUrl(baseUrl, { allowPrivate: true }).ok) {
-    return { allowPrivate: true };
-  }
-  throw ApplicationFailure.nonRetryable(
-    `jira connection baseUrl rejected by the SSRF guard: ${safety.reason}`
-  );
-}
-
-function sameOrigin(a: string, b: string): boolean {
-  try {
-    return new URL(a).origin === new URL(b).origin;
-  } catch {
-    return false;
-  }
+  // The origin-only resolver: it decrypts nothing else from that integration, and a
+  // failure is propagated rather than caught, so a database blip stays retryable
+  // instead of becoming a permanent refusal.
+  const admin = await resolveIssueTrackerOrigin();
+  return assertSafeConnectionBaseUrl(baseUrl, admin, 'jira');
 }
 
 function requireEmail(config: IssueTrackerConnectionConfig): string {

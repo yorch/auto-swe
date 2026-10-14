@@ -15,6 +15,7 @@ describe('connectionTypes', () => {
       'git_repo',
       'issue_tracker',
       'notion',
+      'confluence',
       'zendesk',
       'hubspot',
       'slack_workspace',
@@ -52,6 +53,7 @@ describe('connectionTypes', () => {
     expect(targets).toContain('git_repo');
     expect(targets).toContain('issue_tracker');
     expect(targets).toContain('notion');
+    expect(targets).toContain('confluence');
     expect(targets).toContain('zendesk');
     expect(targets).toContain('hubspot');
     expect(targets).not.toContain('slack_workspace');

@@ -1174,6 +1174,128 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     expect(calls.readSource).toHaveLength(1);
     expect((calls.readSource[0] as { connectionId: string }).connectionId).toBe(overrideId);
   }, 120_000);
+
+  it('maps inputs.issueId to the query an issue-tracker readSource needs', async () => {
+    calls.resolveWorkspace.length = 0;
+    calls.readSource.length = 0;
+    currentSpec = makeSpec(
+      {
+        done: { result: {}, status: 'SUCCESS', type: 'terminate' },
+        read: {
+          config: {},
+          inputs: { issueId: { literal: 'PROJ-42' } },
+          next: 'done',
+          step: 'readSource',
+          type: 'step',
+        },
+        resolveWorkspace: {
+          config: { workspaceProvider: 'issue_tracker' },
+          inputs: {},
+          next: 'read',
+          step: 'resolveWorkspace',
+          type: 'step',
+        },
+      },
+      'resolveWorkspace'
+    );
+    await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-issue-id', GENERIC_REQUEST)
+    );
+    expect(calls.resolveWorkspace).toHaveLength(1);
+    expect(calls.resolveWorkspace[0]).toMatchObject({ workspaceProvider: 'issue_tracker' });
+    expect(calls.readSource).toHaveLength(1);
+    expect((calls.readSource[0] as { connectionId: string }).connectionId).toBe(
+      GENERIC_REQUEST.connectionId
+    );
+    // The issue-tracker connector reads `query.issueId` and nothing else, so the
+    // node's `issueId` input has to arrive wrapped — otherwise a Jira read throws
+    // "requires an issueId in query" from an input the template plainly supplied.
+    expect((calls.readSource[0] as { query: unknown }).query).toEqual({ issueId: 'PROJ-42' });
+  }, 120_000);
+
+  it('reaches the Confluence handler from the flat inputs the template binds', async () => {
+    calls.resolveWorkspace.length = 0;
+    calls.writeOutcome.length = 0;
+    currentSpec = makeSpec(
+      {
+        done: { result: {}, status: 'SUCCESS', type: 'terminate' },
+        post: {
+          config: {},
+          inputs: {
+            bodyText: { literal: 'Draft' },
+            fallbackTitle: { literal: 'From the issue' },
+            targetPageId: { literal: 'TARGET' },
+            version: { literal: 7 },
+          },
+          next: 'done',
+          step: 'writeOutcome',
+          type: 'step',
+        },
+        resolveWorkspace: {
+          config: {},
+          inputs: {},
+          next: 'post',
+          step: 'resolveWorkspace',
+          type: 'step',
+        },
+      },
+      'resolveWorkspace'
+    );
+    await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-confluence-flat', GENERIC_REQUEST)
+    );
+    const writes = calls.writeOutcome as { data: unknown }[];
+    // The built-in template's shape: none of the explicit-payload keys is bound, so
+    // the node's own inputs are the payload.
+    expect(writes[0]?.data).toEqual({
+      bodyText: 'Draft',
+      fallbackTitle: 'From the issue',
+      targetPageId: 'TARGET',
+      version: 7,
+    });
+  }, 120_000);
+
+  it('refuses a Notion payload whose page binding resolved to nothing', async () => {
+    calls.resolveWorkspace.length = 0;
+    calls.writeOutcome.length = 0;
+    currentSpec = makeSpec(
+      {
+        done: { result: {}, status: 'SUCCESS', type: 'terminate' },
+        post: {
+          config: {},
+          inputs: {
+            bodyText: { literal: 'not a Notion field' },
+            // Bound but resolving to nothing: the write must fail rather than fall
+            // back to the connection's own source page.
+            pageId: { from: 'request.payload.absentPageId' },
+            title: { literal: 'Unexpected' },
+          },
+          next: 'done',
+          step: 'writeOutcome',
+          type: 'step',
+        },
+        resolveWorkspace: {
+          config: {},
+          inputs: {},
+          next: 'post',
+          step: 'resolveWorkspace',
+          type: 'step',
+        },
+      },
+      'resolveWorkspace'
+    );
+    await env.client.workflow.execute(
+      'RunnableWorkflow',
+      startArgs('wf-notion-suppressed', GENERIC_REQUEST)
+    );
+    const writes = calls.writeOutcome as { data: unknown }[];
+    // `pageId` names an explicit payload shape and resolved to nothing, so no
+    // payload is built: the activity refuses instead of creating a page under the
+    // connection's default parent — which an exemption for `bodyText` allowed.
+    expect(writes[0]?.data).toBeUndefined();
+  }, 120_000);
 });
 
 describe('RunnableWorkflow — oversized context values', () => {

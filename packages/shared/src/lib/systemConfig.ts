@@ -538,6 +538,29 @@ function asTrackerProvider(value: string | null | undefined): TrackerProvider | 
   return value === 'jira' || value === 'linear' || value === 'github' ? value : null;
 }
 
+/**
+ * The admin issue-tracker integration's origin and its private-network opt-in,
+ * decrypting nothing.
+ *
+ * The same reasoning as {@link resolveKnowledgeBaseOrigin}: the worker's
+ * per-connection URL guard needs these two fields only, and the full resolver also
+ * decrypts the API token *and* the webhook secret — either of which failing would
+ * then break every Jira connection request that has its own working token.
+ */
+export async function resolveIssueTrackerOrigin(): Promise<{
+  allowPrivateNetwork: boolean;
+  baseUrl: string | null;
+}> {
+  const row = await (await db()).issueTrackerConfig.findUnique({
+    select: { allowPrivateNetwork: true, baseUrl: true },
+    where: { id: 'default' },
+  });
+  return {
+    allowPrivateNetwork: row?.allowPrivateNetwork ?? false,
+    baseUrl: row?.baseUrl ?? process.env.TRACKER_BASE_URL ?? null,
+  };
+}
+
 export async function resolveIssueTrackerConfig(
   _opts?: ResolveOpts
 ): Promise<ResolvedIssueTrackerConfig> {
@@ -616,6 +639,30 @@ export async function resolveKnowledgeBaseConfig(
     maxPages: row?.maxPages ?? undefined,
     provider,
     spaces: row?.spaces?.length ? row.spaces : spacesEnv,
+  };
+}
+
+/**
+ * The admin knowledge-base integration's origin and its private-network opt-in,
+ * decrypting nothing.
+ *
+ * The worker's per-connection URL guard needs only these two fields. Reading them
+ * through {@link resolveKnowledgeBaseConfig} would make the singleton's token a
+ * prerequisite: a token that no longer decrypts — a rotated key version, a
+ * corrupted tag — would then fail every request through a connection that has a
+ * perfectly usable credential of its own.
+ */
+export async function resolveKnowledgeBaseOrigin(): Promise<{
+  allowPrivateNetwork: boolean;
+  baseUrl: string | null;
+}> {
+  const row = await (await db()).knowledgeBaseConfig.findUnique({
+    select: { allowPrivateNetwork: true, baseUrl: true },
+    where: { id: 'default' },
+  });
+  return {
+    allowPrivateNetwork: row?.allowPrivateNetwork ?? false,
+    baseUrl: row?.baseUrl ?? process.env.KB_BASE_URL ?? null,
   };
 }
 
