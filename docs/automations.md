@@ -370,6 +370,18 @@ await fetch(webhookUrl, {
 The webhook token is part of the URL, so the gateway's request log and its trace spans record the
 path with the token replaced by `[redacted]`.
 
+### 5.2 Reporting the outcome
+
+A webhook call may ask to be told how its run went: a top-level `callback` object in the body,
+`{ "url": "…" }` or `{ "endpointId": "…" }` with an optional `context`, names a callback endpoint of
+the **template's team** (or a URL under one). The platform then POSTs a signed body there when the
+run waits for a human and when it ends ([run-callbacks.md](./run-callbacks.md)). The `callback` key is
+taken out of the body before the payload is validated against the template's inputs and stored, so
+a template cannot use `callback` as an input of its own (a non-object value is left as input). A
+global template's webhook refuses a callback (`400 CALLBACKS_UNAVAILABLE`): it has no team to
+register endpoints. A callback the team has not registered is refused before anything starts and
+recorded as `FAILED_TO_START` with its code.
+
 ## Limitations
 
 - **Two event sources.** Failed GitHub Actions runs and issue labels start event automations; a
