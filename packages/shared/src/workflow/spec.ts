@@ -309,12 +309,14 @@ const EvalNodeSchema = z.object({
    * Git ref (branch) the candidate's code lives on, for any `gate` scorer.
    * Defaults to the run's own work branch, `<branchPrefix>/<ticketId>`.
    *
-   * A `gate` scorer clones and executes against a branch, so a run whose code is
-   * not on that branch — a per-branch fan-out subtask, or a launch that named a
-   * `baseBranch` — has to say so, or the scorer verifies nothing (and, because
-   * `gate` fails safe, would report a failure the change never caused). A
-   * binding, resolved like `target`, so it can read the branch a previous node
-   * pushed: `{ "from": "nodes.implement.output.branch" }`.
+   * A `gate` scorer clones and executes against a branch, so name this whenever
+   * the code under review is not on that branch — a per-branch fan-out subtask
+   * pushes `<branchPrefix>/<ticketId>/<subtask>`, and a step with its own
+   * `branch` override writes somewhere else again. Getting it wrong is wrong in
+   * both directions: a missing branch fails the scorer on a change that never
+   * broke it, and an existing one makes the scorer verify unrelated code and
+   * pass. A binding, resolved like `target`, so it can read the branch a
+   * previous node pushed: `{ "from": "nodes.implement.output.branch" }`.
    */
   candidateRef: BindingSchema.optional(),
   heartbeatTimeout: z.string().optional(),

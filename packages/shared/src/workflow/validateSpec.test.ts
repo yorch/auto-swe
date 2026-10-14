@@ -143,6 +143,29 @@ describe('validateSpec', () => {
     expect(r.warnings.some((w) => w.code === 'UNKNOWN_NODE_REF')).toBe(false);
   });
 
+  it('lints an eval node candidateRef binding like its target', () => {
+    // The interpreter resolves `candidateRef` the same way, so a mistyped path
+    // must be reported rather than silently scoring the run's own branch.
+    const r = validateSpec(
+      spec({
+        a: {
+          candidateRef: { from: 'nodes.ghost.output.branch' },
+          next: 'done',
+          scorers: [{ gate: 'runTests', kind: 'gate' }],
+          target: { from: 'nodes.ghost.output.diff' },
+          type: 'eval',
+        },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      })
+    );
+    const ref = r.warnings.filter((w) => w.code === 'UNKNOWN_NODE_REF' && w.nodeId === 'a');
+    // Both bindings are reported: `target`'s path and `candidateRef`'s.
+    expect(ref.map((w) => w.message)).toEqual([
+      expect.stringContaining('nodes.ghost.output.diff'),
+      expect.stringContaining('nodes.ghost.output.branch'),
+    ]);
+  });
+
   it('does NOT flag valid relational/arithmetic expressions over context paths', () => {
     // Regression: evaluating `count >= 3` against an empty context throws a
     // runtime type error; that must NOT be reported as a syntax error.

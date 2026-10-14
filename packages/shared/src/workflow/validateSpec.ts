@@ -84,6 +84,12 @@ function nodeBindings(node: Node): Array<{ field: string; binding: unknown }> {
   }
   if (node.type === 'eval') {
     out.push({ binding: node.target, field: 'target' });
+    // `candidateRef` is resolved by the interpreter like `target`, so the same
+    // lint applies: a mistyped path or a malformed expression resolves to
+    // undefined and the gate scorer silently falls back to the run's own branch.
+    if (node.candidateRef) {
+      out.push({ binding: node.candidateRef, field: 'candidateRef' });
+    }
   }
   if (node.type === 'fanOut') {
     out.push({ binding: node.over, field: 'over' });
