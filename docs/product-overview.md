@@ -261,22 +261,27 @@ a key whose launch failed to start is free to reuse. Two *different* keys for on
 ordinary `409`.
 
 **What is still SWE-shaped is the plumbing behind them, not the door.** Both marshal the payload into
-a `RepoWorkRequest` — the ticket→PR struct — passing `repoId: ''` when there is no connection, and
+a `RepoWorkRequest` — the ticket→PR struct — passing a null `repoId` when there is no connection, and
 `RunInput.externalTicketId` remains non-nullable in the schema (auto-filled rather than demanded of
 the caller). Event→input mappings for external triggers are configuration rather than a persisted
 `Trigger` table.
 
 **The non-engineering verticals are seeded content, not proven flows.** The horizontal
 abstractions exist — workspace providers (`git_repo`, `document`, `issue_tracker`, `record`,
-`api_only`), outcome publishers, connection types (`git_repo`, `issue_tracker`, `notion`, `zendesk`,
-`hubspot`, `slack_workspace`, `http_api`, `mcp`), autonomy policies, and the support, product, and
-content skill and agent packs — but only the engineering flow has a complete, exercised
+`api_only`), outcome publishers, connection types (`git_repo`, `issue_tracker`, `notion`, `confluence`,
+`zendesk`, `hubspot`, `slack_workspace`, `http_api`, `mcp`), autonomy policies, and the support,
+product, and content skill and agent packs — but only the engineering flow has a complete, exercised
 end-to-end path. Where the platform stops today:
 
-- The `document` provider is backed by Notion only, reading and writing through the connector API
-  per step; there is no local document cache and no headless editor.
-- Salesforce, Workday, Google Docs, Intercom, and Confluence-as-a-workspace are not connection
-  types; they are reachable only through a generic `http_api` connection or an `mcp` server. There
+- The `document` provider is backed by Notion and Confluence, reading and writing through the
+  connector API per step; there is no local document cache and no headless editor. A Confluence
+  write reads a page or creates one, or replaces an existing page's whole body; there is no
+  block-level edit. The Confluence request and response shapes follow the documented v2 and legacy
+  REST contracts, but no Confluence instance was reachable from this environment, so they are
+  unexercised against a live service.
+- Salesforce, Workday, Google Docs and Intercom are not connection types; they are reachable only
+  through a generic `http_api` connection or an `mcp` server, and `http_api` is itself still a
+  placeholder, so a generic step over one reports success without making a request. There
   is no connector marketplace — bundles install from a file or a URL against trust anchors set in
   the environment.
 - The run viewer is built around a code diff and CI status. A document, record change, or message

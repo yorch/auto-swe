@@ -89,7 +89,7 @@ packages/
 | `src/lib/billing.ts` | `currentYearMonth()` — the month-bucket key shared by the worker writer and gateway reader |
 | `src/lib/connectionTypes.ts` | Typed registry of supported `Connection.type` values and their metadata |
 | `src/lib/outcomePublishers.ts` | Typed registry of outcome publishers (`openPullRequest`, `updateRecord`, `sendMessage`, etc.) |
-| `src/lib/workspaceProviders.ts` | Typed registry of workspace provider types (`git_repo`, `document`, `record`, `api_only`) |
+| `src/lib/workspaceProviders.ts` | Typed registry of workspace provider types (`git_repo`, `document`, `issue_tracker`, `record`, `api_only`) and the connection types each accepts — `document` takes `notion` and `confluence`, `record` takes `zendesk` and `hubspot` |
 | `src/lib/integrations/` | Read-only issue-tracker (Jira / Linear / GitHub Issues), knowledge-base (Confluence / Notion) and Figma connectors, fetched at work-request submit time; best-effort, never block a submission. The platform tracker and knowledge-base clients (Jira, Confluence, GitHub Issues) and the admin Jira field detection first pass `checkConnectorBaseUrl`: strict first, with the connector's private-network opt-in waiving only private-address refusals. The worker's per-connection Jira URL uses a narrower same-origin opt-in |
 | `src/workflow/spec.ts` | `WorkflowSpec` Zod schema — the node-type union |
 | `src/workflow/interpreter.ts` | **Pure DAG interpreter** (`runSpec`) — no Temporal imports; side effects go through `Dispatcher` |
@@ -675,7 +675,7 @@ erDiagram
 | Identity | `User`, `Account`, `Session`, `Verification` | better-auth sessions, PATs, the JWT bridge; `User.preferences` JSONB holds per-user UI settings |
 | Auth tokens | `ApiToken`, `ServicePrincipal` | `ats_*` bearer tokens, owned by a user or by a team's service principal; only the hash is stored. A service principal carries its repository and template allowlists and its own limits |
 | Tenancy & RBAC | `Organization`, `Team`, `TeamMembership`, `OrganizationMembership` | `Organization` is the top-level tenant; every `Team` nests under one. `OrgRole` is `ORG_ADMIN` / `ORG_MEMBER` |
-| Connections | `Connection` | Typed binding to an external system. `type` is validated against the runtime registry in `@auto-swe/shared/lib/connectionTypes` (`git_repo`, `issue_tracker`, `notion`, `zendesk`, `hubspot`, `slack_workspace`, `http_api`, `mcp`). `type='git_repo'` carries repo coordinates, default branch, and gate commands; other types store type-specific settings in `config`. Token-based connection types may store an AES-256-GCM encrypted API token (`apiKeyCiphertext`/`Nonce`/`AuthTag`/`Version`). Git-identity columns are nullable for non-git types, and git uniqueness is a partial unique index scoped to `type='git_repo'` |
+| Connections | `Connection` | Typed binding to an external system. `type` is validated against the runtime registry in `@auto-swe/shared/lib/connectionTypes` (`git_repo`, `issue_tracker`, `notion`, `confluence`, `zendesk`, `hubspot`, `slack_workspace`, `http_api`, `mcp`). `type='git_repo'` carries repo coordinates, default branch, and gate commands; other types store type-specific settings in `config`. Token-based connection types may store an AES-256-GCM encrypted API token (`apiKeyCiphertext`/`Nonce`/`AuthTag`/`Version`). Git-identity columns are nullable for non-git types, and git uniqueness is a partial unique index scoped to `type='git_repo'` |
 | Repository sharing | `ConnectionTeamShare` | A further team, in the owning team's organization, whose members may see and launch on a repository; the owning team keeps management. See [repositories.md](./repositories.md) |
 | Per-user credentials | `ConnectionCredential` | One user's own encrypted GitHub token for one repository, bound to the origins it was verified against and used only for runs that user launched (`WorkflowRun.launchedById`). See [user-github-credentials.md](./user-github-credentials.md) |
 | Work | `RunInput`, `ContextSnapshot` | `RunInput.payload` is the generic request body, validated against the template's `inputSchema`. The in-memory `RunRequest` type is the base for domain-specific requests such as `RepoWorkRequest`; `ContextSnapshot` is an SWE satellite keyed by run |
@@ -1228,18 +1228,81 @@ Current constraints of the system as built. Deliberate product boundaries are in
   list explicitly so losing one fails loudly rather than quietly narrowing the guard. An epic's or
   channel task's own children are guarded only as `RunnableWorkflow` histories, not as part of the
   parent's.
-- **Generic workspace and outcome dispatch is wired end-to-end, with provider-specific writes
-  idempotent by workflow identity.** `Connection.type`, `RunRequest`, `MemoryItem.entityType`/
+- **Generic workspace and outcome dispatch is wired end-to-end, with a write usable again by the same
+  node.** `Connection.type`, `RunRequest`, `MemoryItem.entityType`/
   `entityId`, `workspaceProvider` on `WorkflowTemplate`, and outcome publishers are typed and
   registered. The generic trigger endpoints propagate the validated `payload` and `connectionId`
   through `RunInput` and the `RepoWorkRequest` that starts `RunnableWorkflow`, and the interpreter
   dispatches `resolveWorkspace`, `readSource`, `writeOutcome`, and `runTool` as built-in steps.
   `writeOutcome` keys its idempotency ledger on the run, the node's recording id (its visit number
-  on a loop's later passes) and the connection, so a retry does not duplicate an external write
-  while two write nodes, two fan-out branches, or two passes of a loop each write. A write node
-  that names no explicit payload writes its own inputs, less `connectionId`. Notion, Zendesk, Slack, and issue-tracker outcomes are concrete;
+  on a loop's later passes) and the connection, so a second visit to the same write node reuses the
+  recorded result instead of writing again, while two write nodes, two fan-out branches, or two
+  passes of a loop each write — a loop's *second visit* is a different node id, so it writes. That
+  is a guard for a retry of the same visit, not exactly-once. A write node
+  that names no explicit payload writes its own inputs, less `connectionId`. Notion, Confluence, Zendesk, Slack, and issue-tracker outcomes are concrete;
   `http_api`, `hubspot`, and `mcp` still return placeholder results pending provider-specific
   activity packs. The `record` workspace provider metadata currently targets `zendesk` only.
+- **A template's declared connections are authorized at launch, and mutating tools obey the
+  approval gate.** The launch takes the same decision for each `connection`-typed field the
+  template's `inputSchema` declares, not only for `payload.connectionId`: a node may name its own
+  connection, so a template that reads from one system and writes to another would otherwise let a
+  caller pair their own connection with someone else's and have the worker use that team's token. A
+  declared field's `connectionType` is enforced too, including when the field repeats the run's own
+  connection id, because a write node dispatches on the resolved connection's type. On the worker
+  side, `runTool` refuses anything not on its read-only list until a recorded `require_approval`
+  decision is satisfied, exactly as `writeOutcome` does.
+  **Where this stops:** the declared schema is an input contract, not a credential boundary. A
+  template whose graph binds a connection from a field the schema does not describe as one — a
+  `format: 'uuid'` string, a nested payload path, an array element — is not authorized by this, and
+  the worker resolves it regardless; and the `POST /work-requests/:id/retry` path for a **git-repo**
+  run re-authorizes the repository but not the connections its stored payload declares (the
+  non-git retry path does). Closing it properly means authorizing the connection a node actually
+  resolved, at the worker boundary, against the run's launcher and team reach — the same check the
+  public-caller branch already makes — rather than inferring it from the template's own metadata.
+- **A connection's stored token is not bound to the origin it was entered for.** The token is
+  encrypted per connection, but `config.baseUrl` is editable by a team LEAD, so repointing an
+  existing connection at another **public** host sends the stored credential there. The URL guard
+  refuses loopback, link-local, cloud-metadata and unspecified addresses whatever the opt-in says,
+  and a credentialed request has to be HTTPS unless the host text itself is refused as a private
+  address and an admin opted that exact origin in. That condition is decided on the **host text and
+  only on it**: a private-range or `.internal`/`.local` spelling gets the exemption, and the check
+  does not require the name to resolve privately — an opted-in `http://wiki.corp.internal` that
+  resolves to a public address is reached over HTTP with the credential. A private host written as
+  an ordinary DNS name (say `wiki.corp.example.com`) is refused over HTTP while the same host
+  written as its address is allowed, so a plain-HTTP internal deployment configures the address or
+  moves to HTTPS. The alternative — waiving TLS because the private-network opt-in is on — lets any
+  public host be reached in clear, which is worse than a clear error. None of this knows
+  which origin the operator entered the token against; the `mcp` connection type is the one that
+  closes that (`TOKEN_ORIGIN_CHANGE`), and a fix belongs in one place for the tracker,
+  knowledge-base, document and record connections alike. The HTTPS rule applies to the tracker
+  connector too, so a self-hosted Jira reached over plain HTTP on a public address now fails
+  non-retryably and has to move to HTTPS.
+- **An external write is not exactly-once.** The outcome ledger records a result *after* the
+  mutation, so a committed write whose response or ledger insert is lost is retried by the next
+  activity attempt. A create can therefore be sent twice, and an update that did not receive a
+  caller-supplied `version` re-reads the page and can replace an edit a person made in between. A
+  supplied `version` is honoured rather than refreshed, so that retry is refused as stale instead,
+  which is the safer half of the problem. Neither an intent record nor a ledger closes this on its
+  own: an ambiguous remote commit needs the provider's own idempotency support or a reconciliation
+  protocol. What a connection *tool* writes has no ledger at all. The connector treats a 2xx whose
+  body is not JSON, is `null`, or describes a different page as a **non-retryable** failure, so an
+  ambiguous commit receives neither an automatic retry nor a reconciliation — the run stops and
+  says so, rather than reporting a write that may or may not have landed as a success.
+- **A refused outbound request is retried like a transport failure.** `SsrfBlockedError` is thrown
+  both for an address the guard refuses and for a host that could not be resolved, so the connector
+  does not classify it and a refused request spends the activity's retries before failing. A host
+  *literal* that is never allowed (loopback, link-local, unspecified, cloud metadata) is refused by
+  the text check before any request; a host *name* that resolves to one is refused only at connect
+  time, and that refusal is the retried one. A redirecting endpoint behaves the same way:
+  `redirect: 'error'` refuses the hop — so the credential is never forwarded — and the rejection is
+  indistinguishable from a transport error at the call site.
+- **Approval evidence is not correlated to the decision that required it.** `assertApprovalSatisfied`
+  refuses a write while the run's latest `publishOutcome` decision is `require_approval` and no
+  `approve` event follows it. It compares timestamps for the run, not the decision, the target, the
+  payload or the approver count the policy asked for — so in a run with several human steps, an
+  approval recorded for a *different* step satisfies it. An approval threshold above one is not
+  enforced here at all. Binding the evidence to the specific decision and its resolved human step is
+  the fix; both `writeOutcome` and `runTool` inherit the current behaviour.
 - **The run page polls; nothing is pushed.** A running run's page learns of a new trace, step, or
   status up to 3 s after it is written. Only traces are fetched incrementally: each poll still
   re-reads the run's steps whole, and the 10 s overlap re-reads a trace on each
