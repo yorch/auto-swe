@@ -1,4 +1,5 @@
 import { createInterface } from 'node:readline/promises';
+import type { PreviewSkill, SkillSourceSummary } from '@auto-swe/shared/lib/skillSource';
 import { apiRequest, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { FLAG_PRESENT, missingValue, parseFlags } from '../lib/flags.js';
@@ -41,39 +42,10 @@ const SUB_HELP = `auto-swe skills — skill library (admin)
   imported; without --yes you are asked to confirm.
 `;
 
-interface PreviewSkill {
-  folder: string;
-  name: string | null;
-  textLength: number;
-  referenceFileCount: number;
-  skippedFiles: Array<{ path: string; reason: string }>;
-  scanWarnings: string[];
-  conflicts: Array<{ name: string; scope: string }>;
-  errors: string[];
-  ignoredKeys?: string[];
-  blockedByScan: boolean;
-  installable: boolean;
-}
-
 interface Preview {
   sha: string;
   location: { host: string; owner: string; repo: string; path: string; ref: string };
   skills: PreviewSkill[];
-}
-
-interface SourceRow {
-  id: string;
-  host: string;
-  owner: string;
-  repo: string;
-  path: string;
-  ref: string;
-  pinnedSha: string;
-  status: string;
-  scriptMode: string;
-  scope: string;
-  skillCount: number;
-  lastError: string | null;
 }
 
 export type Confirm = (question: string) => Promise<boolean>;
@@ -144,7 +116,11 @@ const where = (s: { host: string; owner: string; repo: string; path: string }) =
   );
 
 async function cmdList(env: CliEnv): Promise<number> {
-  const rows = await apiRequest<SourceRow[]>(env, 'GET', '/api/v1/platform/skill-sources');
+  const rows = await apiRequest<SkillSourceSummary[]>(
+    env,
+    'GET',
+    '/api/v1/platform/skill-sources'
+  );
   if (rows.length === 0) {
     process.stdout.write('No skill sources.\n');
     return 0;
@@ -183,7 +159,7 @@ function describe(s: PreviewSkill): string {
       `skipped ${s.skippedFiles.length} file(s): ${s.skippedFiles.map((f) => clean(f.path)).join(', ')}`
     );
   }
-  if (s.ignoredKeys?.length) {
+  if (s.ignoredKeys.length > 0) {
     notes.push(`ignored frontmatter: ${s.ignoredKeys.map(clean).join(', ')}`);
   }
   return notes.map((n) => `      ${n}\n`).join('');

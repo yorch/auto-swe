@@ -5,9 +5,12 @@ import {
   fetchSkillSource,
   normaliseLocation,
   normaliseSkillName,
+  type PreviewSkill,
   type ScriptMode,
+  type SkillConflict,
   type SkillSourceDeps,
   type SourceLocation,
+  type SourceScopeKind,
   type SourceSkill,
   safeDisplayPath,
 } from '@auto-swe/shared/lib/skillSource';
@@ -19,34 +22,12 @@ import { scanSkillAdvisory } from './skillScan.js';
  * one-transaction install. HTTP status mapping and audit stay with the routes.
  */
 
+export type { PreviewSkill, SkillConflict };
+
 export interface SourceScope {
-  scope: 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
+  scope: SourceScopeKind;
   teamId: string | null;
   orgId: string | null;
-}
-
-export interface SkillConflict {
-  id: string;
-  name: string;
-  scope: string;
-}
-
-export interface PreviewSkill {
-  /** Control characters replaced: the folder is repository-controlled text. */
-  folder: string;
-  /** Frontmatter keys (e.g. `allowed-tools`) that the import reads nothing from. */
-  ignoredKeys: string[];
-  name: string | null;
-  description: string | null;
-  textLength: number;
-  referenceFileCount: number;
-  skippedFiles: SourceSkill['skippedFiles'];
-  scanWarnings: string[];
-  conflicts: SkillConflict[];
-  errors: string[];
-  /** Refused only because `skills.import.blockOnScanWarnings` is on and it has warnings. */
-  blockedByScan: boolean;
-  installable: boolean;
 }
 
 /**

@@ -7,8 +7,10 @@ const SHA = 'a1b2c3d4e5f6'.padEnd(40, '0');
 const skill = (name: string, over: Record<string, unknown> = {}) => ({
   blockedByScan: false,
   conflicts: [],
+  description: null,
   errors: [],
   folder: `skills/${name}`,
+  ignoredKeys: [],
   installable: true,
   name,
   referenceFileCount: 1,

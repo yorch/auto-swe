@@ -1,5 +1,13 @@
 'use client';
 
+import type {
+  PreviewSkill,
+  ScriptMode,
+  SkillSourceStatus,
+  SkillSourceSummary,
+  SkippedFile,
+  SourceScopeKind,
+} from '@auto-swe/shared/lib/skillSource';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
@@ -9,29 +17,9 @@ import { api } from '@/lib/api';
  * diff lines) is untrusted text: render it through `visibleText`.
  */
 
-export type SourceStatus = 'OK' | 'UPDATE_AVAILABLE' | 'ERROR' | 'DISABLED';
-export type ScriptMode = 'TEXT_ONLY' | 'REJECT';
-export type SourceScopeKind = 'GLOBAL' | 'ORGANIZATION' | 'TEAM';
-
-export interface SkillSource {
-  id: string;
-  host: string;
-  owner: string;
-  repo: string;
-  path: string;
-  ref: string;
-  pinnedSha: string;
-  latestSha: string | null;
-  lastCheckedAt: string | null;
-  /** A fixed server-side string, never repository text. */
-  lastError: string | null;
-  status: SourceStatus;
-  scriptMode: ScriptMode;
-  scope: SourceScopeKind;
-  teamId: string | null;
-  orgId: string | null;
-  skillCount: number;
-}
+export type { PreviewSkill, ScriptMode, SkippedFile, SourceScopeKind };
+export type SourceStatus = SkillSourceStatus;
+export type SkillSource = SkillSourceSummary;
 
 export interface SourceLocationInput {
   host: string;
@@ -43,27 +31,6 @@ export interface SourceLocationInput {
   scope: SourceScopeKind;
   teamId?: string;
   orgId?: string;
-}
-
-export interface SkippedFile {
-  path: string;
-  reason: string;
-}
-
-export interface PreviewSkill {
-  folder: string;
-  name: string | null;
-  description: string | null;
-  textLength: number;
-  referenceFileCount: number;
-  ignoredKeys: string[];
-  skippedFiles: SkippedFile[];
-  scanWarnings: string[];
-  conflicts: Array<{ id: string; name: string; scope: string }>;
-  errors: string[];
-  /** Refused only because `skills.import.blockOnScanWarnings` is on and it has warnings. */
-  blockedByScan: boolean;
-  installable: boolean;
 }
 
 export interface SourcePreview {
