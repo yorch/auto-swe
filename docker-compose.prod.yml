@@ -10,6 +10,12 @@
 # gateway/worker, but still set it if the bundled postgres service runs), and
 # see `.env.example` for swapping the object store to a hosted S3 provider.
 services:
+  # The production dynamic config: development-sql.yaml minus its dev-only
+  # setting. Compose merges `environment` by name, so only this entry changes.
+  temporal:
+    environment:
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/production-sql.yaml
+
   gateway:
     image: ${APP_IMAGE_GATEWAY:-ghcr.io/yorch/auto-swe/gateway:main}
     pull_policy: always
