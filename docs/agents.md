@@ -774,12 +774,15 @@ towards compacting early). Over the budget, it works in phases until the estimat
 Compaction starts only when the estimate exceeds the budget and then goes on down to 85% of it, and
 within a turn the fitted prefix is kept and extended until the budget is exceeded again, so the
 prompt a provider caches does not change on every call. The current prompt is never dropped, and a
-newest exchange that alone exceeds the budget after every phase is sent as it is, for the provider to refuse or accept. At the end of each turn the session keeps
-what that pass would send, so the history does not grow without bound; a stubbed result or argument or
-a dropped exchange is gone for later turns, and the model re-runs a tool or re-reads a file when it
-needs the content again. The policy refuses a `write` whose content, or an `edit` whose new text,
+newest exchange that alone exceeds the budget after every phase is sent as it is, for the provider to refuse or accept. At the end of each turn the session's
+history is compacted the same way, from scratch, and kept, so it does not grow without bound; a
+stubbed result or argument or a dropped exchange is gone for later turns, and the model re-runs a
+tool or re-reads a file when it needs the content again. That pass can choose different stubs than
+the calls inside the turn did, so the next turn's first call may not reuse the prompt the provider
+cached for the last one. The policy refuses a `write` whose content, or an `edit` whose new text,
 contains the argument placeholder, so a model imitating its history cannot write the placeholder
-into a file. Each turn that compacted is traced as one `pi.context_compacted` activity
+into a file; the match is on the exact placeholder text, and a file whose real content includes it
+(the compaction module itself) can only be changed by an `edit` that leaves that text out. Each turn that compacted is traced as one `pi.context_compacted` activity
 event with the last compaction's estimates before and after, the results and call arguments stubbed,
 the messages dropped, and how many model calls of the turn were compacted. Choose a budget below the
 model's window with room for its reply; the estimate is a rule of thumb, not the provider's tokenizer.
