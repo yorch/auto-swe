@@ -19,9 +19,11 @@ const { screenDatasetCasesActivity: screenDatasetCases } = proxyActivities<{
 }>(SCREEN_ACTIVITY_OPTIONS);
 
 /**
- * Flake-screen one dataset's never-screened cases. Started by the gateway when
- * a dataset is created with cases; the re-validation sweep screens whatever
- * this misses (Temporal unavailable at creation, an infrastructure error).
+ * Flake-screen one dataset's never-screened cases. Runs under one id per
+ * dataset (`evalScreenWorkflowId`), started — or joined, while one runs — by
+ * the gateway when a dataset is created with cases, by an eval run that finds
+ * never-screened cases, and by an admin re-screen. The re-validation sweep
+ * screens whatever these miss (Temporal unavailable, an infrastructure error).
  */
 export async function EvalScreenWorkflow(input: EvalScreenInput): Promise<FlakeScreenResult> {
   return screenDatasetCases(input.datasetId);

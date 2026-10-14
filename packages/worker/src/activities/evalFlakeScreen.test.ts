@@ -23,9 +23,16 @@ function deps(
   runReference: FlakeScreenDeps['runReference'],
   recorded = true
 ) {
-  const recordScreen = vi.fn(async () => recorded);
+  // Like the database: a recorded case is no longer loaded as unscreened.
+  const done = new Set<string>();
+  const recordScreen = vi.fn(async (x: EvalCaseRow, _flakeScreened: boolean, _runs: number) => {
+    if (recorded) {
+      done.add(x.id);
+    }
+    return recorded;
+  });
   const d: FlakeScreenDeps = {
-    loadCases: async () => cases,
+    loadCases: async () => cases.filter((x) => !done.has(x.id)),
     recordScreen,
     runReference,
     runs: 3,
@@ -67,6 +74,20 @@ describe('screenDatasetCases', () => {
     expect(recordScreen).toHaveBeenCalledTimes(1);
     expect(recordScreen).toHaveBeenCalledWith(c('b'), true, 3);
     expect(r).toEqual({ erroredCaseIds: ['a'], failedCaseIds: [], passed: 1, screened: 1 });
+  });
+
+  it('picks up a case that became unscreened while it ran', async () => {
+    const cases = [c('a')];
+    const runReference = vi.fn(async (x: EvalCaseRow) => {
+      if (x.id === 'a' && cases.length === 1) {
+        cases.push(c('b'));
+      }
+      return gate(true);
+    });
+    const { d, recordScreen } = deps(cases, runReference);
+    const r = await screenDatasetCases('d1', d);
+    expect(recordScreen.mock.calls.map(([x]) => x.id)).toEqual(['a', 'b']);
+    expect(r.screened).toBe(2);
   });
 
   it('does not count a case whose reference changed while it was screened', async () => {

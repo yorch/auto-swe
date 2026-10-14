@@ -71,6 +71,10 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 vi.mock('../lib/evalCapture.js', () => ({ recordEvalResult: vi.fn(async () => {}) }));
+const startDatasetScreen = vi.fn(async (_datasetId: string) => {});
+vi.mock('../lib/evalScreenStart.js', () => ({
+  startDatasetScreen: (datasetId: string) => startDatasetScreen(datasetId),
+}));
 const recordRunFinalized = vi.fn();
 vi.mock('../lib/metrics.js', () => ({
   recordRunFinalized: (...a: unknown[]) => recordRunFinalized(...(a as [])),
@@ -224,6 +228,38 @@ describe('runEvalHarness', () => {
         screenFailedCaseIds: ['c3'],
       },
     });
+  });
+
+  it('starts the dataset screen when it finds never-screened cases', async () => {
+    const startScreen = vi.fn(async () => {});
+    const d = deps({
+      loadCases: async () => [cases[0], { ...cases[1], flakeRuns: 0, flakeScreened: false }],
+      startScreen,
+    });
+    await runEvalHarness(input, d);
+    expect(startScreen).toHaveBeenCalledExactlyOnceWith('d1');
+  });
+
+  it('starts no screen when every unscored case already failed its screen', async () => {
+    const startScreen = vi.fn(async () => {});
+    const d = deps({
+      loadCases: async () => [cases[0], { ...cases[1], flakeRuns: 3, flakeScreened: false }],
+      startScreen,
+    });
+    await runEvalHarness(input, d);
+    expect(startScreen).not.toHaveBeenCalled();
+  });
+
+  it('still scores the run when the screen cannot start', async () => {
+    const d = deps({
+      loadCases: async () => [cases[0], { ...cases[1], flakeRuns: 0, flakeScreened: false }],
+      startScreen: vi.fn(async () => {
+        throw new Error('temporal unreachable');
+      }),
+    });
+    await runEvalHarness(input, d);
+    expect(d.records).toHaveLength(1);
+    expect(d.finals[0].status).toBe('SUCCESS');
   });
 
   it('reports no unscreened cases when every case is screened', async () => {
@@ -570,6 +606,26 @@ describe('runEvalHarnessActivity', () => {
       expect(scope).toMatchObject({ orgId: 'org-x' });
       expect(scope).not.toHaveProperty('teamId');
     }
+  });
+
+  it('starts the screen of a dataset whose cases were never screened', async () => {
+    startDatasetScreen.mockClear();
+    evalCaseFindMany.mockResolvedValueOnce([
+      cases[0],
+      { ...cases[1], flakeRuns: 0, flakeScreened: false },
+    ]);
+    evalDatasetFindUnique.mockResolvedValueOnce({ orgId: null, teamId: null });
+    evalRunUpdateMany.mockResolvedValue({ count: 1 });
+    vi.mocked(resolveWorkflowDefaults).mockResolvedValue({ maxEvalIterations: 1 } as never);
+
+    await runEvalHarnessActivity({
+      baselineRef: 'implementer@1',
+      candidateRef: 'implementer@2',
+      datasetId: 'd1',
+      evalRunId: 'run-1',
+    });
+
+    expect(startDatasetScreen).toHaveBeenCalledExactlyOnceWith('d1');
   });
 
   it('pins only the side that names a runtime override', async () => {

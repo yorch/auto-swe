@@ -10,6 +10,7 @@
 
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { evalScreenWorkflowId } from '@auto-swe/shared/lib/workflowId';
 import {
   EVAL_SIGNAL_SOURCES,
   type EvalCaseDto,
@@ -278,11 +279,12 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         entityType: 'EvalDataset',
       });
       // New cases start unscreened, and the harness scores only screened cases.
-      // Best-effort: a case this start misses is screened by the re-validation
-      // sweep, so a Temporal outage never fails the create.
+      // Best-effort: a case this start misses is screened when an eval run of
+      // the dataset finds it unscreened, or by the re-validation sweep, so a
+      // Temporal outage never fails the create.
       if (dataset._count.cases > 0) {
         try {
-          await fastify.temporal.startEvalScreenWorkflow(`eval-screen-${dataset.id}`, {
+          await fastify.temporal.startEvalScreenWorkflow(evalScreenWorkflowId(dataset.id), {
             datasetId: dataset.id,
           });
         } catch (err) {

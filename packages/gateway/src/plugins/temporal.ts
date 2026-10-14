@@ -25,6 +25,7 @@ import {
   ScheduleNotFoundError,
   type ScheduleOptionsAction,
   ScheduleOverlapPolicy,
+  WorkflowIdConflictPolicy,
   WorkflowIdReusePolicy,
 } from '@temporalio/client';
 import type { FastifyPluginAsync } from 'fastify';
@@ -299,7 +300,10 @@ declare module 'fastify' {
           baselineRuntime?: ImplementerRuntimeKind | null;
         }
       ) => Promise<void>;
-      /** Flake-screen a dataset's never-screened cases (EvalScreenWorkflow). */
+      /**
+       * Flake-screen a dataset's never-screened cases (EvalScreenWorkflow). Joins
+       * a screen already running under the same id instead of failing.
+       */
       startEvalScreenWorkflow: (workflowId: string, input: EvalScreenInput) => Promise<void>;
       startConsolidationWorkflow: (
         workflowId: string,
@@ -1004,11 +1008,21 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
     },
 
     async startEvalScreenWorkflow(workflowId: string, input: EvalScreenInput): Promise<void> {
-      await client.workflow.start('EvalScreenWorkflow', {
-        args: [input],
-        taskQueue: 'engineering-workflow',
-        workflowId,
-      });
+      // One screen per dataset id: a start while one runs joins it (it loads
+      // every unscreened case when it starts its activity), and a closed one is
+      // started afresh. The catch covers a server that refuses the policy.
+      try {
+        await client.workflow.start('EvalScreenWorkflow', {
+          args: [input],
+          taskQueue: 'engineering-workflow',
+          workflowId,
+          workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        });
+      } catch (err) {
+        if (getErrorName(err) !== 'WorkflowExecutionAlreadyStartedError') {
+          throw err;
+        }
+      }
     },
 
     async startReembedMemory(workflowId: string, memoryId: string): Promise<void> {

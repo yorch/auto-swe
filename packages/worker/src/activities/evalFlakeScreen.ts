@@ -36,36 +36,64 @@ export interface FlakeScreenDeps {
   recordScreen: (c: EvalCaseRow, flakeScreened: boolean, runs: number) => Promise<boolean>;
 }
 
+/**
+ * Loads per screen: the first, plus reloads for cases that arrived while it
+ * ran. A bound, so a dataset reset over and over cannot hold one activity.
+ */
+const MAX_SCREEN_PASSES = 5;
+
 export async function screenDatasetCases(
   datasetId: string,
   deps: FlakeScreenDeps
 ): Promise<FlakeScreenResult> {
-  const cases = await deps.loadCases(datasetId);
   const result: FlakeScreenResult = {
     erroredCaseIds: [],
     failedCaseIds: [],
     passed: 0,
     screened: 0,
   };
-  for (const c of cases) {
-    let consistent: boolean;
-    try {
-      ({ consistent } = await screenGateConsistency(deps.runs, () => deps.runReference(c)));
-    } catch {
-      result.erroredCaseIds.push(c.id);
-      continue;
+  // Reloaded until nothing is left: a start that joined this screen while it ran
+  // (cases added, or reset for a re-screen) relies on it to pick them up. A
+  // recorded case is no longer loaded; one left unrecorded (an infrastructure
+  // error, a concurrent change) is not retried by this screen, so it cannot loop.
+  const skip = new Set<string>();
+  for (let pass = 0; pass < MAX_SCREEN_PASSES; pass += 1) {
+    const cases = (await deps.loadCases(datasetId)).filter((c) => !skip.has(c.id));
+    if (cases.length === 0) {
+      break;
     }
-    if (!(await deps.recordScreen(c, consistent, deps.runs))) {
-      continue;
-    }
-    result.screened += 1;
-    if (consistent) {
-      result.passed += 1;
-    } else {
-      result.failedCaseIds.push(c.id);
+    for (const c of cases) {
+      if (!(await screenOne(c, deps, result))) {
+        skip.add(c.id);
+      }
     }
   }
   return result;
+}
+
+/** Screen one case; resolves whether its outcome was recorded. */
+async function screenOne(
+  c: EvalCaseRow,
+  deps: FlakeScreenDeps,
+  result: FlakeScreenResult
+): Promise<boolean> {
+  let consistent: boolean;
+  try {
+    ({ consistent } = await screenGateConsistency(deps.runs, () => deps.runReference(c)));
+  } catch {
+    result.erroredCaseIds.push(c.id);
+    return false;
+  }
+  if (!(await deps.recordScreen(c, consistent, deps.runs))) {
+    return false;
+  }
+  result.screened += 1;
+  if (consistent) {
+    result.passed += 1;
+  } else {
+    result.failedCaseIds.push(c.id);
+  }
+  return true;
 }
 
 async function defaultLoadCases(datasetId: string): Promise<EvalCaseRow[]> {

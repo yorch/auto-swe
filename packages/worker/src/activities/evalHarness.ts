@@ -27,12 +27,14 @@ import {
 } from '../agents/implementerRuntimeSelect.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { persistActivityTrace } from '../lib/activityContext.js';
+import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
+import { startDatasetScreen } from '../lib/evalScreenStart.js';
 import { type PairedOutcome, regressionVerdict } from '../lib/evalStats.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import { withRunlessCapScale } from '../lib/runlessBudget.js';
@@ -124,6 +126,12 @@ export interface HarnessDeps {
   record?: typeof recordEvalResult;
   /** Finalize the EvalRun row. */
   finalize?: (evalRunId: string, status: string, summary: unknown) => Promise<void>;
+  /**
+   * Start (or join) the dataset's flake screen. Called when the run finds
+   * never-screened cases, so a dataset whose screen never started — cases that
+   * predate screening, a start lost to a Temporal outage — screens itself.
+   */
+  startScreen?: (datasetId: string) => Promise<void>;
 }
 
 async function defaultLoadCases(datasetId: string): Promise<HarnessCaseRow[]> {
@@ -371,6 +379,16 @@ export async function runEvalHarness(input: HarnessInput, deps: HarnessDeps) {
   // A case whose reference was never screened, or failed its screen, is not
   // scored: a flaky floor would move the verdict for reasons that are not the agent's.
   const { cases, unscreened } = partitionScreened(await deps.loadCases(input.datasetId));
+  if (unscreened.neverScreened > 0 && deps.startScreen) {
+    // Best-effort: the run scores what is screened now either way, and the
+    // re-validation sweep screens what this start misses.
+    await deps.startScreen(input.datasetId).catch((err: unknown) => {
+      logWarn('eval: could not start the flake screen of unscreened cases', {
+        datasetId: input.datasetId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+  }
 
   return withRunlessCapScale(cases.length, async () => {
     const pairs: PairedOutcome[] = [];
@@ -460,6 +478,7 @@ export async function runEvalHarnessActivity(input: HarnessInput): Promise<void>
       return runEvalHarness(input, {
         loadCases: defaultLoadCases,
         runCase: (caseRow, ref, runtime) => runCaseDefault(caseRow, ref, scope, runtime),
+        startScreen: startDatasetScreen,
       });
     });
   } catch (err) {
