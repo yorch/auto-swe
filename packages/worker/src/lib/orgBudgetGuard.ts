@@ -10,9 +10,11 @@ import { currentSpendOwner } from './spendOwner.js';
  * billing finds it (`finalizeRun`, `orgMonthSpend`; the order is `billedOrgId`):
  * the run's work request's connection, else — when the request names none, as
  * an epic child's and a scheduled fire's do not — the run's own connection,
- * else, only when the run has no connection, the ledger row's repository. So a PRD run and a code-route channel
- * task, which bill their org through the request's connection, are capped
- * like any run.
+ * else, only when the run has no connection, the ledger row's repository, else
+ * the org the run's launch charged its request to (`RunInput.billingOrgId`). So
+ * a PRD run and a code-route channel task, which bill their org through the
+ * request's connection, and a connection-less template or automation run,
+ * which bills the org its launch was gated against, are capped like any run.
  *
  * `stable` is true once a run or a repository-bearing ledger row exists: the
  * answer is then a property of rows that do not change, so the caller may cache
@@ -29,7 +31,9 @@ export async function resolveBilledOrg(
       select: {
         connection: { select: { team } },
         connectionId: true,
-        workRequest: { select: { connection: { select: { team } }, connectionId: true } },
+        workRequest: {
+          select: { billingOrgId: true, connection: { select: { team } }, connectionId: true },
+        },
       },
       where: { workflowId },
     }),
@@ -41,6 +45,7 @@ export async function resolveBilledOrg(
   const viaLedger = ledger?.repository?.team?.orgId;
   const orgId = billedOrgId({
     ledgerOrgId: viaLedger,
+    requestBillingOrgId: run?.workRequest?.billingOrgId,
     requestConnectionId: run?.workRequest?.connectionId,
     requestOrgId: run?.workRequest?.connection?.team?.orgId,
     runConnectionId: run?.connectionId,

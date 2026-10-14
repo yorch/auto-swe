@@ -42,8 +42,9 @@ export interface OrgMonthSpend {
  * Attributes a run as `billedOrgId` does, which `finalizeRun` and the mid-run
  * cap guard use: the work request's connection, else — only when the request
  * names none — the run's own connection, else — only when the run has no
- * connection either — the run's own ledger row's repository. The reads below
- * are that rule written as filters.
+ * connection either — the run's own ledger row's repository, else the org the
+ * request was charged to at launch. The reads below are that rule written as
+ * filters.
  */
 export async function orgMonthSpend(db: PrismaClient, orgId: string): Promise<OrgMonthSpend> {
   try {
@@ -78,7 +79,11 @@ function isTransactionTimeout(err: unknown): boolean {
  * request that names a connection decides (its team having no organization
  * bills no one, not the run's connection); when it names none, the run's own
  * connection decides the same way; the ledger row's repository is used only
- * when neither connection exists.
+ * when neither connection exists; and the request's `billingOrgId` — the org a
+ * launch with no connection gated the run against — only when there is no
+ * ledger repository either. A ledger repository always has an org (a team
+ * cannot exist without one), so `ledgerOrgId` is non-null exactly when that
+ * repository exists, and a stamped org is never reached past one.
  */
 export function billedOrgId(sources: {
   requestConnectionId?: string | null;
@@ -86,6 +91,7 @@ export function billedOrgId(sources: {
   runConnectionId?: string | null;
   runOrgId?: string | null;
   ledgerOrgId?: string | null;
+  requestBillingOrgId?: string | null;
 }): string | null {
   if (sources.requestConnectionId) {
     return sources.requestOrgId ?? null;
@@ -93,7 +99,7 @@ export function billedOrgId(sources: {
   if (sources.runConnectionId) {
     return sources.runOrgId ?? null;
   }
-  return sources.ledgerOrgId ?? null;
+  return sources.ledgerOrgId ?? sources.requestBillingOrgId ?? null;
 }
 
 async function readOrgMonthSpend(
@@ -109,9 +115,11 @@ async function readOrgMonthSpend(
   // Unfinalized by `endedAt`, not status: a dashboard-cancelled run is
   // CANCELLED with `endedAt` null until its workflow finalizes and bills it.
   // `runs` are the runs a connection places in the org; `unplaced` are the
-  // unfinalized runs no connection places anywhere, which only a ledger row's
-  // repository can (the two sets are disjoint).
-  const [runs, unplaced] = await Promise.all([
+  // unfinalized runs no connection places anywhere, which a ledger row's
+  // repository can (the two sets are disjoint); `stamped` are the unplaced runs
+  // whose request was charged to this org at launch, which are the org's only
+  // when no ledger repository places them (decided below).
+  const [runs, unplaced, stamped] = await Promise.all([
     db.workflowRun.findMany({
       select: { id: true, workflowId: true },
       where: {
@@ -133,8 +141,16 @@ async function readOrgMonthSpend(
         OR: [{ workRequestId: null }, { workRequest: { connectionId: null } }],
       },
     }),
+    db.workflowRun.findMany({
+      select: { id: true, workflowId: true },
+      where: {
+        connectionId: null,
+        endedAt: null,
+        workRequest: { billingOrgId: orgId, connectionId: null },
+      },
+    }),
   ]);
-  const [directLedgers, placedByLedger] = await Promise.all([
+  const [directLedgers, placedByLedger, stampedLedgers] = await Promise.all([
     runs.length
       ? db.activeWorkflow.findMany({
           select: { costUsdAccrued: true, temporalWorkflowId: true },
@@ -150,10 +166,29 @@ async function readOrgMonthSpend(
           },
         })
       : [],
+    stamped.length
+      ? db.activeWorkflow.findMany({
+          select: { costUsdAccrued: true, repoId: true, temporalWorkflowId: true },
+          where: { temporalWorkflowId: { in: stamped.map((r) => r.workflowId) } },
+        })
+      : [],
   ]);
-  const ledgers = [...directLedgers, ...placedByLedger];
+  // A stamped run whose ledger row names a repository is that repository's org's
+  // (counted above, by `placedByLedger`, when that is this org) — never this one's
+  // through the stamp, so no run is counted on both sides.
+  const placedElsewhere = new Set(
+    stampedLedgers.filter((l) => l.repoId !== null).map((l) => l.temporalWorkflowId)
+  );
+  const billedByStamp = stamped.filter((r) => !placedElsewhere.has(r.workflowId));
+  const ledgers = [
+    ...directLedgers,
+    ...placedByLedger,
+    ...stampedLedgers.filter((l) => l.repoId === null),
+  ];
   const withLedger = new Set(ledgers.map((l) => l.temporalWorkflowId));
-  const ledgerless = runs.filter((r) => !withLedger.has(r.workflowId)).map((r) => r.id);
+  const ledgerless = [...runs, ...billedByStamp]
+    .filter((r) => !withLedger.has(r.workflowId))
+    .map((r) => r.id);
   const [traced, runless] = await Promise.all([
     ledgerless.length
       ? runUnscoped('scoped by run ids already filtered to the org', ['AgentTrace'], () =>

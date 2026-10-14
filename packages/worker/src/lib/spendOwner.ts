@@ -73,8 +73,11 @@ export async function ownerOfDataset(datasetId: string): Promise<SpendOwner> {
  *
  * Derived the way run visibility decides a run's team: the run's own
  * repository (an epic child), its ledger row's repository, its work request's
- * connection, its Slack channel, then its template. Never throws — attribution
- * is bookkeeping, and a call that has been paid for must still be recorded.
+ * connection, its Slack channel, then its template. A run none of those gives
+ * a team — a service principal's run of a global template with no connection —
+ * is attributed to the organization its launch charged it to
+ * (`RunInput.billingOrgId`), with no team. Never throws — attribution is
+ * bookkeeping, and a call that has been paid for must still be recorded.
  */
 export async function currentSpendOwner(): Promise<SpendOwner> {
   const explicit = explicitOwner.getStore();
@@ -96,7 +99,7 @@ export async function currentSpendOwner(): Promise<SpendOwner> {
       configCacheTtlMs(),
       () => ownerOfWorkflow(workflowId),
       // A lookup that raced ahead of the run's rows must not pin "nobody".
-      (owner) => owner.teamId !== undefined
+      (owner) => owner.teamId !== undefined || owner.orgId !== undefined
     );
   } catch {
     return {};
@@ -111,7 +114,7 @@ async function ownerOfWorkflow(workflowId: string): Promise<SpendOwner> {
         channel: { select: { team } },
         connection: { select: { team } },
         template: { select: { team } },
-        workRequest: { select: { connection: { select: { team } } } },
+        workRequest: { select: { billingOrgId: true, connection: { select: { team } } } },
       },
       where: { workflowId },
     }),
@@ -120,11 +123,14 @@ async function ownerOfWorkflow(workflowId: string): Promise<SpendOwner> {
       where: { temporalWorkflowId: workflowId },
     }),
   ]);
-  return fromTeam(
+  const owner =
     run?.connection?.team ??
-      ledger?.repository?.team ??
-      run?.workRequest?.connection?.team ??
-      run?.channel?.team ??
-      run?.template?.team
-  );
+    ledger?.repository?.team ??
+    run?.workRequest?.connection?.team ??
+    run?.channel?.team ??
+    run?.template?.team;
+  if (!owner && run?.workRequest?.billingOrgId) {
+    return { orgId: run.workRequest.billingOrgId };
+  }
+  return fromTeam(owner);
 }

@@ -61,6 +61,26 @@ describe('currentSpendOwner', () => {
     expect(await currentSpendOwner()).toEqual({ orgId: 'org-of-tpl', teamId: 'tpl' });
   });
 
+  it('attributes a run no row gives a team to the org its launch charged it to', async () => {
+    h.run.mockResolvedValue({
+      channel: null,
+      connection: null,
+      template: { team: null },
+      workRequest: { billingOrgId: 'org-stamped', connection: null },
+    });
+    expect(await currentSpendOwner()).toEqual({ orgId: 'org-stamped' });
+
+    // A team, where one is found, still decides.
+    _resetConfigCacheForTests();
+    h.run.mockResolvedValue({
+      channel: null,
+      connection: null,
+      template: { team: team('tpl') },
+      workRequest: { billingOrgId: 'org-stamped', connection: null },
+    });
+    expect(await currentSpendOwner()).toEqual({ orgId: 'org-of-tpl', teamId: 'tpl' });
+  });
+
   it('prefers what the activity declared, without touching the workflow rows', async () => {
     const owner = await withSpendOwner(Promise.resolve({ orgId: 'o', teamId: 't' }), () =>
       currentSpendOwner()

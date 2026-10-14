@@ -171,6 +171,44 @@ describe('assertOrgBudgetAvailable', () => {
     await expect(assertOrgBudgetAvailable('wf-1', 'agent.x')).resolves.toBeUndefined();
   });
 
+  it('caps a connection-less run against the org its launch charged the request to', async () => {
+    findLedger.mockResolvedValue({ repository: null } as never);
+    findRun.mockResolvedValue({
+      connection: null,
+      connectionId: null,
+      workRequest: { billingOrgId: 'org-stamped', connection: null, connectionId: null },
+    } as never);
+    orgMonthSpendMock.mockResolvedValue(spend(10));
+    const err = await refusal(assertOrgBudgetAvailable('wf-1', 'agent.x'));
+    expect(err.details?.[0]).toMatchObject({ cap: 'organization', orgId: 'org-stamped' });
+    // A run row exists, so the answer is stable and the spend owner is never asked.
+    expect(currentSpendOwnerMock).not.toHaveBeenCalled();
+  });
+
+  it('never caps by the stamped org when a connection or ledger repository places the run', async () => {
+    findLedger.mockResolvedValue(null as never);
+    findRun.mockResolvedValue({
+      connection: null,
+      workRequest: {
+        billingOrgId: 'org-stamped',
+        connection: { team: { orgId: 'org-2' } },
+        connectionId: 'c',
+      },
+    } as never);
+    await assertOrgBudgetAvailable('wf-1', 'agent.x');
+    expect(findOrg).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'org-2' } }));
+
+    _resetConfigCacheForTests();
+    findOrg.mockClear();
+    findLedger.mockResolvedValue({ repository: { team: { orgId: 'org-ledger' } } } as never);
+    findRun.mockResolvedValue({
+      connection: null,
+      workRequest: { billingOrgId: 'org-stamped', connection: null, connectionId: null },
+    } as never);
+    await assertOrgBudgetAvailable('wf-2', 'agent.x');
+    expect(findOrg).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'org-ledger' } }));
+  });
+
   it('resolves a run-backed workflow once per window, org or none', async () => {
     findLedger.mockResolvedValue(null as never);
     findRun.mockResolvedValue(request(null));

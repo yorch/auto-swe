@@ -806,6 +806,8 @@ model Organization {
   providerCredentials ProviderCredential[]
   memberships         OrganizationMembership[]
   monthlyUsages       OrgMonthlyUsage[]
+  /// Connection-less requests charged to this org (`RunInput.billingOrgId`).
+  billedRunInputs     RunInput[]
   slackWorkspaces     SlackWorkspace[]
   slackChannels       SlackChannel[]
   memoryItems         MemoryItem[]             @relation("OrgMemoryItems")
@@ -1384,6 +1386,14 @@ model RunInput {
   /// rows where the linkage lives on requestPayload/ActiveWorkflow.repoId).
   connectionId     String?     @map("connection_id") @db.Uuid
   connection       Connection? @relation(fields: [connectionId], references: [id], onDelete: SetNull)
+  /// The organization a launch with no connection charged this request to: the
+  /// org its launch decision gated (a template run's template team, a team
+  /// automation's team, a service principal's team). Billing reads it only when
+  /// no connection and no ledger repository places the run (`billedOrgId`), so
+  /// it is null whenever the launch named a connection. Re-runs of the request
+  /// inherit it.
+  billingOrgId     String?       @map("billing_org_id") @db.Uuid
+  billingOrg       Organization? @relation(fields: [billingOrgId], references: [id], onDelete: SetNull)
   /// Immutable source identity recorded by the authorized launch transaction.
   /// Null on legacy rows; UNKNOWN is explicit and never promoted from absent links.
   knowledgeSourceKind WorkflowRunKnowledgeSourceKind? @map("knowledge_source_kind")
@@ -1433,6 +1443,7 @@ model RunInput {
 
   @@unique([requestedById, idempotencyKey])
   @@index([connectionId])
+  @@index([billingOrgId])
   @@index([requestedById])
   @@index([requestedByServiceId, createdAt])
   @@index([externalTicketId])

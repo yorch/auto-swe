@@ -1457,6 +1457,36 @@ describe('finalizeWorkflowRun', () => {
     it('falls back to the ledger repository for a run with no work request and no connection', async () => {
       expect(await billedTo(runRow({ workRequest: null }), 'org-ledger')).toBe('org-ledger');
     });
+
+    const stampedRequest = (over: Record<string, unknown> = {}) => ({
+      activeWorkflows: [],
+      billingOrgId: 'org-stamped',
+      connection: null,
+      connectionId: null,
+      payload: null,
+      ...over,
+    });
+
+    it('bills a connection-less run to the org its launch charged the request to', async () => {
+      expect(await billedTo(runRow({ workRequest: stampedRequest() }))).toBe('org-stamped');
+    });
+
+    it('never bills the stamped org past a connection or a ledger repository', async () => {
+      expect(await billedTo(runRow({ workRequest: stampedRequest() }), 'org-ledger')).toBe(
+        'org-ledger'
+      );
+      const viaRequest = stampedRequest({
+        connection: { team: { orgId: 'org-request' } },
+        connectionId: 'c',
+      });
+      expect(await billedTo(runRow({ workRequest: viaRequest }))).toBe('org-request');
+      const viaRun = runRow({
+        connection: { team: { orgId: 'org-run' } },
+        connectionId: 'c-run',
+        workRequest: stampedRequest(),
+      });
+      expect(await billedTo(viaRun)).toBe('org-run');
+    });
   });
 
   it('fires no user-facing side effect when notify is off, and all of them when it is on', async () => {

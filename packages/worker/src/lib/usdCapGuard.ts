@@ -54,9 +54,10 @@ async function findUsdCap(scope: {
 
   // The org cap counts a run through the org billing attributes it to
   // (`resolveBilledOrg`, the rule the mid-run guard caps by): the request's
-  // connection, else the run's own, else the ledger row's repository. A PRD run
-  // and a code-route channel task bill through a connection, so they are capped
-  // here too. A workflow with neither run nor repository-bearing ledger row is
+  // connection, else the run's own, else the ledger row's repository, else the
+  // org the launch charged the request to. A PRD run and a code-route channel
+  // task bill through a connection, and a connection-less template or
+  // automation run through its launch's org, so they are capped here too. A workflow with neither run nor repository-bearing ledger row is
   // counted through the owner its trace rows are stamped with
   // (`orgMonthSpend`'s runless spend).
   let workflowId: string;

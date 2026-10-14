@@ -12,6 +12,10 @@ function fakeDb(opts: {
   unplaced?: { workflowId: string }[];
   /** Ledger rows whose repository belongs to the org, among the unplaced runs. */
   repoLedgers?: { temporalWorkflowId: string; costUsdAccrued: number }[];
+  /** Unplaced runs whose request was charged to the org at launch (`billingOrgId`). */
+  stamped?: { id: string; workflowId: string }[];
+  /** The stamped runs' own ledger rows, with or without a repository. */
+  stampedLedgers?: { temporalWorkflowId: string; costUsdAccrued: number; repoId: string | null }[];
   runTraceCost?: number | null;
   runlessCost?: number | null;
 }) {
@@ -22,8 +26,13 @@ function fakeDb(opts: {
   }));
   const tx = {
     activeWorkflow: {
-      findMany: vi.fn(async (args: { where: { repository?: unknown } }) =>
-        args.where.repository ? (opts.repoLedgers ?? []) : (opts.ledgers ?? [])
+      findMany: vi.fn(
+        async (args: { select: { repoId?: boolean }; where: { repository?: unknown } }) =>
+          args.select.repoId
+            ? (opts.stampedLedgers ?? [])
+            : args.where.repository
+              ? (opts.repoLedgers ?? [])
+              : (opts.ledgers ?? [])
       ),
     },
     agentTrace: { aggregate },
@@ -33,8 +42,16 @@ function fakeDb(opts: {
       ),
     },
     workflowRun: {
-      findMany: vi.fn(async (args: { select: { id?: boolean } }) =>
-        args.select.id ? (opts.runs ?? []) : (opts.unplaced ?? [])
+      findMany: vi.fn(
+        async (args: {
+          select: { id?: boolean };
+          where: { workRequest?: { billingOrgId?: string } };
+        }) =>
+          args.where.workRequest?.billingOrgId
+            ? (opts.stamped ?? [])
+            : args.select.id
+              ? (opts.runs ?? [])
+              : (opts.unplaced ?? [])
       ),
     },
   };
@@ -119,7 +136,7 @@ describe('orgMonthSpend', () => {
       runlessUsd: 0.5,
       totalUsd: 10.5,
     });
-    expect(f.tx.workflowRun.findMany).toHaveBeenCalledTimes(2);
+    expect(f.tx.workflowRun.findMany).toHaveBeenCalledTimes(3);
   });
 
   it('rethrows any other failure', async () => {
@@ -188,6 +205,73 @@ describe('orgMonthSpend: runs placed by the run connection or the ledger', () =>
   });
 });
 
+describe('orgMonthSpend: runs placed by the org their launch charged', () => {
+  it('selects unplaced runs whose request was charged to the org, and nothing a connection places', async () => {
+    const f = fakeDb({});
+    await orgMonthSpend(f.db, ORG);
+    expect(f.tx.workflowRun.findMany).toHaveBeenCalledWith({
+      select: { id: true, workflowId: true },
+      where: {
+        connectionId: null,
+        endedAt: null,
+        workRequest: { billingOrgId: ORG, connectionId: null },
+      },
+    });
+  });
+
+  it('counts an in-flight stamped run exactly once: from its ledger row, else its traces', async () => {
+    const f = fakeDb({
+      runTraceCost: 1.5,
+      stamped: [
+        { id: 'run-l', workflowId: 'wf-ledger' },
+        { id: 'run-t', workflowId: 'wf-traced' },
+      ],
+      stampedLedgers: [{ costUsdAccrued: 2, repoId: null, temporalWorkflowId: 'wf-ledger' }],
+      // The same runs are among the unplaced (they name no connection), but no
+      // repository-bearing ledger row of the org places them, so that path adds nothing.
+      unplaced: [{ workflowId: 'wf-ledger' }, { workflowId: 'wf-traced' }],
+    });
+    const spend = await orgMonthSpend(f.db, ORG);
+    expect(spend.inFlightUsd).toBe(3.5);
+    // Only the stamped run with no ledger row is summed from its traces.
+    expect(f.aggregate).toHaveBeenCalledWith({
+      _sum: { costUsd: true },
+      where: { runId: { in: ['run-t'] } },
+    });
+  });
+
+  it("leaves a stamped run to its ledger repository's org, so it is never counted twice", async () => {
+    const f = fakeDb({
+      // This org's repository places it: counted once, through the ledger path.
+      repoLedgers: [{ costUsdAccrued: 4, temporalWorkflowId: 'wf-here' }],
+      runTraceCost: 100,
+      stamped: [
+        { id: 'run-here', workflowId: 'wf-here' },
+        { id: 'run-away', workflowId: 'wf-away' },
+      ],
+      stampedLedgers: [
+        { costUsdAccrued: 4, repoId: 'repo-here', temporalWorkflowId: 'wf-here' },
+        // Another org's repository places this one: not this org's at all.
+        { costUsdAccrued: 8, repoId: 'repo-away', temporalWorkflowId: 'wf-away' },
+      ],
+      unplaced: [{ workflowId: 'wf-here' }, { workflowId: 'wf-away' }],
+    });
+    const spend = await orgMonthSpend(f.db, ORG);
+    expect(spend.inFlightUsd).toBe(4);
+    // Neither is ledgerless, so no trace sum runs for them.
+    expect(f.aggregate).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks for the stamped runs' ledger rows only when there are stamped runs", async () => {
+    const f = fakeDb({ stamped: [{ id: 'run-s', workflowId: 'wf-s' }] });
+    await orgMonthSpend(f.db, ORG);
+    expect(f.tx.activeWorkflow.findMany).toHaveBeenCalledWith({
+      select: { costUsdAccrued: true, repoId: true, temporalWorkflowId: true },
+      where: { temporalWorkflowId: { in: ['wf-s'] } },
+    });
+  });
+});
+
 describe('billedOrgId', () => {
   it('prefers the request connection, then the run connection only when the request names none, then the ledger', () => {
     const all = { ledgerOrgId: 'L', requestOrgId: 'Q', runOrgId: 'R' };
@@ -211,6 +295,22 @@ describe('billedOrgId', () => {
     ).toBeNull();
     // Likewise a run's own connection with no org does not reach the ledger.
     expect(billedOrgId({ ledgerOrgId: 'L', runConnectionId: 'r', runOrgId: null })).toBeNull();
+  });
+
+  it("bills the request's launch org only when no connection and no ledger repository place the run", () => {
+    expect(billedOrgId({ requestBillingOrgId: 'B' })).toBe('B');
+    expect(billedOrgId({ ledgerOrgId: 'L', requestBillingOrgId: 'B' })).toBe('L');
+    expect(
+      billedOrgId({ requestBillingOrgId: 'B', requestConnectionId: 'c', requestOrgId: 'Q' })
+    ).toBe('Q');
+    expect(billedOrgId({ requestBillingOrgId: 'B', runConnectionId: 'r', runOrgId: 'R' })).toBe(
+      'R'
+    );
+    // A connection with no org still decides: the stamp is not a fall-through.
+    expect(
+      billedOrgId({ requestBillingOrgId: 'B', requestConnectionId: 'c', requestOrgId: null })
+    ).toBeNull();
+    expect(billedOrgId({ requestBillingOrgId: 'B', runConnectionId: 'r' })).toBeNull();
   });
 });
 
