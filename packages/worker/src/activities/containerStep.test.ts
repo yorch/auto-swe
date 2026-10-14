@@ -43,8 +43,17 @@ describe('runContainerStep', () => {
     );
   });
 
-  it('throws when no command is provided', async () => {
-    await expect(runContainerStep(base)).rejects.toThrow(/requires a command/);
+  it('runs the image entrypoint when no command is provided', async () => {
+    // The node schema, the SDK helper and the bundle validator all treat
+    // `command` as optional ("defaults to the image entrypoint"), so the
+    // activity must run the image's own entrypoint rather than refuse.
+    mockedRun.mockResolvedValue({ exitCode: 0, stderr: '', stdout: '{"ok":1}' } as never);
+    const res = await runContainerStep({ ...base, inputs: { q: 'x' } });
+    expect(res).toEqual({ result: { ok: 1 } });
+    expect(mockedRun).toHaveBeenCalledWith(
+      expect.objectContaining({ env: { CONTAINER_STEP_INPUT: JSON.stringify({ q: 'x' }) } })
+    );
+    expect(mockedRun.mock.calls[0]?.[0]).not.toHaveProperty('command');
   });
 
   it('throws when the image is not allowed (propagates the allowlist error)', async () => {
