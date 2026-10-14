@@ -837,13 +837,21 @@ export async function bulkUpdateAgentModels(
   for (const id of new Set(request.ids)) {
     rows.push({ id, row: await prisma.agent.findUnique({ where: { id } }) });
   }
-  const shadowing = await prisma.agent.findMany({
-    select: { key: true, scope: true },
-    where: {
-      isActive: true,
-      key: { in: [...new Set(rows.flatMap(({ row }) => (row ? [row.key] : [])))] },
-    },
-  });
+  // Deliberately cross-tenant: a same-key row at a narrower scope wins for runs in that scope,
+  // whichever team or organization owns it, and naming those scopes is the whole point of the
+  // warning. The caller is a platform admin editing rows at any scope.
+  const shadowing = await runUnscoped(
+    'a narrower same-key override shadows this agent for runs in that scope, at any team or organization',
+    ['Agent'],
+    () =>
+      prisma.agent.findMany({
+        select: { key: true, scope: true },
+        where: {
+          isActive: true,
+          key: { in: [...new Set(rows.flatMap(({ row }) => (row ? [row.key] : [])))] },
+        },
+      })
+  );
   const scopes: AgentScope[] = ['WORKFLOW_TEMPLATE', 'CHANNEL', 'TEAM', 'ORGANIZATION', 'GLOBAL'];
   const changes: BulkModelChange[] = [];
   for (const { id, row } of rows) {
