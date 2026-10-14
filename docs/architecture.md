@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 89 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 91 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | The consolidated `20260618000000_init` baseline (generated from `schema.prisma`) plus the hand-written `20260618000001_custom_constraints_and_indexes` beside it; new changes append their own migration once the schema is deployed |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -595,8 +595,19 @@ entry, every `DELETE` and every deprecated alias are refused with `403 ASSISTANT
 is every call while `assistant.enabled` is off. A `confirm` call must name, in `x-assistant-action`,
 an `AssistantAction` the user confirmed on their own session for exactly that method, URL and body;
 the gateway spends it once the body is parsed and refuses the request if it differs. `request.assistant`
-tells a handler the call came from the assistant. See
-[adr/in-app-assistant.md](./adr/in-app-assistant.md).
+tells a handler the call came from the assistant. A token is also refused once the conversation it
+was minted for is closed or is not its user's, so closing a conversation revokes every token issued
+for it. See [adr/in-app-assistant.md](./adr/in-app-assistant.md).
+
+The assistant itself runs in the worker. Each conversation is one `AssistantConversationWorkflow`
+(id `assistant-<conversationId>`) that the gateway starts or signals with `signalWithStart` when the
+user posts to `/api/v1/assistant/conversations`; it runs one turn at a time and completes after 30
+minutes idle. A turn is the `runAssistantTurn` activity: the `appAssistant` agent with read-only tools
+— `searchDocs` over the docs the worker image ships, `getPageContext`, `describeApi` (the registered
+routes the policy admits, with their schemas) and `callApi` (GET only) — each calling the gateway over
+HTTP at `API_INTERNAL_URL` with the turn's assistant token. The reply is written into its
+`AssistantMessage` row as the model streams it, and the gateway streams that row to the panel as
+server-sent events.
 
 A JWT's role claim is not trusted on its own: after verifying the signature, the gateway re-reads
 the user's current role and `isActive` flag (behind a 30 s in-process cache), so a demotion or
@@ -640,7 +651,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 89 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 91 models.
 
 ```mermaid
 erDiagram

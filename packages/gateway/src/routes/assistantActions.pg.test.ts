@@ -31,6 +31,7 @@ const BODY = { description: 'Add a health check', repoIds: ['r1'] };
 describe.skipIf(!enabled)('assistant actions against Postgres', () => {
   const suffix = crypto.randomBytes(4).toString('hex');
   const conversationId = crypto.randomUUID();
+  const otherConversationId = crypto.randomUUID();
   let userId: string;
   let app: FastifyInstance;
   let ran = 0;
@@ -41,6 +42,13 @@ describe.skipIf(!enabled)('assistant actions against Postgres', () => {
       data: { email: `assistant-${suffix}@example.test`, emailVerified: true, name: 'a' },
     });
     userId = user.id;
+    // An assistant token is good only while its conversation is open and its user's.
+    await prisma.assistantConversation.createMany({
+      data: [
+        { id: conversationId, title: 'one', userId },
+        { id: otherConversationId, title: 'two', userId },
+      ],
+    });
     app = await buildAssistantApp(prisma as never, async (a) => {
       await a.register(assistantActionRoutes, { prefix: PREFIX });
       a.post(TARGET, { onRequest: requireAuth() }, async (request: FastifyRequest) => {
@@ -52,7 +60,7 @@ describe.skipIf(!enabled)('assistant actions against Postgres', () => {
 
   afterAll(async () => {
     await app?.close();
-    // Cascades to the user's assistant actions.
+    // Cascades to the user's conversations and assistant actions.
     await prisma.user.deleteMany({ where: { id: userId } });
   });
 
@@ -113,7 +121,7 @@ describe.skipIf(!enabled)('assistant actions against Postgres', () => {
 
   it('refuses a confirmation from another conversation', async () => {
     const id = await proposeAndConfirm();
-    const res = await execute(id, assistant(crypto.randomUUID()));
+    const res = await execute(id, assistant(otherConversationId));
     expect(res.statusCode).toBe(403);
     expect(res.json().error.code).toBe('ASSISTANT_CONFIRMATION_INVALID');
     expect((await prisma.assistantAction.findUniqueOrThrow({ where: { id } })).status).toBe(
@@ -140,5 +148,20 @@ describe.skipIf(!enabled)('assistant actions against Postgres', () => {
       url: `${PREFIX}/${id}/decline`,
     });
     expect(declined.statusCode).toBe(409);
+  });
+
+  it('refuses every token of a conversation once it is closed', async () => {
+    const closed = crypto.randomUUID();
+    await prisma.assistantConversation.create({
+      data: { closedAt: new Date(), id: closed, title: 'closed', userId },
+    });
+    const res = await app.inject({
+      headers: { authorization: assistant(closed) },
+      method: 'POST',
+      payload: { body: BODY, method: 'POST', summary: 'Start a run', url: TARGET },
+      url: PREFIX,
+    });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.code).toBe('TOKEN_INVALID');
   });
 });

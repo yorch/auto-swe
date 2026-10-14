@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { extractToc } from './docToc';
+import { extractToc } from './docToc.js';
 
 describe('extractToc', () => {
   it('lists h2 and h3 headings with unique ids', () => {

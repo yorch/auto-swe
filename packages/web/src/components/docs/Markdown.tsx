@@ -1,9 +1,9 @@
+import { headingIdFactory, headingText } from '@auto-swe/shared/lib/docToc';
 import Link from 'next/link';
 import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { isSafeExternalUrl, resolveDocLink } from '@/lib/docLinks';
-import { headingIdFactory, headingText } from '@/lib/docToc';
 import { cn } from '@/lib/utils';
 
 /**

@@ -1,3 +1,4 @@
+import { extractToc } from '@auto-swe/shared/lib/docToc';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { DocToc } from '@/components/docs/DocToc';
@@ -5,7 +6,6 @@ import { Markdown } from '@/components/docs/Markdown';
 import { ButtonLink } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import { type DocMeta, getDoc, listDocs, servedDocSlugs } from '@/lib/docs';
-import { extractToc } from '@/lib/docToc';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
 type Params = { slug: string };

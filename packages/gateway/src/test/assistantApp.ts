@@ -22,6 +22,10 @@ export function makeAssistantPrisma() {
       findUnique: vi.fn(),
       updateMany: vi.fn(),
     },
+    /** The token's conversation is open and the user's unless a test says otherwise. */
+    assistantConversation: {
+      findFirst: vi.fn().mockResolvedValue({ id: CONVERSATION_ID }),
+    },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     user: {
       findUnique: vi.fn().mockResolvedValue({ isActive: true, role: 'ENGINEER', slackId: null }),

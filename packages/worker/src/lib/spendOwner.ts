@@ -55,6 +55,27 @@ export async function ownerOfConnection(connectionId: string): Promise<SpendOwne
   return fromTeam(connection?.team);
 }
 
+/**
+ * The owner of a user's own work (the in-app assistant): their organization, when they belong to
+ * exactly one — directly or through their teams. A user in several has no single answer, so their
+ * spend is attributed to nobody rather than to a guess.
+ */
+export async function ownerOfUser(userId: string): Promise<SpendOwner> {
+  const user = await prisma.user.findUnique({
+    select: {
+      memberships: { select: { team: { select: { orgId: true } } } },
+      orgMemberships: { select: { orgId: true } },
+    },
+    where: { id: userId },
+  });
+  const orgIds = new Set([
+    ...(user?.orgMemberships ?? []).map((m) => m.orgId),
+    ...(user?.memberships ?? []).map((m) => m.team.orgId),
+  ]);
+  const [orgId] = orgIds;
+  return orgIds.size === 1 && orgId ? { orgId } : {};
+}
+
 /** The owner of an eval dataset: its team, else its organization, else nobody (GLOBAL). */
 export async function ownerOfDataset(datasetId: string): Promise<SpendOwner> {
   const dataset = await prisma.evalDataset.findUnique({

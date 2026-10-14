@@ -9,7 +9,7 @@
 Agent identity is a **free-form string** — there is no enum, the DB columns are plain `TEXT`, and
 `AnySkillRole = string`. New agents are added as data, not code.
 
-`syncBuiltins` seeds 29 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
+`syncBuiltins` seeds 30 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
 are seed content for the flagship software-engineering use case, not a fixed roster. An agent a team
 adds resolves through exactly the same cascade as `implementer`, and nothing in the engine privileges
 the seeded set — `assertConfigReady` gates boot on what the deployment has *installed*, not on the
@@ -18,7 +18,7 @@ catalog (§2).
 They split by how they bind a model: an agent carries either its own `modelSpec`, or an
 `inheritsModelFrom` pointer that `resolveAgent` chases to a parent.
 
-### Model-backed agents (17)
+### Model-backed agents (18)
 
 Each has a GLOBAL `Agent` row with its own `modelSpec`. Model, prompt, skills, and tools are edited
 — and overridden at CHANNEL / TEAM / ORGANIZATION / WORKFLOW_TEMPLATE scope — through the Agent
@@ -43,6 +43,7 @@ library at `/studio/agents/library`.
 | `productAnalyst` | Product pack — problem analysis | `anthropic/claude-sonnet-5-5` |
 | `prdWriter` | Product pack — PRD drafting | `anthropic/claude-sonnet-5-5` |
 | `issueDrafter` | Product pack — drafts issue descriptions from a brief | `anthropic/claude-sonnet-5-5` |
+| `appAssistant` | The dashboard's in-app assistant panel (`runAssistantTurn`), acting as the signed-in user | `anthropic/claude-sonnet-5-5` |
 
 `assertConfigReady()` gates worker boot on the agents the **installed templates** can reach:
 `requiredAgentKeysForDeployment()` walks the active (and experiment) version of every `ACTIVE`

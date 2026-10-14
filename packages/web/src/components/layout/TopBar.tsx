@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { type RefObject, useState } from 'react';
+import { AssistantToggle } from '@/components/assistant/AssistantPanel';
 import { CommandPalette, CommandPaletteButton } from '@/components/layout/CommandPalette';
 import { SIDEBAR_ID } from '@/components/layout/Sidebar';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
@@ -121,6 +122,7 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
       {/* Right side */}
       <div className="flex shrink-0 items-center gap-3">
         {/* Gateway reachability — driven by a /health probe, never assumed */}
+        <AssistantToggle />
         <CommandPaletteButton onClick={() => setPaletteOpen(true)} />
         <Badge
           className="max-sm:hidden"

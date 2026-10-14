@@ -1270,6 +1270,7 @@ model User {
   orgMemberships        OrganizationMembership[]
   accessTokens          ApiToken[]
   assistantActions      AssistantAction[]
+  assistantConversations AssistantConversation[]
   /// Better-auth relations.
   accounts              Account[]
   sessions              Session[]
@@ -3529,6 +3530,7 @@ model AssistantAction {
   user           User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// The conversation the assistant token that proposed it was bound to.
   conversationId String                @map("conversation_id") @db.Uuid
+  conversation   AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   method         String
   /// Path and query, as the assistant will send it: `/api/v1/...`.
   url            String
@@ -3553,4 +3555,64 @@ enum AssistantActionStatus {
   CONFIRMED
   DECLINED
   EXECUTED
+}
+
+/// A conversation between one user and the in-app assistant. Private to that user: every route
+/// that reads it filters on `userId`, whatever the caller's role.
+///
+/// Each conversation is driven by one Temporal workflow, `AssistantConversationWorkflow`, whose id is
+/// `assistant-<id>`. An assistant token names the conversation it was minted for, and `requireAuth`
+/// refuses it once the conversation is closed or no longer belongs to the token's user.
+model AssistantConversation {
+  id        String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String             @map("user_id") @db.Uuid
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// The start of the first message, so the conversation list has something to show.
+  title     String
+  closedAt  DateTime?          @map("closed_at") @db.Timestamptz
+  createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz
+  /// Bumped on every message, so the list sorts by last activity.
+  updatedAt DateTime           @updatedAt @map("updated_at") @db.Timestamptz
+  messages  AssistantMessage[]
+  actions   AssistantAction[]
+
+  @@index([userId, updatedAt])
+  @@map("assistant_conversations")
+}
+
+/// One message in an assistant conversation: the user's, or the assistant's reply to it.
+///
+/// A reply row is created PENDING when the user's message is posted, and the worker writes into it
+/// as the turn runs (`content` grows, `steps` gains a row per tool call), so the gateway can stream
+/// it to the panel by reading the row.
+model AssistantMessage {
+  id             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String                 @map("conversation_id") @db.Uuid
+  conversation   AssistantConversation  @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           AssistantMessageRole
+  content        String                 @default("")
+  /// The reply's tool calls, in order: `AssistantToolStep[]` (`shared/lib/assistantConversation.ts`).
+  steps          Json                   @default("[]")
+  status         AssistantMessageStatus @default(COMPLETE)
+  /// On a user message, the page the user was on: `AssistantPageContext`.
+  pageContext    Json?                  @map("page_context")
+  /// Why a FAILED reply failed, in words fit for the user.
+  error          String?
+  createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([conversationId, createdAt])
+  @@map("assistant_messages")
+}
+
+enum AssistantMessageRole {
+  USER
+  ASSISTANT
+}
+
+enum AssistantMessageStatus {
+  PENDING
+  STREAMING
+  COMPLETE
+  FAILED
 }

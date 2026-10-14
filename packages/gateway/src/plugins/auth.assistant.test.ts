@@ -124,6 +124,22 @@ describe('requireAuth — assistant tokens', () => {
       expect(seen).toEqual([]);
     });
 
+    it('refuses a token whose conversation is closed or not its user’s', async () => {
+      prisma.assistantConversation.findFirst.mockResolvedValue(null);
+      const res = await app.inject({
+        headers: { authorization: assistantBearer(app) },
+        method: 'GET',
+        url: `/api/v1/workflow-runs/${RUN_ID}`,
+      });
+      expect(res.statusCode).toBe(401);
+      expect(res.json().error.code).toBe('TOKEN_INVALID');
+      expect(prisma.assistantConversation.findFirst.mock.calls[0][0].where).toEqual({
+        closedAt: null,
+        id: CONVERSATION_ID,
+        userId: USER_ID,
+      });
+    });
+
     it('refuses every call while assistant.enabled is off', async () => {
       settings.resolveSetting.mockResolvedValue(false);
       const res = await app.inject({

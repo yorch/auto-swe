@@ -1,9 +1,11 @@
 import type { FastifyInstance } from 'fastify';
+import { ApiCatalog } from '../lib/apiCatalog.js';
 import { adminRoutes } from './admin.js';
 import { agentLibraryRoutes, teamAgentLibraryRoutes } from './agentLibrary.js';
 import { agentRunRoutes } from './agentRuns.js';
 import { agentVersionRoutes } from './agentVersions.js';
 import { assistantActionRoutes } from './assistantActions.js';
+import { assistantConversationRoutes } from './assistantConversations.js';
 import { automationRoutes } from './automations.js';
 import { autonomyPolicyRoutes } from './autonomyPolicies.js';
 import { bundleRoutes } from './bundles.js';
@@ -60,6 +62,10 @@ import { workRequestRoutes } from './workRequests.js';
  * (`assistantPolicy.test.ts` walks it).
  */
 export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
+  // Every route registered below, as the assistant's `describeApi` tool lists it.
+  const catalog = new ApiCatalog();
+  app.addHook('onRoute', (route) => catalog.add(route));
+
   // ── Personal access tokens (auth required, but self-service for engineers+) ──
   await app.register(tokenRoutes, { prefix: '/api/v1/auth/tokens' });
 
@@ -155,6 +161,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(teamAgentLibraryRoutes, { prefix: '/api/v1/teams' });
   await app.register(humanStepRoutes, { prefix: '/api/v1/human-steps' });
   await app.register(assistantActionRoutes, { prefix: '/api/v1/assistant/actions' });
+  await app.register(assistantConversationRoutes, { catalog, prefix: '/api/v1/assistant' });
   // Deprecated alias — kept for one release so existing CLI tokens and bookmarks keep working.
   await app.register(humanStepRoutes, { prefix: '/api/v1/inbox' });
 }

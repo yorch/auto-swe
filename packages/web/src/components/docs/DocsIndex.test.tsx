@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
+
+import {
+  buildSearchIndex,
+  MAX_QUERY_CHARS,
+  type SearchResult,
+  searchDocs,
+} from '@auto-swe/shared/lib/docSearch';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildSearchIndex, MAX_QUERY_CHARS, type SearchResult, searchDocs } from '@/lib/docSearch';
 import type { DocMeta } from '@/lib/docs';
 import { DocsIndex, fetchSearchResults, SEARCH_DEBOUNCE_MS } from './DocsIndex';
 

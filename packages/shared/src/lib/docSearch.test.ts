@@ -10,8 +10,8 @@ import {
   searchDocs,
   stemForms,
   tokenize,
-} from './docSearch';
-import { extractToc } from './docToc';
+} from './docSearch.js';
+import { extractToc } from './docToc.js';
 
 const DOC = `# Agents
 

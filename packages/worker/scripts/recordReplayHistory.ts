@@ -946,6 +946,32 @@ const SCENARIOS: Scenario[] = [
     name: 'channel-reactive',
     workflow: { args: [{ channelId: 'chan-replay' }], type: 'ChannelReactiveWorkflow' },
   },
+  {
+    // An in-app assistant conversation: two turns signalled, answered in order. The second turn's
+    // activity fails, so its reply is marked failed; then the conversation idles out.
+    activities: () => {
+      let turns = 0;
+      return {
+        failAssistantReply: async () => {},
+        runAssistantTurn: async () => {
+          turns += 1;
+          if (turns > 1) {
+            throw ApplicationFailure.nonRetryable('fixture turn failure');
+          }
+          return { status: 'COMPLETE' };
+        },
+      };
+    },
+    drive: async (handle) => {
+      await handle.signal('assistantTurn', { replyId: 'reply-1', token: 'asst_fixture-1' });
+      await handle.signal('assistantTurn', { replyId: 'reply-2', token: 'asst_fixture-2' });
+    },
+    name: 'assistant-conversation',
+    workflow: {
+      args: [{ conversationId: 'conv-replay', userId: 'user-replay' }],
+      type: 'AssistantConversationWorkflow',
+    },
+  },
 ];
 
 /**

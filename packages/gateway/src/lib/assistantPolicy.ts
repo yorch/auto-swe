@@ -30,7 +30,12 @@ export type NeverReason =
   /** A long-lived event stream, which a tool call cannot consume. */
   | 'stream'
   /** Starts a browser OAuth redirect, which only a person in a browser can complete. */
-  | 'oauthFlow';
+  | 'oauthFlow'
+  /**
+   * The assistant panel's own conversations. The assistant reads its conversation through its turn;
+   * one that could post here would start turns of its own.
+   */
+  | 'assistantPanel';
 
 export type RoutePolicyEntry = 'read' | 'confirm' | { read: string } | { never: NeverReason };
 
@@ -41,6 +46,11 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/agent-runs/agents': 'read',
   'GET /api/v1/agent-runs/limits': 'read',
   'GET /api/v1/assistant/actions/:id': 'read',
+  'GET /api/v1/assistant/api-catalog': 'read',
+  'GET /api/v1/assistant/conversations': { never: 'assistantPanel' },
+  'GET /api/v1/assistant/conversations/:id': { never: 'assistantPanel' },
+  'GET /api/v1/assistant/conversations/:id/messages/:messageId/stream': { never: 'stream' },
+  'GET /api/v1/assistant/status': 'read',
   'GET /api/v1/auth/slack/connect': { never: 'oauthFlow' },
   'GET /api/v1/auth/slack/install': { never: 'oauthFlow' },
   'GET /api/v1/auth/tokens': { never: 'secret' },
@@ -211,6 +221,9 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   },
   'POST /api/v1/assistant/actions/:id/confirm': { never: 'humanDecision' },
   'POST /api/v1/assistant/actions/:id/decline': { never: 'humanDecision' },
+  'POST /api/v1/assistant/conversations': { never: 'assistantPanel' },
+  'POST /api/v1/assistant/conversations/:id/close': { never: 'assistantPanel' },
+  'POST /api/v1/assistant/conversations/:id/messages': { never: 'assistantPanel' },
   'POST /api/v1/auth/tokens': { never: 'secret' },
   'POST /api/v1/automations/events': 'confirm',
   'POST /api/v1/automations/events/:id/fires/:fireId/retry': 'confirm',

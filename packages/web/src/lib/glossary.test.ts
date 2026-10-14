@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { extractToc } from '@auto-swe/shared/lib/docToc';
 import { describe, expect, it } from 'vitest';
-import { extractToc } from './docToc';
 import { GLOSSARY, type GlossaryTerm, glossaryEntry } from './glossary';
 
 const DOCS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../../docs');

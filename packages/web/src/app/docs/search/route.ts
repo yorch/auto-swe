@@ -1,5 +1,5 @@
+import { MAX_QUERY_CHARS, MAX_RESULTS, searchDocs } from '@auto-swe/shared/lib/docSearch';
 import type { NextRequest } from 'next/server';
-import { MAX_QUERY_CHARS, MAX_RESULTS, searchDocs } from '@/lib/docSearch';
 import { loadDocSearchIndex } from '@/lib/docs';
 
 /** Answers per request, so it must not be prerendered at `next build`. */
