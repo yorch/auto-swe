@@ -138,8 +138,21 @@ export function BulkModelModal({
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [adaptRuntime, setAdaptRuntime] = useState(false);
   const [clearMismatchedCredentials, setClearMismatchedCredentials] = useState(false);
-  const [plan, setPlan] = useState<BulkModelPlan | null>(null);
-  const [previewRequest, setPreviewRequest] = useState<BulkModelRequest | null>(null);
+  // A plan belongs to the inputs that produced it. Keying it that way means a preview that lands
+  // after the operator has edited something is never shown, and never applied, without every input
+  // having to remember to invalidate it.
+  const inputsKey = JSON.stringify([
+    mode,
+    modelSpec,
+    mapping,
+    adaptRuntime,
+    clearMismatchedCredentials,
+  ]);
+  const [previewed, setPreviewed] = useState<{
+    body: BulkModelRequest;
+    key: string;
+    plan: BulkModelPlan;
+  } | null>(null);
   const [appliedPlan, setAppliedPlan] = useState<BulkModelPlan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const preview = usePreviewBulkModel();
@@ -167,8 +180,8 @@ export function BulkModelModal({
     setError(null);
     const body = request();
     try {
-      setPlan(await preview.mutateAsync(body));
-      setPreviewRequest(body);
+      const result = await preview.mutateAsync(body);
+      setPreviewed({ body, key: inputsKey, plan: result });
       setAppliedPlan(null);
     } catch (e) {
       setError(errMsg(e, 'Preview failed'));
@@ -177,16 +190,19 @@ export function BulkModelModal({
 
   async function applyPlan() {
     setError(null);
-    if (!previewRequest) {
+    if (!activePreview) {
       return;
     }
     try {
-      setAppliedPlan(await apply.mutateAsync(previewRequest));
+      setAppliedPlan(await apply.mutateAsync(activePreview.body));
     } catch (e) {
       setError(errMsg(e, 'Apply failed'));
     }
   }
 
+  /** The preview whose inputs still match the form; null once anything is edited. */
+  const activePreview = previewed?.key === inputsKey ? previewed : null;
+  const plan = activePreview?.plan ?? null;
   const shownPlan = appliedPlan ?? plan;
   // REMAP with nothing filled would send an empty mapping, which the gateway refuses.
   const canPreview =
@@ -210,8 +226,6 @@ export function BulkModelModal({
                 ariaLabel="Model change mode"
                 onChange={(v) => {
                   setMode(v);
-                  setPlan(null);
-                  setPreviewRequest(null);
                 }}
                 options={[
                   { label: 'Set one model', value: 'SET' },
@@ -225,8 +239,6 @@ export function BulkModelModal({
                   label="Target model"
                   onChange={(value) => {
                     setModelSpec(value);
-                    setPlan(null);
-                    setPreviewRequest(null);
                   }}
                   value={modelSpec}
                 />
@@ -243,8 +255,6 @@ export function BulkModelModal({
                         label={`Target for ${spec}`}
                         onChange={(value) => {
                           setMapping({ ...mapping, [spec]: value });
-                          setPlan(null);
-                          setPreviewRequest(null);
                         }}
                         value={mapping[spec] ?? ''}
                       />
@@ -257,14 +267,15 @@ export function BulkModelModal({
                       label="Catch-all target"
                       onChange={(value) => {
                         setMapping({ ...mapping, '*': value });
-                        setPlan(null);
-                        setPreviewRequest(null);
                       }}
                       placeholder="Applies to any other current model"
                       value={mapping['*'] ?? ''}
                     />
                   </div>
-                  <p className="text-xs text-paper-500">A blank target leaves that model alone.</p>
+                  <p className="text-xs text-paper-500">
+                    A model left blank here follows the catch-all when one is set, and is otherwise
+                    left alone. The preview shows which of these agents that covers.
+                  </p>
                 </div>
               )}
             </div>
@@ -275,8 +286,6 @@ export function BulkModelModal({
                 label="Move Claude Code agents to the Mastra loop"
                 onChange={(e) => {
                   setAdaptRuntime(e.target.checked);
-                  setPlan(null);
-                  setPreviewRequest(null);
                 }}
               />
               <Checkbox
@@ -285,8 +294,6 @@ export function BulkModelModal({
                 label="Clear credentials pinned to another provider"
                 onChange={(e) => {
                   setClearMismatchedCredentials(e.target.checked);
-                  setPlan(null);
-                  setPreviewRequest(null);
                 }}
               />
             </div>

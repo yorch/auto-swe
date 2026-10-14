@@ -196,6 +196,9 @@ export default function AgentLibraryPage() {
   const [history, setHistory] = useState<AgentRow | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [bulkModelOpen, setBulkModelOpen] = useState(false);
+  // Bumped per opening so the dialog starts from a clean slate: its previous plan, or the result
+  // of a batch already applied, must not greet the next selection.
+  const [bulkModelSession, setBulkModelSession] = useState(0);
   // Set after a save the scanner or catalog commented on: the agent exists, and the dialog stays
   // open only so the findings are read rather than vanishing with the form.
   const [saved, setSaved] = useState<SavedNotice | null>(null);
@@ -445,7 +448,14 @@ export default function AgentLibraryPage() {
           <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
             <span className="mr-auto text-paper-400">{selectedVisibleIds.size} selected</span>
             {isAdmin && (
-              <Button onClick={() => setBulkModelOpen(true)} size="sm" variant="secondary">
+              <Button
+                onClick={() => {
+                  setBulkModelSession((session) => session + 1);
+                  setBulkModelOpen(true);
+                }}
+                size="sm"
+                variant="secondary"
+              >
                 Change model
               </Button>
             )}
@@ -669,6 +679,7 @@ export default function AgentLibraryPage() {
       {isAdmin && (
         <BulkModelModal
           agents={selectedAgents}
+          key={bulkModelSession}
           onClose={() => {
             setBulkModelOpen(false);
             setSelectedIds(new Set());

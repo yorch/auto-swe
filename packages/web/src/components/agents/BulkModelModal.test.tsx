@@ -74,6 +74,7 @@ const change = (over: Record<string, unknown> = {}) => ({
   inheritedFrom: null,
   key: 'a',
   name: 'Agent A',
+  newId: null,
   newVersion: null,
   runtimeChange: null,
   scope: 'GLOBAL',
@@ -232,6 +233,71 @@ describe('BulkModelModal', () => {
 
     fireEvent.change(target, { target: { value: 'anthropic/other' } });
     expect(screen.queryByRole('button', { name: 'Apply 1 changes' })).toBeNull();
+  });
+
+  it('drops the preview when an opt-in changes', async () => {
+    setupFetchMock({
+      'POST /api/v1/platform/agent-library/bulk-model/preview': () => ({
+        data: { ...plan, changes: [change()], summary: { ...plan.summary, ok: 1, total: 1 } },
+      }),
+    });
+    render(
+      withQuery(<BulkModelModal agents={[agent('a', 'openai/old')]} onClose={vi.fn()} open />)
+    );
+    fireEvent.change(screen.getByRole('textbox', { name: 'Target model' }), {
+      target: { value: 'anthropic/new' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview changes' }));
+    expect(await screen.findByRole('button', { name: 'Apply 1 changes' })).toBeTruthy();
+
+    fireEvent.click(screen.getByText('Clear credentials pinned to another provider'));
+    expect(screen.queryByRole('button', { name: 'Apply 1 changes' })).toBeNull();
+  });
+
+  it('ignores a preview whose answer lands after the inputs it was built from changed', async () => {
+    let release: ((response: Response) => void) | undefined;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            release = resolve;
+          })
+      )
+    );
+    render(
+      withQuery(<BulkModelModal agents={[agent('a', 'openai/old')]} onClose={vi.fn()} open />)
+    );
+    const target = screen.getByRole('textbox', { name: 'Target model' });
+    fireEvent.change(target, { target: { value: 'anthropic/first' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Preview changes' }));
+    await waitFor(() => expect(release).toBeDefined());
+
+    // The operator edits the target while that preview is still in flight.
+    fireEvent.change(target, { target: { value: 'anthropic/second' } });
+    release?.(
+      new Response(
+        JSON.stringify({
+          data: {
+            ...plan,
+            changes: [change({ to: 'anthropic/first' })],
+            summary: { ...plan.summary, ok: 1, total: 1 },
+          },
+        }),
+        { headers: { 'content-type': 'application/json' }, status: 200 }
+      )
+    );
+    // The button leaving its pending label is what says the answer has been handled.
+    await waitFor(() => screen.getByRole('button', { name: 'Preview changes' }));
+
+    // It describes inputs the form no longer holds, so it is neither shown nor applicable.
+    expect(screen.queryByRole('button', { name: 'Apply 1 changes' })).toBeNull();
+    expect(screen.queryByText('openai/old → anthropic/first')).toBeNull();
+
+    // It was received and kept, not discarded: put the input back the way it was and the same
+    // answer applies again.
+    fireEvent.change(target, { target: { value: 'anthropic/first' } });
+    expect(screen.getByRole('button', { name: 'Apply 1 changes' })).toBeTruthy();
   });
 
   it('reports an inheriting agent as following its parent, not as a change', async () => {

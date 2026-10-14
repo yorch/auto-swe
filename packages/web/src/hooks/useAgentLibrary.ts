@@ -53,6 +53,8 @@ export interface BulkModelChange {
   id: string;
   key: string;
   name: string;
+  /** The id of the version the change created; null until it is applied. */
+  newId: string | null;
   scope: AgentScope;
   version: number;
   from: string | null;
