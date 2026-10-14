@@ -10,6 +10,7 @@ import {
 import { AgentHistoryModal } from '@/components/agents/AgentHistoryModal';
 import { AgentScopeFields } from '@/components/agents/AgentScopeFields';
 import { broaderFallbacks } from '@/components/agents/agentFallback';
+import { BulkModelModal } from '@/components/agents/BulkModelModal';
 import { ModelSaveWarnings } from '@/components/agents/ModelSaveWarnings';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
 import { ActionMenu } from '@/components/ui/ActionMenu';
@@ -17,6 +18,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
@@ -192,6 +194,8 @@ export default function AgentLibraryPage() {
   const [editingOriginal, setEditingOriginal] = useState<AgentRow | null>(null);
   const [deleting, setDeleting] = useState<AgentRow | null>(null);
   const [history, setHistory] = useState<AgentRow | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
+  const [bulkModelOpen, setBulkModelOpen] = useState(false);
   // Set after a save the scanner or catalog commented on: the agent exists, and the dialog stays
   // open only so the findings are read rather than vanishing with the form.
   const [saved, setSaved] = useState<SavedNotice | null>(null);
@@ -294,6 +298,11 @@ export default function AgentLibraryPage() {
         SCOPE_ORDER.indexOf(a.scope) - SCOPE_ORDER.indexOf(b.scope)
     );
   const filtering = Boolean(scopeFilter || query);
+  const visibleIds = new Set(visibleAgents.map((agent) => agent.id));
+  const selectedVisibleIds = new Set([...selectedIds].filter((id) => visibleIds.has(id)));
+  const selectedAgents = visibleAgents.filter((agent) => selectedVisibleIds.has(agent.id));
+  const allVisibleSelected =
+    visibleAgents.length > 0 && selectedVisibleIds.size === visibleAgents.length;
   // Agents a sub-role can borrow a model from: those with a model of their own.
   const parentAgents = (agents ?? [])
     .filter((a) => a.scope === 'GLOBAL' && a.isActive && a.modelSpec)
@@ -432,6 +441,19 @@ export default function AgentLibraryPage() {
             </Button>
           )}
         </Toolbar>
+        {selectedVisibleIds.size > 0 && (
+          <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+            <span className="mr-auto text-paper-400">{selectedVisibleIds.size} selected</span>
+            {isAdmin && (
+              <Button onClick={() => setBulkModelOpen(true)} size="sm" variant="secondary">
+                Change model
+              </Button>
+            )}
+            <Button onClick={() => setSelectedIds(new Set())} size="sm" variant="ghost">
+              Clear selection
+            </Button>
+          </div>
+        )}
         <QueryBoundary
           error={loadError}
           isError={isError}
@@ -474,6 +496,31 @@ export default function AgentLibraryPage() {
           ) : (
             <Table stacked>
               <THead>
+                {/* Only an admin can send a bulk change, so only an admin gets the selection column. */}
+                {isAdmin && (
+                  <Th className="w-10 pl-0" variant="plain">
+                    <Checkbox
+                      aria-label="Select all visible agents"
+                      checked={allVisibleSelected}
+                      label=""
+                      onChange={(event) => {
+                        setSelectedIds((current) => {
+                          const next = new Set([...current].filter((id) => visibleIds.has(id)));
+                          if (event.target.checked) {
+                            for (const id of visibleIds) {
+                              next.add(id);
+                            }
+                          } else {
+                            for (const id of visibleIds) {
+                              next.delete(id);
+                            }
+                          }
+                          return next;
+                        });
+                      }}
+                    />
+                  </Th>
+                )}
                 <Th className="pl-0" variant="plain">
                   Agent
                 </Th>
@@ -497,6 +544,28 @@ export default function AgentLibraryPage() {
                   const tools = toolKeysLabel(a.toolKeys);
                   return (
                     <TRow hover key={a.id}>
+                      {isAdmin && (
+                        <Td className="py-3 pr-1 align-top" label="Select">
+                          <Checkbox
+                            aria-label={`Select ${a.key}`}
+                            checked={selectedVisibleIds.has(a.id)}
+                            label=""
+                            onChange={(event) =>
+                              setSelectedIds((current) => {
+                                const next = new Set(
+                                  [...current].filter((id) => visibleIds.has(id))
+                                );
+                                if (event.target.checked) {
+                                  next.add(a.id);
+                                } else {
+                                  next.delete(a.id);
+                                }
+                                return next;
+                              })
+                            }
+                          />
+                        </Td>
+                      )}
                       <Td className="py-3 pr-4 align-top sm:max-w-[22rem]" primary>
                         <div className="flex min-w-0 items-baseline gap-2">
                           {sameKeyAsAbove && (
@@ -596,6 +665,17 @@ export default function AgentLibraryPage() {
           )}
         </QueryBoundary>
       </Card>
+
+      {isAdmin && (
+        <BulkModelModal
+          agents={selectedAgents}
+          onClose={() => {
+            setBulkModelOpen(false);
+            setSelectedIds(new Set());
+          }}
+          open={bulkModelOpen}
+        />
+      )}
 
       {/* ── Create ── */}
       <Modal onClose={() => setCreateOpen(false)} open={createOpen} size="lg" title="New agent">

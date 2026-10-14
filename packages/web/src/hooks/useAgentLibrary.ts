@@ -40,6 +40,56 @@ export interface AgentRow {
   skillRefs: AgentSkillRef[];
 }
 
+export type BulkModelStatus =
+  | 'OK'
+  | 'NOOP'
+  | 'UNMATCHED'
+  | 'INHERITS'
+  | 'BLOCKED'
+  | 'CONFLICT'
+  | 'ERROR';
+
+export interface BulkModelChange {
+  id: string;
+  key: string;
+  name: string;
+  scope: AgentScope;
+  version: number;
+  from: string | null;
+  to: string | null;
+  status: BulkModelStatus;
+  blockers: string[];
+  warnings: string[];
+  shadowedBy: string[];
+  inheritedFrom: string | null;
+  runtimeChange: { from: string | null; to: string | null } | null;
+  credentialCleared: boolean;
+  newVersion: number | null;
+}
+
+export interface BulkModelPlan {
+  changes: BulkModelChange[];
+  summary: {
+    total: number;
+    ok: number;
+    noop: number;
+    unmatched: number;
+    inherits: number;
+    blocked: number;
+    conflict: number;
+    error: number;
+  };
+}
+
+export interface BulkModelRequest {
+  ids: string[];
+  mode: 'SET' | 'REMAP';
+  modelSpec?: string;
+  mapping?: Record<string, string>;
+  adaptRuntime?: boolean;
+  clearMismatchedCredentials?: boolean;
+}
+
 export interface SkillRefInput {
   skillId: string;
   sortOrder: number;
@@ -135,6 +185,26 @@ export function useDeleteAgent() {
       api.delete<{ data: { deactivated: number } }>(
         `/api/v1/platform/agent-library/${id}${force ? '?force=true' : ''}`
       ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+}
+
+export function usePreviewBulkModel() {
+  return useMutation({
+    mutationFn: (body: BulkModelRequest) =>
+      api
+        .post<{ data: BulkModelPlan }>('/api/v1/platform/agent-library/bulk-model/preview', body)
+        .then((r) => r.data),
+  });
+}
+
+export function useApplyBulkModel() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: BulkModelRequest) =>
+      api
+        .post<{ data: BulkModelPlan }>('/api/v1/platform/agent-library/bulk-model', body)
+        .then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 }
