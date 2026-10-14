@@ -612,7 +612,8 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     '/',
     {
       // Open to service principals: docs/service-principals.md.
-      config: { serviceScopes: ['runs:launch'] },
+      // `runs:agent`, not `runs:launch`: a free-form prompt to an agent of the caller's choosing.
+      config: { serviceScopes: ['runs:agent'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: CreateAgentRunBody, headers: IdempotencyHeaderSchema },
     },

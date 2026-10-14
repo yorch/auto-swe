@@ -47,8 +47,10 @@ export interface GrantableRepo {
 }
 
 const SCOPE_HINTS: Record<ServiceTokenScope, string> = {
+  'runs:agent':
+    'Start agent runs: any prompt, any launchable agent, on a repository on its list. Grant only to a caller you trust with that',
   'runs:cancel': 'Cancel runs this principal started',
-  'runs:launch': 'Start agent runs and template runs on its allowlists',
+  'runs:launch': 'Start runs of the templates on its list',
   'runs:read': 'List and read runs this principal started',
 };
 

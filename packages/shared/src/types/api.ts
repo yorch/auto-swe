@@ -728,8 +728,18 @@ export interface AdminTokenSummary {
 /**
  * What a service principal's token may do. A route opts in by declaring the scopes it needs
  * (`config.serviceScopes`); every other route refuses a service token.
+ *
+ * `runs:agent` is separate from `runs:launch` because an agent run takes a free-form prompt and
+ * an agent of the caller's choosing (the implementer, with a shell): a repository grant alone
+ * would otherwise let a principal run anything there. `runs:launch` starts only the templates on
+ * the principal's template allowlist.
  */
-export const SERVICE_TOKEN_SCOPES = ['runs:launch', 'runs:read', 'runs:cancel'] as const;
+export const SERVICE_TOKEN_SCOPES = [
+  'runs:launch',
+  'runs:agent',
+  'runs:read',
+  'runs:cancel',
+] as const;
 export type ServiceTokenScope = (typeof SERVICE_TOKEN_SCOPES)[number];
 
 /** A service token's longest lifetime, in days. Every service token expires. */

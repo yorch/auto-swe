@@ -52,6 +52,7 @@ interface State {
     maxInFlight: number;
     maxRunsPerDay: number;
     team: { isActive: boolean };
+    teamId: string;
     templateIds: string[];
   } | null;
   repoTeamId: string;
@@ -59,6 +60,8 @@ interface State {
   orgOverBudget: boolean;
   runsLastDay: number;
   inFlight: number;
+  /** The repository's team as the launch guard re-reads it under the lock. */
+  guardRepoTeamId: string;
 }
 
 describe('POST /api/v1/agent-runs with a service principal token', () => {
@@ -67,29 +70,33 @@ describe('POST /api/v1/agent-runs with a service principal token', () => {
   let runInputs: Array<Record<string, unknown>>;
   let started: Array<{ id: string; input: Record<string, unknown> }>;
   let locks: string[];
+  let connectionLookups: number;
 
   beforeEach(async () => {
     __resetReconcileCacheForTests();
     s = {
       connectionIds: [REPO],
+      guardRepoTeamId: SP_TEAM,
       guardRow: {
         connectionIds: [REPO],
         disabledAt: null,
         maxInFlight: 5,
         maxRunsPerDay: 50,
         team: { isActive: true },
+        teamId: SP_TEAM,
         templateIds: [],
       },
       inFlight: 0,
       orgOverBudget: false,
       repoTeamId: SP_TEAM,
       runsLastDay: 0,
-      scopes: ['runs:launch'],
+      scopes: ['runs:agent'],
       sharedWith: [],
     };
     runInputs = [];
     started = [];
     locks = [];
+    connectionLookups = 0;
 
     app = Fastify();
     app.setValidatorCompiler(validatorCompiler);
@@ -139,26 +146,41 @@ describe('POST /api/v1/agent-runs with a service principal token', () => {
         update: async () => ({}),
       },
       connection: {
-        findUnique: async () => ({
-          githubApiUrl: null,
-          githubUrl: null,
-          id: REPO,
-          installation: null,
-          isActive: true,
-          organizationName: 'acme',
-          repoName: 'api',
-          shares: s.sharedWith.map((teamId) => ({
-            team: { isActive: true, memberships: [] },
-            teamId,
-          })),
-          team: {
-            memberships: [{ userId: USER }],
-            organization: { id: 'org-1', monthlyBudgetUsdCents: s.orgOverBudget ? 100 : null },
-            orgId: 'org-1',
-          },
-          teamId: s.repoTeamId,
-          type: 'git_repo',
-        }),
+        findUnique: async ({
+          include,
+          select,
+        }: {
+          include?: Record<string, unknown>;
+          select?: Record<string, unknown>;
+        }) => {
+          // The launch guard's narrow read under the connection lock.
+          if (select && !('type' in select)) {
+            return { isActive: true, shares: [], teamId: s.guardRepoTeamId };
+          }
+          if (include && 'installation' in include) {
+            connectionLookups++;
+          }
+          return {
+            githubApiUrl: null,
+            githubUrl: null,
+            id: REPO,
+            installation: null,
+            isActive: true,
+            organizationName: 'acme',
+            repoName: 'api',
+            shares: s.sharedWith.map((teamId) => ({
+              team: { isActive: true, memberships: [] },
+              teamId,
+            })),
+            team: {
+              memberships: [{ userId: USER }],
+              organization: { id: 'org-1', monthlyBudgetUsdCents: s.orgOverBudget ? 100 : null },
+              orgId: 'org-1',
+            },
+            teamId: s.repoTeamId,
+            type: 'git_repo',
+          };
+        },
       },
       organizationMembership: { findUnique: async () => ({ role: 'ORG_MEMBER' }) },
       orgMonthlyUsage: {
@@ -218,20 +240,33 @@ describe('POST /api/v1/agent-runs with a service principal token', () => {
   });
 
   describe('refusals', () => {
-    it('without the runs:launch scope: 403 INSUFFICIENT_SCOPE', async () => {
-      s.scopes = ['runs:read'];
+    it('without the runs:agent scope: 403 INSUFFICIENT_SCOPE, runs:launch is not enough', async () => {
+      s.scopes = ['runs:launch', 'runs:read'];
       const res = await post();
       expect(res.statusCode).toBe(403);
       expect(res.json().error.code).toBe('INSUFFICIENT_SCOPE');
       expect(started).toHaveLength(0);
     });
 
-    it('a repository not on its allowlist', async () => {
+    it('a repository not on its allowlist: the 404 a missing connection gets, with no lookup', async () => {
       s.connectionIds = [];
+      const res = await post();
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error).toEqual({
+        code: 'CONNECTION_NOT_FOUND',
+        message: 'Connection not found or inactive',
+      });
+      expect(connectionLookups).toBe(0);
+      expect(runInputs).toHaveLength(0);
+    });
+
+    it('a repository its team lost after the token was checked, decided under the lock', async () => {
+      s.guardRepoTeamId = OTHER_TEAM;
       const res = await post();
       expect(res.statusCode).toBe(403);
       expect(res.json().error.code).toBe('SERVICE_CONNECTION_NOT_ALLOWED');
       expect(runInputs).toHaveLength(0);
+      expect(started).toHaveLength(0);
     });
 
     it('an allowlisted repository its team neither owns nor shares', async () => {
@@ -308,7 +343,7 @@ describe('POST /api/v1/agent-runs with a service principal token', () => {
       await post({ 'idempotency-key': 'deploy-42' });
       await post({ 'idempotency-key': 'deploy-42' }, 'fake-jwt');
       const [service, person] = started.map((x) => x.id);
-      expect(service).toMatch(/^agent-aaaaaaaa-s33333333-[0-9a-f]{16}$/);
+      expect(service).toMatch(/^agent-aaaaaaaa-s33333333333343338333333333333333-[0-9a-f]{16}$/);
       expect(person).toMatch(/^agent-aaaaaaaa-11111111-[0-9a-f]{16}$/);
     });
 
