@@ -758,6 +758,39 @@ scripted model and no API key: `PI_DOCKER_TEST=1 yarn vitest run
 packages/worker/src/agents/pi/runtime.docker.test.ts` (`PI_DOCKER_TEST_IMAGE` names an image other
 than `node:24-alpine`). The `docker-tests` job in `ci.yml` runs it with the flag set.
 
+**Running one real turn.** `yarn pi:smoke` runs a single Pi implementer turn against a real model,
+outside Temporal and without a database. It starts a workspace container hardened as
+`createWorkspace`'s is (`--init`, `--cap-drop=ALL`, `no-new-privileges`, memory, CPU and pids
+limits), clones the repository on the host (shallow, so the image needs no git) or copies a
+directory in, builds `piRuntime` with the real `resolveModel`, and calls `runTurn` once. It prints
+each tool call with the worker's decision, each model call's tokens, the final text, the diff
+stat, the wall time and a cost estimate from `BUILTIN_MODELS` (the model catalog lives in the
+database and is not consulted), and writes the full trace as JSON. The container is always
+removed.
+
+```bash
+yarn workspace @auto-swe/shared build   # the script imports the shared package's build output
+PI_SMOKE_API_KEY=<provider key> yarn pi:smoke --model anthropic/claude-sonnet-5-5 --no-db-scanners
+```
+
+The key is read only from `PI_SMOKE_API_KEY`, never a flag. `--api-base` points an
+OpenAI-compatible provider at its endpoint; `--image`, `--repo` or `--dir`, `--prompt`,
+`--max-steps`, `--deadline-seconds` and `--trace-file` set the rest (`--help` lists them, and each
+reads a `PI_SMOKE_<NAME>` variable too). The scanners load their patterns from the database, so
+the tool refuses to start without `DATABASE_URL` unless `--no-db-scanners` is given. That mode
+makes them read `BUILTIN_SCANNER_PATTERNS` instead and says so in the report; patterns an admin
+added or disabled at `/govern/scanner` do not apply. `--mock` swaps in a scripted model that
+writes a file and answers, for checking the tool itself with no key or network
+(`pi/smoke.docker.test.ts` runs it in CI under the same `PI_DOCKER_TEST` flag).
+
+Once a turn has run cleanly, compare the runtime with the Mastra loop on the same prompt, model and
+skills, as [evals.md "Comparing runtimes"](./evals.md#comparing-runtimes) describes:
+
+```bash
+auto-swe evals run golden --candidate=implementer@N --candidate-runtime=pi \
+  --against=implementer@N --against-runtime=mastra
+```
+
 **Other harnesses.** Claude Code and Pi are the harnesses registered. Codex CLI, OpenCode, Gemini CLI
 and Pi were each checked for what the registry requires: a callback the worker answers,
 synchronously, before every tool call, that nothing inside the container can bypass. None of the

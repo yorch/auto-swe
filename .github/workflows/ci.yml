@@ -133,7 +133,7 @@ jobs:
       - name: Pi harness (Docker-backed tests)
         env:
           PI_DOCKER_TEST: '1'
-        run: yarn test packages/worker/src/agents/pi/runtime.docker.test.ts
+        run: yarn test packages/worker/src/agents/pi/runtime.docker.test.ts packages/worker/src/agents/pi/smoke.docker.test.ts
 
       # The trusted finalize path's real shell against a deliberately hostile
       # agent container (a lying `git`, `* -diff`, a planted symlink, a secret).
@@ -210,6 +210,7 @@ jobs:
           yarn test packages/worker/src/agents/claudeCode/runtime.docker.test.ts
           packages/worker/src/activities/agentRunFinalize.docker.test.ts
           packages/worker/src/agents/pi/runtime.docker.test.ts
+          packages/worker/src/agents/pi/smoke.docker.test.ts
 
   # Real-database job: applies every migration to a fresh Postgres+pgvector
   # and runs the seed. The unit-test job deliberately uses an unreachable
