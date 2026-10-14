@@ -1459,6 +1459,8 @@ template override is never badged, because it may use a different model or crede
 
 The bulk endpoints are admin-only. Preview writes nothing; apply uses the same version cut as a single edit, so every changed Agent gets a new immutable version and history is never rewritten. See [bulk model changes](model-configuration.md#changing-many-agents-models-at-once) for the operational details.
 
+`PUT` accepts `isActive: true` to reactivate a deactivated lineage, and nothing else: switching a lineage off is the `DELETE` route, which does the whole lineage rather than one version of it. A version preserves its lineage's activation, so an edit of a deactivated agent is refused with `409 AGENT_INACTIVE` instead of reviving it — see [reactivating a deactivated agent](model-configuration.md#reactivating-a-deactivated-agent).
+
 ---
 
 ## 10. Data Model Summary

@@ -443,6 +443,12 @@ Every changed agent gets a new immutable version through the same versioning pat
 
 An agent at a narrower scope — team, organization, channel or workflow template — replaces the broader row for runs that resolve through it. Changing a platform-wide row therefore does not reach a team with its own override. The preview names the narrower scopes holding a row for the same key. A channel or workflow-template row wins in its own context whatever it sits above; a team row wins over a platform-wide row for that team, and over an organization row for teams inside that organization, because the resolver tries the team tier before the organization one.
 
+### Reactivating a deactivated agent
+
+Deactivating an agent switches off its whole lineage: every version is marked inactive, runs that need the key fall through to a broader scope, and the worker refuses to start if a required agent stays that way. Activation belongs to the lineage rather than to a version, so **saving a change no longer switches an agent back on** — an edit of a deactivated agent is refused with `409 AGENT_INACTIVE`, and so is restoring a version into one. That is deliberate: reviving an agent is a decision of its own, and a save that did it by accident is worse than one that refuses and says so.
+
+Reactivate deliberately from the Agent library, on the row's actions menu. It cuts a new version, as any other save does, and is recorded in the audit log with the activation it changed. Deactivation and reactivation take the lineage's lock, so an edit and a deactivation cannot interleave: whichever commits first is what the other sees.
+
 ### Rotating an API key
 
 1. **Admin → Model Config → Credentials → Edit \<provider\>**.
@@ -651,12 +657,6 @@ forced delete.
 
 ## Limitations
 
-- **A bulk apply can still revive a lineage deactivated between the preview and the write.** The
-  apply refuses a head that is no longer active, but that check and the write are not atomic: a
-  deactivation landing in between goes unseen and the new version is written active. The same race
-  exists on a single edit, which does not check activity at all, and `updateAgent` writing
-  `isActive: true` is what reactivates — closing it properly needs a lock held across the check and
-  the write.
 - **Bulk model preview and apply are separate operations, not an atomic transaction.** Each agent
   is handled independently during apply: a version conflict or unexpected write failure is
   reported for that agent, while successful changes to other agents remain applied.
