@@ -112,18 +112,20 @@ beforeEach(() => {
 });
 
 describe('runShellStep — token redaction', () => {
-  it('does not leak the GitHub token into the summary when git push fails', async () => {
+  it('does not leak the GitHub token into the summary when the finalize fails', async () => {
     const result = await runShellStep({
       command: 'echo hi',
       image: 'alpine/git:latest',
       request: REQUEST,
     });
 
-    // The command itself exited 0 — only the push failed. The step still fails,
-    // because the changes it was asked to land are not on the branch.
+    // The command itself exited 0 — only the finalize failed. The step still
+    // fails, because the change it was asked to land could not be confirmed on
+    // the branch. The message does not claim which command failed: the finalize
+    // runs as one script, and this catches all of it.
     expect(result.passed).toBe(false);
     expect(result.exitCode).toBe(0);
-    expect(result.summary).toMatch(/git push failed/);
+    expect(result.summary).toMatch(/finalizing the workspace failed/);
     expect(result.persisted).toBe(false);
     expect(result.summary).not.toContain(TOKEN);
     expect(result.summary).not.toContain(CLONE_URL);
