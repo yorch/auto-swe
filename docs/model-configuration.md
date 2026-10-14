@@ -431,6 +431,18 @@ Removes via the **Reset** button. Resetting causes the next activity call for th
 
 Admin-only, from the Agent library at `/studio/agents/library`. Create an Agent for the key with scope `WORKFLOW_TEMPLATE` and supply the template ID. The template editor itself carries no model section — template-scoped overrides are edited in the Agent library.
 
+### Changing many agents' models at once
+
+In **Agent library** at `/studio/agents/library`, select the rows to change and choose **Change model**. **Set one model** assigns the same target to every selected agent with its own model. **Map each model** assigns a target per current model; this is useful when different providers or model families need different destinations. A mapping entry for a current model handles that model, and the optional catch-all entry handles every other current model. A blank target leaves that model alone.
+
+Review the preview before applying. It shows each agent's current and target model, any runtime or credential change, notes, and narrower scopes that shadow the row. The status explains what happens: `OK` will change, `NOOP` already has the target, `UNMATCHED` has no matching mapping entry, `INHERITS` has no model of its own and follows another agent, and `BLOCKED` fails a save rule. Inherited sub-role personas are not edited: they take their model, runtime and reasoning level from the agent they inherit from. The preview names the parent each one follows; where that parent is in the selection as well, its own row is where the model it is moving to is shown.
+
+Two optional choices let a bulk change handle writes the gateway otherwise refuses. **Move Claude Code agents to the Mastra loop** adapts a `claude-code` agent to `mastra` when its target is not an Anthropic model; a `claude-code` version cannot carry a non-Anthropic model. **Clear credentials pinned to another provider** removes a pin that cannot be used for the target — one for another provider, or one that no longer exists — so the agent falls back to the provider's default credential; otherwise the gateway refuses the write rather than dropping the pin.
+
+Each changed agent gets a new immutable version through the same versioning path as a single edit. Earlier versions remain resolvable, so a run already pinned to an earlier version is unaffected; see [Agent version history](agents.md#92-agent-library-model--prompt--skills--tools).
+
+An agent at a narrower scope — team, organization, channel or workflow template — replaces the broader row for runs in that scope. Changing a platform-wide row therefore does not reach a team with its own override. The preview names the narrower scopes that shadow each row.
+
 ### Rotating an API key
 
 1. **Admin → Model Config → Credentials → Edit \<provider\>**.
@@ -522,6 +534,33 @@ curl -X POST http://localhost:8080/api/v1/platform/agent-library \
     "modelSpec": "anthropic/claude-opus-5-5"
   }'
 
+# Preview a per-model remap, then apply the same request. Preview has its own
+# path; there is no dryRun field. Mapping keys are normalized provider/model
+# specs, and "*" is the optional catch-all for any other current model.
+curl -X POST http://localhost:8080/api/v1/platform/agent-library/bulk-model/preview \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "ids": ["<agent-id-1>", "<agent-id-2>"],
+    "mode": "REMAP",
+    "mapping": {
+      "anthropic/claude-sonnet-5-5": "openai/gpt-6.1-sol",
+      "*": "google/gemini-3.5-flash-lite"
+    }
+  }' | jq '.data.changes[] | {key, from, to, status, shadowedBy, inheritedFrom}'
+
+curl -X POST http://localhost:8080/api/v1/platform/agent-library/bulk-model \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "ids": ["<agent-id-1>", "<agent-id-2>"],
+    "mode": "REMAP",
+    "mapping": {
+      "anthropic/claude-sonnet-5-5": "openai/gpt-6.1-sol",
+      "*": "google/gemini-3.5-flash-lite"
+    }
+  }' | jq '.data.changes[] | {key, from, to, status, newVersion}'
+
 # Rotate a credential (admin scope). Provider + scope are immutable; only
 # apiBase and apiKey can change.
 curl -X PUT http://localhost:8080/api/v1/platform/credentials/<credential-id> \
@@ -612,6 +651,9 @@ forced delete.
 
 ## Limitations
 
+- **Bulk model preview and apply are separate operations, not an atomic transaction.** Each agent
+  is handled independently during apply: a version conflict or unexpected write failure is
+  reported for that agent, while successful changes to other agents remain applied.
 - **The config cache means edits are eventually consistent.** Model config is cached in-process with
   a ~30 s TTL (`CONFIG_CACHE_TTL_MS`) and gateway and worker are separate processes, so the two can
   briefly disagree after an edit. A `generate()` call already in flight keeps the model it bound.
