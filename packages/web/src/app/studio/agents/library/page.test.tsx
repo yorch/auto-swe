@@ -104,6 +104,19 @@ describe('agent library — bulk model change', () => {
     expect(screen.queryByText('2 selected')).toBeNull();
   });
 
+  it('will not offer a change the gateway would refuse', () => {
+    state.agents = Array.from({ length: 201 }, (_, index) =>
+      row(`a${index}`, `Agent ${index}`, `agent-${index}`)
+    );
+    render(withQuery(<AgentLibraryPage />));
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all visible agents' }));
+    expect(screen.getByText(/At most 200 can be changed at once/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Change model' }).hasAttribute('disabled')).toBe(
+      true
+    );
+  });
+
   it('gives a non-admin no selection column and no way to change models in bulk', () => {
     state.admin = false;
     render(withQuery(<AgentLibraryPage />));

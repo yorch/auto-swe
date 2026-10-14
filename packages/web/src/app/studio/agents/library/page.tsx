@@ -116,6 +116,12 @@ const EDIT_COPY: AgentFormCopy = {
 
 // ── Page ──────────────────────────────────────────────────────────────────────
 
+/**
+ * The gateway refuses a bulk model change naming more than this many agents in one request, so the
+ * page must never offer one. Changing more agents at once is a matter of narrowing the list first.
+ */
+const BULK_MODEL_LIMIT = 200;
+
 const SCOPE_NOUN: Record<AgentScope, string> = {
   CHANNEL: 'Slack channel',
   GLOBAL: 'deployment',
@@ -447,8 +453,15 @@ export default function AgentLibraryPage() {
         {selectedVisibleIds.size > 0 && (
           <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
             <span className="mr-auto text-paper-400">{selectedVisibleIds.size} selected</span>
+            {selectedVisibleIds.size > BULK_MODEL_LIMIT && (
+              <span className="text-amber-400">
+                At most {BULK_MODEL_LIMIT} can be changed at once — narrow the list with the
+                filters.
+              </span>
+            )}
             {isAdmin && (
               <Button
+                disabled={selectedVisibleIds.size > BULK_MODEL_LIMIT}
                 onClick={() => {
                   setBulkModelSession((session) => session + 1);
                   setBulkModelOpen(true);
