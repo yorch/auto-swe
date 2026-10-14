@@ -106,12 +106,20 @@ jobs:
             fi
             echo "::warning::Building the repository's own .auto-swe/Dockerfile (use_repo_dockerfile)"
             echo "path=.auto-swe/Dockerfile" >> "$GITHUB_OUTPUT"
+            echo "context=." >> "$GITHUB_OUTPUT"
           else
+            if [ -f ".auto-swe/Dockerfile" ]; then
+              echo "::warning::The repository has .auto-swe/Dockerfile but use_repo_dockerfile is not set; building defaults/Dockerfile.node"
+            fi
             # Fetch the default executor Dockerfile from the control-plane repo
             curl -sf -H "Authorization: Bearer ${GH_TOKEN}" \
               "https://raw.githubusercontent.com/${CONTROL_PLANE_REPO}/main/defaults/Dockerfile.node" \
               -o "${RUNNER_TEMP_DIR}/Dockerfile.node"
             echo "path=${RUNNER_TEMP_DIR}/Dockerfile.node" >> "$GITHUB_OUTPUT"
+            # An empty build context: nothing from the repository can reach the
+            # default image, whatever Dockerfile.node later copies.
+            mkdir -p "${RUNNER_TEMP_DIR}/empty-context"
+            echo "context=${RUNNER_TEMP_DIR}/empty-context" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Configure AWS credentials (OIDC)
@@ -139,7 +147,7 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
-          context: .
+          context: ${{ steps.dockerfile.outputs.context }}
           file: ${{ steps.dockerfile.outputs.path }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}

@@ -64,7 +64,9 @@ token, via the install flow (`/studio/integrations → Slack → Add to Slack`):
    callback requires the cookie nonce to match the state's (timing-safe compare)
    and clears the cookie on every outcome, so an authorize URL handed to another
    browser cannot complete the install (`403 STATE_MISMATCH`). It also re-checks
-   that the installer is still an active admin.
+   that the installer is still an active admin. The install must start on the
+   gateway's public URL (`PUBLIC_URL`), the host the callback is served from, or
+   the cookie is not sent back and every install is refused.
 3. The admin lands back on the integrations page; the Slack tab lists each
    workspace's install status (own token vs. singleton fallback).
 
