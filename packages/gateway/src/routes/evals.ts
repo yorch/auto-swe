@@ -371,32 +371,39 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     }
     // What the reset discards, for the audit: how many of the cases were screened,
     // failed their screen, or were never screened. Counted in the reset's own
-    // transaction, so a screen recording a result meanwhile cannot skew them.
+    // repeatable-read transaction, so a screen recording a result meanwhile
+    // cannot skew them.
     const scope = { datasetId: ds.id, ...(caseId ? { id: caseId } : {}) };
-    const count = await fastify.prisma.$transaction(async (tx) => {
-      const screenedBefore = await tx.evalCase.count({ where: { ...scope, flakeScreened: true } });
-      const failedBefore = await tx.evalCase.count({
-        where: { ...scope, flakeRuns: { gt: 0 }, flakeScreened: false },
-      });
-      const neverBefore = await tx.evalCase.count({ where: { ...scope, flakeRuns: 0 } });
-      const reset = await tx.evalCase.updateMany({
-        data: { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0 },
-        where: scope,
-      });
-      if (caseId && reset.count === 0) {
-        return 0;
-      }
-      await writeAuditLog(fastify, {
-        action: 'UPDATE',
-        actor,
-        after: { flakeRuns: 0, flakeScreened: false, rescreen: caseId ? { caseId } : 'dataset' },
-        before: { failed: failedBefore, neverScreened: neverBefore, screened: screenedBefore },
-        client: tx,
-        entityId: ds.id,
-        entityType: 'EvalDataset',
-      });
-      return reset.count;
-    });
+    const count = await fastify.prisma.$transaction(
+      async (tx) => {
+        const screenedBefore = await tx.evalCase.count({
+          where: { ...scope, flakeScreened: true },
+        });
+        const failedBefore = await tx.evalCase.count({
+          where: { ...scope, flakeRuns: { gt: 0 }, flakeScreened: false },
+        });
+        const neverBefore = await tx.evalCase.count({ where: { ...scope, flakeRuns: 0 } });
+        const reset = await tx.evalCase.updateMany({
+          data: { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0 },
+          where: scope,
+        });
+        if (caseId && reset.count === 0) {
+          return 0;
+        }
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor,
+          after: { flakeRuns: 0, flakeScreened: false, rescreen: caseId ? { caseId } : 'dataset' },
+          before: { failed: failedBefore, neverScreened: neverBefore, screened: screenedBefore },
+          client: tx,
+          entityId: ds.id,
+          entityType: 'EvalDataset',
+        });
+        return reset.count;
+      },
+      // One snapshot for the counts and the reset, so the audit matches what was reset.
+      { isolationLevel: 'RepeatableRead' }
+    );
     if (caseId && count === 0) {
       return 'CASE_NOT_FOUND';
     }
