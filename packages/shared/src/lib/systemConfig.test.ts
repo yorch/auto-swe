@@ -6,6 +6,7 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     figmaConfig: { findUnique: vi.fn() },
     gitHubConfig: { findUnique: vi.fn() },
+    issueTrackerConfig: { findUnique: vi.fn() },
     knowledgeBaseConfig: { findUnique: vi.fn() },
     workflowDefaults: { findUnique: vi.fn() },
   },
@@ -19,7 +20,9 @@ import {
   resolveGitHubBaseUrl,
   resolveGitHubConfig,
   resolveGoogleOAuthConfig,
+  resolveIssueTrackerOrigin,
   resolveKnowledgeBaseConfig,
+  resolveKnowledgeBaseOrigin,
   resolveOktaOAuthConfig,
   resolveScheduledSweeps,
   resolveStorageConfig,
@@ -835,6 +838,50 @@ describe('systemConfig resolvers', () => {
       expect(config.provider).toBeNull();
       expect(config.enabled).toBe(false);
       expect(config.spaces).toEqual([]);
+    });
+  });
+});
+
+describe('resolveKnowledgeBaseOrigin', () => {
+  it('reads the origin without decrypting the integration token', async () => {
+    // A token that cannot be decrypted: the full resolver throws on it, and the
+    // origin guard a connector URL check uses must not depend on it. A knowledge-base
+    // token nobody uses must not be able to break a connection that has its own.
+    (prisma.knowledgeBaseConfig.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      allowPrivateNetwork: true,
+      apiTokenAuthTag: Buffer.from('not-a-real-tag'),
+      apiTokenCiphertext: Buffer.from('garbage'),
+      apiTokenKeyVersion: 1,
+      apiTokenNonce: Buffer.from('nope'),
+      baseUrl: 'https://wiki.example.com',
+    });
+
+    await expect(resolveKnowledgeBaseOrigin()).resolves.toEqual({
+      allowPrivateNetwork: true,
+      baseUrl: 'https://wiki.example.com',
+    });
+    // It asks for those two fields and nothing else.
+    expect(prisma.knowledgeBaseConfig.findUnique).toHaveBeenCalledWith({
+      select: { allowPrivateNetwork: true, baseUrl: true },
+      where: { id: 'default' },
+    });
+  });
+
+  it('reads the tracker origin the same way', async () => {
+    (prisma.issueTrackerConfig.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      allowPrivateNetwork: false,
+      baseUrl: 'https://jira.example.com',
+    });
+
+    await expect(resolveIssueTrackerOrigin()).resolves.toEqual({
+      allowPrivateNetwork: false,
+      baseUrl: 'https://jira.example.com',
+    });
+    // The full tracker resolver also decrypts the API token and the webhook secret;
+    // this one must ask for neither.
+    expect(prisma.issueTrackerConfig.findUnique).toHaveBeenCalledWith({
+      select: { allowPrivateNetwork: true, baseUrl: true },
+      where: { id: 'default' },
     });
   });
 });

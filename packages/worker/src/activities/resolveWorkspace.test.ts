@@ -23,11 +23,16 @@ vi.mock('../connectors/notion.js', () => ({
   readNotionPage: vi.fn(),
 }));
 
+vi.mock('../connectors/confluence.js', () => ({
+  readConfluencePage: vi.fn(),
+}));
+
 vi.mock('../connectors/zendesk.js', () => ({
   fetchZendeskTicket: vi.fn(),
 }));
 
 const { prisma } = await import('@auto-swe/shared/db');
+const { readConfluencePage } = await import('../connectors/confluence.js');
 const { readNotionPage } = await import('../connectors/notion.js');
 const { fetchZendeskTicket } = await import('../connectors/zendesk.js');
 
@@ -210,5 +215,74 @@ describe('resolveWorkspace', () => {
     await expect(
       resolveWorkspace({ connectionId: null, workspaceProvider: 'document' })
     ).rejects.toThrow('document workspace requires a connectionId');
+  });
+
+  it('resolves a document workspace from a confluence connection', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      config: { baseUrl: 'https://x.atlassian.net', email: 'a@b.com' },
+      isActive: true,
+      name: 'Engineering Wiki',
+      type: 'confluence',
+    });
+
+    const result = await resolveWorkspace({
+      connectionId: 'conn-3',
+      workspaceProvider: 'document',
+    });
+
+    expect(result).toEqual({
+      connectionId: 'conn-3',
+      provider: 'document',
+      sourceId: undefined,
+      workspaceName: 'Engineering Wiki',
+    });
+    // No page to read: a Confluence connection has no default source page, only a
+    // default parent for writes.
+    expect(readConfluencePage).not.toHaveBeenCalled();
+  });
+
+  it('validates the confluence source page named by the run', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      apiKeyAuthTag: Buffer.from('tag'),
+      apiKeyCiphertext: Buffer.from('cipher'),
+      apiKeyNonce: Buffer.from('nonce'),
+      apiKeyVersion: 1,
+      config: { baseUrl: 'https://x.atlassian.net', email: 'a@b.com' },
+      isActive: true,
+      name: 'Engineering Wiki',
+      type: 'confluence',
+    });
+    (readConfluencePage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      bodyText: 'Body',
+      id: 'page-9',
+      title: 'Runbook',
+      url: 'https://x.atlassian.net/wiki/pages/page-9',
+      version: 1,
+    });
+
+    const result = await resolveWorkspace({
+      connectionId: 'conn-3',
+      payload: { pageId: 'page-9' },
+      workspaceProvider: 'document',
+    });
+
+    expect(result).toMatchObject({ connectionId: 'conn-3', sourceId: 'page-9' });
+    expect(readConfluencePage).toHaveBeenCalledWith(
+      { apiToken: 'test-token', config: { baseUrl: 'https://x.atlassian.net', email: 'a@b.com' } },
+      'page-9'
+    );
+  });
+
+  it('rejects a document workspace whose connection is neither notion nor confluence', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      config: {},
+      isActive: true,
+      name: 'Ticket queue',
+      type: 'zendesk',
+    });
+
+    await expect(
+      resolveWorkspace({ connectionId: 'conn-4', workspaceProvider: 'document' })
+    ).rejects.toThrow('is not an active notion or confluence connection');
   });
 });

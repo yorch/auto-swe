@@ -1341,6 +1341,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           // No authenticated user, so no GitHub identity to check. This caller
           // is scoped to the template's own team instead.
           gate: undefined,
+          inputSchema: isInputSchema(template.inputSchema) ? template.inputSchema : null,
+          payload,
           prisma: fastify.prisma,
           providerMeta,
           templateTeamId: template.teamId,

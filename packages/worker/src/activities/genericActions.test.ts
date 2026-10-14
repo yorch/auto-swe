@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  createConfluencePage,
+  readConfluencePage,
+  updateConfluencePage,
+} from '../connectors/confluence.js';
 import { createIssue, fetchIssue } from '../connectors/issueTracker.js';
 import { appendNotionBlocks, createNotionPage, readNotionPage } from '../connectors/notion.js';
 import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
@@ -49,6 +54,12 @@ vi.mock('../connectors/zendesk.js', () => ({
 vi.mock('../connectors/issueTracker.js', () => ({
   createIssue: vi.fn(),
   fetchIssue: vi.fn(),
+}));
+
+vi.mock('../connectors/confluence.js', () => ({
+  createConfluencePage: vi.fn(),
+  readConfluencePage: vi.fn(),
+  updateConfluencePage: vi.fn(),
 }));
 
 const { prisma } = await import('@auto-swe/shared/db');
@@ -571,5 +582,317 @@ describe('runTool', () => {
       identifier: 'PROJ-42',
       url: 'https://x.atlassian.net/browse/PROJ-42',
     });
+  });
+});
+
+const confluenceConfig = { baseUrl: 'https://x.atlassian.net', email: 'a@b.com' };
+const confluenceConnectionId = '4dcf895a-9ed7-450c-8858-e45b8415db4b';
+
+describe('confluence readSource', () => {
+  it('reads a page and returns its plain text', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('confluence', { config: confluenceConfig, token: true })
+    );
+    (readConfluencePage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      bodyText: 'Steps',
+      id: '123',
+      title: 'Runbook',
+      url: 'https://x.atlassian.net/wiki/pages/123',
+      version: 2,
+    });
+
+    const result = await readSource({
+      connectionId: confluenceConnectionId,
+      query: { pageId: '123' },
+    });
+    expect(result.ok).toBe(true);
+    expect(result.connectionType).toBe('confluence');
+    expect(result.data).toEqual({
+      bodyText: 'Steps',
+      id: '123',
+      title: 'Runbook',
+      url: 'https://x.atlassian.net/wiki/pages/123',
+      version: 2,
+    });
+    expect(readConfluencePage).toHaveBeenCalledWith(
+      expect.objectContaining({ apiToken: 'test-token' }),
+      '123'
+    );
+  });
+
+  it('throws when no page id is supplied', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('confluence', { config: confluenceConfig, token: true })
+    );
+
+    await expect(readSource({ connectionId: confluenceConnectionId })).rejects.toThrow(
+      'Confluence readSource requires a pageId'
+    );
+  });
+});
+
+describe('confluence writeOutcome', () => {
+  beforeEach(() => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('confluence', { config: confluenceConfig, token: true })
+    );
+  });
+
+  it('creates a page when no target page is named', async () => {
+    (createConfluencePage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '9',
+      url: 'https://x.atlassian.net/wiki/spaces/ENG/pages/9',
+      version: 1,
+    });
+
+    const result = await writeOutcome({
+      connectionId: confluenceConnectionId,
+      data: { bodyText: 'Draft', spaceKey: 'ENG', title: 'From a ticket' },
+    });
+
+    expect(result).toEqual({
+      connectionType: 'confluence',
+      ok: true,
+      reference: 'https://x.atlassian.net/wiki/spaces/ENG/pages/9',
+    });
+    expect(createConfluencePage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        config: expect.objectContaining({ baseUrl: confluenceConfig.baseUrl }),
+      }),
+      expect.objectContaining({ bodyText: 'Draft', spaceKey: 'ENG', title: 'From a ticket' })
+    );
+    expect(updateConfluencePage).not.toHaveBeenCalled();
+  });
+
+  it('updates the named page instead of creating one', async () => {
+    (updateConfluencePage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '9',
+      url: 'https://x.atlassian.net/wiki/pages/9',
+      version: 3,
+    });
+
+    const result = await writeOutcome({
+      connectionId: confluenceConnectionId,
+      data: { bodyText: 'Draft', targetPageId: '9', title: 'Doc' },
+    });
+
+    expect(result).toEqual({
+      connectionType: 'confluence',
+      ok: true,
+      reference: 'https://x.atlassian.net/wiki/pages/9',
+    });
+    expect(updateConfluencePage).toHaveBeenCalledWith(
+      expect.anything(),
+      '9',
+      expect.objectContaining({ bodyText: 'Draft', title: 'Doc' })
+    );
+    expect(createConfluencePage).not.toHaveBeenCalled();
+  });
+
+  it('refuses a write with no body', async () => {
+    await expect(
+      writeOutcome({ connectionId: confluenceConnectionId, data: { title: 'Doc' } })
+    ).rejects.toThrow('Confluence writeOutcome requires bodyText');
+  });
+
+  it('refuses a create with no title', async () => {
+    await expect(
+      writeOutcome({ connectionId: confluenceConnectionId, data: { bodyText: 'Draft' } })
+    ).rejects.toThrow('requires a title to create a page');
+  });
+
+  it('uses the fallback title when the request named none', async () => {
+    (createConfluencePage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '9',
+      url: 'https://x.atlassian.net/wiki/spaces/ENG/pages/9',
+      version: 1,
+    });
+
+    // A form submits an untouched optional field as `''`, and no binding can say
+    // "the first non-empty of these", so the caller passes the source's title and
+    // the choice is made here.
+    await writeOutcome({
+      connectionId: confluenceConnectionId,
+      data: { bodyText: 'Draft', fallbackTitle: 'From the issue', title: '' },
+    });
+
+    expect(createConfluencePage).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ title: 'From the issue' })
+    );
+  });
+
+  it('propagates a connector failure instead of reporting success', async () => {
+    (createConfluencePage as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('Confluence API error (400)')
+    );
+
+    await expect(
+      writeOutcome({
+        connectionId: confluenceConnectionId,
+        data: { bodyText: 'Draft', title: 'Doc' },
+      })
+    ).rejects.toThrow('Confluence API error (400)');
+  });
+});
+
+describe('confluence runTool', () => {
+  beforeEach(() => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('confluence', { config: confluenceConfig, token: true })
+    );
+  });
+
+  it('creates a page', async () => {
+    (createConfluencePage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '9',
+      url: 'https://x.atlassian.net/wiki/pages/9',
+      version: 1,
+    });
+
+    const result = await runTool({
+      connectionId: confluenceConnectionId,
+      inputs: { bodyText: 'Draft', spaceKey: 'ENG', title: 'Doc' },
+      tool: 'createPage',
+    });
+    expect(result.ok).toBe(true);
+    expect(result.connectionType).toBe('confluence');
+  });
+
+  it('updates a page', async () => {
+    (updateConfluencePage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '9',
+      url: 'https://x.atlassian.net/wiki/pages/9',
+      version: 2,
+    });
+
+    const result = await runTool({
+      connectionId: confluenceConnectionId,
+      inputs: { bodyText: 'New', pageId: '9' },
+      tool: 'updatePage',
+    });
+    expect(result.ok).toBe(true);
+    expect(updateConfluencePage).toHaveBeenCalledWith(
+      expect.anything(),
+      '9',
+      expect.objectContaining({ bodyText: 'New' })
+    );
+  });
+
+  it('rejects an unknown tool', async () => {
+    await expect(
+      runTool({ connectionId: confluenceConnectionId, inputs: {}, tool: 'deletePage' })
+    ).rejects.toThrow('Unsupported Confluence tool');
+  });
+
+  it('forwards a caller-supplied version rather than refreshing it', async () => {
+    (updateConfluencePage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '9',
+      url: 'https://x.atlassian.net/wiki/pages/9',
+      version: 8,
+    });
+
+    await runTool({
+      connectionId: confluenceConnectionId,
+      inputs: { bodyText: 'Draft', pageId: '9', version: 7 },
+      tool: 'updatePage',
+    });
+
+    expect(updateConfluencePage).toHaveBeenCalledWith(
+      expect.anything(),
+      '9',
+      expect.objectContaining({ bodyText: 'Draft', version: 7 })
+    );
+  });
+
+  it('refuses a version that is not a positive whole number', async () => {
+    await expect(
+      runTool({
+        connectionId: confluenceConnectionId,
+        inputs: { bodyText: 'Draft', pageId: '9', version: 0 },
+        tool: 'updatePage',
+      })
+    ).rejects.toThrow('positive whole number');
+    expect(updateConfluencePage).not.toHaveBeenCalled();
+  });
+});
+
+describe('runTool approval guard', () => {
+  const publishedAt = new Date('2026-01-01T00:00:00Z');
+
+  beforeEach(() => {
+    (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({ id: 'run-1' });
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('confluence', { config: confluenceConfig, token: true })
+    );
+  });
+
+  it('refuses a mutating tool when the policy required approval and none was recorded', async () => {
+    (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        createdAt: publishedAt,
+        payload: { decision: 'require_approval' },
+        policyName: 'default',
+        riskClass: 'external_write',
+      })
+      .mockResolvedValueOnce(null);
+
+    // `runTool` used to bypass the gate `writeOutcome` applies, so a template that
+    // recorded "approval required" and then wrote through a tool published anyway.
+    await expect(
+      runTool({
+        connectionId: confluenceConnectionId,
+        inputs: { bodyText: 'Draft', pageId: '9' },
+        tool: 'updatePage',
+      })
+    ).rejects.toThrow('requires human approval');
+    expect(updateConfluencePage).not.toHaveBeenCalled();
+  });
+
+  it('writes through a tool when an approval was recorded', async () => {
+    (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        createdAt: publishedAt,
+        payload: { decision: 'require_approval' },
+      })
+      .mockResolvedValueOnce({ id: 'approval-1' });
+    (updateConfluencePage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      id: '9',
+      url: 'https://x.atlassian.net/wiki/pages/9',
+      version: 2,
+    });
+
+    const result = await runTool({
+      connectionId: confluenceConnectionId,
+      inputs: { bodyText: 'Draft', pageId: '9' },
+      tool: 'updatePage',
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it('does not gate a read tool', async () => {
+    (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      createdAt: publishedAt,
+      payload: { decision: 'require_approval' },
+      policyName: 'default',
+    });
+    (readConfluencePage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      bodyText: 'Body',
+      id: '9',
+      title: 'Runbook',
+      url: 'https://x.atlassian.net/wiki/pages/9',
+      version: 1,
+    });
+
+    const result = await runTool({
+      connectionId: confluenceConnectionId,
+      inputs: { pageId: '9' },
+      tool: 'fetchPage',
+    });
+
+    expect(result.ok).toBe(true);
+    // The gate is not consulted at all for a read: a run whose policy demanded
+    // approval for a write has not asked for one to look a page up.
+    expect(prisma.autonomyDecision.findFirst).not.toHaveBeenCalled();
   });
 });
