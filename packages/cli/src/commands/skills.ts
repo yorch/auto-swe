@@ -116,11 +116,7 @@ const where = (s: { host: string; owner: string; repo: string; path: string }) =
   );
 
 async function cmdList(env: CliEnv): Promise<number> {
-  const rows = await apiRequest<SkillSourceSummary[]>(
-    env,
-    'GET',
-    '/api/v1/platform/skill-sources'
-  );
+  const rows = await apiRequest<SkillSourceSummary[]>(env, 'GET', '/api/v1/platform/skill-sources');
   if (rows.length === 0) {
     process.stdout.write('No skill sources.\n');
     return 0;

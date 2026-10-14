@@ -67,7 +67,9 @@ export function IssuesPanel({
         )}
         {serverIssues.length > 0 && shownErrors + shownWarnings > 0 && ' · '}
         {shownErrors > 0 && (
-          <span className="text-brick-400">{shownErrors} error{shownErrors === 1 ? '' : 's'}</span>
+          <span className="text-brick-400">
+            {shownErrors} error{shownErrors === 1 ? '' : 's'}
+          </span>
         )}
         {shownErrors > 0 && shownWarnings > 0 && ' · '}
         {shownWarnings > 0 && (

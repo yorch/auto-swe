@@ -3,7 +3,6 @@ import {
   resolveSlackConfig,
 } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { openSlackView, verifySlackSignature } from '../../lib/slack.js';
 import { buildRunModalView } from '../../lib/slack/runModal.js';
 import {
   ephemeral,
@@ -13,6 +12,7 @@ import {
   listVisibleTemplates,
   slashHelpText,
 } from '../../lib/slack/slashCommands.js';
+import { openSlackView, verifySlackSignature } from '../../lib/slack.js';
 
 export async function registerCommandRoutes(fastify: FastifyInstance): Promise<void> {
   // POST /api/v1/auth/slack/commands — Handle Slack slash commands

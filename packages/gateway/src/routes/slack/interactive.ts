@@ -6,7 +6,6 @@ import {
 } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { buildWorkflowRunControlFilter } from '../../lib/runVisibility.js';
-import { openSlackView, verifySlackSignature } from '../../lib/slack.js';
 import { handleAskMessageShortcut } from '../../lib/slack/channelEvents.js';
 import { handleHitlModalSubmission, handleHitlResolveAction } from '../../lib/slack/hitlActions.js';
 import { HITL_COMMENT_BLOCK, HITL_MODAL_CALLBACK_ID } from '../../lib/slack/hitlModal.js';
@@ -17,6 +16,7 @@ import {
   handleRunModalSubmission,
 } from '../../lib/slack/runModal.js';
 import type { SlackInteractivePayload } from '../../lib/slack/types.js';
+import { openSlackView, verifySlackSignature } from '../../lib/slack.js';
 import { hasRole } from '../../plugins/auth.js';
 
 /**

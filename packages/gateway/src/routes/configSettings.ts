@@ -12,8 +12,8 @@ import {
   canReadScope,
   clearSetting,
   listSettings,
-  scopeColumns,
   type ScopeSelector,
+  scopeColumns,
   setSetting,
 } from '../lib/configSettingsService.js';
 import { sendError } from '../lib/httpErrors.js';

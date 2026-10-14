@@ -3,9 +3,9 @@ import {
   resolveSlackConfig,
 } from '@auto-swe/shared/lib/systemConfig';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
-import { publishAppHome, verifySlackSignature } from '../../lib/slack.js';
 import { processChannelEvent } from '../../lib/slack/channelEvents.js';
 import type { SlackEventCallback } from '../../lib/slack/types.js';
+import { publishAppHome, verifySlackSignature } from '../../lib/slack.js';
 
 export async function registerEventRoutes(fastify: FastifyInstance): Promise<void> {
   // POST /api/v1/auth/slack/events — Slack Events API callback (channel assistant).
