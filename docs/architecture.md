@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 83 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 84 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | Generated `init` baseline, a hand-written constraints/indexes migration, and appended migrations for later changes |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -577,7 +577,13 @@ flowchart LR
 |------|-------------|---------|-----------|
 | better-auth cookie | HTTP-only session cookie | `sessions` (60 s in-memory cache) | `POST /api/auth/sign-in/*` — email+password, GitHub, Google, magic-link |
 | PAT bearer | `ats_<base64url-32B>` | `api_tokens` (hash only) | Settings → API tokens |
+| Service principal bearer | `ats_<base64url-32B>` | `api_tokens` (hash only), owned by a `ServicePrincipal` | A team's Service principals card — see [service-principals.md](./service-principals.md) |
 | JWT bearer | `eyJ…` (HS256/RS256) | — | `POST /api/v1/auth/session-token`, which exchanges an active session cookie for a short-lived JWT |
+
+A service principal's token takes the PAT path but never becomes a user: it sets
+`request.principal`, and `requireAuth` refuses it (`401 SERVICE_TOKEN_NOT_ALLOWED`) on every route
+that does not declare `config.serviceScopes`. The ones that do are the agent-run and template-run launches and the
+run list, read and cancel routes.
 
 A JWT's role claim is not trusted on its own: after verifying the signature, the gateway re-reads
 the user's current role and `isActive` flag (behind a 30 s in-process cache), so a demotion or
@@ -604,8 +610,9 @@ body rather than a route param — every launch path, notably — take the org c
 `authorizeLaunch` instead. Tenant isolation is enforced in the application layer, not by database row policies.
 
 **Run visibility** keys on the run, never on its template: a non-admin sees a run they requested, a
-run whose work request targets a repository they can reach, a run of a template their team owns, or
-a channel-assistant run in a Slack channel their team owns. That one predicate also gates
+run whose work request targets a repository they can reach, a run of a template their team owns,
+a channel-assistant run in a Slack channel their team owns, or a run a service principal of their
+team requested. That one predicate also gates
 cancelling a run and resolving its human steps, from the dashboard and from Slack buttons, and it
 filters each template's "last run" summary. A run of a GLOBAL template is therefore not visible to
 everyone. Every term is an exact relational match, and a multi-repository run is decided per run:
@@ -620,7 +627,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 83 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 84 models.
 
 ```mermaid
 erDiagram
@@ -666,7 +673,7 @@ erDiagram
 | Group | Models | Purpose |
 |-------|--------|---------|
 | Identity | `User`, `Account`, `Session`, `Verification` | better-auth sessions, PATs, the JWT bridge; `User.preferences` JSONB holds per-user UI settings |
-| Auth tokens | `ApiToken` | `ats_*` bearer tokens; only the hash is stored |
+| Auth tokens | `ApiToken`, `ServicePrincipal` | `ats_*` bearer tokens, owned by a user or by a team's service principal; only the hash is stored. A service principal carries its repository and template allowlists and its own limits |
 | Tenancy & RBAC | `Organization`, `Team`, `TeamMembership`, `OrganizationMembership` | `Organization` is the top-level tenant; every `Team` nests under one. `OrgRole` is `ORG_ADMIN` / `ORG_MEMBER` |
 | Connections | `Connection` | Typed binding to an external system. `type` is validated against the runtime registry in `@auto-swe/shared/lib/connectionTypes` (`git_repo`, `issue_tracker`, `notion`, `zendesk`, `hubspot`, `slack_workspace`, `http_api`, `mcp`). `type='git_repo'` carries repo coordinates, default branch, and gate commands; other types store type-specific settings in `config`. Token-based connection types may store an AES-256-GCM encrypted API token (`apiKeyCiphertext`/`Nonce`/`AuthTag`/`Version`). Git-identity columns are nullable for non-git types, and git uniqueness is a partial unique index scoped to `type='git_repo'` |
 | Repository sharing | `ConnectionTeamShare` | A further team, in the owning team's organization, whose members may see and launch on a repository; the owning team keeps management. See [repositories.md](./repositories.md) |
