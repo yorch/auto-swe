@@ -5,6 +5,7 @@ import type {
   GlobalAnalyticsResponse,
   SpecDiffResponse,
   StepRegistryEntry,
+  WebhookSigningSummary,
   WorkflowTemplateAnalytics,
   WorkflowTemplateDetail,
   WorkflowTemplateSummary,
@@ -273,6 +274,44 @@ export function useRevokeWebhook(templateId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () => api.delete<void>(`/api/v1/workflow-templates/${templateId}/webhook`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-template', templateId] }),
+  });
+}
+
+/** A new webhook signing secret, returned once; the one it replaces is accepted for 24 hours. */
+export function useRotateWebhookSigningSecret(templateId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api
+        .post<{ data: { signingSecret: string; webhookSigning: WebhookSigningSummary } }>(
+          `/api/v1/workflow-templates/${templateId}/webhook/signing-secret/rotate`,
+          {}
+        )
+        .then((r) => r.data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-template', templateId] }),
+  });
+}
+
+export function useRemoveWebhookSigningSecret(templateId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.delete<void>(`/api/v1/workflow-templates/${templateId}/webhook/signing-secret`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-template', templateId] }),
+  });
+}
+
+export function useSetWebhookRequireSignature(templateId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (required: boolean) =>
+      api
+        .put<{ data: { webhookSigning: WebhookSigningSummary } }>(
+          `/api/v1/workflow-templates/${templateId}/webhook/require-signature`,
+          { required }
+        )
+        .then((r) => r.data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['workflow-template', templateId] }),
   });
 }

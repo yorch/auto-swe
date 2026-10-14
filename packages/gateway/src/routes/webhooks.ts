@@ -45,6 +45,10 @@ import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/id
 import { applyInstallationEvent, INSTALLATION_EVENT_TYPES } from '../lib/installationWebhook.js';
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
+import {
+  checkTemplateSignature,
+  signatureRequiredByPolicy,
+} from '../lib/templateWebhookSigning.js';
 
 const JiraWebhookSchema = z
   .object({
@@ -1163,7 +1167,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
     '/:token',
     {
       bodyLimit: 128 * 1024,
-      config: { rateLimit: { max: 60, timeWindow: '1 minute' } },
+      // The raw bytes, for the signature: it is computed over the body as sent, not as parsed.
+      config: { rateLimit: { max: 60, timeWindow: '1 minute' }, rawBody: true },
       schema: {
         body: z.record(z.string(), z.unknown()).optional(),
         headers: IdempotencyHeaderSchema,
@@ -1201,6 +1206,23 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           },
           (err) => request.log.warn({ err }, 'could not record a webhook call in the ledger')
         );
+      // The signature first: a caller that cannot sign learns nothing else about the template.
+      const signature = checkTemplateSignature({
+        header: request.raw.headers['x-autoswe-signature'],
+        now: new Date(),
+        rawBody: (request as FastifyRequest & { rawBody?: string | Buffer }).rawBody ?? '',
+        required:
+          template.webhookRequireSignature ||
+          (await signatureRequiredByPolicy({
+            orgId: template.team?.organization?.id,
+            teamId: template.teamId,
+          })),
+        template,
+      });
+      if (!signature.ok) {
+        await refused('FAILED_TO_START', signature.code, signature.reason);
+        return sendError(reply, signature.status, signature.code, signature.message);
+      }
       if (template.status !== 'ACTIVE') {
         await refused('FAILED_TO_START', 'TEMPLATE_NOT_ACTIVE', 'the template is not active');
         return sendError(reply, 409, 'TEMPLATE_NOT_ACTIVE', 'Template is not active');

@@ -45,6 +45,12 @@ const base = {
   updatedAt: '2026-01-02T00:00:00.000Z',
   versionCount: 1,
   webhookConfigured: false,
+  webhookSigning: {
+    configured: false,
+    lastFour: null,
+    previousExpiresAt: null,
+    requireSignature: false,
+  },
 };
 
 describe('Workflow library', () => {

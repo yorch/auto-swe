@@ -535,6 +535,21 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt,
     unit: 'tokens',
   }),
+
+  // ── Template webhooks ──────────────────────────────────────────────────────
+  // Read per call by the public trigger with the template's team and organization.
+  'workflow.templateWebhookRequireSignature': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether every template webhook in scope must be called with a valid X-AutoSwe-Signature, whatever the template's own require-signature switch says. An unsigned or badly signed call is refused with 401, and a template with no signing secret refuses every call until one is generated. A global template is covered only by the platform-wide value.",
+    group: 'workflow',
+    label: 'Template webhooks must be signed',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'workspace.agentMaxSteps': defineSetting({
     defaultValue: 50,
     description:

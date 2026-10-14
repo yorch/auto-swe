@@ -170,6 +170,10 @@ export interface AutomationSummary {
   automation?: EventAutomation;
   /** For `event`: its source key. */
   source?: string;
+  /** For `template_webhook`: a signing secret exists. */
+  signed?: boolean;
+  /** For `template_webhook`: unsigned calls are refused (the template's switch or policy). */
+  signatureRequired?: boolean;
 }
 
 /** Event automations, template webhooks and (ADMIN) the tracker hook the caller may see. */

@@ -282,6 +282,19 @@ export default function GovernAutomationsPage() {
                                     off
                                   </Badge>
                                 )}
+                                {r.kind === 'template_webhook' && !r.signatureRequired && (
+                                  <span
+                                    title={
+                                      r.signed
+                                        ? 'Signed calls are checked, but unsigned calls are still accepted'
+                                        : 'Anyone holding the URL can call it: no signing secret'
+                                    }
+                                  >
+                                    <Badge tone="amber" variant="outline">
+                                      {r.signed ? 'signature optional' : 'unsigned'}
+                                    </Badge>
+                                  </span>
+                                )}
                               </div>
                             </Td>
                             <Td label="When">

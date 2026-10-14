@@ -47,6 +47,7 @@ import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
 import { teamMembershipFilter, templateWriteFilter } from '../lib/templateLaunch.js';
+import { signatureRequiredByPolicy } from '../lib/templateWebhookSigning.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -333,7 +334,11 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
             id: true,
             name: true,
             status: true,
-            team: { select: { id: true, name: true } },
+            team: { select: { id: true, name: true, orgId: true } },
+            teamId: true,
+            webhookRequireSignature: true,
+            // Set exactly when a signing secret is; the secret itself is never read here.
+            webhookSigningSecretKeyVersion: true,
           },
           where: {
             AND: [
@@ -378,6 +383,19 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
             ],
           }
     );
+    // Whether policy forces signing, once per team (a global template has none).
+    const policyByTeam = new Map<string | null, Promise<boolean>>();
+    const policyFor = (t: (typeof templates)[number]) => {
+      let pending = policyByTeam.get(t.teamId);
+      if (!pending) {
+        pending = signatureRequiredByPolicy({ orgId: t.team?.orgId ?? null, teamId: t.teamId });
+        policyByTeam.set(t.teamId, pending);
+      }
+      return pending;
+    };
+    const signaturePolicy = new Map(
+      await Promise.all(templates.map(async (t) => [t.id, await policyFor(t)] as const))
+    );
     // Editing a webhook (regenerate, remove) also needs platform role LEAD.
     const mayEditWebhooks = roleMeets(user.role as Role, 'LEAD' as Role);
     const webhooks = templates.map((t) => {
@@ -390,7 +408,9 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         lastActivity: last ? { at: last.at, outcome: last.outcome, reason: last.reason } : null,
         name: t.name,
         repository: null,
-        team: t.team,
+        signatureRequired: t.webhookRequireSignature || signaturePolicy.get(t.id) === true,
+        signed: t.webhookSigningSecretKeyVersion !== null,
+        team: t.team ? { id: t.team.id, name: t.team.name } : null,
         template: { id: t.id, name: t.name },
         when: 'A POST to the template’s secret webhook URL',
       };

@@ -39,6 +39,8 @@ const webhookRow = {
   lastActivity: null,
   name: 'deploy hook',
   repository: null,
+  signatureRequired: false,
+  signed: false,
   team: { id: 't1', name: 'Payments' },
   template: { id: 'tpl-1', name: 'deploy hook' },
   when: 'A POST to the template’s secret webhook URL',
@@ -80,6 +82,34 @@ describe('GovernAutomationsPage', () => {
     // A paused schedule reads as off.
     const row = screen.getByText('Weekly deps').closest('tr') as HTMLElement;
     expect(within(row).getByText('off')).toBeTruthy();
+  });
+
+  it('marks a webhook that accepts unsigned calls, and not one that refuses them', async () => {
+    setupFetchMock({
+      'GET /api/v1/automations': () => ({
+        data: [
+          webhookRow,
+          { ...webhookRow, id: 'tpl-2', name: 'optional hook', signed: true },
+          {
+            ...webhookRow,
+            id: 'tpl-3',
+            name: 'signed hook',
+            signatureRequired: true,
+            signed: true,
+          },
+        ],
+      }),
+      'GET /api/v1/repositories': () => ({ data: [] }),
+      'GET /api/v1/scheduled-work-requests': () => ({ data: [] }),
+    });
+    render(withQuery(<GovernAutomationsPage />));
+    const rowOf = async (name: string) =>
+      (await screen.findByText(name, { selector: 'div' })).closest('tr') as HTMLElement;
+    expect(within(await rowOf('deploy hook')).getByText('unsigned')).toBeTruthy();
+    expect(within(await rowOf('optional hook')).getByText('signature optional')).toBeTruthy();
+    const signed = await rowOf('signed hook');
+    expect(within(signed).queryByText('unsigned')).toBeNull();
+    expect(within(signed).queryByText('signature optional')).toBeNull();
   });
 
   it('opens where each kind is edited, as View when the caller may not manage it', async () => {

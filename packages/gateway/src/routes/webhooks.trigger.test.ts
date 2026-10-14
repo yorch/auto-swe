@@ -1,8 +1,22 @@
+import { encryptSecret } from '@auto-swe/shared/lib/crypto';
+import { signWebhookBody } from '@auto-swe/shared/lib/webhookSigning';
 import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { webhookRoutes } from './webhooks.js';
+
+process.env.CONFIG_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
+
+// `workflow.templateWebhookRequireSignature`, as the tests set it.
+const policy = vi.hoisted(() => ({ ctx: [] as unknown[], requireSignature: false }));
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  resolveSetting: vi.fn(async (key: string, ctx: unknown) => {
+    policy.ctx.push(ctx);
+    return key === 'workflow.templateWebhookRequireSignature' ? policy.requireSignature : false;
+  }),
+}));
 
 // Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
 vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
@@ -376,5 +390,173 @@ describe('POST /webhooks/:token', () => {
     const body = JSON.parse(res.payload);
     expect(body.error.code).toBe('ORG_BUDGET_EXCEEDED');
     expect(h.started).toHaveLength(0);
+  });
+});
+
+describe('POST /webhooks/:token — signatures', () => {
+  let h: Harness;
+  const SECRET = 'whsec_current_secret_for_tests';
+  const OLD_SECRET = 'whsec_previous_secret_for_tests';
+
+  /** Template columns for a sealed secret, as the rotate route writes them. */
+  function sealed(prefix: 'webhookSigningSecret' | 'webhookPreviousSigningSecret', secret: string) {
+    const s = encryptSecret(secret);
+    return {
+      [`${prefix}AuthTag`]: s.authTag,
+      [`${prefix}Ciphertext`]: s.ciphertext,
+      [`${prefix}KeyVersion`]: s.keyVersion,
+      [`${prefix}LastFour`]: s.lastFour,
+      [`${prefix}Nonce`]: s.nonce,
+    };
+  }
+
+  // The exact bytes sent: signing is over the raw body, never re-serialised JSON.
+  const BODY = '{"description":"nightly sweep",  "ticketId":"OPS-1"}';
+  const nowSec = () => Math.floor(Date.now() / 1000);
+
+  function send(headers: Record<string, string> = {}, body = BODY) {
+    return h.app.inject({
+      headers: { 'content-type': 'application/json', ...headers },
+      method: 'POST',
+      payload: body,
+      url: `/api/v1/webhooks/${TOKEN}`,
+    });
+  }
+  const signed = (secret: string, body = BODY, t = nowSec()) => ({
+    'x-autoswe-signature': signWebhookBody(secret, body, t),
+  });
+
+  beforeEach(async () => {
+    policy.requireSignature = false;
+    policy.ctx = [];
+    h = await buildHarness();
+  });
+
+  it('accepts an unsigned call when nothing requires signing (unchanged behaviour)', async () => {
+    const res = await send();
+    expect(res.statusCode).toBe(201);
+  });
+
+  it('accepts a correctly signed call when the template requires signing', async () => {
+    h.template = {
+      ...h.template,
+      ...sealed('webhookSigningSecret', SECRET),
+      webhookRequireSignature: true,
+    };
+    const res = await send(signed(SECRET));
+    expect(res.statusCode).toBe(201);
+  });
+
+  it.each([
+    ['missing', {}],
+    ['malformed', { 'x-autoswe-signature': 't=abc,v1=zz' }],
+    ['stale', 'stale'],
+    ['mismatch', 'wrong-secret'],
+  ] as const)(
+    'refuses a %s signature with 401 SIGNATURE_INVALID and records it',
+    async (_label, how) => {
+      h.template = {
+        ...h.template,
+        ...sealed('webhookSigningSecret', SECRET),
+        webhookRequireSignature: true,
+      };
+      const headers =
+        how === 'stale'
+          ? signed(SECRET, BODY, nowSec() - 301)
+          : how === 'wrong-secret'
+            ? signed('whsec_not_the_secret')
+            : how;
+      const res = await send(headers);
+
+      expect(res.statusCode).toBe(401);
+      expect(res.json().error.code).toBe('SIGNATURE_INVALID');
+      expect(h.started).toHaveLength(0);
+      expect(h.runInputs).toHaveLength(0);
+      expect(h.decisions.at(-1)).toMatchObject({
+        outcome: 'FAILED_TO_START',
+        source: 'template_webhook.call',
+        subjectKey: TEMPLATE_ID,
+      });
+      expect(String(h.decisions.at(-1)?.dedupeKey)).toContain(':SIGNATURE_INVALID:');
+    }
+  );
+
+  it('refuses a tampered body even though the header is well formed', async () => {
+    h.template = {
+      ...h.template,
+      ...sealed('webhookSigningSecret', SECRET),
+      webhookRequireSignature: true,
+    };
+    const res = await send(signed(SECRET), BODY.replace('OPS-1', 'OPS-2'));
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.message).toMatch(/does not match/);
+  });
+
+  it('verifies a signature against the raw bytes, not the re-serialised JSON', async () => {
+    h.template = {
+      ...h.template,
+      ...sealed('webhookSigningSecret', SECRET),
+      webhookRequireSignature: true,
+    };
+    const reserialised = JSON.stringify(JSON.parse(BODY));
+    expect(reserialised).not.toBe(BODY);
+    // Signed over the bytes actually sent (with their odd spacing): accepted.
+    expect((await send(signed(SECRET))).statusCode).toBe(201);
+    // Signed over a canonical form the sender did not send: refused.
+    expect((await send(signed(SECRET, reserialised))).statusCode).toBe(401);
+  });
+
+  it('checks a signature that is present even when signing is optional', async () => {
+    h.template = { ...h.template, ...sealed('webhookSigningSecret', SECRET) };
+    expect((await send(signed('whsec_forged'))).statusCode).toBe(401);
+    expect((await send(signed(SECRET))).statusCode).toBe(201);
+    // And still accepts an unsigned call: signing is not required.
+    expect((await send()).statusCode).toBe(201);
+  });
+
+  it('accepts the previous secret until it expires, then refuses it', async () => {
+    h.template = {
+      ...h.template,
+      ...sealed('webhookSigningSecret', SECRET),
+      ...sealed('webhookPreviousSigningSecret', OLD_SECRET),
+      webhookPreviousSigningSecretExpiresAt: new Date(Date.now() + 60_000),
+      webhookRequireSignature: true,
+    };
+    expect((await send(signed(OLD_SECRET))).statusCode).toBe(201);
+    expect((await send(signed(SECRET))).statusCode).toBe(201);
+
+    h.template = { ...h.template, webhookPreviousSigningSecretExpiresAt: new Date(Date.now() - 1) };
+    expect((await send(signed(OLD_SECRET))).statusCode).toBe(401);
+    expect((await send(signed(SECRET))).statusCode).toBe(201);
+  });
+
+  it('enforces the policy setting, resolved with the template’s team and organization', async () => {
+    policy.requireSignature = true;
+    h.template = { ...h.template, ...sealed('webhookSigningSecret', SECRET) };
+
+    expect((await send()).statusCode).toBe(401);
+    expect(policy.ctx.at(-1)).toEqual({ orgId: 'org-1', teamId: 'team-1' });
+    expect((await send(signed(SECRET))).statusCode).toBe(201);
+  });
+
+  it('refuses every call when signing is required but no secret is configured', async () => {
+    policy.requireSignature = true;
+    const res = await send(signed(SECRET));
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.code).toBe('WEBHOOK_SIGNING_NOT_CONFIGURED');
+    expect(h.started).toHaveLength(0);
+    expect(String(h.decisions.at(-1)?.dedupeKey)).toContain(':WEBHOOK_SIGNING_NOT_CONFIGURED:');
+  });
+
+  it('checks the signature before saying anything else about the template', async () => {
+    h.template = {
+      ...h.template,
+      ...sealed('webhookSigningSecret', SECRET),
+      status: 'ARCHIVED',
+      webhookRequireSignature: true,
+    };
+    const res = await send();
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.code).toBe('SIGNATURE_INVALID');
   });
 });
