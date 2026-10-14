@@ -1,27 +1,10 @@
 'use client';
 
+import type { PatCreated, PatSummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-export interface PatSummary {
-  id: string;
-  name: string;
-  prefix: string;
-  createdAt: string;
-  expiresAt: string | null;
-  lastUsedAt: string | null;
-  revokedAt: string | null;
-}
-
-export interface PatCreated {
-  id: string;
-  name: string;
-  prefix: string;
-  createdAt: string;
-  expiresAt: string | null;
-  /** Plaintext appears in the create response exactly once. */
-  token: string;
-}
+export type { PatCreated, PatSummary };
 
 export function usePersonalAccessTokens() {
   return useQuery({

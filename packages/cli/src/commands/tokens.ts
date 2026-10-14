@@ -1,3 +1,4 @@
+import type { PatCreated, PatSummary } from '@auto-swe/shared/types/api';
 import { apiRequest, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { parseFlags } from '../lib/flags.js';
@@ -17,20 +18,6 @@ const SUB_HELP = `auto-swe tokens — manage personal access tokens
   tokens create <name> [--expires-in-days=N]  Issue a token (plaintext printed once)
   tokens revoke <id>                          Revoke a token
 `;
-
-interface TokenSummary {
-  id: string;
-  name: string;
-  prefix: string;
-  expiresAt: string | null;
-  lastUsedAt: string | null;
-  revokedAt: string | null;
-  createdAt: string;
-}
-
-interface IssuedToken extends TokenSummary {
-  token: string;
-}
 
 export async function runTokensCommand(args: string[], env: CliEnv): Promise<number> {
   const [sub, ...rest] = args;
@@ -58,7 +45,7 @@ export async function runTokensCommand(args: string[], env: CliEnv): Promise<num
 }
 
 async function cmdList(env: CliEnv): Promise<number> {
-  const rows = await apiRequest<TokenSummary[]>(env, 'GET', '/api/v1/auth/tokens');
+  const rows = await apiRequest<PatSummary[]>(env, 'GET', '/api/v1/auth/tokens');
   if (rows.length === 0) {
     process.stdout.write('No tokens.\n');
     return 0;
@@ -98,7 +85,7 @@ async function cmdCreate(args: string[], env: CliEnv): Promise<number> {
   if (expiresInDays !== undefined) {
     body.expiresInDays = expiresInDays;
   }
-  const issued = await apiRequest<IssuedToken>(env, 'POST', '/api/v1/auth/tokens', body);
+  const issued = await apiRequest<PatCreated>(env, 'POST', '/api/v1/auth/tokens', body);
   process.stdout.write(`${issued.token}\n`);
   process.stderr.write(
     `Created token "${issued.name}" (id ${issued.id}, prefix ${issued.prefix}).\n` +
