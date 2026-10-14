@@ -761,20 +761,25 @@ towards compacting early). Over the budget, it works in phases until the estimat
 
 1. In every exchange before the newest, oldest first, it replaces the text of each tool result with a
    one-line stub naming the tool, and each large string in a `write` or `edit` call's arguments
-   (`content`, `oldText`, `newText`, `edits[]`) with `[N chars elided]`. A result keeps its call id,
+   (`content`, `oldText`, `newText`, `edits[]`) with a placeholder that says the content was elided and to read the file for it. A result keeps its call id,
    tool name and error flag, and a call keeps its id, name and path, so every call still has its
    result.
 2. It drops the oldest whole exchanges (a user message and everything up to the next one), so a call
    and its result leave together and the history still begins with a user message.
 3. Only then does it stub inside the newest exchange, oldest first: first everything older than the
-   four most recent assistant turns, then everything but the last tool call and its result, then those
-   too.
+   four most recent assistant turns, then everything but the last tool call and its result, then the
+   file content in the arguments of the last calls. The newest tool result is never stubbed: it is what
+   the model is about to react to.
 
-The current prompt is never dropped, and a newest exchange that alone exceeds the budget after every
-phase is sent as it is, for the provider to refuse or accept. At the end of each turn the session keeps
+Compaction starts only when the estimate exceeds the budget and then goes on down to 85% of it, and
+within a turn the fitted prefix is kept and extended until the budget is exceeded again, so the
+prompt a provider caches does not change on every call. The current prompt is never dropped, and a
+newest exchange that alone exceeds the budget after every phase is sent as it is, for the provider to refuse or accept. At the end of each turn the session keeps
 what that pass would send, so the history does not grow without bound; a stubbed result or argument or
 a dropped exchange is gone for later turns, and the model re-runs a tool or re-reads a file when it
-needs the content again. Each turn that compacted is traced as one `pi.context_compacted` activity
+needs the content again. The policy refuses a `write` whose content, or an `edit` whose new text,
+contains the argument placeholder, so a model imitating its history cannot write the placeholder
+into a file. Each turn that compacted is traced as one `pi.context_compacted` activity
 event with the last compaction's estimates before and after, the results and call arguments stubbed,
 the messages dropped, and how many model calls of the turn were compacted. Choose a budget below the
 model's window with room for its reply; the estimate is a rule of thumb, not the provider's tokenizer.
@@ -1362,7 +1367,7 @@ template override is never badged, because it may use a different model or crede
   content in old `write`/`edit` calls and dropping the oldest exchanges, so a long session loses detail
   from its early work rather than failing at the model's window; the estimate is characters over
   three, tool-call arguments other than `write`/`edit` content are never shrunk, and a newest exchange
-  still over the budget once everything but its last call is stubbed is sent whole), no extensions, skills, prompt templates or settings from the repository or the worker, no images (a
+  still over the budget once everything but its newest result is stubbed is sent whole), no extensions, skills, prompt templates or settings from the repository or the worker, no images (a
   file is read as text), and no reasoning (thinking is off).
 - **Pi's `grep` depends on the image.** With ripgrep in the executor image it honours `.gitignore`;
   without it, `grep -rn` searches everything but `.git` and `node_modules` (build output included),

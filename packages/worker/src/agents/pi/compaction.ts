@@ -11,6 +11,8 @@ const CHARS_PER_TOKEN = 3;
 const IMAGE_CHARS = 4_000;
 /** The most recent assistant turns whose output is spared while anything older can go. */
 export const KEEP_RECENT_ASSISTANT_TURNS = 4;
+/** Compaction, once triggered, brings the estimate down to this share of the budget. */
+export const COMPACTION_TARGET_RATIO = 0.85;
 /** A tool-call argument string at or under this many characters is not worth stubbing. */
 const MIN_ELIDABLE_ARG_CHARS = 200;
 /** The tools whose call arguments carry file content, and the fields that do. */
@@ -74,8 +76,16 @@ export function elisionStub(toolName: string): string {
   return `[output of ${toolName} elided to save context; re-run the tool if you need it]`;
 }
 
-const argStub = (chars: number) => `[${chars} chars elided]`;
-const ARG_STUB_RE = /^\[\d+ chars elided\]$/;
+/**
+ * What replaces a large `write`/`edit` argument in the history. It says what
+ * happened and what to do, because a model that imitates its history must not
+ * learn to write it into a file; the Pi policy refuses a write that contains it.
+ */
+export const ARG_STUB =
+  '[file content elided from history to save context; read the file for its current content]';
+
+/** Whether text carries the argument stub, exactly as {@link ARG_STUB} spells it. */
+export const containsArgStub = (text: string): boolean => text.includes(ARG_STUB);
 
 export interface CompactionResult {
   afterTokens: number;
@@ -101,10 +111,8 @@ function isElidedResult(message: ToolResultMessage): boolean {
 
 /** Stub one large string; reports whether it did. */
 function stubString(value: unknown): string | undefined {
-  return typeof value === 'string' &&
-    value.length > MIN_ELIDABLE_ARG_CHARS &&
-    !ARG_STUB_RE.test(value)
-    ? argStub(value.length)
+  return typeof value === 'string' && value.length > MIN_ELIDABLE_ARG_CHARS && value !== ARG_STUB
+    ? ARG_STUB
     : undefined;
 }
 
@@ -185,7 +193,12 @@ function shrunk(message: AgentMessage): AgentMessage | null {
  *    together and the history still begins with a user message.
  * 3. Only then stub inside the newest exchange, oldest first: first sparing the
  *    most recent {@link KEEP_RECENT_ASSISTANT_TURNS} assistant turns, then
- *    everything but the last tool call and its result, then those too.
+ *    everything but the last tool call and its result, then the file content
+ *    in the arguments of the last calls. The newest tool result is never
+ *    stubbed.
+ *
+ * Compaction runs only when the estimate exceeds the budget, and then goes on
+ * to {@link COMPACTION_TARGET_RATIO} of it.
  *
  * The newest exchange, which holds the current prompt, is never dropped; if it
  * alone exceeds the budget after phase 3 it is returned as it is and the
@@ -199,6 +212,8 @@ export function compactMessages(input: {
   /** Characters sent beside the messages and system prompt: the tool definitions. */
   overheadChars?: number;
   keepRecentAssistantTurns?: number;
+  /** Where compaction stops, as a share of the budget; {@link COMPACTION_TARGET_RATIO}. */
+  targetRatio?: number;
 }): CompactionResult {
   const { budgetTokens, systemPrompt } = input;
   const keep = input.keepRecentAssistantTurns ?? KEEP_RECENT_ASSISTANT_TURNS;
@@ -220,13 +235,20 @@ export function compactMessages(input: {
   const messages = [...original];
   const sizes = messages.map(messageChars);
   let chars = fixedChars + sizes.reduce((n, c) => n + c, 0);
-  const over = () => Math.ceil(chars / CHARS_PER_TOKEN) > budgetTokens;
+  // Compaction starts above the budget and stops at a target a little below
+  // it, so the next calls fit without compacting again and the prefix a
+  // provider caches stays put.
+  const goalTokens = Math.floor(budgetTokens * (input.targetRatio ?? COMPACTION_TARGET_RATIO));
+  const over = () => Math.ceil(chars / CHARS_PER_TOKEN) > goalTokens;
   const shrunkResults = new Set<number>();
   const shrunkCalls = new Set<number>();
 
   /** Stub messages in [lo, hi) oldest first until under budget. */
-  const pass = (lo: number, hi: number) => {
+  const pass = (lo: number, hi: number, argumentsOnly = false) => {
     for (let i = lo; i < hi && over(); i++) {
+      if (argumentsOnly && roleOf(messages[i] as AgentMessage) !== 'assistant') {
+        continue;
+      }
       const next = shrunk(messages[i] as AgentMessage);
       if (!next) {
         continue;
@@ -271,7 +293,9 @@ export function compactMessages(input: {
     const lastCalling = callers.at(-1);
     pass(firstKept, spared);
     pass(firstKept, lastCalling ?? messages.length);
-    pass(firstKept, messages.length);
+    // Last, only the arguments of the latest calls: the newest tool result is
+    // what the model is about to react to and is never stubbed.
+    pass(firstKept, messages.length, true);
   }
 
   const elidedResults = [...shrunkResults].filter((i) => i >= firstKept).length;
@@ -286,5 +310,38 @@ export function compactMessages(input: {
     elidedArguments,
     elidedResults,
     messages: messages.slice(firstKept),
+  };
+}
+
+/**
+ * Compaction across the model calls of one turn. The agent loop's message array
+ * only grows, so fitting it afresh each call would move the stubbed prefix on
+ * every call and defeat the provider's prompt cache. This keeps the last fitted
+ * prefix and appends what is new to it, compacting again only when the estimate
+ * exceeds the budget.
+ */
+export function createCompactor(params: {
+  budgetTokens: number;
+  overheadChars?: number;
+  systemPrompt: string;
+}) {
+  let memo: { covered: number; fitted: AgentMessage[]; source: AgentMessage[] } | undefined;
+  return {
+    /** The messages to send, and the compaction's figures when this call compacted. */
+    next(messages: AgentMessage[]): {
+      figures?: Omit<CompactionResult, 'messages'>;
+      messages: AgentMessage[];
+    } {
+      const base =
+        memo && memo.source === messages && messages.length >= memo.covered
+          ? [...memo.fitted, ...messages.slice(memo.covered)]
+          : messages;
+      const { messages: fitted, ...figures } = compactMessages({ ...params, messages: base });
+      if (fitted === base) {
+        return { messages: base };
+      }
+      memo = { covered: messages.length, fitted, source: messages };
+      return { figures, messages: fitted };
+    },
   };
 }

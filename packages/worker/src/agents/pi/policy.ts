@@ -12,6 +12,7 @@ import {
   type ToolVocabulary,
 } from '../harness/policy.js';
 import { TOOL_OUTPUT_OFFLOAD_DIR } from '../toolOutputOffload.js';
+import { containsArgStub } from './compaction.js';
 
 /**
  * Pi's tools a workspace run may use: its four defaults (`read`, `bash`,
@@ -188,6 +189,24 @@ function toCanonical(tool: PiTool, input: Record<string, unknown>): CanonicalToo
   }
 }
 
+/** A `write`/`edit` that would put the history's elision placeholder into a file. */
+function writesArgumentStub(tool: PiTool, input: Record<string, unknown>): boolean {
+  const has = (v: unknown) => typeof v === 'string' && containsArgStub(v);
+  if (tool === 'write') {
+    return has(input.content);
+  }
+  if (tool === 'edit') {
+    const edits = Array.isArray(input.edits) ? input.edits : [];
+    return (
+      has(input.newText) ||
+      edits.some(
+        (e) => typeof e === 'object' && e !== null && has((e as { newText?: unknown }).newText)
+      )
+    );
+  }
+  return false;
+}
+
 /**
  * The worker's verdict on one Pi tool call, made before Pi runs it: the call
  * is translated into the canonical vocabulary and decided by
@@ -218,6 +237,12 @@ export async function decidePiToolCall(
   if (PATH_TOOLS.has(tool) && typeof input.path === 'string' && REWRITTEN_SPACES.test(input.path)) {
     return deny(
       'Path rejected: the path holds a Unicode space; name the file with plain characters.'
+    );
+  }
+  if (writesArgumentStub(tool, input)) {
+    return deny(
+      'The content to write is a placeholder from the conversation history, not file content. ' +
+        'Read the file for its current content and write the real content.'
     );
   }
   return decideCanonicalCall(

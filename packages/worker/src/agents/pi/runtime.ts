@@ -14,7 +14,12 @@ import {
 import { type McpRelay, openMcpRelay } from '../harness/mcpRelay.js';
 import { type HarnessRuntime, harnessRuntime } from '../harness/runtime.js';
 import { summedCallsUsage, type UsageTotals } from '../harness/usage.js';
-import { type CompactionResult, compactMessages, toolDefinitionChars } from './compaction.js';
+import {
+  type CompactionResult,
+  compactMessages,
+  createCompactor,
+  toolDefinitionChars,
+} from './compaction.js';
 import { piMcpTools } from './mcp.js';
 import { aiSdkStreamFn, piModelDescriptor } from './model.js';
 import {
@@ -251,23 +256,17 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
         options.harnessContextTokens ??
         getSettingDefinition('workspace.harnessContextTokens').defaultValue;
       const overheadChars = toolDefinitionChars(open.agentTools);
-      // Fit a conversation to the budget, noting it when that changed anything.
-      const compact = (messages: AgentMessage[], sentToModel: boolean) => {
-        const { messages: fitted, ...figures } = compactMessages({
+      const noteCompaction = (
+        figures: Omit<CompactionResult, 'messages'>,
+        sentToModel: boolean
+      ) => {
+        compaction = {
           budgetTokens,
-          messages,
-          overheadChars,
-          systemPrompt,
-        });
-        if (fitted !== messages) {
-          compaction = {
-            budgetTokens,
-            calls: (compaction?.calls ?? 0) + (sentToModel ? 1 : 0),
-            last: figures,
-          };
-        }
-        return fitted;
+          calls: (compaction?.calls ?? 0) + (sentToModel ? 1 : 0),
+          last: figures,
+        };
       };
+      const compactor = createCompactor({ budgetTokens, overheadChars, systemPrompt });
       const added = await runAgentLoop(
         [prompt],
         {
@@ -323,7 +322,13 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
           // Runs before every model call and receives the loop's live message
           // array, not a copy. Returning a different array shapes what is sent;
           // it is safe only because `compactMessages` never mutates its input.
-          transformContext: async (messages) => compact(messages, true),
+          transformContext: async (messages) => {
+            const { figures, messages: fitted } = compactor.next(messages);
+            if (figures) {
+              noteCompaction(figures, true);
+            }
+            return fitted;
+          },
         },
         () => turn.heartbeat(),
         turn.abort.signal,
@@ -344,8 +349,14 @@ export function piAdapter(options: PiRuntimeOptions): HarnessAdapter<PiUsageRepo
       );
       // The session keeps what the next turn would send, so a long session does
       // not carry history it would only elide or drop again.
-      const kept = compact(open.messages, false);
+      const { messages: kept, ...figures } = compactMessages({
+        budgetTokens,
+        messages: open.messages,
+        overheadChars,
+        systemPrompt,
+      });
       if (kept !== open.messages) {
+        noteCompaction(figures, false);
         open.messages.splice(0, open.messages.length, ...kept);
       }
 
