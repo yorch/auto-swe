@@ -155,6 +155,23 @@ export const SETTING_DEFINITIONS = {
     unit: 'messages',
   }),
 
+  // ── Eval benchmark ─────────────────────────────────────────────────────────
+  // Read by flake screening, which runs on cases of every tenant from one
+  // deployment-wide sweep: GLOBAL only.
+  'evals.flakeScreenRuns': defineSetting({
+    defaultValue: 3,
+    description:
+      "How many times a benchmark case's reference (its golden test at the pinned commit) is run when the case is screened for flakiness. A case is scored by the regression harness only once its reference passed every one of these runs; one that failed any run is excluded as flaky. Each run provisions a workspace and runs the golden test, so this multiplies screening cost. A change applies to cases screened afterwards; cases already screened keep their result.",
+    group: 'evals',
+    label: 'Flake-screen runs per case',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(20),
+    unit: 'runs',
+  }),
+
   // ── GitHub hosts and per-user credentials ──────────────────────────────────
   // Where a GitHub credential may be sent, and whether a user may attach their
   // own token to a repository, used only for runs they launch. Deployment-wide
