@@ -205,9 +205,11 @@ jobs:
           AGENT_RUN_DOCKER_TEST: '1'
           CLAUDE_CODE_DOCKER_TEST: '1'
           DOCKER_HOST: tcp://127.0.0.1:2375
+          PI_DOCKER_TEST: '1'
         run: >-
           yarn test packages/worker/src/agents/claudeCode/runtime.docker.test.ts
           packages/worker/src/activities/agentRunFinalize.docker.test.ts
+          packages/worker/src/agents/pi/runtime.docker.test.ts
 
   # Real-database job: applies every migration to a fresh Postgres+pgvector
   # and runs the seed. The unit-test job deliberately uses an unreachable
