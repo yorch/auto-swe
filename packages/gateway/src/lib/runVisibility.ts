@@ -30,8 +30,11 @@ export interface VisibilityActor {
  * - it is a channel-assistant run in a Slack channel owned by one of their
  *   teams — the same audience `assertChannelAccess` admits to the channel's
  *   config and its audit feed, which links to these runs.
- * - a service principal of one of their teams requested it — the team owns the
- *   machine identity, so it sees what that identity launched wherever it ran.
+ * - a service principal of one of their teams requested it AND it names no
+ *   repository. A principal's run on a repository is decided by the repository
+ *   terms above, like anyone's, so the access gate and shared-team rules apply
+ *   to it; only a connection-less run, which no repository term can reach, is
+ *   reached through the principal's team.
  *
  * What a run's *template* is shared with is deliberately not a term. GLOBAL
  * templates — every built-in, and the default any team falls back to — are
@@ -85,7 +88,7 @@ export function buildWorkflowRunVisibilityFilter(
       { connection: reachableConnections(actor, gate) },
       { template: { team: memberTeams(actor) } },
       { channel: { team: memberTeams(actor) } },
-      { workRequest: { requestedByService: { team: memberTeams(actor) } } },
+      servicePrincipalTeamTerm(actor),
     ],
   };
 }
@@ -98,9 +101,12 @@ export function buildWorkflowRunVisibilityFilter(
  * members only, plus whoever launched the run, which keeps a shared-team
  * member in control of the runs they started.
  *
- * A run a service principal requested is controlled by the principal's team,
- * as a run someone launched is controlled by them: the team owns the identity
- * that started it.
+ * A connection-less run a service principal requested is controlled by the
+ * principal's team. Its runs on a repository are controlled through the
+ * repository terms below (the owning team, under the access gate), exactly as
+ * anyone's are: a principal's team that has the repository only through a share
+ * does not control them, and the principal itself cancels its own runs with
+ * its `runs:cancel` scope.
  *
  * Repository ownership is matched per run, exactly as visibility does, and for
  * the same reason: every child of an epic links the epic's work request, and
@@ -129,7 +135,7 @@ export function buildWorkflowRunControlFilter(
     OR: [
       { template: { team: memberTeams(actor) } },
       { launchedById: actor.sub },
-      { workRequest: { requestedByService: { team: memberTeams(actor) } } },
+      servicePrincipalTeamTerm(actor),
       {
         workRequest: {
           activeWorkflows: { some: { repository: ownedRepository } },
@@ -139,6 +145,19 @@ export function buildWorkflowRunControlFilter(
       { workRequest: { connection: ownedRepository } },
       { connection: ownedRepository },
     ],
+  };
+}
+
+/**
+ * Connection-less runs a service principal of one of the actor's teams requested. Limited to
+ * runs whose request names no connection: a run on a repository must pass the repository
+ * terms, so the GitHub access gate and the owning-team rule for control cannot be stepped round
+ * by having a machine launch it.
+ */
+function servicePrincipalTeamTerm(actor: VisibilityActor): Prisma.WorkflowRunWhereInput {
+  return {
+    connectionId: null,
+    workRequest: { connectionId: null, requestedByService: { team: memberTeams(actor) } },
   };
 }
 
