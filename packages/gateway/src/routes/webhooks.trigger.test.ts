@@ -217,6 +217,28 @@ describe('POST /webhooks/:token', () => {
     expect(h.order).toEqual(['ledger', 'start']);
   });
 
+  it("charges a connection-less run to the template team's org, the org its cap gated", async () => {
+    await fire(h);
+    expect(h.runInputs[0]).toMatchObject({ billingOrgId: 'org-1', connectionId: null });
+  });
+
+  it("refuses a connection-less run when the template team's org is over its cap", async () => {
+    h.template = {
+      ...h.template,
+      team: {
+        id: 'team-1',
+        organization: { id: 'org-1', monthlyBudgetUsdCents: 5000 },
+        slug: 'platform',
+      },
+    };
+    const app = h.app as unknown as {
+      prisma: { orgMonthlyUsage: { findUnique: () => Promise<unknown> } };
+    };
+    app.prisma.orgMonthlyUsage.findUnique = async () => ({ costUsdAccrued: 100 });
+    expect((await fire(h)).statusCode).toBe(402);
+    expect(h.runInputs).toHaveLength(0);
+  });
+
   it('records the call in the template’s decision history, refusals once an hour per reason', async () => {
     await fire(h);
     expect(h.decisions.at(-1)).toMatchObject({
@@ -329,6 +351,42 @@ describe('POST /webhooks/:token', () => {
     expect(input.request.externalTicketId).toBe('WEB-1');
     expect(input.request.payload).toEqual(payload);
     expect(input.request.requestPayload).toBe(JSON.stringify(payload));
+    // The connection decides billing, so the request is charged to no launch org.
+    expect(h.runInputs[0]).toMatchObject({ billingOrgId: null, connectionId });
+  });
+
+  it("holds a connection's org to its own cap, never the template team's", async () => {
+    const connectionId = '11111111-1111-4111-8111-111111111111';
+    h.template = {
+      ...h.template,
+      team: {
+        id: 'team-1',
+        organization: { id: 'org-1', monthlyBudgetUsdCents: 5000 },
+        slug: 'platform',
+      },
+      workspaceProvider: 'document',
+    };
+    h.connection = {
+      id: connectionId,
+      isActive: true,
+      team: {
+        id: 'team-1',
+        memberships: [],
+        organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+      },
+      teamId: 'team-1',
+      type: 'notion',
+    };
+    const app = h.app as unknown as {
+      prisma: { orgMonthlyUsage: { findUnique: () => Promise<unknown> } };
+    };
+    app.prisma.orgMonthlyUsage.findUnique = async () => ({ costUsdAccrued: 100 });
+    const res = await h.app.inject({
+      method: 'POST',
+      payload: { connectionId },
+      url: `/api/v1/webhooks/${TOKEN}`,
+    });
+    expect(res.statusCode).toBe(201);
   });
 
   it('rejects an inactive connection', async () => {

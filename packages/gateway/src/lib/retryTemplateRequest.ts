@@ -55,7 +55,6 @@ export async function retryTemplateRequest(
       id: true,
       inputSchema: true,
       origin: true,
-      team: { select: { organization: { select: { id: true, monthlyBudgetUsdCents: true } } } },
       teamId: true,
       workspaceProvider: true,
     },
@@ -95,11 +94,21 @@ export async function retryTemplateRequest(
   if (!connection.ok) {
     return;
   }
-  if (!connection.budgetOrgId && template.team?.organization) {
+  // A connection-less retry reuses the request, so it is billed to the org its first launch
+  // charged the request to (`billingOrgId`) — and gated against that same org, not whatever
+  // the template's team is now, so the decision and the bill name one organization.
+  const billingOrg =
+    !input.connectionId && input.billingOrgId
+      ? await app.prisma.organization.findUnique({
+          select: { id: true, monthlyBudgetUsdCents: true },
+          where: { id: input.billingOrgId },
+        })
+      : null;
+  if (billingOrg) {
     const authorization = await authorizeLaunch(app.prisma, user, {
       gate: request.repoAccessGate,
       log: request.log,
-      orgs: [template.team.organization],
+      orgs: [billingOrg],
       repos: [],
     });
     if (!authorization.ok) {

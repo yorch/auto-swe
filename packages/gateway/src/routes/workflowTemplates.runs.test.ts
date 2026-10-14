@@ -33,7 +33,12 @@ function uniqueViolation(): Error {
   return Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
 }
 
-function buildHarness(opts?: { inputSchema?: unknown; name?: string }): Harness {
+function buildHarness(opts?: {
+  inputSchema?: unknown;
+  name?: string;
+  /** The template's owning team's org; absent means a global template. */
+  teamOrgId?: string;
+}): Harness {
   const h: Harness = {
     activeWorkflows: [],
     app: Fastify(),
@@ -49,6 +54,9 @@ function buildHarness(opts?: { inputSchema?: unknown; name?: string }): Harness 
   } as unknown as never);
 
   const prismaMock: Record<string, unknown> = {
+    // The launch's knowledge-source snapshot of a team template: no row locks, so the
+    // snapshot stays UNKNOWN and the launch proceeds.
+    $queryRaw: async () => [],
     activeWorkflow: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
         // The real dedup gate: a unique index on temporalWorkflowId.
@@ -94,7 +102,15 @@ function buildHarness(opts?: { inputSchema?: unknown; name?: string }): Harness 
         id: TEMPLATE_ID,
         inputSchema: opts?.inputSchema ?? null,
         name: opts?.name ?? 'Some workflow',
-        teamId: null,
+        ...(opts?.teamOrgId
+          ? {
+              team: {
+                organization: { id: opts.teamOrgId, monthlyBudgetUsdCents: null },
+                orgId: opts.teamOrgId,
+              },
+              teamId: 'team-1',
+            }
+          : { teamId: null }),
       }),
     },
   };
@@ -141,6 +157,22 @@ describe('POST /workflow-templates/:id/runs for the Channel Assistant', () => {
     expect(res.json().error.code).toBe('SYSTEM_MANAGED_TEMPLATE');
     expect(h.started).toHaveLength(0);
     expect(h.runInputs).toHaveLength(0);
+  });
+});
+
+describe('POST /workflow-templates/:id/runs: the org a connection-less run is billed to', () => {
+  it("stamps the template team's org, the org its launch decision gated, on the request", async () => {
+    const h = buildHarness({ teamOrgId: 'org-t' });
+    await h.app.ready();
+    expect((await run(h)).statusCode).toBe(201);
+    expect(h.runInputs[0]).toMatchObject({ billingOrgId: 'org-t', connectionId: null });
+  });
+
+  it('stamps no org for a global template, which no org decision gates', async () => {
+    const h = buildHarness();
+    await h.app.ready();
+    expect((await run(h)).statusCode).toBe(201);
+    expect(h.runInputs[0]).toMatchObject({ billingOrgId: null });
   });
 });
 

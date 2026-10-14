@@ -90,8 +90,14 @@ person-specific steps swapped for the principal's own:
 | Organization monthly cap | Applies | Applies |
 | Template | Visible to the person | On the principal's template allowlist, and global or the principal's team's own |
 | Retired installation, repository host allowlist, agent-run ceilings and concurrency | Apply | Apply |
-| Organization cap of a run with no repository | The template team's org | The template team's org and the principal's own team's org |
+| Organization cap of a run with no repository | The template team's org, which the run is billed to | The template team's org and the principal's own team's org; the run is billed to the principal's own team's org |
 | Own limits | — | At most `maxRunsPerDay` runs requested in any 24 hours, and `maxInFlight` runs not yet finished |
+
+A run with no connection is billed to the organization of the principal's own team. A principal
+launches only global templates and its own team's, so that is the template team's organization
+whenever the template has a team. The request records it (`RunInput.billingOrgId`), so the run is
+billed to it at finalization, counts toward its in-flight spend and is capped mid-run against it,
+like a run on a repository.
 
 A connection that is not on the principal's list answers `404 CONNECTION_NOT_FOUND`, the answer a
 connection that does not exist gets, before anything is looked up, so a principal cannot probe which
@@ -184,10 +190,6 @@ the principal's id in the record.
   If the lead later loses access to the repository, or the access gate would now refuse them, the
   grant stands until someone edits the list; launches still require the repository to be reachable by
   the principal's team and the organization to be under its cap.
-- **A run with no connection is gated, not billed, by its organization's cap.** The launch is
-  refused when the principal's team's organization (or the template team's) is over its cap, but the
-  run's spend is billed to an organization only through a repository, as for a person's
-  connection-less run, so such runs do not add to the month's figure.
 - **The daily limit counts requests, not finished runs.** A run that is refused later (by the
   worker's concurrency admission, say) still counts against the principal's 24 hours.
 - **Deleting a principal loses attribution.** Its finished runs remain, with `requestedByServiceId`

@@ -150,7 +150,9 @@ A team automation has no repository, so the rules that hang off the repository m
 - **The launch decision.** Saving one that can start runs, and **Decide again**, check the caller's
   membership of the team's organization and that organization's monthly cap. There is no
   repository, so there is no access-gate check.
-- **The run.** It spends against the team's organization, resolves the source's kill switch and
+- **The run.** It spends against the team's organization — the request records that organization
+  as the one it is charged to, so the run is billed, counted in flight and capped mid-run there like
+  a repository run — resolves the source's kill switch and
   gated options for the team, starts a template that is global or the team's own, and carries no
   `connectionId`. A source that acts only for a repository's members (`actor`) cannot start a run
   for a team: such a decision is `SUPPRESSED_PRECONDITION`.
