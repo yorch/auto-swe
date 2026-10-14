@@ -16,6 +16,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useHasRole } from '@/hooks/useHasRole';
 import {
   type OrgRole,
@@ -78,6 +79,15 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
       setOrgSlug(org.slug);
     }
   }, [org]);
+  async function handleToggleTrust(next: boolean) {
+    setOrgError(null);
+    try {
+      await patchOrg.mutateAsync({ trustedInvites: next });
+    } catch (e) {
+      setOrgError(errMsg(e, 'Failed to update invite trust'));
+    }
+  }
+
   const [addUserId, setAddUserId] = useState('');
   const [addRole, setAddRole] = useState<OrgRole>('ORG_MEMBER');
   const [inviteEmail, setInviteEmail] = useState('');
@@ -605,6 +615,21 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                   readOnly={!canAdmin}
                   value={orgSlug}
                 />
+                {isPlatformAdmin && (
+                  <div className="space-y-1 border-t border-ink-600 pt-4">
+                    <ToggleSwitch
+                      checked={org?.trustedInvites ?? false}
+                      disabled={patchOrg.isPending}
+                      label="Trust organization admin invites"
+                      onChange={() => handleToggleTrust(!(org?.trustedInvites ?? false))}
+                      title={org?.trustedInvites ? 'Stop trusting invites' : 'Trust invites'}
+                    />
+                    <p className="text-xs leading-relaxed text-paper-500">
+                      When on, an invite from any of this organization&apos;s admins creates an
+                      active, approved account instead of waiting in the approval queue.
+                    </p>
+                  </div>
+                )}
                 {canAdmin && (
                   <div className="flex justify-end">
                     <Button
