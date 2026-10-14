@@ -12,17 +12,43 @@ describe('reasoningCallSetting', () => {
     expect(reasoningCallSetting('anthropic/claude-opus-5-5', undefined)).toBeUndefined();
   });
 
-  it('maps off to none and passes the other levels through, for the built-in providers', () => {
+  it('passes low, medium and high through to the built-in providers', () => {
     for (const spec of [
       'anthropic/claude-opus-5-5',
       'OpenAI/gpt-6-astra',
+      'openai/o3',
       'google/gemini-3.8-flash',
     ]) {
-      expect(reasoningCallSetting(spec, 'off')).toBe('none');
       expect(reasoningCallSetting(spec, 'low')).toBe('low');
       expect(reasoningCallSetting(spec, 'medium')).toBe('medium');
       expect(reasoningCallSetting(spec, 'high')).toBe('high');
     }
+  });
+
+  it('sends off as none only where the adapter knows the model takes it', () => {
+    expect(reasoningCallSetting('anthropic/claude-opus-5-5', 'off')).toBe('none');
+    expect(reasoningCallSetting('anthropic/claude-haiku-4-5-20251001', 'off')).toBe('none');
+    expect(reasoningCallSetting('openai/gpt-6-luna', 'off')).toBe('none');
+    expect(reasoningCallSetting('openai/gpt-6-sol', 'off')).toBe('none');
+    for (const spec of [
+      'openai/o3',
+      'openai/gpt-5',
+      'openai/gpt-6-astra',
+      'google/gemini-2.5-pro',
+      'google/gemini-3.1-pro-preview',
+      'google/gemini-3.8-flash',
+    ]) {
+      expect(reasoningCallSetting(spec, 'off')).toBeUndefined();
+    }
+  });
+
+  it('sends nothing to OpenAI behind an apiBase, whose Chat Completions adapter forwards it raw', () => {
+    expect(
+      reasoningCallSetting('openai/gpt-5', 'high', 'https://litellm.internal/v1')
+    ).toBeUndefined();
+    expect(reasoningCallSetting('openai/gpt-6-luna', 'off', 'https://gw/v1')).toBeUndefined();
+    // Anthropic's adapter speaks the Messages API whatever the base.
+    expect(reasoningCallSetting('anthropic/claude-opus-5-5', 'high', 'https://gw/v1')).toBe('high');
   });
 
   it('ignores an OpenAI-compatible provider and a malformed spec, never failing', () => {

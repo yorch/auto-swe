@@ -26,7 +26,6 @@ import {
   type AgentSkillRef,
   type CreateTeamAgentBody,
   type SkillRefInput,
-  type UpdateAgentBody,
   useCreateTeamAgent,
   useDeleteTeamAgent,
   useTeamAgentOptions,
@@ -37,6 +36,7 @@ import { useHasRole } from '@/hooks/useHasRole';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { useTeamSkills } from '@/hooks/useSkills';
 import { modelLabel } from '@/lib/agentDisplay';
+import { buildAgentUpdate } from '@/lib/agentEditPatch';
 import { errMsg } from '@/lib/errors';
 import { scanWarningLead } from '@/lib/scanWarnings';
 
@@ -90,6 +90,8 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState<CreateTeamAgentBody>(EMPTY);
   const [editing, setEditing] = useState<AgentRow | null>(null);
+  // The row as it was when the edit opened, so a save sends only what changed.
+  const [editingOriginal, setEditingOriginal] = useState<AgentRow | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<AgentRow | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
@@ -116,30 +118,23 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   }
 
   async function submitEdit() {
-    if (!editing) {
+    if (!(editing && editingOriginal)) {
       return;
     }
     setEditError(null);
+    if (!editing.name.trim()) {
+      setEditError('Name is required');
+      return;
+    }
+    // Only what changed, as the platform library sends it: an unchanged prompt
+    // resent would be rescanned and lose its verification.
+    const body = buildAgentUpdate(editingOriginal, editing);
+    if (Object.keys(body).length === 0) {
+      setEditing(null);
+      return;
+    }
     try {
-      const skillRefsPayload: SkillRefInput[] = (editing.skillRefs ?? []).map((r, i) => ({
-        skillId: r.skillId,
-        sortOrder: i,
-      }));
-      const res = await updateAgent.mutateAsync({
-        body: {
-          ...(cleanAgentPayload({
-            description: editing.description ?? '',
-            inheritsModelFrom: editing.inheritsModelFrom ?? '',
-            modelSpec: editing.modelSpec ?? '',
-            name: editing.name,
-            systemPrompt: editing.systemPrompt ?? '',
-          }) as UpdateAgentBody),
-          mcpConnectionId: editing.mcpConnectionId ?? null,
-          skillRefs: skillRefsPayload,
-          toolKeys: editing.toolKeys,
-        },
-        id: editing.id,
-      });
+      const res = await updateAgent.mutateAsync({ body, id: editing.id });
       setSaveWarnings(res);
       setEditing(null);
     } catch (e) {
@@ -281,6 +276,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
                           setSaveWarnings({});
                           setEditError(null);
                           setEditing({ ...a });
+                          setEditingOriginal(a);
                         }}
                         size="sm"
                         variant="secondary"

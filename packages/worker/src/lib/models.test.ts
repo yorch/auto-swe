@@ -1,3 +1,4 @@
+import { generateText } from 'ai';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
@@ -137,6 +138,68 @@ describe('resolveModel — reasoning', () => {
   it('leaves an OpenAI-compatible model unwrapped, whatever the level', () => {
     const plain = resolveModel('ollama/llama-4', 'sk-x', 'http://localhost:11434/v1');
     expect(resolveModel('ollama/llama-4', 'sk-x', 'http://localhost:11434/v1', 'high')).toBe(plain);
+  });
+});
+
+describe('resolveModel — what a reasoning level puts on the wire', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** The JSON body the bound model sends for one call. */
+  async function bodyOf(
+    spec: string,
+    level: Parameters<typeof resolveModel>[3],
+    apiBase?: string
+  ): Promise<Record<string, unknown>> {
+    let body: Record<string, unknown> = {};
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        body = JSON.parse(String(init.body));
+        // A refusal is enough: the request was built and captured.
+        return new Response(JSON.stringify({ error: { message: 'stop', type: 'x' } }), {
+          headers: { 'content-type': 'application/json' },
+          status: 400,
+        });
+      })
+    );
+    const model = resolveModel(spec, 'sk-x', apiBase, level);
+    await generateText({ maxRetries: 0, model, prompt: 'hi' }).catch(() => undefined);
+    return body;
+  }
+
+  it('sends no reasoning_effort to OpenAI behind an apiBase, whatever the level', async () => {
+    const body = await bodyOf('openai/gpt-5', 'high', 'https://litellm.example/v1');
+    expect(body.model).toBe('gpt-5');
+    expect(body).not.toHaveProperty('reasoning_effort');
+    expect(body).not.toHaveProperty('reasoning');
+  });
+
+  it('sends nothing for off to an OpenAI model whose adapter does not list the none effort', async () => {
+    for (const modelId of ['o3', 'gpt-5']) {
+      const body = await bodyOf(`openai/${modelId}`, 'off');
+      expect(body.model).toBe(modelId);
+      expect(body).not.toHaveProperty('reasoning');
+    }
+  });
+
+  it('sends effort none for off where the adapter lists it', async () => {
+    const body = await bodyOf('openai/gpt-6-luna', 'off');
+    expect(body.reasoning).toMatchObject({ effort: 'none' });
+  });
+
+  it('sends no thinking configuration for off to Google', async () => {
+    for (const modelId of ['gemini-2.5-pro', 'gemini-3.1-pro-preview']) {
+      const body = await bodyOf(`google/${modelId}`, 'off');
+      expect(body.contents).toBeDefined();
+      const config = body.generationConfig as Record<string, unknown> | undefined;
+      expect(config?.thinkingConfig).toBeUndefined();
+    }
+  });
+
+  it('still sends a level the model takes', async () => {
+    expect((await bodyOf('openai/o3', 'high')).reasoning).toMatchObject({ effort: 'high' });
   });
 });
 

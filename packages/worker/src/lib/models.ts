@@ -128,7 +128,7 @@ function buildModel(
   apiBase?: string,
   level?: ReasoningLevel | null
 ): LanguageModel {
-  const reasoning = reasoningCallSetting(spec, level);
+  const reasoning = reasoningCallSetting(spec, level, apiBase);
   const key = cacheKeyForBuild(spec, apiKey, apiBase, reasoning);
   const cached = modelCache.get(key);
   if (cached) {

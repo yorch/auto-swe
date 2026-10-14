@@ -183,18 +183,25 @@ call through that model then carries the AI SDK's provider-neutral `reasoning` c
 structured-output call, the generic `runAgent` and Pi's model bridge all honour one level the same
 way, with no per-call-site option.
 
-`reasoningCallSetting(spec, level)` is the one mapping:
+`reasoningCallSetting(spec, level, apiBase)` is the one mapping. The cells say what the worker
+sends; the adapter then translates it per model:
 
-| Level | Sent | Anthropic | OpenAI | Google |
-|---|---|---|---|---|
-| null (no opinion) | nothing | the model's default | the model's default | the model's default |
-| `off` | `none` | thinking disabled; a model that cannot turn thinking off runs at its lowest setting | effort `none` where the model supports it, else the model's default | no thinking budget, or the model's minimum thinking level |
-| `low` / `medium` / `high` | the level | adaptive thinking at that effort, or a thinking budget (with `max_tokens` raised to fit it) on a model that predates adaptive thinking | that reasoning effort where the model supports it, else the model's default | that thinking level, or a thinking budget |
+| Level | Anthropic | OpenAI (no `apiBase`) | Google |
+|---|---|---|---|
+| null (no opinion) | nothing: the model's default | nothing | nothing |
+| `off` | `none`: thinking disabled; a model that cannot turn thinking off (the adapter knows which) runs at its lowest setting | `none` (effort `none`) only for `gpt-6-sol` and `gpt-6-luna`, the models the adapter lists as taking it; nothing for any other model | nothing: the model's default |
+| `low` / `medium` / `high` | the level: adaptive thinking at that effort, or a thinking budget (with `max_tokens` raised to fit it) on a model that predates adaptive thinking | the level as the reasoning effort; the adapter drops an effort a GPT-6 model does not list, and sends none to a model that does not reason | the level as a thinking level, or a thinking budget |
 
-The provider adapters own the per-model translation, so a model that refuses a thinking budget, or
-rejects disabling thinking, is sent what it accepts. An OpenAI-compatible provider is sent nothing:
-its adapter would forward a raw `reasoning_effort` that an endpoint may refuse, and a level must never
-fail a call.
+`off` is sent only where the installed adapter's own capability data says the model accepts it (or
+how to translate it). OpenAI's adapter sends `none` unchecked to an o-series or GPT-5 model, which
+refuse it, and Google's has no data on which models may stop thinking (`gemini-2.5-pro` refuses a
+zero budget), so for those `off` sends nothing and the model runs at its default.
+
+Some credentials get nothing at all, whatever the level. An OpenAI-compatible provider is sent
+nothing: its adapter would forward a raw `reasoning_effort` that an endpoint may refuse. An OpenAI
+credential with an `apiBase` is bound to the Chat Completions adapter, which forwards the same raw
+field for any model to whatever gateway the base names, so it is sent nothing too. A level must
+never fail a call.
 
 Reasoning tokens are output tokens. Each provider's `outputTokens` already includes them (its
 `outputTokenDetails.reasoningTokens` is a share of that total, not an addition), and budgets and
@@ -783,7 +790,9 @@ in the order the model produced them — reasoning, text and tool calls — and 
 provider metadata (an Anthropic thinking signature or redacted thinking, an OpenAI reasoning item, a
 Google thought signature) in the part's signature field (`piContentOf`), from which `toModelMessages`
 rebuilds the AI SDK part with its `providerOptions`. So the call after a tool call sends the previous
-turn's signed thinking back, as a provider requires while the model continues with thinking on. Pi's own
+turn's signed thinking back, as a provider requires while the model continues with thinking on. On an
+OpenAI model the kept metadata is the Responses item id, and the adapter sends those parts back as
+references to items OpenAI stored, which needs response storage on (§11). Pi's own
 summarising compaction, sessions on disk, settings, extensions, skills and prompt templates are not part of
 this: nothing of Pi's touches the worker's filesystem.
 
@@ -1477,14 +1486,24 @@ template override is never badged, because it may use a different model or crede
   three, tool-call arguments other than `write`/`edit` content are never shrunk, and a newest exchange
   still over the budget once everything but its newest result is stubbed is sent whole), no extensions, skills, prompt templates or settings from the repository or the worker, and no images (a
   file is read as text).
-- **A reasoning level is a request, not a guarantee.** A provider adapter that cannot apply a level
-  to a model (an OpenAI model without that effort, a model that cannot turn thinking off) sends the
-  nearest setting it can, or none, with an AI SDK warning the worker does not surface; an
-  OpenAI-compatible provider is sent no level at all. The Claude Code harness honours `low`,
-  `medium` and `high` as its effort but not `off`, which leaves it at its own default
-  ([§2.1](#21-reasoning)). The level is not pinned per run on its own: it moves with the Agent
-  version, so the GLOBAL agent-version pin freezes it and a scoped override edited mid-run reaches
-  the next call, as its model does.
+- **A reasoning level is a request, not a guarantee.** `off` reaches only Anthropic models and the
+  two OpenAI models whose adapter lists the `none` effort; on every other OpenAI model and every
+  Google model it sends nothing, and the model thinks at its default. Where a level is sent, an
+  adapter that cannot apply it to the model (a GPT-6 model without that effort, an Anthropic model
+  that cannot turn thinking off) sends the nearest setting it can, or none, with an AI SDK warning
+  the worker does not surface. An OpenAI-compatible provider, and an OpenAI credential with an
+  `apiBase`, are sent no level at all. The Claude Code harness honours `low`, `medium` and `high`
+  as its effort but not `off`, which leaves it at its own default ([§2.1](#21-reasoning)). The
+  level is not pinned per run on its own: it moves with the Agent version, so the GLOBAL
+  agent-version pin freezes it and a scoped override edited mid-run reaches the next call, as its
+  model does.
+- **Pi on OpenAI needs response storage.** Pi's history keeps OpenAI's item ids with the assistant
+  turn's reasoning, text and tool calls, and the Responses adapter, with storage on (its default; the
+  worker never turns it off), sends a later call those parts as `item_reference`s to items OpenAI
+  stored. An organisation with response storage disabled (zero data retention) has nothing stored to
+  reference, so a Pi session on an OpenAI model fails on its second model call there. The Mastra loop
+  relies on the same storage between the steps of one call. No credential says storage is disabled,
+  so the worker cannot fall back to sending the parts inline.
 - **Pi's `grep` depends on the image.** With ripgrep in the executor image it honours `.gitignore`;
   without it, `grep -rn` searches everything but `.git` and `node_modules` (build output included),
   and its `glob` filter is applied after the search rather than during it. Pi's `find` honours no

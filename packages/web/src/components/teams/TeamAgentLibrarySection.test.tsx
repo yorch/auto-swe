@@ -1,19 +1,27 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 const idle = { isPending: false, mutateAsync: vi.fn() };
 const createMutation = { isPending: false, mutateAsync: vi.fn() };
+const updateMutation = { isPending: false, mutateAsync: vi.fn() };
+const teamAgents: { data: unknown[] } = { data: [] };
 vi.mock('@/hooks/useAgentLibrary', () => ({
   useCreateTeamAgent: () => createMutation,
   useDeleteTeamAgent: () => idle,
   useTeamAgentOptions: () => ({
     data: [{ key: 'reviewer', modelSpec: 'anthropic/x', name: 'Reviewer' }],
   }),
-  useTeamAgents: () => ({ data: [], isFetching: false, isLoading: false, refetch: vi.fn() }),
-  useUpdateTeamAgent: () => idle,
+  useTeamAgents: () => ({
+    data: teamAgents.data,
+    isFetching: false,
+    isLoading: false,
+    refetch: vi.fn(),
+  }),
+  useUpdateTeamAgent: () => updateMutation,
 }));
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => false }));
 vi.mock('@/hooks/useMcpConnections', () => ({ useMcpConnections: () => ({ data: [] }) }));
 vi.mock('@/components/modelConfig/ModelSpecPicker', () => ({ ModelSpecPicker: () => null }));
@@ -56,5 +64,53 @@ describe('TeamAgentLibrarySection', () => {
     expect(screen.getByText(/Credentials: No credential for acme\./)).toBeTruthy();
     expect(screen.getByText(/harnessAgent \(inherits from reviewer\)/)).toBeTruthy();
     expect(screen.getByText(/agents on the Claude Code harness inherit this model/)).toBeTruthy();
+  });
+
+  it('saves an edited reasoning level, and only what changed', async () => {
+    teamAgents.data = [
+      {
+        createdAt: '2026-01-01T00:00:00.000Z',
+        credentialId: null,
+        description: null,
+        id: 'agent-1',
+        inheritsModelFrom: 'reviewer',
+        isActive: true,
+        isBuiltIn: false,
+        isVerified: true,
+        key: 'reviewer',
+        mcpConnectionId: null,
+        modelSpec: null,
+        name: 'Reviewer',
+        orgId: null,
+        origin: null,
+        reasoning: null,
+        runtime: null,
+        scope: 'TEAM',
+        skillRefs: [],
+        systemPrompt: 'Review carefully.',
+        teamId: 't-1',
+        toolKeys: null,
+        version: 1,
+        workflowTemplateId: null,
+      },
+    ];
+    updateMutation.mutateAsync.mockResolvedValueOnce({ data: {} });
+    try {
+      render(<TeamAgentLibrarySection teamId="t-1" />);
+      fireEvent.click(screen.getByRole('button', { name: 'Edit reviewer' }));
+      const reasoning = screen.getByRole('combobox', { name: /Reasoning/ });
+      // React Aria opens the list only while the input is focused.
+      act(() => reasoning.focus());
+      fireEvent.change(reasoning, { target: { value: 'High' } });
+      fireEvent.click(screen.getByRole('option', { name: 'High' }));
+      fireEvent.click(screen.getByRole('button', { name: /^Save/ }));
+      await waitFor(() => expect(updateMutation.mutateAsync).toHaveBeenCalled());
+      expect(updateMutation.mutateAsync).toHaveBeenCalledWith({
+        body: { reasoning: 'high' },
+        id: 'agent-1',
+      });
+    } finally {
+      teamAgents.data = [];
+    }
   });
 });

@@ -11,12 +11,21 @@ export type ReasoningCallSetting = NonNullable<CallParams['reasoning']>;
  * The providers whose AI SDK adapter maps the reasoning call setting onto the
  * provider's own option, per model: Anthropic to adaptive thinking and an
  * effort (or a thinking budget on a model that predates adaptive thinking),
- * OpenAI to a reasoning effort its model supports, Google to a thinking level
- * or budget. The OpenAI-compatible adapter would forward it as a raw
- * `reasoning_effort`, which an endpoint that does not know the field can
- * refuse, so those providers are left out.
+ * OpenAI to a reasoning effort, Google to a thinking level or budget. The
+ * OpenAI-compatible adapter would forward it as a raw `reasoning_effort`, which
+ * an endpoint that does not know the field can refuse, so those providers are
+ * left out.
  */
 const REASONING_PROVIDERS = new Set(['anthropic', 'openai', 'google']);
+
+/**
+ * The OpenAI models whose adapter capability table lists the `none` effort
+ * (`supportedReasoningEfforts` in `@ai-sdk/openai`'s
+ * `getOpenAILanguageModelCapabilities`, which the package does not export).
+ * Every other OpenAI model is sent `none` unchecked by the adapter, and an
+ * older reasoning model refuses it, so `off` is sent only to these.
+ */
+const OPENAI_NONE_EFFORT_MODELS = new Set(['gpt-6-sol', 'gpt-6-luna']);
 
 /**
  * What an Agent version's `reasoning` asks of a call to `spec`, as the AI SDK's
@@ -24,30 +33,52 @@ const REASONING_PROVIDERS = new Set(['anthropic', 'openai', 'google']);
  *
  * - null (no opinion) sends nothing, so the model runs at its provider's
  *   default — what every call did before the field existed.
- * - `off` asks for no reasoning (`none`). A model that cannot turn its thinking
- *   off is held to the least its adapter allows instead.
- * - `low`, `medium` and `high` pass through.
+ * - `low`, `medium` and `high` pass through to Anthropic, OpenAI and Google.
+ * - `off` is sent as `none` only where the installed adapter knows the model
+ *   accepts it, or translates it into what the model accepts: every Anthropic
+ *   model (the adapter holds each model's thinking capabilities, and runs a
+ *   model that cannot turn thinking off at its lowest setting), and the OpenAI
+ *   models in {@link OPENAI_NONE_EFFORT_MODELS}. Anywhere else — another OpenAI
+ *   model, any Google model, whose adapter has no data on which models may stop
+ *   thinking — `off` sends nothing and the model runs at its default.
  *
- * A provider with no mapping gets nothing: a level is a preference, and a call
- * must never fail over one.
+ * An OpenAI credential with an `apiBase` is bound to the Chat Completions
+ * adapter (`lib/models.ts`), which forwards a raw `reasoning_effort` for any
+ * model to whatever gateway the base names, so it is sent nothing, as an
+ * OpenAI-compatible provider is. A level is a preference: a call must never
+ * fail over one.
  */
 export function reasoningCallSetting(
   spec: string,
-  level: ReasoningLevel | null | undefined
+  level: ReasoningLevel | null | undefined,
+  apiBase?: string | null
 ): ReasoningCallSetting | undefined {
   if (!level) {
     return undefined;
   }
   let provider: string;
+  let modelId: string;
   try {
-    ({ provider } = parseProviderModelSpec(spec));
+    ({ modelId, provider } = parseProviderModelSpec(spec));
   } catch {
     return undefined;
   }
   if (!REASONING_PROVIDERS.has(provider)) {
     return undefined;
   }
-  return level === 'off' ? 'none' : level;
+  if (provider === 'openai' && apiBase) {
+    return undefined;
+  }
+  if (level !== 'off') {
+    return level;
+  }
+  if (provider === 'anthropic') {
+    return 'none';
+  }
+  if (provider === 'openai' && OPENAI_NONE_EFFORT_MODELS.has(modelId)) {
+    return 'none';
+  }
+  return undefined;
 }
 
 /**
