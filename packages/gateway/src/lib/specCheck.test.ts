@@ -10,6 +10,8 @@ import {
   assertShellAuthoringAllowed,
   assertShellImagesAllowed,
   checkSpec,
+  collectAuthoredCode,
+  collectAuthoredCommandNodes,
   collectShellNodes,
   parseSpec,
   parseSpecOrThrow,
@@ -136,6 +138,77 @@ describe('collectShellNodes', () => {
   });
 });
 
+describe('collectAuthoredCommandNodes', () => {
+  const ws = (id: string, command: string): ShellNodeWithId => ({
+    id,
+    node: { command, image: '(agent workspace)', network: 'egress' },
+  });
+
+  it('collects nothing for a gate step that runs the repository command', () => {
+    const s = spec({ done, lint: { next: 'done', step: 'runLint', type: 'step' } }, 'lint');
+    expect(collectAuthoredCommandNodes(s as unknown as WorkflowSpec)).toEqual([]);
+  });
+
+  it('collects a gate step command, and spells an inputs binding as bound at run time', () => {
+    const s = spec(
+      {
+        done,
+        lint: { config: { command: 'npm run lint' }, next: 'test', step: 'runLint', type: 'step' },
+        test: {
+          inputs: { command: { from: 'input.cmd' } },
+          next: 'done',
+          step: 'runTests',
+          type: 'step',
+        },
+      },
+      'lint'
+    );
+    expect(collectAuthoredCommandNodes(s as unknown as WorkflowSpec)).toEqual([
+      ws('lint', 'npm run lint'),
+      ws('test', '(bound at run time: inputs.command = {"from":"input.cmd"})'),
+    ]);
+  });
+
+  it('collects every runQualityGates gate command and eval gate scorer command', () => {
+    const s = spec(
+      {
+        done,
+        ev: {
+          next: 'done',
+          scorers: [{ command: 'npm run check', gate: 'lint', kind: 'gate' }, { kind: 'pii' }],
+          target: { from: 'input.diff' },
+          type: 'eval',
+        },
+        gates: {
+          config: { gates: [{ command: 'npm test', gate: 'test' }, { gate: 'build' }] },
+          next: 'ev',
+          step: 'runQualityGates',
+          type: 'step',
+        },
+      },
+      'gates'
+    );
+    expect(collectAuthoredCommandNodes(s as unknown as WorkflowSpec)).toEqual([
+      ws('ev', 'npm run check'),
+      ws('gates', 'npm test'),
+    ]);
+  });
+
+  it('keeps authored commands out of the image-allowlisted shell nodes', () => {
+    const s = spec(
+      {
+        done,
+        lint: { config: { command: 'npm run lint' }, next: 'sh', step: 'runLint', type: 'step' },
+        sh: { command: 'echo hi', image: 'alpine:latest', next: 'done', type: 'shell' },
+      },
+      'lint'
+    );
+    const { authoredNodes, shellNodes } = collectAuthoredCode(s as unknown as WorkflowSpec);
+    expect(shellNodes.map((n) => n.id)).toEqual(['sh']);
+    expect(authoredNodes.map((n) => n.id)).toEqual(['sh', 'lint']);
+  });
+});
+
 describe('assertShellAuthoringAllowed', () => {
   it('returns null without a membership lookup when there are no shell nodes', async () => {
     const { fastify, prisma } = fastifyWith();
@@ -158,7 +231,8 @@ describe('assertShellAuthoringAllowed', () => {
       body: {
         error: {
           code: 'SHELL_AUTHOR_FORBIDDEN',
-          message: 'Only platform admins may author shell steps on global templates',
+          message:
+            'Only platform admins may author shell steps or gate commands on global templates',
         },
       },
       statusCode: 403,
@@ -183,7 +257,7 @@ describe('assertShellAuthoringAllowed', () => {
       body: {
         error: {
           code: 'SHELL_AUTHOR_FORBIDDEN',
-          message: 'Authoring shell steps requires team-admin role',
+          message: 'Authoring shell steps or gate commands requires team-admin role',
         },
       },
       statusCode: 403,
@@ -432,7 +506,7 @@ describe('checkSpec', () => {
     expect(issues.filter((i) => i.source === 'authoring')).toEqual([
       {
         code: 'SHELL_AUTHOR_FORBIDDEN',
-        message: 'Authoring shell steps requires team-admin role',
+        message: 'Authoring shell steps or gate commands requires team-admin role',
         severity: 'error',
         source: 'authoring',
       },

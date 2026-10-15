@@ -104,7 +104,7 @@ dynamic catalog + the user's intent go in the user message.
 | **Explain** | `POST /api/v1/workflow-templates/:id/explain` → `{ data: { explanation } }` (Markdown), CLI `auto-swe workflows explain <name>`, web "Explain" button. The inverse of authoring. |
 | **Refine (web)** | Template page (`/workflows/library/[id]`) → **"Refine with AI"** → a chat panel where each plain-language change calls `POST /api/v1/workflow-templates/:id/refine` `{ prompt }` → `{ data: version, spec, summary, attempts, warnings? }`. Each turn saves a **new DRAFT version** off the latest and updates the canvas. Gated on ADMIN/LEAD; `allowShell` is true only for a platform admin or an admin of the template's team. |
 | **Refine (Slack)** | A follow-up in the same thread ("also add a security review step") → the channel assistant's `refineWorkflow` tool → applies the change to the draft that thread generated (linked via `ChannelThreadSession.lastGeneratedTemplateId`) and saves a new version. Budget-gated; refuses shell nodes; replies with the new version (or "nothing to refine yet"). |
-| **Check without saving** | `POST /api/v1/workflow-templates/validate` `{ spec, templateId?, teamId? }` → `{ data: { ok, issues: [{ code, severity, message, nodeId?, field?, source }] } }`. Requires LEAD. Runs the checks a save runs and writes nothing (no template, version or audit row). `source` is `schema` (the strict parse a save answers `400 INVALID_SPEC` for), `lint` (`validateSpec`), `refs` (unresolved agent, MCP or eval-rubric references, warnings) or `authoring` (the shell-authoring role gate and the shell image allowlist, which a save answers with `403`/`400`). `ok` is true when no issue has `severity: "error"`. A well-formed request is `200` unless the scope ids are refused (`403` for a `teamId` the caller cannot author for, `404` for a `templateId` it cannot write); only a malformed body is `400`. With neither id, the spec is judged as a global template, so a non-admin gets an `authoring` issue `FORBIDDEN`, as create answers `403`. |
+| **Check without saving** | `POST /api/v1/workflow-templates/validate` `{ spec, templateId?, teamId? }` → `{ data: { ok, issues: [{ code, severity, message, nodeId?, field?, source }] } }`. Requires LEAD. Runs the checks a save runs and writes nothing (no template, version or audit row). `source` is `schema` (the strict parse a save answers `400 INVALID_SPEC` for), `lint` (`validateSpec`), `refs` (unresolved agent, MCP or eval-rubric references, warnings) or `authoring` (the shell-authoring role gate over container code and authored gate commands, and the shell image allowlist over container code, which a save answers with `403`/`400`). `ok` is true when no issue has `severity: "error"`. A well-formed request is `200` unless the scope ids are refused (`403` for a `teamId` the caller cannot author for, `404` for a `templateId` it cannot write); only a malformed body is `400`. With neither id, the spec is judged as a global template, so a non-admin gets an `authoring` issue `FORBIDDEN`, as create answers `403`. |
 | **CLI** | `auto-swe workflows generate "<description>" [--name=NAME] [--team=<slug>]` |
 | **Slack** | The channel assistant's `generateWorkflow` tool: ask it to "create a workflow that…" and it drafts one (scoped to the channel's team, `allowShell: false`) and replies in-thread with the draft name + a pointer to the Workflow library. The draft is **budget-gated** like a delegated task, and the channel path is never shell-authorized — a generated spec containing `shell`/`containerStep` nodes, a `runContainerStep` step, or an authored gate command is refused (those require canvas authoring with the proper RBAC + audit), and the reply points at the canvas. |
 
@@ -186,7 +186,30 @@ dynamic catalog + the user's intent go in the user message.
   functions in `packages/gateway/src/lib/specCheck.ts` (`parseSpec`, `validateSpec`,
   `findSpecRefProblems`, the shell gates), so the endpoint cannot disagree with what a save does.
   `templateId` supplies the template's owning team; `teamId` is for a template not saved yet; with
-  neither, the spec is judged as a global template, where only a platform admin may use shell nodes.
+  neither, the spec is judged as a global template, where only a platform admin may use shell nodes
+  or authored gate commands.
+- **Authored code takes the shell authoring role, wherever it enters.** Two kinds of node run code
+  an author wrote into the spec, both decided by the shared predicates in
+  `packages/shared/src/workflow/containerCode.ts`: container code (`shell`, `containerStep`, or a
+  `step` naming `runContainerStep`), and authored commands (a `command` on a gate step such as
+  `runLint` or `runTests`, a `runQualityGates` gate with a `command` or an `inputs.gates` binding, or
+  an eval `gate` scorer with a `command`). Every gateway save (`POST /`, `POST /generate`,
+  `POST /:id/versions`, `POST /:id/refine`) requires `workflow:write:shell` — a platform admin, or an
+  admin of the owning team; only a platform admin on a global template — for either kind, and writes
+  one `WorkflowShellAudit` row per container node and per authored command. Authored commands run in
+  the agent workspace rather than a pulled image, so the image allowlist does not apply to them; their
+  rows record the image as `(agent workspace)` and the network as `egress`, and a command bound from
+  a run input is recorded as that binding. A gate step without a `command` runs the repository's own
+  command and needs no role.
+- **Serving a version re-checks code that has no audit row.** Reviewing a version
+  (`POST /:id/versions/:version/review`), promoting it (`POST /:id/promote`), re-activating a template
+  on it (`PATCH` with `status: "ACTIVE"`) and making it an experiment arm (`PATCH` with
+  `experimentVersion`) look up the version's `WorkflowShellAudit` rows. A node of authored code with
+  no row — a version a bundle install or `syncBuiltins` wrote, which no gateway save checked, or one
+  whose rows were pruned — makes the request require the shell authoring role (`403 SHELL_AUTHOR_FORBIDDEN`
+  otherwise), and on success records the missing rows with the caller as author, in the same
+  transaction as the write. A version whose code was audited at save stays promotable by any LEAD who
+  may write the template.
 
 ---
 
@@ -211,11 +234,18 @@ dynamic catalog + the user's intent go in the user message.
   Generate button uses the async job and never authors shell nodes. The refusal covers every
   spelling of container code — a `shell` or `containerStep` node, or a `step` naming
   `runContainerStep` — and authored gate commands.
-- **Authored gate commands are not shell-gated on save.** A `command` on a gate step (`runLint`,
-  `runTests`, …), on a `runQualityGates` gate, or on an eval `gate` scorer runs in the agent
-  workspace, not the shell sandbox. The async and channel paths refuse one, but the gateway's save
-  and synchronous generate/refine routes apply neither the shell authoring role nor
-  `WorkflowShellAudit` to it: a LEAD who may save a template may set one.
+- **Authored gate commands are role-gated and audited, not sandboxed.** A `command` on a gate step,
+  a `runQualityGates` gate or an eval `gate` scorer runs in the run's agent workspace — the
+  repository's executor image, with egress — not in the shell sandbox, and no image allowlist or
+  network policy applies to it. The shell authoring role and `WorkflowShellAudit` are its only
+  save-time controls. This also means a team LEAD who may write a template cannot set one; a LEAD
+  can still use any gate step without a `command`, which runs the repository's configured command.
+- **The serving check matches audit rows by node id.** A node counts as audited when any row for
+  the version names its id, so a `runQualityGates` node whose row covers one of its gates counts for
+  all of them. Rows deleted by the shell-audit prune (`POST /api/v1/platform/shell-audit/prune`)
+  leave a version unaudited again, so the next review, promote or activation of it takes the shell
+  authoring role and records new rows. A bundle install that activates the version it appends does
+  so without this check (see [bundles.md](./bundles.md#limitations)).
 - **Generated specs are DRAFT, never active.** By design — activation is an explicit human action
   through the canvas. A generated workflow cannot run until a person promotes it.
 - **Refinement replaces the whole spec.** Refine mode asks the model to return the full updated

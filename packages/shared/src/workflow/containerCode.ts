@@ -26,10 +26,13 @@
  *   A gate with no command runs the repository's own command (`Repository.gateCommands`) or the
  *   built-in default, which the spec did not write, so it does not count.
  *
- * Limitation: an authored gate command runs in the agent workspace without the shell sandbox,
- * and the gateway's save path applies neither the shell authoring role nor `WorkflowShellAudit`
- * to it. Only the worker-side paths that are never shell-authorized — the async and channel
- * generation paths and channel refinement — refuse it, through this module.
+ * The gateway's save, review, promote and activate paths require the shell authoring role and
+ * write `WorkflowShellAudit` rows for both kinds (only container code takes the image
+ * allowlist). The worker-side paths that are never shell-authorized — the async and channel
+ * generation paths and channel refinement — refuse both, through this module.
+ *
+ * Limitation: an authored command runs in the agent workspace without the shell sandbox; the
+ * role and the audit row are its only controls.
  */
 
 import type { Node, WorkflowSpec } from './spec.js';

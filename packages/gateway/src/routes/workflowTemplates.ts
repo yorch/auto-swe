@@ -60,7 +60,7 @@ import {
   assertShellAuthoringAllowed,
   assertShellImagesAllowed,
   checkSpec,
-  collectShellNodes,
+  collectAuthoredCode,
   parseSpecOrThrow,
   type ShellNodeWithId,
   specErrorsOf,
@@ -179,14 +179,14 @@ async function recordShellAudit(
   templateVersionId: string,
   teamId: string | null,
   authorUserId: string,
-  shellNodes: ShellNodeWithId[],
+  auditNodes: ShellNodeWithId[],
   egressAllowlist: string[]
 ): Promise<void> {
-  if (shellNodes.length === 0) {
+  if (auditNodes.length === 0) {
     return;
   }
   await tx.workflowShellAudit.createMany({
-    data: shellNodes.map(({ id, node }) => ({
+    data: auditNodes.map(({ id, node }) => ({
       authorUserId,
       command: node.command,
       egressAllowlistSnapshot: egressAllowlist,
@@ -197,6 +197,82 @@ async function recordShellAudit(
       templateVersionId,
     })),
   });
+}
+
+type ServingAuthorization =
+  | { ok: false; statusCode: number; body: unknown }
+  | {
+      ok: true;
+      /** Writes the audit rows the check found missing; run it in the write's transaction. */
+      record: (tx: Pick<FastifyInstance['prisma'], 'workflowShellAudit'>) => Promise<void>;
+    };
+
+/** The stored spec as the predicates read it; an unparseable one still exposes its nodes. */
+function storedSpecForGates(spec: unknown): WorkflowSpec | null {
+  try {
+    return parseWorkflowSpec(migrateSpec(spec, SPEC_SCHEMA_VERSION));
+  } catch {
+    const nodes = (spec as { nodes?: unknown } | null)?.nodes;
+    return nodes && typeof nodes === 'object' ? (spec as WorkflowSpec) : null;
+  }
+}
+
+/**
+ * The shell-authoring gate for a version about to serve runs — reviewed, promoted, made the
+ * active version of a template set ACTIVE, or made an experiment arm. A version saved through
+ * this API already passed `assertShellAuthoringAllowed` and carries a `WorkflowShellAudit` row
+ * per node of authored code; one that arrived any other way (a bundle install, a version saved
+ * before authored commands were gated) has nodes with no row. For those nodes the caller must
+ * hold the shell authoring role, and their rows are recorded with the caller as author, so the
+ * person who let the code serve runs is on record. A version with no authored code, or whose
+ * every such node is audited, passes untouched.
+ */
+async function authorizeServingVersion(
+  fastify: FastifyInstance,
+  user: JwtPayload,
+  teamId: string | null,
+  version: { id: string; spec: unknown }
+): Promise<ServingAuthorization> {
+  const spec = storedSpecForGates(version.spec);
+  const { authoredNodes, shellNodes } = spec
+    ? collectAuthoredCode(spec)
+    : { authoredNodes: [], shellNodes: [] };
+  if (authoredNodes.length === 0) {
+    return { ok: true, record: async () => {} };
+  }
+  // Scoped by the version, whose template the caller already passed the write filter for. A
+  // row's own `teamId` cannot scope it: it is null on a global template and on a deleted team.
+  const rows = await runUnscoped(
+    'audit rows of one template version the caller may write',
+    ['WorkflowShellAudit'],
+    () =>
+      fastify.prisma.workflowShellAudit.findMany({
+        select: { nodeId: true },
+        where: { templateVersionId: version.id },
+      })
+  );
+  const audited = new Set(rows.map((r) => r.nodeId));
+  const missing = authoredNodes.filter(({ id }) => !audited.has(id));
+  if (missing.length === 0) {
+    return { ok: true, record: async () => {} };
+  }
+  const refusal = await assertShellAuthoringAllowed(fastify, user, teamId, missing);
+  if (refusal) {
+    return { ok: false, ...refusal };
+  }
+  // The egress snapshot is what the container nodes' network policy is at sign-off.
+  const needsEgress = teamId !== null && missing.some((m) => shellNodes.includes(m));
+  const team = needsEgress
+    ? await fastify.prisma.team.findUnique({
+        select: { egressAllowlist: true },
+        where: { id: teamId },
+      })
+    : null;
+  return {
+    ok: true,
+    record: (tx) =>
+      recordShellAudit(tx, version.id, teamId, user.sub, missing, team?.egressAllowlist ?? []),
+  };
 }
 
 const TemplateIdParam = z.object({ id: z.string().uuid() });
@@ -290,7 +366,8 @@ async function createTemplateWithInitialVersion(
     status: 'ACTIVE' | 'DRAFT';
     specJson: object;
     authorUserId: string;
-    shellNodes: ShellNodeWithId[];
+    /** Every node of authored code, each recorded in `WorkflowShellAudit`. */
+    auditNodes: ShellNodeWithId[];
     egressAllowlist: string[];
     workspaceProvider: string | null;
     generatedBy?: string | null;
@@ -323,7 +400,7 @@ async function createTemplateWithInitialVersion(
         initialVersion.id,
         args.teamId,
         args.authorUserId,
-        args.shellNodes,
+        args.auditNodes,
         args.egressAllowlist
       );
     }
@@ -349,7 +426,8 @@ async function createTemplateVersion(
     teamId: string | null;
     specJson: object;
     authorUserId: string;
-    shellNodes: ShellNodeWithId[];
+    /** Every node of authored code, each recorded in `WorkflowShellAudit`. */
+    auditNodes: ShellNodeWithId[];
     egressAllowlist: string[];
     generatedBy?: string | null;
   }
@@ -387,7 +465,7 @@ async function createTemplateVersion(
           row.id,
           args.teamId,
           args.authorUserId,
-          args.shellNodes,
+          args.auditNodes,
           args.egressAllowlist
         );
         return row;
@@ -748,9 +826,9 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const name = parsedSpec.name;
 
-      const shellNodes = collectShellNodes(parsedSpec);
+      const { authoredNodes, shellNodes } = collectAuthoredCode(parsedSpec);
       const [rbac, imgGate] = await Promise.all([
-        assertShellAuthoringAllowed(fastify, user, teamId ?? null, shellNodes),
+        assertShellAuthoringAllowed(fastify, user, teamId ?? null, authoredNodes),
         assertShellImagesAllowed(fastify, teamId ?? null, shellNodes),
       ]);
       if (rbac) {
@@ -764,12 +842,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       try {
         // DRAFT (not ACTIVE): the human reviews/edits on the canvas, then activates.
         const tpl = await createTemplateWithInitialVersion(fastify.prisma, {
+          auditNodes: authoredNodes,
           authorUserId: user.sub,
           description: parsedSpec.description ?? '',
           egressAllowlist,
           generatedBy: 'workflow_author',
           name,
-          shellNodes,
           specJson: parsed as object,
           status: 'DRAFT',
           teamId: teamId ?? null,
@@ -934,9 +1012,9 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const parsedSpec = parsed as WorkflowSpec;
-      const shellNodes = collectShellNodes(parsedSpec);
+      const { authoredNodes, shellNodes } = collectAuthoredCode(parsedSpec);
       const [rbac, imgGate] = await Promise.all([
-        assertShellAuthoringAllowed(fastify, user, teamId ?? null, shellNodes),
+        assertShellAuthoringAllowed(fastify, user, teamId ?? null, authoredNodes),
         assertShellImagesAllowed(fastify, teamId ?? null, shellNodes),
       ]);
       if (rbac) {
@@ -949,11 +1027,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
 
       try {
         const tpl = await createTemplateWithInitialVersion(fastify.prisma, {
+          auditNodes: authoredNodes,
           authorUserId: user.sub,
           description: description ?? '',
           egressAllowlist,
           name,
-          shellNodes,
           specJson: parsed as object,
           status: 'ACTIVE',
           teamId: teamId ?? null,
@@ -1138,6 +1216,12 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // this template) which Postgres can't express cheaply.
       const expVersion = request.body.experimentVersion;
       const expSplit = request.body.experimentSplit;
+      // Audit rows the shell-authoring checks below found missing, written with the update,
+      // keyed by version so a version that is both the arm and the active one is recorded once.
+      const servingRecords = new Map<
+        string,
+        (tx: Pick<FastifyInstance['prisma'], 'workflowShellAudit'>) => Promise<void>
+      >();
       if (expVersion !== undefined && expVersion !== null) {
         const v = await fastify.prisma.workflowTemplateVersion.findUnique({
           where: { templateId_version: { templateId: existing.id, version: expVersion } },
@@ -1160,6 +1244,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             'This AI-generated version must be reviewed and approved before it can serve experiment traffic.'
           );
         }
+        const serving = await authorizeServingVersion(fastify, user, existing.teamId, v);
+        if (!serving.ok) {
+          return reply.status(serving.statusCode).send(serving.body);
+        }
+        servingRecords.set(v.id, serving.record);
       }
       // Setting a template ACTIVE (restoring an archived one, say) serves real runs from
       // its active version, so it carries the same preconditions `/promote` enforces.
@@ -1190,6 +1279,11 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           if (errs.length > 0) {
             return sendSpecHasErrors(reply, errs, 'be activated');
           }
+          const serving = await authorizeServingVersion(fastify, user, existing.teamId, activeRow);
+          if (!serving.ok) {
+            return reply.status(serving.statusCode).send(serving.body);
+          }
+          servingRecords.set(activeRow.id, serving.record);
         }
       }
       // Enabling traffic split without a destination version is meaningless and
@@ -1236,6 +1330,9 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // observe a moment with zero (or more than one) default template for
       // the team.
       const updated: TemplateWithIncludes = await fastify.prisma.$transaction(async (tx) => {
+        for (const record of servingRecords.values()) {
+          await record(tx);
+        }
         if (request.body.isDefault === true) {
           await tx.workflowTemplate.updateMany({
             data: { isDefault: false },
@@ -1421,9 +1518,9 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // rename (or collide) the template it belongs to.
       parsedSpec.name = tpl.name;
 
-      const shellNodes = collectShellNodes(parsedSpec);
+      const { authoredNodes, shellNodes } = collectAuthoredCode(parsedSpec);
       const [rbac, imgGate] = await Promise.all([
-        assertShellAuthoringAllowed(fastify, user, tpl.teamId, shellNodes),
+        assertShellAuthoringAllowed(fastify, user, tpl.teamId, authoredNodes),
         assertShellImagesAllowed(fastify, tpl.teamId, shellNodes),
       ]);
       if (rbac) {
@@ -1434,10 +1531,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const created = await createTemplateVersion(fastify.prisma, {
+        auditNodes: authoredNodes,
         authorUserId: user.sub,
         egressAllowlist: imgGate.egressAllowlist,
         generatedBy: 'workflow_author',
-        shellNodes,
         specJson: parsedSpec as object,
         teamId: tpl.teamId,
         templateId: tpl.id,
@@ -1529,14 +1626,14 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const tpl = await fastify.prisma.workflowTemplate.findFirst({
-        select: { id: true },
+        select: { id: true, teamId: true },
         where: { id: request.params.id, ...templateWriteFilter(user) },
       });
       if (!tpl) {
         return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
       const target = await fastify.prisma.workflowTemplateVersion.findUnique({
-        select: { createdBy: true, generatedBy: true, id: true },
+        select: { createdBy: true, generatedBy: true, id: true, spec: true },
         where: { templateId_version: { templateId: tpl.id, version: request.params.version } },
       });
       if (!target) {
@@ -1553,11 +1650,20 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           'A generated version must be reviewed by someone other than the person who generated it.'
         );
       }
-      const version = await fastify.prisma.workflowTemplateVersion.update({
-        data: { reviewedAt: new Date(), reviewedBy: user.sub },
-        where: {
-          templateId_version: { templateId: tpl.id, version: request.params.version },
-        },
+      // Approving a version vouches for the code it runs, so code with no audit row takes
+      // the shell authoring role here, as it would have at save.
+      const serving = await authorizeServingVersion(fastify, user, tpl.teamId, target);
+      if (!serving.ok) {
+        return reply.status(serving.statusCode).send(serving.body);
+      }
+      const version = await fastify.prisma.$transaction(async (tx) => {
+        await serving.record(tx);
+        return tx.workflowTemplateVersion.update({
+          data: { reviewedAt: new Date(), reviewedBy: user.sub },
+          where: {
+            templateId_version: { templateId: tpl.id, version: request.params.version },
+          },
+        });
       });
       return {
         data: {
@@ -1599,9 +1705,9 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const parsedSpec = parsed as WorkflowSpec;
-      const shellNodes = collectShellNodes(parsedSpec);
+      const { authoredNodes, shellNodes } = collectAuthoredCode(parsedSpec);
       const [rbac, imgGate] = await Promise.all([
-        assertShellAuthoringAllowed(fastify, user, tpl.teamId, shellNodes),
+        assertShellAuthoringAllowed(fastify, user, tpl.teamId, authoredNodes),
         assertShellImagesAllowed(fastify, tpl.teamId, shellNodes),
       ]);
       if (rbac) {
@@ -1613,9 +1719,9 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const { egressAllowlist } = imgGate;
 
       const created = await createTemplateVersion(fastify.prisma, {
+        auditNodes: authoredNodes,
         authorUserId: user.sub,
         egressAllowlist,
-        shellNodes,
         specJson: parsed as object,
         teamId: tpl.teamId,
         templateId: tpl.id,
@@ -1695,10 +1801,17 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       if (promoteErrors.length > 0) {
         return sendSpecHasErrors(reply, promoteErrors, 'be promoted');
       }
-      const updated = await fastify.prisma.workflowTemplate.update({
-        data: { activeVersion: request.body.version, status: 'ACTIVE' },
-        include: TEMPLATE_INCLUDE,
-        where: { id: tpl.id },
+      const serving = await authorizeServingVersion(fastify, user, tpl.teamId, version);
+      if (!serving.ok) {
+        return reply.status(serving.statusCode).send(serving.body);
+      }
+      const updated = await fastify.prisma.$transaction(async (tx) => {
+        await serving.record(tx);
+        return tx.workflowTemplate.update({
+          data: { activeVersion: request.body.version, status: 'ACTIVE' },
+          include: TEMPLATE_INCLUDE,
+          where: { id: tpl.id },
+        });
       });
       await writeAuditLog(fastify, {
         action: 'UPDATE',

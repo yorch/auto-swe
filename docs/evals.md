@@ -81,7 +81,7 @@ were advisory.
 
 | Kind | Family | Fields | What it does |
 |---|---|---|---|
-| `gate` | floor | `gate`, optional `command` | Executes a real quality gate against the candidate's pushed branch on the repo's executor image |
+| `gate` | floor | `gate`, optional `command` | Executes a real quality gate against the candidate's pushed branch on the repo's executor image. A `command` is code the author wrote: saving it takes the shell authoring role and writes a `WorkflowShellAudit` row ([nl-workflow-authoring.md](./nl-workflow-authoring.md#5-design-notes)); without one the repository's configured command runs |
 | `assert` | floor | `expr` | Evaluates a programmatic expression against the target (`$.`-prefixed paths, the `cond` grammar) |
 | `policy` | floor | `riskClass` | Passes when the run's resolved autonomy policy sets that risk class to `auto`; fails on any other action (`require_approval`, which is also what a class the policy does not name resolves to) or when the eval runs outside a run. It never waits for an approval |
 | `pii` | floor | — | Runs every active `PII` scanner pattern over the target (JSON-encoded when not a string); passes on no match, fails on a match, an incomplete scan, or a scan that skipped a quarantined pattern |

@@ -1,9 +1,11 @@
 import {
   assertShellImageAllowed,
+  findAuthoredCommandNodes,
   findContainerCodeNodes,
   findInternalSteps,
   findInvalidPresentation,
   formatValidationIssue,
+  isCommandGateStep,
   parseWorkflowSpec,
   ShellImageNotAllowedError,
   SPEC_SCHEMA_VERSION,
@@ -57,7 +59,96 @@ export function collectShellNodes(spec: WorkflowSpec): ShellNodeWithId[] {
 }
 
 /**
- * Phase-6 RBAC: authoring a spec with any shell node requires the
+ * The `image` an authored-command audit row records. An authored gate or eval command runs in
+ * the run's agent workspace (the repository's executor image, chosen by the deployment), not
+ * in an image the spec names, so the row says where it ran instead of naming one.
+ */
+export const AGENT_WORKSPACE_AUDIT_IMAGE = '(agent workspace)';
+
+/** How an audit row spells a command the spec binds from a run-time input. */
+function boundCommand(field: string, binding: unknown): string {
+  return `(bound at run time: ${field} = ${JSON.stringify(binding) ?? 'undefined'})`;
+}
+
+function gateScorerCommands(scorers: unknown): string[] {
+  if (!Array.isArray(scorers)) {
+    return [];
+  }
+  return scorers.flatMap((s: unknown) => {
+    const scorer = s as { kind?: unknown; command?: unknown } | null;
+    return scorer?.kind === 'gate' &&
+      typeof scorer.command === 'string' &&
+      scorer.command.trim() !== ''
+      ? [scorer.command]
+      : [];
+  });
+}
+
+/** The command strings one authored-command node writes into the spec (see `containerCode.ts`). */
+function authoredCommandsOf(node: WorkflowSpec['nodes'][string]): string[] {
+  if (node.type === 'eval') {
+    return gateScorerCommands(node.scorers);
+  }
+  if (node.type !== 'step') {
+    return [];
+  }
+  const config = node.config ?? {};
+  const inputs = (node.inputs ?? {}) as Record<string, unknown>;
+  if (isCommandGateStep(node.step)) {
+    if (typeof config.command === 'string' && config.command.trim() !== '') {
+      return [config.command];
+    }
+    return 'command' in inputs ? [boundCommand('inputs.command', inputs.command)] : [];
+  }
+  if (node.step === 'runQualityGates') {
+    const gates = Array.isArray(config.gates) ? (config.gates as unknown[]) : [];
+    const written = gates.flatMap((g) => {
+      const command = (g as { command?: unknown } | null)?.command;
+      return typeof command === 'string' && command.trim() !== '' ? [command] : [];
+    });
+    return 'gates' in inputs ? [...written, boundCommand('inputs.gates', inputs.gates)] : written;
+  }
+  if (node.step === 'runEvalNode') {
+    return gateScorerCommands(config.scorers);
+  }
+  return [];
+}
+
+/**
+ * Every command an author wrote into a gate step, a `runQualityGates` gate, or an eval `gate`
+ * scorer, one entry per command, projected onto the audit shape. Membership is the shared
+ * `isAuthoredCommandNode`; these run in the agent workspace, so the image allowlist does not
+ * apply to them and they are never passed to {@link assertShellImagesAllowed}. They carry the
+ * same authoring role and `WorkflowShellAudit` trail as container code.
+ */
+export function collectAuthoredCommandNodes(spec: WorkflowSpec): ShellNodeWithId[] {
+  const out: ShellNodeWithId[] = [];
+  for (const [id, node] of findAuthoredCommandNodes(spec)) {
+    const commands = authoredCommandsOf(node);
+    // The predicate and this projection read the same fields; a node the predicate counts
+    // still yields a row if they ever disagree, so the gate cannot silently pass it.
+    for (const command of commands.length > 0 ? commands : ['(authored command)']) {
+      out.push({ id, node: { command, image: AGENT_WORKSPACE_AUDIT_IMAGE, network: 'egress' } });
+    }
+  }
+  return out;
+}
+
+/**
+ * The code an author wrote into a spec, split by the gates that apply to it: `shellNodes`
+ * (container code) take the image allowlist; `authoredNodes` is every node that needs the
+ * shell authoring role and a `WorkflowShellAudit` row — container code and authored commands.
+ */
+export function collectAuthoredCode(spec: WorkflowSpec): {
+  shellNodes: ShellNodeWithId[];
+  authoredNodes: ShellNodeWithId[];
+} {
+  const shellNodes = collectShellNodes(spec);
+  return { authoredNodes: [...shellNodes, ...collectAuthoredCommandNodes(spec)], shellNodes };
+}
+
+/**
+ * Authoring a spec with any container code or authored command requires the
  * `workflow:write:shell` permission. We map it to:
  *   - platform ADMIN, OR
  *   - team-role ADMIN in the template's owning team (templates with
@@ -82,7 +173,8 @@ export async function assertShellAuthoringAllowed(
       body: {
         error: {
           code: 'SHELL_AUTHOR_FORBIDDEN',
-          message: 'Only platform admins may author shell steps on global templates',
+          message:
+            'Only platform admins may author shell steps or gate commands on global templates',
         },
       },
       statusCode: 403,
@@ -96,7 +188,7 @@ export async function assertShellAuthoringAllowed(
       body: {
         error: {
           code: 'SHELL_AUTHOR_FORBIDDEN',
-          message: 'Authoring shell steps requires team-admin role',
+          message: 'Authoring shell steps or gate commands requires team-admin role',
         },
       },
       statusCode: 403,
@@ -332,9 +424,9 @@ export async function checkSpec(
     issues.push({ ...p, severity: 'warning', source: 'refs' });
   }
 
-  const shellNodes = collectShellNodes(spec);
+  const { authoredNodes, shellNodes } = collectAuthoredCode(spec);
   const [rbac, imgGate] = await Promise.all([
-    assertShellAuthoringAllowed(fastify, user, teamId, shellNodes),
+    assertShellAuthoringAllowed(fastify, user, teamId, authoredNodes),
     assertShellImagesAllowed(fastify, teamId, shellNodes),
   ]);
   for (const refusal of [rbac, imgGate.ok ? null : imgGate]) {
