@@ -356,6 +356,9 @@ Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential`, so
 
 **Tracker, knowledge-base, and Figma connectors** are fetched server-side at work-request submit
 time and seed `ContextSnapshot`. They are best-effort: a failure never blocks submission. The
+tracker ticket reaches the agents through `loadTicketContext` in the worker, which reads the stored
+ticket or fetches it on first use, so every launch path gets it (see
+[`docs/agents.md` §3.8](./docs/agents.md#38-tracker-ticket-context)). The
 tracker and knowledge-base configs carry an `allowPrivateNetwork` flag — an explicit opt-in
 required before the SSRF guard will accept a self-hosted base URL on a private address. The opt-in
 waives only that refusal (`checkProbeUrl` in `shared/lib/ssrfGuard.ts`): loopback, unspecified,

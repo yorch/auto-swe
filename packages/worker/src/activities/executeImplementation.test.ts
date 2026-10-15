@@ -8,24 +8,29 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * the `system` message the implementer agent is generated with.
  */
 
-const { checkoutMock, generateMock, loadMock, prismaMock, workspaceMock } = vi.hoisted(() => ({
-  checkoutMock: vi.fn(),
-  generateMock: vi.fn(),
-  loadMock: vi.fn(),
-  prismaMock: {
-    connection: { findUniqueOrThrow: vi.fn() },
-    contextSnapshot: { findUnique: vi.fn() },
-    workflowRun: { update: vi.fn() },
-  },
-  workspaceMock: {
-    destroy: vi.fn(async () => {}),
-    exec: vi.fn(async (_command: string, _options?: { timeoutMs?: number }) => ''),
-    execCapture: vi.fn(),
-    gitAuthed: vi.fn(async (_subcommand: string) => ''),
-  },
-}));
+const { checkoutMock, generateMock, loadMock, prismaMock, ticketMock, workspaceMock } = vi.hoisted(
+  () => ({
+    checkoutMock: vi.fn(),
+    generateMock: vi.fn(),
+    loadMock: vi.fn(),
+    prismaMock: {
+      connection: { findUniqueOrThrow: vi.fn() },
+      contextSnapshot: { findUnique: vi.fn() },
+      workflowRun: { update: vi.fn() },
+    },
+    ticketMock: vi.fn(async (..._args: unknown[]) => ''),
+    workspaceMock: {
+      destroy: vi.fn(async () => {}),
+      exec: vi.fn(async (_command: string, _options?: { timeoutMs?: number }) => ''),
+      execCapture: vi.fn(),
+      gitAuthed: vi.fn(async (_subcommand: string) => ''),
+    },
+  })
+);
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: prismaMock }));
+
+vi.mock('../lib/ticketContext.js', () => ({ loadTicketContext: ticketMock }));
 
 // Which loop drives the implementer is a run-pinned setting; these tests are about
 // the Mastra loop, so the registry read answers without a database.
@@ -160,6 +165,7 @@ beforeEach(() => {
   vi.mocked(currentAttempt).mockReturnValue(1);
   vi.mocked(scanDiffForCodeIssues).mockResolvedValue([]);
   loadMock.mockResolvedValue('');
+  ticketMock.mockResolvedValue('');
   checkoutMock.mockResolvedValue('');
   generateMock.mockResolvedValue({ text: 'done', usage: { inputTokens: 1, outputTokens: 1 } });
   prismaMock.connection.findUniqueOrThrow.mockResolvedValue({
@@ -237,6 +243,36 @@ describe('executeImplementation base branch', () => {
       executeImplementation({ ...REQUEST, payload: { baseBranch: '-x' } })
     ).rejects.toThrow(/not a valid branch name/);
     expect(vi.mocked(createWorkspace)).not.toHaveBeenCalled();
+  });
+});
+
+describe('executeImplementation tracker ticket context', () => {
+  it("appends the run's tracker ticket to the implementer system prompt", async () => {
+    ticketMock.mockResolvedValue(
+      '\n\n## Issue tracker ticket\n<ticket>\nTitle: Health endpoint\n</ticket>'
+    );
+
+    await executeImplementation({ ...REQUEST, workRequestId: 'wr-1' } as RepoWorkRequest);
+
+    expect(ticketMock).toHaveBeenCalledWith(expect.objectContaining({ workRequestId: 'wr-1' }));
+    const prompt = systemPrompt();
+    expect(prompt.startsWith('BASE_PROMPT')).toBe(true);
+    expect(prompt).toContain('Title: Health endpoint');
+  });
+
+  it('puts the ticket before the cross-repo block, so the dependency graph stays last', async () => {
+    ticketMock.mockResolvedValue('[TICKET]');
+    loadMock.mockResolvedValue('[CROSS]');
+    await executeImplementation({ ...REQUEST, workRequestId: 'wr-1' } as RepoWorkRequest);
+    const prompt = systemPrompt();
+    expect(prompt.indexOf('[TICKET]')).toBeGreaterThan(-1);
+    expect(prompt.indexOf('[TICKET]')).toBeLessThan(prompt.indexOf('[CROSS]'));
+  });
+
+  it('does not stop the implementation when the ticket lookup rejects', async () => {
+    ticketMock.mockRejectedValue(new Error('boom'));
+    await executeImplementation({ ...REQUEST, workRequestId: 'wr-1' } as RepoWorkRequest);
+    expect(systemPrompt()).toBe('BASE_PROMPT');
   });
 });
 

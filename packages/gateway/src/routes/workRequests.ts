@@ -91,9 +91,10 @@ async function resolveCanaryPin(
  * (unique on workRequestId) but only writes `successCriteria` on the update
  * path, so the ticket payload survives.
  *
- * Nothing reads `rawTicketData` or `rawDocumentation` yet, so this runs after
- * the 201 rather than in front of it. Never throws — every failure is logged
- * and swallowed.
+ * Nothing reads `rawDocumentation` yet. The worker's `loadTicketContext` reads
+ * `rawTicketData` and fetches the ticket itself when this has not stored it, so
+ * this runs after the 201 rather than in front of it. Never throws — every
+ * failure is logged and swallowed.
  */
 async function enrichWithTicketData(
   fastify: FastifyInstance,

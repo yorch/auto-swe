@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { persistMock, runAgentMock, upsertMock } = vi.hoisted(() => ({
+const { persistMock, runAgentMock, ticketMock, upsertMock } = vi.hoisted(() => ({
   persistMock: vi.fn(async (..._args: unknown[]) => {}),
   runAgentMock: vi.fn(),
+  ticketMock: vi.fn(async (..._args: unknown[]) => ''),
   upsertMock: vi.fn(async () => ({ id: 'snap-1' })),
 }));
 
@@ -22,6 +23,7 @@ vi.mock('../lib/config/agentSpec.js', () => ({
 vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({})),
 }));
+vi.mock('../lib/ticketContext.js', () => ({ loadTicketContext: ticketMock }));
 vi.mock('./runAgent.js', () => ({ runAgent: runAgentMock }));
 
 import { buildValidationUserMessage, validateContext } from './validateContext.js';
@@ -62,6 +64,34 @@ describe('buildValidationUserMessage', () => {
   });
 });
 
+describe('buildValidationUserMessage with a tracker ticket', () => {
+  const ticket = '\n\n## Issue tracker ticket\n<ticket>\nTitle: Health endpoint\n</ticket>';
+
+  it('adds the ticket beside the structured payload', () => {
+    const parsed = JSON.parse(
+      buildValidationUserMessage(
+        { payload: { title: 'T' }, workRequestId: 'wr-1' } as never,
+        ticket
+      )
+    );
+    expect(parsed).toEqual({ payload: { title: 'T' }, ticket });
+  });
+
+  it('adds the ticket to the legacy fields, and leaves them alone without one', () => {
+    const request = {
+      description: 'D',
+      externalTicketId: 'JIRA-1',
+      workRequestId: 'wr-1',
+    } as never;
+    expect(JSON.parse(buildValidationUserMessage(request, ticket))).toEqual({
+      description: 'D',
+      ticket,
+      title: 'JIRA-1',
+    });
+    expect(JSON.parse(buildValidationUserMessage(request, ''))).not.toHaveProperty('ticket');
+  });
+});
+
 describe('validateContext degradation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -95,5 +125,56 @@ describe('validateContext degradation', () => {
     const out = await validateContext({ description: 'x', workRequestId: 'wr-1' } as never);
     expect(out.successCriteria).toEqual(['a']);
     expect(persistMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('validateContext ticket context', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    ticketMock.mockResolvedValue('');
+    runAgentMock.mockResolvedValue({ object: { successCriteria: ['a'] } });
+  });
+
+  it('gives the model the tracker ticket of this run', async () => {
+    ticketMock.mockResolvedValue('<ticket>Title: Health endpoint</ticket>');
+    await validateContext({ description: 'Some work', workRequestId: 'wr-9' } as never);
+    expect(ticketMock).toHaveBeenCalledWith(expect.objectContaining({ workRequestId: 'wr-9' }));
+    const message = JSON.parse(runAgentMock.mock.calls[0]?.[1] as string);
+    expect(message.ticket).toContain('Health endpoint');
+    expect(message.description).toBe('Some work');
+  });
+
+  it('adds nothing when the run has no ticket', async () => {
+    await validateContext({ description: 'Some work', workRequestId: 'wr-9' } as never);
+    expect(JSON.parse(runAgentMock.mock.calls[0]?.[1] as string)).not.toHaveProperty('ticket');
+  });
+
+  it('persists the ticket events it recorded, once, together with any degradation', async () => {
+    ticketMock.mockImplementation(async (args: unknown) => {
+      (
+        args as { tracer: { addActivityEvent: (e: { name: string }) => void } }
+      ).tracer.addActivityEvent({
+        name: 'ticket.context_loaded',
+      });
+      return '<ticket>x</ticket>';
+    });
+    runAgentMock.mockRejectedValue(new Error('provider 529'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await validateContext({ description: 'x', workRequestId: 'wr-9' } as never);
+    expect(persistMock).toHaveBeenCalledTimes(1);
+    const [tracer] = persistMock.mock.calls[0] as [
+      { records: Array<{ toolName?: string | null }> },
+    ];
+    expect(tracer.records.map((r) => r.toolName)).toEqual([
+      'ticket.context_loaded',
+      'context_validation.degraded',
+    ]);
+    warn.mockRestore();
+  });
+
+  it('still validates when the ticket lookup itself fails', async () => {
+    ticketMock.mockRejectedValue(new Error('boom'));
+    const out = await validateContext({ description: 'x', workRequestId: 'wr-9' } as never);
+    expect(out.successCriteria).toEqual(['a']);
   });
 });

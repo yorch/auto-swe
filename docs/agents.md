@@ -975,6 +975,28 @@ omits `provisioning` and acts on the container through `turn.exec`.
 
 ---
 
+### 3.8 Tracker ticket context
+
+The submitter's description is often a line or two; the ticket holds the requirements.
+`loadTicketContext` (`packages/worker/src/lib/ticketContext.ts`) gives the first step of a run that
+needs it the ticket from the configured issue tracker (Jira, Linear or GitHub Issues, set at
+`/studio/integrations → Tracker`). It reads `ContextSnapshot.rawTicketData` for the run's input, or
+fetches the ticket and stores it there. The worker does the fetch, so every launch path gets the same
+ticket, however the run was started and whether or not the gateway fetched one at submit time.
+
+`validateContext` passes the ticket beside the request, so the success criteria reflect what the
+ticket asks for. The implementer appends it to its system prompt as an `## Issue tracker ticket` block,
+after the design context and before the cross-repo block.
+
+Ticket text is written by people other than the operator, so the block is bounded (title 300
+characters, description 6,000), holds the title, status, labels, URL and description but never the raw
+provider payload, sits inside a `<ticket>` delimiter that the ticket's own text cannot close, and is
+introduced as requirements to satisfy, not instructions. A ticket id the platform generated
+(`RunInput.ticketIsSynthetic`) is never looked up. The load is best-effort and never throws: a tracker
+outage leaves the run with its own description. The run's trace records `ticket.context_loaded`
+(`source` is `stored` or `tracker`) or `ticket.context_unavailable`, which carries no provider
+message, since those can quote a request header.
+
 ## 4. The Review Network
 
 **File:** `packages/worker/src/agents/reviewNetwork.ts`
@@ -1488,6 +1510,14 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
 
 ## 11. Limitations
 
+- **Only the ticket's own fields reach the agents.** Comments, linked knowledge-base pages and
+  attachments are not part of the block (`ContextSnapshot.rawDocumentation` is stored and read by
+  nothing). A ticket is stored on first use, so an edit made after the first step that needed it is not
+  picked up by that run. A ticket that could not be fetched is tried again by the next step that needs
+  it, and not otherwise.
+- **The ticket block is framed and bounded, not scanned.** The delimiter and the "requirements, not
+  instructions" framing lower the risk of text in a ticket steering the agent; they do not remove it.
+  The injection scanners cover skill text, model output, diffs and file writes, not this block.
 - **The Claude Code harness's container-side checks are tripwires, not a boundary.** The binary's
   hash is taken with the container's own `sha256sum`, so code that controls the container (its
   `sha256sum`, or a process that outlives the turn's tag cleanup) can defeat the check; the harness's

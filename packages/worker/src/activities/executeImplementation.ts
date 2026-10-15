@@ -40,6 +40,7 @@ import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
+import { loadTicketContext } from '../lib/ticketContext.js';
 import { requestHasTrackerTicket } from '../lib/trackerTicket.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import {
@@ -241,6 +242,14 @@ export async function executeImplementation(
       // Design context is optional — never block implementation on it.
     }
 
+    // The tracker ticket behind this run: the submitter's description is often a line or two, and the
+    // ticket holds the actual requirements. The loader is best-effort and never throws; the catch
+    // keeps a future change to that contract from failing the implementation.
+    const ticketContext = await loadTicketContext({
+      tracer,
+      workRequestId: request.workRequestId,
+    }).catch(() => '');
+
     // Cross-repo dependency context (repo dependency graph, P2): the active
     // 1-hop graph around this repo — upstream contracts to honour, downstream
     // consumers to avoid breaking. Best-effort exactly like design context; the
@@ -295,7 +304,11 @@ export async function executeImplementation(
     );
 
     const llmSystemPrompt =
-      turns.systemPrompt(systemPrompt) + lessonsContext + designContext + crossRepoContext;
+      turns.systemPrompt(systemPrompt) +
+      lessonsContext +
+      designContext +
+      ticketContext +
+      crossRepoContext;
 
     // TDD loop — bound by the DB-backed workflow default (falls back to 5).
     const maxTddIterations = workflowDefaults.maxTddIterations;
