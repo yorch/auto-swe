@@ -227,6 +227,8 @@ export class AgentTracer {
       temporalRunId?: string | null;
       teamId?: string;
       orgId?: string;
+      /** The in-app assistant reply whose turn wrote these rows. */
+      assistantMessageId?: string;
     },
     nodeId: string,
     agentKey: string,
@@ -245,6 +247,7 @@ export class AgentTracer {
         data: this.records.map((r) => ({
           ...node,
           agentKey,
+          assistantMessageId: ids.assistantMessageId ?? null,
           attempt,
           costUsd: r.costUsd ?? null,
           durationMs: r.durationMs,

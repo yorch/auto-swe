@@ -176,8 +176,13 @@ describe('an assistant turn, end to end in the worker', () => {
     const m = model.current as MockLanguageModelV4;
     expect(m.doStreamCalls).toHaveLength(2);
     expect(m.doGenerateCalls).toHaveLength(0);
-    // The turn's trace was written, in runAgent's finally.
-    expect(persistActivityTrace).toHaveBeenCalledWith(expect.anything(), 'appAssistant');
+    // The turn's trace was written once, by the turn, tagged with the reply it answered, and it
+    // holds the loop's rows: the tool call and the model response.
+    expect(persistActivityTrace).toHaveBeenCalledTimes(1);
+    const [tracer, agentKey, tags] = vi.mocked(persistActivityTrace).mock.calls[0] ?? [];
+    expect(agentKey).toBe('appAssistant');
+    expect(tags).toEqual({ assistantMessageId: 'reply-1' });
+    expect(tracer?.size).toBeGreaterThan(0);
     // Builds the docs index over every shipped doc, which takes seconds on a loaded CI runner.
   }, 60_000);
 });

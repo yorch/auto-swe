@@ -37,6 +37,21 @@ describe('AgentTracer.persist', () => {
     expect(createManyMock.mock.calls[1]?.[0].data[0]).toMatchObject({ orgId: null, teamId: null });
   });
 
+  it('stamps the assistant reply it is given, and NULL when it is given none', async () => {
+    const tracer = new AgentTracer();
+    tracer.addLlmResponse({ durationMs: 5, role: 'r' });
+    await tracer.persist(
+      { assistantMessageId: 'reply-1', runId: undefined, workflowId: 'w' },
+      'n',
+      'r'
+    );
+    await tracer.persist({ runId: undefined, workflowId: 'w' }, 'n', 'r');
+    expect(createManyMock.mock.calls[0]?.[0].data[0]).toMatchObject({
+      assistantMessageId: 'reply-1',
+    });
+    expect(createManyMock.mock.calls[1]?.[0].data[0]).toMatchObject({ assistantMessageId: null });
+  });
+
   it('records the spec node, recording id and step attempt it was given', async () => {
     const tracer = new AgentTracer();
     tracer.addActivityEvent({ name: 'e' });

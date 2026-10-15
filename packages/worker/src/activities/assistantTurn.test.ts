@@ -13,6 +13,9 @@ vi.mock('@auto-swe/shared/db', () => ({ prisma: db }));
 vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: vi.fn().mockResolvedValue(7) }));
 vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
 vi.mock('../lib/activityLog.js', () => ({ logError: vi.fn() }));
+vi.mock('../lib/activityContext.js', () => ({
+  persistActivityTrace: vi.fn().mockResolvedValue(true),
+}));
 vi.mock('../lib/config/agentSpec.js', () => ({
   resolveAgentSpec: vi.fn(async (input: { availableTools: unknown }) => ({
     agentKey: 'appAssistant',
@@ -25,6 +28,7 @@ vi.mock('../lib/spendOwner.js', () => ({
 }));
 vi.mock('./runAgent.js', () => ({ runAgent: vi.fn() }));
 
+import { persistActivityTrace } from '../lib/activityContext.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { failAssistantReply, ReplyWriter, runAssistantTurn } from './assistantTurn.js';
 import { runAgent } from './runAgent.js';
@@ -105,6 +109,21 @@ describe('runAssistantTurn', () => {
     const data = db.assistantMessage.update.mock.calls.at(-1)?.[0].data;
     expect(data.status).toBe('FAILED');
     expect(data.error).toBe('I hit an error answering that. Please try again.');
+  });
+
+  it('persists the trace once, tagged with the reply, whether the turn succeeds or fails', async () => {
+    mockedRunAgent.mockResolvedValueOnce({ text: 'Done' });
+    await runAssistantTurn(INPUT);
+    mockedRunAgent.mockRejectedValueOnce(new Error('provider down'));
+    await runAssistantTurn(INPUT);
+
+    const persisted = vi.mocked(persistActivityTrace).mock.calls;
+    expect(persisted).toHaveLength(2);
+    for (const [i, call] of persisted.entries()) {
+      // The tracer handed to runAgent is the one persisted, so runAgent leaves persisting to us.
+      expect(call[0]).toBe(mockedRunAgent.mock.calls[i]?.[2]?.tracer);
+      expect(call.slice(1)).toEqual(['appAssistant', { assistantMessageId: 'reply-1' }]);
+    }
   });
 
   it('records the cause for admins, scrubbed of the turn token and credentials', async () => {
