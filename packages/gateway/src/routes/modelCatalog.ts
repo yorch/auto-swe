@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { builtinModelFor, findUnpricedSpecs, rolePricing } from '../lib/modelCatalogService.js';
+import { findPriceHints } from '../lib/modelPriceHints.js';
 import { isRecordNotFoundError, isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -41,15 +42,18 @@ const CatalogFields = {
   status: StatusSchema.optional(),
 };
 
-const CreateBody = z.object({
-  ...CatalogFields,
+const SpecFields = {
   modelId: z.string().min(1).max(200).regex(/^\S+$/, 'modelId must not contain whitespace'),
   provider: z
     .string()
     .min(1)
     .max(64)
     .regex(/^[a-z0-9][a-z0-9-]*$/, 'provider must be lowercase-kebab-case'),
-});
+};
+
+const CreateBody = z.object({ ...CatalogFields, ...SpecFields });
+
+const PriceHintBody = z.object(SpecFields);
 
 // Provider and modelId are the row's identity, and pinned agent versions bill
 // against it, so an edit never changes them — delete and re-create instead.
@@ -236,6 +240,19 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
     });
     return { data: results };
   });
+
+  // What a model is published to cost, for the Add form to prefill: the
+  // provider's own listing where it states a price, then the community price
+  // list. POST for the same reason as discover — it can call a provider with a
+  // decrypted key. Writes nothing: an admin still saves every price.
+  app.post(
+    '/model-catalog/price-hints',
+    { onRequest: adminOnly, schema: { body: PriceHintBody } },
+    async (request) => {
+      const { provider, modelId } = request.body;
+      return { data: await findPriceHints(fastify.prisma, provider, modelId) };
+    }
+  );
 
   app.post(
     '/model-catalog',

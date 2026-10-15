@@ -17,6 +17,14 @@ vi.mock('@auto-swe/shared/lib/modelSuggestions', () => ({
   })),
 }));
 
+vi.mock('../lib/modelPriceHints.js', () => ({
+  findPriceHints: vi.fn(async (_prisma: unknown, provider: string, modelId: string) => ({
+    asked: `${provider}/${modelId}`,
+    hints: [{ inputUsdPerMTok: 3, matchedId: modelId, outputUsdPerMTok: 15, source: 'provider' }],
+    unavailable: [{ reason: 'HTTP 503', source: 'priceList' }],
+  })),
+}));
+
 import { modelCatalogRoutes } from './modelCatalog.js';
 
 const BUILTIN_ID = '00000000-0000-4000-a000-0000000000b1';
@@ -426,6 +434,41 @@ describe('POST /model-catalog/discover', () => {
     expect(audit).toHaveBeenCalledWith({
       data: expect.objectContaining({ action: 'UPDATE', entityType: 'ModelSuggestion' }),
     });
+  });
+});
+
+describe('POST /model-catalog/price-hints', () => {
+  it('is ADMIN-only — it can call a provider with a decrypted key', async () => {
+    const { call } = await buildApp('ENGINEER');
+    const res = await call('POST', '/model-catalog/price-hints', {
+      modelId: 'anthropic/claude-x',
+      provider: 'openrouter',
+    });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('returns the hints for the spec asked about, and writes nothing', async () => {
+    const { audit, call } = await buildApp();
+    const res = await call('POST', '/model-catalog/price-hints', {
+      modelId: 'anthropic/claude-x',
+      provider: 'openrouter',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toMatchObject({
+      asked: 'openrouter/anthropic/claude-x',
+      hints: [{ inputUsdPerMTok: 3, outputUsdPerMTok: 15, source: 'provider' }],
+      unavailable: [{ reason: 'HTTP 503', source: 'priceList' }],
+    });
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it('refuses a malformed spec', async () => {
+    const { call } = await buildApp();
+    const res = await call('POST', '/model-catalog/price-hints', {
+      modelId: 'has space',
+      provider: 'OpenRouter',
+    });
+    expect(res.statusCode).toBe(400);
   });
 });
 

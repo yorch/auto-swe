@@ -245,11 +245,23 @@ export async function pricedSpecs(prisma: PrismaClient): Promise<Set<string>> {
   return new Set((await knownModels(prisma)).keys());
 }
 
+/** A price a provider's own listing states, converted to USD per million tokens. */
+export interface ListedPrice {
+  inputUsdPerMTok: number;
+  outputUsdPerMTok: number;
+}
+
 export interface DiscoveredModel {
   modelId: string;
   /** A guess: Google says which methods a model serves; elsewhere the id is read. */
   kind: ModelKind;
   displayName: string | null;
+  /**
+   * The price the listing itself states, where it states one (OpenRouter does;
+   * Anthropic, OpenAI and Google do not). A hint for an admin's form, never a
+   * catalog price: nothing prices a call from it.
+   */
+  listedPrice?: ListedPrice;
 }
 
 export type DiscoveredSpec = DiscoveredModel & { spec: string };
@@ -281,6 +293,37 @@ const MAX_PAGES = 5;
  */
 const NON_TEXT_MODEL =
   /(^|[-_./])(tts|whisper|dall-e|image|imagen|veo|sora|moderation|transcribe|audio|realtime|speech|lyria)([-_./]|$)/i;
+
+/** Highest per-MTok price a hint may carry — the catalog's own write limit. */
+const MAX_HINT_USD_PER_MTOK = 100_000;
+
+/**
+ * A per-token USD figure as USD per million tokens, or null when it is not a
+ * usable price. OpenRouter states prices per token as decimal strings, and
+ * `-1` for a router whose price depends on the model it picks.
+ */
+export function perTokenToPerMTok(raw: unknown): number | null {
+  const n = typeof raw === 'string' && raw.trim() !== '' ? Number(raw) : raw;
+  if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) {
+    return null;
+  }
+  // Per-token decimals do not survive the multiplication exactly (3e-6 → 2.9999999999999996).
+  const perMTok = Math.round(n * 1e12) / 1e6;
+  return perMTok <= MAX_HINT_USD_PER_MTOK ? perMTok : null;
+}
+
+/** OpenRouter's `pricing: { prompt, completion }`, per token. Anything else yields none. */
+function listedPrice(m: Record<string, unknown>): ListedPrice | undefined {
+  const pricing = m.pricing as Record<string, unknown> | null | undefined;
+  if (!pricing || typeof pricing !== 'object') {
+    return undefined;
+  }
+  const input = perTokenToPerMTok(pricing.prompt);
+  const output = perTokenToPerMTok(pricing.completion);
+  return input === null || output === null
+    ? undefined
+    : { inputUsdPerMTok: input, outputUsdPerMTok: output };
+}
 
 function embeddingByName(id: string): ModelKind {
   return /embed/i.test(id) ? 'EMBEDDING' : 'CHAT';
@@ -335,17 +378,20 @@ export function parseModelListPage(provider: string, body: unknown): Page {
     };
   }
   const data = Array.isArray(b.data) ? (b.data as Array<Record<string, unknown>>) : [];
-  const models = data.flatMap((m) =>
-    typeof m.id === 'string' && m.id
-      ? [
-          {
-            displayName: typeof m.display_name === 'string' ? m.display_name : null,
-            kind: embeddingByName(m.id),
-            modelId: m.id,
-          },
-        ]
-      : []
-  );
+  const models = data.flatMap((m): DiscoveredModel[] => {
+    if (typeof m.id !== 'string' || !m.id) {
+      return [];
+    }
+    const price = listedPrice(m);
+    return [
+      {
+        displayName: typeof m.display_name === 'string' ? m.display_name : null,
+        kind: embeddingByName(m.id),
+        modelId: m.id,
+        ...(price ? { listedPrice: price } : {}),
+      },
+    ];
+  });
   // Anthropic pages by cursor; OpenAI and OpenAI-compatible lists are not paged.
   const next =
     provider === 'anthropic' && b.has_more === true && typeof b.last_id === 'string'
@@ -448,6 +494,44 @@ export async function listProviderModels(args: {
   };
 }
 
+type GlobalCredential = NonNullable<
+  Awaited<ReturnType<PrismaClient['providerCredential']['findFirst']>>
+>;
+
+/** Lists one GLOBAL credential's models, or says in a fixed string why it could not. */
+async function listThroughCredential(cred: GlobalCredential): Promise<ProviderListing> {
+  const { decryptSecret } = await import('./crypto.js');
+  let apiKey: string;
+  try {
+    apiKey = decryptSecret({
+      authTag: cred.apiKeyAuthTag,
+      ciphertext: cred.apiKeyCiphertext,
+      keyVersion: cred.keyVersion,
+      nonce: cred.apiKeyNonce,
+    });
+  } catch {
+    return { error: 'credential could not be decrypted', ok: false };
+  }
+  return listProviderModels({ apiBase: cred.apiBase, apiKey, provider: cred.provider });
+}
+
+/**
+ * One provider's listing through its GLOBAL credential — what the catalog's
+ * price hints read a provider-stated price from. Null when the provider has no
+ * GLOBAL credential.
+ */
+export async function listGlobalProviderModels(
+  prisma: PrismaClient,
+  provider: string
+): Promise<ProviderListing | null> {
+  const cred = await runUnscoped(
+    'admin lists models through a GLOBAL provider credential',
+    ['ProviderCredential'],
+    () => prisma.providerCredential.findFirst({ where: { provider, scope: 'GLOBAL' } })
+  );
+  return cred ? listThroughCredential(cred) : null;
+}
+
 /**
  * Lists models through every GLOBAL credential, in parallel, and keeps the ones
  * nothing prices — plus, per provider, the priced ones it no longer lists. One
@@ -469,35 +553,18 @@ export async function discoverProviderModels(prisma: PrismaClient): Promise<Prov
     ),
     knownModels(prisma),
   ]);
-  const { decryptSecret } = await import('./crypto.js');
   return Promise.all(
     credentials.map(async (cred): Promise<ProviderDiscovery> => {
-      const failed = (error: string): ProviderDiscovery => ({
-        complete: false,
-        error,
-        models: [],
-        ok: false,
-        provider: cred.provider,
-        retirementCandidates: [],
-      });
-      let apiKey: string;
-      try {
-        apiKey = decryptSecret({
-          authTag: cred.apiKeyAuthTag,
-          ciphertext: cred.apiKeyCiphertext,
-          keyVersion: cred.keyVersion,
-          nonce: cred.apiKeyNonce,
-        });
-      } catch {
-        return failed('credential could not be decrypted');
-      }
-      const listed = await listProviderModels({
-        apiBase: cred.apiBase,
-        apiKey,
-        provider: cred.provider,
-      });
+      const listed = await listThroughCredential(cred);
       if (!listed.ok) {
-        return failed(listed.error);
+        return {
+          complete: false,
+          error: listed.error,
+          models: [],
+          ok: false,
+          provider: cred.provider,
+          retirementCandidates: [],
+        };
       }
       const seen = new Set<string>();
       const models = listed.models

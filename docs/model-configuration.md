@@ -151,6 +151,26 @@ listing failed, an **Add** prefilled with the id, kind and display name, and a *
 discovered model is not "known" until an admin adds it with a price, and the pricing path never reads
 a suggestion.
 
+**Published prices prefill the Add form.** When the form opens for a spec — from a discovered model,
+an unpriced one, or one typed in — it asks `POST /model-catalog/price-hints` what that model is
+published to cost, and fills the price and cache fields from the first answer, naming its source.
+Two sources answer, in this order:
+
+1. **The provider's own listing**, for an OpenAI-compatible provider whose list-models response states
+   prices (OpenRouter's per-token `pricing.prompt` / `pricing.completion`), read through its GLOBAL
+   credential exactly as discovery reads it and kept for five minutes. Anthropic, OpenAI and Google
+   state no price in their listings, so they are not asked.
+2. **A community price list** in LiteLLM's `model_prices_and_context_window.json` format, at
+   `models.priceListUrl` (LiteLLM's file on GitHub by default; empty turns it off). An entry counts
+   only when its `litellm_provider` is the provider asked about, under `<provider>/<model-id>` or the
+   bare id, with `google` read as LiteLLM's `gemini`. Cache read and write rates become multiples of
+   the input price. The gateway fetches the list behind the same address guard as a credential, with
+   redirects refused and a 32 MB cap, and keeps it for six hours (five minutes after a failure).
+
+A second answer is shown with a **Use** to switch to it, and a source that could not be read is named
+with a fixed reason. A hint fills only fields nobody has typed in, and is never a price: nothing is
+written until the admin saves, and the pricing path never reads a hint.
+
 The run's cadence is environment-only, like the other gateway sweeps: `MODEL_DISCOVERY_ENABLED`
 (default `true`) and `MODEL_DISCOVERY_CRON` (five-field cron, UTC, default `17 3 * * *`). The gateway
 applies them to the `auto-swe-model-discovery` Temporal Schedule once, at startup, so a change needs
@@ -203,6 +223,7 @@ as a `ModelCatalogEntry`.
 | `GET /model-catalog/unpriced` | Specs in use that nothing prices, each with where it is used and the spec it most likely meant |
 | `GET /model-catalog/suggestions` | ADMIN. The stored suggestions (`type` `NEW` or `RETIREMENT_CANDIDATE`) and, per provider, when it was last checked and its last error. Dismissed ones only with `?includeDismissed=true`, with `hiddenDismissed` counting those hidden, per type (`NEW`, `RETIREMENT_CANDIDATE`). A `NEW` one the catalog now prices, and a `RETIREMENT_CANDIDATE` whose model is now retired or gone from the catalog, are omitted |
 | `POST /model-catalog/suggestions/:id/dismiss`, `…/undismiss` | ADMIN. Hides or restores one suggestion. Dismissal is kept across runs |
+| `POST /model-catalog/price-hints` | ADMIN. `{ provider, modelId }` → `hints` (each with its `source`, `provider` or `priceList`, the id it matched, per-MTok prices and any cache multipliers) and `unavailable` (a source that could not be read, with a fixed reason). Writes nothing |
 | `POST /model-catalog/discover` | ADMIN. Runs a discovery pass now and returns, per provider, the unpriced models it lists, the priced ones it no longer lists, or why it could not be listed. Writes no catalog row, but refreshes the stored suggestions exactly as the scheduled run does |
 
 **Unpriced models are reported on save, and refused at run time only under a USD cap.** Saving an agent version or the embedding config
@@ -692,8 +713,12 @@ forced delete.
 - **The editor's cost estimate prices GLOBAL defaults.** It uses the model each role's GLOBAL agent
   runs, so a team, organization or template override of that agent's model is not reflected, and
   token counts come from each step's static `costHint`, not from measured runs.
-- **Discovery finds ids, not prices.** It reads no price from a listing, even where one carries
-  prices (OpenRouter's does), so an admin still enters every number that feeds USD budgets. It reaches only models listed through a GLOBAL
+- **Discovery finds ids; prices are only suggested.** The Add form's price hints come from a listing
+  that states prices (OpenRouter's) or a community price list, and either can be stale or wrong: a
+  provider's price changes before the list does, a long-context or batch rate is not shown, and a
+  model the list keys under another provider name finds no hint. An admin still checks and saves every
+  number that feeds USD budgets. A hint is per-process cached, so a gateway replica can answer from a
+  list up to six hours older than another's. Discovery reaches only models listed through a GLOBAL
   credential; one reachable only through a team or organization credential is not found. It suggests
   by name, not by capability: speech, transcription, image, video and moderation models are dropped
   by a name filter that can miss one or drop one it should not, and outside Google — which says which
