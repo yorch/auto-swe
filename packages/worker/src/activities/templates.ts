@@ -589,8 +589,14 @@ export async function createWorkflowRun(
   // declared schema a boundary rather than a hint. Computed here because this activity is
   // the only writer of a run row: a scheduled fire, an epic child and a channel task all
   // arrive without the gateway computing a set.
+  // The set comes from the schema **this version** was created under, not the template's current
+  // one: a version snapshots its schema (`WorkflowTemplateVersion.inputSchema`), so retyping an
+  // input afterwards cannot widen the pin of a run already under way, nor refuse a connection to
+  // an experiment arm or a rollback that runs an older version. A version written before the
+  // column existed was backfilled from its template, so null means "this version declared no
+  // schema" — the same answer the template would have given then.
   const authorizedConnectionIds = runAuthorizedConnectionIds({
-    inputSchema: isInputSchema(version.template?.inputSchema) ? version.template.inputSchema : null,
+    inputSchema: isInputSchema(version.inputSchema) ? version.inputSchema : null,
     payload: input.payload ?? null,
     workspaceConnectionId: input.runConnectionId ?? input.repoId ?? scheduledRepoId ?? null,
   });

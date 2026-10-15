@@ -23,7 +23,15 @@ const input = {
   templateId: 'template-1',
   templateVersion: 3,
 };
-async function harness(visible = true, request: Record<string, unknown> = input) {
+/**
+ * `templateRow` is both the template the retry looks up and the schema of the version it runs:
+ * the handler decides against the version's schema, and a version snapshots its template's.
+ */
+async function harness(
+  visible = true,
+  request: Record<string, unknown> = input,
+  templateRow: Record<string, unknown> = { id: 'template-1', teamId: null, workspaceProvider: null }
+) {
   const app = Fastify();
   const prisma = {
     // The launch records an authorized source snapshot: row locks, then the membership reads. All
@@ -47,7 +55,13 @@ async function harness(visible = true, request: Record<string, unknown> = input)
       findFirst: vi.fn(async (_query: unknown) => (visible ? { id: 'old-run' } : null)),
     },
     workflowTemplate: {
-      findFirst: vi.fn(async () => ({ id: 'template-1', teamId: null, workspaceProvider: null })),
+      findFirst: vi.fn(async () => templateRow),
+    },
+    // The retry decides against the schema of the *version it runs* — what the run pins and what
+    // the recorded payload was written against — so the fixture carries that schema on the same
+    // row: a version snapshots its template's, so one schema per case serves both lookups.
+    workflowTemplateVersion: {
+      findFirst: vi.fn(async () => ({ inputSchema: templateRow.inputSchema ?? null })),
     },
   };
   const start = vi.fn(async () => {});
@@ -234,8 +248,7 @@ describe('generic workflow retry', () => {
   });
 
   it('revalidates the run inputs against the template input schema', async () => {
-    const { app, prisma, start } = await harness();
-    prisma.workflowTemplate.findFirst.mockResolvedValueOnce({
+    const { app, start } = await harness(true, input, {
       id: 'template-1',
       inputSchema: {
         properties: { pageId: { type: 'number' } },
@@ -244,7 +257,7 @@ describe('generic workflow retry', () => {
       },
       teamId: null,
       workspaceProvider: null,
-    } as never);
+    });
     const response = await app.inject({ headers: auth, method: 'POST', url: '/retry' });
     expect(response.statusCode).toBe(400);
     expect(response.json().error.code).toBe('INVALID_INPUT');
@@ -253,8 +266,7 @@ describe('generic workflow retry', () => {
   });
 
   it('launches when the inputs satisfy the input schema', async () => {
-    const { app, prisma, start } = await harness();
-    prisma.workflowTemplate.findFirst.mockResolvedValueOnce({
+    const { app, start } = await harness(true, input, {
       id: 'template-1',
       inputSchema: {
         properties: { pageId: { type: 'string' } },
@@ -263,7 +275,7 @@ describe('generic workflow retry', () => {
       },
       teamId: null,
       workspaceProvider: null,
-    } as never);
+    });
     expect((await app.inject({ headers: auth, method: 'POST', url: '/retry' })).statusCode).toBe(
       201
     );
