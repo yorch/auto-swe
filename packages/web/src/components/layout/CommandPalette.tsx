@@ -3,12 +3,17 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { THEME_CHOICES } from '@/components/layout/ThemeToggle';
 import { Icon, isIconName } from '@/components/ui/Icon';
 import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
 import { cn, FOCUS_RING } from '@/lib/utils';
+import { useThemeStore } from '@/stores/themeStore';
 
+/** A page to open (`href`) or an action to run in place (`run`), such as switching theme. */
 interface Entry {
-  href: string;
+  id: string;
+  href?: string;
+  run?: () => void;
   label: string;
   group: string;
   icon: string;
@@ -85,20 +90,29 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
   const listId = useId();
+  const setThemePreference = useThemeStore((s) => s.setPreference);
 
   const entries = useMemo<Entry[]>(
     () => [
-      { group: 'Actions', href: '/start', icon: 'plus', label: 'Start work' },
+      { group: 'Actions', href: '/start', icon: 'plus', id: 'href:/start', label: 'Start work' },
       ...groups.flatMap((g) =>
         g.items.map((item) => ({
           group: item.section ? `${g.label} · ${item.section}` : g.label,
           href: item.href,
           icon: item.icon,
+          id: `href:${item.href}`,
           label: item.label,
         }))
       ),
+      ...THEME_CHOICES.map((c) => ({
+        group: 'Appearance',
+        icon: c.icon,
+        id: `theme:${c.value}`,
+        label: c.value === 'system' ? 'Theme: follow system' : `Theme: ${c.label.toLowerCase()}`,
+        run: () => setThemePreference(c.value),
+      })),
     ],
-    [groups]
+    [groups, setThemePreference]
   );
 
   const results = useMemo(
@@ -126,7 +140,11 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
       return;
     }
     onClose();
-    router.push(entry.href);
+    if (entry.run) {
+      entry.run();
+    } else if (entry.href) {
+      router.push(entry.href);
+    }
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
@@ -179,16 +197,16 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
           </kbd>
         </div>
         <span aria-live="polite" className="sr-only">
-          {results.length === 0 ? 'No matching pages' : `${results.length} pages`}
+          {results.length === 0 ? 'No matches' : `${results.length} results`}
         </span>
         <ul className="max-h-[50vh] overflow-y-auto p-1.5" id={listId}>
           {results.length === 0 && (
             <li className="px-3 py-8 text-center text-sm text-paper-500">
-              No page matches “{query}”.
+              Nothing matches “{query}”.
             </li>
           )}
           {results.map((entry, i) => (
-            <li key={`${entry.group}-${entry.href}`}>
+            <li key={entry.id}>
               <button
                 className={cn(
                   'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm outline-none',

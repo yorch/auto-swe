@@ -6,6 +6,7 @@ import { type RefObject, useState } from 'react';
 import { AssistantToggle } from '@/components/assistant/AssistantPanel';
 import { CommandPalette, CommandPaletteButton } from '@/components/layout/CommandPalette';
 import { SIDEBAR_ID } from '@/components/layout/Sidebar';
+import { ThemeToggle } from '@/components/layout/ThemeToggle';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Select } from '@/components/ui/Select';
 import { useApprovalsCount } from '@/hooks/useApprovals';
@@ -124,6 +125,7 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
         {/* Gateway reachability — driven by a /health probe, never assumed */}
         <AssistantToggle />
         <CommandPaletteButton onClick={() => setPaletteOpen(true)} />
+        <ThemeToggle />
         <Badge
           className="max-sm:hidden"
           dot={gatewayStatus === 'online' ? 'pulse' : true}
