@@ -7,8 +7,6 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
 import { useApprovalsStream } from '@/hooks/useApprovals';
-import { useRouteDocumentTitle } from '@/hooks/useDocumentTitle';
-import { pageTitle } from '@/lib/navigation';
 
 // Public routes (mirrors the page entries in proxy.ts PUBLIC_PATHS). They render
 // without the app chrome, whose queries would 401 for a signed-out visitor.
@@ -39,7 +37,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscreen: boolean }) {
   useApprovalsStream();
   const pathname = usePathname();
-  useRouteDocumentTitle(pageTitle(pathname));
   const { navOpen, openNav, closeNav, menuButtonRef, closeButtonRef } = useNavDrawer(pathname);
 
   return (

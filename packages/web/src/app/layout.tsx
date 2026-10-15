@@ -1,10 +1,13 @@
 import type { Metadata } from 'next';
 import localFont from 'next/font/local';
+import { headers } from 'next/headers';
 import './globals.css';
 import { AppConfigScript, InlineHeadScript } from '@/components/AppConfigScript';
 import { AppShell } from '@/components/layout/AppShell';
 import { Providers } from '@/components/Providers';
 import { ThemeSync } from '@/components/ThemeSync';
+import { PATHNAME_HEADER } from '@/lib/config';
+import { routeDocumentTitle } from '@/lib/documentTitle';
 import { publicApiUrl, temporalUiUrl } from '@/lib/env';
 import { THEME_INIT_SCRIPT } from '@/lib/theme';
 
@@ -27,10 +30,18 @@ const ibmPlexMono = localFont({
   variable: '--font-ibm-plex-mono',
 });
 
-export const metadata: Metadata = {
-  description: 'Durable agent workflow platform',
-  title: { default: 'auto·swe', template: '%s · auto·swe' },
-};
+// The tab title comes from here, per route, rather than from an effect in the browser:
+// Next renders a new `<title>` from metadata on every navigation, and that element
+// beats anything an effect wrote into the old one. The proxy forwards the pathname
+// because a layout cannot see the URL. Pages with data-dependent titles refine it
+// client-side with `useDocumentTitle`.
+export async function generateMetadata(): Promise<Metadata> {
+  const pathname = (await headers()).get(PATHNAME_HEADER);
+  return {
+    description: 'Durable agent workflow platform',
+    title: { default: routeDocumentTitle(pathname), template: '%s · auto·swe' },
+  };
+}
 
 // Render per request. The layout injects NEXT_PUBLIC_API_URL / NEXT_PUBLIC_TEMPORAL_UI_URL into
 // window.__APP_CONFIG__ from the running container's environment. Left static, Next prerenders
