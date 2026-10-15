@@ -58,7 +58,7 @@ export function ModeChooser({
       className="rounded-xl border border-ink-500/70 bg-ink-900/40 p-4"
       data-testid="mode-hint"
     >
-      <p className="text-[13px] font-medium text-paper-300" id="mode-chooser-title">
+      <p className="text-sm font-medium text-paper-300" id="mode-chooser-title">
         Not sure? Pick the line that matches your task.
       </p>
       <ul className="mt-3 space-y-3">
@@ -67,7 +67,7 @@ export function ModeChooser({
             className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
             key={choice.mode}
           >
-            <p className="min-w-0 text-[13px] leading-relaxed text-paper-400">
+            <p className="min-w-0 text-sm leading-relaxed text-paper-400">
               {choice.question}
               {choice.note && <span className="mt-0.5 block text-paper-500">{choice.note}</span>}
             </p>

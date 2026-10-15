@@ -175,7 +175,7 @@ export function GovernanceGuide() {
                 <li key={link.href}>
                   <Link
                     className={cn(
-                      'inline-flex items-center gap-1 rounded-sm text-[13px] font-medium text-ember-400 hover:underline',
+                      'inline-flex items-center gap-1 rounded-sm text-sm font-medium text-ember-400 hover:underline',
                       FOCUS_RING
                     )}
                     href={link.href}

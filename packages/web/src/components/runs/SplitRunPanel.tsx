@@ -35,7 +35,7 @@ export function SplitRunPanel({
       {/* Step list column */}
       <div className="max-h-60 w-full shrink-0 overflow-y-auto border-b border-ink-600/40 lg:max-h-none lg:w-[38%] lg:border-b-0 lg:border-r">
         <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-ink-600/40 bg-ink-900 px-4 py-2">
-          <h3 className="text-[13px] font-semibold text-paper-100">Steps</h3>
+          <h3 className="text-sm font-semibold text-paper-100">Steps</h3>
           <span className="tabular text-xs text-paper-500">{steps.length}</span>
           {selectedNodeId && (
             <span className="ml-auto text-xs text-paper-500 max-sm:hidden">
@@ -85,7 +85,7 @@ export function SplitRunPanel({
                         {specId}
                       </span>
                       <span
-                        className="tabular shrink-0 text-[11px] text-paper-500"
+                        className="tabular shrink-0 text-xs text-paper-500"
                         title={`Attempt ${s.attempt}`}
                       >
                         ×{s.attempt}
@@ -93,14 +93,14 @@ export function SplitRunPanel({
                     </div>
                     {s.error && (
                       <div
-                        className="mt-0.5 truncate font-mono text-[11px] text-brick-400"
+                        className="mt-0.5 truncate font-mono text-xs text-brick-400"
                         title={s.error}
                       >
                         {s.error}
                       </div>
                     )}
                     {(s.startedAt || s.endedAt) && (
-                      <div className="tabular mt-0.5 text-[11px] text-paper-500">
+                      <div className="tabular mt-0.5 text-xs text-paper-500">
                         {s.startedAt ? formatDate(s.startedAt) : '?'}
                         {s.endedAt ? ` – ${formatDate(s.endedAt)}` : ''}
                       </div>

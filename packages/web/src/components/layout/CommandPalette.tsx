@@ -174,7 +174,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
             type="search"
             value={query}
           />
-          <kbd className="hidden rounded border border-ink-400 px-1.5 py-0.5 text-[11px] text-paper-500 sm:block">
+          <kbd className="hidden rounded border border-ink-400 px-1.5 py-0.5 text-xs text-paper-500 sm:block">
             Esc
           </kbd>
         </div>
@@ -216,7 +216,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
             </li>
           ))}
         </ul>
-        <div className="flex items-center gap-4 border-t border-ink-500 px-4 py-2 text-[11.5px] text-paper-600">
+        <div className="flex items-center gap-4 border-t border-ink-500 px-4 py-2 text-xs text-paper-600">
           <span>
             <kbd className="font-sans">↑↓</kbd> to move
           </span>
@@ -239,7 +239,7 @@ export function CommandPaletteButton({ onClick }: { onClick: () => void }) {
     <button
       aria-keyshortcuts="Meta+K Control+K"
       className={cn(
-        'inline-flex h-8 items-center gap-2 rounded-lg border border-ink-400/80 bg-ink-900/60 px-2.5 text-[13px] text-paper-500 transition-colors hover:border-ink-300 hover:text-paper-200 lg:w-60',
+        'inline-flex h-8 items-center gap-2 rounded-lg border border-ink-400/80 bg-ink-900/60 px-2.5 text-sm text-paper-500 transition-colors hover:border-ink-300 hover:text-paper-200 lg:w-60',
         FOCUS_RING
       )}
       onClick={onClick}
@@ -247,7 +247,7 @@ export function CommandPaletteButton({ onClick }: { onClick: () => void }) {
     >
       <Icon name="search" size={14} />
       <span className="max-lg:sr-only">Search…</span>
-      <kbd className="ml-auto hidden rounded border border-ink-400 px-1.5 text-[11px] text-paper-500 lg:block">
+      <kbd className="ml-auto hidden rounded border border-ink-400 px-1.5 text-xs text-paper-500 lg:block">
         {isMac ? '⌘K' : 'Ctrl K'}
       </kbd>
     </button>

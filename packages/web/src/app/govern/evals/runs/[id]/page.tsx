@@ -148,12 +148,12 @@ function VerdictView({ summary }: { summary: unknown }) {
       <Alert variant={verdictSentence(summary.overall).tone}>
         {verdictSentence(summary.overall).text}
       </Alert>
-      <p className="text-[13px] text-paper-400">{summary.summary}</p>
+      <p className="text-sm text-paper-400">{summary.summary}</p>
       {unscreenedSentence(summary.unscreened) && (
-        <p className="text-[13px] text-paper-400">{unscreenedSentence(summary.unscreened)}</p>
+        <p className="text-sm text-paper-400">{unscreenedSentence(summary.unscreened)}</p>
       )}
       {summary.runtimes && (
-        <p className="text-[13px] text-paper-400">
+        <p className="text-sm text-paper-400">
           {`Ran on: candidate ${describeRuntimes(summary.runtimes.candidate)}, baseline ${describeRuntimes(summary.runtimes.baseline)}`}
         </p>
       )}

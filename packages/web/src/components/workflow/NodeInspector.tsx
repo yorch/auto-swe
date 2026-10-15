@@ -243,7 +243,7 @@ export function NodeInspector({
         <details className="group border-t border-ink-600 px-4 pt-4">
           <summary
             className={cn(
-              'flex cursor-pointer list-none items-center gap-1.5 rounded-sm text-[13px] font-semibold text-paper-100 [&::-webkit-details-marker]:hidden',
+              'flex cursor-pointer list-none items-center gap-1.5 rounded-sm text-sm font-semibold text-paper-100 [&::-webkit-details-marker]:hidden',
               FOCUS_RING
             )}
           >
@@ -257,7 +257,7 @@ export function NodeInspector({
           <div className="mt-2 flex items-center justify-end">
             <CopyButton value={JSON.stringify(node, null, 2)} />
           </div>
-          <pre className="mt-1 max-h-60 overflow-auto rounded-md border border-ink-600 bg-ink-900 p-2.5 font-mono text-[11px] leading-relaxed text-paper-300">
+          <pre className="mt-1 max-h-60 overflow-auto rounded-md border border-ink-600 bg-ink-900 p-2.5 font-mono text-xs leading-relaxed text-paper-300">
             {JSON.stringify(node, null, 2)}
           </pre>
         </details>

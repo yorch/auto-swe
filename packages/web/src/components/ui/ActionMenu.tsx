@@ -74,7 +74,7 @@ export function ActionMenu({
           {visible.map((item) => (
             <MenuItem
               className={cn(
-                'flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-[13px] outline-none',
+                'flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm outline-none',
                 item.tone === 'danger'
                   ? 'text-brick-400 data-[focused]:bg-brick-400/10'
                   : 'text-paper-200 data-[focused]:bg-ink-600',

@@ -201,7 +201,7 @@ export function CredentialsTab() {
                 />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-[13px] font-medium text-paper-100">
+                    <span className="font-mono text-sm font-medium text-paper-100">
                       {p.provider}
                     </span>
                     <Badge tone={p.present ? 'moss' : 'brick'}>
@@ -272,7 +272,7 @@ export function CredentialsTab() {
                   return (
                     <TRow key={c.id}>
                       <Td className="py-2.5 pr-4" primary>
-                        <div className="font-mono text-[13px] font-medium text-paper-100">
+                        <div className="font-mono text-sm font-medium text-paper-100">
                           {c.provider}
                         </div>
                         {c.apiBase && (

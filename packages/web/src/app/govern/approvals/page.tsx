@@ -88,7 +88,7 @@ export default function GovernApprovalsPage() {
         <summary className="cursor-pointer select-none rounded-lg px-4 py-3 text-sm font-medium text-paper-100 outline-none focus-visible:ring-2 focus-visible:ring-ember-400">
           What these steps are
         </summary>
-        <div className="space-y-3 border-t border-ink-600 px-4 py-4 text-[13px] leading-relaxed text-paper-300">
+        <div className="space-y-3 border-t border-ink-600 px-4 py-4 text-sm leading-relaxed text-paper-300">
           <p>
             Each is a gate <HelpTip term="gate" /> that waits for a person.
           </p>
@@ -145,7 +145,7 @@ export default function GovernApprovalsPage() {
 
             <Checkbox
               checked={overdueOnly}
-              className="items-center text-[13px]"
+              className="items-center text-sm"
               label="Overdue only"
               onChange={(e) => {
                 setOverdueOnly(e.target.checked);

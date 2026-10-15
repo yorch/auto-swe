@@ -194,7 +194,7 @@ export default function GovernAutomationsPage() {
         subtitle="Everything that starts a run without a person pressing run: rules that react to events on a repository, such as a failed CI run, cron schedules, template webhook URLs and the issue-tracker hook. Each says when it fires, what it starts and what it last did."
         title="Automations"
       />
-      <p className="max-w-3xl text-[13px] leading-relaxed text-paper-400">
+      <p className="max-w-3xl text-sm leading-relaxed text-paper-400">
         Event automations are limited by a cooldown and a daily cap{' '}
         <HelpTip label="automations">
           The cooldown is the minimum time between runs for the same branch or other scope; the

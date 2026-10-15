@@ -113,7 +113,7 @@ export function AccessTokensSection() {
         description={
           <>
             Personal access tokens for the auto-swe CLI and the REST API, set as{' '}
-            <code className="font-mono text-[12px] text-paper-300">AUTO_SWE_TOKEN</code>.
+            <code className="font-mono text-xs text-paper-300">AUTO_SWE_TOKEN</code>.
           </>
         }
         icon="key"
@@ -170,13 +170,13 @@ export function AccessTokensSection() {
                         </div>
                         <code className="font-mono text-xs text-paper-500">{t.prefix}…</code>
                       </Td>
-                      <Td className="px-4 py-3 text-[13px] text-paper-400" label="Created">
+                      <Td className="px-4 py-3 text-sm text-paper-400" label="Created">
                         <When value={t.createdAt} />
                       </Td>
-                      <Td className="px-4 py-3 text-[13px] text-paper-400" label="Last used">
+                      <Td className="px-4 py-3 text-sm text-paper-400" label="Last used">
                         <When empty="Never" value={t.lastUsedAt} />
                       </Td>
-                      <Td className="px-4 py-3 text-[13px] text-paper-400" label="Expires">
+                      <Td className="px-4 py-3 text-sm text-paper-400" label="Expires">
                         <When empty="Never" value={t.expiresAt} />
                       </Td>
                       <Td className="px-4 py-3" label="Status">

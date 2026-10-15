@@ -14,7 +14,7 @@ function SignalRow({ row }: { row: EvalResultDto }) {
         {row.scorer}
       </span>
       <span
-        className="tabular shrink-0 text-[13px] font-medium"
+        className="tabular shrink-0 text-sm font-medium"
         style={{ color: scoreColor(row.value) }}
       >
         {row.scoreType === 'BOOLEAN' && typeof row.value === 'number'
@@ -39,7 +39,7 @@ export function EvalSignalsPanel({ runId }: { runId: string }) {
   if (isError) {
     return (
       <RailSection title="Eval signals">
-        <Alert className="text-[13px]" variant="error">
+        <Alert className="text-sm" variant="error">
           Could not load eval signals: {errMsg(error, 'request failed')}
         </Alert>
       </RailSection>

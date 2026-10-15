@@ -55,7 +55,7 @@ function NavLink({
     <Link
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'relative mx-2.5 flex items-center gap-2.5 rounded-md py-1.5 text-[13px] font-medium no-underline transition-colors',
+        'relative mx-2.5 flex items-center gap-2.5 rounded-md py-1.5 text-sm font-medium no-underline transition-colors',
         indent ? 'pr-2.5 pl-6' : 'px-2.5',
         FOCUS_RING,
         active
@@ -72,7 +72,7 @@ function NavLink({
       />
       <span className="flex-1">{item.label}</span>
       {badge !== undefined && badge > 0 && (
-        <span className="rounded-full bg-ember-500 px-1.5 py-px text-[10.5px] font-semibold tabular-nums text-white">
+        <span className="rounded-full bg-ember-500 px-1.5 py-px text-xs font-semibold tabular-nums text-white">
           {badge}
         </span>
       )}
@@ -134,7 +134,7 @@ function UserMenu() {
         aria-controls={MENU_ID}
         aria-expanded={open}
         className={cn(
-          'flex w-full items-center gap-2.5 rounded-lg border border-ink-500 bg-ink-700/60 px-2.5 py-2 text-left text-[12.5px] transition-colors hover:border-ink-300 hover:bg-ink-700',
+          'flex w-full items-center gap-2.5 rounded-lg border border-ink-500 bg-ink-700/60 px-2.5 py-2 text-left text-sm transition-colors hover:border-ink-300 hover:bg-ink-700',
           FOCUS_RING
         )}
         onClick={() => setOpen((o) => !o)}
@@ -143,14 +143,14 @@ function UserMenu() {
       >
         <span
           aria-hidden="true"
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-dust-400 to-ember-400 text-[11px] font-bold text-ink-950"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-dust-400 to-ember-400 text-xs font-bold text-ink-950"
         >
           {name[0].toUpperCase()}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[12.5px] font-semibold text-paper-200">{name}</span>
+          <span className="block truncate text-sm font-semibold text-paper-200">{name}</span>
           {(user?.role?.toLowerCase() ?? 'member') !== name.toLowerCase() && (
-            <span className="block text-[11px] text-paper-400">
+            <span className="block text-xs text-paper-400">
               {user?.role?.toLowerCase() ?? 'member'}
             </span>
           )}
@@ -182,7 +182,7 @@ function UserMenu() {
           </div>
           <Link
             className={cn(
-              'block px-3 py-2 text-[13px] text-paper-200 no-underline hover:bg-ink-700',
+              'block px-3 py-2 text-sm text-paper-200 no-underline hover:bg-ink-700',
               FOCUS_RING
             )}
             href="/settings"
@@ -192,7 +192,7 @@ function UserMenu() {
           </Link>
           <button
             className={cn(
-              'block w-full px-3 py-2 text-left text-[13px] text-paper-200 hover:bg-ink-700',
+              'block w-full px-3 py-2 text-left text-sm text-paper-200 hover:bg-ink-700',
               FOCUS_RING
             )}
             onClick={handleLogout}
@@ -327,7 +327,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           <Link
             aria-current={isStartWorkPath(pathname) ? 'page' : undefined}
             className={cn(
-              'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-gradient-to-br from-ember-500 to-ember-600 px-3 py-2 text-[13px] font-semibold text-white no-underline shadow-[0_8px_20px_-10px_var(--color-ember-500)] transition hover:brightness-110',
+              'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-gradient-to-br from-ember-500 to-ember-600 px-3 py-2 text-sm font-semibold text-white no-underline shadow-[0_8px_20px_-10px_var(--color-ember-500)] transition hover:brightness-110',
               FOCUS_RING
             )}
             data-tour="nav:/start"
@@ -339,7 +339,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
         </div>
         {groups.map((group) => (
           <div key={group.label}>
-            <div className="px-5 pt-5 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-paper-600">
+            <div className="px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600">
               {group.label}
             </div>
             {navSections(group.items).map((section) => {
@@ -369,7 +369,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
                     aria-disabled={holdsActive}
                     aria-expanded={isOpen}
                     className={cn(
-                      'mx-2.5 flex w-[calc(100%-1.25rem)] items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-[12px] font-medium text-paper-500 hover:text-paper-200',
+                      'mx-2.5 flex w-[calc(100%-1.25rem)] items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs font-medium text-paper-500 hover:text-paper-200',
                       FOCUS_RING,
                       holdsActive && 'cursor-default'
                     )}

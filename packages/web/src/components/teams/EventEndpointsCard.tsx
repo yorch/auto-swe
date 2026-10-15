@@ -52,7 +52,7 @@ function FreshSecret({ secret }: { secret: string }) {
         Copy this secret now and give it to the sender. It is shown only once.
       </Alert>
       <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 truncate rounded-md border border-ink-600 bg-ink-900 px-2 py-1 font-mono text-[11px] text-paper-300">
+        <code className="min-w-0 flex-1 truncate rounded-md border border-ink-600 bg-ink-900 px-2 py-1 font-mono text-xs text-paper-300">
           {secret}
         </code>
         <CopyButton value={secret} />
@@ -257,7 +257,7 @@ function EndpointRow({
         />
       </div>
       <div className="flex items-center gap-2">
-        <code className="min-w-0 flex-1 truncate rounded-md border border-ink-600 bg-ink-900 px-2 py-1 font-mono text-[11px] text-paper-300">
+        <code className="min-w-0 flex-1 truncate rounded-md border border-ink-600 bg-ink-900 px-2 py-1 font-mono text-xs text-paper-300">
           POST {url}
         </code>
         <CopyButton value={url} />

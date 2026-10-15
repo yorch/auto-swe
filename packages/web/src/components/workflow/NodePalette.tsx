@@ -267,7 +267,7 @@ export function NodePalette({ steps, onAdd }: Props) {
 
         {/* Primitives — grouped */}
         <div className="border-b border-ink-600 px-3 py-3">
-          <h3 className="mb-1 px-1 text-[13px] font-semibold text-paper-200">Node types</h3>
+          <h3 className="mb-1 px-1 text-sm font-semibold text-paper-200">Node types</h3>
           {PRIMITIVE_GROUPS.map((g) => (
             <PrimitiveGroup group={g} key={g.label} onActivate={activate} onAdd={onAdd} />
           ))}
@@ -276,7 +276,7 @@ export function NodePalette({ steps, onAdd }: Props) {
         {/* Steps */}
         <div className="flex flex-col">
           <div className="sticky top-0 z-10 border-b border-ink-600 bg-ink-950 px-3 py-3">
-            <h3 className="mb-2 px-1 text-[13px] font-semibold text-paper-200">
+            <h3 className="mb-2 px-1 text-sm font-semibold text-paper-200">
               Registered steps
               <span className="ml-1.5 font-normal text-paper-500 tabular-nums">{steps.length}</span>
             </h3>
@@ -333,7 +333,7 @@ function NodeHelpRegion({ active }: { active: ActiveHelp | null }) {
       className="max-h-48 shrink-0 overflow-y-auto border-t border-ink-600 bg-ink-950 px-4 py-3 text-xs leading-snug"
       data-testid="palette-help"
     >
-      <h3 className="mb-1 text-[13px] font-semibold text-paper-200" id="palette-help-heading">
+      <h3 className="mb-1 text-sm font-semibold text-paper-200" id="palette-help-heading">
         Node help
       </h3>
       {active ? (
@@ -437,16 +437,16 @@ function PaletteItem({
           <div
             className={cn(
               'truncate text-paper-100',
-              mono ? 'font-mono text-xs' : 'text-[13px] font-medium'
+              mono ? 'font-mono text-xs' : 'text-sm font-medium'
             )}
           >
             {label}
           </div>
           {hint && (
-            <div className={cn('text-[11px] text-paper-500', !example && 'truncate')}>{hint}</div>
+            <div className={cn('text-xs text-paper-500', !example && 'truncate')}>{hint}</div>
           )}
           {example && (
-            <div className="mt-0.5 break-words font-mono text-[11px] text-paper-400">{example}</div>
+            <div className="mt-0.5 break-words font-mono text-xs text-paper-400">{example}</div>
           )}
         </div>
         {elevated && (

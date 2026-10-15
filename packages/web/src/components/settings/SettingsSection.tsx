@@ -44,7 +44,7 @@ export function SettingsSection({
                 {title}
               </h2>
               {description && (
-                <p className="mt-0.5 text-[13px] leading-relaxed text-paper-500">{description}</p>
+                <p className="mt-0.5 text-sm leading-relaxed text-paper-500">{description}</p>
               )}
             </div>
           </div>
@@ -89,9 +89,7 @@ export function SettingsListRow({
           <span className="text-sm font-medium text-paper-100">{title}</span>
           {status}
         </div>
-        {detail && (
-          <div className="mt-0.5 text-[13px] leading-relaxed text-paper-500">{detail}</div>
-        )}
+        {detail && <div className="mt-0.5 text-sm leading-relaxed text-paper-500">{detail}</div>}
       </div>
       {action && <div className="ml-auto flex shrink-0 items-center gap-2">{action}</div>}
     </li>

@@ -101,7 +101,7 @@ export default function GovernSessionsPage() {
         >
           <Select
             aria-label="Filter by user"
-            className="h-8 w-full text-[13px] sm:w-64"
+            className="h-8 w-full text-sm sm:w-64"
             onChange={selectUser}
             options={[
               { label: 'All users', value: '' },
@@ -163,13 +163,13 @@ export default function GovernSessionsPage() {
                     )}
                   </div>
                 </Td>
-                <Td className="px-4 py-3 text-[13px] text-paper-300" label="Last active">
+                <Td className="px-4 py-3 text-sm text-paper-300" label="Last active">
                   <RelativeTime value={s.updatedAt} />
                 </Td>
-                <Td className="px-4 py-3 text-[13px] text-paper-400" label="Started">
+                <Td className="px-4 py-3 text-sm text-paper-400" label="Started">
                   <RelativeTime value={s.createdAt} />
                 </Td>
-                <Td className="px-4 py-3 text-[13px] text-paper-400" label="Expires">
+                <Td className="px-4 py-3 text-sm text-paper-400" label="Expires">
                   <RelativeTime value={s.expiresAt} />
                 </Td>
                 <Td className="px-4 py-3" label="Session ID">

@@ -105,11 +105,11 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
           <MetaRow label="Template">
             {/* The Agent Run template is hidden; its route answers 404. */}
             {isAgentRun ? (
-              <span className="text-[13px] text-paper-200">{run.templateName}</span>
+              <span className="text-sm text-paper-200">{run.templateName}</span>
             ) : (
               <Link
                 className={cn(
-                  'rounded-sm text-[13px] text-ember-400 transition-colors hover:text-ember-300',
+                  'rounded-sm text-sm text-ember-400 transition-colors hover:text-ember-300',
                   FOCUS_RING
                 )}
                 href={`/workflows/library/${run.templateId}`}
@@ -153,7 +153,7 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
               {run.workRequest.externalTicketId}
             </div>
           )}
-          <p className="line-clamp-[12] whitespace-pre-wrap break-words text-[13px] leading-relaxed text-paper-400">
+          <p className="line-clamp-[12] whitespace-pre-wrap break-words text-sm leading-relaxed text-paper-400">
             {run.workRequest.description}
           </p>
         </RailSection>
@@ -185,7 +185,7 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
             name="chevronRight"
             size={14}
           />
-          <span className="shrink-0 text-[13px] font-semibold text-paper-100">Run details</span>
+          <span className="shrink-0 text-sm font-semibold text-paper-100">Run details</span>
           {summary.length > 0 && (
             <span className="tabular min-w-0 truncate text-xs text-paper-500">
               {summary.join(' · ')}

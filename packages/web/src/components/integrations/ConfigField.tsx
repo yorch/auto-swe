@@ -42,7 +42,7 @@ export function ConfigField({
   return (
     <div className="min-w-0 space-y-1.5">
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-        <label className="text-[13px] font-medium text-paper-200" htmlFor={id}>
+        <label className="text-sm font-medium text-paper-200" htmlFor={id}>
           {label}
         </label>
         <SourceBadge source={source} />

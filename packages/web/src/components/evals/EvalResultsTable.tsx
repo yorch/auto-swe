@@ -183,10 +183,10 @@ export function EvalResultsTable({
             <tbody>
               {rows.map((row) => (
                 <TRow hover key={row.id}>
-                  <Td className="px-4 py-2.5 font-mono text-[13px] text-paper-100" primary>
+                  <Td className="px-4 py-2.5 font-mono text-sm text-paper-100" primary>
                     <span title={row.rationale ?? undefined}>{row.scorer}</span>
                   </Td>
-                  <Td align="right" className="px-4 py-2.5 text-[13px] font-medium" label="Score">
+                  <Td align="right" className="px-4 py-2.5 text-sm font-medium" label="Score">
                     <span className="tabular-nums" style={{ color: scoreColor(row.value) }}>
                       {formatScore(row)}
                     </span>

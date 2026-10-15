@@ -56,15 +56,13 @@ const BREAKDOWN_HEADER: Record<Exclude<Breakdown, ''>, string> = {
 function ChangeCell({ value }: { value: number | null }) {
   if (value === null || Math.abs(value) < 0.005) {
     return (
-      <span className="text-[13px] text-paper-500 tabular-nums">
-        {value === null ? '—' : '→ 0.00'}
-      </span>
+      <span className="text-sm text-paper-500 tabular-nums">{value === null ? '—' : '→ 0.00'}</span>
     );
   }
   const up = value > 0;
   return (
     <span
-      className={cn('text-[13px] tabular-nums', up ? 'text-moss-400' : 'text-brick-400')}
+      className={cn('text-sm tabular-nums', up ? 'text-moss-400' : 'text-brick-400')}
       title="Latest day's mean minus the first day's mean in this window"
     >
       {up ? '▲' : '▼'} {up ? '+' : '−'}
@@ -78,7 +76,7 @@ function ScoreCell({ value }: { value: number | null }) {
     return <span className="text-paper-500">—</span>;
   }
   return (
-    <span className="text-[13px] font-medium tabular-nums" style={{ color: scoreColor(value) }}>
+    <span className="text-sm font-medium tabular-nums" style={{ color: scoreColor(value) }}>
       {value.toFixed(2)}
     </span>
   );
@@ -198,7 +196,7 @@ function EvalsWorkspace() {
                           <button
                             aria-pressed={selected}
                             className={cn(
-                              'inline-flex items-center gap-2 rounded-sm font-mono text-[13px] hover:text-ember-300',
+                              'inline-flex items-center gap-2 rounded-sm font-mono text-sm hover:text-ember-300',
                               FOCUS_RING,
                               selected ? 'text-ember-300' : 'text-paper-200'
                             )}
@@ -223,7 +221,7 @@ function EvalsWorkspace() {
                         )}
                         <Td
                           align="right"
-                          className="px-4 py-2.5 text-[13px] text-paper-400 tabular-nums"
+                          className="px-4 py-2.5 text-sm text-paper-400 tabular-nums"
                         >
                           {t.n}
                         </Td>
@@ -377,9 +375,7 @@ function EvalsWorkspace() {
                       href={`/govern/evals/datasets/${d.id}`}
                     >
                       <span className="flex min-w-0 items-center gap-2">
-                        <span className="truncate font-mono text-[13px] text-paper-100">
-                          {d.slug}
-                        </span>
+                        <span className="truncate font-mono text-sm text-paper-100">{d.slug}</span>
                         <Badge tone="muted" variant="outline">
                           {d.scope.charAt(0) + d.scope.slice(1).toLowerCase()}
                         </Badge>

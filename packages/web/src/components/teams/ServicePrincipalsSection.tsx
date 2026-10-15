@@ -89,7 +89,7 @@ export function ServicePrincipalsSection({
           New principal
         </Button>
       </CardHeader>
-      <p className="mb-4 text-[13px] text-paper-400">
+      <p className="mb-4 text-sm text-paper-400">
         Machine identities that start and follow runs for this team with tokens of their own. A
         principal may launch only on the repositories and templates you put on its lists, and its
         runs use the platform credential.
@@ -146,16 +146,16 @@ export function ServicePrincipalsSection({
                       </div>
                     )}
                   </Td>
-                  <Td className="px-4 py-3 text-[13px] text-paper-300" label="May launch on">
+                  <Td className="px-4 py-3 text-sm text-paper-300" label="May launch on">
                     {p.connectionIds.length === 1
                       ? '1 repository'
                       : `${p.connectionIds.length} repositories`}{' '}
                     · {plural(p.templateIds.length, 'template')}
                   </Td>
-                  <Td className="px-4 py-3 text-[13px] text-paper-400" label="Limits">
+                  <Td className="px-4 py-3 text-sm text-paper-400" label="Limits">
                     {p.maxRunsPerDay}/day · {p.maxInFlight} in flight
                   </Td>
-                  <Td className="px-4 py-3 text-[13px] text-paper-400" label="Tokens">
+                  <Td className="px-4 py-3 text-sm text-paper-400" label="Tokens">
                     {p.liveTokenCount} live
                   </Td>
                   <Td align="right" className="py-3 pl-4">
@@ -343,7 +343,7 @@ function PrincipalFormModal({
         <fieldset className="space-y-2">
           <legend className="label-mono mb-2">Repositories it may launch on</legend>
           {repositories.length === 0 ? (
-            <p className="text-[13px] text-paper-500">
+            <p className="text-sm text-paper-500">
               This team has no active repositories of its own or shared with it.
             </p>
           ) : (
@@ -351,7 +351,7 @@ function PrincipalFormModal({
               <Checkbox
                 checked={form.connectionIds.includes(r.id)}
                 key={r.id}
-                label={<span className="font-mono text-[13px]">{r.label}</span>}
+                label={<span className="font-mono text-sm">{r.label}</span>}
                 onChange={(e) =>
                   setForm({
                     ...form,
@@ -365,7 +365,7 @@ function PrincipalFormModal({
         <fieldset className="space-y-2">
           <legend className="label-mono mb-2">Templates it may run</legend>
           {grantableTemplates.length === 0 ? (
-            <p className="text-[13px] text-paper-500">No templates available to this team.</p>
+            <p className="text-sm text-paper-500">No templates available to this team.</p>
           ) : (
             grantableTemplates.map((t) => (
               <Checkbox
@@ -500,10 +500,10 @@ function TokensModal({
                     <Td className="px-4 py-3 font-mono text-xs text-paper-300" label="Scopes">
                       {t.scopes.join(' ')}
                     </Td>
-                    <Td className="px-4 py-3 text-[13px] text-paper-400" label="Last used">
+                    <Td className="px-4 py-3 text-sm text-paper-400" label="Last used">
                       {t.lastUsedAt ? <RelativeTime value={t.lastUsedAt} /> : 'Never'}
                     </Td>
-                    <Td className="px-4 py-3 text-[13px] text-paper-400" label="Expires">
+                    <Td className="px-4 py-3 text-sm text-paper-400" label="Expires">
                       {t.revokedAt ? 'Revoked' : expired ? 'Expired' : formatDate(t.expiresAt)}
                     </Td>
                     <Td align="right" className="py-3 pl-4">
@@ -558,7 +558,7 @@ function TokensModal({
                   checked={scopes.includes(scope)}
                   hint={SCOPE_HINTS[scope]}
                   key={scope}
-                  label={<span className="font-mono text-[13px]">{scope}</span>}
+                  label={<span className="font-mono text-sm">{scope}</span>}
                   onChange={(e) =>
                     setScopes(
                       e.target.checked

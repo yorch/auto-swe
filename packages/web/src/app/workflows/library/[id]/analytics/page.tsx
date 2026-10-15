@@ -252,7 +252,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                       : '—'}
                   </Badge>
                 </CardHeader>
-                <p className="mb-4 max-w-2xl text-[13px] leading-relaxed text-paper-400">
+                <p className="mb-4 max-w-2xl text-sm leading-relaxed text-paper-400">
                   Success-rate comparison between the two most-trafficked versions. Treat this as a
                   hint, not a verdict — apply your own judgement before promoting.
                 </p>
@@ -287,13 +287,13 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                     <CardHeader>
                       <CardTitle eyebrow="Traffic split">Runs per version</CardTitle>
                     </CardHeader>
-                    <p className="mb-4 text-[13px] text-paper-400">
+                    <p className="mb-4 text-sm text-paper-400">
                       Confirms the A/B traffic split lands where you configured it.
                     </p>
                     <ul className="space-y-3">
                       {stats.perVersionCounts.map((v) => (
                         <li key={v.version}>
-                          <div className="flex items-center justify-between gap-3 text-[13px]">
+                          <div className="flex items-center justify-between gap-3 text-sm">
                             <span className="flex items-center gap-2">
                               <span className="font-medium text-paper-100 tabular-nums">
                                 v{v.version}
@@ -327,7 +327,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                     <CardHeader>
                       <CardTitle eyebrow="Cost by outcome">Outcomes</CardTitle>
                     </CardHeader>
-                    <p className="mb-4 text-[13px] text-paper-400">
+                    <p className="mb-4 text-sm text-paper-400">
                       Runs grouped by the type of outcome they produced.
                     </p>
                     <ul className="divide-y divide-ink-600">
@@ -339,7 +339,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                           <span className="text-sm text-paper-100">
                             {outcomeTypeLabel(o.outcomeType)}
                           </span>
-                          <span className="text-[13px] text-paper-300 tabular-nums">
+                          <span className="text-sm text-paper-300 tabular-nums">
                             {o.runCount} runs
                             <span className="ml-2 text-paper-500">{formatCost(o.totalCost)}</span>
                           </span>
@@ -356,7 +356,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                 <CardTitle eyebrow="Highest failure rate first">Step failure rates</CardTitle>
                 <Select
                   aria-label="Minimum runs per step"
-                  className="h-8 w-full text-[13px] sm:w-56"
+                  className="h-8 w-full text-sm sm:w-56"
                   compact
                   id="min-runs"
                   onChange={(v) => setMinRuns(Number(v))}
@@ -367,7 +367,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                   value={String(minRuns)}
                 />
               </CardHeader>
-              <p className="mb-4 max-w-2xl text-[13px] text-paper-400">
+              <p className="mb-4 max-w-2xl text-sm text-paper-400">
                 How often each step failed across its executions in this window. Skipped and pending
                 executions are left out. Select a failing step to see its runs.
               </p>
@@ -422,20 +422,20 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                         </Td>
                         <Td
                           align="right"
-                          className="px-4 py-2.5 text-[13px] text-paper-300 tabular-nums"
+                          className="px-4 py-2.5 text-sm text-paper-300 tabular-nums"
                         >
                           {row.failed}
                         </Td>
                         <Td
                           align="right"
-                          className="px-4 py-2.5 text-[13px] text-paper-300 tabular-nums"
+                          className="px-4 py-2.5 text-sm text-paper-300 tabular-nums"
                         >
                           {row.total}
                         </Td>
                         <Td
                           align="right"
                           className={cn(
-                            'py-2.5 pl-4 text-[13px] font-medium tabular-nums',
+                            'py-2.5 pl-4 text-sm font-medium tabular-nums',
                             row.failureRate > 0.25
                               ? 'text-brick-400'
                               : row.failureRate > 0.05

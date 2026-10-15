@@ -109,7 +109,7 @@ export function RefineChatPanel({
         >
           {messages.length === 0 ? (
             <div className="flex flex-col items-center gap-3 py-5 text-center">
-              <p className="text-[13px] text-paper-500">Try one of these, or write your own</p>
+              <p className="text-sm text-paper-500">Try one of these, or write your own</p>
               <div className="flex flex-wrap justify-center gap-2">
                 {EXAMPLES.map((example) => (
                   <Button key={example} onClick={() => setInput(example)} size="sm">

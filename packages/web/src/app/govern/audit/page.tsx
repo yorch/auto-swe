@@ -202,14 +202,14 @@ function AuditWorkspace() {
           />
           <Select
             aria-label="Filter by action"
-            className="h-8 w-full text-[13px] sm:w-36"
+            className="h-8 w-full text-sm sm:w-36"
             onChange={(v) => setFilter({ action: v || null })}
             options={ACTION_OPTIONS}
             value={filters.action ?? ''}
           />
           <Select
             aria-label="Filter by entity type"
-            className="h-8 w-full text-[13px] sm:w-48"
+            className="h-8 w-full text-sm sm:w-48"
             onChange={(v) => setFilter({ entity: v || null })}
             options={[
               { label: 'All entity types', value: '' },
@@ -324,7 +324,7 @@ function AuditWorkspace() {
           <CardHeader className="mb-1">
             <CardTitle eyebrow="Housekeeping">Shell command history</CardTitle>
           </CardHeader>
-          <p className="mb-4 max-w-prose text-[13px] text-paper-400">
+          <p className="mb-4 max-w-prose text-sm text-paper-400">
             Every command an agent runs in a workspace is recorded separately from this log. Delete
             entries older than {SHELL_AUDIT_KEEP_DAYS} days to keep that history small.
           </p>
@@ -383,13 +383,13 @@ export default function GovernAuditPage() {
  */
 function AuditActor({ row, onFilter }: { row: AuditLogRow; onFilter: (id: string) => void }) {
   if (!row.actorId) {
-    return <span className="text-[13px] text-paper-500">System</span>;
+    return <span className="text-sm text-paper-500">System</span>;
   }
   const actorId = row.actorId;
   return (
     <button
       className={cn(
-        'rounded-sm text-left text-[13px] text-paper-200 hover:text-ember-400 hover:underline',
+        'rounded-sm text-left text-sm text-paper-200 hover:text-ember-400 hover:underline',
         FOCUS_RING
       )}
       onClick={() => onFilter(actorId)}
@@ -544,7 +544,7 @@ function AuditRow({
             </span>
           </button>
         </Td>
-        <Td className="py-3 pl-4 text-[13px] text-paper-400" label="When">
+        <Td className="py-3 pl-4 text-sm text-paper-400" label="When">
           <RelativeTime value={row.createdAt} />
         </Td>
       </TRow>

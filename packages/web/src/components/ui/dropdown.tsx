@@ -51,7 +51,7 @@ export function optionText(option: DropdownOption): string {
 export function fieldBoxClass(compact: boolean, invalid: boolean) {
   return cn(
     'w-full rounded-md border border-ink-200 bg-ink-900 text-paper-100 outline-none transition-colors',
-    compact ? 'h-8 px-2.5 text-[13px]' : 'h-9 px-3 text-sm',
+    compact ? 'h-8 px-2.5 text-sm' : 'h-9 px-3 text-sm',
     // data-focused: a Select's trigger button; data-focus-within: a Combobox's
     // Group around its input. Each primitive gets the attribute that applies.
     'hover:border-paper-600 data-[focused]:border-ember-400 data-[focused]:ring-2 data-[focused]:ring-ember-400/20',
@@ -138,7 +138,7 @@ export function DropdownItem({ option, compact }: { option: DropdownOption; comp
     <ListBoxItem
       className={cn(
         'flex cursor-pointer items-start gap-2 rounded-md px-2.5 py-1.5 text-paper-200 outline-none',
-        compact ? 'text-[13px]' : 'text-sm',
+        compact ? 'text-sm' : 'text-sm',
         'data-[focused]:bg-ink-600 data-[selected]:text-ember-400',
         'data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40'
       )}

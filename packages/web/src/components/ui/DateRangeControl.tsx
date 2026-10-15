@@ -72,7 +72,7 @@ export function DateRangeControl({
   const selected =
     customOpen || value?.kind === 'custom' ? 'custom' : value ? String(value.days) : 'all';
   const inputClass =
-    'h-8 rounded-md border border-ink-200 bg-ink-900 px-2.5 text-[13px] text-paper-100 outline-none transition-colors hover:border-paper-600 focus:border-ember-400 focus:ring-2 focus:ring-ember-400/20';
+    'h-8 rounded-md border border-ink-200 bg-ink-900 px-2.5 text-sm text-paper-100 outline-none transition-colors hover:border-paper-600 focus:border-ember-400 focus:ring-2 focus:ring-ember-400/20';
 
   return (
     <div className={cn('flex flex-wrap items-center gap-2', className)}>

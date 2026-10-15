@@ -140,7 +140,7 @@ export default function TeamsPage() {
                         </div>
                         <p
                           className={cn(
-                            'mt-3 line-clamp-2 flex-1 text-[13px] leading-relaxed',
+                            'mt-3 line-clamp-2 flex-1 text-sm leading-relaxed',
                             t.description ? 'text-paper-400' : 'text-paper-500 italic'
                           )}
                         >

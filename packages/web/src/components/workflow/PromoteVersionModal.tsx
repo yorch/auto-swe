@@ -81,10 +81,10 @@ export function PromoteVersionModal({
               ? `Activate version ${version}?`
               : `New runs will use version ${version} instead of version ${activeVersion ?? 'none'}.`}
           </p>
-          <div className="text-[13px] text-paper-300">{summary}</div>
+          <div className="text-sm text-paper-300">{summary}</div>
           {comparing && !hideDiffLink && (
             <Link
-              className="inline-flex items-center gap-1 text-[13px] text-ember-400 hover:underline"
+              className="inline-flex items-center gap-1 text-sm text-ember-400 hover:underline"
               href={diffHref(templateId, activeVersion, version)}
             >
               View the full diff

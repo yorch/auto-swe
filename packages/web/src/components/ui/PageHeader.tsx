@@ -63,11 +63,9 @@ export function SectionHeader({
       )}
     >
       <div className="flex min-w-0 flex-wrap items-baseline gap-x-3">
-        {number && (
-          <span className="font-mono text-[11px] text-ember-300 tabular-nums">{number}</span>
-        )}
+        {number && <span className="font-mono text-xs text-ember-300 tabular-nums">{number}</span>}
         <h2 className="text-lg font-semibold tracking-tight text-paper-100">{title}</h2>
-        {hint && <span className="text-[12.5px] text-paper-500">{hint}</span>}
+        {hint && <span className="text-sm text-paper-500">{hint}</span>}
       </div>
       {actions && <div className="max-w-full max-sm:w-full max-sm:overflow-x-auto">{actions}</div>}
     </div>

@@ -192,7 +192,7 @@ export function Transcript({
               {/* Step summary */}
               <p
                 className={cn(
-                  'mb-4 break-words text-[13px] leading-relaxed',
+                  'mb-4 break-words text-sm leading-relaxed',
                   isFailedStep ? 'text-brick-400' : 'text-paper-400'
                 )}
               >

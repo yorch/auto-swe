@@ -178,7 +178,7 @@ export function OrgBudgetTable({
               <Td
                 align={COLUMNS[col].alignRight ? 'right' : undefined}
                 className={cn(
-                  'px-4 py-3 text-[13px] text-paper-300',
+                  'px-4 py-3 text-sm text-paper-300',
                   COLUMNS[col].alignRight && 'tabular-nums',
                   i === 0 && 'pl-0',
                   i === last && 'pr-0'

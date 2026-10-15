@@ -43,7 +43,7 @@ export function ErrorPanel({ error, onRetry }: { error: Error | null; onRetry?: 
         </div>
         {error?.message && (
           <details className="mt-8 rounded-lg border border-ink-500/70 bg-ink-900/60 text-left">
-            <summary className="cursor-pointer select-none px-3.5 py-2.5 text-[13px] text-paper-400 hover:text-paper-200">
+            <summary className="cursor-pointer select-none px-3.5 py-2.5 text-sm text-paper-400 hover:text-paper-200">
               Error details
             </summary>
             <pre className="max-h-48 overflow-auto border-t border-ink-600 px-3.5 py-3 font-mono text-xs leading-relaxed whitespace-pre-wrap break-words text-paper-300">

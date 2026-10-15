@@ -39,7 +39,7 @@ export function EmptyState({
         </div>
       )}
       <p className="text-sm font-medium text-paper-200">{title}</p>
-      {hint && <p className="mt-1 max-w-md text-[13px] leading-relaxed text-paper-500">{hint}</p>}
+      {hint && <p className="mt-1 max-w-md text-sm leading-relaxed text-paper-500">{hint}</p>}
       {action && <div className="mt-4 flex flex-wrap justify-center gap-2">{action}</div>}
     </div>
   );

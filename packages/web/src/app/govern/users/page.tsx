@@ -185,7 +185,7 @@ export default function UsersPage() {
         <CardHeader className="mb-1">
           <CardTitle>Invite a teammate</CardTitle>
         </CardHeader>
-        <p className="mb-4 text-[13px] text-paper-400">
+        <p className="mb-4 text-sm text-paper-400">
           They get a magic-link email and join the default team, already approved.
         </p>
         {inviteError && (
@@ -232,7 +232,7 @@ export default function UsersPage() {
               {pending.length} awaiting approval
             </Badge>
           </CardHeader>
-          <p className="mb-2 text-[13px] text-paper-400">
+          <p className="mb-2 text-sm text-paper-400">
             These people signed up but cannot sign in until you approve them.
           </p>
           {approveError && (
@@ -286,7 +286,7 @@ export default function UsersPage() {
           />
           <Select
             aria-label="Filter by role"
-            className="h-8 w-full text-[13px] sm:w-40"
+            className="h-8 w-full text-sm sm:w-40"
             onChange={(v) => setRoleFilter(v as '' | Role)}
             options={[{ label: 'All roles', value: '' }, ...ROLE_OPTIONS]}
             value={roleFilter}

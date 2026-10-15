@@ -77,7 +77,7 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
 
       {/* Where you are. A breadcrumb, not a heading: the page's own <h1> carries the
           title, so repeating it as a heading made two identical headings per page. */}
-      <nav aria-label="Breadcrumb" className="min-w-0 truncate text-[13px] text-paper-400">
+      <nav aria-label="Breadcrumb" className="min-w-0 truncate text-sm text-paper-400">
         {section && section !== title && (
           <>
             <span>{section}</span>
@@ -108,7 +108,7 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
       {/* Inbox badge */}
       {inboxCount > 0 && (
         <Link
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-1 text-[12px] font-semibold text-amber-400 no-underline transition-colors hover:bg-amber-400/20 max-sm:hidden"
+          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-400 no-underline transition-colors hover:bg-amber-400/20 max-sm:hidden"
           href="/govern/approvals"
         >
           <span className="inline-block h-[7px] w-[7px] rounded-full bg-amber-400" />

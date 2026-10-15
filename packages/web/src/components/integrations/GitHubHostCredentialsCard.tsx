@@ -240,7 +240,7 @@ export function GitHubHostCredentialsCard() {
             <tbody>
               {credentials.map((c) => (
                 <TRow key={c.id}>
-                  <Td className="py-2.5 pr-4 font-mono text-[13px] text-paper-100">{c.host}</Td>
+                  <Td className="py-2.5 pr-4 font-mono text-sm text-paper-100">{c.host}</Td>
                   <Td className="px-4 py-2.5 font-mono text-xs text-paper-300">{summary(c)}</Td>
                   <Td className="py-2.5 pl-4 text-right">
                     <div className="flex justify-end gap-1">

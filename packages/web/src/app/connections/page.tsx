@@ -351,7 +351,7 @@ export default function ConnectionsPage() {
                               </div>
                               {r.executorImage && (
                                 <div
-                                  className="max-w-48 truncate font-mono text-[11px] text-paper-500"
+                                  className="max-w-48 truncate font-mono text-xs text-paper-500"
                                   title={`Executor image: ${r.executorImage}`}
                                 >
                                   {r.executorImage}

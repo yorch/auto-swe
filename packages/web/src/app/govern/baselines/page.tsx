@@ -175,7 +175,7 @@ function CreateBaselineModal({
           />
         </div>
         {previewRate !== null && (
-          <p className="text-[13px] text-paper-400" role="status">
+          <p className="text-sm text-paper-400" role="status">
             Human error rate:{' '}
             <span className="font-medium text-paper-100 tabular-nums">
               {formatPercent(previewRate)}
@@ -333,7 +333,7 @@ export default function GovernBaselinesPage() {
                       </Td>
                       <Td
                         align="right"
-                        className="px-4 py-3 text-[13px] text-paper-400"
+                        className="px-4 py-3 text-sm text-paper-400"
                         label="Recorded"
                       >
                         <time

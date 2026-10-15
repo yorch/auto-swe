@@ -171,7 +171,7 @@ export function InputSchemaBuilder({
       {fields.map((f, i) => (
         <Card className="space-y-3 p-4" key={f.id} variant="inset">
           <div className="flex items-center justify-between gap-2">
-            <h3 className="text-[13px] font-semibold text-paper-200">
+            <h3 className="text-sm font-semibold text-paper-200">
               Field {i + 1}
               {f.key.trim() && (
                 <span className="ml-2 font-mono text-xs font-normal text-paper-500">
@@ -192,7 +192,7 @@ export function InputSchemaBuilder({
           </div>
           <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_10rem_auto]">
             <Input
-              className="font-mono text-[13px]"
+              className="font-mono text-sm"
               hint={
                 !f.key.trim()
                   ? 'Key required — this field will not be saved'

@@ -175,7 +175,7 @@ export function ChannelMemoryTab({ channel }: { channel: SlackChannel }) {
                         <p className="whitespace-pre-wrap text-sm leading-snug text-paper-100">
                           {item.lessonSummary}
                         </p>
-                        <p className="whitespace-pre-wrap text-[13px] leading-snug text-paper-400">
+                        <p className="whitespace-pre-wrap text-sm leading-snug text-paper-400">
                           {item.rationale}
                         </p>
                         <div className="flex flex-wrap items-center gap-3 pt-1">

@@ -72,7 +72,7 @@ export function Alert({
         {title ? (
           <>
             <div className={cn('font-semibold leading-snug', VARIANT_ACCENT[variant])}>{title}</div>
-            <div className="mt-1 text-[13px] leading-relaxed text-paper-300">{children}</div>
+            <div className="mt-1 text-sm leading-relaxed text-paper-300">{children}</div>
           </>
         ) : (
           <div className={cn('leading-snug', VARIANT_ACCENT[variant])}>{children}</div>

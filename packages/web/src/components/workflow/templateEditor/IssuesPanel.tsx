@@ -97,7 +97,7 @@ export function IssuesPanel({
             >
               <span
                 className={cn(
-                  'font-mono text-[11px]',
+                  'font-mono text-xs',
                   issue.severity === 'error' ? 'text-brick-400' : 'text-amber-400'
                 )}
               >
@@ -120,12 +120,12 @@ export function IssuesPanel({
               onClick={() => issue.nodeId && onSelect(issue.nodeId)}
               type="button"
             >
-              <span className="mr-1 rounded-sm border border-ink-400 px-1 text-[10px] font-medium text-paper-300 uppercase">
+              <span className="mr-1 rounded-sm border border-ink-400 px-1 text-2xs font-medium text-paper-300 uppercase">
                 server: {issue.source}
               </span>{' '}
               <span
                 className={cn(
-                  'font-mono text-[11px]',
+                  'font-mono text-xs',
                   issue.severity === 'error' ? 'text-brick-400' : 'text-amber-400'
                 )}
               >

@@ -221,7 +221,7 @@ function SecurityWorkspace() {
             <div className="w-full sm:w-60">
               <Select
                 aria-label="Filter by event type"
-                className="h-8 text-[13px]"
+                className="h-8 text-sm"
                 onChange={(v) => setType(v as SecurityEventType | '')}
                 options={TYPE_OPTIONS}
                 value={typeFilter}

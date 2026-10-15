@@ -232,7 +232,7 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
         <span aria-hidden className="w-3.5 shrink-0" />
       )}
       <SecurityEventBadge type={event.eventType} />
-      <span className="min-w-0 truncate font-mono text-[13px] text-paper-100">{primary}</span>
+      <span className="min-w-0 truncate font-mono text-sm text-paper-100">{primary}</span>
       {secondary && (
         <span className="hidden min-w-0 truncate font-mono text-paper-500 sm:block">
           {secondary}

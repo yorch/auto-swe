@@ -174,17 +174,17 @@ export default function AutonomyDecisionsPage() {
                         {eventLabel(row.event)}
                       </Badge>
                     </Td>
-                    <Td className="px-4 py-3 text-[13px] text-paper-200" label="Risk class">
+                    <Td className="px-4 py-3 text-sm text-paper-200" label="Risk class">
                       {row.riskClass ? (
                         riskClassLabel(row.riskClass)
                       ) : (
                         <span className="text-paper-500">—</span>
                       )}
                     </Td>
-                    <Td className="px-4 py-3 text-[13px] text-paper-300" label="Policy">
+                    <Td className="px-4 py-3 text-sm text-paper-300" label="Policy">
                       {row.policyName ?? <span className="text-paper-500">—</span>}
                     </Td>
-                    <Td className="px-4 py-3 text-[13px] text-paper-300" label="Decided by">
+                    <Td className="px-4 py-3 text-sm text-paper-300" label="Decided by">
                       {row.actorId ? (
                         (emailById.get(row.actorId) ?? 'Unknown user')
                       ) : (
@@ -200,7 +200,7 @@ export default function AutonomyDecisionsPage() {
                         {row.runId.slice(0, 8)}
                       </Link>
                     </Td>
-                    <Td className="py-3 pl-4 text-[13px] text-paper-400" label="When">
+                    <Td className="py-3 pl-4 text-sm text-paper-400" label="When">
                       <RelativeTime value={row.createdAt} />
                     </Td>
                   </TRow>

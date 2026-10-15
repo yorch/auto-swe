@@ -208,7 +208,7 @@ export function EpicLaunchForm({
                 );
               })}
               {shownRepos.length === 0 && (
-                <p className="px-3 py-4 text-center text-[13px] text-paper-500">
+                <p className="px-3 py-4 text-center text-sm text-paper-500">
                   {repos.length ? 'No repositories match this filter' : 'No repositories available'}
                 </p>
               )}
