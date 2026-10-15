@@ -160,3 +160,38 @@ export function useRolePricing() {
     queryKey: ['model-catalog', 'role-pricing'],
   });
 }
+
+/** A published price for a model the catalog lacks. Never a price until an admin saves it. */
+export interface PriceHint {
+  /** `provider`: the provider's own model listing. `priceList`: the community price list. */
+  source: 'provider' | 'priceList';
+  matchedId: string;
+  url?: string;
+  inputUsdPerMTok: number;
+  outputUsdPerMTok: number;
+  cacheReadMultiplier?: number;
+  cacheWrite5mMultiplier?: number;
+  cacheWrite1hMultiplier?: number;
+  kind?: ModelKind;
+}
+
+export interface PriceHintResult {
+  hints: PriceHint[];
+  unavailable: Array<{ source: PriceHint['source']; reason: string }>;
+}
+
+/// Prices the Add form can prefill for `provider/modelId`. ADMIN-only on the
+/// gateway, which may ask the provider through its GLOBAL credential, so a
+/// result is kept for the session and never retried on its own.
+export function usePriceHints(provider: string, modelId: string, enabled: boolean) {
+  return useQuery({
+    enabled: enabled && provider !== '' && modelId !== '',
+    queryFn: () =>
+      api
+        .post<{ data: PriceHintResult }>(`${BASE}/price-hints`, { modelId, provider })
+        .then((r) => r.data),
+    queryKey: ['model-catalog', 'price-hints', provider, modelId],
+    retry: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}

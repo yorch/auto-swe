@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -18,12 +18,15 @@ import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
   type CatalogEntryInput,
   type ModelSuggestion,
+  type PriceHint,
+  type PriceHintResult,
   useCreateCatalogEntry,
   useDeleteCatalogEntry,
   useDiscoverModels,
   useDismissSuggestion,
   useModelCatalog,
   useModelSuggestions,
+  usePriceHints,
   useResetCatalogEntry,
   useUnpricedModels,
   useUpdateCatalogEntry,
@@ -462,6 +465,73 @@ function cacheHint(builtinRate: number | undefined): string {
   return builtinRate === undefined ? 'Blank: built-in rate' : `Blank: ${builtinRate}×`;
 }
 
+/** Where a hint came from, as the form names it. */
+function hintSourceName(hint: Pick<PriceHint, 'source' | 'url'>, provider: string): string {
+  if (hint.source === 'provider') {
+    return `${provider}'s model listing`;
+  }
+  try {
+    return hint.url ? `the price list at ${new URL(hint.url).host}` : 'the price list';
+  } catch {
+    return 'the price list';
+  }
+}
+
+const usd = (n: number) => `$${n}`;
+
+/// What the Add form found published for the spec being added: the hint it
+/// prefilled from, any other source's price with a "Use", and a source that
+/// could not be read. A prefilled price is still the admin's to check.
+function PriceHintPanel({
+  applied,
+  loading,
+  onUse,
+  provider,
+  result,
+}: {
+  applied: PriceHint | null;
+  loading: boolean;
+  onUse: (hint: PriceHint) => void;
+  provider: string;
+  result: PriceHintResult | undefined;
+}) {
+  if (loading) {
+    return <p className="text-xs text-paper-500">Looking up published prices…</p>;
+  }
+  if (!result) {
+    return null;
+  }
+  const others = result.hints.filter((h) => h !== applied);
+  return (
+    <div className="space-y-1 text-xs text-paper-500">
+      {applied && (
+        <Alert announce={false} variant="info">
+          Prices prefilled from {hintSourceName(applied, provider)} (
+          <span className="font-mono">{applied.matchedId}</span>). Check them against the provider's
+          pricing page before saving.
+        </Alert>
+      )}
+      {others.map((h) => (
+        <div className="flex items-center justify-between gap-2" key={h.source}>
+          <span>
+            {hintSourceName(h, provider)}: {usd(h.inputUsdPerMTok)} / {usd(h.outputUsdPerMTok)} per
+            MTok
+          </span>
+          <Button onClick={() => onUse(h)} size="sm" variant="ghost">
+            Use
+          </Button>
+        </div>
+      ))}
+      {result.hints.length === 0 && <p>No published price found for this model.</p>}
+      {result.unavailable.map((u) => (
+        <p key={u.source}>
+          Could not read {hintSourceName(u, provider)}: {u.reason}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function EntryModal({
   existing,
   initial,
@@ -487,6 +557,55 @@ function EntryModal({
   const { error, saving, submit } = useIntegrationConfigForm();
   const create = useCreateCatalogEntry();
   const update = useUpdateCatalogEntry();
+
+  // Published prices for the spec being added, looked up once typing settles.
+  const [hintSpec, setHintSpec] = useState({
+    modelId: initial?.modelId ?? '',
+    provider: initial?.provider ?? '',
+  });
+  useEffect(() => {
+    if (existing) {
+      return;
+    }
+    const timer = setTimeout(
+      () => setHintSpec({ modelId: modelId.trim(), provider: provider.trim() }),
+      500
+    );
+    return () => clearTimeout(timer);
+  }, [existing, modelId, provider]);
+  const hints = usePriceHints(hintSpec.provider, hintSpec.modelId, !existing);
+  const [applied, setApplied] = useState<PriceHint | null>(null);
+  const [seenHints, setSeenHints] = useState<PriceHintResult | undefined>(undefined);
+
+  const fill = (hint: PriceHint | null) => {
+    const text = (n: number | undefined) => (n === undefined ? '' : String(n));
+    setInput(text(hint?.inputUsdPerMTok));
+    setOutput(text(hint?.outputUsdPerMTok));
+    setCacheRead(text(hint?.cacheReadMultiplier));
+    setCacheWrite5m(text(hint?.cacheWrite5mMultiplier));
+    setCacheWrite1h(text(hint?.cacheWrite1hMultiplier));
+    setApplied(hint);
+  };
+  // A new answer prefills only prices nobody has typed: blank ones, or the ones
+  // the previous answer filled and the admin left alone.
+  if (hints.data && hints.data !== seenHints) {
+    setSeenHints(hints.data);
+    const untouched =
+      (input === '' && output === '') ||
+      (applied !== null &&
+        input === String(applied.inputUsdPerMTok) &&
+        output === String(applied.outputUsdPerMTok));
+    if (untouched) {
+      fill(hints.data.hints[0] ?? null);
+    }
+  }
+  // Once the admin types over a prefilled price, it is no longer the hint's.
+  const prefilled =
+    applied &&
+    input === String(applied.inputUsdPerMTok) &&
+    output === String(applied.outputUsdPerMTok)
+      ? applied
+      : null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -571,6 +690,15 @@ function EntryModal({
             value={output}
           />
         </div>
+        {!existing && (
+          <PriceHintPanel
+            applied={prefilled}
+            loading={hints.isFetching}
+            onUse={fill}
+            provider={hintSpec.provider}
+            result={hints.data}
+          />
+        )}
         <div className="grid grid-cols-3 gap-4">
           <Input
             hint={cacheHint(existing?.cacheDefaults?.cacheReadMultiplier)}

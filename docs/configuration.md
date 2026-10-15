@@ -63,6 +63,12 @@ run-time calls also refuse redirects. Loopback, link-local / cloud-metadata, uns
 reserved addresses stay refused whatever is listed, an unreadable setting lists no host, and a Claude Code harness run without the model proxy is outside the guard. See
 [model-configuration.md](./model-configuration.md#troubleshooting).
 
+It also holds `models.priceListUrl` (ADMIN-only, GLOBAL only, sensitive): the community price list, in
+LiteLLM's `model_prices_and_context_window.json` format, that the catalog's **Add** form reads to
+suggest a new model's prices. It defaults to LiteLLM's file on GitHub; an empty value turns the lookup
+off, and a mirror on a private network needs its host in `models.privateNetworkHosts`. See
+[model-configuration.md](./model-configuration.md#model-catalog).
+
 The `skills` group holds two settings, both ADMIN-only and GLOBAL only. `skills.import.privateNetworkHosts`
 (default empty) names hosts a skill source may live on even though they are, or are spelled as, a private
 address; a host qualifies only if it is also an approved repository host, and cloud metadata and loopback

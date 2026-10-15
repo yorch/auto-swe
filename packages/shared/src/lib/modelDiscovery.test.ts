@@ -15,6 +15,7 @@ import {
   modelCallFetch,
   modelListRequest,
   parseModelListPage,
+  perTokenToPerMTok,
 } from './modelDiscovery.js';
 
 afterEach(() => {
@@ -79,6 +80,48 @@ describe('parseModelListPage', () => {
       ],
       next: null,
     });
+  });
+
+  it('keeps a price an OpenRouter-style listing states, per MTok, and nothing it cannot read', () => {
+    const page = parseModelListPage('openrouter', {
+      data: [
+        {
+          id: 'anthropic/claude-x',
+          pricing: { completion: '0.000015', prompt: '0.000003' },
+        },
+        // A router priced by whatever model it picks.
+        { id: 'openrouter/auto', pricing: { completion: '-1', prompt: '-1' } },
+        { id: 'free/model', pricing: { completion: '0', prompt: '0' } },
+        { id: 'half/priced', pricing: { prompt: '0.000001' } },
+        { id: 'plain' },
+      ],
+    });
+    expect(page.models).toEqual([
+      {
+        displayName: null,
+        kind: 'CHAT',
+        listedPrice: { inputUsdPerMTok: 3, outputUsdPerMTok: 15 },
+        modelId: 'anthropic/claude-x',
+      },
+      { displayName: null, kind: 'CHAT', modelId: 'openrouter/auto' },
+      {
+        displayName: null,
+        kind: 'CHAT',
+        listedPrice: { inputUsdPerMTok: 0, outputUsdPerMTok: 0 },
+        modelId: 'free/model',
+      },
+      { displayName: null, kind: 'CHAT', modelId: 'half/priced' },
+      { displayName: null, kind: 'CHAT', modelId: 'plain' },
+    ]);
+  });
+
+  it('converts a per-token price to per MTok without float noise, refusing unusable ones', () => {
+    expect(perTokenToPerMTok('0.000003')).toBe(3);
+    expect(perTokenToPerMTok(0.0000001)).toBe(0.1);
+    expect(perTokenToPerMTok('0.00000125')).toBe(1.25);
+    for (const bad of ['-1', '', 'abc', null, undefined, Number.NaN, '1']) {
+      expect(perTokenToPerMTok(bad)).toBeNull();
+    }
   });
 
   it('yields nothing for a shape it does not recognise', () => {
