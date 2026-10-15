@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
+  collectWorkflowInventory,
   edgeFields,
   executorStepFor,
   INVENTORY_COMMAND,
@@ -141,5 +142,49 @@ describe('workflow inventory', () => {
     const long = summarise(`${'word '.repeat(60)}end.`);
     expect(long.length).toBeLessThanOrEqual(161);
     expect(long.endsWith('…')).toBe(true);
+  });
+});
+
+describe('collectWorkflowInventory', () => {
+  const inventory = collectWorkflowInventory();
+
+  it('holds every node type, step and built-in template the page lists, and nothing else', () => {
+    expect(inventory.nodeTypes.map((t) => t.type).sort()).toEqual(nodeTypes().sort());
+    expect(inventory.steps.map((s) => s.name).sort()).toEqual(
+      listAllSteps()
+        .map((s) => s.name)
+        .sort()
+    );
+    expect(inventory.templates.map((t) => t.name).sort()).toEqual(
+      BUILTIN_TEMPLATES.map((t) => t.name).sort()
+    );
+  });
+
+  it('carries each step registry flag as declared', () => {
+    for (const step of listAllSteps()) {
+      const row = inventory.steps.find((s) => s.name === step.name);
+      expect(row?.internal).toBe(!!step.internal);
+      expect(row?.agentRole).toBe(step.costHint?.role ?? null);
+      expect(row?.backsNodeType).toBe(EXECUTOR_STEP_ALIASES[step.name] ?? null);
+      expect(row?.configFields.map((f) => f.key).sort()).toEqual(
+        step.configFields.map((f) => f.key).sort()
+      );
+    }
+  });
+
+  it('counts template usage from the templates themselves', () => {
+    for (const t of inventory.templates) {
+      const source = BUILTIN_TEMPLATES.find((b) => b.name === t.name);
+      const nodes = Object.values(source?.spec.nodes ?? {});
+      expect(t.nodeCount).toBe(nodes.length);
+      for (const { type, count } of t.nodeTypes) {
+        expect(nodes.filter((n) => n.type === type)).toHaveLength(count);
+        const usage = inventory.nodeTypes.find((n) => n.type === type)?.usage;
+        expect(usage?.templates).toContain(t.name);
+      }
+      for (const step of t.steps) {
+        expect(inventory.steps.find((s) => s.name === step)?.usage?.templates).toContain(t.name);
+      }
+    }
   });
 });

@@ -612,9 +612,20 @@ The assistant itself runs in the worker. Each conversation is one `AssistantConv
 (id `assistant-<conversationId>`) that the gateway starts or signals with `signalWithStart` when the
 user posts to `/api/v1/assistant/conversations`; it runs one turn at a time and completes after 30
 minutes idle. A turn is the `runAssistantTurn` activity: the `appAssistant` agent with read-only tools
-— `searchDocs` over the docs the worker image ships, `getPageContext`, `describeApi` (the registered
-routes the policy admits, with their schemas) and `callApi` (GET only) — each calling the gateway over
-HTTP at `API_INTERNAL_URL` with the turn's assistant token. The reply is written into its
+— `searchDocs` over the docs the worker image ships, `workflowInventory`, `getPageContext`,
+`describeApi` (the registered routes the policy admits, with their schemas) and `callApi` (GET only).
+`describeApi` and `callApi` call the gateway over HTTP at `API_INTERNAL_URL` with the turn's
+assistant token; `getPageContext` returns the page context the user's message carried; `searchDocs`
+and `workflowInventory` read only what ships with the worker. `searchDocs` returns each section cut
+to 1,500 characters with its `/docs` link. A section over the cap because of a table is cut by
+rows rather than at a character offset — the rows matching the most query terms with the table's
+header, the prose before the table, the other rows in table order, then the prose after it, while
+they fit — and says how many rows it left out. `workflowInventory`
+answers "which node types, registered steps and built-in templates exist, and which templates use
+each" from `collectWorkflowInventory()` (`shared/workflow/inventory.ts`), the same data
+[workflow-inventory.md](./workflow-inventory.md) is rendered from, so the two cannot disagree. Each
+answer carries a `doc` link to cite (node-type and lookup rows also carry their own), and internal
+steps are flagged. The reply is written into its
 `AssistantMessage` row as the model streams it, and the gateway streams that row to the panel as
 server-sent events.
 
@@ -1458,3 +1469,8 @@ Current constraints of the system as built. Deliberate product boundaries are in
   no cause, and their untagged rows are matched by time rather than by reply. For those, the worker
   log line `[assistantTurn] turn failed` and the Temporal history of `assistant-<conversationId>`
   remain the sources.
+- **The assistant's workflow inventory covers built-ins only.** `workflowInventory` lists the node
+  types, registered steps and built-in templates the code defines. Teams' own templates and
+  bundle-installed ones are not in it, so "which templates use this step" counts built-in templates
+  only; the assistant reads a team's templates through `callApi`. A `searchDocs` section is
+  capped, so a long table answered from the docs shows only some of its rows.

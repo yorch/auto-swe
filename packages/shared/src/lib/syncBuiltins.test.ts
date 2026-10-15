@@ -610,12 +610,12 @@ describe('syncBuiltins — seeded prompt migration', () => {
     });
   }
 
-  it('lists previous prompts for the authoring agents, never the current text', async () => {
+  it('lists previous prompts for the authoring agents and the assistant, never the current text', async () => {
     const { agent } = await seeded('workflowAuthor');
     expect(Object.keys(PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES)).toEqual(
-      expect.arrayContaining(['workflowAuthor', 'workflowExplainer'])
+      expect.arrayContaining(['appAssistant', 'workflowAuthor', 'workflowExplainer'])
     );
-    for (const key of ['workflowAuthor', 'workflowExplainer']) {
+    for (const key of ['appAssistant', 'workflowAuthor', 'workflowExplainer']) {
       const current = (await seeded(key)).agent.systemPrompt as string;
       expect(PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES[key]).not.toContain(sha(current));
     }

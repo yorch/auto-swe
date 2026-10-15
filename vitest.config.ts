@@ -422,6 +422,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/testHelpers.ts'),
       },
       {
+        find: '@auto-swe/shared/workflow/inventory',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/inventory.ts'),
+      },
+      {
         find: '@auto-swe/shared/workflow',
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/index.ts'),
       },
