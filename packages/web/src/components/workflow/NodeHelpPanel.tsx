@@ -44,6 +44,10 @@ export function NodeHelpPanel({ type }: { type: SpecNode['type'] }) {
           <span className="font-semibold text-paper-100">Watch out: </span>
           {help.gotcha}
         </p>
+        <p>
+          <span className="font-semibold text-paper-100">Output: </span>
+          {help.output}
+        </p>
         <div>
           <div className="mb-1 font-semibold text-paper-100">Example</div>
           <pre className="max-h-48 overflow-auto rounded-md border border-ink-600 bg-ink-900 p-2.5 font-mono text-[11px] leading-relaxed text-paper-300">

@@ -26,4 +26,5 @@ export const HELP_LINKS = {
   platformSettingsCascade: { anchor: '2-resolution-order', slug: 'configuration' },
   scannerWriteToolChain: { anchor: '34-write-tool-security-chain', slug: 'agents' },
   skills: { anchor: '6-skills', slug: 'agents' },
+  workflowNodes: { slug: 'workflow-nodes' },
 } as const satisfies Record<string, { slug: string; anchor?: string }>;

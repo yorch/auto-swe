@@ -26,6 +26,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { NODE_TYPE_LABEL } from '@/components/workflow/nodeTypeTone';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
 import { VersionTags } from '@/components/workflow/VersionTags';
 import { useHasRole } from '@/hooks/useHasRole';
@@ -839,8 +840,11 @@ export default function TemplatesPage() {
                 <Card className="flex flex-col p-5 hover:border-ink-300" key={s.id} variant="inset">
                   <div className="mb-1 text-xs font-medium text-paper-500">{s.tagline}</div>
                   <h3 className="mb-2 text-base font-semibold text-paper-100">{s.name}</h3>
-                  <p className="mb-5 flex-1 text-[13px] leading-relaxed text-paper-400">
+                  <p className="mb-3 flex-1 text-[13px] leading-relaxed text-paper-400">
                     {s.description}
+                  </p>
+                  <p className="mb-5 text-xs text-paper-500">
+                    Teaches: {s.teaches.map((t) => NODE_TYPE_LABEL[t]).join(', ')}
                   </p>
                   <span className="self-start" title={manageTitle}>
                     <Button

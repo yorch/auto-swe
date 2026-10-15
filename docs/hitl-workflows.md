@@ -26,6 +26,9 @@ This is useful for:
 
 ## Node types
 
+For every node type in one place, with complete specs you can paste into the editor, see
+[workflow-nodes.md](./workflow-nodes.md).
+
 All four HITL node types share a `timeout` field and an `onTimeout` routing target. `timeout` is a
 positive duration in the form Temporal parses — a number and a unit, such as `"30m"`, `"24h"`,
 `"7d"`, `"1.5h"` or `"2 hours"` (not ISO 8601 `PT24H`). A spec with any other value fails to parse,
@@ -105,7 +108,7 @@ Valid API action: `submit` (with `value` set to an object keyed by field `key`).
 
 ### `humanReview`
 
-Shows content (e.g. a diff or generated document) for the reviewer to read and optionally edit or annotate. The reviewer submits their text and the workflow continues.
+Shows content (e.g. a diff or generated document) for the reviewer to read. The reviewer submits an optional free-text note (up to 2,000 characters) and the workflow continues; the content itself is not changed.
 
 ```yaml
 type: humanReview

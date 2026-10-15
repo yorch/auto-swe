@@ -1,3 +1,7 @@
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { extractToc } from '@auto-swe/shared/lib/docToc';
 import {
   evalBoolean,
   evalExpr,
@@ -32,6 +36,28 @@ const ALL_TYPES: Record<SpecNode['type'], true> = {
 };
 const TYPES = Object.keys(ALL_TYPES) as SpecNode['type'][];
 
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const NODES_DOC = readFileSync(path.resolve(HERE, '../../../../docs/workflow-nodes.md'), 'utf8');
+
+/** The text of the node reference section whose heading is "### `<type>`", up to the next h2/h3. */
+function docSection(type: string): string {
+  const start = NODES_DOC.indexOf(`### \`${type}\``);
+  expect(start, `### \`${type}\` in workflow-nodes.md`).toBeGreaterThanOrEqual(0);
+  const rest = NODES_DOC.slice(start + 1);
+  const next = rest.search(/\n#{2,3} /);
+  return next < 0 ? rest : rest.slice(0, next);
+}
+
+/** A section's text after a bold label (such as `**Output.**`) up to the next bold label. */
+function labelled(type: string, label: string): string {
+  const text = docSection(type);
+  const start = text.indexOf(label);
+  expect(start, `${label} in the ${type} section`).toBeGreaterThanOrEqual(0);
+  const rest = text.slice(start + label.length);
+  const end = rest.search(/\n\*\*[A-Z][^*]*\.\*\*/);
+  return end < 0 ? rest : rest.slice(0, end);
+}
+
 describe('NODE_HELP', () => {
   it('has an entry for every node type in the spec, and no others', () => {
     // The spec's own discriminated union is the source of truth for the list of types.
@@ -53,15 +79,74 @@ describe('NODE_HELP', () => {
     expect(parsed.data?.type).toBe(type);
   });
 
-  it.each(TYPES)('%s: the docs link is one the link registry knows', (type) => {
+  it.each(TYPES)('%s: the docs link is a heading of the node reference', (type) => {
     const { doc } = nodeHelp(type);
-    const known = Object.values(HELP_LINKS).some(
-      (l) =>
-        l.slug === doc.slug &&
-        (('anchor' in l ? l.anchor : undefined) as string | undefined) === doc.anchor
-    );
+    const known = Object.values(HELP_LINKS).some((l) => l.slug === doc.slug);
     expect(known).toBe(true);
-    expect(docHref(doc.slug, doc.anchor)).toMatch(/^\/docs\//);
+    expect(doc.slug).toBe('workflow-nodes');
+    expect(doc.anchor).toBe(type.toLowerCase());
+    const ids = extractToc(NODES_DOC).map((entry) => entry.id);
+    expect(ids, `#${doc.anchor} in workflow-nodes.md`).toContain(doc.anchor);
+    expect(docHref(doc.slug, doc.anchor)).toBe(`/docs/workflow-nodes#${type.toLowerCase()}`);
+  });
+
+  it.each(TYPES)('%s: the output line is filled in', (type) => {
+    expect(nodeHelp(type).output.trim().length).toBeGreaterThan(20);
+  });
+
+  it.each(TYPES)(
+    '%s: every output path it names is in that type’s Output or Failure text',
+    (type) => {
+      const text = `${labelled(type, '**Output.**')}\n${labelled(type, '**Failure.**')}`;
+      const paths = nodeHelp(type).output.match(/nodes\.<id>\.output(?:\.[A-Za-z]+)*/g) ?? [];
+      for (const token of new Set(paths)) {
+        expect(text, `${token} in the ${type} Output or Failure text`).toContain(token);
+      }
+    }
+  );
+
+  it('the output lines that name no path say the node records nothing', () => {
+    for (const type of TYPES) {
+      const { output } = nodeHelp(type);
+      if (!/nodes\.<id>\.output/.test(output)) {
+        expect(output).toMatch(/^None:/);
+      }
+    }
+    for (const type of ['cond', 'set', 'terminate'] as const) {
+      expect(nodeHelp(type).output).toMatch(/^None:/);
+    }
+  });
+
+  it('the eval output names the gate verdict, the failure handling and the branch recipe', () => {
+    const { output } = nodeHelp('eval');
+    for (const needle of ['onFail', 'block', 'warn', 'retry', 'nodes.<id>.output.errors']) {
+      expect(output).toContain(needle);
+    }
+    // The cond recipe tests for the positive: a thrown eval under warn leaves the output null,
+    // which `decision.blocked != true` would read as a pass.
+    expect(output).toContain('test nodes.<id>.output.passed == true in a cond');
+    expect(
+      evalBoolean('nodes.check.output.passed == true', { nodes: { check: { output: null } } })
+    ).toBe(false);
+    expect(
+      evalBoolean('nodes.check.output.decision.blocked != true', {
+        nodes: { check: { output: null } },
+      })
+    ).toBe(true);
+    expect(output).not.toMatch(/test nodes\.<id>\.output\.decision\.blocked/);
+  });
+
+  it('a gate failure is said to write no nodes.<id>.error: only a thrown error does', () => {
+    for (const type of ['eval', 'shell'] as const) {
+      expect(nodeHelp(type).output).toContain('no nodes.<id>.error');
+    }
+    expect(nodeHelp('step').output).toContain('Only a thrown error writes nodes.<id>.error');
+  });
+
+  it('the containerStep output ties events to the ndjson transport alone', () => {
+    const { output } = nodeHelp('containerStep');
+    expect(output).toMatch(/Only the ndjson transport also sets nodes\.<id>\.output\.events/);
+    expect(output).not.toMatch(/sidecar[^.]*events/);
   });
 
   it('uses a registered step in its step example', () => {
