@@ -16,6 +16,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { templateReachesConnection } from '@auto-swe/shared/lib/repoMembership';
 import { ApplicationFailure, Context } from '@temporalio/activity';
+import { logWarn } from './activityLog.js';
 
 /** The workflow execution's id, or null outside an activity. */
 function currentWorkflowId(): string | null {
@@ -23,6 +24,60 @@ function currentWorkflowId(): string | null {
     return Context.current().info.workflowExecution?.workflowId ?? null;
   } catch {
     return null;
+  }
+}
+
+const NOT_AUTHORIZED =
+  'it is not one of the connections this run was authorized to use. Supply it as a ' +
+  '`connection` field of the template you launched, or ask an admin to add it to the template.';
+
+/**
+ * Refuse a connection the run was not authorized to use.
+ *
+ * The run's authorized set is resolved once, when it is created (`createWorkflowRun`) from
+ * the template's declared `connection` fields, the payload, and the run's own connection,
+ * and pinned on the row. Checking membership is what makes the declared schema a boundary:
+ * a connection named through a field the schema does not describe was never authorized, so
+ * it is not in the set, whichever node resolved it — including one whose value came from
+ * another node's output.
+ *
+ * Fails closed on an unreadable pin. A run with **no pin** is let through with a warning:
+ * it was created before the column existed, so there is nothing to check against, and
+ * refusing would strand work mid-flight. Every new execution writes one.
+ */
+export async function assertConnectionAuthorized(
+  connectionId: string,
+  step: string
+): Promise<void> {
+  const workflowId = currentWorkflowId();
+  const run = workflowId
+    ? await prisma.workflowRun.findUnique({
+        select: { authorizedConnectionIds: true, id: true },
+        where: { workflowId },
+      })
+    : null;
+  if (!run) {
+    throw ApplicationFailure.nonRetryable(
+      `Step '${step}' may not use connection '${connectionId}': the run it belongs to could not be identified.`,
+      'RUN_NOT_IDENTIFIED',
+      { connectionId, step }
+    );
+  }
+  const pinned = run.authorizedConnectionIds;
+  if (pinned === null || pinned === undefined) {
+    logWarn('a run has no authorized-connection pin; its connections are unchecked', {
+      connectionId,
+      runId: run.id,
+      step,
+    });
+    return;
+  }
+  if (!Array.isArray(pinned) || !pinned.includes(connectionId)) {
+    throw ApplicationFailure.nonRetryable(
+      `Step '${step}' may not use connection '${connectionId}': ${NOT_AUTHORIZED}`,
+      'CONNECTION_NOT_AUTHORIZED',
+      { connectionId, step }
+    );
   }
 }
 

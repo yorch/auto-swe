@@ -108,6 +108,32 @@ export function declaredConnectionInputs(
   return found;
 }
 
+/**
+ * The connections a run is authorized for, as ids: its own workspace connection plus
+ * every `connection`-typed field the template declares that the payload fills.
+ *
+ * Computed once at run creation and pinned on the run
+ * (`WorkflowRun.authorizedConnectionIds`), because a template's `inputSchema` is mutable
+ * while its spec is snapshotted — deriving the set at check time would let one schema
+ * edit widen a run already in flight. A node that resolves a connection outside the
+ * pinned set is refused where it is used, which is what makes the declared schema a
+ * boundary rather than a hint: a connection named through a field the schema does not
+ * describe is never in the set.
+ */
+export function runAuthorizedConnectionIds(args: {
+  inputSchema: InputSchema | null | undefined;
+  payload: unknown;
+  workspaceConnectionId?: string | null;
+}): string[] {
+  const ids = new Set<string>(
+    declaredConnectionInputs(args.inputSchema, args.payload).map((c) => c.connectionId)
+  );
+  if (args.workspaceConnectionId) {
+    ids.add(args.workspaceConnectionId);
+  }
+  return [...ids];
+}
+
 function typeOf(value: unknown): InputFieldType | 'null' | 'object' {
   if (value === null) {
     return 'null';

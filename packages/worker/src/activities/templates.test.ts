@@ -241,6 +241,16 @@ afterEach(() => {
   aggregateTraces.mockReset();
 });
 
+/**
+ * The upsert's `update` branch. The upsert exists so a retried Temporal execution does not
+ * duplicate a row, and everything describing the ORIGINAL execution — its launcher, its
+ * Temporal run id, its spec and agent snapshots — is written on create only, so a later
+ * execution of a reused workflow id cannot inherit them. The authorized-connection pin is
+ * the one field refreshed: it describes the execution doing the writing, and leaving the
+ * first one's in place would pin a retry to a set resolved from a payload it may not share.
+ */
+const UPDATE_REWRITES_ONLY_THE_PIN = { authorizedConnectionIds: [] };
+
 describe('createWorkflowRun', () => {
   beforeEach(() => {
     upsertRun.mockResolvedValue({ id: 'run-1' } as never);
@@ -714,7 +724,7 @@ describe('createWorkflowRun', () => {
     await createWorkflowRun({ templateId: 'tpl-1', templateVersion: 1, workflowId: 'wf-1' });
     const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
     expect(args.create.skillRevisions).toEqual({ 'skill-a': 3, 'skill-b': 1 });
-    expect(args.update).toEqual({});
+    expect(args.update).toEqual(UPDATE_REWRITES_ONLY_THE_PIN);
   });
 
   it('scopes the skill snapshot to GLOBAL plus the run’s own team and organization', async () => {
@@ -773,6 +783,23 @@ describe('createWorkflowRun', () => {
     });
   });
 
+  it('pins the run’s own connection, which is not `repoId`', async () => {
+    // A run's repository is the connection it reads and writes through, and it arrives as
+    // `runConnectionId`: `repoId` is set only for a scheduled fire and an epic child. A pin
+    // built from `repoId` alone omits it, and the check in `resolveWorkspace` then refuses
+    // every ordinary run — the workspace is resolved from exactly that connection.
+    findVersion.mockResolvedValue({ spec: validSpec } as never);
+    await createWorkflowRun({
+      runConnectionId: 'conn-the-run',
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'wf-1',
+    });
+    const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
+    expect(args.create.authorizedConnectionIds).toEqual(['conn-the-run']);
+    expect(args.update).toEqual({ authorizedConnectionIds: ['conn-the-run'] });
+  });
+
   it('records who launched this execution, and which execution, on create only', async () => {
     findVersion.mockResolvedValue({ spec: validSpec } as never);
     await createWorkflowRun({
@@ -788,7 +815,7 @@ describe('createWorkflowRun', () => {
     });
     // Never rewritten: a row left by an earlier execution of a reused workflow
     // id must keep naming that execution, so its launcher is not inherited.
-    expect(args.update).toEqual({});
+    expect(args.update).toEqual(UPDATE_REWRITES_ONLY_THE_PIN);
   });
 
   it('records no launcher for a run started by nobody', async () => {
@@ -1032,7 +1059,7 @@ describe('createWorkflowRun', () => {
     expect(upsertRun).toHaveBeenCalledTimes(1);
     const args = upsertRun.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(args.where).toEqual({ workflowId: 'wf-1' });
-    expect(args.update).toEqual({});
+    expect(args.update).toEqual(UPDATE_REWRITES_ONLY_THE_PIN);
     expect((args.create as Record<string, unknown>).workflowId).toBe('wf-1');
     expect((args.create as Record<string, unknown>).workRequestId).toBe('wr-1');
   });

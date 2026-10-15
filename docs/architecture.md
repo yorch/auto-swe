@@ -1311,9 +1311,21 @@ Current constraints of the system as built. Deliberate product boundaries are in
   `format: 'uuid'` string, a nested payload path, an array element — is not authorized by this, and
   the worker resolves it regardless; and the `POST /work-requests/:id/retry` path for a **git-repo**
   run re-authorizes the repository but not the connections its stored payload declares (the
-  non-git retry path does). Closing it properly means authorizing the connection a node actually
-  resolved, at the worker boundary, against the run's launcher and team reach — the same check the
-  public-caller branch already makes — rather than inferring it from the template's own metadata.
+  non-git retry path does). That is now what happens for a connection a node resolves from the
+  run's inputs: the authorized set is resolved once, when the run is created, and pinned on the
+  row (`WorkflowRun.authorizedConnectionIds`), and `assertConnectionAuthorized` refuses a
+  connection outside it where the connection is loaded — before its credential is decrypted. The
+  declared schema is therefore a boundary rather than a hint: a connection named through a field
+  the template does not declare is never in the set, whichever node resolved it, including one
+  whose value came from another node's output. The set is pinned rather than derived because a
+  template's `inputSchema` is mutable while its spec is snapshotted, so deriving at check time
+  would let one schema edit widen a run already in flight; a run with **no** pin (created before
+  the column existed) is let through with a warning rather than stranded, and every new
+  execution writes one. Two gaps remain: a **literal** reference — an `mcp` node's
+  `connectionRef` — is in no pin and is checked against the template's team instead
+  (`assertRunMayUseConnection`), so reassigning a template mid-run moves that authority; and the
+  **git-repo retry** path still re-authorizes its repository without authorizing the connections
+  its stored payload declares.
 - **A literal connection reference is checked where it is used.** An `mcp` node names its server
   with `connectionRef`, an id written into the spec rather than a payload binding, so no launch path
   authorizes it: `assertRunMayUseConnection` (`worker/src/lib/connectionAccess.ts`) refuses one the

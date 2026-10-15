@@ -24,6 +24,7 @@ import {
 } from '../connectors/notion.js';
 import { postSlackMessage } from '../connectors/slack.js';
 import { fetchZendeskTicket, postZendeskComment } from '../connectors/zendesk.js';
+import { assertConnectionAuthorized } from '../lib/connectionAccess.js';
 import {
   assertApprovalSatisfied,
   findRecordedOutcome,
@@ -101,7 +102,17 @@ export interface RunToolResult {
   placeholder?: boolean;
 }
 
-async function loadConnection(connectionId: string) {
+/**
+ * Load a connection this run is allowed to use.
+ *
+ * The authorization check lives here because every generic step that targets a
+ * connection — `readSource`, `writeOutcome`, `runTool` — loads it through this one
+ * function, so a node whose connection id came from anywhere (a declared payload field, a
+ * nested path, another node's output) is checked against the run's pinned set before its
+ * credential is decrypted.
+ */
+async function loadConnection(connectionId: string, step: string) {
+  await assertConnectionAuthorized(connectionId, step);
   const connection = await prisma.connection.findUnique({
     where: { id: connectionId },
   });
@@ -250,7 +261,7 @@ export async function readSource(input: ReadSourceInput): Promise<ReadSourceResu
     z.object({ connectionId: ConnectionIdSchema, query: z.unknown().optional() }),
     input
   );
-  const connection = await loadConnection(connectionId);
+  const connection = await loadConnection(connectionId, 'readSource');
   const token = getApiToken(connection);
   switch (connection.type) {
     case 'git_repo':
@@ -581,7 +592,7 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
     if (scope.runId) {
       await assertApprovalSatisfied(scope.runId);
     }
-    const connection = await loadConnection(connectionId);
+    const connection = await loadConnection(connectionId, 'writeOutcome');
     const token = getApiToken(connection);
     switch (connection.type) {
       case 'git_repo':
@@ -832,7 +843,7 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
     if (mutating && scope.runId) {
       await assertApprovalSatisfied(scope.runId);
     }
-    const connection = await loadConnection(connectionId);
+    const connection = await loadConnection(connectionId, 'runTool');
     const token = getApiToken(connection);
     switch (connection.type) {
       case 'git_repo':
@@ -856,7 +867,6 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
         );
     }
   }
-
   if (!ledgerKey) {
     return perform();
   }

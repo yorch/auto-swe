@@ -1769,6 +1769,19 @@ model WorkflowRun {
   /// pinned the first time the run resolved it, so a later edit of the agent,
   /// its scoped overrides or the setting cannot switch it mid-run.
   agentRuntimes     Json?             @map("agent_runtimes")
+  /// The connections this run may use, resolved and authorized when it was created:
+  /// the workspace connection, every `connection`-typed input its template version
+  /// declares with a value in the payload, and the literal ids its spec names (an
+  /// `mcp` node's `connectionRef`). A node that resolves a connection outside this set
+  /// is refused where it is used (`assertRunMayUseConnection`), so a template cannot
+  /// reach another team's credential through a field its schema does not describe.
+  /// Pinned rather than derived because the template's `inputSchema` is mutable while
+  /// the spec is snapshotted: deriving from the current schema would let one edit
+  /// widen a run already in flight. `Json` rather than `String[]` for the same reason
+  /// its neighbours are: Prisma has no optional list, and **null ("no pin", a run
+  /// created before this column existed) has to be distinct from an empty set**
+  /// ("authorized nothing").
+  authorizedConnectionIds Json?      @map("authorized_connection_ids")
   /// Snapshot of the skill revisions the run's agents reference, taken when the
   /// run began: a `{ skillId: revision }` map. `resolveAgent` reads the pinned
   /// `SkillRevision` text instead of the live `Skill` row, so editing a skill

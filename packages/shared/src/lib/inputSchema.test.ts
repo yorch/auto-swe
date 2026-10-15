@@ -4,6 +4,7 @@ import {
   type InputSchema,
   inputSchemaProblems,
   isInputSchema,
+  runAuthorizedConnectionIds,
   validateInputPayload,
 } from './inputSchema.js';
 
@@ -271,5 +272,55 @@ describe('declaredConnectionInputs', () => {
     expect(declaredConnectionInputs(open, { any: 'conn-1' })).toEqual([
       { connectionId: 'conn-1', field: 'any' },
     ]);
+  });
+});
+
+describe('runAuthorizedConnectionIds', () => {
+  const schema: InputSchema = {
+    properties: {
+      connectionId: { connectionType: 'issue_tracker', type: 'connection' },
+      docConnectionId: { connectionType: 'confluence', type: 'connection' },
+    },
+    type: 'object',
+  };
+
+  it('is the run’s own connection plus every declared field the payload fills', () => {
+    expect(
+      runAuthorizedConnectionIds({
+        inputSchema: schema,
+        payload: { connectionId: 'jira-1', docConnectionId: 'wiki-1' },
+        workspaceConnectionId: 'jira-1',
+      })
+    ).toEqual(['jira-1', 'wiki-1']);
+  });
+
+  it('does not repeat the workspace connection', () => {
+    expect(
+      runAuthorizedConnectionIds({
+        inputSchema: schema,
+        payload: { connectionId: 'jira-1' },
+        workspaceConnectionId: 'jira-1',
+      })
+    ).toEqual(['jira-1']);
+  });
+
+  it('authorizes only the workspace connection when the payload names none', () => {
+    expect(
+      runAuthorizedConnectionIds({
+        inputSchema: schema,
+        payload: {},
+        workspaceConnectionId: 'jira-1',
+      })
+    ).toEqual(['jira-1']);
+  });
+
+  it('is empty for a run with no connection and no declared field', () => {
+    // Distinct from "no pin": the run was resolved, and it may use nothing.
+    expect(
+      runAuthorizedConnectionIds({ inputSchema: schema, payload: {}, workspaceConnectionId: null })
+    ).toEqual([]);
+    expect(
+      runAuthorizedConnectionIds({ inputSchema: null, payload: null, workspaceConnectionId: null })
+    ).toEqual([]);
   });
 });

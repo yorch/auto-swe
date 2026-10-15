@@ -16,6 +16,9 @@ vi.mock('@temporalio/activity', () => ({
       return err;
     },
   },
+  // `connectionAccess` logs through `activityLog`, which imports this to decide between
+  // the Temporal logger and the console.
+  asyncLocalStorage: { getStore: () => undefined },
   Context: {
     current: vi.fn(() => ({
       info: { attempt: 1, workflowExecution: { workflowId: 'wf-1' } },
@@ -78,6 +81,18 @@ function makeConnection(type: string, options?: { config?: unknown; token?: bool
 
 beforeEach(() => {
   vi.resetAllMocks();
+  // An authorized run by default: every connection id these cases name is in the pin, so
+  // each one exercises the step it names. The refusal is a case of its own.
+  (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+    authorizedConnectionIds: [
+      '11111111-1111-4111-8111-111111111111',
+      '4dcf895a-9ed7-450c-8858-e45b8415db4b',
+      '5af1a0ac-d2a0-4896-ad7e-ca8845e819c5',
+      'bd4483f7-1fcc-4abe-916c-deab2811a4dc',
+      'e9108636-3b75-440c-a4f9-987449669502',
+    ],
+    id: 'run-1',
+  });
 });
 
 describe('input validation', () => {
