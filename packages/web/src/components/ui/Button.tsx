@@ -20,10 +20,14 @@ const VARIANTS: Record<Variant, string> = {
 // component-wide 13px (the `text-sm` step) set inline below; the `text-xs`/`text-sm` classes
 // that used to be here never applied, because an inline style beats every
 // class, so all three rendered at one size regardless.
+//
+// `sm` and `md` share the 28px height (`h-8` at the 14px root) and differ only in
+// padding: 28px is the floor for a comfortable click target, and it is the
+// height of the compact inputs `sm` buttons sit beside in toolbars and filters.
 const SIZES: Record<Size, string> = {
   lg: 'h-10 px-5',
   md: 'h-8 px-4',
-  sm: 'h-7 px-3',
+  sm: 'h-8 px-3',
 };
 
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {

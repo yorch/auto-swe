@@ -86,7 +86,7 @@ function WorkModePicker({
               className={cn(
                 // Mobile: icon | text | check in one row. From sm: icon and check on top, text below.
                 'relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 rounded-xl border p-4 transition-colors sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-y-3',
-                'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ember-400 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink-950',
+                'has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ember-400',
                 selected
                   ? 'border-ember-400/70 bg-ember-400/[0.07]'
                   : 'border-ink-400/60 bg-ink-800/60',

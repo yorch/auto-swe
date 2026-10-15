@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { ExpandablePre } from '@/components/ui/ExpandablePre';
 import { SparkleIcon } from '@/components/ui/icons';
 import {
   useAssistantConversation,
@@ -295,9 +296,13 @@ function ToolStep({ step }: { step: AssistantToolStep }) {
           <span className="font-medium text-paper-300">{TOOL_LABELS[step.tool] ?? step.tool}</span>
           {step.summary && <span className="truncate text-paper-500">· {step.summary}</span>}
         </summary>
-        <pre className="max-h-48 overflow-auto border-t border-ink-600 px-2.5 py-2 font-mono text-xs text-paper-400">
+        <ExpandablePre
+          className="border-t border-ink-600 px-2.5 py-2 font-mono text-xs text-paper-400"
+          collapsedHeight="12rem"
+          toggleClassName="mx-2.5 mb-2"
+        >
           {JSON.stringify(step.input, null, 2)}
-        </pre>
+        </ExpandablePre>
       </details>
     </li>
   );

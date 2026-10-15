@@ -6,6 +6,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ExpandablePre } from '@/components/ui/ExpandablePre';
 import { Icon } from '@/components/ui/Icon';
 import { attributeTrace, type TraceLinker, traceMatchesSelection } from '@/lib/traceLinkage';
 import { FILTER_BAR_HEIGHT_VAR, groupHeaderTop } from '@/lib/traceSticky';
@@ -147,12 +148,34 @@ function CollapsibleSection({
 
 const BODY_LIMIT = 3000;
 
-/** The mono block every trace body renders into. */
-function TracePre({ children }: { children: ReactNode }) {
+/**
+ * The mono block every trace body renders into. It expands in place rather than
+ * scrolling: the trace stream is itself a scrolling pane, and a scroll box inside
+ * it takes the wheel away from the stream.
+ */
+function TracePre({
+  children,
+  expanded,
+  hasMore,
+  moreLabel,
+  onExpandedChange,
+}: {
+  children: ReactNode;
+  expanded: boolean;
+  hasMore: boolean;
+  moreLabel: string;
+  onExpandedChange: (expanded: boolean) => void;
+}) {
   return (
-    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md border border-ink-500/70 bg-ink-900 px-3 py-2.5 font-mono text-xs leading-relaxed text-paper-300">
+    <ExpandablePre
+      className="whitespace-pre-wrap break-all rounded-md border border-ink-500/70 bg-ink-900 px-3 py-2.5 font-mono text-xs leading-relaxed text-paper-300"
+      expanded={expanded}
+      hasMore={hasMore}
+      labels={{ less: 'show less', more: moreLabel }}
+      onExpandedChange={onExpandedChange}
+    >
       {children}
-    </pre>
+    </ExpandablePre>
   );
 }
 
@@ -177,24 +200,21 @@ function capped(text: string): string {
 /**
  * A trace body capped by `capped()`, with a toggle to render all of it. The cap
  * keeps a long page responsive; it should not be the reason a payload the
- * browser already holds cannot be read.
+ * browser already holds cannot be read. One toggle lifts both the character cap
+ * and the height cut.
  */
 function CappedPre({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
   const isCapped = text.length > BODY_LIMIT;
   return (
-    <>
-      <TracePre>{expanded ? text : capped(text)}</TracePre>
-      {isCapped && (
-        <button
-          className={cn(TEXT_ACTION, 'mt-1')}
-          onClick={() => setExpanded((v) => !v)}
-          type="button"
-        >
-          {expanded ? 'show less' : `show all (${formatCount(text.length)} chars)`}
-        </button>
-      )}
-    </>
+    <TracePre
+      expanded={expanded}
+      hasMore={isCapped}
+      moreLabel={isCapped ? `show all (${formatCount(text.length)} chars)` : 'show all'}
+      onExpandedChange={setExpanded}
+    >
+      {expanded ? text : capped(text)}
+    </TracePre>
   );
 }
 
@@ -217,25 +237,17 @@ function TruncatedText({ text }: { text: string }) {
   const displayed = isTruncated && !expanded ? text.slice(0, TRUNCATE_LIMIT) : text;
 
   return (
-    <>
-      <TracePre>
-        {displayed}
-        {isTruncated && !expanded ? '…' : ''}
-      </TracePre>
-      {isTruncated && (
-        <button
-          className={cn(TEXT_ACTION, 'mt-1')}
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded((v) => !v);
-          }}
-          onKeyDown={(e) => e.stopPropagation()}
-          type="button"
-        >
-          {expanded ? 'show less' : `show more (${text.length - TRUNCATE_LIMIT} more chars)`}
-        </button>
-      )}
-    </>
+    <TracePre
+      expanded={expanded}
+      hasMore={isTruncated}
+      moreLabel={
+        isTruncated ? `show more (${text.length - TRUNCATE_LIMIT} more chars)` : 'show all'
+      }
+      onExpandedChange={setExpanded}
+    >
+      {displayed}
+      {isTruncated && !expanded ? '…' : ''}
+    </TracePre>
   );
 }
 

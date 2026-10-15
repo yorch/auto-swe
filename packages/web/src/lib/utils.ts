@@ -8,9 +8,15 @@ export function cn(...inputs: ClassValue[]) {
 /**
  * Keyboard-focus ring shared by every interactive primitive (buttons, nav links,
  * tabs, switches). `focus-visible` only, so a mouse click leaves no ring.
+ *
+ * An outline, not a `ring-*` box-shadow: a ring's offset is a second shadow
+ * painted in one fixed colour, which reads as a dark halo on every surface but
+ * the one it names. An outline's offset is a real gap, so whatever the control
+ * sits on shows through. `outline-solid` is needed because `outline-none` sets
+ * the style to none.
  */
 export const FOCUS_RING =
-  'outline-none focus-visible:ring-2 focus-visible:ring-ember-400 focus-visible:ring-offset-2 focus-visible:ring-offset-ink-900';
+  'outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ember-400';
 
 /** A plain JSON-style object — not null, not an array. */
 export function isRecord(value: unknown): value is Record<string, unknown> {

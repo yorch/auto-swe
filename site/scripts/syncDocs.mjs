@@ -52,7 +52,7 @@ const USE_CASE_DATA = join(SITE_ROOT, 'src/data/useCases.json');
 /**
  * Filenames under `docs/` that become pages. Mirrors the dashboard's rule so
  * the two surfaces publish exactly the same set: top-level `.md` only, so
- * `history/` and `redesign/` are excluded by having no entry rather than by a
+ * `history/` is excluded by having no entry rather than by a
  * rule someone has to remember.
  */
 const SLUG_RE = /^[a-z0-9][a-z0-9-]*$/i;

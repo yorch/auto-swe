@@ -59,8 +59,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [slack-app-setup.md](./slack-app-setup.md) | Slack app manifest import and admin configuration |
 | [packages/cli/README.md](../packages/cli/README.md) | `auto-swe` CLI — work requests, runs, workflow templates, tokens, bundles |
 
-Also here: [`slack-app-manifest.json`](./slack-app-manifest.json) and [`redesign/`](./redesign/)
-(dashboard design screenshots).
+Also here: [`slack-app-manifest.json`](./slack-app-manifest.json).
 
 ## These files ship
 
@@ -76,8 +75,8 @@ Neither owns these files. The dashboard reads them at build time; the site copie
 own content collection, gitignored and rebuilt from scratch on every run. Write markdown for a
 checkout, as normal, and keep three things in mind:
 
-- **Only the top level is published**, by both. `history/` and `redesign/` are deliberately left
-  out — frozen docs presented as current behaviour are worse than no docs.
+- **Only the top level is published**, by both. `history/` is deliberately left out — frozen docs
+  presented as current behaviour are worse than no docs.
 - **Cross-doc links are rewritten**, so `[agents.md](./agents.md)` works as a file path, as
   `/docs/agents`, and as a page on the site. Write them relative and let each surface translate.
 - **A link the surface cannot serve is handled differently by each, on purpose.** The dashboard
