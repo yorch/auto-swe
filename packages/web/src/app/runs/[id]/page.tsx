@@ -82,7 +82,7 @@ function runtimeBadge(run: {
 }
 
 /** `sm` buttons are 28px tall: on a phone the header actions get a 40px target instead. */
-const TOUCH_SM = 'h-[40px] lg:h-7';
+const TOUCH_SM = 'h-[40px] lg:h-8';
 
 const CRUMB = cn(
   'rounded-sm transition-colors hover:text-paper-200 max-lg:inline-flex max-lg:min-h-[40px] max-lg:items-center',

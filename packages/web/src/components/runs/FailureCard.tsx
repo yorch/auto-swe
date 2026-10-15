@@ -97,14 +97,14 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
           {(onJumpToFailure || onReRun) && (
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {onReRun && (
-                <Button className="h-[40px] lg:h-7" onClick={onReRun} size="sm" variant="primary">
+                <Button className="h-[40px] lg:h-8" onClick={onReRun} size="sm" variant="primary">
                   <Icon name="refresh" size={13} />
                   Re-run
                 </Button>
               )}
               {onJumpToFailure && (
                 <Button
-                  className="h-[40px] lg:h-7"
+                  className="h-[40px] lg:h-8"
                   onClick={onJumpToFailure}
                   size="sm"
                   variant="secondary"

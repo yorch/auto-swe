@@ -398,7 +398,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
           {canRespond && (
             <Button
               aria-expanded={expanded}
-              className="h-[40px] lg:h-7"
+              className="h-[40px] lg:h-8"
               onClick={toggleExpanded}
               size="sm"
               variant={expanded ? 'ghost' : 'secondary'}
@@ -463,7 +463,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
               </p>
               <div className="flex gap-2 max-sm:w-full max-sm:*:flex-1">
                 <Button
-                  className="h-[40px] lg:h-7"
+                  className="h-[40px] lg:h-8"
                   disabled={respond.isPending}
                   onClick={() => openDialog('reject')}
                   size="sm"
@@ -473,7 +473,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                   Reject
                 </Button>
                 <Button
-                  className="h-[40px] lg:h-7"
+                  className="h-[40px] lg:h-8"
                   disabled={respond.isPending}
                   onClick={() => openDialog('approve')}
                   size="sm"

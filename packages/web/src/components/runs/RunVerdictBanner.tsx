@@ -21,14 +21,14 @@ export function RunVerdictBanner({
   let control: React.ReactNode;
   if (action?.kind === 'jump-to-failure' && onJumpToFailure) {
     control = (
-      <Button className="h-[40px] lg:h-7" onClick={onJumpToFailure} size="sm" variant="secondary">
+      <Button className="h-[40px] lg:h-8" onClick={onJumpToFailure} size="sm" variant="secondary">
         {action.label}
       </Button>
     );
   } else if (action?.kind === 'link' && action.external) {
     control = (
       <ButtonLink
-        className="h-[40px] lg:h-7"
+        className="h-[40px] lg:h-8"
         href={action.href}
         rel="noopener noreferrer"
         size="sm"
@@ -41,7 +41,7 @@ export function RunVerdictBanner({
   } else if (action?.kind === 'link') {
     control = (
       <Link
-        className="inline-flex h-[40px] items-center rounded-md border border-ink-400/60 px-3 text-sm text-paper-100 hover:bg-ink-700/50 lg:h-7"
+        className="inline-flex h-[40px] items-center rounded-md border border-ink-400/60 px-3 text-sm text-paper-100 hover:bg-ink-700/50 lg:h-8"
         href={action.href}
       >
         {action.label}
