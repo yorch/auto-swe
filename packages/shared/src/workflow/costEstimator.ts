@@ -214,15 +214,16 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
 
 /**
  * One sentence naming what the estimate leaves out, for display beside the
- * number — or null when the walk priced every node it reached.
+ * number.
  *
  * The excluded classes are structural, not oversights: container steps cost
- * runtime rather than tokens, an MCP call's usage is the remote server's, a
- * step without a `costHint` has no basis to price, and a node in a retry loop
- * is counted once (the walk cuts cycles rather than guessing an iteration
- * count). Saying so is the difference between a partial sum and a wrong claim.
+ * runtime rather than tokens, an MCP call's usage is the remote server's, and a
+ * step without a `costHint` has no basis to price. Retries and loops are always
+ * excluded — the walk cuts cycles rather than guessing an iteration count — so
+ * that clause is present even when every node was priced, which is exactly when
+ * the number looks most complete and is most likely to be read as a total.
  */
-export function describeCostExclusions(estimate: CostEstimate): string | null {
+export function describeCostExclusions(estimate: CostEstimate): string {
   const count = (reason: UnpricedReason): number =>
     estimate.unpriced.filter((u) => u.reason === reason).length;
   const parts: string[] = [];
@@ -238,8 +239,6 @@ export function describeCostExclusions(estimate: CostEstimate): string | null {
   if (noHint > 0) {
     parts.push(`unpriced steps (${noHint} ${noHint === 1 ? 'node' : 'nodes'})`);
   }
-  if (parts.length === 0) {
-    return null;
-  }
-  return `Excludes ${parts.join(', ')} and retries (each node is counted once).`;
+  const loops = 'Retries and loops are counted once, so a looping spec costs more than this.';
+  return parts.length === 0 ? loops : `Excludes ${parts.join(', ')}. ${loops}`;
 }

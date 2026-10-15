@@ -321,8 +321,10 @@ describe('describeCostExclusions', () => {
     unpriced,
   });
 
-  it('returns null when the walk priced everything it reached', () => {
-    expect(describeCostExclusions(est([]))).toBeNull();
+  it('still discloses retries when the walk priced everything it reached', () => {
+    // The number looks complete here, which is when a reader is most likely to
+    // treat it as a total — and a looping spec costs more.
+    expect(describeCostExclusions(est([]))).toMatch(/loops are counted once/);
   });
 
   it('names each excluded class, with counts and the retry caveat', () => {
@@ -335,14 +337,14 @@ describe('describeCostExclusions', () => {
       ])
     );
     expect(sentence).toBe(
-      'Excludes container runtime (1 node), external calls (1 node), unpriced steps (2 nodes) and retries (each node is counted once).'
+      'Excludes container runtime (1 node), external calls (1 node), unpriced steps (2 nodes). Retries and loops are counted once, so a looping spec costs more than this.'
     );
   });
 
   it('omits a class that is not present', () => {
     const sentence = describeCostExclusions(est([{ nodeId: 'a', reason: 'external-call' }]));
     expect(sentence).toBe(
-      'Excludes external calls (1 node) and retries (each node is counted once).'
+      'Excludes external calls (1 node). Retries and loops are counted once, so a looping spec costs more than this.'
     );
   });
 });
