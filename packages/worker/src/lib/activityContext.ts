@@ -124,11 +124,13 @@ function reserveSeq(count: number): number {
  * attached a more specific one) so trace rows can be correlated with
  * Grafana/Tempo spans via otelTraceId/otelSpanId.
  * Best-effort: errors are swallowed inside `AgentTracer.persist`; resolves
- * false when the write failed.
+ * false when the write failed. `tags.assistantMessageId` stamps the rows with
+ * the in-app assistant reply they were written for.
  */
 export async function persistActivityTrace(
   tracer: AgentTracer,
-  agentKey: string
+  agentKey: string,
+  tags: { assistantMessageId?: string } = {}
 ): Promise<boolean> {
   const spanContext = trace.getActiveSpan()?.spanContext();
   if (!tracer.hasSpanContext() && spanContext?.traceId && spanContext?.spanId) {
@@ -147,13 +149,13 @@ export async function persistActivityTrace(
   // its rows carry no owner. `orgMonthSpend` counts an owner-stamped row with no
   // run as runless spend, and a run's spend is already counted from its ledger:
   // stamping the owner here would bill that run to its org twice.
-  const tags = run ? { ...owner, runId: run.id } : { runId: undefined };
+  const ids = run ? { ...owner, runId: run.id } : { runId: undefined };
   // The rows about to be written carry this activity's runless spend: take it
   // out of the in-process sum first, and put it back if the write fails.
   const { input, output } = tracer.llmTokenTotals();
   const restore = takePersistingUsage(workflowId, temporalRunId, input, output);
   const written = await tracer.persist(
-    { ...tags, temporalRunId, workflowId },
+    { ...ids, ...tags, temporalRunId, workflowId },
     currentActivityType(),
     agentKey,
     currentAttempt(),

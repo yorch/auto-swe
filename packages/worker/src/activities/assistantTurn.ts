@@ -8,8 +8,9 @@ import {
   assistantPageContextSchema,
 } from '@auto-swe/shared/lib/assistantConversation';
 import { createAssistantTools, summarizeToolResult } from '../agents/assistantTools.js';
+import { persistActivityTrace } from '../lib/activityContext.js';
 import { logError } from '../lib/activityLog.js';
-import { redactString } from '../lib/agentTracer.js';
+import { AgentTracer, redactString } from '../lib/agentTracer.js';
 import { createAssistantGateway } from '../lib/assistantGateway.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
@@ -219,12 +220,21 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
         availableTools: tools,
       });
       const maxSteps = await resolveSetting('assistant.maxStepsPerTurn');
-      return runAgent(spec, latest.content, {
-        history,
-        maxSteps,
-        onChunk: (chunk) => writer.onChunk(chunk),
-        spanName: 'llm.app_assistant',
-      });
+      // The turn owns its tracer so its rows carry the reply they were written for: the admin
+      // failure view reads them by that, not by a time window. Persisted inside the spend owner's
+      // scope, which stamps the rows' owner.
+      const tracer = new AgentTracer();
+      try {
+        return await runAgent(spec, latest.content, {
+          history,
+          maxSteps,
+          onChunk: (chunk) => writer.onChunk(chunk),
+          spanName: 'llm.app_assistant',
+          tracer,
+        });
+      } finally {
+        await persistActivityTrace(tracer, AGENT_KEY, { assistantMessageId: reply.id });
+      }
     });
     await writer.flush();
     let content = result.text ?? writer.content;

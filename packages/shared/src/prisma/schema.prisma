@@ -2140,6 +2140,11 @@ model AgentTrace {
   /// is known (an ORGANIZATION-scoped eval dataset).
   orgId         String?       @map("org_id") @db.Uuid
   org           Organization? @relation("OrgAgentTraces", fields: [orgId], references: [id], onDelete: SetNull)
+  /// The in-app assistant reply whose turn wrote this row, so the admin failure view reads exactly
+  /// that turn's rows. Null for every other activity and on rows that predate the column; set null
+  /// when the conversation is deleted, so the row's spend survives it.
+  assistantMessageId String?           @map("assistant_message_id") @db.Uuid
+  assistantMessage   AssistantMessage? @relation(fields: [assistantMessageId], references: [id], onDelete: SetNull)
   createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([runId, nodeId])
@@ -2148,6 +2153,7 @@ model AgentTrace {
   @@index([workflowId, temporalRunId])
   @@index([teamId, createdAt])
   @@index([orgId, createdAt])
+  @@index([assistantMessageId])
   @@map("agent_traces")
 }
 
@@ -3636,6 +3642,8 @@ model AssistantMessage {
   errorDetail    String?                @map("error_detail")
   createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz
+  /// The agent trace rows this reply's turn wrote.
+  traces         AgentTrace[]
 
   @@index([conversationId, createdAt])
   // The admin failure feed: FAILED replies, newest first.

@@ -113,7 +113,7 @@ describe('assistantDiagnosticsRoutes', () => {
     expect(res.statusCode).toBe(404);
   });
 
-  it("reads only the turn's own trace rows, without their payloads", async () => {
+  it("reads the turn's own trace rows, without their payloads", async () => {
     const { app, prisma } = await buildApp();
     // The reply waited behind an earlier turn that finished after it was created.
     const earlierDone = new Date('2026-10-14T10:00:20Z');
@@ -144,9 +144,17 @@ describe('assistantDiagnosticsRoutes', () => {
     });
     expect(res.statusCode).toBe(200);
     const query = prisma.agentTrace.findMany.mock.calls[0]?.[0];
+    // Rows tagged with this reply, plus untagged rows from before the tag existed, which are
+    // found by the conversation's workflow and the turn's time window.
     expect(query.where).toEqual({
-      createdAt: { gte: earlierDone, lte: FAILED },
-      workflowId: `assistant-${CONVERSATION}`,
+      OR: [
+        { assistantMessageId: MESSAGE },
+        {
+          assistantMessageId: null,
+          createdAt: { gte: earlierDone, lte: FAILED },
+          workflowId: `assistant-${CONVERSATION}`,
+        },
+      ],
     });
     expect(query.select).not.toHaveProperty('inputJson');
     expect(query.select).not.toHaveProperty('outputJson');
@@ -171,7 +179,7 @@ describe('assistantDiagnosticsRoutes', () => {
       method: 'GET',
       url: `/api/v1/platform/assistant/failures/${MESSAGE}`,
     });
-    expect(prisma.agentTrace.findMany.mock.calls[0]?.[0].where.createdAt).toEqual({
+    expect(prisma.agentTrace.findMany.mock.calls[0]?.[0].where.OR[1].createdAt).toEqual({
       gte: CREATED,
       lte: FAILED,
     });

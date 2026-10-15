@@ -10,7 +10,7 @@ import { requireAuth } from '../plugins/auth.js';
 /**
  * Why in-app assistant replies failed, for admins: the FAILED replies across every user, each with
  * the cause the platform recorded (`AssistantMessage.errorDetail`) and, for one reply, the agent
- * trace rows its turn wrote.
+ * trace rows its turn wrote (tagged with the reply, `AgentTrace.assistantMessageId`).
  *
  * A conversation is private to its user, so this shows what failed and why, never what was said:
  * no message text, no conversation title, and no trace `inputJson`/`outputJson` (they carry the
@@ -111,8 +111,10 @@ export const assistantDiagnosticsRoutes: FastifyPluginAsync = async (fastify) =>
       if (!row) {
         return sendError(reply, 404, 'NOT_FOUND', 'Assistant failure not found');
       }
-      // A conversation's turns run one at a time, so this turn's rows were written after the reply
-      // before it finished (it may have waited behind that turn) and before this one was failed.
+      // A turn tags its rows with its reply (`AgentTrace.assistantMessageId`). Rows written before
+      // the column existed carry no tag, so those are still found by time: a conversation's turns
+      // run one at a time, so this turn's rows were written after the reply before it finished (it
+      // may have waited behind that turn) and before this one was failed.
       const previous = await fastify.prisma.assistantMessage.findFirst({
         orderBy: { createdAt: 'desc' },
         select: { updatedAt: true },
@@ -147,8 +149,14 @@ export const assistantDiagnosticsRoutes: FastifyPluginAsync = async (fastify) =>
             },
             take: MAX_TURN_TRACES,
             where: {
-              createdAt: { gte: from, lte: row.updatedAt },
-              workflowId: assistantConversationWorkflowId(row.conversationId),
+              OR: [
+                { assistantMessageId: row.id },
+                {
+                  assistantMessageId: null,
+                  createdAt: { gte: from, lte: row.updatedAt },
+                  workflowId: assistantConversationWorkflowId(row.conversationId),
+                },
+              ],
             },
           })
       );

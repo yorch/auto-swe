@@ -624,9 +624,11 @@ it wraps, scrubbed of credential-shaped text and the turn's token. It is written
 when the turn throws, by `failAssistantReply` when the activity never reported back (a timeout or a
 dead worker, which says to look in Temporal), and by the gateway when the turn could not be handed to
 the workflow. Admins read it at `/govern/assistant` (`GET /api/v1/platform/assistant/failures`), across
-every user and newest first. Opening one failure lists the agent trace rows its turn wrote, found by
-the conversation's workflow id between the end of the turn before it and the moment it failed: kind,
-tool or model, tokens, duration, error, and the OpenTelemetry trace id to look up in Tempo. The view
+every user and newest first. Opening one failure lists the agent trace rows its turn wrote: kind,
+tool or model, tokens, duration, error, and the OpenTelemetry trace id to look up in Tempo. A turn
+tags every row it writes with its reply (`AgentTrace.assistantMessageId`), and the view reads them by
+that tag; rows written before the tag existed are found instead by the conversation's workflow id,
+between the end of the turn before and the failure. The view
 never shows what was said: no message text, conversation title, or trace `inputJson`/`outputJson`. The
 assistant itself may not call these routes.
 
@@ -1450,10 +1452,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   poll for up to 10 s after the read that first returned it. A trace that commits behind the cursor is not lost, but it costs a full
   re-read of every trimmed trace on the poll that notices it; a worker whose clock lags the others
   by more than 10 s triggers one on every poll it writes during.
-- **An assistant failure's trace rows are matched by time, not by turn.** `AgentTrace` has no column
-  naming the reply a turn was for, so `/govern/assistant` takes the rows the conversation's workflow
-  wrote between the end of the turn before and the failure. A turn that failed before any trace was
-  persisted (the agent or its provider credential could not be resolved) shows none, and replies that
-  failed before `errorDetail` existed show no cause; for those, the worker log line
-  `[assistantTurn] turn failed` and the Temporal history of `assistant-<conversationId>` remain the
-  sources.
+- **Some assistant failures have no trace rows or no recorded cause.** A turn that failed before it
+  wrote a trace row (the agent or its provider credential could not be resolved) shows none on
+  `/govern/assistant`, only its `errorDetail`; replies that failed before `errorDetail` existed show
+  no cause, and their untagged rows are matched by time rather than by reply. For those, the worker
+  log line `[assistantTurn] turn failed` and the Temporal history of `assistant-<conversationId>`
+  remain the sources.
