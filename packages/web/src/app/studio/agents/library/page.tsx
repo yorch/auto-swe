@@ -450,7 +450,7 @@ export default function AgentLibraryPage() {
           />
           <Select
             aria-label="Filter by scope"
-            className="h-8 w-full text-[13px] sm:w-44"
+            className="h-8 w-full text-sm sm:w-44"
             onChange={(v) => setScopeFilter(v as '' | AgentScope)}
             options={[
               { label: 'All scopes', value: '' },

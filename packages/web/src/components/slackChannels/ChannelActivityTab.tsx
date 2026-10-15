@@ -69,7 +69,7 @@ export function ChannelActivityTab({ channel }: { channel: SlackChannel }) {
           value={kindFilter}
         />
       </Toolbar>
-      <p className="text-[13px] text-paper-400">
+      <p className="text-sm text-paper-400">
         Who triggered the assistant in this channel, what they asked, and what it did. Each entry
         links to the full run.
       </p>

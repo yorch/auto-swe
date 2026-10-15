@@ -126,11 +126,11 @@ export default function GovernConfigGrantsPage() {
         <CardHeader className="mb-1">
           <CardTitle>Create a grant</CardTitle>
         </CardHeader>
-        <p className="mb-5 text-[13px] text-paper-400">
+        <p className="mb-5 text-sm text-paper-400">
           Choose which settings, who may change them, and where. The preview shows exactly which
           keys the pattern covers.
         </p>
-        <p className="mb-5 text-[13px] text-paper-400">
+        <p className="mb-5 text-sm text-paper-400">
           A key pattern is an exact setting key, a group prefix such as{' '}
           <span className="font-mono text-paper-200">channel.*</span>, or{' '}
           <span className="font-mono text-paper-200">*</span> for every setting. It is not a glob:
@@ -337,9 +337,9 @@ export default function GovernConfigGrantsPage() {
                 {allGrants.map((g) => (
                   <TRow hover key={g.id}>
                     <Td className="py-3 pr-4" primary>
-                      <span className="font-mono text-[13px] text-paper-100">{g.keyPattern}</span>
+                      <span className="font-mono text-sm text-paper-100">{g.keyPattern}</span>
                     </Td>
-                    <Td className="px-4 py-3 text-[13px]" label="Granted to">
+                    <Td className="px-4 py-3 text-sm" label="Granted to">
                       {g.user?.email ? (
                         <span className="text-paper-200">{g.user.email}</span>
                       ) : g.role ? (
@@ -350,7 +350,7 @@ export default function GovernConfigGrantsPage() {
                         <span className="text-paper-500">—</span>
                       )}
                     </Td>
-                    <Td className="px-4 py-3 text-[13px]" label="Where">
+                    <Td className="px-4 py-3 text-sm" label="Where">
                       <div className="text-paper-200">
                         {g.scope === 'GLOBAL'
                           ? 'Whole platform'
@@ -364,7 +364,7 @@ export default function GovernConfigGrantsPage() {
                         </div>
                       )}
                     </Td>
-                    <Td className="px-4 py-3 text-[13px] text-paper-400" label="Created">
+                    <Td className="px-4 py-3 text-sm text-paper-400" label="Created">
                       <RelativeTime value={g.createdAt} />
                     </Td>
                     <Td align="right" className="py-3 pl-4">

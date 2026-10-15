@@ -104,7 +104,7 @@ export function CatalogTab() {
             </Button>
           </div>
         </CardHeader>
-        <p className="-mt-1 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+        <p className="-mt-1 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
           Built-in models follow the prices code ships until edited; an edit marks the row
           customized and keeps it. Edits reach the worker within the config cache window, and never
           reprice calls already recorded.
@@ -259,7 +259,7 @@ function UnpricedPanel({ onAdd }: { onAdd: (spec: string) => void }) {
       <CardHeader>
         <CardTitle eyebrow="Unpriced in use">Recorded at $0</CardTitle>
       </CardHeader>
-      <p className="-mt-1 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+      <p className="-mt-1 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
         These models are configured or were called in the last 30 days, but nothing prices them, so
         their spend never reaches a USD budget. Add each one, or fix a misspelled spec.
       </p>
@@ -434,7 +434,7 @@ function DiscoveryPanel({
             </Button>
           </div>
         </CardHeader>
-        <p className="-mt-1 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+        <p className="-mt-1 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
           Providers are asked on a schedule, through each global provider credential. Nothing is
           added to the catalog until you add it — with its price.{' '}
           {lastChecked
@@ -452,7 +452,7 @@ function DiscoveryPanel({
           </p>
         ))}
         {data && fresh.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-ink-400 px-4 py-3 text-[13px] text-paper-400">
+          <p className="rounded-lg border border-dashed border-ink-400 px-4 py-3 text-sm text-paper-400">
             {emptyMessage}
           </p>
         ) : (
@@ -542,7 +542,7 @@ function DiscoveryPanel({
           <CardHeader>
             <CardTitle eyebrow="Possibly retired">Priced, but no longer listed</CardTitle>
           </CardHeader>
-          <p className="-mt-1 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+          <p className="-mt-1 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
             A provider whose listing succeeded no longer lists these. Nothing is retired for you: a
             pinned agent version may still bill against one, and a provider may serve an alias it
             does not list. Edit the row to mark it deprecated or retired, or dismiss the flag.

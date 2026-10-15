@@ -80,7 +80,7 @@ function PullRequests() {
         title="Pull requests"
       />
       <p
-        className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-ink-500/70 bg-ink-800/60 px-4 py-3 text-[13px] text-paper-300"
+        className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-ink-500/70 bg-ink-800/60 px-4 py-3 text-sm text-paper-300"
         data-testid="never-merges-note"
       >
         <span>

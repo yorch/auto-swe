@@ -156,7 +156,7 @@ function DepSection({
           ))}
         </ul>
       ) : (
-        <p className="mt-2 rounded-lg border border-ink-500/60 border-dashed px-3.5 py-3 text-paper-500 text-[13px]">
+        <p className="mt-2 rounded-lg border border-ink-500/60 border-dashed px-3.5 py-3 text-paper-500 text-sm">
           {emptyText}
         </p>
       )}

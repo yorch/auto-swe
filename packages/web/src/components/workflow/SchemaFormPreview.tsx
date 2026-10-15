@@ -31,7 +31,7 @@ export function SchemaFormPreview({ schema }: { schema: InputSchema | null | und
 
   return (
     <div className="space-y-4">
-      <p className="text-[13px] text-paper-400">How the run form looks to the people who run it</p>
+      <p className="text-sm text-paper-400">How the run form looks to the people who run it</p>
       <Card className="space-y-4 p-4" variant="inset">
         {Object.entries(schema.properties).map(([key, prop]) => (
           <SchemaFieldInput

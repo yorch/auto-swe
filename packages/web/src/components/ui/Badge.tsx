@@ -93,7 +93,7 @@ export function Badge({
         'whitespace-nowrap text-xs font-medium',
         VARIANT_BASE[variant],
         dot && 'inline-flex items-center gap-1.5',
-        uppercase && 'text-[11px] uppercase tracking-[0.06em]',
+        uppercase && 'text-2xs uppercase tracking-[0.06em]',
         TONE_CLASSES[tone][variant],
         className
       )}

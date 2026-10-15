@@ -409,7 +409,7 @@ function PolicyModal({
 /** What each known risk class means, from the same list the editor offers. */
 function RiskClassGuide() {
   return (
-    <details className="text-[13px]">
+    <details className="text-sm">
       <summary className="cursor-pointer select-none text-paper-200">
         What the risk classes mean
       </summary>
@@ -486,7 +486,7 @@ export default function AutonomyPoliciesPage() {
         a global policy covers every run that no team or template policy matches.
       </Alert>
 
-      <Card className="space-y-3 p-4 text-[13px] leading-relaxed text-paper-300">
+      <Card className="space-y-3 p-4 text-sm leading-relaxed text-paper-300">
         <p>
           An autonomy policy <HelpTip term="autonomyPolicy" /> sets, for each risk class{' '}
           <HelpTip term="riskClass" />, whether a run may act on its own or must wait for approval.
@@ -545,9 +545,7 @@ export default function AutonomyPoliciesPage() {
                             {scopeLabel(p)}
                           </Badge>
                         </div>
-                        {p.description && (
-                          <p className="text-[13px] text-paper-400">{p.description}</p>
-                        )}
+                        {p.description && <p className="text-sm text-paper-400">{p.description}</p>}
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         <Button onClick={() => startEdit(p)} size="sm" variant="secondary">

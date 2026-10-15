@@ -90,7 +90,7 @@ function RunsList() {
           </div>
           <Checkbox
             checked={includeChannel}
-            className="items-center text-[13px] sm:ml-1"
+            className="items-center text-sm sm:ml-1"
             label="Include channel runs"
             onChange={(e) => update({ channel: e.target.checked ? '1' : null, offset: null })}
           />

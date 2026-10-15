@@ -74,8 +74,14 @@
   /* Type scale. The root is 14px (the html rule below), and Tailwind's defaults are rem,
      so left alone `text-xs` was 10.5px and `text-sm` 12.25px — the metadata, table and
      form text that most of the app is made of. These pin the two small steps to whole
-     pixels a dense UI can still read; the larger steps keep their rem defaults. Every
-     arbitrary `text-[Npx]` should land on one of these rather than between them. */
+     pixels a dense UI can still read; the larger steps keep their rem defaults. Text
+     below the heading sizes uses these steps, never an arbitrary `text-[Npx]` between
+     them — half-pixel neighbours read as "slightly off", not as hierarchy.
+     `text-2xs` is for UPPERCASE eyebrow labels only (`.kicker`, nav group names,
+     uppercase badges): capitals read about a step larger, so 11px caps sit beside 12px
+     sentence-case text. Never use it for sentence-case text. */
+  --text-2xs: 11px;
+  --text-2xs--line-height: 14px;
   --text-xs: 12px;
   --text-xs--line-height: 16px;
   --text-sm: 13px;
@@ -269,7 +275,7 @@
   /* Eyebrow above a card or section title — the ember-coloured section marker. */
   .kicker {
     font-family: var(--font-sans);
-    font-size: 11px;
+    font-size: var(--text-2xs);
     font-weight: 600;
     color: var(--color-ember-300);
     text-transform: uppercase;
@@ -281,7 +287,7 @@
      small-caps label), kept so every call site picks up the one treatment. */
   .label-mono {
     font-family: var(--font-sans);
-    font-size: 13px;
+    font-size: var(--text-sm);
     font-weight: 500;
     color: var(--color-paper-400);
     letter-spacing: 0;

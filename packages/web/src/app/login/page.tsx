@@ -400,13 +400,13 @@ function LoginPageInner() {
         >
           <p>
             We received your sign-in for{' '}
-            <span className="break-all font-mono text-[13px] text-paper-100">{pendingEmail}</span>.
-            An admin needs to approve your account before you can use auto-swe. Ask an admin to
-            approve it, then sign in again.
+            <span className="break-all font-mono text-sm text-paper-100">{pendingEmail}</span>. An
+            admin needs to approve your account before you can use auto-swe. Ask an admin to approve
+            it, then sign in again.
           </p>
         </AuthHeading>
         <div className="mb-6 flex items-center justify-between gap-3 rounded-lg border border-ink-400/60 bg-ink-900/60 px-3.5 py-3">
-          <span className="text-[13px] text-paper-400">Account status</span>
+          <span className="text-sm text-paper-400">Account status</span>
           <Badge dot tone="amber" variant="outline">
             Pending approval
           </Badge>
@@ -475,9 +475,7 @@ function LoginPageInner() {
                 </span>
                 <div>
                   <div className="text-sm font-medium text-paper-100">{h.title}</div>
-                  <div className="mt-0.5 text-[13px] leading-relaxed text-paper-500">
-                    {h.detail}
-                  </div>
+                  <div className="mt-0.5 text-sm leading-relaxed text-paper-500">{h.detail}</div>
                 </div>
               </li>
             ))}
@@ -566,7 +564,7 @@ function LoginPageInner() {
               setError('');
               setInfo('');
             }}
-            optionClassName="flex-1 py-1.5 text-[13px]"
+            optionClassName="flex-1 py-1.5 text-sm"
             options={TAB_OPTIONS}
             value={tab}
           />
@@ -673,11 +671,11 @@ function LoginPageInner() {
             </Button>
           </form>
         )}
-        <p className="mt-6 text-center text-[13px] leading-relaxed text-paper-500">
+        <p className="mt-6 text-center text-sm leading-relaxed text-paper-500">
           New here? New accounts usually need an administrator’s approval, or ask an administrator
           for an invite.
         </p>
-        <p className="mt-3 text-center text-[13px] leading-relaxed text-paper-500 lg:hidden">
+        <p className="mt-3 text-center text-sm leading-relaxed text-paper-500 lg:hidden">
           auto-swe turns a ticket into a pull request for you to review and merge.
         </p>
       </AuthLayout>

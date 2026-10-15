@@ -43,7 +43,7 @@ const TEXT_ACTION = cn(
 );
 
 /** The caption above a trace body block ("Input", "System prompt"). */
-const BLOCK_CAPTION = 'mb-1 text-[11px] font-medium text-paper-500';
+const BLOCK_CAPTION = 'mb-1 text-xs font-medium text-paper-500';
 
 /** Strip provider prefix from a model spec: `anthropic/claude-opus-5-5` → `claude-opus-5-5` */
 function modelShortName(model: string): string {
@@ -150,7 +150,7 @@ const BODY_LIMIT = 3000;
 /** The mono block every trace body renders into. */
 function TracePre({ children }: { children: ReactNode }) {
   return (
-    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md border border-ink-500/70 bg-ink-900 px-3 py-2.5 font-mono text-[11.5px] leading-relaxed text-paper-300">
+    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md border border-ink-500/70 bg-ink-900 px-3 py-2.5 font-mono text-xs leading-relaxed text-paper-300">
       {children}
     </pre>
   );
@@ -385,7 +385,7 @@ function TokenCostChip({ trace }: { trace: AgentTraceRecord }) {
 
   return (
     <span
-      className="tabular shrink-0 text-[11px] text-paper-500"
+      className="tabular shrink-0 text-xs text-paper-500"
       title={
         hasTokens
           ? `${formatCount(trace.inputTokens ?? 0)} input / ${formatCount(trace.outputTokens ?? 0)} output tokens`
@@ -417,7 +417,7 @@ function OtelLink({ trace }: { trace: AgentTraceRecord }) {
     ? `${GRAFANA_URL}/explore?left=${encodeURIComponent(JSON.stringify({ queries: [{ datasource: { type: 'tempo' }, query: trace.otelTraceId, queryType: 'traceId', refId: 'A' }] }))}`
     : null;
 
-  const inner = 'shrink-0 rounded-sm font-mono text-[11px] text-paper-500';
+  const inner = 'shrink-0 rounded-sm font-mono text-xs text-paper-500';
 
   return href ? (
     <a
@@ -485,7 +485,7 @@ function EventRow({
 
             {/* Event kind */}
             <Badge
-              className="w-10 shrink-0 justify-center text-[11px]"
+              className="w-10 shrink-0 justify-center text-xs"
               title={glyph.title}
               tone={glyph.tone}
             >
@@ -504,7 +504,7 @@ function EventRow({
 
             {/* Detail / model */}
             {detail && (
-              <span className="flex-1 truncate font-mono text-[11px] text-paper-500">{detail}</span>
+              <span className="flex-1 truncate font-mono text-xs text-paper-500">{detail}</span>
             )}
           </button>
 
@@ -513,7 +513,7 @@ function EventRow({
             <TokenCostChip trace={trace} />
             <OtelLink trace={trace} />
             {durationLabel && (
-              <span className="tabular text-[11px] text-paper-500">{durationLabel}</span>
+              <span className="tabular text-xs text-paper-500">{durationLabel}</span>
             )}
             {hasError && (
               <Badge dot tone="brick">
@@ -694,7 +694,7 @@ export function TracesTab({
         >
           <span className="text-xs text-paper-500">
             Filtered to{' '}
-            <span className="rounded-sm bg-ink-600 px-1.5 py-px font-mono text-[11px] text-paper-200 max-lg:break-all">
+            <span className="rounded-sm bg-ink-600 px-1.5 py-px font-mono text-xs text-paper-200 max-lg:break-all">
               {filterNodeId}
             </span>
           </span>
@@ -763,27 +763,27 @@ export function TracesTab({
                       </span>
                       {group.nodeLabels.length > 0 &&
                         !group.nodeLabels.includes(group.activityName) && (
-                          <span className="font-mono text-[11px] text-paper-500">
+                          <span className="font-mono text-xs text-paper-500">
                             ({group.activityName})
                           </span>
                         )}
                       {group.ambiguous && (
                         <span
                           aria-describedby={noteId}
-                          className="rounded-md bg-amber-400/15 px-1.5 py-px text-[11px] font-medium text-amber-400"
+                          className="rounded-md bg-amber-400/15 px-1.5 py-px text-xs font-medium text-amber-400"
                         >
                           Ambiguous
                         </span>
                       )}
-                      <span className="tabular text-[11px] text-paper-500">
+                      <span className="tabular text-xs text-paper-500">
                         Attempt {group.attempt}
                       </span>
                       {group.stepAttempt !== null && group.stepAttempt > 1 && (
-                        <span className="tabular text-[11px] text-paper-500">
+                        <span className="tabular text-xs text-paper-500">
                           · node attempt {group.stepAttempt}
                         </span>
                       )}
-                      <span className="tabular ml-auto text-[11px] text-paper-500">
+                      <span className="tabular ml-auto text-xs text-paper-500">
                         {group.traces.length} event{group.traces.length !== 1 ? 's' : ''}
                       </span>
                     </div>

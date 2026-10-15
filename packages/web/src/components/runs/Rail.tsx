@@ -21,7 +21,7 @@ export function RailSection({
     <>
       {divider && <div className="mx-5 h-px bg-ink-500/40" />}
       <div className={cn('px-5 py-4', className)}>
-        {title && <h2 className="mb-2 text-[13px] font-semibold text-paper-100">{title}</h2>}
+        {title && <h2 className="mb-2 text-sm font-semibold text-paper-100">{title}</h2>}
         {children}
       </div>
     </>
@@ -46,7 +46,7 @@ export function RailRow({ children, className }: { children: ReactNode; classNam
 export const RAIL_KEY = 'shrink-0 text-xs text-paper-500';
 
 /** A rail value that is a plain figure or date. */
-export const RAIL_VALUE = 'tabular text-[13px] text-paper-200';
+export const RAIL_VALUE = 'tabular text-sm text-paper-200';
 
 /** A rail value that is an identifier: a scorer key, a workflow id, an event name. */
 export const RAIL_CODE = 'font-mono text-xs text-paper-300';

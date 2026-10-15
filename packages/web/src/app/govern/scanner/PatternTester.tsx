@@ -229,7 +229,7 @@ export function PatternTester({
       <button
         aria-controls={panelId}
         aria-expanded={open}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px] font-medium text-paper-200 hover:text-paper-50"
+        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-paper-200 hover:text-paper-50"
         onClick={() => setOpen((o) => !o)}
         type="button"
       >

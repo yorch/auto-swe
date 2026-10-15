@@ -42,7 +42,7 @@ export function SampleTaskButton({
       >
         Try a sample task
       </Button>
-      <p className="min-w-0 text-[13px] leading-relaxed text-paper-500" id={captionId}>
+      <p className="min-w-0 text-sm leading-relaxed text-paper-500" id={captionId}>
         {blocked
           ? filled
             ? 'Sample filled in. Edit it freely; nothing runs until you review and launch.'

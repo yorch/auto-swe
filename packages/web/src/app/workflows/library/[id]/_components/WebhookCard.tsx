@@ -107,7 +107,7 @@ export function WebhookCard({
             Copy this URL now. It is shown only once.
           </Alert>
           <div className="flex items-center gap-2">
-            <code className="min-w-0 flex-1 truncate rounded-md border border-ink-600 bg-ink-900 px-2 py-1 font-mono text-[11px] text-paper-300">
+            <code className="min-w-0 flex-1 truncate rounded-md border border-ink-600 bg-ink-900 px-2 py-1 font-mono text-xs text-paper-300">
               {webhookUrl}
             </code>
             <CopyButton value={webhookUrl} />
@@ -118,7 +118,7 @@ export function WebhookCard({
         </div>
       ) : template.webhookConfigured ? (
         <div className="space-y-3">
-          <p className="flex items-center gap-2 text-[13px] text-paper-200">
+          <p className="flex items-center gap-2 text-sm text-paper-200">
             <Badge dot tone="moss">
               Configured
             </Badge>
@@ -204,7 +204,7 @@ function WebhookSigning({
 
   return (
     <div className="mt-4 space-y-3 border-t border-ink-600 pt-3">
-      <p className="flex flex-wrap items-center gap-2 text-[13px] text-paper-200">
+      <p className="flex flex-wrap items-center gap-2 text-sm text-paper-200">
         Signing
         {signing.configured ? (
           <Badge dot tone="moss">
@@ -228,7 +228,7 @@ function WebhookSigning({
             Copy this signing secret now. It is shown only once.
           </Alert>
           <div className="flex items-center gap-2">
-            <code className="min-w-0 flex-1 truncate rounded-md border border-ink-600 bg-ink-900 px-2 py-1 font-mono text-[11px] text-paper-300">
+            <code className="min-w-0 flex-1 truncate rounded-md border border-ink-600 bg-ink-900 px-2 py-1 font-mono text-xs text-paper-300">
               {freshSecret}
             </code>
             <CopyButton value={freshSecret} />

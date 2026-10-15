@@ -108,7 +108,7 @@ export default function EpicDetailPage({ params }: PageProps) {
           <Card className="overflow-hidden p-0">
             <CardHeader className="mb-0 px-5 pt-5 pb-3">
               <CardTitle>Child runs</CardTitle>
-              <span className="tabular text-[13px] text-paper-400">
+              <span className="tabular text-sm text-paper-400">
                 {done} of {epic.children.length} finished
               </span>
             </CardHeader>

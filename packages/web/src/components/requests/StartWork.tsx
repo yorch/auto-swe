@@ -164,7 +164,7 @@ function Step({
             <span className="sr-only">Step {number}: </span>
             {title}
           </h2>
-          {hint && <p className="mt-0.5 text-[13px] text-paper-400">{hint}</p>}
+          {hint && <p className="mt-0.5 text-sm text-paper-400">{hint}</p>}
         </div>
       </div>
       {children}
@@ -303,7 +303,7 @@ export function StartWork({
                     </div>
                   )}
                   {template?.description && (
-                    <p className="mt-3 text-[13px] leading-relaxed text-paper-400">
+                    <p className="mt-3 text-sm leading-relaxed text-paper-400">
                       {template.description}
                     </p>
                   )}
@@ -340,7 +340,7 @@ export function StartWork({
             <h2 className="text-sm font-semibold text-paper-100">{guide.title}</h2>
             <ul className="mt-3 space-y-2.5">
               {guide.points.map((point) => (
-                <li className="flex gap-2 text-[13px] leading-relaxed text-paper-400" key={point}>
+                <li className="flex gap-2 text-sm leading-relaxed text-paper-400" key={point}>
                   <Icon className="mt-0.5 text-moss-400" name="check" size={14} />
                   {point}
                 </li>

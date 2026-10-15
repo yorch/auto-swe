@@ -310,7 +310,7 @@ export default function RunDetailPage({ params }: PageProps) {
       <header className="shrink-0 border-b border-ink-600/40 bg-ink-900 px-4 pt-3 pb-4 md:px-6">
         <nav
           aria-label="Breadcrumb"
-          className="mb-1.5 flex flex-wrap items-center gap-x-1.5 text-[13px] text-paper-500"
+          className="mb-1.5 flex flex-wrap items-center gap-x-1.5 text-sm text-paper-500"
         >
           <Link className={CRUMB} href="/runs">
             All runs
@@ -344,7 +344,7 @@ export default function RunDetailPage({ params }: PageProps) {
                 </Badge>
               )}
             </div>
-            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[13px] text-paper-500">
+            <p className="mt-1 flex flex-wrap items-center gap-x-1.5 text-sm text-paper-500">
               {/* The Agent Run template is hidden: its detail route answers 404 for everyone. */}
               {run.templateName &&
                 (isAgentRun ? (
@@ -425,7 +425,7 @@ export default function RunDetailPage({ params }: PageProps) {
           </div>
         </div>
 
-        <p className="mt-3 flex flex-wrap items-center gap-x-1 text-[13px] text-paper-500">
+        <p className="mt-3 flex flex-wrap items-center gap-x-1 text-sm text-paper-500">
           Below: the run's trace
           <HelpTip term="trace" />, every step and agent action, and any gate where it is waiting on
           a person.

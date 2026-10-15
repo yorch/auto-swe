@@ -41,7 +41,7 @@ export function DocToc({ className, toc }: { className?: string; toc: TocEntry[]
   }, [toc]);
 
   return (
-    <ul className={cn('space-y-0.5 border-l border-ink-600 text-[13px]', className)}>
+    <ul className={cn('space-y-0.5 border-l border-ink-600 text-sm', className)}>
       {toc.map((entry) => {
         const current = entry.id === active;
         return (

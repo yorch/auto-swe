@@ -234,7 +234,7 @@ export default function StudioGithubInstallationsPage() {
                   return (
                     <TRow key={i.id}>
                       <Td
-                        className="py-2.5 pr-4 font-mono text-[13px] font-medium text-paper-100"
+                        className="py-2.5 pr-4 font-mono text-sm font-medium text-paper-100"
                         primary
                       >
                         {i.accountLogin}

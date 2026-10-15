@@ -96,7 +96,7 @@ export function RunListItem({ run }: { run: WorkflowRunSummary }) {
       <Link
         aria-label={`Diagnostics for ${title}`}
         className={cn(
-          'inline-flex shrink-0 items-center gap-1 self-start rounded-sm text-[13px] text-ember-400 transition-colors hover:text-ember-300 sm:self-center',
+          'inline-flex shrink-0 items-center gap-1 self-start rounded-sm text-sm text-ember-400 transition-colors hover:text-ember-300 sm:self-center',
           FOCUS_RING
         )}
         href={diagnostics}

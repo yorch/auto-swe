@@ -156,9 +156,9 @@ function FieldGroup({
 }) {
   return (
     <div>
-      <h3 className="text-[13px] font-semibold text-paper-200">{label}</h3>
+      <h3 className="text-sm font-semibold text-paper-200">{label}</h3>
       {help ? (
-        <p className="mt-1 mb-3 max-w-2xl text-[13px] leading-relaxed text-paper-400">{help}</p>
+        <p className="mt-1 mb-3 max-w-2xl text-sm leading-relaxed text-paper-400">{help}</p>
       ) : (
         <div className="mb-3" />
       )}

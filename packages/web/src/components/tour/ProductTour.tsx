@@ -58,7 +58,7 @@ function isEditable(node: EventTarget | null): boolean {
 }
 
 const CARD =
-  'w-80 max-h-[calc(100vh-1.5rem)] max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-lg border border-ink-400 bg-ink-800 p-4 text-left text-[13px] leading-relaxed text-paper-200 shadow-2xl shadow-black/40';
+  'w-80 max-h-[calc(100vh-1.5rem)] max-w-[calc(100vw-1.5rem)] overflow-y-auto rounded-lg border border-ink-400 bg-ink-800 p-4 text-left text-sm leading-relaxed text-paper-200 shadow-2xl shadow-black/40';
 
 interface ProductTourProps {
   steps: TourStep[];

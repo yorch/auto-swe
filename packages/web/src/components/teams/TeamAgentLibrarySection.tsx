@@ -196,7 +196,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
           </Button>
         )}
       </CardHeader>
-      <p className="mb-4 text-[13px] text-paper-400">
+      <p className="mb-4 text-sm text-paper-400">
         Per-team agents override the global library for this team's runs. Leave a field blank to
         inherit the global value.
       </p>

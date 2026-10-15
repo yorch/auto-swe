@@ -44,7 +44,7 @@ export function SegmentedControl<T extends string>({
           <button
             aria-pressed={selected}
             className={cn(
-              'whitespace-nowrap rounded-md px-2.5 py-1 text-[12.5px] font-medium transition-colors',
+              'whitespace-nowrap rounded-md px-2.5 py-1 text-sm font-medium transition-colors',
               FOCUS_RING,
               selected
                 ? 'bg-ink-500 text-paper-50 shadow-sm'

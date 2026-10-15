@@ -80,7 +80,7 @@ export function ReviewList({ items }: { items: ReviewItem[] }) {
           <dd
             className={cn(
               'min-w-0 break-words text-paper-100',
-              item.mono && 'font-mono text-[13px]',
+              item.mono && 'font-mono text-sm',
               item.multiline && 'whitespace-pre-wrap'
             )}
           >

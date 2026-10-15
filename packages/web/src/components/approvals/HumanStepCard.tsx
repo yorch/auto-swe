@@ -312,7 +312,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
             {step.title}
           </div>
           {step.description && (
-            <div className="mt-1 whitespace-pre-wrap break-words text-[13px] leading-relaxed text-paper-400">
+            <div className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed text-paper-400">
               {step.description}
             </div>
           )}
@@ -410,7 +410,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
       </div>
 
       {responses.length > 0 && (
-        <ul className="space-y-2 border-t border-ink-600 pt-3 text-[13px]">
+        <ul className="space-y-2 border-t border-ink-600 pt-3 text-sm">
           {responses.map((r, i) => (
             // biome-ignore lint/suspicious/noArrayIndexKey: responses are an ordered, append-only list
             <li className="flex gap-2.5 text-paper-300" key={i}>

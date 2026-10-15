@@ -169,10 +169,10 @@ export function SettingRow({
               </Badge>
             )}
           </div>
-          <code className="mt-0.5 block break-all font-mono text-[11.5px] text-paper-500">
+          <code className="mt-0.5 block break-all font-mono text-xs text-paper-500">
             {setting.key}
           </code>
-          <p className="mt-2 max-w-prose text-[13px] leading-relaxed text-paper-400">
+          <p className="mt-2 max-w-prose text-sm leading-relaxed text-paper-400">
             {setting.description}
           </p>
           <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
@@ -226,7 +226,7 @@ export function SettingRow({
                 <Input
                   aria-describedby={unit ? unitId : undefined}
                   aria-label={setting.label}
-                  className={cn(isNumber && 'tabular-nums', isList && 'font-mono text-[13px]')}
+                  className={cn(isNumber && 'tabular-nums', isList && 'font-mono text-sm')}
                   disabled={!canWriteHere || busy || setting.redacted}
                   error={invalidNumber ? 'Must be a number' : undefined}
                   id={`setting-${setting.key}`}

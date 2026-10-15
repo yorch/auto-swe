@@ -19,7 +19,7 @@ export function LoadingState({
       className={cn('flex items-center', compact ? 'py-2' : 'justify-center py-12')}
       role="status"
     >
-      <div className="flex items-center gap-2.5 text-[13px] text-paper-500">
+      <div className="flex items-center gap-2.5 text-sm text-paper-500">
         <span
           aria-hidden
           className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-ink-400 border-t-ember-400"

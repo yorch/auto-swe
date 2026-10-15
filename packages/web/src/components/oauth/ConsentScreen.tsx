@@ -152,7 +152,7 @@ function ConsentDecision({ search }: { search: string }) {
         <span className="font-semibold text-paper-100">{name ?? 'An app'}</span> wants to act on
         your behalf in auto-swe.
       </AuthHeading>
-      <p className="-mt-2 mb-4 text-[13px] leading-relaxed text-paper-500">
+      <p className="-mt-2 mb-4 text-sm leading-relaxed text-paper-500">
         MCP (Model Context Protocol) lets an AI app use auto-swe on your behalf.{' '}
         <DocLink label="Learn more about MCP" newTab {...HELP_LINKS.mcpServer} />
       </p>
@@ -187,7 +187,7 @@ function ConsentDecision({ search }: { search: string }) {
 
         <div className="p-4">
           <div className="label-mono mb-2.5">It will be able to</div>
-          <ul className="space-y-3 text-[13px] leading-relaxed text-paper-300">
+          <ul className="space-y-3 text-sm leading-relaxed text-paper-300">
             {wantsRead && (
               <li className="flex gap-2.5">
                 <Icon className="mt-0.5 text-moss-400" name="check" size={15} />
@@ -245,7 +245,7 @@ function ConsentDecision({ search }: { search: string }) {
         {error && <Alert>{error}</Alert>}
       </div>
 
-      <p className="mt-6 text-[13px] leading-relaxed text-paper-500">
+      <p className="mt-6 text-sm leading-relaxed text-paper-500">
         You can disconnect this at any time under{' '}
         <Link
           className="text-ember-300 underline hover:text-ember-200"

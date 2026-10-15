@@ -195,7 +195,7 @@ export function GitHubTab() {
             </FieldGrid>
 
             <div className="space-y-2.5 rounded-lg border border-ink-500/60 bg-ink-900/30 p-4">
-              <div className="text-[13px] font-medium text-paper-200">Webhook endpoints</div>
+              <div className="text-sm font-medium text-paper-200">Webhook endpoints</div>
               <UrlRow label="PR and merge events" url={webhookUrl} />
               <UrlRow
                 help="Register both URLs in your GitHub repository or organization webhook settings, with Content-Type: application/json."

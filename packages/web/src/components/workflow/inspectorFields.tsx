@@ -135,7 +135,7 @@ export function InspectorSection({
   return (
     <section className={cn('space-y-3 border-t border-ink-600 px-4 py-4', className)}>
       <div className="flex min-h-7 items-center justify-between gap-2">
-        <h3 className="text-[13px] font-semibold text-paper-100">{title}</h3>
+        <h3 className="text-sm font-semibold text-paper-100">{title}</h3>
         {action}
       </div>
       {children}
@@ -218,7 +218,7 @@ function SchemaField({
     return (
       <Checkbox
         checked={Boolean(value)}
-        className="text-[13px]"
+        className="text-sm"
         hint={hint}
         id={id}
         label={label}

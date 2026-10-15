@@ -79,7 +79,7 @@ export default function GovernWorkflowPage() {
                     className={`-ml-px block border-l border-transparent py-1.5 pl-3 hover:border-ember-400 ${FOCUS_RING}`}
                     href={`#${s.id}`}
                   >
-                    <span className="block text-[13px] text-paper-200">{s.label}</span>
+                    <span className="block text-sm text-paper-200">{s.label}</span>
                     <span className="block text-xs text-paper-500">{s.hint}</span>
                   </a>
                 </li>

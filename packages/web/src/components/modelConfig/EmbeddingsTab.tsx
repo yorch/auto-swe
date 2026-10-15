@@ -93,7 +93,7 @@ export function EmbeddingsTab() {
             {noCredential ? 'No credential' : 'Ready'}
           </Badge>
         </CardHeader>
-        <p className="-mt-1 mb-5 text-[13px] leading-relaxed text-paper-400">
+        <p className="-mt-1 mb-5 text-sm leading-relaxed text-paper-400">
           Turns lessons and memory into vectors so the platform can find similar ones later. One
           model serves the whole platform; teams and workflows cannot override it. The model must
           produce 1536-dimensional vectors, because stored memory has a fixed width.
@@ -169,7 +169,7 @@ function ReembedMemoryCard() {
       <CardHeader className="items-start">
         <CardTitle eyebrow="Memory">Re-embed older memory</CardTitle>
       </CardHeader>
-      <p className="-mt-1 mb-5 text-[13px] leading-relaxed text-paper-400">
+      <p className="-mt-1 mb-5 text-sm leading-relaxed text-paper-400">
         {status.stale.toLocaleString()} of {status.total.toLocaleString()} memory items were
         embedded by a different model than {status.modelSpec ?? 'the configured one'}. Lesson and
         channel-memory search skips them until they are re-embedded.

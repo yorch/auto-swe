@@ -40,7 +40,7 @@ export function Input({
           aria-invalid={error ? true : undefined}
           className={cn(
             'w-full rounded-md border border-ink-200 bg-ink-900 text-paper-100 outline-none transition-colors',
-            compact ? 'h-8 px-2.5 text-[13px]' : 'h-9 px-3 text-sm',
+            compact ? 'h-8 px-2.5 text-sm' : 'h-9 px-3 text-sm',
             'hover:border-paper-600 focus:border-ember-400 focus:ring-2 focus:ring-ember-400/20',
             'placeholder:text-paper-600',
             error && 'border-brick-400 focus:border-brick-400',

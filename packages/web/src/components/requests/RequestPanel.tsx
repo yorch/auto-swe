@@ -128,7 +128,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
                   </h3>
                   <div className="flex flex-wrap items-center gap-3">
                     <StatusBadge status={run.status} />
-                    <span className="text-[13px] text-paper-400">
+                    <span className="text-sm text-paper-400">
                       {isCrossRepo
                         ? 'Repository execution'
                         : runId === latestId
@@ -387,7 +387,7 @@ function AttemptContent({
               }}
             />
           </div>
-          <p className="tabular shrink-0 text-[13px] text-paper-400">
+          <p className="tabular shrink-0 text-sm text-paper-400">
             {currentSteps.filter((step) => step.status === 'PASSED').length} of{' '}
             {currentSteps.length} recorded steps passed.
           </p>
@@ -446,7 +446,7 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
           <h4 className="text-sm font-semibold text-paper-200">Step log</h4>
           <ul className="divide-y divide-ink-600 rounded-md border border-ink-600">
             {run.steps.map((step) => (
-              <li className="px-3 py-2 text-[13px]" key={step.id}>
+              <li className="px-3 py-2 text-sm" key={step.id}>
                 <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="font-mono text-paper-100">{step.nodeId}</span>
                   <span className="text-paper-500">attempt {step.attempt}</span>

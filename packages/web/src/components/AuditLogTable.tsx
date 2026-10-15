@@ -121,7 +121,7 @@ export function AuditLogTable<T extends AuditLogEntry>({
               {entries.map((entry) => (
                 <TRow hover key={entry.id}>
                   <Td className="py-2.5 pr-4" primary>
-                    <span className="text-[13px] font-medium text-paper-100">
+                    <span className="text-sm font-medium text-paper-100">
                       {ENTITY_LABELS[entry.entityType] ?? entry.entityType}
                     </span>
                     {showEntityId && (
@@ -138,7 +138,7 @@ export function AuditLogTable<T extends AuditLogEntry>({
                       {ACTION_LABELS[entry.action] ?? entry.action}
                     </Badge>
                   </Td>
-                  <Td className="px-4 py-2.5 text-[13px] text-paper-300" label="By">
+                  <Td className="px-4 py-2.5 text-sm text-paper-300" label="By">
                     {entry.actorEmail ??
                       (entry.actorId ? (
                         <span className="font-mono text-xs" title={entry.actorId}>
@@ -154,7 +154,7 @@ export function AuditLogTable<T extends AuditLogEntry>({
                   >
                     {summary(entry)}
                   </Td>
-                  <Td className="py-2.5 pl-4 text-[13px] text-paper-400" label="When">
+                  <Td className="py-2.5 pl-4 text-sm text-paper-400" label="When">
                     <time
                       className="whitespace-nowrap tabular-nums"
                       dateTime={entry.createdAt}
