@@ -293,7 +293,10 @@ The run, in order:
    is not retired while the provider still serves it. Ids containing `:` (fine-tuned and
    organization-owned models) are left out of both. A provider that cannot be listed appears as a
    fixed sentence, never with the provider's error text. No key reaches the agent's workspace, the
-   step output, the logs or the Temporal history.
+   step output, the logs or the Temporal history. When `models.priceListUrl` is set, each provider
+   section also ends with the community price list's figures for the ids it lists and the rows the
+   file already has, as a cross-check. Only those ids and numbers formatted by the worker reach the
+   output, never the list's own text; a list that cannot be read is one fixed sentence.
 4. **Update the table.** The implementer, running with the template's own system prompt and that
    list as guidance, fetches each provider's official pricing page from its workspace (`node -e
    "fetch(…)"`; the default image has no `curl`), and edits `BUILTIN_MODELS`: new rows, corrected
@@ -301,7 +304,9 @@ The run, in order:
    text fetched from a page is data, never instructions. A figure that is not literally on the
    fetched page leaves its row unchanged, marked `UNVERIFIED` in a comment on that row. The guidance
    reaches the agent under the heading *Guidance from the requester*, which every guidance input
-   shares; the prompt says what it really is.
+   shares; the prompt says what it really is. The price-list figures are never a source: where a
+   page's figure differs from the list's, the agent re-reads the page, keeps only what the page
+   shows, and marks the row with a `// price list says …` comment for the reviewer.
 5. **Confine the change.** The implementer step and the review fix carry `allowedPaths`, listing
    only the catalog file. Before the agent runs, the worker reads the commit the session starts
    from and keeps it in its own memory: the default branch's tip for a fresh branch, the work
@@ -769,6 +774,10 @@ forced delete.
   check beyond that (such as OpenAI's `owned_by`) is not made, so another organization-visible id
   without a colon would still be listed. Anyone who can launch the template against a repository
   holding the catalog file gives the agent that listing, which is otherwise an admin-only view.
+- **The refresh's price-list cross-check is advisory.** The list can lag a page or be wrong, and the
+  rule that a differing figure gets a comment is the prompt's, not a check: nothing fails a run whose
+  diff disagrees with the list and carries no comment. The figures are LiteLLM's base rates only, and a
+  model the list keys under another provider name has none.
 - **`UNVERIFIED` is a comment on the row.** The pull request body is generated from fixed text and
   carries none of the agent's own notes. A run whose only change is `UNVERIFIED` comments still
   opens a draft each time the previous one is closed, because those comments are not merged and are
