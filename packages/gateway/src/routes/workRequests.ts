@@ -39,6 +39,7 @@ import {
 } from '../lib/mcpWriteGuard.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { retryTemplateRequest } from '../lib/retryTemplateRequest.js';
+import { authorizePayloadDeclaredConnections } from '../lib/runConnection.js';
 import { isSystemTemplate } from '../lib/systemTemplate.js';
 import {
   inputsSatisfySchema,
@@ -926,6 +927,31 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
               }
             : {}),
         })
+      ) {
+        return;
+      }
+      // The other half of the same launch decision: the repository above, and every *other*
+      // connection the recorded payload names. A re-run pushes and writes externally exactly
+      // like the first attempt, so a payload naming a connection the caller cannot reach must
+      // not start. `repo.type` is passed because the default template declares `connectionId`
+      // as a `git_repo` connection, and the field repeating the run's own id is type-checked
+      // against it rather than looked up.
+      if (
+        !(await authorizePayloadDeclaredConnections(
+          {
+            connectionId: repo.id,
+            gate: request.repoAccessGate,
+            inputSchema: isInputSchema(launchable.inputSchema) ? launchable.inputSchema : null,
+            log: request.log,
+            payload: workRequest.payload,
+            prisma: fastify.prisma,
+            providerMeta: null,
+            templateTeamId: snapshotTemplate?.teamId ?? null,
+            user,
+          },
+          reply,
+          repo.type
+        ))
       ) {
         return;
       }

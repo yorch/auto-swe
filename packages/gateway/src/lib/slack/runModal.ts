@@ -1,7 +1,11 @@
 import crypto from 'node:crypto';
 import type { Prisma, Role } from '@auto-swe/shared';
 import { isGitRepoConnection } from '@auto-swe/shared/lib/connectionGuards';
-import { isInputSchema, validateInputPayload } from '@auto-swe/shared/lib/inputSchema';
+import {
+  declaredConnectionInputs,
+  isInputSchema,
+  validateInputPayload,
+} from '@auto-swe/shared/lib/inputSchema';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import { repoMembersSelect } from '@auto-swe/shared/lib/repoMembership';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
@@ -338,6 +342,28 @@ export async function handleRunModalSubmission(
       return {
         errors: {
           template_block: `This workflow needs inputs the modal cannot supply: ${result.errors.join('; ')}`,
+        },
+        response_action: 'errors',
+      };
+    }
+    // The modal fills exactly four keys — `budget`, `connectionId`, `description`, `ticketId` —
+    // so a template that types one of them as a `connection` lets the *submitter* name a
+    // connection the run then uses: the payload is where the run's authorized set comes from, and
+    // nothing between here and the worker decides the connections it declares. `connectionId` is
+    // the repository this launch already decided; every other connection-typed field this payload
+    // fills is refused, as is a `connectionId` whose declared type contradicts that repository.
+    const declared = declaredConnectionInputs(tplSchema.inputSchema, runPayload);
+    const unexpected = declared.find((field) => field.connectionId !== repo.id);
+    const mismatched = declared.find(
+      (field) =>
+        field.connectionId === repo.id && field.expectedType && field.expectedType !== repo.type
+    );
+    if (unexpected || mismatched) {
+      return {
+        errors: {
+          template_block: unexpected
+            ? `This workflow cannot be run from Slack: '${unexpected.field}' is a connection input`
+            : 'This workflow expects a different kind of connection than the repository you chose',
         },
         response_action: 'errors',
       };

@@ -133,7 +133,11 @@ async function buildApp() {
       groupBy: vi.fn(async (_args: unknown) => [] as unknown[]),
     },
     configAuditLog: { create: vi.fn(async (_args: { data: Record<string, unknown> }) => ({})) },
-    connection: { findFirst: vi.fn() },
+    connection: {
+      findFirst: vi.fn(),
+      // The declared-connection check at save: nothing answers for an id, which is the refusal.
+      findMany: vi.fn(async (_args: unknown) => [] as unknown[]),
+    },
     workflowRun: {
       findFirst: vi.fn(async () => null),
       findMany: vi.fn(async (_args: unknown) => [] as unknown[]),
@@ -615,6 +619,34 @@ describe('automationRoutes (event automations)', () => {
       expect(
         JSON.stringify(ctx.prisma.workflowTemplate.findFirst.mock.calls[0]?.[0].where)
       ).toContain('system:');
+    });
+
+    it('refuses an option naming a connection the team cannot use', async () => {
+      // The same decision the fire takes, taken here so the author is told when they save rather
+      // than from a run that never started. The lookup answers for no id, so the option names no
+      // connection the team can use.
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({
+        activeVersion: 2,
+        id: TEMPLATE,
+        inputSchema: {
+          ...CI_TRIAGE_INPUT_SCHEMA,
+          properties: {
+            ...CI_TRIAGE_INPUT_SCHEMA.properties,
+            docConnectionId: { type: 'connection' },
+          },
+        },
+      });
+
+      const res = await post({
+        ...VALID,
+        inputs: { docConnectionId: 'cccccccc-0000-4000-8000-000000000003' },
+        templateId: TEMPLATE,
+      });
+
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('INVALID_INPUTS');
+      expect(res.json().error.message).toMatch(/not one this team can use/);
     });
 
     it.each([

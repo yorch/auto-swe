@@ -165,6 +165,29 @@ export async function validateRunConnection(
 }
 
 /**
+ * Authorize every connection the payload declares, for a caller that has decided the run's own
+ * connection itself.
+ *
+ * A re-run is that caller: it authorizes its recorded repository with `authorizeLaunch` and then
+ * re-validates the recorded payload against the schema, but the payload may name a second
+ * connection — a document store to write to — and each one is a credential the run will be
+ * handed. Exported rather than reimplemented so the rule cannot drift from a launch's.
+ *
+ * `primaryConnectionType` is the type of the connection the caller already decided: the field
+ * repeating its id has its declared type checked against it, and every other field is looked up
+ * and decided on its own id. A caller that has the row must pass its type — passing null fails
+ * the declared type on the primary field, which the default template's `connectionId` declares
+ * as `git_repo`.
+ */
+export async function authorizePayloadDeclaredConnections(
+  input: ValidateRunConnectionInput,
+  reply: FastifyReply,
+  primaryConnectionType: string | null
+): Promise<boolean> {
+  return authorizeDeclaredConnections(input, reply, primaryConnectionType);
+}
+
+/**
  * The connection row a launch decision reads, in the shape `decideRepoAccess`
  * needs: the acting user's memberships (they have to be a member of the owning
  * team, or of a team the connection is shared with) and the owning team's org.

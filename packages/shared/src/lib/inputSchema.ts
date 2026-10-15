@@ -290,6 +290,14 @@ export function inputSchemaProblems(value: unknown): string[] {
     if (p.format !== undefined && p.format !== 'uuid') {
       at("format may only be 'uuid'");
     }
+    // The platform fills these two from text it either receives or is given: an external ticket
+    // id, and a description. Typing one as a `connection` would make that text the connection a
+    // run uses — chosen by whoever supplies the ticket — and the run's authorized set is derived
+    // from the payload, so no launch path would notice. `connectionId` is deliberately not here:
+    // it *is* a connection, the run's own, which every launch authorizes.
+    if (p.type === 'connection' && (key === 'ticketId' || key === 'description')) {
+      at('may not be a connection: the platform fills this key from text, not from a picker');
+    }
     if (p.enum !== undefined && !isScalarList(p.enum)) {
       at('enum must be a list of strings or numbers');
     }

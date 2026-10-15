@@ -11,6 +11,8 @@ import { workRequestRoutes } from './workRequests.js';
 
 const OLD = new Date(Date.now() - 60 * 60_000);
 const WORK_REQUEST_ID = 'bbbbbbbb-1111-4111-8111-bbbbbbbbbbbb';
+/** The repository row's id. A real one is a UUID, and a `connection` input must be one too. */
+const REPO_ID = '11111111-1111-4111-8111-111111111111';
 
 type Ledger = {
   currentStatus: string;
@@ -119,7 +121,7 @@ describe('POST /work-requests/:id/retry', () => {
               budgetTier: 'STANDARD',
               repository: {
                 githubUrl: null,
-                id: 'repo-1',
+                id: REPO_ID,
                 installation: null,
                 isActive: true,
                 organizationName: 'org',
@@ -202,6 +204,50 @@ describe('POST /work-requests/:id/retry', () => {
     });
     expect(res.statusCode).toBe(409);
     expect(res.json().error.code).toBe('USE_AGENT_RUN_RERUN');
+    expect(started).toHaveLength(0);
+  });
+
+  it('starts a retry whose payload names only its own repository', async () => {
+    // The regression this guards: the default template declares `connectionId` as a `git_repo`
+    // connection, and a field repeating the run's own id is type-checked against the row the
+    // caller already decided. A check that passed no type there would fail *every* git retry of
+    // the default template with CONNECTION_TYPE_MISMATCH.
+    launchable = {
+      inputSchema: {
+        properties: { connectionId: { connectionType: 'git_repo', type: 'connection' } },
+        required: ['connectionId'],
+        type: 'object',
+      },
+    };
+    payload = { connectionId: REPO_ID };
+
+    const res = await retry();
+
+    expect(res.statusCode).toBe(201);
+    expect(started).toHaveLength(1);
+  });
+
+  it('refuses a retry whose payload names a connection the caller cannot reach', async () => {
+    // A re-run pushes and writes externally exactly like the first attempt, so a second
+    // connection in the recorded payload is a credential the caller must still be able to use.
+    // The repository decision above says nothing about it: it is authorized per declared field
+    // or not at all.
+    launchable = {
+      inputSchema: {
+        properties: {
+          connectionId: { connectionType: 'git_repo', type: 'connection' },
+          docConnectionId: { type: 'connection' },
+        },
+        required: ['connectionId'],
+        type: 'object',
+      },
+    };
+    payload = { connectionId: REPO_ID, docConnectionId: 'eeeeeeee-0000-4000-8000-00000000000e' };
+
+    const res = await retry();
+
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('CONNECTION_NOT_FOUND');
     expect(started).toHaveLength(0);
   });
 
@@ -312,7 +358,7 @@ describe('POST /work-requests/:id/retry', () => {
   const ENG = 'eng-org-test-T-1';
   const engRow = (workRequestId: string | null, updatedAt = OLD) => ({
     currentStatus: 'IMPLEMENTING',
-    repoId: 'repo-1',
+    repoId: REPO_ID,
     temporalWorkflowId: ENG,
     updatedAt,
     workRequest: { externalTicketId: 'T-1' },

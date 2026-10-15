@@ -1321,11 +1321,32 @@ Current constraints of the system as built. Deliberate product boundaries are in
   template's `inputSchema` is mutable while its spec is snapshotted, so deriving at check time
   would let one schema edit widen a run already in flight; a run with **no** pin (created before
   the column existed) is let through with a warning rather than stranded, and every new
-  execution writes one. Two gaps remain: a **literal** reference — an `mcp` node's
-  `connectionRef` — is in no pin and is checked against the template's team instead
-  (`assertRunMayUseConnection`), so reassigning a template mid-run moves that authority; and the
-  **git-repo retry** path still re-authorizes its repository without authorizing the connections
-  its stored payload declares.
+  execution writes one. One gap remains: a **literal** reference — an `mcp` node's `connectionRef` —
+  is in no pin and is checked against the template's team instead (`assertRunMayUseConnection`), so
+  reassigning a template mid-run moves that authority.
+- **The connections a payload declares are authorized before a run is created.** The pin is derived
+  from the payload, so it cannot answer "may this identity reach them" — it authorizes whatever the
+  payload names. The launches that call `validateRunConnection` decide it up front; two paths that
+  can start a run decide it themselves, with the acting identity they have: an **automation fire**
+  (`gateway/src/lib/automations/declaredConnections.ts`, the acting team's reach — a fire has no
+  user) and the **git-repo retry** (`routes/workRequests.ts`, through the same
+  `authorizePayloadDeclaredConnections` a launch uses, with the row it has already decided). A
+  **scheduled work request** needs neither: its request carries no payload, so it declares no
+  connection, and `scheduledFireRefusal` (`worker/src/activities/scheduledFireAuthorization.ts`)
+  re-takes its owner's repository decision on every fire.
+- **A template may not type a key the platform fills from text as a `connection`.** `ticketId` and
+  `description` are text the platform supplies — from the Slack modal, `POST /work-requests`, an
+  event or an automation's occurrence — so a schema typing either as a `connection` would make that
+  text the connection a run uses, chosen by whoever supplies the ticket, with the run's authorized
+  set derived from the payload. `inputSchemaProblems` refuses it where a schema is saved (a template
+  write, or a bundle install), which is why a path whose payload has a fixed shape needs no check of
+  its own; the Slack modal additionally refuses such a template at submit, which covers a schema
+  saved before this rule. `connectionId` may still be a `connection`: it is the run's own, which
+  every launch authorizes.
+- An existing automation is also re-checked at fire, because the template may have changed since the
+  automation was saved: the source's `templateProblem` runs again, so a mapping stored against a
+  string input that the template later retyped to `connection` is refused rather than letting the
+  event's own sender choose the connection the run uses.
 - **A literal connection reference is checked where it is used.** An `mcp` node names its server
   with `connectionRef`, an id written into the spec rather than a payload binding, so no launch path
   authorizes it: `assertRunMayUseConnection` (`worker/src/lib/connectionAccess.ts`) refuses one the

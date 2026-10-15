@@ -226,6 +226,30 @@ describe('inputSchemaProblems', () => {
   it('reports a schema without the outline', () => {
     expect(inputSchemaProblems({ properties: [] })).toHaveLength(1);
   });
+
+  it('refuses the keys the platform fills from text, as connections', () => {
+    // `ticketId` arrives as an external ticket id and `description` as prose — the modal, this
+    // API and the automations engine all fill them from text. A schema typing either as a
+    // `connection` would make that text the connection the run uses, and the run's authorized set
+    // is derived from the payload, so no launch path would notice.
+    for (const key of ['ticketId', 'description']) {
+      expect(
+        inputSchemaProblems({
+          properties: { [key]: { type: 'connection' } },
+          type: 'object',
+        }).join('\n')
+      ).toMatch(new RegExp(`${key}.*may not be a connection`));
+    }
+  });
+
+  it('still allows connectionId as a connection, which is the run’s own', () => {
+    expect(
+      inputSchemaProblems({
+        properties: { connectionId: { connectionType: 'git_repo', type: 'connection' } },
+        type: 'object',
+      })
+    ).toEqual([]);
+  });
 });
 
 describe('declaredConnectionInputs', () => {
