@@ -1,15 +1,19 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import {
+  ASSISTANT_TURN_LOST_DETAIL,
   type AssistantPageContext,
   type AssistantToolStep,
+  assistantErrorDetail,
   assistantPageContextSchema,
 } from '@auto-swe/shared/lib/assistantConversation';
 import { createAssistantTools, summarizeToolResult } from '../agents/assistantTools.js';
 import { logError } from '../lib/activityLog.js';
+import { redactString } from '../lib/agentTracer.js';
 import { createAssistantGateway } from '../lib/assistantGateway.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
+import { redactToken } from '../lib/redactToken.js';
 import { ownerOfUser, withSpendOwner } from '../lib/spendOwner.js';
 import { runAgent } from './runAgent.js';
 
@@ -240,7 +244,13 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
       replyId: reply.id,
     });
     await prisma.assistantMessage.update({
-      data: { error: failureText(err), status: 'FAILED', steps: writer.toolSteps as object[] },
+      data: {
+        error: failureText(err),
+        // Stored for admins, so scrubbed of credential-shaped text and of the turn's own token.
+        errorDetail: redactToken(redactString(assistantErrorDetail(err)), input.token),
+        status: 'FAILED',
+        steps: writer.toolSteps as object[],
+      },
       where: { id: reply.id },
     });
     return { status: 'FAILED' };
@@ -257,7 +267,7 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
  */
 export async function failAssistantReply(input: { replyId: string }): Promise<void> {
   await prisma.assistantMessage.updateMany({
-    data: { error: FAILED_TEXT, status: 'FAILED' },
+    data: { error: FAILED_TEXT, errorDetail: ASSISTANT_TURN_LOST_DETAIL, status: 'FAILED' },
     where: { id: input.replyId, status: { in: ['PENDING', 'STREAMING'] } },
   });
 }

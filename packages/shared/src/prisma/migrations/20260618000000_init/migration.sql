@@ -1866,6 +1866,7 @@ CREATE TABLE "assistant_messages" (
     "status" "AssistantMessageStatus" NOT NULL DEFAULT 'COMPLETE',
     "page_context" JSONB,
     "error" TEXT,
+    "error_detail" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL,
 
@@ -2558,6 +2559,9 @@ CREATE INDEX "assistant_conversations_user_id_updated_at_idx" ON "assistant_conv
 
 -- CreateIndex
 CREATE INDEX "assistant_messages_conversation_id_created_at_idx" ON "assistant_messages"("conversation_id", "created_at");
+
+-- CreateIndex
+CREATE INDEX "assistant_messages_status_created_at_idx" ON "assistant_messages"("status", "created_at");
 
 -- AddForeignKey
 ALTER TABLE "active_workflows" ADD CONSTRAINT "active_workflows_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE SET NULL ON UPDATE CASCADE;

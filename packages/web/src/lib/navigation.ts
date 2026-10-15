@@ -187,6 +187,13 @@ export const NAV_GROUPS: NavGroup[] = [
         section: 'Spend & insights',
       },
       {
+        href: '/govern/assistant',
+        icon: 'warning',
+        label: 'Assistant failures',
+        minRole: 'ADMIN',
+        section: 'Spend & insights',
+      },
+      {
         href: '/govern/platform-settings',
         icon: 'settings',
         label: 'Platform settings',

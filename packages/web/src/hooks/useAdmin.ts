@@ -317,6 +317,76 @@ export function useSecurityEventSummary(window: SecurityEventWindow = {}) {
   });
 }
 
+// ── In-app assistant failures ──
+
+/** A FAILED assistant reply: who it failed for, and why. Never the conversation's text. */
+export interface AssistantFailure {
+  conversationId: string;
+  createdAt: string;
+  /** What the user was shown. */
+  error: string | null;
+  /** The underlying cause, for admins. Null on replies that failed before it was recorded. */
+  errorDetail: string | null;
+  failedAt: string;
+  id: string;
+  user: { email: string; id: string; name: string | null };
+  /** The conversation's Temporal workflow id. */
+  workflowId: string;
+}
+
+/** One agent trace row the failed turn wrote, without its payloads. */
+export interface AssistantFailureTrace {
+  agentKey: string;
+  attempt: number;
+  costUsd: number | null;
+  createdAt: string;
+  durationMs: number | null;
+  error: string | null;
+  id: string;
+  inputTokens: number | null;
+  model: string | null;
+  otelTraceId: string | null;
+  outputTokens: number | null;
+  toolName: string | null;
+  type: string;
+}
+
+export function useAssistantFailures(
+  params: SecurityEventWindow & { limit: number; offset: number }
+) {
+  const qs = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) });
+  if (params.since) {
+    qs.set('since', params.since);
+  }
+  if (params.until) {
+    qs.set('until', params.until);
+  }
+  return useQuery({
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      api.get<{
+        data: AssistantFailure[];
+        meta: { limit: number; offset: number; total: number };
+      }>(`/api/v1/platform/assistant/failures?${qs}`),
+    queryKey: ['assistant-failures', params],
+    refetchInterval: 30_000,
+  });
+}
+
+/** One failure with its turn's trace rows; fetched only once the row is opened. */
+export function useAssistantFailure(id: string, enabled: boolean) {
+  return useQuery({
+    enabled,
+    queryFn: () =>
+      api
+        .get<{
+          data: AssistantFailure & { traces: AssistantFailureTrace[] };
+        }>(`/api/v1/platform/assistant/failures/${encodeURIComponent(id)}`)
+        .then((r) => r.data),
+    queryKey: ['assistant-failures', 'detail', id],
+  });
+}
+
 // ── Platform LLM usage ──
 
 export interface UsageBucket {
