@@ -85,6 +85,12 @@ CREATE TYPE "OutboundDeliveryStatus" AS ENUM ('PENDING', 'DELIVERED', 'DEAD');
 -- CreateEnum
 CREATE TYPE "AssistantActionStatus" AS ENUM ('PENDING', 'CONFIRMED', 'DECLINED', 'EXECUTED');
 
+-- CreateEnum
+CREATE TYPE "AssistantMessageRole" AS ENUM ('USER', 'ASSISTANT');
+
+-- CreateEnum
+CREATE TYPE "AssistantMessageStatus" AS ENUM ('PENDING', 'STREAMING', 'COMPLETE', 'FAILED');
+
 -- CreateTable
 CREATE TABLE "active_workflows" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
@@ -1837,6 +1843,34 @@ CREATE TABLE "assistant_actions" (
     CONSTRAINT "assistant_actions_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "assistant_conversations" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "user_id" UUID NOT NULL,
+    "title" TEXT NOT NULL,
+    "closed_at" TIMESTAMPTZ,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL,
+
+    CONSTRAINT "assistant_conversations_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "assistant_messages" (
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+    "conversation_id" UUID NOT NULL,
+    "role" "AssistantMessageRole" NOT NULL,
+    "content" TEXT NOT NULL DEFAULT '',
+    "steps" JSONB NOT NULL DEFAULT '[]',
+    "status" "AssistantMessageStatus" NOT NULL DEFAULT 'COMPLETE',
+    "page_context" JSONB,
+    "error" TEXT,
+    "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updated_at" TIMESTAMPTZ NOT NULL,
+
+    CONSTRAINT "assistant_messages_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "active_workflows_temporal_workflow_id_key" ON "active_workflows"("temporal_workflow_id");
 
@@ -2518,6 +2552,12 @@ CREATE INDEX "outbound_deliveries_run_callback_id_idx" ON "outbound_deliveries"(
 -- CreateIndex
 CREATE INDEX "assistant_actions_user_id_conversation_id_created_at_idx" ON "assistant_actions"("user_id", "conversation_id", "created_at");
 
+-- CreateIndex
+CREATE INDEX "assistant_conversations_user_id_updated_at_idx" ON "assistant_conversations"("user_id", "updated_at");
+
+-- CreateIndex
+CREATE INDEX "assistant_messages_conversation_id_created_at_idx" ON "assistant_messages"("conversation_id", "created_at");
+
 -- AddForeignKey
 ALTER TABLE "active_workflows" ADD CONSTRAINT "active_workflows_work_request_id_fkey" FOREIGN KEY ("work_request_id") REFERENCES "run_inputs"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
@@ -2961,4 +3001,13 @@ ALTER TABLE "outbound_deliveries" ADD CONSTRAINT "outbound_deliveries_workflow_r
 
 -- AddForeignKey
 ALTER TABLE "assistant_actions" ADD CONSTRAINT "assistant_actions_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "assistant_actions" ADD CONSTRAINT "assistant_actions_conversation_id_fkey" FOREIGN KEY ("conversation_id") REFERENCES "assistant_conversations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "assistant_conversations" ADD CONSTRAINT "assistant_conversations_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "assistant_messages" ADD CONSTRAINT "assistant_messages_conversation_id_fkey" FOREIGN KEY ("conversation_id") REFERENCES "assistant_conversations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 

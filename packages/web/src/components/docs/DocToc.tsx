@@ -1,7 +1,7 @@
 'use client';
 
+import type { TocEntry } from '@auto-swe/shared/lib/docToc';
 import { useEffect, useState } from 'react';
-import type { TocEntry } from '@/lib/docToc';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
 /**

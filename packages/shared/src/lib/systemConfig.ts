@@ -964,6 +964,35 @@ function validatedEnv(name: string, fallback: string, pattern: RegExp, hint: str
   return fallback;
 }
 
+const DEFAULT_GATEWAY_INTERNAL_URL = 'http://localhost:8080';
+
+/// The gateway as the worker reaches it, for the in-app assistant's tools: they
+/// call the gateway's own routes with the user's assistant token. Same variable
+/// the web server reads for its own fetches (`API_INTERNAL_URL`), and the same
+/// shape: an http(s) origin, optionally with a path prefix. Anything else falls
+/// back to the local default and says so once.
+export function resolveGatewayInternalUrl(): string {
+  const raw = process.env.API_INTERNAL_URL?.trim();
+  if (!raw) {
+    return DEFAULT_GATEWAY_INTERNAL_URL;
+  }
+  try {
+    const url = new URL(raw);
+    if ((url.protocol === 'http:' || url.protocol === 'https:') && !url.search && !url.hash) {
+      return raw.replace(/\/+$/, '');
+    }
+  } catch {
+    // Falls through to the warning below.
+  }
+  if (!warnedInvalidEnv.has('API_INTERNAL_URL')) {
+    warnedInvalidEnv.add('API_INTERNAL_URL');
+    console.error(
+      `[config] ignoring API_INTERNAL_URL: not an http(s) URL. Using '${DEFAULT_GATEWAY_INTERNAL_URL}'.`
+    );
+  }
+  return DEFAULT_GATEWAY_INTERNAL_URL;
+}
+
 const IMAGE_HINT = 'a valid Docker image reference';
 const DOCKER_MEMORY_RE = /^\d+[bkmg]?$/i;
 

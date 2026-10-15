@@ -217,7 +217,7 @@ launch-time agent-version snapshot applies as for any run.
 
 A code list, `NON_LAUNCHABLE_AGENT_KEYS` (`securityReview`, `evalJudge`, `commitToMemory`,
 `validateContext`, `lessonConsolidator`, `workflowAuthor`, `workflowExplainer`,
-`repoDependencyInferrer`, `channelAssistant`), names agents that back a platform mechanism with its own
+`repoDependencyInferrer`, `channelAssistant`, `appAssistant`, `ciTriager`), names agents that back a platform mechanism with its own
 contract and cannot be launched. It is checked at the gateway and again in the worker.
 
 ---

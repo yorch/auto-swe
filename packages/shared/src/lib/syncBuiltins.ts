@@ -4,6 +4,7 @@ import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 import { activeLineageHead, lockAgentLineage } from './agentLineageLock.js';
 import {
+  APP_ASSISTANT_PROMPT,
   BRAND_REVIEWER_PROMPT,
   CHANNEL_ASSISTANT_PROMPT,
   CI_FIX_SYSTEM_PROMPT,
@@ -549,6 +550,18 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     modelSpec: 'anthropic/claude-sonnet-5-5',
     name: 'Workflow Explainer',
     systemPrompt: WORKFLOW_EXPLAINER_PROMPT,
+  },
+  {
+    // The dashboard's in-app assistant. Acts as the signed-in user through the
+    // gateway's own routes, with a token bound to that user and one conversation
+    // (`docs/adr/in-app-assistant.md`). Resolved on demand by the conversation
+    // workflow's turn activity, so not in MODEL_BACKED_AGENT_KEYS: it never gates
+    // worker boot. Its tools are bound in code, like the memory tools.
+    description: 'Answers questions in the dashboard panel, acting as the signed-in user.',
+    key: 'appAssistant',
+    modelSpec: 'anthropic/claude-sonnet-5-5',
+    name: 'App Assistant',
+    systemPrompt: APP_ASSISTANT_PROMPT,
   },
   {
     // Content/Comms pack (Phase 2): drafts prose for document workspaces such as Notion.

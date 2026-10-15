@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 
 const generateMock = vi.fn();
+const streamMock = vi.fn();
 vi.mock('@mastra/core/agent', () => ({
   Agent: vi.fn().mockImplementation(function (this: Record<string, unknown>, config: unknown) {
     this.config = config;
     this.generate = generateMock;
+    this.stream = streamMock;
   }),
 }));
 
@@ -73,6 +75,34 @@ function makeSpec(overrides: Partial<AgentSpec> = {}): AgentSpec {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe('runAgent — conversation history and streaming', () => {
+  it('streams, sending earlier turns ahead of the message and forwarding each chunk', async () => {
+    const seen: string[] = [];
+    streamMock.mockImplementationOnce(async (_messages, options) => {
+      await options.onChunk({ payload: { text: 'Hi' }, type: 'text-delta' });
+      return { getFullOutput: async () => ({ finishReason: 'stop', steps: [], text: 'Hi' }) };
+    });
+    const result = await runAgent(makeSpec(), 'And now?', {
+      history: [
+        { content: 'First question', role: 'user' },
+        { content: 'First answer', role: 'assistant' },
+      ],
+      onChunk: (chunk) => {
+        seen.push(chunk.type);
+        throw new Error('a display failure never fails the call');
+      },
+    });
+    expect(result.text).toBe('Hi');
+    expect(generateMock).not.toHaveBeenCalled();
+    expect(streamMock.mock.calls[0]?.[0]).toEqual([
+      { content: 'First question', role: 'user' },
+      { content: 'First answer', role: 'assistant' },
+      { content: 'And now?', role: 'user' },
+    ]);
+    expect(seen).toEqual(['text-delta']);
+  });
 });
 
 describe('runAgent', () => {

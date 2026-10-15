@@ -1,10 +1,10 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { buildSearchIndex, type SearchIndex, searchDocs } from '@auto-swe/shared/lib/docSearch';
+import { extractToc } from '@auto-swe/shared/lib/docToc';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Markdown } from '@/components/docs/Markdown';
-import { buildSearchIndex, type SearchIndex, searchDocs } from './docSearch';
-import { extractToc } from './docToc';
 
 // The same set `lib/docs.ts` serves: top-level docs/*.md with a valid slug.
 const DOCS_DIR = path.resolve(__dirname, '../../../../docs');

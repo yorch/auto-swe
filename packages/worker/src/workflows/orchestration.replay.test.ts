@@ -1,6 +1,6 @@
 /**
  * Determinism guard for the workflows that are not `RunnableWorkflow`: the epic
- * orchestrator and the channel assistant family. The sibling of
+ * orchestrator, the channel assistant family and the in-app assistant's conversation workflow. The sibling of
  * `runnable.replay.test.ts`, with the same contract — each committed history is
  * replayed against current workflow code, and a change that makes the workflow
  * take a different path on replay fails it.
@@ -74,6 +74,7 @@ describe('Epic and channel workflows — history replay', () => {
     // Named with their type: silently losing one, or recording one against
     // the wrong workflow, would quietly narrow the guard.
     expect(fixtures.map((f) => [f.name, f.type])).toEqual([
+      ['assistant-conversation', 'AssistantConversationWorkflow'],
       ['channel-ambient', 'ChannelAmbientWorkflow'],
       ['channel-assistant-delegate', 'ChannelAssistantWorkflow'],
       ['channel-assistant-error', 'ChannelAssistantWorkflow'],
@@ -229,6 +230,20 @@ describe('Epic and channel workflows — history replay', () => {
         'finalizeChannelRun',
       ]);
       expect(typesOf('channel-ambient')).toContain(EventType.EVENT_TYPE_ACTIVITY_TASK_FAILED);
+    });
+
+    it('assistant-conversation answered both turns in order and failed the second reply', () => {
+      expect(activitiesOf('assistant-conversation')).toEqual([
+        'runAssistantTurn',
+        'runAssistantTurn',
+        'failAssistantReply',
+      ]);
+      expect(
+        count('assistant-conversation', EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)
+      ).toBe(2);
+      expect(typesOf('assistant-conversation')).toContain(
+        EventType.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED
+      );
     });
 
     it('channel-reactive ran its interjection check', () => {

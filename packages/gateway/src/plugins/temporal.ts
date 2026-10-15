@@ -3,6 +3,13 @@ import {
   closedLedgerStatusFor,
   isWorkflowStatusFinished,
 } from '@auto-swe/shared/lib/agentRunAdmission';
+import {
+  ASSISTANT_CONVERSATION_WORKFLOW,
+  ASSISTANT_TURN_SIGNAL,
+  type AssistantConversationInput,
+  type AssistantTurnRequest,
+  assistantConversationWorkflowId,
+} from '@auto-swe/shared/lib/assistantConversation';
 import { resolveTemporalAddress } from '@auto-swe/shared/lib/systemConfig';
 import { traceContextClientInterceptor } from '@auto-swe/shared/lib/temporalTracing';
 import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
@@ -279,6 +286,14 @@ declare module 'fastify' {
           baseSpec?: WorkflowSpec;
         }
       ) => Promise<{ spec: WorkflowSpec; summary: string; attempts: number }>;
+      /**
+       * Hand an in-app assistant conversation its next turn: signal its workflow, starting it
+       * first when it is not running (it completes after a while idle).
+       */
+      sendAssistantTurn: (
+        input: AssistantConversationInput,
+        turn: AssistantTurnRequest
+      ) => Promise<void>;
       /** Explain a WorkflowSpec in plain language (request/response). */
       explainWorkflowSpec: (
         workflowId: string,
@@ -963,6 +978,16 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         }
         throw err;
       }
+    },
+
+    async sendAssistantTurn(input, turn) {
+      await client.workflow.signalWithStart(ASSISTANT_CONVERSATION_WORKFLOW, {
+        args: [input],
+        signal: ASSISTANT_TURN_SIGNAL,
+        signalArgs: [turn],
+        taskQueue: 'engineering-workflow',
+        workflowId: assistantConversationWorkflowId(input.conversationId),
+      });
     },
 
     async signalWorkflow(

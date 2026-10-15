@@ -88,6 +88,11 @@ document for everything else.
 
 **Reason**: Full parity without writing ~345 tools, while the frequent tasks get tools shaped for the
 model rather than raw route output.
+**Update (2026-10-14, implementation)**: The gateway registers no OpenAPI generator, so the catalog
+`describeApi` searches is built from the route table itself: `lib/apiCatalog.ts` records every
+`/api/v1` route as it registers, keeps those the policy admits, and converts each route's own Zod
+schemas for params, query and body to JSON Schema. It is served at `GET /api/v1/assistant/api-catalog`.
+In the read-only step `callApi` sends GET only.
 
 ## D6 — 2026-10-14 — Where it runs
 
@@ -101,6 +106,20 @@ bound to `(userId, conversationId)`, refused once the user is deactivated or the
 for confirmation and survives worker restarts mid-turn.
 **Alternatives considered**: Running the loop in the gateway (breaks the model-binding boundary);
 reusing MCP OAuth tokens (they require a browser consent flow and are scoped to opted-in routes).
+**Update (2026-10-14, implementation)**:
+- The workflow (`assistant-<conversationId>`) runs turns one at a time, in the order they were sent,
+  and completes after 30 minutes idle; the gateway's `signalWithStart` starts it again. It continues
+  as new every 50 turns.
+- The turn's token travels in the `assistantTurn` signal, so it sits in the workflow's history until
+  it expires (15 minutes). The gateway also refuses it once the conversation is closed.
+- A turn is not retried: it writes into the reply as it goes, and a second attempt would answer twice.
+  A turn that cannot run at all marks its reply failed.
+- The reply streams by row: the activity writes the growing text and tool steps into the
+  `AssistantMessage` row (at most every 250 ms), and the gateway's SSE route polls that row. `runAgent`
+  streams the model when a caller passes `onChunk`, so text arrives as it is written rather than once
+  per step.
+- The tools reach the gateway at `API_INTERNAL_URL`, refuse any path outside `/api/v1/`, and never
+  follow a redirect.
 
 ## D7 — 2026-10-14 — Product docs as knowledge
 
@@ -116,6 +135,11 @@ docs page in agreement, and the docs version always matches the running code.
 **Alternatives considered**: Calling the web's `/docs/search` route from the worker (couples the
 worker to the web process being up); indexing the docs into the knowledge store (team-scoped, governed
 lifecycle that platform docs do not need).
+**Update (2026-10-14, implementation)**: The index, its ranking and the doc file reader live in
+`@auto-swe/shared/lib/docSearch`, `docToc` and `docFiles`; the worker image copies `docs/*.md` to
+`/app/docs`. The search matches a section only when it holds every term, which a model's full sentence
+rarely does, so when that finds nothing the tool ranks sections by how many of the query's longer
+words they hold.
 
 ## D8 — 2026-10-14 — Surface and conversation model
 
@@ -125,6 +149,11 @@ its entity id (run, template, repository), which `getPageContext` exposes. Conve
 to their user, persisted, listed in the panel, and retained for a configurable period (registry
 setting, default 30 days). Replies stream; tool calls show as collapsible steps.
 **Reason**: "Why did this fail?" on a run page should not require pasting an id.
+**Update (2026-10-14, implementation)**: The page context is a hint, never a permission: the
+browser sends it, and the assistant reads the entity through the gateway, whose route decides whether
+the user may see it. The panel recognises the dashboard's detail routes (run, workflow, template,
+epic, team, organization, eval run and dataset, doc). One reply is written at a time per conversation;
+a message sent while one is being written is refused with `409 TURN_IN_PROGRESS`.
 
 ## D9 — 2026-10-14 — Cost and limits
 

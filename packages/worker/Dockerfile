@@ -140,6 +140,11 @@ COPY --from=prod-deps --chown=node:node /app/packages/worker/node_modules ./pack
 # Root package.json (for workspace symlink resolution)
 COPY --chown=node:node package.json ./
 
+# The in-app assistant's `searchDocs` tool searches the living docs, and only the
+# top level is served (`@auto-swe/shared/lib/docFiles`), the same set `/docs`
+# renders. The tool finds them at /app/docs, four levels up from its module.
+COPY --chown=node:node docs/*.md ./docs/
+
 ENV NODE_ENV=production
 
 # The worker serves no HTTP. It touches /tmp/worker-alive every 10 s while its

@@ -1,7 +1,8 @@
 /**
- * Full-text search over the served docs. Pure: no file access. The index is built once per server
- * process (see `loadDocSearchIndex` in `docs.ts`) and searched there by `app/docs/search/route.ts`;
- * the browser only ever receives the top results.
+ * Full-text search over the served docs. Pure: no file access. The dashboard builds the index once
+ * per server process (`loadDocSearchIndex` in the web's `lib/docs.ts`) and searches it in
+ * `app/docs/search/route.ts`, so the browser only ever receives the top results; the in-app
+ * assistant's `searchDocs` tool builds the same index from the docs the worker image ships.
  *
  * Each doc is cut into sections at its h2/h3 headings. A section carries the heading id the
  * renderer gives that heading (`extractToc` walks the same parse and de-duplicates the same
@@ -11,7 +12,7 @@
 import remarkGfm from 'remark-gfm';
 import remarkParse from 'remark-parse';
 import { unified } from 'unified';
-import { tocFromTree } from './docToc';
+import { tocFromTree } from './docToc.js';
 
 export interface SearchIndex {
   docs: { slug: string; title: string }[];
@@ -437,13 +438,24 @@ const TITLE_WEIGHT = 10;
 const HEADING_WEIGHT = 5;
 const BODY_WEIGHT = 1;
 
+/** A section a query matched, with the doc it belongs to. */
+export interface RankedSection {
+  section: SearchSection;
+  doc: { slug: string; title: string };
+  score: number;
+}
+
 /**
  * Sections that contain every term (in the doc title, the heading or the body, in any mix),
  * best first. A term matches as a substring or by word stem, so `skills` finds `skill` and
  * `approved` finds `approving`. A term in the title outranks one in the heading, which outranks
  * the body; ties keep document order. At most `limit` results.
  */
-export function searchDocs(index: SearchIndex, query: string, limit = MAX_RESULTS): SearchResult[] {
+export function rankSections(
+  index: SearchIndex,
+  query: string,
+  limit = MAX_RESULTS
+): RankedSection[] {
   const terms = tokenize(query);
   if (terms.length === 0) {
     return [];
@@ -474,14 +486,26 @@ export function searchDocs(index: SearchIndex, query: string, limit = MAX_RESULT
     scored.push({ order, score, section });
   });
   scored.sort((a, b) => b.score - a.score || a.order - b.order);
-  return scored.slice(0, Math.max(0, limit)).map(({ section }) => {
-    const doc = index.docs[section.doc] as { slug: string; title: string };
-    return {
-      anchor: section.anchor,
-      heading: section.heading === null ? null : highlight(section.heading, terms),
-      slug: doc.slug,
-      snippet: highlight(snippetOf(section.text, terms), terms),
-      title: highlight(doc.title, terms),
-    };
-  });
+  return scored.slice(0, Math.max(0, limit)).map(({ score, section }) => ({
+    doc: index.docs[section.doc] as { slug: string; title: string },
+    score,
+    section,
+  }));
+}
+
+/** {@link rankSections}, as highlighted results for the docs search box. */
+export function searchDocs(index: SearchIndex, query: string, limit = MAX_RESULTS): SearchResult[] {
+  const terms = tokenize(query);
+  return rankSections(index, query, limit).map(({ doc, section }) => ({
+    anchor: section.anchor,
+    heading: section.heading === null ? null : highlight(section.heading, terms),
+    slug: doc.slug,
+    snippet: highlight(snippetOf(section.text, terms), terms),
+    title: highlight(doc.title, terms),
+  }));
+}
+
+/** The dashboard link to a section: `/docs/<slug>`, with `#<anchor>` when it has a heading. */
+export function sectionLink(slug: string, anchor: string | null): string {
+  return anchor === null ? `/docs/${slug}` : `/docs/${slug}#${anchor}`;
 }

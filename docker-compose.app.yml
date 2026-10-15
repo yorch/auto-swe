@@ -89,6 +89,8 @@ services:
         required: false
     environment:
       - NODE_ENV=production
+      # The in-app assistant's tools call the gateway on the compose network.
+      - API_INTERNAL_URL=${API_INTERNAL_URL:-http://gateway:8080}
       - DATABASE_URL=postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-password}@postgres:5432/${POSTGRES_DB:-engineering_system}
       - TEMPORAL_ADDRESS=temporal:7233
       # LLM provider keys are NOT env vars — they live encrypted in the DB

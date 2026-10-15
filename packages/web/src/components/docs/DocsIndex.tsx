@@ -1,12 +1,12 @@
 'use client';
 
+import { MAX_QUERY_CHARS, type SearchResult, type Segment } from '@auto-swe/shared/lib/docSearch';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { docHref } from '@/components/ui/DocLink';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon, type IconName } from '@/components/ui/Icon';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
-import { MAX_QUERY_CHARS, type SearchResult, type Segment } from '@/lib/docSearch';
 import type { DocMeta } from '@/lib/docs';
 import { cn, FOCUS_RING, plural } from '@/lib/utils';
 

@@ -68,6 +68,19 @@ export interface RunAgentOptions {
    * never left without a row — the worst case is a duplicate.
    */
   selfRecordingTools?: ReadonlySet<string>;
+  /**
+   * Earlier turns of a conversation, oldest first, sent ahead of `userMessage`. Only the text of
+   * each turn: a prior turn's tool calls are not replayed.
+   */
+  history?: ReadonlyArray<{ role: 'user' | 'assistant'; content: string }>;
+  /**
+   * Called with every chunk the model loop emits (text deltas, tool calls, tool results), for a
+   * caller that shows the reply as it is written. With it the loop streams the model's output
+   * instead of making one non-streaming call per step; the result is the same. A throw is the
+   * caller's problem: it is caught and dropped so a display failure never fails the call. Ignored
+   * with an `outputSchema`, whose output is only useful whole.
+   */
+  onChunk?: (chunk: { type: string; payload?: unknown }) => void | Promise<void>;
 }
 
 export interface RunAgentResult<T = unknown> {
@@ -183,22 +196,53 @@ export async function runAgent<T = unknown>(
           ? createStepAccounting(spec.agentKey, spanName, options.abortSignal, spec.modelSpec)
           : undefined;
         accountingTotals = accounting?.totals;
+        const onChunk = options.onChunk;
+        const chunkOption = onChunk
+          ? {
+              onChunk: async (chunk: { type: string; payload?: unknown }) => {
+                try {
+                  await onChunk(chunk);
+                } catch {
+                  // Display only: never fail the call over it.
+                }
+              },
+            }
+          : {};
         const callOptions = accounting
-          ? { ...stepBudget, abortSignal: accounting.signal, onStepFinish: accounting.onStepFinish }
-          : { ...stepBudget, ...abortSignalOption() };
+          ? {
+              ...stepBudget,
+              ...chunkOption,
+              abortSignal: accounting.signal,
+              onStepFinish: accounting.onStepFinish,
+            }
+          : { ...stepBudget, ...chunkOption, ...abortSignalOption() };
+        const messages: Array<
+          { role: 'user'; content: string } | { role: 'assistant'; content: string }
+        > = [
+          ...(options.history ?? []).map((m) =>
+            m.role === 'user'
+              ? { content: m.content, role: 'user' as const }
+              : { content: m.content, role: 'assistant' as const }
+          ),
+          { content: userMessage, role: 'user' },
+        ];
 
         let genResult: Awaited<ReturnType<InstanceType<typeof Agent>['generate']>> | undefined;
         try {
           genResult = await withHeartbeat(
             `agent ${spec.agentKey}: generating`,
             spec.outputSchema
-              ? agent.generate([{ content: userMessage, role: 'user' }], {
+              ? agent.generate(messages, {
                   ...callOptions,
                   structuredOutput: { schema: spec.outputSchema },
                 })
-              : Object.keys(callOptions).length > 0
-                ? agent.generate([{ content: userMessage, role: 'user' }], callOptions)
-                : agent.generate([{ content: userMessage, role: 'user' }])
+              : onChunk
+                ? // Streamed, so `onChunk` sees text as the model writes it; `generate`
+                  // makes one non-streaming model call per step. Same output either way.
+                  agent.stream(messages, callOptions).then((s) => s.getFullOutput())
+                : Object.keys(callOptions).length > 0
+                  ? agent.generate(messages, callOptions)
+                  : agent.generate(messages)
           );
         } catch (e) {
           // A budget stop wins over whatever the aborted call threw, and a

@@ -55,6 +55,8 @@ services:
       # Pinned so a development value in `.env` cannot switch the image onto
       # the in-source dev secrets (`environment:` wins over `env_file`).
       NODE_ENV: production
+      # The in-app assistant's tools call the gateway on the compose network.
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://gateway:8080}
       DATABASE_URL: ${DATABASE_URL_OVERRIDE:-postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in production — set a strong value in .env (or set DATABASE_URL_OVERRIDE for an external database)}@postgres:5432/${POSTGRES_DB:-engineering_system}}
       TEMPORAL_ADDRESS: temporal:7233
       # Same key as the gateway — every provider credential decrypts with it.

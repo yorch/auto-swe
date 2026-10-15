@@ -977,6 +977,8 @@ type AssistantRefusal = { status: 400 | 401 | 403 | 503; code: string; message: 
  *
  * 1. the token's signature, audience, expiry and shape (else 401);
  * 2. its user is active, and the payload carries the user's current role (else 401);
+ * 2a. its conversation is still open and is that user's (else 401), so closing a conversation
+ *    revokes every token minted for it;
  * 3. `assistant.enabled` is on (else 403 `ASSISTANT_DISABLED`; 503 if it cannot be read, so the
  *    switch fails closed);
  * 4. `assistantPolicy.ts` admits this route (else 403 `ASSISTANT_NOT_ALLOWED`).
@@ -1000,6 +1002,21 @@ async function admitAssistant(
   });
   if (!user?.isActive) {
     return { code: 'TOKEN_INVALID', message: new TokenUserRevokedError().message, status: 401 };
+  }
+  const conversation = await request.server.prisma.assistantConversation
+    .findFirst({
+      select: { id: true },
+      where: { closedAt: null, id: claims.conversationId, userId: claims.sub },
+    })
+    .catch((err: unknown) => {
+      throw new TokenUserLookupError(err);
+    });
+  if (!conversation) {
+    return {
+      code: 'TOKEN_INVALID',
+      message: 'The conversation this assistant token was issued for is closed',
+      status: 401,
+    };
   }
   let enabled: boolean;
   try {

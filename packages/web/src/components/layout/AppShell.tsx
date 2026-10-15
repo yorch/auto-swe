@@ -2,6 +2,7 @@
 
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { AssistantPanel } from '@/components/assistant/AssistantPanel';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { TopBar } from '@/components/layout/TopBar';
@@ -87,6 +88,7 @@ function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscree
           )}
         </div>
       </div>
+      <AssistantPanel />
     </>
   );
 }

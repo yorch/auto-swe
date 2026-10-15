@@ -28,6 +28,22 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/assistantAction.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/assistantConversation',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/assistantConversation.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/docFiles',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/docFiles.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/docSearch',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/docSearch.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/docToc',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/docToc.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/agentLineageLock',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/agentLineageLock.ts'),
       },

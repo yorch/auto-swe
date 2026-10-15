@@ -9,6 +9,7 @@ vi.mock('@/hooks/useApprovals', () => ({
   useApprovalsCount: () => 0,
   useApprovalsStream: () => undefined,
 }));
+vi.mock('@/components/assistant/AssistantPanel', () => ({ AssistantPanel: () => null }));
 vi.mock('@/hooks/useDocumentTitle', () => ({ useRouteDocumentTitle: () => undefined }));
 vi.mock('@/components/layout/Sidebar', () => ({
   Sidebar: ({ closeButtonRef }: { closeButtonRef: React.RefObject<HTMLButtonElement | null> }) => (

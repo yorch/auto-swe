@@ -1,6 +1,6 @@
+import { buildSearchIndex, MAX_QUERY_CHARS, MAX_RESULTS } from '@auto-swe/shared/lib/docSearch';
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildSearchIndex, MAX_QUERY_CHARS, MAX_RESULTS } from '@/lib/docSearch';
 
 const load = vi.hoisted(() => vi.fn());
 vi.mock('@/lib/docs', () => ({ loadDocSearchIndex: load }));

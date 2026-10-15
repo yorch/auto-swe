@@ -40,7 +40,14 @@ organization because a team on an isolated network may need its own mirror. The 
 
 The `assistant` group holds `assistant.enabled` (ADMIN-only, default off), the switch for the in-app
 assistant: off, the gateway refuses every request made with an assistant token, including the next
-call of a conversation already under way. It is read per request through the settings cache.
+call of a conversation already under way, and the dashboard does not offer the panel. It is read per
+request through the settings cache. `assistant.maxStepsPerTurn` (default 12) bounds the model steps
+one reply may take, each tool call being one; a reply that reaches it ends with what it has and says
+so.
+
+The assistant's tools in the worker call the gateway at `API_INTERNAL_URL` (default
+`http://localhost:8080`; both compose files set `http://gateway:8080`), the same variable the web
+server reads for its own fetches.
 
 The `mcp` group holds the switches and bounds of the MCP server: `mcp.enabled`,
 `mcp.writeToolsEnabled`, `mcp.writeCallsPerMinute` and `mcp.maxConcurrentRuns`, all ADMIN-only and read

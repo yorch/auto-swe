@@ -65,6 +65,20 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.boolean(),
   }),
+  // Read by the conversation workflow's turn activity at the start of every turn.
+  'assistant.maxStepsPerTurn': defineSetting({
+    defaultValue: 12,
+    description:
+      'How many model steps one assistant reply may take, each tool call being one. A reply that reaches the limit ends with what it has and says so. Higher lets the assistant look further before answering and costs more per reply.',
+    group: 'assistant',
+    label: 'Steps per reply',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(50),
+    unit: 'steps',
+  }),
 
   // ── Channel assistant ──────────────────────────────────────────────────────
   // The assistant's proactivity and context budgets. Every one of these was a
