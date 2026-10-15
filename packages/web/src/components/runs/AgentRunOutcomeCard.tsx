@@ -4,6 +4,7 @@ import { AGENT_RUN_MAX_OUTPUT_DIFF_CHARS } from '@auto-swe/shared/lib/agentRun';
 import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
+import { ExpandablePre } from '@/components/ui/ExpandablePre';
 import { Icon } from '@/components/ui/Icon';
 import {
   type AgentRunFailureView,
@@ -156,9 +157,12 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
               This is the agent’s own view of its container. It is for reading, not for trust.
             </p>
           )}
-          <pre className="mt-2 max-h-80 overflow-auto rounded-md border border-ink-500/50 bg-ink-950/60 p-3 font-mono text-xs leading-relaxed text-paper-300">
+          <ExpandablePre
+            className="mt-2 rounded-md border border-ink-500/50 bg-ink-950/60 p-3 font-mono text-xs leading-relaxed text-paper-300"
+            collapsedHeight="20rem"
+          >
             {o.diff}
-          </pre>
+          </ExpandablePre>
           {o.diffTruncated && (
             <p className="mt-1.5 text-xs text-paper-500">
               The diff is cut at {AGENT_RUN_MAX_OUTPUT_DIFF_CHARS.toLocaleString('en-US')}{' '}
