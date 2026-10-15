@@ -178,5 +178,6 @@ describe('an assistant turn, end to end in the worker', () => {
     expect(m.doGenerateCalls).toHaveLength(0);
     // The turn's trace was written, in runAgent's finally.
     expect(persistActivityTrace).toHaveBeenCalledWith(expect.anything(), 'appAssistant');
-  });
+    // Builds the docs index over every shipped doc, which takes seconds on a loaded CI runner.
+  }, 60_000);
 });

@@ -32,7 +32,8 @@ describe('searchDocs', () => {
       expect(r.text.length).toBeLessThanOrEqual(1501);
     }
     expect(results.some((r) => /github/i.test(r.text + r.doc))).toBe(true);
-  });
+    // Builds the index over every shipped doc, which takes seconds on a loaded CI runner.
+  }, 60_000);
 
   it('reads the docs from the repository root, never history', () => {
     expect(ASSISTANT_DOCS_DIR.replace(/\\/g, '/')).toMatch(/\/docs\/$/);
