@@ -65,6 +65,17 @@ export function useCreateCatalogEntry() {
   });
 }
 
+/// Bulk add: every entry is added in one transaction, or none is (a 409 names
+/// the specs already in the catalog).
+export function useBatchCreateCatalogEntries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (entries: Array<CatalogEntryInput & { provider: string; modelId: string }>) =>
+      api.post<{ data: ModelCatalogEntry[] }>(`${BASE}/batch`, { entries }),
+    onSuccess: () => invalidateCatalog(qc),
+  });
+}
+
 export function useUpdateCatalogEntry() {
   const qc = useQueryClient();
   return useMutation({

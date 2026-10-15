@@ -21,6 +21,7 @@ import {
   type ModelSuggestion,
   type PriceHint,
   type PriceHintResult,
+  useBatchCreateCatalogEntries,
   useCreateCatalogEntry,
   useDeleteCatalogEntry,
   useDiscoverModels,
@@ -362,7 +363,7 @@ function DiscoveryPanel({
 
   // Bulk add: only a model with a suggested price can be ticked, and nothing is
   // written until the admin confirms the list of specs and prices.
-  const create = useCreateCatalogEntry();
+  const batchCreate = useBatchCreateCatalogEntries();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirmingBulk, setConfirmingBulk] = useState(false);
   const selectable = fresh.filter((m) => m.dismissedAt === null && hintsBySpec.get(m.spec));
@@ -375,39 +376,30 @@ function DiscoveryPanel({
       }
       return next;
     });
+  // One request for the whole selection: the gateway adds all of it or none.
   const addChosen = async () => {
-    const failures: string[] = [];
-    for (const m of chosen) {
-      const hint = hintsBySpec.get(m.spec);
-      if (!hint) {
-        continue;
-      }
-      try {
-        await create.mutateAsync({
-          cacheReadMultiplier: hint.cacheReadMultiplier ?? null,
-          cacheWrite1hMultiplier: hint.cacheWrite1hMultiplier ?? null,
-          cacheWrite5mMultiplier: hint.cacheWrite5mMultiplier ?? null,
-          displayName: m.displayName,
-          inputUsdPerMTok: hint.inputUsdPerMTok,
-          kind: m.kind,
-          modelId: m.modelId,
-          notes: `Price suggested by ${hintSourceName(hint, m.provider)} (${hint.matchedId}); added in bulk from discovery.`,
-          outputUsdPerMTok: hint.outputUsdPerMTok,
-          provider: m.provider,
-        });
-        setSelected((prev) => {
-          const next = new Set(prev);
-          next.delete(m.spec);
-          return next;
-        });
-      } catch (err) {
-        failures.push(`${m.spec}: ${errMsg(err, 'could not be added')}`);
-      }
-    }
-    if (failures.length > 0) {
-      // Keeps the dialog open on the ones that failed; the rest are already in the catalog.
-      throw new Error(`Not added — ${failures.join('; ')}`);
-    }
+    await batchCreate.mutateAsync(
+      chosen.flatMap((m) => {
+        const hint = hintsBySpec.get(m.spec);
+        return hint
+          ? [
+              {
+                cacheReadMultiplier: hint.cacheReadMultiplier ?? null,
+                cacheWrite1hMultiplier: hint.cacheWrite1hMultiplier ?? null,
+                cacheWrite5mMultiplier: hint.cacheWrite5mMultiplier ?? null,
+                displayName: m.displayName,
+                inputUsdPerMTok: hint.inputUsdPerMTok,
+                kind: m.kind,
+                modelId: m.modelId,
+                notes: `Price suggested by ${hintSourceName(hint, m.provider)} (${hint.matchedId}); added in bulk from discovery.`,
+                outputUsdPerMTok: hint.outputUsdPerMTok,
+                provider: m.provider,
+              },
+            ]
+          : [];
+      })
+    );
+    setSelected(new Set());
   };
 
   const dismissButton = (s: ModelSuggestion) => (
@@ -521,8 +513,8 @@ function DiscoveryPanel({
           <div className="space-y-3">
             <p>
               Each model is added at its suggested price, and its notes say where the price came
-              from. Check the figures against each provider's pricing page: they decide what USD
-              budgets see.
+              from. All of them are added, or none is. Check the figures against each provider's
+              pricing page: they decide what USD budgets see.
             </p>
             <ul className="space-y-1 text-xs">
               {chosen.map((m) => {

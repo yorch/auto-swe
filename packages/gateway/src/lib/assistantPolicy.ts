@@ -272,6 +272,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/platform/mcp-connections/:id/test': 'confirm',
   'POST /api/v1/platform/model-catalog': 'confirm',
   'POST /api/v1/platform/model-catalog/:id/reset': 'confirm',
+  'POST /api/v1/platform/model-catalog/batch': 'confirm',
   'POST /api/v1/platform/model-catalog/discover': 'confirm',
   'POST /api/v1/platform/model-catalog/price-hints': 'confirm',
   'POST /api/v1/platform/model-catalog/price-hints/batch': 'confirm',
