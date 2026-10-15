@@ -255,10 +255,11 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   [
     // Evals P2 declarative eval node: score a target value with a list of scorers.
     'runEvalNode',
-    ({ config }) =>
+    ({ config, dispatchKey }) =>
       evalNodeActivities.runEvalNode({
         candidateRef: config.candidateRef as string | undefined,
         judgeAdvisory: config.judgeAdvisory as boolean | undefined,
+        nodeId: dispatchKey,
         scorers: config.scorers as Parameters<typeof evalNodeActivities.runEvalNode>[0]['scorers'],
         spanName: config.spanName as string | undefined,
         targetValue: config.targetValue,

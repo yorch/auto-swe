@@ -60,6 +60,21 @@ export function bindingText(binding: Binding | undefined): string {
   return 'from' in binding ? binding.from : '';
 }
 
+/**
+ * True when the three-way editor can show and re-save `value` without changing
+ * it: a `{ from }`, `{ expr }` or `{ literal }` whose literal text parses back
+ * to the same value. A `from` that carries a `default`, a literal string such
+ * as `"5"` (which the literal field would turn into a number), a multi-key
+ * object or a bare legacy value is not, and is shown as JSON instead.
+ */
+export function bindingFitsForm(value: unknown): value is Binding {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const b = value as Binding;
+  return JSON.stringify(setBindingText(bindingMode(b), bindingText(b))) === JSON.stringify(value);
+}
+
 /** Rewrite a binding as `mode` holding `text`, keeping it schema-valid. */
 export function setBindingText(mode: BindingMode, text: string): Binding {
   if (mode === 'expr') {
@@ -293,12 +308,19 @@ function SchemaField({
 
 /* ─── onFail policy editor ───────────────────────────────────────────────── */
 
+export type OnErrorValue = 'fail' | 'continue';
+
 export function OnFailSection({
   value,
   onChange,
+  onError,
+  onOnErrorChange,
 }: {
   value: OnFailValue | undefined;
   onChange: (v: OnFailValue | undefined) => void;
+  /** The node's `onError`. Rendered only when `onOnErrorChange` is given. */
+  onError?: OnErrorValue;
+  onOnErrorChange?: (v: OnErrorValue | undefined) => void;
 }) {
   const mode =
     value === undefined || value === 'block' ? 'block' : value === 'warn' ? 'warn' : 'retry';
@@ -337,6 +359,26 @@ export function OnFailSection({
           onChange={(e) => onChange({ retry: Math.max(1, Math.min(10, Number(e.target.value))) })}
           type="number"
           value={retryCount}
+        />
+      )}
+      {onOnErrorChange && (
+        <Select
+          compact
+          hint="Covers errors thrown by the node’s activity (not input-binding errors or a failed gate), and wins over “When this node fails”. Continue records the node as skipped with a null output and skips any retries"
+          id="onerror-mode"
+          label="When this node throws"
+          onChange={(v) => {
+            if (v === 'continue') {
+              onOnErrorChange('continue');
+            } else if (v === 'fail') {
+              onOnErrorChange(undefined);
+            }
+          }}
+          options={[
+            { label: 'Fail the node (default)', value: 'fail' },
+            { label: 'Continue past the error', value: 'continue' },
+          ]}
+          value={onError ?? 'fail'}
         />
       )}
     </InspectorSubsection>
@@ -425,13 +467,14 @@ export function InputsBindingsSection({
  * through here so the shape cannot be got wrong in one place and right in
  * another.
  */
-function BindingRow({
+export function BindingRow({
   binding,
   onChange,
   onRemove,
   removeLabel,
   keyControl,
   allowExpr = true,
+  labelledBy,
 }: {
   binding: Binding | undefined;
   onChange: (next: Binding) => void;
@@ -440,6 +483,8 @@ function BindingRow({
   /** Replacement for the key editor; absent for a standalone binding. */
   keyControl?: ReactNode;
   allowExpr?: boolean;
+  /** Id of the element naming a standalone binding; replaces the generic value label. */
+  labelledBy?: string;
 }) {
   const mode = bindingMode(binding);
   const value = bindingText(binding);
@@ -473,7 +518,8 @@ function BindingRow({
         ) : null}
       </div>
       <Input
-        aria-label="Binding value"
+        aria-label={labelledBy ? undefined : 'Binding value'}
+        aria-labelledby={labelledBy}
         className={mode === 'from' || mode === 'expr' ? 'font-mono text-xs' : undefined}
         compact
         onChange={(e) => onChange(setBindingText(mode, e.target.value))}
@@ -513,9 +559,16 @@ export function BindingField({
   const id = `binding-${label.replace(/\W+/g, '-').toLowerCase()}`;
   return (
     <div className="space-y-1.5" data-binding-field={id}>
-      <span className="block text-xs font-medium text-paper-400">{label}</span>
+      <span className="block text-xs font-medium text-paper-400" id={`${id}-label`}>
+        {label}
+      </span>
       {hint ? <p className="text-xs leading-relaxed text-paper-500">{hint}</p> : null}
-      <BindingRow allowExpr={allowExpr} binding={binding} onChange={onChange} />
+      <BindingRow
+        allowExpr={allowExpr}
+        binding={binding}
+        labelledBy={`${id}-label`}
+        onChange={onChange}
+      />
       {placeholder ? <InspectorNote>{placeholder}</InspectorNote> : null}
     </div>
   );

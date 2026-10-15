@@ -164,10 +164,19 @@ export function estimateSpecCost(spec: WorkflowSpec, options: EstimatorOptions):
         unpriced.push({ nodeId, reason: 'external-call' });
         return walk(node.next);
       case 'eval': {
-        // Evals node: the judge scorer (if any) makes one LLM call; model it via
-        // the runEvalNode step metadata when present, else just walk onward.
-        const meta = options.stepLookup('runEvalNode');
-        const usd = stepUsd(meta, pricing);
+        // Only a `judge` scorer calls a model — one `evalJudge` call each, priced
+        // from the runEvalNode step hint. Every other scorer runs no model (a
+        // `gate` scorer costs container runtime, like a gate step, which is not
+        // priced either), so an eval with no judge costs nothing and is not a gap.
+        // Guarded: the editor estimates a spec that may not have passed the schema.
+        const scorers: unknown[] = Array.isArray(node.scorers) ? node.scorers : [];
+        const judges = scorers.filter(
+          (s) => typeof s === 'object' && s !== null && (s as { kind?: unknown }).kind === 'judge'
+        ).length;
+        if (judges === 0) {
+          return walk(node.next);
+        }
+        const usd = stepUsd(options.stepLookup('runEvalNode'), pricing) * judges;
         if (usd > 0) {
           perStep.push({ nodeId, step: 'runEvalNode', usd });
         } else {

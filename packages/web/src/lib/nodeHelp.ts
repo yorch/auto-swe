@@ -72,14 +72,16 @@ export const NODE_HELP: Record<SpecNode['type'], NodeHelp> = {
     doc: HELP_LINKS.evals,
     example: {
       next: 'decide',
+      // `decide` routes on the result, so a blocked eval must carry on rather than fail the run.
+      onFail: 'warn',
       scorers: [{ expr: '$.approved == true', kind: 'assert' }],
       target: { from: 'nodes.review.output' },
       type: 'eval',
     },
     gotcha:
-      '`target` is a binding to the value being scored, so an empty path scores nothing useful. Gate, assert, policy and pii scorers always block: they run first and stop the judge if they fail. A judge is advisory unless you set judgeAdvisory to false, which makes only the judge blocking; trajectory is always advisory. A `gate` scorer does not read `target`: it re-runs the named check on the work request’s pushed branch, and fails when the run has none. The aggregate is at nodes.<id>.output.score.',
+      '`target` is a binding to the value being scored, so an empty path scores nothing useful. Gate, assert, policy and pii scorers always block: they run first and stop the judge if they fail. A judge is advisory unless you set judgeAdvisory to false, which makes only the judge blocking — and then a judge that cannot score (missing rubric, failed call) blocks too; trajectory is always advisory. A blocked eval goes through onFail like a failed gate: block (the default) fails the run, warn carries on. A `gate` scorer does not read `target`: it re-runs the named check on the work request’s pushed branch, and fails when the run has none. The aggregate is at nodes.<id>.output.score.',
     what: 'Scores a value that is already in the run with one or more scorers, then records the result.',
-    when: 'You want a measured pass/fail or score to branch on, such as a cond on the score.',
+    when: 'You want a measured pass/fail or score to gate the run on, or to branch on with a cond after it (then set onFail to warn).',
   },
   fanOut: {
     doc: NODE_DOC,

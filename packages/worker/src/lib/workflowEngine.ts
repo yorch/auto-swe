@@ -16,4 +16,4 @@ export {
   readInterpreterLimits,
   runSpec,
 } from '@auto-swe/shared/workflow/interpreter';
-export { SignalSlots } from '@auto-swe/shared/workflow/signalSlots';
+export { SignalSlots, waitForSignal } from '@auto-swe/shared/workflow/signalSlots';

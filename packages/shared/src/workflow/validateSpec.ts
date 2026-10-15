@@ -23,10 +23,16 @@
  *     - MISSING_CONFIG     a required step config field is absent
  *     - FANOUT_LEAK        a fan-out branch can walk into its own `join` node (or back into
  *                          the fan-out), so every branch would run what is meant to run once
+ *     - SIGNAL_SHARED_ACROSS_BRANCHES  a `signal` node is reachable inside a fan-out whose
+ *                          branches run concurrently (any `concurrency` but 1); they all wait
+ *                          on the one name, and one delivery wakes exactly one branch
  *     - TERMINAL_IN_SUBGRAPH_ONLY  every reachable terminate sits inside a fan-out branch,
  *                          where a terminate ends one branch, not the run
  *     - IGNORED_FIELD      a node sets `retry` / `startToCloseTimeout` / `heartbeatTimeout`,
- *                          which the interpreter never reads (use `onFail: { retry }`)
+ *                          which the interpreter never reads (use `onFail: { retry }`); an
+ *                          `eval` node sets `inputs`, a judge `baselineFrom` or a trajectory
+ *                          `from`, which no scorer reads; or an `mcp` or `eval` node sets
+ *                          `spanName`, which only an `agent` node's activity uses
  *     - GROUP_NOT_CONTIGUOUS  the edges between nodes sharing a `group` label do not join them
  *                          into one connected piece (edges are taken as undirected). It does NOT
  *                          check single entry or exit, and a group that is connected but also has a
@@ -42,7 +48,7 @@
  */
 
 import { checkExprSyntax, RESERVED_SEGMENTS } from './expr.js';
-import { type Node, nodeEdges, type WorkflowSpec } from './spec.js';
+import { type EvalScorer, type Node, nodeEdges, type WorkflowSpec } from './spec.js';
 import { EXECUTOR_STEP_ALIASES, getStepMetadata, hasStep } from './stepRegistry.js';
 
 export type ValidationSeverity = 'error' | 'warning';
@@ -90,6 +96,19 @@ function nodeBindings(node: Node): Array<{ field: string; binding: unknown }> {
     if (node.candidateRef) {
       out.push({ binding: node.candidateRef, field: 'candidateRef' });
     }
+    // An assert scorer's `expr` is evaluated by the shared engine after the
+    // runtime strips its `$.` path prefix (runEvalNode `evalAssert`), so lint
+    // the same stripped text. The editor may hand us an unvalidated spec.
+    const scorers: unknown[] = Array.isArray(node.scorers) ? node.scorers : [];
+    scorers.forEach((entry, i) => {
+      const s = entry as { kind?: unknown; expr?: unknown } | null;
+      if (s && typeof s === 'object' && s.kind === 'assert' && typeof s.expr === 'string') {
+        out.push({ binding: { expr: s.expr.replace(/\$\./g, '') }, field: `scorers[${i}].expr` });
+      }
+    });
+  }
+  if (node.type === 'humanApproval' && node.approverCount !== undefined) {
+    out.push({ binding: node.approverCount, field: 'approverCount' });
   }
   if (node.type === 'fanOut') {
     out.push({ binding: node.over, field: 'over' });
@@ -152,6 +171,59 @@ function writePathSegments(id: string, node: Node): Array<{ field: string; segme
 
 /** Node fields the schema accepts for stored-spec compatibility but the interpreter never reads. */
 const IGNORED_NODE_FIELDS = ['retry', 'startToCloseTimeout', 'heartbeatTimeout'] as const;
+
+/**
+ * Eval-node fields the schema accepts but no scorer reads: the executor scores
+ * `target` alone (never the node's `inputs`), a judge has no baseline
+ * comparison, and the trajectory scorer always reads the current run's traces.
+ */
+function ignoredEvalFields(id: string, node: Extract<Node, { type: 'eval' }>): ValidationIssue[] {
+  const out: ValidationIssue[] = [];
+  // `inputs` are still resolved and recorded on the step row (and an expression
+  // that throws fails the node), so only a non-empty map is worth a warning.
+  if (node.inputs && Object.keys(node.inputs).length > 0) {
+    out.push({
+      code: 'IGNORED_FIELD',
+      field: 'inputs',
+      message:
+        "'inputs' are resolved and recorded but no scorer reads them: an eval node scores only " +
+        '`target`. Bind the value to score as `target`.',
+      nodeId: id,
+      severity: 'warning',
+    });
+  }
+  // The editor lints a spec that may not have passed the schema yet (it reports
+  // schema issues alongside), so a hand-edited `scorers` can be anything.
+  const scorers: unknown[] = Array.isArray(node.scorers) ? node.scorers : [];
+  scorers.forEach((entry, i) => {
+    if (typeof entry !== 'object' || entry === null) {
+      return;
+    }
+    const scorer = entry as EvalScorer;
+    if (scorer.kind === 'judge' && scorer.baselineFrom !== undefined) {
+      out.push({
+        code: 'IGNORED_FIELD',
+        field: `scorers[${i}].baselineFrom`,
+        message:
+          "'baselineFrom' has no effect: the judge scores the target against its rubric alone " +
+          'and makes no baseline comparison.',
+        nodeId: id,
+        severity: 'warning',
+      });
+    }
+    if (scorer.kind === 'trajectory' && scorer.from !== undefined) {
+      out.push({
+        code: 'IGNORED_FIELD',
+        field: `scorers[${i}].from`,
+        message:
+          "'from' has no effect: the trajectory scorer always reads this run's own agent traces.",
+        nodeId: id,
+        severity: 'warning',
+      });
+    }
+  });
+  return out;
+}
 
 export interface ValidateSpecOptions {
   /**
@@ -258,6 +330,20 @@ export function validateSpec(
           severity: 'warning',
         });
       }
+    }
+    if ((node.type === 'mcp' || node.type === 'eval') && node.spanName !== undefined) {
+      warnings.push({
+        code: 'IGNORED_FIELD',
+        field: 'spanName',
+        message:
+          `'spanName' has no effect on ${node.type === 'mcp' ? 'an mcp' : 'an eval'} node: ` +
+          "only an agent node's activity reads it.",
+        nodeId: id,
+        severity: 'warning',
+      });
+    }
+    if (node.type === 'eval') {
+      warnings.push(...ignoredEvalFields(id, node));
     }
     for (const { field, segments } of writePathSegments(id, node)) {
       const reserved = segments.find((seg) => RESERVED_SEGMENTS.has(seg));
@@ -394,6 +480,7 @@ export function validateSpec(
     }
     return seen;
   };
+  const sharedSignalWarned = new Set<string>();
   for (const [id, node] of Object.entries(spec.nodes)) {
     if (node.type !== 'fanOut') {
       continue;
@@ -409,6 +496,25 @@ export function validateSpec(
         nodeId: id,
         severity: 'warning',
       });
+    }
+    // A `signal` node keeps its fixed name inside a branch — external senders
+    // address it by that name — so concurrent branches all wait on one slot,
+    // and one delivery is consumed by exactly one of them.
+    if (node.concurrency === undefined || node.concurrency > 1) {
+      for (const branchNodeId of inBranch) {
+        const branchNode = spec.nodes[branchNodeId] as Node;
+        if (branchNode.type !== 'signal' || sharedSignalWarned.has(branchNodeId)) {
+          continue;
+        }
+        sharedSignalWarned.add(branchNodeId);
+        warnings.push({
+          code: 'SIGNAL_SHARED_ACROSS_BRANCHES',
+          field: 'name',
+          message: `signal node '${branchNodeId}' waits on '${branchNode.name}' inside fan-out '${id}', whose branches run concurrently; every branch waits on the same signal, and one delivery wakes only one branch — the others keep waiting for a delivery of their own or their timeout (set concurrency to 1 to wait branch by branch)`,
+          nodeId: branchNodeId,
+          severity: 'warning',
+        });
+      }
     }
   }
 

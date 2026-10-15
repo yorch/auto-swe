@@ -6,12 +6,13 @@ import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Non-fatal save-time validation of a spec's `agent` / `mcp` node references.
+ * Non-fatal save-time validation of a spec's `agent` / `mcp` / `eval` node references.
  *
  * Walks the spec and checks that each `agent` node's `agentRef` resolves to an
- * active Agent (at some scope) and each `mcp` node's `connectionRef` resolves to
- * an active `mcp` Connection, returning human-readable **warnings** for any that
- * don't. It never throws and never blocks the save: boot validation
+ * active Agent (at some scope), each `mcp` node's `connectionRef` resolves to
+ * an active `mcp` Connection, and each `eval` judge scorer's `rubricRef` names an
+ * `EvalRubric` slug, returning human-readable **warnings** for any that don't.
+ * It never throws and never blocks the save: boot validation
  * (`assertConfigReady`) is the only hard-fail surface — by design a bad/missing
  * ref must fail *that run's node*, not the whole worker, and authors should be
  * able to save a work-in-progress spec that references a not-yet-created agent.
@@ -31,9 +32,13 @@ export async function validateSpecRefs(
 
 /** One unresolved reference, located on its node. */
 export interface SpecRefProblem {
-  code: 'AGENT_REF_UNRESOLVED' | 'MCP_REF_NOT_REACHABLE' | 'MCP_REF_UNRESOLVED';
+  code:
+    | 'AGENT_REF_UNRESOLVED'
+    | 'MCP_REF_NOT_REACHABLE'
+    | 'MCP_REF_UNRESOLVED'
+    | 'RUBRIC_REF_UNRESOLVED';
   nodeId: string;
-  field: 'agentRef' | 'connectionRef';
+  field: 'agentRef' | 'connectionRef' | `scorers[${number}].rubricRef`;
   message: string;
 }
 
@@ -50,6 +55,7 @@ export async function findSpecRefProblems(
   const warnings: SpecRefProblem[] = [];
   const agentRefs: { id: string; key: string }[] = [];
   const mcpRefs: { id: string; connectionRef: string }[] = [];
+  const rubricRefs: { id: string; index: number; slug: string }[] = [];
 
   for (const [id, node] of Object.entries(spec.nodes)) {
     if (node.type === 'agent') {
@@ -57,6 +63,12 @@ export async function findSpecRefProblems(
       agentRefs.push({ id, key: node.agentRef.split('@')[0] });
     } else if (node.type === 'mcp') {
       mcpRefs.push({ connectionRef: node.connectionRef, id });
+    } else if (node.type === 'eval') {
+      node.scorers.forEach((scorer, index) => {
+        if (scorer.kind === 'judge') {
+          rubricRefs.push({ id, index, slug: scorer.rubricRef });
+        }
+      });
     }
   }
 
@@ -115,6 +127,27 @@ export async function findSpecRefProblems(
           code: 'MCP_REF_NOT_REACHABLE',
           field: 'connectionRef',
           message: `Node '${r.id}': mcp connection '${r.connectionRef}' does not belong to this template's team and is not shared with it — this node will be refused at run time.`,
+          nodeId: r.id,
+        });
+      }
+    }
+  }
+
+  if (rubricRefs.length > 0) {
+    const slugs = [...new Set(rubricRefs.map((r) => r.slug))];
+    // Cross-scope, like the judge's own run-time lookup: it reads the newest
+    // version of the slug at any scope, matching the exact string — so a
+    // `slug@version` spelling never resolves and is worth a warning too.
+    const found = await runUnscoped('rubric slugs resolve across every scope', ['EvalRubric'], () =>
+      prisma.evalRubric.findMany({ select: { slug: true }, where: { slug: { in: slugs } } })
+    );
+    const present = new Set(found.map((r) => r.slug));
+    for (const r of rubricRefs) {
+      if (!present.has(r.slug)) {
+        warnings.push({
+          code: 'RUBRIC_REF_UNRESOLVED',
+          field: `scorers[${r.index}].rubricRef`,
+          message: `Node '${r.id}': rubric '${r.slug}' is not an eval rubric slug — ask an admin to create it, or this judge cannot score (and blocks the node when judgeAdvisory is false).`,
           nodeId: r.id,
         });
       }

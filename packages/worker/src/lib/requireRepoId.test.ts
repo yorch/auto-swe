@@ -22,6 +22,12 @@ describe('requireRepoId', () => {
     expect(() => requireRepoId({ repoId: null }, 'shell')).toThrow(/connectionId/);
   });
 
+  it('states why the step needs the connection when told', () => {
+    expect(() => requireRepoId({ repoId: null }, 'containerStep', 'to resolve its team')).toThrow(
+      /needs a repository \(to resolve its team\)/
+    );
+  });
+
   it('fails non-retryably — a missing connection will not appear on retry', () => {
     const err = (() => {
       try {

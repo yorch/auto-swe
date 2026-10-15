@@ -261,8 +261,10 @@ async function cmdGenerate(args: string[], env: CliEnv): Promise<number> {
 
   // The asynchronous job endpoint, polled to completion: a generation can take
   // minutes, longer than a proxy in front of the gateway will hold a request
-  // open. (The job path does not author shell nodes; the canvas's synchronous
-  // generator is the shell-capable one.)
+  // open. (The job path does not author shell nodes: its worker call always
+  // passes allowShell: false. Only the synchronous /generate and /:id/refine
+  // endpoints derive allowShell from the caller's role; the dashboard's refine
+  // panel uses the latter.)
   const { jobId } = await apiRequest<{ jobId: string }>(
     env,
     'POST',

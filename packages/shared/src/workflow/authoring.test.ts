@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { WORKFLOW_AUTHOR_PROMPT } from '../lib/agentPrompts.js';
 import {
   type AuthoringCatalog,
   buildAuthorRequestMessage,
@@ -28,6 +29,39 @@ describe('renderAuthoringCatalog', () => {
     expect(renderAuthoringCatalog(CATALOG)).toContain('Shell: NOT allowed');
   });
 
+  it('omits shell-category steps from the step list when shell is not allowed', () => {
+    const steps = renderAuthoringCatalog(CATALOG).split('## Library agents')[0];
+    expect(steps).toContain('executeImplementation');
+    expect(steps).not.toContain('runContainerStep');
+  });
+
+  it('lists shell-category steps when shell is allowed and an image is allowlisted', () => {
+    const text = renderAuthoringCatalog({
+      ...CATALOG,
+      allowShell: true,
+      shellImages: ['node:24-alpine'],
+    });
+    const steps = text.split('## Library agents')[0];
+    expect(steps).toContain('- runContainerStep [shell]');
+  });
+
+  it('omits shell-category steps when shell is allowed but no image is allowlisted', () => {
+    const text = renderAuthoringCatalog({ ...CATALOG, allowShell: true, shellImages: [] });
+    expect(text.split('## Library agents')[0]).not.toContain('runContainerStep');
+    expect(text).toContain('avoid shell/containerStep nodes and `runContainerStep`');
+  });
+
+  it('tells a requester without shell not to author gate commands', () => {
+    const text = renderAuthoringCatalog(CATALOG);
+    expect(text).toContain('Do not set a `command` on gate steps');
+    const allowed = renderAuthoringCatalog({
+      ...CATALOG,
+      allowShell: true,
+      shellImages: ['node:24-alpine'],
+    });
+    expect(allowed).not.toContain('Do not set a `command` on gate steps');
+  });
+
   it('lists allowed images + the containerStep contract when shell is permitted', () => {
     const text = renderAuthoringCatalog({
       ...CATALOG,
@@ -49,6 +83,35 @@ describe('renderAuthoringCatalog', () => {
     const text = renderAuthoringCatalog({ agents: [], allowShell: false, mcpConnections: [] });
     expect(text).toContain('avoid `agent` nodes');
     expect(text).toContain('do not emit `mcp` nodes');
+  });
+
+  it('tells the model MCP tool names are not listed', () => {
+    const text = renderAuthoringCatalog({
+      agents: [],
+      allowShell: false,
+      mcpConnections: [{ description: null, id: 'conn-1', name: 'Jira' }],
+    });
+    expect(text).toContain('Tool names are not listed here');
+  });
+});
+
+describe('WORKFLOW_AUTHOR_PROMPT', () => {
+  it('covers every eval scorer kind and the fanOut / failure-policy fields', () => {
+    for (const kind of ['gate', 'assert', 'trajectory', 'judge', 'policy', 'pii']) {
+      expect(WORKFLOW_AUTHOR_PROMPT).toContain(`"kind":"${kind}"`);
+    }
+    for (const field of [
+      'candidateRef',
+      'judgeAdvisory',
+      'onBranchFail',
+      'pluck',
+      'approverCount',
+      'contextFrom',
+      'storeAs',
+      'onError',
+    ]) {
+      expect(WORKFLOW_AUTHOR_PROMPT).toContain(field);
+    }
   });
 });
 

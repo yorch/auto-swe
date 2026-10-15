@@ -26,9 +26,14 @@ one from a sentence instead of hand-building it node by node:
 
 The trust model is deliberate: a generated workflow can run agents in Docker, run
 shell nodes, and open PRs, so a human gate sits between generation and execution.
-Shell / `containerStep` nodes inherit the same authoring RBAC + image-allowlist +
-audit as the hand-authored path, and the author agent is told not to emit them
-unless the requester may author shell and the intent requires it.
+Shell / `containerStep` nodes — and a plain `step` naming `runContainerStep`, which runs
+the same executor — inherit the same authoring RBAC + image-allowlist + audit as the
+hand-authored path, and the author agent is told not to emit them unless the requester
+may author shell and the intent requires it. Without shell authorization the catalog
+also leaves `runContainerStep` out of the step list and tells the author not to set a
+`command` on a gate step or eval `gate` scorer, and the repair loop asks the model to
+remove any it emits anyway. The shared `isContainerCodeNode` and `isAuthoredCommandNode`
+(`shared/workflow/containerCode.ts`) define both sets.
 
 ---
 
@@ -93,15 +98,15 @@ dynamic catalog + the user's intent go in the user message.
 
 | Surface | How |
 |---|---|
-| **Web** | Workflow library (`/templates`) → **"Generate with AI"** → describe → routes to the canvas editor for the new DRAFT. |
-| **API (sync)** | `POST /api/v1/workflow-templates/generate` `{ prompt, teamId?, name? }` → `{ data: template, spec, summary, attempts, warnings? }`. Errors are distinguished: `422 GENERATION_FAILED` when the model can't produce a valid spec (rephrase) vs `503 GENERATION_UNAVAILABLE` for an infra failure. Shell-capable (audited) authoring path. |
+| **Web** | Workflow library (`/workflows/library`) → **"New workflow"** → describe → **"Generate draft"** → the async job (`generate/jobs`, below) → routes to the canvas editor for the new DRAFT. Never shell-capable. |
+| **API (sync)** | `POST /api/v1/workflow-templates/generate` `{ prompt, teamId?, name? }` → `{ data: template, spec, summary, attempts, warnings? }`. Errors are distinguished: `422 GENERATION_FAILED` when the model can't produce a valid spec (rephrase) vs `503 GENERATION_UNAVAILABLE` for an infra failure. Shell-capable (audited) authoring path: `allowShell` is true only for a platform admin or an admin of the target team. Neither the dashboard nor the CLI calls it; the in-app assistant may, with the user's confirmation. |
 | **API (async)** | `POST /api/v1/workflow-templates/generate/jobs` → `202 { jobId }`; poll `GET /api/v1/workflow-templates/generate/jobs/:jobId` → `{ status: running\|done\|failed, phase \| result \| code }`. Non-blocking (no proxy idle-timeout); persists the DRAFT worker-side; refuses shell nodes. |
 | **Explain** | `POST /api/v1/workflow-templates/:id/explain` → `{ data: { explanation } }` (Markdown), CLI `auto-swe workflows explain <name>`, web "Explain" button. The inverse of authoring. |
-| **Refine (web)** | Template page (`/templates/[id]`) → **"Refine with AI"** → a chat panel where each plain-language change calls `POST /api/v1/workflow-templates/:id/refine` `{ prompt }` → `{ data: version, spec, summary, attempts, warnings? }`. Each turn saves a **new DRAFT version** off the latest and updates the canvas. Gated on ADMIN/LEAD. |
+| **Refine (web)** | Template page (`/workflows/library/[id]`) → **"Refine with AI"** → a chat panel where each plain-language change calls `POST /api/v1/workflow-templates/:id/refine` `{ prompt }` → `{ data: version, spec, summary, attempts, warnings? }`. Each turn saves a **new DRAFT version** off the latest and updates the canvas. Gated on ADMIN/LEAD; `allowShell` is true only for a platform admin or an admin of the template's team. |
 | **Refine (Slack)** | A follow-up in the same thread ("also add a security review step") → the channel assistant's `refineWorkflow` tool → applies the change to the draft that thread generated (linked via `ChannelThreadSession.lastGeneratedTemplateId`) and saves a new version. Budget-gated; refuses shell nodes; replies with the new version (or "nothing to refine yet"). |
-| **Check without saving** | `POST /api/v1/workflow-templates/validate` `{ spec, templateId?, teamId? }` → `{ data: { ok, issues: [{ code, severity, message, nodeId?, field?, source }] } }`. Requires LEAD. Runs the checks a save runs and writes nothing (no template, version or audit row). `source` is `schema` (the strict parse a save answers `400 INVALID_SPEC` for), `lint` (`validateSpec`), `refs` (unresolved agent or MCP references, warnings) or `authoring` (the shell-authoring role gate and the shell image allowlist, which a save answers with `403`/`400`). `ok` is true when no issue has `severity: "error"`. A well-formed request is `200` unless the scope ids are refused (`403` for a `teamId` the caller cannot author for, `404` for a `templateId` it cannot write); only a malformed body is `400`. With neither id, the spec is judged as a global template, so a non-admin gets an `authoring` issue `FORBIDDEN`, as create answers `403`. |
+| **Check without saving** | `POST /api/v1/workflow-templates/validate` `{ spec, templateId?, teamId? }` → `{ data: { ok, issues: [{ code, severity, message, nodeId?, field?, source }] } }`. Requires LEAD. Runs the checks a save runs and writes nothing (no template, version or audit row). `source` is `schema` (the strict parse a save answers `400 INVALID_SPEC` for), `lint` (`validateSpec`), `refs` (unresolved agent, MCP or eval-rubric references, warnings) or `authoring` (the shell-authoring role gate and the shell image allowlist, which a save answers with `403`/`400`). `ok` is true when no issue has `severity: "error"`. A well-formed request is `200` unless the scope ids are refused (`403` for a `teamId` the caller cannot author for, `404` for a `templateId` it cannot write); only a malformed body is `400`. With neither id, the spec is judged as a global template, so a non-admin gets an `authoring` issue `FORBIDDEN`, as create answers `403`. |
 | **CLI** | `auto-swe workflows generate "<description>" [--name=NAME] [--team=<slug>]` |
-| **Slack** | The channel assistant's `generateWorkflow` tool: ask it to "create a workflow that…" and it drafts one (scoped to the channel's team, `allowShell: false`) and replies in-thread with the draft name + a pointer to the Workflow library. The draft is **budget-gated** like a delegated task, and the channel path is never shell-authorized — a generated spec containing `shell`/`containerStep` nodes is refused (those require canvas authoring with the proper RBAC + audit). |
+| **Slack** | The channel assistant's `generateWorkflow` tool: ask it to "create a workflow that…" and it drafts one (scoped to the channel's team, `allowShell: false`) and replies in-thread with the draft name + a pointer to the Workflow library. The draft is **budget-gated** like a delegated task, and the channel path is never shell-authorized — a generated spec containing `shell`/`containerStep` nodes, a `runContainerStep` step, or an authored gate command is refused (those require canvas authoring with the proper RBAC + audit), and the reply points at the canvas. |
 
 ---
 
@@ -141,7 +146,8 @@ dynamic catalog + the user's intent go in the user message.
 - **Coded / container steps.** When shell authoring is permitted, the catalog
   lists the team's effective image allowlist (built-in + additions) and the
   `containerStep` contract, so generated workflows can use bundle-shipped coded
-  capabilities. The async/channel paths refuse shell nodes (no audit there).
+  capabilities. The async/channel paths refuse container code and authored gate
+  commands (no audit there).
 - **Async generation.** The web uses a non-blocking job (`/generate/jobs` →
   poll) so a long generation never holds the HTTP request open (proxy-safe); the
   job persists the DRAFT worker-side, so re-polling is idempotent.
@@ -157,7 +163,8 @@ dynamic catalog + the user's intent go in the user message.
   thread to its draft via `ChannelThreadSession.lastGeneratedTemplateId` (a
   plain UUID — a deleted template reads as "nothing to refine"). Both save
   paths reuse the shared `createTemplateVersion` (concurrency-safe append +
-  shell audit); the channel path additionally refuses shell nodes.
+  shell audit); the channel path additionally refuses container code and authored
+  gate commands, including a draft that already carries them.
 - **Expression language.** `cond.expr` / `{ expr }` bindings use the
   interpreter's restricted **safe** expression language (`==` not `===`, no
   method calls), documented in `WORKFLOW_AUTHOR_PROMPT`. An integration test
@@ -193,10 +200,22 @@ dynamic catalog + the user's intent go in the user message.
   as on save. The `refs` check is an existence test at any scope, as on save. A check leaves no audit
   trail (a save writes the template, version and audit rows), and it does not reproduce a save's
   concurrent-write conflict (`409 VERSION_CONFLICT`).
+- **MCP tool names are a guess.** The catalog lists each MCP connection without its tools: a
+  connection stores no tool list, and only a live probe of the server returns one, which catalog
+  building does not do. The author picks the likeliest `tool` name and says in the summary that the
+  user must confirm it; a wrong name fails when the node runs, not when the spec is saved.
 - **Shell nodes are refused on the async and channel paths.** Shell authoring requires an audit
   trail, and neither the background generation job nor the Slack path has one. Only the synchronous
-  web/API path can generate a spec containing `shell` nodes, and only when the team's allowlist
-  permits.
+  `POST .../generate` and `POST .../:id/refine` endpoints pass `allowShell` to the author agent, and
+  only for an admin; the save-time shell gates (role and image allowlist) still apply. The web
+  Generate button uses the async job and never authors shell nodes. The refusal covers every
+  spelling of container code — a `shell` or `containerStep` node, or a `step` naming
+  `runContainerStep` — and authored gate commands.
+- **Authored gate commands are not shell-gated on save.** A `command` on a gate step (`runLint`,
+  `runTests`, …), on a `runQualityGates` gate, or on an eval `gate` scorer runs in the agent
+  workspace, not the shell sandbox. The async and channel paths refuse one, but the gateway's save
+  and synchronous generate/refine routes apply neither the shell authoring role nor
+  `WorkflowShellAudit` to it: a LEAD who may save a template may set one.
 - **Generated specs are DRAFT, never active.** By design — activation is an explicit human action
   through the canvas. A generated workflow cannot run until a person promotes it.
 - **Refinement replaces the whole spec.** Refine mode asks the model to return the full updated

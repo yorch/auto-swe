@@ -23,6 +23,13 @@ export interface ScoreInput {
   value: number;
   /** Explicit pass/fail for floor scorers (defaults to value >= 1). */
   passed?: boolean;
+  /**
+   * Set when the scorer could not produce a score at all (a judge whose rubric
+   * is missing, whose call failed, or whose output carried no score). `value`
+   * is then a neutral placeholder, not a measurement — so a blocking judge
+   * fails closed on it rather than comparing the placeholder to a threshold.
+   */
+  error?: string;
 }
 
 /** Floor = the hard, blocking axes (execution + programmatic guardrail). */
@@ -56,26 +63,38 @@ export interface CombinedScore {
   shouldRunJudge: boolean;
   /**
    * Convenience aggregate in [0,1] for `cond` branching — 0 when the floor
-   * fails, else the mean of the soft axes (1 when there are none). NOT the
-   * system of record; the per-axis rows are (RFC §2).
+   * fails, else the mean of the soft axes that scored (1 when none did). NOT
+   * the system of record; the per-axis rows are (RFC §2).
    */
   aggregate: number;
-  /** Per-scorer value, kept decomposable (stacked, not summed). */
+  /**
+   * Per-scorer value, kept decomposable (stacked, not summed). A scorer that
+   * could not score is absent: its value is a placeholder, not a measurement.
+   */
   perAxis: Record<string, number>;
+  /** Scorers that could not score, mapped to the reason. Empty when all scored. */
+  errors: Record<string, string>;
 }
 
 export function combineScores(scores: ScoreInput[]): CombinedScore {
   const floorPassed = evaluateFloor(scores);
   const perAxis: Record<string, number> = {};
+  const errors: Record<string, string> = {};
   for (const s of scores) {
-    perAxis[s.scorer] = s.value;
+    if (s.error !== undefined) {
+      errors[s.scorer] = s.error;
+    } else {
+      perAxis[s.scorer] = s.value;
+    }
   }
   if (!floorPassed) {
-    return { aggregate: 0, floorPassed: false, perAxis, shouldRunJudge: false };
+    return { aggregate: 0, errors, floorPassed: false, perAxis, shouldRunJudge: false };
   }
-  const soft = scores.filter((s) => !isFloorKind(s.kind));
+  // An errored scorer's placeholder would drag the mean toward 0.5, so a broken
+  // judge would read as a mediocre candidate. It is reported in `errors` instead.
+  const soft = scores.filter((s) => !isFloorKind(s.kind) && s.error === undefined);
   const aggregate = soft.length > 0 ? soft.reduce((sum, s) => sum + s.value, 0) / soft.length : 1;
-  return { aggregate, floorPassed: true, perAxis, shouldRunJudge: true };
+  return { aggregate, errors, floorPassed: true, perAxis, shouldRunJudge: true };
 }
 
 export interface GateDecisionOpts {
@@ -97,8 +116,8 @@ export interface GateDecision {
 /**
  * The decision rule (RFC §9 8a). A gate must terminate in a decision:
  * execution + guardrail are blocking; trajectory + judge are advisory unless
- * the judge is explicitly promoted to blocking (calibrated) and falls below
- * its threshold.
+ * the judge is explicitly promoted to blocking (calibrated) and either falls
+ * below its threshold or could not score at all (fail closed).
  */
 export function decideGate(scores: ScoreInput[], opts: GateDecisionOpts = {}): GateDecision {
   const failedFloor = scores.filter((s) => isFloorKind(s.kind)).find((s) => !scorerPassed(s));
@@ -107,13 +126,27 @@ export function decideGate(scores: ScoreInput[], opts: GateDecisionOpts = {}): G
   }
   const judgeAdvisory = opts.judgeAdvisory ?? true;
   if (!judgeAdvisory) {
+    // A blocking judge that could not score must not pass on its placeholder
+    // value: an unverified candidate would clear the gate exactly when the
+    // judge is broken. An advisory judge's error stays advisory.
+    const failedJudge = scores.find((s) => s.kind === 'judge' && s.error !== undefined);
+    if (failedJudge) {
+      return {
+        blocked: true,
+        reason: `judge could not score (${failedJudge.scorer}: ${failedJudge.error})`,
+      };
+    }
     const threshold = opts.judgeThreshold ?? 0.5;
-    const weakJudge = scores.find((s) => s.kind === 'judge' && s.value < threshold);
+    const judges = scores.filter((s) => s.kind === 'judge');
+    const weakJudge = judges.find((s) => s.value < threshold);
     if (weakJudge) {
       return {
         blocked: true,
         reason: `judge below threshold (${weakJudge.scorer}=${weakJudge.value} < ${threshold})`,
       };
+    }
+    if (judges.length > 0) {
+      return { blocked: false, reason: `floor passed; judge at or above threshold ${threshold}` };
     }
   }
   return { blocked: false, reason: 'floor passed; soft axes advisory' };

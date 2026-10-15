@@ -894,6 +894,117 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     expect(result.failed).toBe(0);
   }, 120_000);
 
+  describe('a signal node inside concurrent fanOut branches', () => {
+    // A `signal` node keeps its fixed name inside a branch (external senders
+    // address it by that name), so every branch waits on the same slot. One
+    // delivery wakes every waiting branch but is consumed by exactly one.
+    const sharedSignalSpec = () =>
+      makeSpec(
+        {
+          branchDone: { status: 'SUCCESS', type: 'terminate' },
+          branchTimedOut: { status: 'FAILED', type: 'terminate' },
+          done: {
+            result: { failed: { from: 'nodes.fan.output.failed' } },
+            status: 'SUCCESS',
+            type: 'terminate',
+          },
+          fan: {
+            concurrency: 2,
+            join: 'done',
+            onBranchFail: 'continue',
+            over: { literal: ['a', 'b'] },
+            subgraph: 'marker',
+            type: 'fanOut',
+          },
+          marker: {
+            config: { status: 'BRANCH_AWAITING_SIGNAL' },
+            next: 'wait',
+            step: 'updateDomainState',
+            type: 'step',
+          },
+          wait: {
+            name: 'sharedSignal',
+            onReceive: 'branchDone',
+            onTimeout: 'branchTimedOut',
+            timeout: '1h',
+            type: 'signal',
+          },
+        },
+        'fan'
+      );
+    const until = async (pred: () => boolean) => {
+      const deadline = Date.now() + 15_000;
+      while (!pred() && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return pred();
+    };
+    const parked = () =>
+      calls.domainStates.filter((s) => s === 'BRANCH_AWAITING_SIGNAL').length >= 2;
+    const waitRecords = () =>
+      calls.recordedSteps.filter((r) => r.nodeId.endsWith('/wait')).map((r) => r.status);
+
+    it('keeps the branch that missed a delivery waiting instead of timing it out', async () => {
+      calls.domainStates.length = 0;
+      calls.recordedSteps.length = 0;
+      currentSpec = sharedSignalSpec();
+      const handle = await env.client.workflow.start(
+        'RunnableWorkflow',
+        startArgs('wf-signal-fan-shared')
+      );
+      expect(await until(parked)).toBe(true);
+      await env.sleep('1 second');
+
+      await handle.signal('sharedSignal', { n: 1 });
+      expect(await until(() => waitRecords().length >= 1)).toBe(true);
+      // The empty-handed branch used to record SKIPPED and take onTimeout in
+      // the same workflow task; give that task time to have done so.
+      await new Promise((r) => setTimeout(r, 500));
+      expect(waitRecords()).toEqual(['PASSED']);
+      expect((await handle.describe()).status.name).toBe('RUNNING');
+
+      await handle.signal('sharedSignal', { n: 2 });
+      const result = (await handle.result()) as { failed: number; status: string };
+      expect(result.status).toBe('SUCCESS');
+      expect(result.failed).toBe(0);
+      expect(waitRecords()).toEqual(['PASSED', 'PASSED']);
+    }, 120_000);
+
+    it('times the waiting branch out at its own deadline when no second delivery comes', async () => {
+      calls.domainStates.length = 0;
+      calls.recordedSteps.length = 0;
+      currentSpec = sharedSignalSpec();
+      const handle = await env.client.workflow.start(
+        'RunnableWorkflow',
+        startArgs('wf-signal-fan-single')
+      );
+      expect(await until(parked)).toBe(true);
+      await env.sleep('1 second');
+      await handle.signal('sharedSignal', { n: 1 });
+      expect(await until(() => waitRecords().length >= 1)).toBe(true);
+      // Before the fix the empty-handed branch recorded SKIPPED and ended in
+      // this same workflow task; now it is still parked on its own timer.
+      await new Promise((r) => setTimeout(r, 500));
+      expect(waitRecords()).toEqual(['PASSED']);
+      expect((await handle.describe()).status.name).toBe('RUNNING');
+
+      // Time-skipping runs the re-wait's timer out.
+      const result = (await handle.result()) as { failed: number; status: string };
+      expect(result.status).toBe('SUCCESS');
+      expect(result.failed).toBe(1);
+      expect([...waitRecords()].sort()).toEqual(['PASSED', 'SKIPPED']);
+
+      // The branch ended at its own 1h deadline, not when the delivery came: a
+      // timer fired, and about an hour of workflow time passed.
+      const events = (await handle.fetchHistory()).events ?? [];
+      expect(events.some((e) => e.timerFiredEventAttributes)).toBe(true);
+      const seconds = (t?: { seconds?: unknown } | null) => Number(String(t?.seconds ?? 0));
+      const elapsed = seconds(events.at(-1)?.eventTime) - seconds(events[0]?.eventTime);
+      expect(elapsed).toBeGreaterThanOrEqual(59 * 60);
+      expect(elapsed).toBeLessThan(2 * 60 * 60);
+    }, 120_000);
+  });
+
   it('finalizes a cancelled run as CANCELLED and clears its pending human steps', async () => {
     calls.cancelledHumanSteps.length = 0;
     const before = calls.finalize.length;

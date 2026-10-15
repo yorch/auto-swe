@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { SignalSlots } from './signalSlots.js';
+import {
+  SIGNAL_REWAIT_PATCH,
+  SignalSlots,
+  type SignalWaitRuntime,
+  waitForSignal,
+} from './signalSlots.js';
+import { waitDurationMs } from './waitDuration.js';
 
 describe('SignalSlots', () => {
   it('registers names idempotently', () => {
@@ -89,5 +95,165 @@ describe('SignalSlots', () => {
     s.deliver('a', 1);
     s.deliver('a', 2);
     expect(s.take('a')).toBe(2);
+  });
+});
+
+/**
+ * A stand-in for the Temporal SDK's condition handling. What matters is the
+ * order the SDK uses: an activation applies its jobs (signals, fired timers)
+ * and then resolves EVERY blocked condition whose predicate holds, before any
+ * woken workflow code runs. That is what lets one delivery wake two waits on
+ * the same name.
+ */
+function fakeTemporal(opts: { patched?: boolean } = {}) {
+  let clock = 1_000_000;
+  let blocked: Array<{ deadline: number; fn: () => boolean; resolve: (v: boolean) => void }> = [];
+  const timeouts: Array<string | number> = [];
+  const patchCalls: string[] = [];
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  const runtime: SignalWaitRuntime = {
+    condition(fn, timeout) {
+      timeouts.push(timeout);
+      const ms = typeof timeout === 'number' ? timeout : waitDurationMs(timeout);
+      return new Promise((resolve) => {
+        blocked.push({ deadline: clock + ms, fn, resolve });
+      });
+    },
+    now: () => clock,
+    patched(id) {
+      patchCalls.push(id);
+      return opts.patched ?? true;
+    },
+  };
+  return {
+    /** Apply `job`, then wake every condition that now holds, then let woken code run. */
+    async activate(job: () => void) {
+      job();
+      const ready = blocked.filter((c) => c.fn());
+      blocked = blocked.filter((c) => !ready.includes(c));
+      for (const c of ready) {
+        c.resolve(true);
+      }
+      await flush();
+    },
+    /** Move the workflow clock forward, firing every timer that falls due. */
+    async advance(ms: number) {
+      clock += ms;
+      const due = blocked.filter((c) => c.deadline <= clock);
+      blocked = blocked.filter((c) => !due.includes(c));
+      for (const c of due) {
+        c.resolve(false);
+      }
+      await flush();
+    },
+    patchCalls,
+    runtime,
+    timeouts,
+    get waiting() {
+      return blocked.length;
+    },
+  };
+}
+
+describe('waitForSignal', () => {
+  it('consumes a payload that is already pending', async () => {
+    const t = fakeTemporal();
+    const s = new SignalSlots();
+    s.deliver('go', { ok: true });
+    const wait = waitForSignal(s, 'go', '1h', t.runtime);
+    await t.activate(() => {});
+    await expect(wait).resolves.toEqual({ ok: true });
+    expect(t.patchCalls).toEqual([]);
+  });
+
+  it('returns undefined when the timeout elapses', async () => {
+    const t = fakeTemporal();
+    const s = new SignalSlots();
+    const wait = waitForSignal(s, 'go', '30m', t.runtime);
+    await t.advance(30 * 60_000);
+    await expect(wait).resolves.toBeUndefined();
+    expect(t.patchCalls).toEqual([]);
+  });
+
+  it('wakes only one of two concurrent waits per delivery; the other keeps waiting', async () => {
+    const t = fakeTemporal();
+    const s = new SignalSlots();
+    const results: unknown[] = [];
+    const a = waitForSignal(s, 'go', '1h', t.runtime).then((v) => results.push(['a', v]));
+    const b = waitForSignal(s, 'go', '1h', t.runtime).then((v) => results.push(['b', v]));
+    await t.activate(() => {});
+    await t.advance(10 * 60_000);
+
+    await t.activate(() => s.deliver('go', 1));
+    // One wait got the payload; the other went back to waiting rather than
+    // reporting a timeout that has not happened.
+    expect(results).toEqual([['a', 1]]);
+    expect(t.waiting).toBe(1);
+    expect(t.patchCalls).toEqual([SIGNAL_REWAIT_PATCH]);
+    // Its new timer covers only what is left of its own hour.
+    expect(t.timeouts).toEqual(['1h', '1h', 50 * 60_000]);
+
+    await t.activate(() => s.deliver('go', 2));
+    await Promise.all([a, b]);
+    expect(results).toEqual([
+      ['a', 1],
+      ['b', 2],
+    ]);
+    expect(s.hasPending('go')).toBe(false);
+  });
+
+  it('times the re-wait out at the original deadline', async () => {
+    const t = fakeTemporal();
+    const s = new SignalSlots();
+    const results: unknown[] = [];
+    const a = waitForSignal(s, 'go', '1h', t.runtime).then((v) => results.push(['a', v]));
+    const b = waitForSignal(s, 'go', '1h', t.runtime).then((v) => results.push(['b', v]));
+    await t.advance(20 * 60_000);
+    await t.activate(() => s.deliver('go', 'only'));
+    expect(results).toEqual([['a', 'only']]);
+
+    await t.advance(39 * 60_000);
+    expect(results).toHaveLength(1);
+    await t.advance(60_000);
+    await Promise.all([a, b]);
+    expect(results).toEqual([
+      ['a', 'only'],
+      ['b', undefined],
+    ]);
+  });
+
+  it('keeps the recorded behaviour when the re-wait patch is absent (replay of an older history)', async () => {
+    const t = fakeTemporal({ patched: false });
+    const s = new SignalSlots();
+    const a = waitForSignal(s, 'go', '1h', t.runtime);
+    const b = waitForSignal(s, 'go', '1h', t.runtime);
+    await t.activate(() => s.deliver('go', 1));
+    await expect(a).resolves.toBe(1);
+    // Before the patch the empty-handed waiter ended at once, with no new timer.
+    await expect(b).resolves.toBeUndefined();
+    expect(t.timeouts).toEqual(['1h', '1h']);
+    expect(t.waiting).toBe(0);
+  });
+
+  it('leaves the payload in the slot for a wait that is told to leave it', async () => {
+    const t = fakeTemporal();
+    const s = new SignalSlots();
+    const wait = waitForSignal(s, 'go', '1h', t.runtime, () => true);
+    await t.activate(() => s.deliver('go', 'later'));
+    await expect(wait).resolves.toBeUndefined();
+    expect(s.take('go')).toBe('later');
+  });
+
+  it('asks leaveForLater only once a payload has woken the wait', async () => {
+    const t = fakeTemporal();
+    const s = new SignalSlots();
+    let asked = 0;
+    const wait = waitForSignal(s, 'go', '30m', t.runtime, () => {
+      asked += 1;
+      return false;
+    });
+    await t.advance(30 * 60_000);
+    await expect(wait).resolves.toBeUndefined();
+    expect(asked).toBe(0);
   });
 });

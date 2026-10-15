@@ -30,6 +30,20 @@ vi.mock('@auto-swe/shared/db', () => ({
     workflowRun: { findUnique: mocks.workflowRunFindUnique },
   },
 }));
+// The real executor runs the PII patterns; a test can substitute a canned batch
+// result (a quarantined pattern) the real one only produces after two overruns.
+const regex = vi.hoisted(() => ({ override: undefined as unknown }));
+vi.mock('@auto-swe/shared/lib/regexExec', async (importOriginal) => {
+  const real = await importOriginal<typeof import('@auto-swe/shared/lib/regexExec')>();
+  return {
+    ...real,
+    runRegexBatch: vi.fn((...args: Parameters<typeof real.runRegexBatch>) =>
+      regex.override === undefined
+        ? real.runRegexBatch(...args)
+        : Promise.resolve(regex.override as Awaited<ReturnType<typeof real.runRegexBatch>>)
+    ),
+  };
+});
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(),
   resolveWorkspaceInfra: vi.fn(() => ({ regexScanBudgetMs: 250 })),
@@ -111,6 +125,15 @@ describe('assembleScores', () => {
     expect(r.decision.blocked).toBe(true);
   });
 
+  it('reports passed = !blocked and a summary the gate-failure path can name', () => {
+    const blocked = assembleScores([gateFail], true);
+    expect(blocked.passed).toBe(false);
+    expect(blocked.summary).toBe('eval blocked: floor failed: gate:t');
+    const clear = assembleScores([gatePass, judge], true);
+    expect(clear.passed).toBe(true);
+    expect(clear.summary).toBe(clear.decision.reason);
+  });
+
   it('respects a caller-supplied judgeThreshold (config-driven) in the gate decision', () => {
     // Same judge value (0.5), opposite decisions depending on the threshold the
     // caller threads through — proving the param reaches decideGate.
@@ -120,22 +143,121 @@ describe('assembleScores', () => {
 });
 
 describe('runEvalNode (judge threshold from DB config)', () => {
-  // A judge scorer with no rubric row scores 0.5; whether that blocks depends on
-  // the evalJudgeThreshold resolved from workflow_defaults, so a distinctive
-  // mocked value must decide the gate.
+  // A judge that scores 0.5; whether that blocks depends on the
+  // evalJudgeThreshold resolved from workflow_defaults, so a distinctive mocked
+  // value must decide the gate.
   const judgeScorer = { kind: 'judge', rubricRef: 'quality' } as EvalScorer;
 
   it('blocks the gate when the resolved evalJudgeThreshold exceeds the judge score', async () => {
     mockResolveDefaults.mockResolvedValue({ evalJudgeThreshold: 0.8 } as never);
+    mocks.evalRubricFindFirst.mockResolvedValueOnce({ promptText: 'Grade it.' });
+    judge.runAgent.mockResolvedValueOnce({ object: { score: 0.5 } });
     const r = await runEvalNode({ judgeAdvisory: false, scorers: [judgeScorer], targetValue: {} });
     expect(r.decision.blocked).toBe(true);
     expect(r.decision.reason).toContain('0.8');
+    expect(r.passed).toBe(false);
   });
 
   it('passes the gate when the resolved evalJudgeThreshold is below the judge score', async () => {
     mockResolveDefaults.mockResolvedValue({ evalJudgeThreshold: 0.4 } as never);
+    mocks.evalRubricFindFirst.mockResolvedValueOnce({ promptText: 'Grade it.' });
+    judge.runAgent.mockResolvedValueOnce({ object: { score: 0.5 } });
     const r = await runEvalNode({ judgeAdvisory: false, scorers: [judgeScorer], targetValue: {} });
     expect(r.decision.blocked).toBe(false);
+    expect(r.passed).toBe(true);
+  });
+});
+
+describe('runEvalNode (a judge that could not score)', () => {
+  const judgeScorer = { kind: 'judge', rubricRef: 'quality' } as EvalScorer;
+
+  it('fails closed when the judge is blocking and the rubric is missing', async () => {
+    // The placeholder 0.5 would clear the 0.5 threshold; the missing rubric must block.
+    mockResolveDefaults.mockResolvedValue({ evalJudgeThreshold: 0.5 } as never);
+    const r = await runEvalNode({ judgeAdvisory: false, scorers: [judgeScorer], targetValue: {} });
+    expect(r.decision.blocked).toBe(true);
+    expect(r.decision.reason).toContain('judge could not score');
+    expect(r.decision.reason).toContain('rubric not found');
+    expect(r.passed).toBe(false);
+  });
+
+  it('fails closed when the blocking judge call throws', async () => {
+    mockResolveDefaults.mockResolvedValue({ evalJudgeThreshold: 0.5 } as never);
+    mocks.evalRubricFindFirst.mockResolvedValueOnce({ promptText: 'Grade it.' });
+    judge.runAgent.mockRejectedValueOnce(new Error('provider down'));
+    const r = await runEvalNode({ judgeAdvisory: false, scorers: [judgeScorer], targetValue: {} });
+    expect(r.decision.blocked).toBe(true);
+    expect(r.decision.reason).toContain('judge call failed');
+    // A fixed reason, never the error's own text.
+    expect(r.decision.reason).not.toContain('provider down');
+  });
+
+  it('fails closed when the blocking judge returns no score', async () => {
+    mockResolveDefaults.mockResolvedValue({ evalJudgeThreshold: 0.5 } as never);
+    mocks.evalRubricFindFirst.mockResolvedValueOnce({ promptText: 'Grade it.' });
+    judge.runAgent.mockResolvedValueOnce({ object: undefined });
+    const r = await runEvalNode({ judgeAdvisory: false, scorers: [judgeScorer], targetValue: {} });
+    expect(r.decision.blocked).toBe(true);
+    expect(r.decision.reason).toContain('judge returned no score');
+  });
+
+  it('stays advisory when the judge is advisory', async () => {
+    mockResolveDefaults.mockResolvedValue({ evalJudgeThreshold: 0.5 } as never);
+    const r = await runEvalNode({ scorers: [judgeScorer], targetValue: {} });
+    expect(r.decision.blocked).toBe(false);
+    expect(r.passed).toBe(true);
+  });
+
+  it('names a spent budget as its own reason', async () => {
+    mockResolveDefaults.mockResolvedValue({ evalJudgeThreshold: 0.5 } as never);
+    mocks.evalRubricFindFirst.mockResolvedValueOnce({ promptText: 'Grade it.' });
+    judge.runAgent.mockRejectedValueOnce(
+      ApplicationFailure.nonRetryable('Budget already exhausted', 'BUDGET_EXCEEDED')
+    );
+    const r = await runEvalNode({ judgeAdvisory: false, scorers: [judgeScorer], targetValue: {} });
+    expect(r.decision.reason).toContain('judge budget exhausted');
+    expect(r.errors).toEqual({ 'judge:quality': 'judge budget exhausted' });
+  });
+
+  it('leaves the errored judge out of score and perAxis', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    const r = await runEvalNode({ scorers: [judgeScorer], targetValue: {} });
+    expect(r.errors).toEqual({ 'judge:quality': 'rubric not found' });
+    expect(r.perAxis).toEqual({});
+    // No soft axis scored, so the aggregate follows the no-soft-axes convention.
+    expect(r.score).toBe(1);
+  });
+
+  it('records the node id on every EvalResult row', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    vi.mocked(recordEvalResult).mockClear();
+    await runEvalNode({ nodeId: 'score', scorers: [judgeScorer], targetValue: {} });
+    expect(recordEvalResult).toHaveBeenCalledWith(expect.objectContaining({ nodeId: 'score' }));
+  });
+
+  it('records the error on the judge EvalResult row', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    vi.mocked(recordEvalResult).mockClear();
+    await runEvalNode({ scorers: [judgeScorer], targetValue: {} });
+    expect(recordEvalResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: { error: 'rubric not found' },
+        rationale: 'scorer error: rubric not found',
+        source: 'JUDGE',
+        value: 0.5,
+      })
+    );
+  });
+
+  it('records no error on a judge that scored', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    mocks.evalRubricFindFirst.mockResolvedValueOnce({ promptText: 'Grade it.' });
+    judge.runAgent.mockResolvedValueOnce({ object: { score: 0.7 } });
+    vi.mocked(recordEvalResult).mockClear();
+    await runEvalNode({ scorers: [judgeScorer], targetValue: {} });
+    const row = vi.mocked(recordEvalResult).mock.calls[0]?.[0];
+    expect(row?.metadata).toBeUndefined();
+    expect(row?.rationale).toBeUndefined();
   });
 });
 
@@ -265,6 +387,29 @@ describe('runEvalNode (pii scorer)', () => {
     expect(r.floorPassed).toBe(true);
     expect(r.score).toBe(1);
     expect(r.decision.blocked).toBe(false);
+  });
+
+  it('fails closed when a PII pattern was skipped as quarantined', async () => {
+    mockResolveDefaults.mockResolvedValue({} as never);
+    mocks.scannerPatternFindMany.mockResolvedValue([
+      { flags: '', label: 'slow', pattern: '(a+)+$' },
+    ]);
+    regex.override = {
+      hits: [],
+      incomplete: false,
+      quarantinedPatternKeys: ['pii:slow'],
+      timedOutPatternKeys: [],
+    };
+    try {
+      const r = await runEvalNode({
+        scorers: [{ kind: 'pii' } as EvalScorer],
+        targetValue: 'hello world',
+      });
+      expect(r.floorPassed).toBe(false);
+      expect(r.decision.blocked).toBe(true);
+    } finally {
+      regex.override = undefined;
+    }
   });
 
   it('fails when a PII pattern matches', async () => {

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -6,10 +7,18 @@ import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 import {
+  PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES,
   PREVIOUS_BUILTIN_INPUT_SCHEMAS,
   seedCoreDefaults,
   seedSweStarter,
 } from './syncBuiltins.js';
+
+// The advisory lock is raw SQL, which the in-memory fake below cannot run; the transaction it
+// would take is a passthrough there.
+vi.mock('./agentLineageLock.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./agentLineageLock.js')>()),
+  lockAgentLineage: async () => undefined,
+}));
 
 /**
  * Admin-owned state must survive a gateway restart: `syncBuiltins` runs on
@@ -137,6 +146,9 @@ function makeFake() {
   const prisma = Object.fromEntries(
     (Object.keys(tables) as Array<keyof typeof tables>).map((k) => [k, delegate(k)])
   ) as unknown as PrismaClient;
+  (prisma as unknown as { $transaction: unknown }).$transaction = async (
+    fn: (tx: PrismaClient) => unknown
+  ) => fn(prisma);
   return { orderBys, prisma, tables };
 }
 
@@ -574,6 +586,70 @@ describe('syncBuiltins — agents and skill refs', () => {
     const { orderBys, prisma } = makeFake();
     await seedSweStarter(prisma);
     expect(orderBys.every((o) => JSON.stringify(o).includes('"version":"desc"'))).toBe(true);
+  });
+});
+
+describe('syncBuiltins — seeded prompt migration', () => {
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+  const OLD_PROMPT = 'an earlier built-in workflow author prompt';
+  const hashes = PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES as Record<string, string[]>;
+
+  async function seeded(key: string) {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const agent = tables.agent.find((a) => a.key === key) as Row;
+    agent.isActive = true;
+    return { agent, prisma, tables, versions: () => tables.agent.filter((a) => a.key === key) };
+  }
+
+  function withPreviousHash<T>(key: string, text: string, run: () => Promise<T>): Promise<T> {
+    const original = hashes[key];
+    hashes[key] = [...(original ?? []), sha(text)];
+    return run().finally(() => {
+      hashes[key] = original as string[];
+    });
+  }
+
+  it('lists previous prompts for the authoring agents, never the current text', async () => {
+    const { agent } = await seeded('workflowAuthor');
+    expect(Object.keys(PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES)).toEqual(
+      expect.arrayContaining(['workflowAuthor', 'workflowExplainer'])
+    );
+    for (const key of ['workflowAuthor', 'workflowExplainer']) {
+      const current = (await seeded(key)).agent.systemPrompt as string;
+      expect(PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES[key]).not.toContain(sha(current));
+    }
+    expect(agent.systemPrompt).toBeTruthy();
+  });
+
+  it('cuts a new version with the current prompt for an untouched old seed, keeping the old row', async () => {
+    const { agent, prisma, versions } = await seeded('workflowAuthor');
+    const current = agent.systemPrompt as string;
+    agent.systemPrompt = OLD_PROMPT;
+    await withPreviousHash('workflowAuthor', OLD_PROMPT, () => seedSweStarter(prisma));
+    const rows = versions();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toMatchObject({ isActive: true, systemPrompt: OLD_PROMPT, version: 1 });
+    expect(rows[1]).toMatchObject({ isActive: true, systemPrompt: current, version: 2 });
+    // A second boot finds the current prompt and cuts nothing.
+    await seedSweStarter(prisma);
+    expect(versions()).toHaveLength(2);
+  });
+
+  it('leaves an admin-edited prompt alone', async () => {
+    const { agent, prisma, versions } = await seeded('workflowAuthor');
+    agent.systemPrompt = 'an admin rewrote this';
+    await withPreviousHash('workflowAuthor', OLD_PROMPT, () => seedSweStarter(prisma));
+    expect(versions()).toHaveLength(1);
+    expect(agent.systemPrompt).toBe('an admin rewrote this');
+  });
+
+  it('leaves a deactivated agent alone', async () => {
+    const { agent, prisma, versions } = await seeded('workflowAuthor');
+    agent.systemPrompt = OLD_PROMPT;
+    agent.isActive = false;
+    await withPreviousHash('workflowAuthor', OLD_PROMPT, () => seedSweStarter(prisma));
+    expect(versions()).toHaveLength(1);
   });
 });
 

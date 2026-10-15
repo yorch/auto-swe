@@ -10,6 +10,7 @@ import {
   type UnpricedReason,
 } from './costEstimator.js';
 import type { StepMetadata } from './registry-types.js';
+import type { EvalScorer } from './spec.js';
 import { getStepMetadata, hasStep, listAllSteps } from './stepRegistry.js';
 import { makeSpec as spec } from './testHelpers.js';
 
@@ -54,6 +55,15 @@ const REGISTRY: Record<string, StepMetadata> = {
     description: '',
     label: '',
     name: 'runAgentNode',
+  },
+  // The eval node's judge call is priced from this hint ($1 + $5 at PRICING).
+  runEvalNode: {
+    category: 'control',
+    configFields: [],
+    costHint: { role: 'evalJudge', tokensIn: 1_000_000, tokensOut: 1_000_000 },
+    description: '',
+    label: '',
+    name: 'runEvalNode',
   },
 };
 const lookup = (name: string): StepMetadata | undefined => REGISTRY[name];
@@ -148,6 +158,67 @@ describe('estimateSpecCost', () => {
     expect(result.totalUsd).toBeCloseTo(90, 6);
     expect(result.perStep).toEqual([{ nodeId: 'a', step: 'runAgentNode', usd: 90 }]);
     expect(result.unpriced).toEqual([]);
+  });
+
+  const evalSpec = (scorers: EvalScorer[]) =>
+    spec({
+      entry: 'e',
+      nodes: {
+        e: { next: 't', scorers, target: { from: 'input.diff' }, type: 'eval' },
+        t: { status: 'SUCCESS', type: 'terminate' },
+      },
+    });
+
+  it('prices nothing for an eval node with no judge scorer, and reports no gap', () => {
+    const result = estimateSpecCost(
+      evalSpec([
+        { gate: 'runTests', kind: 'gate' },
+        { expr: '$.ok', kind: 'assert' },
+        { kind: 'pii' },
+      ]),
+      { pricing: PRICING, stepLookup: lookup }
+    );
+    expect(result.totalUsd).toBe(0);
+    expect(result.perStep).toEqual([]);
+    expect(result.unpriced).toEqual([]);
+  });
+
+  it('prices one evalJudge call per judge scorer', () => {
+    const one = estimateSpecCost(
+      evalSpec([
+        { gate: 'runTests', kind: 'gate' },
+        { kind: 'judge', rubricRef: 'q' },
+      ]),
+      { pricing: PRICING, stepLookup: lookup }
+    );
+    expect(one.totalUsd).toBeCloseTo(6, 6);
+    expect(one.perStep).toEqual([{ nodeId: 'e', step: 'runEvalNode', usd: 6 }]);
+
+    const two = estimateSpecCost(
+      evalSpec([
+        { kind: 'judge', rubricRef: 'q' },
+        { kind: 'judge', rubricRef: 'r' },
+      ]),
+      { pricing: PRICING, stepLookup: lookup }
+    );
+    expect(two.totalUsd).toBeCloseTo(12, 6);
+  });
+
+  it('prices nothing for an eval whose scorers are not an array yet (editor draft)', () => {
+    const draft = evalSpec([]);
+    (draft.nodes.e as unknown as { scorers: unknown }).scorers = undefined;
+    const result = estimateSpecCost(draft, { pricing: PRICING, stepLookup: lookup });
+    expect(result.totalUsd).toBe(0);
+    expect(result.unpriced).toEqual([]);
+  });
+
+  it('reports a judge eval as unpriced when runEvalNode carries no hint', () => {
+    const result = estimateSpecCost(evalSpec([{ kind: 'judge', rubricRef: 'q' }]), {
+      pricing: PRICING,
+      stepLookup: (name) => (name === 'runEvalNode' ? undefined : lookup(name)),
+    });
+    expect(result.totalUsd).toBe(0);
+    expect(result.unpriced).toEqual([{ nodeId: 'e', reason: 'no-cost-hint' }]);
   });
 
   it('reports container, external, and hint-less nodes as unpriced', () => {
