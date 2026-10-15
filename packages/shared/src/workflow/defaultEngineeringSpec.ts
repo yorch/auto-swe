@@ -18,7 +18,8 @@ import {
  * mode before any teams customize their workflows.
  *
  * Sequence:
- *   start → validate (non-blocking) → implement → review loop → CI loop →
+ *   start → gather ticket (non-blocking) → validate (non-blocking) → implement →
+ *   review loop → CI loop →
  *   wait-for-human-merge → commit-to-memory → done
  *
  * A review or CI loop that runs out of attempts, and a merge wait that times
@@ -40,17 +41,19 @@ export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
   entry: 'setValidating',
   name: 'default-engineering',
   nodes: mergeNodes(
-    validatePhase({ next: 'setImplementing' }),
+    validatePhase({ next: 'setImplementing', ticketContext: true }),
     {
-      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
       implement: {
         group: 'implement',
+        // The gatherer's digest of the run's tracker ticket (`''` when the run has none).
+        inputs: { ticket: { from: 'context.ticket' } },
         next: 'initCounters',
         step: 'executeImplementation',
         title: 'Implement the ticket',
         type: 'step',
       },
       initCounters: initCounters('clearCiResult', { group: 'implement' }),
+      setImplementing: statusStamp('IMPLEMENTING', 'implement', { group: 'implement' }),
     },
     // ── Review loop, then CI loop; a CI fix re-enters the review via clearCiResult ──
     reviewLoop({
@@ -70,6 +73,15 @@ export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
       wait: 'pollOrSignal',
     }),
     {
+      lessonCIFailed: {
+        group: 'CI loop',
+        inputs: { outcome: { literal: 'CI_FAILED' } },
+        next: 'terminateCIFailed',
+        onError: 'continue',
+        step: 'commitToMemory',
+        title: 'Store what failed CI',
+        type: 'step',
+      },
       // A run that fails teaches as much as one that merges, so each loop's
       // last failure is stored as a lesson before the run ends. Best-effort:
       // a failed write never changes how the run ends.
@@ -82,44 +94,8 @@ export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
         title: 'Store what the review rejected',
         type: 'step',
       },
-      lessonCIFailed: {
-        group: 'CI loop',
-        inputs: { outcome: { literal: 'CI_FAILED' } },
-        next: 'terminateCIFailed',
-        onError: 'continue',
-        step: 'commitToMemory',
-        title: 'Store what failed CI',
-        type: 'step',
-      },
     },
     {
-      // ── Wait for human merge, then memory + completion ──
-      setAwaitingHumanMerge: statusStamp('AWAITING_HUMAN_MERGE', 'waitForHumanMerge', {
-        group: 'human merge',
-      }),
-      waitForHumanMerge: {
-        group: 'human merge',
-        name: 'humanMergeSignal',
-        onReceive: 'commitLesson',
-        onTimeout: 'lessonMergeTimedOut',
-        timeout: '7d',
-        title: 'Wait for a person to merge',
-        type: 'signal',
-      },
-      lessonMergeTimedOut: {
-        group: 'human merge',
-        inputs: { outcome: { literal: 'MERGE_TIMED_OUT' } },
-        next: 'terminateMergeTimedOut',
-        onError: 'continue',
-        step: 'commitToMemory',
-        title: 'Store that nobody merged it',
-        type: 'step',
-      },
-      terminateMergeTimedOut: terminate('TIMED_OUT', {
-        group: 'human merge',
-        result: {},
-        title: 'Merge timed out',
-      }),
       commitLesson: {
         group: 'human merge',
         inputs: { outcome: { literal: 'MERGED' } },
@@ -132,6 +108,33 @@ export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
       // No COMPLETED status stamp ahead of `done`: finalizeWorkflowRun writes it when the run
       // ends SUCCESS.
       done: terminate('SUCCESS', { result: prResult(), title: 'Done' }),
+      lessonMergeTimedOut: {
+        group: 'human merge',
+        inputs: { outcome: { literal: 'MERGE_TIMED_OUT' } },
+        next: 'terminateMergeTimedOut',
+        onError: 'continue',
+        step: 'commitToMemory',
+        title: 'Store that nobody merged it',
+        type: 'step',
+      },
+      // ── Wait for human merge, then memory + completion ──
+      setAwaitingHumanMerge: statusStamp('AWAITING_HUMAN_MERGE', 'waitForHumanMerge', {
+        group: 'human merge',
+      }),
+      terminateMergeTimedOut: terminate('TIMED_OUT', {
+        group: 'human merge',
+        result: {},
+        title: 'Merge timed out',
+      }),
+      waitForHumanMerge: {
+        group: 'human merge',
+        name: 'humanMergeSignal',
+        onReceive: 'commitLesson',
+        onTimeout: 'lessonMergeTimedOut',
+        timeout: '7d',
+        title: 'Wait for a person to merge',
+        type: 'signal',
+      },
     }
   ),
   schemaVersion: SPEC_SCHEMA_VERSION,

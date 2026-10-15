@@ -9,7 +9,7 @@ import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { withHeartbeat } from '../lib/execUtils.js';
-import { loadTicketContext } from '../lib/ticketContext.js';
+import { resolveTicketContext } from '../lib/ticketFallback.js';
 import { runAgent } from './runAgent.js';
 
 // ── Zod schema for structured output ──
@@ -48,16 +48,21 @@ export function buildValidationUserMessage(request: RunRequest, ticketText = '')
 
 export async function validateContext(
   workRequest: RunRequest,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  ticketContext?: string
 ): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
   // Heartbeats while the whole activity runs: its LLM call can outlast the
   // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
-  return withHeartbeat('validateContext', validateContextImpl(workRequest, systemPromptOverride));
+  return withHeartbeat(
+    'validateContext',
+    validateContextImpl(workRequest, systemPromptOverride, ticketContext)
+  );
 }
 
 async function validateContextImpl(
   workRequest: RunRequest,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  ticketContext?: string
 ): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
   heartbeat('extracting success criteria');
 
@@ -71,12 +76,12 @@ async function validateContextImpl(
     ctx
   );
 
-  // Best-effort by contract; the catch is for a contract someone later breaks.
   const tracer = new AgentTracer();
-  const ticketText = await loadTicketContext({
+  const ticketText = await resolveTicketContext(ticketContext, {
+    ctx,
     tracer,
     workRequestId: workRequest.workRequestId,
-  }).catch(() => '');
+  });
   const userMessage = buildValidationUserMessage(workRequest, ticketText);
 
   let successCriteria: string[] = [];

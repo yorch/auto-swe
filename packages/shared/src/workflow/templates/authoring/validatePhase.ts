@@ -12,6 +12,13 @@ export interface ValidatePhaseOptions {
   /** Id of the success-criteria node, for a template that already names it differently. */
   successCriteriaId?: string;
   /**
+   * Gather the run's tracker ticket before validating: `gatherTicket` (the context gatherer, which
+   * digests the ticket, its parent and its newest comments), then `setTicket`, which keeps its text
+   * in `context.ticket` for `validate` and for later steps such as `implement`. Default false, so a
+   * template that does not ask for it is unchanged.
+   */
+  ticketContext?: boolean;
+  /**
    * Add the `setValidating` status stamp in front of `validate` (default true).
    * With it, the phase's entry node is `setValidating`; without it, `validate`.
    */
@@ -28,13 +35,44 @@ export function validatePhase(opts: ValidatePhaseOptions): NodeMap {
   const group = 'validate';
   const withCriteria = opts.successCriteria ?? true;
   const criteriaId = opts.successCriteriaId ?? 'setSuccessCriteria';
+  const withTicket = opts.ticketContext ?? false;
   return mergeNodes(
     opts.stamp === false
       ? {}
-      : { setValidating: statusStamp('VALIDATING_CONTEXT', 'validate', { group }) },
+      : {
+          setValidating: statusStamp(
+            'VALIDATING_CONTEXT',
+            withTicket ? 'gatherTicket' : 'validate',
+            { group }
+          ),
+        },
+    withTicket
+      ? {
+          // A failed gather is no ticket, not a stopped run: validate and implement go on with the
+          // request's own description.
+          gatherTicket: {
+            group,
+            next: 'setTicket',
+            onError: 'continue',
+            step: 'gatherTicketContext',
+            title: 'Gather the ticket context',
+            type: 'step',
+          },
+          setTicket: {
+            group,
+            next: 'validate',
+            title: 'Keep the ticket context',
+            type: 'set',
+            values: {
+              'context.ticket': { default: '', from: 'nodes.gatherTicket.output.text' },
+            },
+          },
+        }
+      : {},
     {
       validate: {
         group,
+        ...(withTicket ? { inputs: { ticket: { from: 'context.ticket' } } } : {}),
         next: withCriteria ? criteriaId : opts.next,
         onError: 'continue',
         step: 'validateContext',

@@ -29,6 +29,7 @@ import {
   SECURITY_AUDITOR_PROMPT,
   SECURITY_REVIEW_PROMPT,
   SUPPORT_RESPONDER_PROMPT,
+  TICKET_CONTEXT_GATHERER_PROMPT,
   WORKFLOW_AUTHOR_PROMPT,
   WORKFLOW_EXPLAINER_PROMPT,
 } from './agentPrompts.js';
@@ -666,6 +667,14 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     key: 'decomposer',
     name: 'Decomposer',
     systemPrompt: DECOMPOSER_AGENT_PROMPT,
+  },
+  {
+    description:
+      'Digests the tracker ticket of a run, its parent issue and its newest comments into one typed summary. No tools.',
+    inheritsModelFrom: 'planner',
+    key: 'ticketContextGatherer',
+    name: 'Ticket Context Gatherer',
+    systemPrompt: TICKET_CONTEXT_GATHERER_PROMPT,
   },
   {
     description: 'Consolidates clusters of similar lessons into generalised insights.',

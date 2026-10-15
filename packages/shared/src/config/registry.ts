@@ -628,6 +628,19 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.boolean(),
   }),
+  // Read by `validateContext` and `executeImplementation` when no step handed them a ticket.
+  'workflow.ticketContextFallback': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether the validate and implement steps fetch the run's tracker ticket themselves when the workflow has no 'Gather ticket context' step. Off by default: a workflow that wants the ticket says so with that step, which is visible, costs a model call only where it is placed, and shows in the run's graph. Turn this on to give older templates the ticket without editing them; the ticket is then read with the platform's tracker token, as the step does. Both read only the ticket's own fields, its parent issue and its newest comments.",
+    group: 'workflow',
+    label: 'Fetch the tracker ticket when no step did',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'workspace.agentMaxSteps': defineSetting({
     defaultValue: 50,
     description:

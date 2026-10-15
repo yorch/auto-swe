@@ -137,6 +137,7 @@ packages/
 | `src/activities/workspace.ts` | DinD helpers — `createWorkspace()` returns `{ exec, execCapture, gitAuthed, destroy }`, plus `shellQuote()` |
 | `src/activities/decomposition.ts` | `planDecomposition` → `Subtask[]` for fan-out |
 | `src/activities/validateContext.ts` | Context validator → `ContextSnapshot` |
+| `src/activities/gatherTicketContext.ts` | Context gatherer: the run's tracker ticket (with comments and parent) → a typed digest for `validate` and `implement` |
 | `src/activities/commitToMemory.ts` | Memory summarization → `MemoryItem` + embedding |
 | `src/activities/createOrUpdatePullRequest.ts` | PR create/update through the SCM provider; idempotent on branch |
 | `src/lib/scm/` | `ScmProvider` abstraction; `github.ts` builds the authenticated Octokit client (the only Octokit in the codebase) and `ciStatus.ts` reads check runs |

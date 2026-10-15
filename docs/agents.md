@@ -9,7 +9,7 @@
 Agent identity is a **free-form string** — there is no enum, the DB columns are plain `TEXT`, and
 `AnySkillRole = string`. New agents are added as data, not code.
 
-`syncBuiltins` seeds 30 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
+`syncBuiltins` seeds 31 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
 are seed content for the flagship software-engineering use case, not a fixed roster. An agent a team
 adds resolves through exactly the same cascade as `implementer`, and nothing in the engine privileges
 the seeded set — `assertConfigReady` gates boot on what the deployment has *installed*, not on the
@@ -100,6 +100,7 @@ own row, with three exceptions that keep an edit to the parent row in force:
 | `mergeConflictResolver` | `implementer` | `resolveMergeConflict` |
 | `lessonConsolidator` | `commitToMemory` | `consolidateLessons` |
 | `ciTriager` | `planner` | `triageCiFailure` ([ci-failure-triggers.md](./ci-failure-triggers.md)) |
+| `ticketContextGatherer` | `planner` | `gatherTicketContext` (§3.8) |
 
 `MODEL_BACKED_AGENT_KEYS` in `@auto-swe/shared/agentKeys` is a narrow convenience set used for cost
 pricing and model-config UI labels — it is **not** the agent universe, and it does not include every
@@ -975,27 +976,48 @@ omits `provisioning` and acts on the container through `turn.exec`.
 
 ---
 
-### 3.8 Tracker ticket context
+### 3.8 Tracker ticket context (`gatherTicketContext`)
 
 The submitter's description is often a line or two; the ticket holds the requirements.
-`loadTicketContext` (`packages/worker/src/lib/ticketContext.ts`) gives the first step of a run that
-needs it the ticket from the configured issue tracker (Jira, Linear or GitHub Issues, set at
-`/studio/integrations → Tracker`). It reads `ContextSnapshot.rawTicketData` for the run's input, or
-fetches the ticket and stores it there. The worker does the fetch, so every launch path gets the same
-ticket, however the run was started and whether or not the gateway fetched one at submit time.
+`default-engineering` therefore opens with a **gather ticket** step (`gatherTicketContext`,
+`packages/worker/src/activities/gatherTicketContext.ts`):
 
-`validateContext` passes the ticket beside the request, so the success criteria reflect what the
-ticket asks for. The implementer appends it to its system prompt as an `## Issue tracker ticket` block,
-after the design context and before the cross-repo block.
+1. It reads the run's input. A ticket id the platform generated (`RunInput.ticketIsSynthetic`) is
+   never looked up.
+2. It loads the ticket from `ContextSnapshot.rawTicketData`, or fetches it from the configured
+   tracker (`/studio/integrations → Tracker`) with the platform's tracker token and stores it. For
+   Jira it also reads the newest 20 comments and the parent issue (an epic's title, status, type and
+   description); Linear and GitHub Issues return the ticket alone. A ticket stored without comments
+   and parent is read again.
+3. It hands the bounded ticket to the `ticketContextGatherer` agent, a persona on the `planner`
+   model with no tools, which returns one typed digest: summary, requirements, acceptance criteria,
+   constraints, open questions and references.
+4. It returns `{ available, digested, text }`. `text` is the ticket as a prompt block: the digest
+   first, then the original description. The parent and the comments reach the prompt through the
+   digest, not verbatim. A `set` node keeps it in `context.ticket`; `validate` (for the success
+   criteria) and `implement` (for its system prompt, after the design context and before the
+   cross-repo block) take it as their `ticket` input.
 
-Ticket text is written by people other than the operator, so the block is bounded (title 300
-characters, description 6,000), holds the title, status, labels, URL and description but never the raw
-provider payload, sits inside a `<ticket>` delimiter that the ticket's own text cannot close, and is
-introduced as requirements to satisfy, not instructions. A ticket id the platform generated
-(`RunInput.ticketIsSynthetic`) is never looked up. The load is best-effort and never throws: a tracker
-outage leaves the run with its own description. The run's trace records `ticket.context_loaded`
-(`source` is `stored` or `tracker`) or `ticket.context_unavailable`, which carries no provider
-message, since those can quote a request header.
+The step is non-blocking. If the agent fails or answers outside its schema, `text` is the plain
+ticket and the trace records `ticket.digest_degraded`. If the run has no ticket, `available` is false
+and no model call is made. Only a cancellation stops the step.
+
+Another template opts in by adding the same pieces: the `gatherTicketContext` step, a `set` node
+that keeps `nodes.<id>.output.text` in `context.ticket`, and `ticket: context.ticket` as an input on
+`validate` and `implement`. A template without the step fetches nothing, unless
+`workflow.ticketContextFallback` is on (ADMIN; off by default; per team or organization). Then
+`validate` and `implement` fetch the plain ticket themselves when no step handed them one. A ticket
+handed in as the empty string means the run has none, and neither path fetches again.
+
+Ticket text is written by people other than the operator, so everything that reaches a prompt is
+bounded (title 300 characters, description 6,000, comments 1,500 each within a 12,000-character
+budget that keeps the newest, parent description 2,000, and at most 12 items of 400 characters in
+each digest list), carries no raw provider payload, sits inside a `<ticket>` delimiter that the
+ticket's own text cannot close, and is introduced as requirements to satisfy, not instructions. The
+gatherer has no tools, so it reads only the text it is given and cannot be steered into acting on
+the tracker. The trace records `ticket.context_loaded` (the source, `stored` or `tracker`, with the
+ticket id and the provider) or `ticket.context_unavailable`, and its `error` is a fixed string,
+never a provider message, which can quote a request header.
 
 ## 4. The Review Network
 
@@ -1510,14 +1532,20 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
 
 ## 11. Limitations
 
-- **Only the ticket's own fields reach the agents.** Comments, linked knowledge-base pages and
-  attachments are not part of the block (`ContextSnapshot.rawDocumentation` is stored and read by
-  nothing). A ticket is stored on first use, so an edit made after the first step that needed it is not
-  picked up by that run. A ticket that could not be fetched is tried again by the next step that needs
-  it, and not otherwise.
-- **The ticket block is framed and bounded, not scanned.** The delimiter and the "requirements, not
-  instructions" framing lower the risk of text in a ticket steering the agent; they do not remove it.
-  The injection scanners cover skill text, model output, diffs and file writes, not this block.
+- **The ticket is read with the platform's tracker token, not the requester's.** Anyone who can
+  launch a run and name a ticket id gets that ticket's text into an agent prompt, and so possibly
+  into the pull request, including a ticket they could not open in the tracker. The same token
+  already fills `ContextSnapshot.rawTicketData`, whose title and status the Tickets view shows.
+- **Only the ticket's own fields, its parent and its newest comments reach the agents.** Linked
+  pages and attachments do not, and `ContextSnapshot.rawDocumentation` is stored and read by
+  nothing. Comments and the parent are read for Jira only. A ticket is stored on first use, so an
+  edit made after that is not picked up by the run. The fix loops (`ciFixer`, `reviewFixer`,
+  `gateFixer`) do not take the ticket.
+- **The ticket block and the digest are framed and bounded, not scanned.** The delimiter and the
+  "requirements, not instructions" framing lower the risk of text in a ticket steering an agent;
+  they do not remove it, and the digest is model output derived from that text. The injection
+  scanners cover skill text, the implementer's output, diffs and file writes, not this block.
+- **The gatherer is one `planner`-model call per run**, with no cache across runs.
 - **The Claude Code harness's container-side checks are tripwires, not a boundary.** The binary's
   hash is taken with the container's own `sha256sum`, so code that controls the container (its
   `sha256sum`, or a process that outlives the turn's tag cleanup) can defeat the check; the harness's

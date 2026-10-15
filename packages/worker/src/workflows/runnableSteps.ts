@@ -177,6 +177,19 @@ const gateExecutor: StepExecutor = ({ step, ctx, request, config, inputs }) => {
   return gateActivities[step as 'runLint'](gateInput);
 };
 
+/**
+ * The tracker ticket an earlier step produced: an explicit `ticket` input, else the `context.ticket`
+ * variable the template's `set` node holds. `undefined` means no step provided one, which is not the
+ * same as the empty string, which means the run has none.
+ */
+function ticketFromStep(
+  inputs: Record<string, unknown>,
+  ctx: Parameters<typeof lookupPath>[0]
+): string | undefined {
+  const value = inputs.ticket ?? lookupPath(ctx, 'context.ticket');
+  return typeof value === 'string' ? value : undefined;
+}
+
 const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepExecutor>([
   [
     'retrieveKnowledge',
@@ -210,8 +223,23 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'validateContext',
+    ({ ctx, request, config, inputs }) => {
+      const ticket = ticketFromStep(inputs, ctx);
+      // The third argument is passed only when a step produced a ticket, so a template without
+      // the gatherer step calls the activity exactly as before.
+      return ticket === undefined
+        ? contextActivities.validateContext(request, config.systemPrompt as string | undefined)
+        : contextActivities.validateContext(
+            request,
+            config.systemPrompt as string | undefined,
+            ticket
+          );
+    },
+  ],
+  [
+    'gatherTicketContext',
     ({ request, config }) =>
-      contextActivities.validateContext(request, config.systemPrompt as string | undefined),
+      contextActivities.gatherTicketContext(request, config.systemPrompt as string | undefined),
   ],
   [
     // P2 declarative agent node: run a library Agent by reference.
@@ -320,6 +348,19 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         description === request.description ? request : { ...request, description };
       const allowedPaths = allowedPathsConfig(config);
       const guardOptions = guardOptionsConfig(config);
+      const ticket = ticketFromStep(inputs, ctx);
+      // The seventh argument is passed only when a step produced a ticket.
+      if (ticket !== undefined) {
+        return agentActivities.executeImplementation(
+          effectiveRequest,
+          subtask,
+          systemPromptOverride,
+          crossRepo,
+          allowedPaths,
+          guardOptions,
+          ticket
+        );
+      }
       if (guardOptions) {
         return agentActivities.executeImplementation(
           effectiveRequest,

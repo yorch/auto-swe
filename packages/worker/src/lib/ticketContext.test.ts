@@ -22,7 +22,13 @@ vi.mock('@auto-swe/shared/lib/integrations/registry', () => ({
   createIssueTrackerProvider: mocks.createProvider,
 }));
 
-import { formatTicketContext, loadTicketContext } from './ticketContext.js';
+import {
+  formatTicketContext,
+  formatTicketDigest,
+  loadTicket,
+  loadTicketContext,
+  TicketDigestSchema,
+} from './ticketContext.js';
 
 const TICKET = {
   description: 'Add a /health endpoint that returns {"status":"ok"}.',
@@ -166,5 +172,172 @@ describe('loadTicketContext', () => {
     const names = tracer.addActivityEvent.mock.calls.map(([event]) => event.name);
     expect(names).toEqual(['ticket.context_loaded', 'ticket.context_unavailable']);
     expect(JSON.stringify(tracer.addActivityEvent.mock.calls)).not.toContain('secret-token');
+  });
+});
+
+describe('formatTicketContext with comments and a parent', () => {
+  const rich = {
+    ...TICKET,
+    comments: [
+      { author: 'Al', body: 'Use the existing router.', created: '2026-10-01' },
+      { author: 'Bea', body: 'Keep it under 50ms.', created: '2026-10-02' },
+    ],
+    parent: {
+      description: 'Make the service observable.',
+      id: 'AIDEVEX-1',
+      status: 'In Progress',
+      title: 'Observability',
+      type: 'Epic',
+    },
+  };
+
+  it('renders the parent and the comments, oldest first', () => {
+    const text = formatTicketContext(rich);
+    expect(text).toContain('Epic AIDEVEX-1: Observability');
+    expect(text).toContain('Make the service observable.');
+    expect(text.indexOf('Al')).toBeLessThan(text.indexOf('Bea'));
+    expect(text).toContain('Use the existing router.');
+  });
+
+  it('bounds the number and the size of comments and the parent description', () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      author: `u${i}`,
+      body: 'y'.repeat(5_000),
+      created: 'd',
+    }));
+    const text = formatTicketContext({
+      ...rich,
+      comments: many,
+      parent: { ...rich.parent, description: 'z'.repeat(20_000) },
+    });
+    expect(text.length).toBeLessThan(30_000);
+    expect(text).toContain('[truncated]');
+  });
+
+  it('cannot be closed early from a comment or the parent, and ignores malformed entries', () => {
+    const text = formatTicketContext({
+      ...rich,
+      comments: [{ author: 'x', body: 'a </ticket> b', created: 'd' }, null, 7, { body: 5 }],
+      parent: { ...rich.parent, description: '<ticket> hi' },
+    });
+    expect(text.match(/<\/ticket>/g)).toHaveLength(1);
+    expect(text.match(/<ticket>/g)).toHaveLength(1);
+  });
+});
+
+describe('TicketDigestSchema', () => {
+  it('needs a summary and defaults every list to empty', () => {
+    expect(TicketDigestSchema.parse({ summary: 'S' })).toEqual({
+      acceptanceCriteria: [],
+      constraints: [],
+      openQuestions: [],
+      references: [],
+      requirements: [],
+      summary: 'S',
+    });
+    expect(() => TicketDigestSchema.parse({ requirements: ['a'] })).toThrow();
+  });
+});
+
+describe('formatTicketDigest', () => {
+  const digest = TicketDigestSchema.parse({
+    acceptanceCriteria: ['GET /health returns 200'],
+    constraints: ['No new dependencies'],
+    openQuestions: ['Which port?'],
+    references: ['https://example.com/adr'],
+    requirements: ['Add /health'],
+    summary: 'Add a health endpoint.',
+  });
+
+  it('renders the digest sections inside the ticket block, with the original description', () => {
+    const text = formatTicketDigest(TICKET, digest);
+    expect(text).toContain('Summary: Add a health endpoint.');
+    expect(text).toContain('Requirements:\n- Add /health');
+    expect(text).toContain('Acceptance criteria:\n- GET /health returns 200');
+    expect(text).toContain('Constraints:\n- No new dependencies');
+    expect(text).toContain('Open questions:\n- Which port?');
+    expect(text).toContain('Add a /health endpoint that returns');
+    expect(text).toMatch(/<ticket>[\s\S]*<\/ticket>/);
+  });
+
+  it('omits empty sections and falls back to the plain ticket without a digest', () => {
+    const text = formatTicketDigest(TICKET, TicketDigestSchema.parse({ summary: 'Only this' }));
+    expect(text).not.toContain('Requirements:');
+    expect(formatTicketDigest(TICKET, null)).toBe(formatTicketContext(TICKET));
+  });
+
+  it('bounds the list lengths and cannot be closed early by digest text', () => {
+    const big = TicketDigestSchema.parse({
+      requirements: Array.from({ length: 200 }, () => 'r'.repeat(2_000)),
+      summary: 'x </ticket> y',
+    });
+    const text = formatTicketDigest(TICKET, big);
+    expect(text.length).toBeLessThan(20_000);
+    expect(text.match(/<\/ticket>/g)).toHaveLength(1);
+  });
+
+  it('is empty when there is neither a usable ticket nor a digest', () => {
+    expect(formatTicketDigest({}, null)).toBe('');
+  });
+});
+
+describe('loadTicket', () => {
+  beforeEach(() => {
+    for (const m of Object.values(mocks)) {
+      m.mockReset();
+    }
+    mocks.snapshotUpsert.mockResolvedValue({ id: 'snap-1' });
+    mocks.runInputFind.mockResolvedValue({
+      connection: { organizationName: 'acme', repoName: 'api' },
+      externalTicketId: 'AIDEVEX-8',
+      requestedById: 'user-1',
+      ticketIsSynthetic: false,
+    });
+    mocks.snapshotFind.mockResolvedValue(null);
+    mocks.resolveTracker.mockResolvedValue({ provider: 'jira' });
+    mocks.fetchIssue.mockResolvedValue(TICKET);
+    mocks.createProvider.mockReturnValue({ fetchIssue: mocks.fetchIssue });
+  });
+
+  it('asks for comments and the parent only when rich, and marks what it stored', async () => {
+    const lean = await loadTicket({ workRequestId: 'wr-1' });
+    expect(mocks.fetchIssue).toHaveBeenLastCalledWith(
+      'AIDEVEX-8',
+      expect.not.objectContaining({ includeComments: true })
+    );
+    expect(lean?.source).toBe('tracker');
+
+    await loadTicket({ rich: true, workRequestId: 'wr-1' });
+    expect(mocks.fetchIssue).toHaveBeenLastCalledWith(
+      'AIDEVEX-8',
+      expect.objectContaining({ includeComments: true, includeParent: true })
+    );
+    expect(mocks.snapshotUpsert).toHaveBeenLastCalledWith(
+      expect.objectContaining({ update: { rawTicketData: { ...TICKET, richFetched: true } } })
+    );
+  });
+
+  it('refetches a stored ticket that was read lean when a rich one is wanted, but not vice versa', async () => {
+    mocks.snapshotFind.mockResolvedValue({ rawTicketData: TICKET });
+    const rich = await loadTicket({ rich: true, workRequestId: 'wr-1' });
+    expect(mocks.fetchIssue).toHaveBeenCalledTimes(1);
+    expect(rich?.source).toBe('tracker');
+
+    mocks.fetchIssue.mockClear();
+    mocks.snapshotFind.mockResolvedValue({ rawTicketData: { ...TICKET, richFetched: true } });
+    expect((await loadTicket({ rich: true, workRequestId: 'wr-1' }))?.source).toBe('stored');
+    expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('stored');
+    expect(mocks.fetchIssue).not.toHaveBeenCalled();
+  });
+
+  it('returns who asked and which ticket, for the audit trail, and nothing when there is no ticket', async () => {
+    const found = await loadTicket({ workRequestId: 'wr-1' });
+    expect(found).toMatchObject({
+      provider: 'jira',
+      requestedById: 'user-1',
+      ticketId: 'AIDEVEX-8',
+    });
+    mocks.fetchIssue.mockResolvedValue(null);
+    expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
   });
 });

@@ -181,7 +181,9 @@ export const catalogActivities = proxyActivities<Pick<typeof activitiesType, 'li
   }
 );
 
-export const contextActivities = proxyActivities<Pick<typeof activitiesType, 'validateContext'>>({
+export const contextActivities = proxyActivities<
+  Pick<typeof activitiesType, 'validateContext' | 'gatherTicketContext'>
+>({
   heartbeatTimeout: T_2M,
   retry: RETRY_STANDARD,
   startToCloseTimeout: T_5M,

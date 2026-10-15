@@ -80,6 +80,14 @@ function ciFixNodes(): Record<string, unknown> {
       onTrue: 'terminateCIFailed',
       type: 'cond',
     },
+    // A fix that changed nothing makes no commit, so no CI event would follow: it counts as a
+    // spent attempt and the loop goes round again instead of waiting.
+    checkCiFixChanged: {
+      expr: 'nodes.ciFix.output.headSha == context.currentCodeResult.headSha',
+      onFalse: 'updateCodeAfterCIFix',
+      onTrue: 'incCIRetries',
+      type: 'cond',
+    },
     ciFix: {
       inputs: {
         failureContext: { from: 'context.lastCILogs' },
@@ -88,14 +96,6 @@ function ciFixNodes(): Record<string, unknown> {
       next: 'checkCiFixChanged',
       step: 'executeCIFixImplementation',
       type: 'step',
-    },
-    // A fix that changed nothing makes no commit, so no CI event would follow: it counts as a
-    // spent attempt and the loop goes round again instead of waiting.
-    checkCiFixChanged: {
-      expr: 'nodes.ciFix.output.headSha == context.currentCodeResult.headSha',
-      onFalse: 'updateCodeAfterCIFix',
-      onTrue: 'incCIRetries',
-      type: 'cond',
     },
     fetchLogs: {
       inputs: { logsUrl: { from: 'context.ciResultPayload.logsUrl' } },
@@ -202,12 +202,6 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
   nodes.checkCI = { ...at('checkCI'), onFalse: 'incCIRetries', onTrue: 'setAwaitingSignoff' };
   Object.assign(nodes, ciFixNodes());
   Object.assign(nodes, {
-    checkSignoffLimit: {
-      expr: 'context.signoffRetries >= 3',
-      onFalse: 'signoffFix',
-      onTrue: 'terminateRejected',
-      type: 'cond',
-    },
     askRejectionReason: {
       description:
         'Say what should change. The fix is told this. Leave it empty or let it time out ' +
@@ -232,6 +226,12 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
       onTrue: 'storeSignoffContextUnchanged',
       type: 'cond',
     },
+    checkSignoffLimit: {
+      expr: 'context.signoffRetries >= 3',
+      onFalse: 'signoffFix',
+      onTrue: 'terminateRejected',
+      type: 'cond',
+    },
     firstSignoff: {
       ...at('firstSignoff'),
       contextFrom: 'context.signoffContext',
@@ -243,17 +243,17 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
         'fix made no change and this is the code that was rejected before.',
       onReject: 'askRejectionReason',
     },
+    incSignoffRetries: {
+      next: 'checkSignoffLimit',
+      type: 'set',
+      values: { 'context.signoffRetries': { expr: 'context.signoffRetries + 1' } },
+    },
     keepRejectionReason: {
       next: 'incSignoffRetries',
       type: 'set',
       values: {
         'context.signoffRejectionSummary': { from: 'context.signoffRejection.value.reason' },
       },
-    },
-    incSignoffRetries: {
-      next: 'checkSignoffLimit',
-      type: 'set',
-      values: { 'context.signoffRetries': { expr: 'context.signoffRetries + 1' } },
     },
     secondSignoff: {
       ...at('secondSignoff'),
@@ -342,6 +342,31 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
  * three lesson steps sit on the loops' exhausted edges and the merge wait's timeout edge, and
  * continue to the same terminals on error.
  */
+/**
+ * `default-engineering` gathers the run's tracker ticket before validating it: `gatherTicket`
+ * (non-blocking) digests the ticket, its parent and its newest comments, `setTicket` keeps the text
+ * in `context.ticket`, and `validate` and `implement` take it as their `ticket` input.
+ */
+function withTicketGatherer(g: WorkflowSpec): WorkflowSpec {
+  const nodes = { ...g.nodes } as Record<string, unknown>;
+  const ticketInput = { ticket: { from: 'context.ticket' } };
+  nodes.setValidating = { ...(nodes.setValidating as object), next: 'gatherTicket' };
+  nodes.gatherTicket = {
+    next: 'setTicket',
+    onError: 'continue',
+    step: 'gatherTicketContext',
+    type: 'step',
+  };
+  nodes.setTicket = {
+    next: 'validate',
+    type: 'set',
+    values: { 'context.ticket': { default: '', from: 'nodes.gatherTicket.output.text' } },
+  };
+  nodes.validate = { ...(nodes.validate as object), inputs: ticketInput };
+  nodes.implement = { ...(nodes.implement as object), inputs: ticketInput };
+  return { ...g, nodes } as WorkflowSpec;
+}
+
 function defaultEngineeringFailureLessons(g: WorkflowSpec): WorkflowSpec {
   const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
   const lesson = (outcome: string, next: string) => ({
@@ -532,11 +557,11 @@ function ciTriagePushWatch(g: WorkflowSpec): WorkflowSpec {
   };
   nodes.reportPushFailed = {
     inputs: {
+      pushedCommitSha: pushed,
       pushFailed: { literal: true },
       pushRetryAttempted: { expr: 'context.pushRetries >= 1' },
       pushRetryPushed: { expr: 'nodes.pushFixAgain.output.pushed == true' },
       pushRetryRefusedReason: { from: 'nodes.pushFixAgain.output.reason' },
-      pushedCommitSha: pushed,
       triage: { from: 'context.ciTriage' },
       verification,
     },
@@ -607,21 +632,16 @@ const INTENDED_CHANGES: Record<
       failureLessons(removePassThrough(g, 'setCompleted'), ['review', 'ci']),
     reason: `the finalizer already writes COMPLETED on SUCCESS; ${FAILURE_LESSONS_REASON}`,
   },
+  'ci-triage-and-fix': {
+    apply: (g: WorkflowSpec) => ciTriagePushWatch(ciTriageVerification(g)),
+    reason:
+      'a fix is checked against the failing step’s own command before it is delivered, and ' +
+      'the result is reported with the fix; a fix pushed onto a pull request has its CI ' +
+      'watched, with one follow-up attempt and a comment when it still fails',
+  },
   'code-and-ci': {
     apply: (g: WorkflowSpec) => failureLessons(removePassThrough(g, 'setCompleted'), ['ci']),
     reason: `the finalizer already writes COMPLETED on SUCCESS; ${FAILURE_LESSONS_REASON}`,
-  },
-  'dependency-update': {
-    apply: (g: WorkflowSpec) => failureLessons(removePassThrough(g, 'setCompleted'), ['ci']),
-    reason: `the finalizer already writes COMPLETED on SUCCESS; ${FAILURE_LESSONS_REASON}`,
-  },
-  'default-engineering': {
-    apply: (g: WorkflowSpec) =>
-      defaultEngineeringFailureLessons(removePassThrough(g, 'setCompleted')),
-    reason:
-      'the finalizer already writes COMPLETED on SUCCESS; a review or CI loop that runs out ' +
-      'of attempts, or a merge wait that times out, stores a lesson about what happened ' +
-      'before the run ends, and every commitToMemory step names the outcome it records',
   },
   // The two templates that ended the run on the first CI failure now fix and retry like their
   // siblings, with CI ahead of the human / consensus gates (and the setCompleted removal above).
@@ -637,12 +657,18 @@ const INTENDED_CHANGES: Record<
       'two-reviewer consensus runs on the green code, a rejection going fix -> CI -> consensus; ' +
       FAILURE_LESSONS_REASON,
   },
-  'ci-triage-and-fix': {
-    apply: (g: WorkflowSpec) => ciTriagePushWatch(ciTriageVerification(g)),
+  'default-engineering': {
+    apply: (g: WorkflowSpec) =>
+      withTicketGatherer(defaultEngineeringFailureLessons(removePassThrough(g, 'setCompleted'))),
     reason:
-      'a fix is checked against the failing step’s own command before it is delivered, and ' +
-      'the result is reported with the fix; a fix pushed onto a pull request has its CI ' +
-      'watched, with one follow-up attempt and a comment when it still fails',
+      'the finalizer already writes COMPLETED on SUCCESS; a review or CI loop that runs out ' +
+      'of attempts, or a merge wait that times out, stores a lesson about what happened ' +
+      'before the run ends, and every commitToMemory step names the outcome it records; ' +
+      "the run's tracker ticket is gathered before validation and handed to validate and implement",
+  },
+  'dependency-update': {
+    apply: (g: WorkflowSpec) => failureLessons(removePassThrough(g, 'setCompleted'), ['ci']),
+    reason: `the finalizer already writes COMPLETED on SUCCESS; ${FAILURE_LESSONS_REASON}`,
   },
   // `writes: 'split'` names the two write nodes autoWrite/manualWrite, so the
   // result's `nodes.writeOutcome` reference pointed at a node that never runs.
@@ -684,27 +710,25 @@ describe('built-in templates match their pre-helper golden specs', () => {
     expect(files).toEqual(BUILTIN_TEMPLATES.map((t) => t.name).sort());
   });
 
-  it.each(BUILTIN_TEMPLATES.map((t) => [t.name, t.spec] as const))(
-    '%s expands to its golden flat spec',
-    (name, spec) => {
-      const change = INTENDED_CHANGES[name];
-      const expected = change ? change.apply(golden(name)) : golden(name);
-      // Strict: a key left as `undefined` would pass toEqual but is not the golden's bytes.
-      expect(stripPresentation(spec)).toStrictEqual(expected);
-    }
-  );
+  it.each(
+    BUILTIN_TEMPLATES.map((t) => [t.name, t.spec] as const)
+  )('%s expands to its golden flat spec', (name, spec) => {
+    const change = INTENDED_CHANGES[name];
+    const expected = change ? change.apply(golden(name)) : golden(name);
+    // Strict: a key left as `undefined` would pass toEqual but is not the golden's bytes.
+    expect(stripPresentation(spec)).toStrictEqual(expected);
+  });
 
-  it.each(BUILTIN_TEMPLATES.map((t) => t.name))(
-    'the golden for %s is a spec as stored before group/title existed, and still parses',
-    (name) => {
-      const raw = golden(name);
-      const parsed = parseWorkflowSpec(raw);
-      expect(Object.keys(parsed.nodes)).toEqual(Object.keys(raw.nodes));
-      for (const node of Object.values(raw.nodes)) {
-        expect('group' in node).toBe(false);
-      }
+  it.each(
+    BUILTIN_TEMPLATES.map((t) => t.name)
+  )('the golden for %s is a spec as stored before group/title existed, and still parses', (name) => {
+    const raw = golden(name);
+    const parsed = parseWorkflowSpec(raw);
+    expect(Object.keys(parsed.nodes)).toEqual(Object.keys(raw.nodes));
+    for (const node of Object.values(raw.nodes)) {
+      expect('group' in node).toBe(false);
     }
-  );
+  });
 
   it('keeps removePassThrough honest: it retargets every edge and the entry', () => {
     const spec = parseWorkflowSpec({

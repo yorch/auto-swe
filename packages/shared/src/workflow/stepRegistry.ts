@@ -126,6 +126,16 @@ register({
 
 register({
   category: 'agent',
+  configFields: [SYSTEM_PROMPT_FIELD],
+  costHint: { role: 'planner', tokensIn: 6000, tokensOut: 800 },
+  description:
+    "Read the run's tracker ticket, with its newest comments and its parent issue, and digest it into one typed result (summary, requirements, acceptance criteria, constraints, open questions). Output: `available`, `digested`, `text`; later steps take `text`. A run with no ticket returns `available: false` without a model call.",
+  label: 'Gather ticket context',
+  name: 'gatherTicketContext',
+});
+
+register({
+  category: 'agent',
   configFields: [
     SYSTEM_PROMPT_FIELD,
     IMPLEMENTER_TOOLS_FIELD,

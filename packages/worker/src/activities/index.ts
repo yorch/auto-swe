@@ -121,6 +121,7 @@ export { explainWorkflowSpec } from './explainWorkflowSpec.js';
 // Channel assistant (Gap B) — org-wide proactive flagging
 export type { FlagOrgSignalsInput, FlagOrgSignalsResult } from './flagOrgSignals.js';
 export { flagOrgSignals } from './flagOrgSignals.js';
+export { gatherTicketContext } from './gatherTicketContext.js';
 // Natural-language workflow authoring (generate a WorkflowSpec from a description)
 export type {
   GenerateWorkflowSpecInput,
