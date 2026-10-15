@@ -236,6 +236,10 @@ function buildApp(state: {
           }
           return { count: data.length };
         },
+        findMany: async ({ where }: { where: Mutable }) =>
+          shellAudits
+            .filter((a) => a.templateVersionId === where.templateVersionId)
+            .map((a) => ({ nodeId: a.nodeId })),
       },
       workflowStep: {
         // The per-step rollup reads every step in the window and folds a
@@ -377,7 +381,27 @@ function buildApp(state: {
           if (!v) {
             return null;
           }
-          return { ...v, templateId: composite.templateId, version: composite.version };
+          return {
+            ...v,
+            id: `v-${composite.templateId}-${composite.version}`,
+            templateId: composite.templateId,
+            version: composite.version,
+          };
+        },
+        update: async ({ data, where }: { data: Mutable; where: Mutable }) => {
+          const composite = where.templateId_version as { templateId: string; version: number };
+          const key = `${composite.templateId}:${composite.version}`;
+          const v = state.versions.get(key);
+          if (!v) {
+            throw new Error('version not found');
+          }
+          Object.assign(v, data);
+          return {
+            ...v,
+            id: `v-${composite.templateId}-${composite.version}`,
+            templateId: composite.templateId,
+            version: composite.version,
+          };
         },
       },
     }) as unknown as never
@@ -1559,6 +1583,297 @@ describe('workflow-templates shell-step RBAC', () => {
     });
     expect(res.statusCode).toBe(201);
     await app.close();
+  });
+});
+
+// ── Authored gate/eval commands, and serving code that has no audit row ──
+
+describe('workflow-templates authored commands and serving unaudited code', () => {
+  const TEAM_ID = 'a1b2c3d4-1234-4567-89ab-cdef01234567';
+  const TPL_ID = '00000000-0000-4000-8000-0000000000aa';
+  const withNodes = (entry: string, nodes: Record<string, unknown>) => ({
+    description: '',
+    entry,
+    name: 'authored',
+    nodes: { ...nodes, done: { status: 'SUCCESS', type: 'terminate' } },
+    schemaVersion: SPEC_SCHEMA_VERSION,
+  });
+  const LINT_CMD_SPEC = withNodes('lint', {
+    lint: { config: { command: 'npm run lint' }, next: 'done', step: 'runLint', type: 'step' },
+  });
+  const LINT_DEFAULT_SPEC = withNodes('lint', {
+    lint: { next: 'done', step: 'runLint', type: 'step' },
+  });
+  const QUALITY_GATES_SPEC = withNodes('gates', {
+    gates: {
+      config: {
+        gates: [
+          { command: 'npm test', gate: 'test' },
+          { command: 'npm run build', gate: 'build' },
+        ],
+      },
+      next: 'done',
+      step: 'runQualityGates',
+      type: 'step',
+    },
+  });
+  const EVAL_SPEC = withNodes('ev', {
+    ev: {
+      next: 'done',
+      scorers: [{ command: 'npm run check', gate: 'lint', kind: 'gate' }],
+      target: { from: 'input.diff' },
+      type: 'eval',
+    },
+  });
+  const SHELL_SPEC = withNodes('sh', {
+    sh: { command: 'echo hi', image: 'alpine:latest', next: 'done', type: 'shell' },
+  });
+
+  type State = Parameters<typeof buildApp>[0] & {
+    shellAudits?: Array<{
+      authorUserId: string;
+      command: string;
+      image: string;
+      network: string;
+      nodeId: string;
+      templateVersionId: string;
+    }>;
+  };
+
+  /** A team template on v1 (no code) with `spec` stored, unaudited, as v2. */
+  function seeded(teamRole: string, spec: unknown, overrides: Partial<FakeTemplate> = {}): State {
+    const now = new Date();
+    return {
+      runs: [],
+      teamRole,
+      templates: [
+        {
+          activeVersion: 1,
+          createdAt: now,
+          description: '',
+          experimentSplit: null,
+          experimentVersion: null,
+          id: TPL_ID,
+          isDefault: false,
+          name: 'authored-tpl',
+          status: 'ACTIVE',
+          team: null,
+          teamId: TEAM_ID,
+          updatedAt: now,
+          versions: [
+            { createdAt: now, createdBy: 'someone', id: `v-${TPL_ID}-1`, version: 1 },
+            { createdAt: now, createdBy: null, id: `v-${TPL_ID}-2`, version: 2 },
+          ],
+          workspaceProvider: 'git_repo',
+          ...overrides,
+        },
+      ],
+      userRole: 'LEAD',
+      versions: new Map([
+        [`${TPL_ID}:1`, { createdAt: now, createdBy: 'someone', spec: LINT_DEFAULT_SPEC }],
+        [`${TPL_ID}:2`, { createdAt: now, createdBy: null, spec }],
+      ]),
+    };
+  }
+
+  async function send(
+    state: State,
+    method: 'POST' | 'PATCH',
+    url: string,
+    payload?: Record<string, unknown>
+  ) {
+    const app = buildApp(state);
+    await app.ready();
+    try {
+      return await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method,
+        url: `/api/v1/workflow-templates${url}`,
+        ...(payload ? { payload } : {}),
+      });
+    } finally {
+      await app.close();
+    }
+  }
+
+  describe('saving', () => {
+    it.each([
+      ['a gate step command', LINT_CMD_SPEC],
+      ['a runQualityGates gate command', QUALITY_GATES_SPEC],
+      ['an eval gate scorer command', EVAL_SPEC],
+    ])('refuses %s from a team LEAD', async (_label, spec) => {
+      const state: State = { runs: [], teamRole: 'LEAD', templates: [], versions: new Map() };
+      const res = await send(state, 'POST', '', { name: 'cmd-tpl', spec, teamId: TEAM_ID });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error).toEqual({
+        code: 'SHELL_AUTHOR_FORBIDDEN',
+        message: 'Authoring shell steps or gate commands requires team-admin role',
+      });
+      expect(state.shellAudits).toEqual([]);
+    });
+
+    it('lets a team LEAD save a gate step that runs the repository command', async () => {
+      const state: State = { runs: [], teamRole: 'LEAD', templates: [], versions: new Map() };
+      const res = await send(state, 'POST', '', {
+        name: 'default-gate',
+        spec: LINT_DEFAULT_SPEC,
+        teamId: TEAM_ID,
+      });
+      expect(res.statusCode).toBe(201);
+      expect(state.shellAudits).toEqual([]);
+    });
+
+    it('audits one row per authored command for a team ADMIN, with no image allowlist', async () => {
+      // No team allowlist: an authored command names no image, so the allowlist never applies.
+      const state: State = { runs: [], teamRole: 'ADMIN', templates: [], versions: new Map() };
+      const res = await send(state, 'POST', '', {
+        name: 'gates-tpl',
+        spec: QUALITY_GATES_SPEC,
+        teamId: TEAM_ID,
+      });
+      expect(res.statusCode).toBe(201);
+      expect(state.shellAudits).toEqual([
+        expect.objectContaining({
+          authorUserId: 'user-1',
+          command: 'npm test',
+          image: '(agent workspace)',
+          network: 'egress',
+          nodeId: 'gates',
+        }),
+        expect.objectContaining({ command: 'npm run build', nodeId: 'gates' }),
+      ]);
+    });
+
+    it('refuses a new version with an authored command from a team LEAD', async () => {
+      const state = seeded('LEAD', LINT_DEFAULT_SPEC);
+      const res = await send(state, 'POST', `/${TPL_ID}/versions`, { spec: LINT_CMD_SPEC });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error?.code).toBe('SHELL_AUTHOR_FORBIDDEN');
+      expect(state.versions.has(`${TPL_ID}:3`)).toBe(false);
+    });
+
+    it('reports the refusal from the read-only validate route too', async () => {
+      const state: State = { runs: [], teamRole: 'LEAD', templates: [], versions: new Map() };
+      const res = await send(state, 'POST', '/validate', { spec: EVAL_SPEC, teamId: TEAM_ID });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.stringify(res.json())).toContain('SHELL_AUTHOR_FORBIDDEN');
+    });
+  });
+
+  describe('promote', () => {
+    it.each([
+      ['an authored command', LINT_CMD_SPEC],
+      ['container code', SHELL_SPEC],
+    ])('refuses a team LEAD promoting an unaudited version with %s', async (_label, spec) => {
+      const state = seeded('LEAD', spec);
+      const res = await send(state, 'POST', `/${TPL_ID}/promote`, { version: 2 });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error?.code).toBe('SHELL_AUTHOR_FORBIDDEN');
+      expect(state.templates[0]?.activeVersion).toBe(1);
+      expect(state.shellAudits).toEqual([]);
+    });
+
+    it('lets a team ADMIN promote it, recording the audit rows with them as author', async () => {
+      const state = seeded('ADMIN', LINT_CMD_SPEC);
+      const res = await send(state, 'POST', `/${TPL_ID}/promote`, { version: 2 });
+      expect(res.statusCode).toBe(200);
+      expect(state.templates[0]?.activeVersion).toBe(2);
+      expect(state.shellAudits).toEqual([
+        expect.objectContaining({
+          authorUserId: 'user-1',
+          command: 'npm run lint',
+          nodeId: 'lint',
+          templateVersionId: `v-${TPL_ID}-2`,
+        }),
+      ]);
+    });
+
+    it('lets a team LEAD promote a version whose code was audited at save', async () => {
+      const state = seeded('LEAD', LINT_CMD_SPEC);
+      const app = buildApp(state);
+      await app.ready();
+      try {
+        state.shellAudits?.push({
+          authorUserId: 'team-admin',
+          command: 'npm run lint',
+          image: '(agent workspace)',
+          network: 'egress',
+          nodeId: 'lint',
+          templateVersionId: `v-${TPL_ID}-2`,
+        });
+        const res = await app.inject({
+          headers: { authorization: 'Bearer x' },
+          method: 'POST',
+          payload: { version: 2 },
+          url: `/api/v1/workflow-templates/${TPL_ID}/promote`,
+        });
+        expect(res.statusCode).toBe(200);
+        expect(state.shellAudits).toHaveLength(1);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('leaves a version with no authored code promotable by a team LEAD', async () => {
+      const state = seeded('LEAD', LINT_DEFAULT_SPEC);
+      const res = await send(state, 'POST', `/${TPL_ID}/promote`, { version: 2 });
+      expect(res.statusCode).toBe(200);
+      expect(state.shellAudits).toEqual([]);
+    });
+  });
+
+  describe('review', () => {
+    it('refuses a team LEAD approving an unaudited version with container code', async () => {
+      const state = seeded('LEAD', SHELL_SPEC);
+      const res = await send(state, 'POST', `/${TPL_ID}/versions/2/review`);
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error?.code).toBe('SHELL_AUTHOR_FORBIDDEN');
+      expect((state.versions.get(`${TPL_ID}:2`) as { reviewedAt?: Date }).reviewedAt).toBe(
+        undefined
+      );
+    });
+
+    it('lets a team ADMIN approve it, recording the audit row', async () => {
+      const state = seeded('ADMIN', SHELL_SPEC);
+      const res = await send(state, 'POST', `/${TPL_ID}/versions/2/review`);
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.reviewedBy).toBe('user-1');
+      expect(state.shellAudits).toEqual([
+        expect.objectContaining({ image: 'alpine:latest', nodeId: 'sh' }),
+      ]);
+    });
+  });
+
+  describe('PATCH', () => {
+    it('refuses a team LEAD re-activating a template whose active version is unaudited', async () => {
+      const state = seeded('LEAD', EVAL_SPEC, { activeVersion: 2, status: 'ARCHIVED' });
+      const res = await send(state, 'PATCH', `/${TPL_ID}`, { status: 'ACTIVE' });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error?.code).toBe('SHELL_AUTHOR_FORBIDDEN');
+      expect(state.templates[0]?.status).toBe('ARCHIVED');
+    });
+
+    it('refuses a team LEAD pointing the experiment arm at an unaudited version', async () => {
+      const state = seeded('LEAD', QUALITY_GATES_SPEC);
+      const res = await send(state, 'PATCH', `/${TPL_ID}`, {
+        experimentSplit: 10,
+        experimentVersion: 2,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error?.code).toBe('SHELL_AUTHOR_FORBIDDEN');
+      expect(state.templates[0]?.experimentVersion).toBeNull();
+    });
+
+    it('records the rows once when a team ADMIN makes one version both arm and active', async () => {
+      const state = seeded('ADMIN', LINT_CMD_SPEC, { activeVersion: 2, status: 'ARCHIVED' });
+      const res = await send(state, 'PATCH', `/${TPL_ID}`, {
+        experimentSplit: 10,
+        experimentVersion: 2,
+        status: 'ACTIVE',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(state.shellAudits).toHaveLength(1);
+    });
   });
 });
 
