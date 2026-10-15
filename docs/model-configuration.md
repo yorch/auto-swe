@@ -340,7 +340,14 @@ The run, in order:
    the `runTests` gate runs `builtinModels.test.ts`, the review network judges the change against the
    success criterion *every changed price cites an official URL; no invented figures*, the review
    fix follows the same rules as the first pass, and the run opens a **draft** pull request and ends.
-   There is no CI loop and no approval inside the run.
+   There is no CI loop and no approval inside the run. Between the review's approval and the pull
+   request, the `checkPriceListNotes` step reads the catalog file at the commit the change started
+   from and at the pushed commit, and finds every added or repriced row whose figure differs from the
+   community price list without a `// price list says …` comment on the row, after its closing
+   brace, or on a comment line just above it. Any such row goes back to the review fixer with a fixed
+   finding naming each spec and both figures, and counts against the same three attempts as a
+   rejected review; a run out of attempts fails without a pull request. With the list turned off or
+   unreadable the step passes and says why.
 
 **The `runTests` gate is advisory.** The gate runs in warn mode: a failing `builtinModels.test.ts`,
 or an install that fails, is recorded and the run goes on to review and a draft pull request. CI on
@@ -774,10 +781,12 @@ forced delete.
   check beyond that (such as OpenAI's `owned_by`) is not made, so another organization-visible id
   without a colon would still be listed. Anyone who can launch the template against a repository
   holding the catalog file gives the agent that listing, which is otherwise an admin-only view.
-- **The refresh's price-list cross-check is advisory.** The list can lag a page or be wrong, and the
-  rule that a differing figure gets a comment is the prompt's, not a check: nothing fails a run whose
-  diff disagrees with the list and carries no comment. The figures are LiteLLM's base rates only, and a
-  model the list keys under another provider name has none.
+- **The refresh's price-list check proves a comment, not a price.** The list can lag a page or be
+  wrong, so a differing figure is allowed: the check requires only that it carries a
+  `// price list says …` comment, and the comment's own figures are not compared with the list. It
+  sees only rows it can parse (an object literal with a provider, an id and both prices as plain
+  numbers), and a row the list does not price is never flagged. The figures are LiteLLM's base rates
+  only, and a model the list keys under another provider name has none.
 - **`UNVERIFIED` is a comment on the row.** The pull request body is generated from fixed text and
   carries none of the agent's own notes. A run whose only change is `UNVERIFIED` comments still
   opens a draft each time the previous one is closed, because those comments are not merged and are

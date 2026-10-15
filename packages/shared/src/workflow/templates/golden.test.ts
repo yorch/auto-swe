@@ -607,6 +607,37 @@ function catalogRefreshPriceListRule(g: WorkflowSpec): WorkflowSpec {
   return { ...g, nodes: nodes as unknown as WorkflowSpec['nodes'] };
 }
 
+/**
+ * The price-list rule, checked in code after the review approves: an approval goes
+ * through `checkPriceNotes`, and an unexplained difference re-enters the review
+ * loop's fix path with the check's summary as the finding.
+ */
+function catalogRefreshPriceNoteCheck(g: WorkflowSpec): WorkflowSpec {
+  const nodes = structuredClone(g.nodes) as unknown as Record<string, Record<string, unknown>>;
+  (nodes.checkApproval as Record<string, unknown>).onTrue = 'checkPriceNotes';
+  nodes.checkPriceNotes = {
+    inputs: { codeResult: { from: 'context.currentCodeResult' } },
+    next: 'priceNotesOk',
+    step: 'checkPriceListNotes',
+    type: 'step',
+  };
+  nodes.priceNotesOk = {
+    expr: 'nodes.checkPriceNotes.output.ok == true',
+    onFalse: 'storePriceNoteFindings',
+    onTrue: 'checkScope',
+    type: 'cond',
+  };
+  nodes.storePriceNoteFindings = {
+    next: 'checkReviewLimit',
+    type: 'set',
+    values: {
+      'context.lastRejectionSummary': { from: 'nodes.checkPriceNotes.output.summary' },
+      'context.reviewRetries': { expr: 'context.reviewRetries + 1' },
+    },
+  };
+  return { ...g, nodes: nodes as unknown as WorkflowSpec['nodes'] };
+}
+
 const FAILURE_LESSONS_REASON =
   'a review or CI loop that runs out of attempts stores a lesson about what blocked it ' +
   'before the run fails';
@@ -696,10 +727,11 @@ const INTENDED_CHANGES: Record<
       'review and CI loops store a lesson when they run out of attempts (the sign-off loop does not)',
   },
   'model-catalog-refresh': {
-    apply: catalogRefreshPriceListRule,
+    apply: (g: WorkflowSpec) => catalogRefreshPriceNoteCheck(catalogRefreshPriceListRule(g)),
     reason:
       'the guidance carries community price-list figures as a cross-check, which the prompts ' +
-      'name and one rule says how to use',
+      'name and one rule says how to use; after the review approves, a step checks that rule in ' +
+      'code and sends an unexplained difference back to the fixer',
   },
 };
 

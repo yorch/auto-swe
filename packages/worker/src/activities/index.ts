@@ -56,6 +56,11 @@ export type {
   RefineChannelWorkflowDraftResult,
 } from './channelWorkflowRefine.js';
 export { refineChannelWorkflowDraft } from './channelWorkflowRefine.js';
+export type {
+  CheckPriceListNotesInput,
+  CheckPriceListNotesResult,
+} from './checkPriceListNotes.js';
+export { checkPriceListNotes } from './checkPriceListNotes.js';
 export {
   executeCIFixImplementation,
   executeReviewFixImplementation,

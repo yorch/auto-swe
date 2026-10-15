@@ -195,6 +195,18 @@ register({
 });
 
 register({
+  category: 'vcs',
+  configFields: [],
+  description:
+    'Compare the pushed model catalog file with the one the change started from, and find every added or ' +
+    'repriced row whose figure differs from the community price list (models.priceListUrl) without a ' +
+    '"// price list says" comment. output.ok is false with output.summary as a finding for the fixer. ' +
+    'Passes, saying why, when the list is off or unreadable.',
+  label: 'Check price-list notes',
+  name: 'checkPriceListNotes',
+});
+
+register({
   category: 'control',
   configFields: [],
   description: 'Fetch and truncate CI logs from the given URL.',

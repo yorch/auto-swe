@@ -171,15 +171,16 @@ export const ciVerifyActivities = proxyActivities<Pick<typeof activitiesType, 'v
   startToCloseTimeout: T_60M,
 });
 
-// Lists provider models through the GLOBAL credentials. Provider calls inside are
-// bounded at 10 s a page, so the timeout is generous; the precondition failures are
-// non-retryable ApplicationFailures, which the policy does not retry.
-export const catalogActivities = proxyActivities<Pick<typeof activitiesType, 'listProviderModels'>>(
-  {
-    retry: RETRY_STANDARD,
-    startToCloseTimeout: T_5M,
-  }
-);
+// Lists provider models through the GLOBAL credentials, and checks the refreshed
+// catalog against the price list. Provider calls inside are bounded at 10 s a page
+// and the list fetch at 15 s, so the timeout is generous; the precondition failures
+// are non-retryable ApplicationFailures, which the policy does not retry.
+export const catalogActivities = proxyActivities<
+  Pick<typeof activitiesType, 'listProviderModels' | 'checkPriceListNotes'>
+>({
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_5M,
+});
 
 export const contextActivities = proxyActivities<Pick<typeof activitiesType, 'validateContext'>>({
   heartbeatTimeout: T_2M,

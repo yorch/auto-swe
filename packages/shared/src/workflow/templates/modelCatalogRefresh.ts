@@ -139,13 +139,42 @@ export const MODEL_CATALOG_REFRESH_SPEC: WorkflowSpec = {
       },
     },
     reviewLoop({
-      approved: 'checkScope',
+      approved: 'checkPriceNotes',
       fixConfig: {
         allowedPaths: MODEL_CATALOG_REFRESH_ALLOWED_PATHS,
         systemPrompt: MODEL_CATALOG_REFRESH_FIX_PROMPT,
       },
     }),
     {
+      // The price-list rule, checked in code once the review approves: an added or repriced
+      // row that differs from the list without a comment goes back to the fixer as a
+      // rejection would, and counts against the same attempt limit.
+      checkPriceNotes: {
+        group: 'review loop',
+        inputs: { codeResult: { from: 'context.currentCodeResult' } },
+        next: 'priceNotesOk',
+        step: 'checkPriceListNotes',
+        title: 'Check price-list notes',
+        type: 'step',
+      },
+      priceNotesOk: {
+        expr: 'nodes.checkPriceNotes.output.ok == true',
+        group: 'review loop',
+        onFalse: 'storePriceNoteFindings',
+        onTrue: 'checkScope',
+        title: 'Every difference explained?',
+        type: 'cond',
+      },
+      storePriceNoteFindings: {
+        group: 'review loop',
+        next: 'checkReviewLimit',
+        title: 'Record the unexplained differences',
+        type: 'set',
+        values: {
+          'context.lastRejectionSummary': { from: 'nodes.checkPriceNotes.output.summary' },
+          'context.reviewRetries': { expr: 'context.reviewRetries + 1' },
+        },
+      },
       // The cumulative change, including every review fix, must be exactly the catalog file.
       checkScope: {
         expr:

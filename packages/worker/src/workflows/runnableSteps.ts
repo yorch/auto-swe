@@ -433,6 +433,14 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   ['listProviderModels', ({ request }) => catalogActivities.listProviderModels({ request })],
   [
+    'checkPriceListNotes',
+    ({ ctx, request, inputs }) =>
+      catalogActivities.checkPriceListNotes({
+        codeResult: pickCodeResult(inputs.codeResult, ctx),
+        request,
+      }),
+  ],
+  [
     'triageCiFailure',
     ({ request, config }) => {
       const systemPromptOverride = config.systemPrompt as string | undefined;
