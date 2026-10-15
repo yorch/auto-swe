@@ -9,7 +9,7 @@ import { cn, FOCUS_RING } from '@/lib/utils';
 const AXIS_TICK = {
   fill: TOKEN.paper500,
   fontFamily: 'var(--font-sans)',
-  fontSize: 11,
+  fontSize: 12,
   fontVariantNumeric: 'tabular-nums',
 };
 
@@ -122,7 +122,7 @@ export function axisLabel(value: string, vertical = false) {
   return {
     fill: TOKEN.paper500,
     fontFamily: 'var(--font-sans)',
-    fontSize: 11,
+    fontSize: 12,
     value,
     ...(vertical
       ? { angle: -90, position: 'insideLeft' as const, style: { textAnchor: 'middle' as const } }

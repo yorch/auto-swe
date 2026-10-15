@@ -17,9 +17,9 @@ const VARIANTS: Record<Variant, string> = {
 };
 
 // Sizes differ by height and horizontal padding only. Type size is the
-// component-wide 13.5px set inline below; the `text-xs`/`text-sm` classes
+// component-wide 13px (the `text-sm` step) set inline below; the `text-xs`/`text-sm` classes
 // that used to be here never applied, because an inline style beats every
-// class, so all three rendered at 13.5px regardless.
+// class, so all three rendered at one size regardless.
 const SIZES: Record<Size, string> = {
   lg: 'h-10 px-5',
   md: 'h-8 px-4',
@@ -34,7 +34,7 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
 // Radius is the `rounded-lg` token (10px) in `buttonClassName`, not an inline style, so a
 // caller's className can override it.
 export const BUTTON_STYLE = {
-  fontSize: '13.5px',
+  fontSize: '13px',
   letterSpacing: '0.01em',
 } as const;
 

@@ -50,12 +50,12 @@ export function optionText(option: DropdownOption): string {
 /** The control's box: matches `Input` (h-10, or h-8 mono when compact). */
 export function fieldBoxClass(compact: boolean, invalid: boolean) {
   return cn(
-    'w-full rounded-md border border-ink-400 bg-ink-900/60 text-paper-100 outline-none transition-colors',
+    'w-full rounded-md border border-ink-200 bg-ink-900 text-paper-100 outline-none transition-colors',
     compact ? 'h-8 px-2.5 text-[13px]' : 'h-9 px-3 text-sm',
     // data-focused: a Select's trigger button; data-focus-within: a Combobox's
     // Group around its input. Each primitive gets the attribute that applies.
-    'hover:border-ink-300 data-[focused]:border-ember-400 data-[focused]:bg-ink-900/80 data-[focused]:ring-2 data-[focused]:ring-ember-400/20',
-    'data-[focus-within]:border-ember-400 data-[focus-within]:bg-ink-900/80',
+    'hover:border-paper-600 data-[focused]:border-ember-400 data-[focused]:ring-2 data-[focused]:ring-ember-400/20',
+    'data-[focus-within]:border-ember-400',
     'data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50',
     invalid &&
       'border-brick-400 data-[focused]:border-brick-400 data-[focus-within]:border-brick-400'

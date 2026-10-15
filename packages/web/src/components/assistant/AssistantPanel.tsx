@@ -389,7 +389,7 @@ function Composer({ busy }: { busy: boolean | undefined }) {
         Message the assistant
       </label>
       <textarea
-        className="max-h-40 min-h-[4.5rem] w-full resize-y rounded-md border border-ink-400 bg-ink-900/60 px-3 py-2 text-[13.5px] text-paper-100 outline-none placeholder:text-paper-600 hover:border-ink-300 focus:border-ember-400 focus:ring-2 focus:ring-ember-400/20"
+        className="max-h-40 min-h-[4.5rem] w-full resize-y rounded-md border border-ink-200 bg-ink-900 px-3 py-2 text-[13.5px] text-paper-100 outline-none placeholder:text-paper-600 hover:border-paper-600 focus:border-ember-400 focus:ring-2 focus:ring-ember-400/20"
         id="assistant-input"
         maxLength={MAX_ASSISTANT_MESSAGE_CHARS}
         onChange={(e) => setText(e.target.value)}

@@ -116,7 +116,7 @@ export function SuiteHealthChart({ datasets, maxStaleRate, title }: Props) {
             label={{
               fill: t.paper400,
               fontFamily: 'var(--font-sans)',
-              fontSize: 11,
+              fontSize: 12,
               position: 'top',
               value: `max ${percent(maxStaleRate)}`,
             }}
