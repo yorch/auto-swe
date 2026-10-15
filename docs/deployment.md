@@ -243,20 +243,18 @@ Integration credentials that an operator rotates during normal use are stored en
 
 ## 3. Database setup
 
-The shipped schema lives in `packages/shared/src/prisma/migrations/` — a consolidated baseline and
-the hand-written DDL migration beside it:
+The shipped schema lives in `packages/shared/src/prisma/migrations/` — a consolidated baseline, the
+hand-written DDL migration beside it, and one migration per schema change made since the schema was
+first deployed, each named for the change it makes:
 
 | Migration | What it adds |
 | --------- | ------------ |
 | `20260618000000_init` | The consolidated baseline, generated from `schema.prisma` via `prisma migrate diff --from-empty --to-schema --script` — the `vector` extension, every enum, table, column, FK and Prisma-expressible index (including the `repo_dependencies` edge table and `connections.package_names`) |
 | `20260618000001_custom_constraints_and_indexes` | Everything the DSL can't express: the HNSW vector indexes on `memory_items.embedding` and `knowledge_items.embedding`, the partial and expression indexes the scope cascade and the automation ledger rely on, the singleton / scope-discriminator / per-source-filter CHECK constraints, `api_tokens`' exactly-one-owner CHECK, array-column `NOT NULL`s, the governed-knowledge scope-guard triggers, and the embedding-config seed |
 
-The split between the two is by *kind* of DDL, not by when it was written. While the schema is
-undeployed the pair is regenerated as a whole — the baseline from `schema.prisma` via
-`prisma migrate diff --from-empty --to-schema --script`, then the hand-written file beside it — so a
-schema change never leaves a third migration behind. Once the schema is deployed anywhere this
-inverts: both are applied in the wild and only new migrations are appended, and
-`prisma migrate deploy` applies whatever is pending. See the
+The split between the two is by *kind* of DDL, not by when it was written. The schema is deployed,
+so the pair is applied in the wild and is never edited or regenerated: a schema change appends its
+own migration after them, and `prisma migrate deploy` applies whatever is pending. See the
 [`prisma-pgvector-hnsw`](../.claude/skills/prisma-pgvector-hnsw/SKILL.md) skill.
 
 Directory names follow Prisma's `<timestamp>_<name>` convention: `20260618000000_init` for the

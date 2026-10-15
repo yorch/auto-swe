@@ -618,6 +618,18 @@ HTTP at `API_INTERNAL_URL` with the turn's assistant token. The reply is written
 `AssistantMessage` row as the model streams it, and the gateway streams that row to the panel as
 server-sent events.
 
+A reply that fails shows the user a fixed sentence (`error`), and also records the underlying cause
+in `AssistantMessage.errorDetail`: the error's name, failure type and message and the first few causes
+it wraps, scrubbed of credential-shaped text and the turn's token. It is written by the turn activity
+when the turn throws, by `failAssistantReply` when the activity never reported back (a timeout or a
+dead worker, which says to look in Temporal), and by the gateway when the turn could not be handed to
+the workflow. Admins read it at `/govern/assistant` (`GET /api/v1/platform/assistant/failures`), across
+every user and newest first. Opening one failure lists the agent trace rows its turn wrote, found by
+the conversation's workflow id between the end of the turn before it and the moment it failed: kind,
+tool or model, tokens, duration, error, and the OpenTelemetry trace id to look up in Tempo. The view
+never shows what was said: no message text, conversation title, or trace `inputJson`/`outputJson`. The
+assistant itself may not call these routes.
+
 A JWT's role claim is not trusted on its own: after verifying the signature, the gateway re-reads
 the user's current role and `isActive` flag (behind a 30 s in-process cache), so a demotion or
 deactivation applies before the token expires. Changing a user's role or active flag drops that
@@ -1438,3 +1450,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   poll for up to 10 s after the read that first returned it. A trace that commits behind the cursor is not lost, but it costs a full
   re-read of every trimmed trace on the poll that notices it; a worker whose clock lags the others
   by more than 10 s triggers one on every poll it writes during.
+- **An assistant failure's trace rows are matched by time, not by turn.** `AgentTrace` has no column
+  naming the reply a turn was for, so `/govern/assistant` takes the rows the conversation's workflow
+  wrote between the end of the turn before and the failure. A turn that failed before any trace was
+  persisted (the agent or its provider credential could not be resolved) shows none, and replies that
+  failed before `errorDetail` existed show no cause; for those, the worker log line
+  `[assistantTurn] turn failed` and the Temporal history of `assistant-<conversationId>` remain the
+  sources.

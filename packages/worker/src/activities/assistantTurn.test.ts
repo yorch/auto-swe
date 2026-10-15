@@ -107,6 +107,20 @@ describe('runAssistantTurn', () => {
     expect(data.error).toBe('I hit an error answering that. Please try again.');
   });
 
+  it('records the cause for admins, scrubbed of the turn token and credentials', async () => {
+    mockedRunAgent.mockRejectedValue(
+      new Error('gateway refused asst_t with Authorization: Bearer abc123', {
+        cause: new Error('upstream 401'),
+      })
+    );
+    await runAssistantTurn(INPUT);
+    const detail = db.assistantMessage.update.mock.calls.at(-1)?.[0].data.errorDetail as string;
+    expect(detail).toContain('Error: gateway refused');
+    expect(detail).toContain('caused by Error: upstream 401');
+    expect(detail).not.toContain('asst_t');
+    expect(detail).not.toContain('abc123');
+  });
+
   it('does nothing for a reply that is already answered or not this user’s', async () => {
     db.assistantMessage.findFirst.mockResolvedValue(null);
     expect(await runAssistantTurn(INPUT)).toEqual({ status: 'SKIPPED' });
@@ -157,7 +171,7 @@ describe('failAssistantReply', () => {
   it('fails only a reply that is still open', async () => {
     await failAssistantReply({ replyId: 'reply-1' });
     expect(db.assistantMessage.updateMany).toHaveBeenCalledWith({
-      data: { error: expect.any(String), status: 'FAILED' },
+      data: { error: expect.any(String), errorDetail: expect.any(String), status: 'FAILED' },
       where: { id: 'reply-1', status: { in: ['PENDING', 'STREAMING'] } },
     });
   });

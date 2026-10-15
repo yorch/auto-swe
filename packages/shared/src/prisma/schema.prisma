@@ -3631,10 +3631,15 @@ model AssistantMessage {
   pageContext    Json?                  @map("page_context")
   /// Why a FAILED reply failed, in words fit for the user.
   error          String?
+  /// Why a FAILED reply failed, as the platform saw it: the underlying error, for admins diagnosing
+  /// the assistant (`GET /api/v1/platform/assistant/failures`). Never shown to the user.
+  errorDetail    String?                @map("error_detail")
   createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz
 
   @@index([conversationId, createdAt])
+  // The admin failure feed: FAILED replies, newest first.
+  @@index([status, createdAt])
   @@map("assistant_messages")
 }
 
