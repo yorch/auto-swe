@@ -858,6 +858,7 @@ CREATE TABLE "workflow_runs" (
     "agent_versions" JSONB,
     "pinned_settings" JSONB,
     "agent_runtimes" JSONB,
+    "authorized_connection_ids" JSONB,
     "skill_revisions" JSONB,
     "is_canary" BOOLEAN NOT NULL DEFAULT false,
     "baseline_sha" TEXT,

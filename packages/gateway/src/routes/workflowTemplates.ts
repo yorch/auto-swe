@@ -785,7 +785,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         const warnings = [
           ...(await advisoryWarnings(
             'workflow spec references',
-            () => validateSpecRefs(fastify.prisma, parsedSpec),
+            () => validateSpecRefs(fastify.prisma, parsedSpec, teamId ?? null),
             []
           )),
           ...specValidationWarnings(parsedSpec),
@@ -970,7 +970,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         const warnings = [
           ...(await advisoryWarnings(
             'workflow spec references',
-            () => validateSpecRefs(fastify.prisma, parsedSpec),
+            () => validateSpecRefs(fastify.prisma, parsedSpec, teamId ?? null),
             []
           )),
           ...specValidationWarnings(parsedSpec),
@@ -1453,7 +1453,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const warnings = [
         ...(await advisoryWarnings(
           'workflow spec references',
-          () => validateSpecRefs(fastify.prisma, parsedSpec),
+          () => validateSpecRefs(fastify.prisma, parsedSpec, tpl.teamId),
           []
         )),
         ...specValidationWarnings(parsedSpec),
@@ -1639,7 +1639,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const warnings = [
         ...(await advisoryWarnings(
           'workflow spec references',
-          () => validateSpecRefs(fastify.prisma, parsed as WorkflowSpec),
+          () => validateSpecRefs(fastify.prisma, parsed as WorkflowSpec, tpl.teamId),
           []
         )),
         ...specValidationWarnings(parsed as WorkflowSpec),

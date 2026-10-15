@@ -1,5 +1,9 @@
 import { ConnectionTypeSchema, encryptConnectionApiToken, Prisma, Role } from '@auto-swe/shared';
 import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
+// From the subpath, not the barrel: this module is pure (zod only), so a test that
+// mocks the barrel to avoid instantiating the Prisma client still gets the real one.
+import { isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
+import { credentialDestinationChanged } from '@auto-swe/shared/lib/credentialDestination';
 import { installationHostFor, sameHostFamily } from '@auto-swe/shared/lib/githubHostScope';
 import { type PermissionLookup, permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import {
@@ -736,6 +740,8 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const repo = await fastify.prisma.connection.findUnique({
         select: {
+          apiKeyCiphertext: true,
+          config: true,
           executorImage: true,
           githubApiUrl: true,
           githubUrl: true,
@@ -873,6 +879,32 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             'That repository is already onboarded on that host'
           );
         }
+      }
+
+      // A stored credential belongs to the destination it was entered for. Pointing
+      // the connection somewhere else while keeping it would send that team's secret
+      // to a host its owner never approved — and `config` is editable by a LEAD, who
+      // cannot read the secret they would be redirecting. `apiToken === undefined`
+      // means "keep the stored one"; supplying or clearing it is the explicit consent,
+      // exactly as the `mcp` route requires.
+      if (
+        repo.apiKeyCiphertext != null &&
+        apiToken === undefined &&
+        config !== undefined &&
+        isConnectionType(repo.type) &&
+        credentialDestinationChanged(
+          { config: repo.config, type: repo.type },
+          { config: config ?? null, type: repo.type }
+        )
+      ) {
+        return sendError(
+          reply,
+          409,
+          'TOKEN_ORIGIN_CHANGE',
+          'This connection has a stored API token. Changing where it would be sent — the base URL, ' +
+            'the tracker provider, or the Zendesk subdomain — would send it somewhere its owner never ' +
+            'approved. Enter a new token, or clear the stored one first.'
+        );
       }
 
       const tokenUpdate =

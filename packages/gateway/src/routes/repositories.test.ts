@@ -779,6 +779,106 @@ describe('repositoryRoutes', () => {
     });
   });
 
+  describe('a stored credential and a changed destination', () => {
+    const patch = (payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload,
+        url: `/api/v1/repositories/${REPO_ID}`,
+      });
+
+    /** A Confluence connection holding a token, as the update route loads it. */
+    const stored = (overrides: Record<string, unknown> = {}) => ({
+      apiKeyCiphertext: Buffer.from('cipher'),
+      config: { baseUrl: 'https://acme.atlassian.net', email: 'a@b.com' },
+      id: REPO_ID,
+      teamId: TEAM_ID,
+      type: 'confluence',
+      ...overrides,
+    });
+
+    it('refuses to send a stored token to another host', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue(stored());
+
+      const res = await patch({
+        config: { baseUrl: 'https://collector.attacker.example', email: 'a@b.com' },
+      });
+
+      // A LEAD cannot read the stored token, so repointing the row is how they would
+      // collect it: the write must not happen at all.
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('TOKEN_ORIGIN_CHANGE');
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses clearing the destination, which is the same move in two steps', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue(stored());
+
+      const cleared = await patch({ config: null });
+
+      expect(cleared.statusCode).toBe(409);
+      expect(JSON.parse(cleared.payload).error.code).toBe('TOKEN_ORIGIN_CHANGE');
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a change that moves the token without touching the URL', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue(
+        stored({
+          config: { baseUrl: 'https://jira.corp', provider: 'jira' },
+          type: 'issue_tracker',
+        })
+      );
+
+      // Linear's endpoint is fixed, so this sends the Jira token to another service.
+      const res = await patch({ config: { baseUrl: 'https://jira.corp', provider: 'linear' } });
+
+      expect(res.statusCode).toBe(409);
+      expect(JSON.parse(res.payload).error.code).toBe('TOKEN_ORIGIN_CHANGE');
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('permits the move when the caller supplies a new token', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue(stored());
+      ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+
+      const res = await patch({
+        apiToken: 'a-new-token',
+        config: { baseUrl: 'https://other.atlassian.net', email: 'a@b.com' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.connection.update).toHaveBeenCalled();
+    });
+
+    it('permits the move when the caller clears the stored token', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue(stored());
+      ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+
+      const res = await patch({
+        apiToken: null,
+        config: { baseUrl: 'https://other.atlassian.net', email: 'a@b.com' },
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.connection.update).toHaveBeenCalled();
+    });
+
+    it('permits an edit that keeps the host, and one on a row with no token', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue(stored());
+      ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+
+      const sameHost = await patch({
+        config: { baseUrl: 'https://acme.atlassian.net/wiki', email: 'a@b.com' },
+      });
+      expect(sameHost.statusCode).toBe(200);
+
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue(stored({ apiKeyCiphertext: null }));
+      const noToken = await patch({ config: { baseUrl: 'https://anywhere.example' } });
+      expect(noToken.statusCode).toBe(200);
+    });
+  });
+
   describe('PATCH /api/v1/repositories/:id', () => {
     it('updates the repository and returns the new row', async () => {
       ctx.mockPrisma.connection.findUnique.mockResolvedValueOnce({ id: REPO_ID, teamId: TEAM_ID });

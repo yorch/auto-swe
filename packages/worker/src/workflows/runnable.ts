@@ -59,6 +59,8 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
       canaryAgentKey: input.request.canaryAgentKey,
       canaryVersion: input.request.canaryVersion,
       launchedById: input.request.launchedById,
+      payload: input.request.payload,
+      runConnectionId: input.request.connectionId ?? input.request.repoId ?? null,
       templateId: input.templateId,
       templateVersion: input.templateVersion,
       workflowId,

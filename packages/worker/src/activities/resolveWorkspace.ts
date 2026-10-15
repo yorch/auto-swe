@@ -13,6 +13,7 @@ import { readConfluencePage } from '../connectors/confluence.js';
 import { fetchIssue } from '../connectors/issueTracker.js';
 import { readNotionPage } from '../connectors/notion.js';
 import { fetchZendeskTicket } from '../connectors/zendesk.js';
+import { assertConnectionAuthorized } from '../lib/connectionAccess.js';
 
 /**
  * Generic workspace context materialised before a run's work stage.
@@ -272,6 +273,12 @@ function resolveApiOnlyWorkspace(): WorkspaceContext {
  * provider and target connection.
  */
 export async function resolveWorkspace(input: ResolveWorkspaceInput): Promise<WorkspaceContext> {
+  // The workspace is the run's own connection in every launch path that sets one, so it is
+  // in the pinned set; checking here keeps a directly-supplied id (a `resolveWorkspace`
+  // node binds its own `connectionId`) under the same rule as any other connection use.
+  if (input.connectionId) {
+    await assertConnectionAuthorized(input.connectionId, 'resolveWorkspace');
+  }
   switch (input.workspaceProvider) {
     case 'api_only':
       return resolveApiOnlyWorkspace();

@@ -9,9 +9,19 @@ vi.mock('@auto-swe/shared', async (importOriginal) => {
   };
 });
 
+// Keep the real `ApplicationFailure`, but give the activity a workflow id so
+// `assertConnectionAuthorized` can find the run it belongs to.
+vi.mock('@temporalio/activity', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@temporalio/activity')>()),
+  Context: {
+    current: () => ({ info: { workflowExecution: { workflowId: 'wf-1' } } }),
+  },
+}));
+
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     connection: { findUnique: vi.fn() },
+    workflowRun: { findUnique: vi.fn() },
   },
 }));
 
@@ -39,6 +49,12 @@ const { fetchZendeskTicket } = await import('../connectors/zendesk.js');
 describe('resolveWorkspace', () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    // An authorized run: every connection these cases name is in the pin, so each keeps
+    // testing the workspace resolution it names.
+    (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      authorizedConnectionIds: ['conn-1', 'conn-2', 'conn-3', 'conn-4'],
+      id: 'run-1',
+    });
   });
 
   it('resolves an api_only workspace without a connection', async () => {

@@ -8,6 +8,7 @@ import {
   SCHEDULE_FIRE_SOURCE,
 } from '@auto-swe/shared/lib/automationLedger';
 import { billedOrgId, currentYearMonth } from '@auto-swe/shared/lib/billing';
+import { isInputSchema, runAuthorizedConnectionIds } from '@auto-swe/shared/lib/inputSchema';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { isTrackerTicket, syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
@@ -294,6 +295,20 @@ export interface CreateWorkflowRunInput {
   parentWorkflowId?: string;
   /** The child's target connection, recorded on its ledger row. */
   repoId?: string | null;
+  /**
+   * The connection this run acts on — its repository, or the connection a template run
+   * without one is scoped to — carried so the authorization pin can include it.
+   *
+   * Distinct from `repoId`, which is set only for a scheduled fire and an epic child: an
+   * ordinary run sets neither, and its repository is still the connection it reads and
+   * writes through.
+   */
+  runConnectionId?: string | null;
+  /**
+   * The run's generic payload, as the workflow received it. Carried rather than re-read so
+   * the authorized set is resolved from exactly the payload the run was launched with.
+   */
+  payload?: unknown;
 }
 
 /**
@@ -485,7 +500,12 @@ export async function createWorkflowRun(
   const version = await prisma.workflowTemplateVersion.findUnique({
     include: {
       template: {
-        select: { estimatedHumanTimeSavedMinutes: true, origin: true, workspaceProvider: true },
+        select: {
+          estimatedHumanTimeSavedMinutes: true,
+          inputSchema: true,
+          origin: true,
+          workspaceProvider: true,
+        },
       },
     },
     where: { templateId_version: { templateId: input.templateId, version: input.templateVersion } },
@@ -564,11 +584,22 @@ export async function createWorkflowRun(
   // and the later execution gets no user credential — never the earlier
   // launcher's.
   const sourceSnapshot = await knowledgeSourceSnapshot(input);
+  // The connections this run may use, resolved now and pinned on the row. A node that
+  // resolves anything else is refused where it is used, which is what makes a template's
+  // declared schema a boundary rather than a hint. Computed here because this activity is
+  // the only writer of a run row: a scheduled fire, an epic child and a channel task all
+  // arrive without the gateway computing a set.
+  const authorizedConnectionIds = runAuthorizedConnectionIds({
+    inputSchema: isInputSchema(version.template?.inputSchema) ? version.template.inputSchema : null,
+    payload: input.payload ?? null,
+    workspaceConnectionId: input.runConnectionId ?? input.repoId ?? scheduledRepoId ?? null,
+  });
   const runUpsert: Prisma.WorkflowRunUpsertArgs = {
     create: {
       agentVersions,
       ...(agentRuntimes ? { agentRuntimes: agentRuntimes as Prisma.InputJsonObject } : {}),
       ...sourceSnapshot,
+      authorizedConnectionIds: authorizedConnectionIds as Prisma.InputJsonValue,
       // An epic child's own repository. Its work request is the epic's and
       // spans every repository, so run visibility reads this instead — a member
       // of one of the epic's teams reaches that team's child, not all of them.
@@ -590,7 +621,13 @@ export async function createWorkflowRun(
       workflowId: input.workflowId,
       workRequestId: input.workRequestId,
     },
-    update: {},
+    // Nothing else is written on conflict: the launcher and Temporal run id must keep
+    // naming the FIRST execution, so a later execution of a reused workflow id cannot act
+    // as the earlier one's launcher (see the comment above). The authorized set is the one
+    // field refreshed, because it describes THIS execution: leaving the first one's in
+    // place would pin a retry to a set resolved from a payload it may not share, and would
+    // leave a row that predates the column unpinned forever.
+    update: { authorizedConnectionIds: authorizedConnectionIds as Prisma.InputJsonValue },
     where: { workflowId: input.workflowId },
   };
   const run =

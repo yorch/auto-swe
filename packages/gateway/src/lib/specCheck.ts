@@ -333,7 +333,7 @@ export async function checkSpec(
     });
   }
 
-  for (const p of await findSpecRefProblems(fastify.prisma, spec)) {
+  for (const p of await findSpecRefProblems(fastify.prisma, spec, teamId)) {
     issues.push({ ...p, severity: 'warning', source: 'refs' });
   }
 

@@ -50,6 +50,7 @@
     "./lib/modelSpec": "./dist/lib/modelSpec.js",
     "./lib/deploymentAgents": "./dist/lib/deploymentAgents.js",
     "./lib/credentialCoverage": "./dist/lib/credentialCoverage.js",
+    "./lib/credentialDestination": "./dist/lib/credentialDestination.js",
     "./lib/builtinModels": "./dist/lib/builtinModels.js",
     "./scannerPatterns": "./dist/scannerPatterns/index.js",
     "./lib/regexExec": "./dist/lib/regexExec.js",
