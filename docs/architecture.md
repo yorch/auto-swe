@@ -334,6 +334,9 @@ The spec supports 15 node types.
 | `humanInput` | Pause for a typed form, written back into context | `fields`, `description`, `onSubmit`, `timeout`, `onTimeout`, `storeAs` |
 | `humanReview` | Pause for an annotated review of displayed content | `contentFrom`, `description`, `onSubmit`, `timeout`, `onTimeout`, `storeAs` |
 
+Each node type's full field list, output paths, failure behaviour and a complete example are in
+[workflow-nodes.md](./workflow-nodes.md).
+
 The four human nodes are handled inside the interpreter: each creates a `WorkflowHumanStep` row,
 optionally notifies Slack, then parks on the `hitl_<nodeId>` signal until an inbox or Slack response
 arrives, or the timeout routes to `onTimeout`. See [hitl-workflows.md](./hitl-workflows.md).

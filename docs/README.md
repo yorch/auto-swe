@@ -17,6 +17,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | **[concepts.md](./concepts.md)** | The vocabulary — runs, templates, versions, nodes, gates, agents, skills, scopes, connections |
 | **[product-overview.md](./product-overview.md)** | What auto-swe is and who it is for — thesis, target users, capability map, primary use cases, differentiators, and what is deliberately out of scope |
 | **[architecture.md](./architecture.md)** | How it is put together — system context, package map, run lifecycle, the workflow engine and its node types, the config cascade, auth, data model, infrastructure |
+| **[workflow-nodes.md](./workflow-nodes.md)** | Writing a workflow spec by hand — every node type's fields, edges, output, failure handling and pitfalls, with a complete example of each, plus the run context, bindings and the expression language |
 | **[agents.md](./agents.md)** | The agent layer — seeded agents and how they bind models, the review network, skills, implementer tools, MCP, and the `AgentTracer` pattern |
 
 ## Capabilities
