@@ -56,8 +56,9 @@ read whatever it generates rather than assuming which constructs are safe.
    today every schema change appends a migration and neither file of the pair is touched.** Name
    it `<UTC timestamp>_<snake_case change>`, generate it with `prisma migrate dev --create-only`
    (or `prisma migrate diff --from-schema <schema before> --to-schema src/prisma/schema.prisma
-   --script` with no database), and read it per rule 2. Generate the baseline with `prisma migrate diff --from-empty
-   --to-schema src/prisma/schema.prisma --script` and keep the committed file **byte-identical to
+   --script` with no database), and read it per rule 2. Its timestamp must sort after every
+   migration already on `main`, so rename it if a newer one lands first. Generate the baseline with
+   `prisma migrate diff --from-empty --to-schema src/prisma/schema.prisma --script` and keep the committed file **byte-identical to
    that command's output** — it is the command the CI drift check and `docs/deployment.md` name.
    `prisma migrate dev` produces the same DDL except for two differences, so do not "reconcile" the
    file with it: it omits the `CREATE SCHEMA IF NOT EXISTS "public";` preamble and the trailing
