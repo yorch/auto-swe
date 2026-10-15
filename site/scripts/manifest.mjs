@@ -29,7 +29,7 @@ export const PLATFORM_EXPLORER = {
 export const REPO_REF = 'main';
 
 /**
- * Top-level `docs/` is published; `history/` and `redesign/` are not.
+ * Top-level `docs/` is published; `history/` is not.
  *
  * Same call the dashboard makes, for the same reason: `history/` is frozen by
  * convention, and frozen docs shown to a reader who has no way to know that read
