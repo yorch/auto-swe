@@ -621,3 +621,35 @@ describe('NodeInspector eval node', () => {
     expect(screen.queryByText('Input bindings')).toBeNull();
   });
 });
+
+describe('NodeInspector authored commands', () => {
+  it('warns on a gate step with its own command, and says who may save it', () => {
+    renderInspector(
+      { config: { command: 'npm run lint' }, next: 'a', step: 'runLint', type: 'step' },
+      'lint'
+    );
+    const alert = screen.getByText('Authored command').closest('[role]') ?? document.body;
+    expect(alert.textContent).toMatch(/runs in the run's workspace/);
+    expect(alert.textContent).toMatch(/team admin/);
+    cleanup();
+  });
+
+  it('warns on an eval node whose gate scorer has a command', () => {
+    renderInspector(
+      {
+        scorers: [{ command: 'npm run check', gate: 'lint', kind: 'gate' }],
+        target: { from: 'nodes.a.output' },
+        type: 'eval',
+      },
+      'ev'
+    );
+    expect(screen.getByText('Authored command')).toBeTruthy();
+    cleanup();
+  });
+
+  it('says nothing for a gate step that runs the repository command', () => {
+    renderInspector({ next: 'a', step: 'runLint', type: 'step' }, 'lint');
+    expect(screen.queryByText('Authored command')).toBeNull();
+    cleanup();
+  });
+});

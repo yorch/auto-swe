@@ -10,7 +10,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Textarea } from '@/components/ui/Textarea';
 import {
   CONTAINER_AUTHORING_RULE,
-  countContainerNodes,
+  describeAuthoredCode,
 } from '@/components/workflow/containerNodes';
 import { PromoteVersionModal } from '@/components/workflow/PromoteVersionModal';
 import { RefineChatPanel } from '@/components/workflow/RefineChatPanel';
@@ -376,8 +376,8 @@ export default function TemplateDetailPage({ params }: PageProps) {
       />
 
       <ConfirmModal
-        confirmLabel="Save with shell steps"
-        message={`This version contains ${countContainerNodes(pendingShellSpec)} shell or container step(s). They run team-authored code in an isolated container. ${CONTAINER_AUTHORING_RULE}`}
+        confirmLabel="Save with authored code"
+        message={`${describeAuthoredCode(pendingShellSpec)} Shell and container steps run in an isolated container; a step's own command runs in the run's workspace. Each is recorded in the shell audit log. ${CONTAINER_AUTHORING_RULE}`}
         onClose={() => setPendingShellSpec(null)}
         onConfirm={() => {
           if (pendingShellSpec) {
@@ -385,7 +385,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
           }
         }}
         open={pendingShellSpec !== null}
-        title="Shell steps detected"
+        title="Authored code detected"
       />
     </div>
   );

@@ -9,6 +9,8 @@ const TEMPLATE_ID = '11111111-1111-4111-8111-111111111111';
 
 // Stable references: the page re-seeds its editor whenever the query data identity changes.
 const hooks = vi.hoisted(() => ({
+  adminTeamIds: null as ReadonlySet<string> | null,
+  ledTeamIds: new Set<string>() as ReadonlySet<string>,
   mutateAsync: vi.fn(),
   template: {
     activeVersion: 1,
@@ -62,7 +64,10 @@ vi.mock('@/hooks/useTemplates', () => ({
   useWorkflowTemplateVersion: () => ({ data: hooks.version }),
 }));
 vi.mock('@/hooks/useModelCatalog', () => ({ useRolePricing: () => ({ data: undefined }) }));
-vi.mock('@/hooks/useTeams', () => ({ useLedTeamIds: () => [] }));
+vi.mock('@/hooks/useTeams', () => ({
+  useAdminTeamIds: () => hooks.adminTeamIds,
+  useLedTeamIds: () => hooks.ledTeamIds,
+}));
 vi.mock('@/hooks/useTransientFlag', () => ({ useTransientFlag: () => [false, vi.fn()] }));
 vi.mock('@/components/workflow/WorkflowDag', () => ({ WorkflowDag: () => null }));
 vi.mock('@/components/workflow/TemplateEditor', () => ({ TemplateEditor: () => null }));
@@ -82,6 +87,8 @@ beforeEach(() => {
   stubDialogPrototype();
   hooks.mutateAsync.mockReset();
   hooks.mutateAsync.mockResolvedValue({ data: { version: 2 } });
+  hooks.adminTeamIds = null;
+  hooks.ledTeamIds = new Set();
   useAuthStore.setState({ user: { role: 'ADMIN' } } as never);
 });
 
@@ -131,6 +138,49 @@ describe('workflow editor with lint errors', () => {
     await screen.findByText(/Save draft with \d+ error/);
     expect(hooks.mutateAsync).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(hooks.mutateAsync).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe('saving a version with an authored command', () => {
+  const LINT_COMMAND_SPEC = {
+    entry: 'lint',
+    name: 'broken',
+    nodes: {
+      done: { status: 'SUCCESS', type: 'terminate' },
+      lint: { config: { command: 'npm run lint' }, next: 'done', step: 'runLint', type: 'step' },
+    },
+    schemaVersion: 1,
+  };
+
+  async function saveJson(spec: object) {
+    await renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'JSON' }));
+    fireEvent.change(screen.getByLabelText('Raw JSON'), {
+      target: { value: JSON.stringify(spec, null, 2) },
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Save new version' }));
+  }
+
+  it('tells a team lead who is not a team admin, without asking the server', async () => {
+    useAuthStore.setState({ user: { role: 'LEAD' } } as never);
+    hooks.ledTeamIds = new Set(['t1']);
+    hooks.adminTeamIds = new Set();
+    await saveJson(LINT_COMMAND_SPEC);
+    expect(
+      await screen.findByText(/1 step with its own command\. Needs a platform admin/)
+    ).toBeTruthy();
+    expect(hooks.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('asks a team admin to confirm, then saves', async () => {
+    useAuthStore.setState({ user: { role: 'LEAD' } } as never);
+    hooks.ledTeamIds = new Set(['t1']);
+    hooks.adminTeamIds = new Set(['t1']);
+    await saveJson(LINT_COMMAND_SPEC);
+    await screen.findByText('Authored code detected');
+    expect(hooks.mutateAsync).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Save with authored code' }));
     await waitFor(() => expect(hooks.mutateAsync).toHaveBeenCalledTimes(1));
   });
 });

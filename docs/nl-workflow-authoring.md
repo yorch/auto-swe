@@ -200,7 +200,9 @@ dynamic catalog + the user's intent go in the user message.
   the agent workspace rather than a pulled image, so the image allowlist does not apply to them; their
   rows record the image as `(agent workspace)` and the network as `egress`, and a command bound from
   a run input is recorded as that binding. A gate step without a `command` runs the repository's own
-  command and needs no role.
+  command and needs no role. The canvas inspector marks a node carrying an authored command, and the
+  template page refuses a save holding authored code before sending it when the caller is not a
+  platform admin or an admin of the owning team; anyone else confirms the save first.
 - **Serving a version re-checks code that has no audit row.** Reviewing a version
   (`POST /:id/versions/:version/review`), promoting it (`POST /:id/promote`), re-activating a template
   on it (`PATCH` with `status: "ACTIVE"`) and making it an experiment arm (`PATCH` with

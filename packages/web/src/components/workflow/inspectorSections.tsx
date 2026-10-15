@@ -8,7 +8,11 @@
  */
 
 import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
-import { BindingSchema, isValidWaitDuration } from '@auto-swe/shared/workflow';
+import {
+  BindingSchema,
+  isAuthoredCommandNode,
+  isValidWaitDuration,
+} from '@auto-swe/shared/workflow';
 import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -21,7 +25,7 @@ import { Textarea } from '@/components/ui/Textarea';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { errMsg } from '@/lib/errors';
-import { CONTAINER_AUTHORING_RULE } from './containerNodes';
+import { AUTHORED_COMMAND_NOTE, CONTAINER_AUTHORING_RULE } from './containerNodes';
 import {
   BindingField,
   BindingRow,
@@ -66,6 +70,7 @@ export function StepConfigSection({
       {stepMeta?.description && (
         <p className="text-xs leading-relaxed text-paper-400">{stepMeta.description}</p>
       )}
+      {isAuthoredCommandNode(node) && <AuthoredCommandAlert />}
       {stepMeta && stepMeta.configFields.length > 0 && (
         <SchemaAwareForm
           fields={stepMeta.configFields}
@@ -255,6 +260,15 @@ export function FanOutSection({
         value={exportsText}
       />
     </div>
+  );
+}
+
+/** The warning on a node that carries a command its author wrote; who may save one. */
+function AuthoredCommandAlert() {
+  return (
+    <Alert className="text-xs" title="Authored command" variant="warning">
+      {AUTHORED_COMMAND_NOTE} {CONTAINER_AUTHORING_RULE}
+    </Alert>
   );
 }
 
@@ -1362,6 +1376,7 @@ export function EvalSection({
         label="Candidate branch"
         onChange={(candidateRef) => onChange({ ...node, candidateRef })}
       />
+      {isAuthoredCommandNode(node) && <AuthoredCommandAlert />}
       <InspectorSubsection title={`Scorers (${scorers.length})`}>
         {scorers.map((scorer, i) => (
           <div

@@ -7,9 +7,12 @@ import {
   validateSpec,
 } from '@auto-swe/shared/workflow';
 import { use, useEffect, useMemo, useState } from 'react';
-import { countContainerNodes } from '@/components/workflow/containerNodes';
+import {
+  CONTAINER_AUTHORING_RULE,
+  describeAuthoredCode,
+} from '@/components/workflow/containerNodes';
 import { useRolePricing } from '@/hooks/useModelCatalog';
-import { useLedTeamIds } from '@/hooks/useTeams';
+import { useAdminTeamIds, useLedTeamIds } from '@/hooks/useTeams';
 import {
   useCreateWorkflowVersion,
   useReviewWorkflowVersion,
@@ -20,9 +23,10 @@ import {
 } from '@/hooks/useTemplates';
 import { errMsg } from '@/lib/errors';
 import { estimatorPricing } from '@/lib/modelCatalog';
+import { hasRole } from '@/lib/roles';
 import { validateRouteParam } from '@/lib/routeParams';
 import { schemaIssues } from '@/lib/specSchemaIssues';
-import { canWriteTeamResource } from '@/lib/teamPermissions';
+import { canAuthorTeamCode, canWriteTeamResource } from '@/lib/teamPermissions';
 import { useAuthStore } from '@/stores/authStore';
 import type { ViewMode } from './EditorActions';
 
@@ -81,6 +85,13 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
   const platformRole = useAuthStore((s) => s.user?.role);
   const ledTeamIds = useLedTeamIds();
   const canManage = canWriteTeamResource(platformRole, template?.team?.id, ledTeamIds);
+  // Container code and authored commands take a team ADMIN on top (the gateway's
+  // `workflow:write:shell`). Null while the memberships load: the save then asks the gateway.
+  const adminTeamIds = useAdminTeamIds();
+  const canAuthorCode =
+    adminTeamIds === null && !hasRole(platformRole, 'ADMIN')
+      ? null
+      : canAuthorTeamCode(platformRole, template?.team?.id, adminTeamIds);
 
   const [mode, setMode] = useState<ViewMode>('view');
   const [editorSpec, setEditorSpec] = useState<WorkflowSpec | null>(null);
@@ -181,8 +192,14 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
   };
 
   const continueSave = async (specToSave: WorkflowSpec) => {
-    const shellCount = countContainerNodes(specToSave);
-    if (shellCount > 0) {
+    const authoredCode = describeAuthoredCode(specToSave);
+    if (authoredCode) {
+      // Say so before the round trip when the gateway would refuse the save: it refuses a
+      // version holding authored code, including code an admin wrote into an earlier version.
+      if (canAuthorCode === false) {
+        setSaveError(`${authoredCode} ${CONTAINER_AUTHORING_RULE}`);
+        return;
+      }
       setPendingShellSpec(specToSave);
       return;
     }
