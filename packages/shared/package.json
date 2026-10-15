@@ -68,6 +68,7 @@
     "./lib/guardedDispatcher": "./dist/lib/guardedDispatcher.js",
     "./lib/mcpHeaders": "./dist/lib/mcpHeaders.js",
     "./lib/modelDiscovery": "./dist/lib/modelDiscovery.js",
+    "./lib/modelPriceList": "./dist/lib/modelPriceList.js",
     "./lib/modelSuggestions": "./dist/lib/modelSuggestions.js",
     "./lib/inputSchema": "./dist/lib/inputSchema.js",
     "./lib/triggerMapping": "./dist/lib/triggerMapping.js",
