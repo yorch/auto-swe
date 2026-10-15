@@ -6,7 +6,9 @@ import type {
   CreatedIssue,
   FetchedIssue,
   FetchIssueOptions,
+  IssueComment,
   IssueCreateFields,
+  IssueParent,
   TrackerSyncEvent,
 } from '../types.js';
 
@@ -29,8 +31,19 @@ interface JiraIssueResponse {
     priority?: { name?: string };
     assignee?: { displayName?: string } | null;
     components?: { name?: string }[];
+    parent?: {
+      key?: string;
+      fields?: { summary?: string; status?: { name?: string }; issuetype?: { name?: string } };
+    };
   };
 }
+
+interface JiraCommentsResponse {
+  comments?: { author?: { displayName?: string }; body?: unknown; created?: string }[];
+}
+
+/// Comments read per ticket: the newest, which is where the latest decisions are.
+const MAX_COMMENTS = 20;
 
 interface JiraTransitionResponse {
   transitions?: { id: string; name: string; to?: { name?: string } }[];
@@ -67,7 +80,7 @@ export class JiraProvider implements IssueTrackerProvider {
   async fetchIssue(id: string, opts?: FetchIssueOptions): Promise<FetchedIssue | null> {
     try {
       const issue = await this.client.get<JiraIssueResponse>(
-        `/rest/api/3/issue/${encodeURIComponent(id)}?fields=summary,description,status,labels,priority,assignee,components`
+        `/rest/api/3/issue/${encodeURIComponent(id)}?fields=summary,description,status,labels,priority,assignee,components${opts?.includeParent ? ',parent' : ''}`
       );
 
       // Fetch remote links to find linked Confluence pages — gated behind
@@ -92,13 +105,18 @@ export class JiraProvider implements IssueTrackerProvider {
         }
       }
 
+      const comments = opts?.includeComments ? await this.readComments(id) : undefined;
+      const parent = opts?.includeParent ? await this.readParent(issue) : undefined;
+
       return {
         assignee: issue.fields?.assignee?.displayName ?? undefined,
+        ...(comments ? { comments } : {}),
         components: (issue.fields?.components ?? []).map((c) => c.name ?? '').filter(Boolean),
         description: adfToPlainText(issue.fields?.description).trim(),
         id: issue.key ?? id,
         labels: issue.fields?.labels ?? [],
         linkedPageIds: linkedPageIds.length > 0 ? linkedPageIds : undefined,
+        ...(parent ? { parent } : {}),
         priority: issue.fields?.priority?.name ?? undefined,
         raw: issue,
         status: issue.fields?.status?.name ?? 'unknown',
@@ -112,6 +130,53 @@ export class JiraProvider implements IssueTrackerProvider {
       this.log?.warn({ err, issueId: id }, 'Jira fetchIssue failed');
       return null;
     }
+  }
+
+  /// The newest comments, oldest first. Optional: a failure leaves the ticket without them.
+  private async readComments(id: string): Promise<IssueComment[] | undefined> {
+    try {
+      const res = await this.client.get<JiraCommentsResponse>(
+        `/rest/api/3/issue/${encodeURIComponent(id)}/comment?maxResults=${MAX_COMMENTS}&orderBy=-created`
+      );
+      const comments = (res.comments ?? [])
+        .map((c) => ({
+          author: c.author?.displayName ?? 'unknown',
+          body: adfToPlainText(c.body).trim(),
+          created: c.created ?? '',
+        }))
+        .filter((c) => c.body !== '')
+        .reverse();
+      return comments.length > 0 ? comments : undefined;
+    } catch (err) {
+      this.log?.warn({ err, issueId: id }, 'Jira comments unavailable');
+      return undefined;
+    }
+  }
+
+  /// The issue's parent (an epic, usually). The description needs a second read, which is
+  /// optional: without it the parent keeps its title, status and type.
+  private async readParent(issue: JiraIssueResponse): Promise<IssueParent | undefined> {
+    const parent = issue.fields?.parent;
+    const key = parent?.key;
+    if (!key) {
+      return undefined;
+    }
+    let description = '';
+    try {
+      const full = await this.client.get<JiraIssueResponse>(
+        `/rest/api/3/issue/${encodeURIComponent(key)}?fields=summary,description,status`
+      );
+      description = adfToPlainText(full.fields?.description).trim();
+    } catch (err) {
+      this.log?.warn({ err, issueId: key }, 'Jira parent description unavailable');
+    }
+    return {
+      description,
+      id: key,
+      status: parent.fields?.status?.name ?? 'unknown',
+      title: parent.fields?.summary ?? key,
+      type: parent.fields?.issuetype?.name ?? 'unknown',
+    };
   }
 
   async createIssue(fields: IssueCreateFields): Promise<CreatedIssue | null> {

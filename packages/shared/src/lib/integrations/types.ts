@@ -1,3 +1,18 @@
+export interface IssueComment {
+  author: string;
+  body: string;
+  created: string;
+}
+
+/// The issue one level up (a Jira epic, say), read only when asked for.
+export interface IssueParent {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  type: string;
+}
+
 export interface FetchedIssue {
   id: string;
   title: string;
@@ -9,6 +24,10 @@ export interface FetchedIssue {
   assignee?: string;
   components?: string[];
   linkedPageIds?: string[]; // for knowledge base cross-linking (Jira remote links)
+  /// Newest comments, oldest first; set only when `FetchIssueOptions.includeComments` was asked for.
+  comments?: IssueComment[];
+  /// Set only when `FetchIssueOptions.includeParent` was asked for and the issue has one.
+  parent?: IssueParent;
   raw: unknown;
 }
 
@@ -66,6 +85,10 @@ export interface CreatedPage {
 export interface FetchIssueOptions {
   defaultRepo?: { owner: string; repo: string };
   fetchLinkedPages?: boolean;
+  /// One extra round-trip: the newest comments (Jira only; other providers ignore it).
+  includeComments?: boolean;
+  /// One or two extra round-trips: the parent issue (Jira only; other providers ignore it).
+  includeParent?: boolean;
   log?: { warn: (obj: unknown, msg?: string) => void };
 }
 
