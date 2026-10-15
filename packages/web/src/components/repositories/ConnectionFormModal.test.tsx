@@ -1,0 +1,84 @@
+// @vitest-environment jsdom
+
+import type { RepositorySummary } from '@auto-swe/shared/types/api';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { stubDialogPrototype } from '@/test/rtl-helpers';
+
+const auth = vi.hoisted(() => ({ role: 'LEAD', teamRole: 'LEAD' as 'LEAD' | 'ADMIN' }));
+const update = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
+
+vi.mock('@/stores/authStore', () => ({
+  useAuthStore: (select: (s: { user: { role: string } }) => unknown) =>
+    select({ user: { role: auth.role } }),
+}));
+vi.mock('@/hooks/useTeams', () => ({
+  useAdminTeamIds: () => new Set(auth.teamRole === 'ADMIN' ? ['t1'] : []),
+  useLedTeamIds: () => new Set(['t1']),
+  useTeams: () => ({ data: [{ id: 't1', name: 'Payments' }] }),
+}));
+vi.mock('@/hooks/useRepositories', () => ({
+  useCreateRepository: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useUpdateRepository: () => ({ isPending: false, mutateAsync: update.mutateAsync }),
+}));
+
+import { ConnectionFormModal } from './ConnectionFormModal';
+
+const repo = {
+  _count: { activeWorkflows: 0 },
+  config: null,
+  consolidationEnabled: true,
+  defaultBranch: 'main',
+  description: null,
+  executorImage: null,
+  gateCommands: { runTests: 'npm test' },
+  id: 'r1',
+  isActive: true,
+  language: null,
+  name: null,
+  organizationName: 'acme',
+  repoName: 'payments-api',
+  team: { id: 't1', name: 'Payments', slug: 'payments' },
+  type: 'git_repo',
+} as unknown as RepositorySummary;
+
+function renderEdit() {
+  render(<ConnectionFormModal mode={{ kind: 'edit', repo }} onClose={() => {}} open />);
+}
+
+const testsField = () => screen.getByLabelText('Tests') as HTMLInputElement;
+const save = () => fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+describe('ConnectionFormModal gate commands', () => {
+  beforeAll(() => stubDialogPrototype());
+  beforeEach(() => {
+    update.mutateAsync.mockReset().mockResolvedValue({});
+    auth.role = 'LEAD';
+    auth.teamRole = 'LEAD';
+  });
+
+  it('shows a team lead the stored commands read-only, and saves without them', async () => {
+    renderEdit();
+    expect(testsField().value).toBe('npm test');
+    expect(testsField().disabled).toBe(true);
+    expect(
+      screen.getByText(/needs a platform admin or an admin of the repository's team/)
+    ).toBeTruthy();
+    save();
+    await waitFor(() => expect(update.mutateAsync).toHaveBeenCalled());
+    expect(update.mutateAsync.mock.calls[0]?.[0]).not.toHaveProperty('gateCommands');
+  });
+
+  it('lets a team admin change them and sends the full set', async () => {
+    auth.teamRole = 'ADMIN';
+    renderEdit();
+    expect(testsField().disabled).toBe(false);
+    fireEvent.change(screen.getByLabelText('Lint'), { target: { value: 'pnpm lint' } });
+    save();
+    await waitFor(() => expect(update.mutateAsync).toHaveBeenCalled());
+    expect(update.mutateAsync.mock.calls[0]?.[0].gateCommands).toEqual({
+      runLint: 'pnpm lint',
+      runTests: 'npm test',
+    });
+  });
+});

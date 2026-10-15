@@ -114,6 +114,23 @@ export interface SharedRepoRef extends RepoRef {
 
 // ── Repositories ──
 
+/**
+ * The gate steps a repository may give its own command (`Connection.gateCommands`), in the order
+ * the dashboard lists them. A gate step with no `command` of its own runs this one, else the
+ * worker's built-in default; the worker's `GateName` is the same set.
+ */
+export const REPO_GATE_COMMAND_KEYS = [
+  'runLint',
+  'runTypecheck',
+  'runTests',
+  'runBuild',
+  'runVulnScan',
+  'runPerfBench',
+] as const;
+export type RepoGateCommandKey = (typeof REPO_GATE_COMMAND_KEYS)[number];
+/** A repository's gate commands: only the gates it overrides, each a non-blank command. */
+export type RepoGateCommands = Partial<Record<RepoGateCommandKey, string>>;
+
 /** Shape returned by GET /api/v1/repositories */
 export interface RepositorySummary {
   id: string;
@@ -129,6 +146,8 @@ export interface RepositorySummary {
   isActive: boolean;
   consolidationEnabled: boolean;
   executorImage: string | null;
+  /** Per-gate command overrides; null when the repository overrides none. */
+  gateCommands?: RepoGateCommands | null;
   language: string | null;
   description: string | null;
   team: TeamRef;

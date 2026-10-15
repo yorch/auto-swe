@@ -13,6 +13,7 @@ import {
 } from '@auto-swe/shared/lib/repoPermission';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { REPO_GATE_COMMAND_KEYS, type RepoGateCommands } from '@auto-swe/shared/types/api';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -27,8 +28,9 @@ import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { insensitiveName } from '../lib/repositoryHost.js';
+import { isShellAuthor } from '../lib/specCheck.js';
 import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
-import { hasRole, requireAuth, requireUser } from '../plugins/auth.js';
+import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 import { deactivateSchedulesOutsideTeams } from './scheduledWorkRequests.js';
 
 /**
@@ -126,6 +128,15 @@ const UpdateRepoSchema = z.object({
     .transform((v) => v || null)
     .nullable()
     .optional(),
+  /**
+   * The repository's gate commands, replacing the stored set: a gate left out, null or blank
+   * falls back to the built-in default, and null clears them all. Commands an author writes, so
+   * changing them takes the shell authoring role (see `gateCommandsProblem`).
+   */
+  gateCommands: z
+    .partialRecord(z.enum(REPO_GATE_COMMAND_KEYS), z.string().max(4000).nullable())
+    .nullable()
+    .optional(),
   githubApiUrl: z.string().url().nullable().optional(),
   githubUrl: z.string().url().nullable().optional(),
   /** Null repoints the repository at the singleton's installation. */
@@ -158,6 +169,62 @@ export async function canManageTeamRepos(
     where: { userId_teamId: { teamId, userId: user.sub } },
   });
   return !!membership && membership.team.isActive && hasRole(membership.role, Role.LEAD);
+}
+
+/** The overrides that run something: blank and null entries dropped; none at all is null. */
+function normaliseGateCommands(value: unknown): RepoGateCommands | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const out: RepoGateCommands = {};
+  for (const key of REPO_GATE_COMMAND_KEYS) {
+    const command = (value as Record<string, unknown>)[key];
+    if (typeof command === 'string' && command.trim() !== '') {
+      out[key] = command;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+function sameGateCommands(a: RepoGateCommands | null, b: RepoGateCommands | null): boolean {
+  return REPO_GATE_COMMAND_KEYS.every((key) => (a?.[key] ?? null) === (b?.[key] ?? null));
+}
+
+/**
+ * Why `user` may not give a repository the gate commands `next`, or null when they may.
+ *
+ * A gate command runs in the agent workspace of every run on the repository that does not set its
+ * own — the same reach as a `command` an author writes into a template, so it takes the same
+ * `workflow:write:shell` role: a platform admin, or an admin of the team that will own the
+ * repository. Re-saving the stored set is always allowed, so a lead can still edit the rest of a
+ * repository whose commands an admin chose; clearing them is a change like any other, because a
+ * cleared command makes every run fall back to the built-in default.
+ */
+async function gateCommandsProblem(
+  fastify: FastifyInstance,
+  user: JwtPayload,
+  repo: { gateCommands: unknown; teamId: string; type: string },
+  next: RepoGateCommands | null,
+  ownerTeamId: string
+): Promise<{ code: string; message: string; status: 400 | 403 } | null> {
+  if (sameGateCommands(next, normaliseGateCommands(repo.gateCommands))) {
+    return null;
+  }
+  if (repo.type !== 'git_repo') {
+    return {
+      code: 'VALIDATION_ERROR',
+      message: 'Only a git repository has gate commands',
+      status: 400,
+    };
+  }
+  if (await isShellAuthor(fastify, user, ownerTeamId)) {
+    return null;
+  }
+  return {
+    code: 'GATE_COMMANDS_FORBIDDEN',
+    message: "Changing a repository's gate commands requires team-admin role",
+    status: 403,
+  };
 }
 
 /**
@@ -743,6 +810,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           apiKeyCiphertext: true,
           config: true,
           executorImage: true,
+          gateCommands: true,
           githubApiUrl: true,
           githubUrl: true,
           id: true,
@@ -787,6 +855,28 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       );
       if (imageProblem) {
         return sendError(reply, imageProblem.status, imageProblem.code, imageProblem.message);
+      }
+
+      const nextGateCommands =
+        request.body.gateCommands === undefined
+          ? undefined
+          : normaliseGateCommands(request.body.gateCommands);
+      const gateCommandsChange =
+        nextGateCommands !== undefined &&
+        !sameGateCommands(nextGateCommands, normaliseGateCommands(repo.gateCommands));
+      if (nextGateCommands !== undefined) {
+        // Judged against the team that will own the repository, so a move and a change in one
+        // request need the role on the destination.
+        const gateProblem = await gateCommandsProblem(
+          fastify,
+          user,
+          repo,
+          nextGateCommands,
+          request.body.teamId ?? repo.teamId
+        );
+        if (gateProblem) {
+          return sendError(reply, gateProblem.status, gateProblem.code, gateProblem.message);
+        }
       }
 
       // Only the overrides this request sets; a row already pointing somewhere
@@ -934,6 +1024,14 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             defaultBranch,
             description,
             executorImage,
+            ...(gateCommandsChange
+              ? {
+                  gateCommands:
+                    nextGateCommands != null
+                      ? (nextGateCommands as Prisma.InputJsonValue)
+                      : Prisma.DbNull,
+                }
+              : {}),
             githubApiUrl,
             githubUrl,
             installationId,
@@ -1011,6 +1109,18 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // repository, so schedules owned by a team with no remaining claim stop.
       if (moving) {
         await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log, user.sub);
+      }
+      // A gate command runs in every run's workspace, so who set which is kept, like a
+      // template's `WorkflowShellAudit` row.
+      if (gateCommandsChange) {
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor: user,
+          after: { gateCommands: nextGateCommands },
+          before: { gateCommands: normaliseGateCommands(repo.gateCommands) },
+          entityId: repo.id,
+          entityType: 'Connection',
+        });
       }
 
       return { data: redactConnection(updated) };

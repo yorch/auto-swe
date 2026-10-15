@@ -197,7 +197,7 @@ export async function assertShellAuthoringAllowed(
   if (shellNodes.length === 0) {
     return null;
   }
-  if (user.role === 'ADMIN') {
+  if (await isShellAuthor(fastify, user, teamId)) {
     return null;
   }
   if (teamId === null) {
@@ -212,21 +212,38 @@ export async function assertShellAuthoringAllowed(
       statusCode: 403,
     };
   }
+  return {
+    body: {
+      error: {
+        code: 'SHELL_AUTHOR_FORBIDDEN',
+        message: 'Authoring shell steps or gate commands requires team-admin role',
+      },
+    },
+    statusCode: 403,
+  };
+}
+
+/**
+ * Whether `user` holds `workflow:write:shell` for `teamId`: a platform ADMIN, or an ADMIN member
+ * of that team. Nobody else may author code for a global (`null`) team. The one rule for every
+ * place an author writes a command that runs in a workspace — template specs and a repository's
+ * gate commands alike.
+ */
+export async function isShellAuthor(
+  fastify: FastifyInstance,
+  user: JwtPayload,
+  teamId: string | null
+): Promise<boolean> {
+  if (user.role === 'ADMIN') {
+    return true;
+  }
+  if (teamId === null) {
+    return false;
+  }
   const membership = await fastify.prisma.teamMembership.findUnique({
     where: { userId_teamId: { teamId, userId: user.sub } },
   });
-  if (membership?.role !== 'ADMIN') {
-    return {
-      body: {
-        error: {
-          code: 'SHELL_AUTHOR_FORBIDDEN',
-          message: 'Authoring shell steps or gate commands requires team-admin role',
-        },
-      },
-      statusCode: 403,
-    };
-  }
-  return null;
+  return membership?.role === 'ADMIN';
 }
 
 export async function assertShellImagesAllowed(

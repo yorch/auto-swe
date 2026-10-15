@@ -26,13 +26,29 @@ export function useTeam(id: string) {
  * Ids of the active teams the caller leads (LEAD or ADMIN membership) — the
  * team-scoped write bar the gateway applies to templates and connections on
  * top of the platform role. `null` until known.
+ */
+export function useLedTeamIds(): ReadonlySet<string> | null {
+  return useTeamIdsWithRole('LEAD');
+}
+
+/**
+ * Ids of the active teams the caller is an ADMIN of — the gateway's
+ * `workflow:write:shell` bar for code an author writes that runs in a
+ * workspace: shell steps, gate commands. `null` until known.
+ */
+export function useAdminTeamIds(): ReadonlySet<string> | null {
+  return useTeamIdsWithRole('ADMIN');
+}
+
+/**
+ * Ids of the teams where the caller's membership is at least `minRole`.
  *
  * The team list carries no per-caller role, so this reads each team's detail
  * (the same `['team', id]` cache the team page uses). Only a platform LEAD
  * needs it: an ENGINEER can write nothing and a platform ADMIN bypasses team
  * checks, so neither fires the fan-out.
  */
-export function useLedTeamIds(): ReadonlySet<string> | null {
+function useTeamIdsWithRole(minRole: 'LEAD' | 'ADMIN'): ReadonlySet<string> | null {
   const user = useAuthStore((s) => s.user);
   const needsLookup = hasRole(user?.role, 'LEAD') && !hasRole(user?.role, 'ADMIN');
   const teams = useQuery({
@@ -56,7 +72,7 @@ export function useLedTeamIds(): ReadonlySet<string> | null {
   } else {
     key = details
       .filter((d) =>
-        hasRole(d.data?.memberships.find((m) => m.user?.id === user.sub)?.role, 'LEAD')
+        hasRole(d.data?.memberships.find((m) => m.user?.id === user.sub)?.role, minRole)
       )
       .map((d) => d.data?.id ?? '')
       .sort()

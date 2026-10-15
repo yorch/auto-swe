@@ -1,6 +1,6 @@
 'use client';
 
-import type { RepositorySummary } from '@auto-swe/shared/types/api';
+import type { RepoGateCommands, RepositorySummary } from '@auto-swe/shared/types/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
 import { READINESS_KEY } from '@/hooks/useReadiness';
@@ -48,6 +48,8 @@ export interface UpdateRepoBody {
   defaultBranch?: string;
   description?: string | null;
   executorImage?: string | null;
+  /** Replaces the stored set; leave out to keep it. Changing it needs team ADMIN. */
+  gateCommands?: RepoGateCommands | null;
   isActive?: boolean;
   language?: string | null;
   teamId?: string;

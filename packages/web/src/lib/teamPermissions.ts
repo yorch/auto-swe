@@ -70,3 +70,27 @@ export function canWriteTeamResource(
   }
   return ledTeamIds.has(teamId);
 }
+
+/**
+ * Whether the caller may write code that runs in a team's workspaces — shell
+ * steps, a template's gate commands, a repository's gate commands — mirroring
+ * the gateway's `isShellAuthor` on top of the platform LEAD every such route
+ * requires: a platform ADMIN always; otherwise ADMIN membership on the owning
+ * team. Code for no team (a GLOBAL template) is ADMIN-only.
+ *
+ * `adminTeamIds` is the set of teams the caller is an ADMIN of; `null` while
+ * loading, which answers false.
+ */
+export function canAuthorTeamCode(
+  platformRole: string | null | undefined,
+  teamId: string | null | undefined,
+  adminTeamIds: ReadonlySet<string> | null
+): boolean {
+  if (hasRole(platformRole, 'ADMIN')) {
+    return true;
+  }
+  if (!hasRole(platformRole, 'LEAD') || !teamId || !adminTeamIds) {
+    return false;
+  }
+  return adminTeamIds.has(teamId);
+}

@@ -1,7 +1,7 @@
 'use client';
 
 import type { ConnectionType } from '@auto-swe/shared/lib/connectionTypes';
-import type { RepositorySummary } from '@auto-swe/shared/types/api';
+import { REPO_GATE_COMMAND_KEYS, type RepositorySummary } from '@auto-swe/shared/types/api';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Combobox } from '@/components/ui/Combobox';
@@ -11,7 +11,7 @@ import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useCreateRepository, useUpdateRepository } from '@/hooks/useRepositories';
-import { useLedTeamIds, useTeams } from '@/hooks/useTeams';
+import { useAdminTeamIds, useLedTeamIds, useTeams } from '@/hooks/useTeams';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import {
   initialConnectionType,
@@ -20,7 +20,14 @@ import {
   selectableConnectionTypes,
 } from '@/lib/connectionForm';
 import { errMsg } from '@/lib/errors';
-import { canWriteTeamResource } from '@/lib/teamPermissions';
+import {
+  GATE_COMMAND_LABELS,
+  GATE_COMMANDS_RULE,
+  type GateCommandsForm,
+  gateCommandsForm,
+  gateCommandsPatch,
+} from '@/lib/gateCommandsForm';
+import { canAuthorTeamCode, canWriteTeamResource } from '@/lib/teamPermissions';
 import { useAuthStore } from '@/stores/authStore';
 
 export interface ConnectionPrefill {
@@ -54,6 +61,7 @@ export function ConnectionFormModal({
   // onboard into or reassign to one they lead.
   const platformRole = useAuthStore((s) => s.user?.role);
   const ledTeamIds = useLedTeamIds();
+  const adminTeamIds = useAdminTeamIds();
   const teams = useMemo(
     () => (allTeams ?? []).filter((t) => canWriteTeamResource(platformRole, t.id, ledTeamIds)),
     [allTeams, platformRole, ledTeamIds]
@@ -75,6 +83,9 @@ export function ConnectionFormModal({
     initial?.defaultBranch ?? prefill?.defaultBranch ?? 'main'
   );
   const [executorImage, setExecutorImage] = useState(initial?.executorImage ?? '');
+  const [gateCommands, setGateCommands] = useState<GateCommandsForm>(() =>
+    gateCommandsForm(initial?.gateCommands)
+  );
   const [language, setLanguage] = useState(initial?.language ?? prefill?.language ?? '');
 
   // non-git fields (name + type-specific config)
@@ -103,6 +114,7 @@ export function ConnectionFormModal({
     setRepoName(initial?.repoName ?? prefill?.repoName ?? '');
     setDefaultBranch(initial?.defaultBranch ?? prefill?.defaultBranch ?? 'main');
     setExecutorImage(initial?.executorImage ?? '');
+    setGateCommands(gateCommandsForm(initial?.gateCommands));
     setLanguage(initial?.language ?? prefill?.language ?? '');
     setName(initial?.name ?? '');
     setConfigJson(initial?.config != null ? JSON.stringify(initial.config, null, 2) : '');
@@ -159,11 +171,13 @@ export function ConnectionFormModal({
         }
       } else {
         if (connType === 'git_repo') {
+          const gatePatch = gateCommandsPatch(initial?.gateCommands, gateCommands);
           await update.mutateAsync({
             consolidationEnabled,
             defaultBranch,
             description: description.trim() || null,
             executorImage: executorImage.trim() || null,
+            ...(gatePatch !== undefined ? { gateCommands: gatePatch } : {}),
             isActive,
             language: language.trim() || null,
             teamId,
@@ -210,6 +224,8 @@ export function ConnectionFormModal({
   const isEdit = mode.kind === 'edit';
   const busy = create.isPending || update.isPending;
   const isGit = connType === 'git_repo';
+  // Judged on the team the repository will be saved to, as the gateway does.
+  const canEditGateCommands = canAuthorTeamCode(platformRole, teamId, adminTeamIds);
   // When importing from GitHub the type is always git_repo — hide the type selector.
   const showTypeSelector = !isEdit && !prefill;
 
@@ -294,6 +310,32 @@ export function ConnectionFormModal({
                 value={language}
               />
             </div>
+            {isEdit && (
+              <fieldset className="space-y-3">
+                <legend className="text-sm font-medium text-paper-200">Gate commands</legend>
+                <p className="text-xs leading-relaxed text-paper-400">
+                  Run by a gate step that sets no command of its own. Blank uses the built-in
+                  default. {GATE_COMMANDS_RULE}
+                </p>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {REPO_GATE_COMMAND_KEYS.map((key) => (
+                    <Input
+                      className="font-mono text-xs"
+                      disabled={!canEditGateCommands}
+                      id={`gate-command-${key}`}
+                      key={key}
+                      label={GATE_COMMAND_LABELS[key]}
+                      onChange={(e) =>
+                        setGateCommands((prev) => ({ ...prev, [key]: e.target.value }))
+                      }
+                      placeholder="Built-in default"
+                      spellCheck={false}
+                      value={gateCommands[key]}
+                    />
+                  ))}
+                </div>
+              </fieldset>
+            )}
           </>
         ) : (
           <>
