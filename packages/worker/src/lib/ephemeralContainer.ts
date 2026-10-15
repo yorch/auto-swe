@@ -28,8 +28,13 @@ export type EphemeralRunResult = CapturedResult;
 export interface EphemeralRunInput {
   /** Docker image to run. Caller is expected to have already enforced the allowlist. */
   image: string;
-  /** Command passed to `sh -c`. */
-  command: string;
+  /**
+   * Command passed to `sh -c`. Omit to run the image's own entrypoint (`CMD`),
+   * which is the documented contract for a container-contract step whose image
+   * knows how to read `CONTAINER_STEP_INPUT` and print its JSON result. A `shell`
+   * node always supplies one — its schema requires `command`.
+   */
+  command?: string;
   /**
    * Mount source for /workspace. Pass either a Docker named volume or an
    * absolute host path. We don't try to autodetect — DinD environments must
@@ -196,9 +201,9 @@ export function buildDockerArgs(input: EphemeralRunInput, containerName: string)
     ...flags,
     '--',
     input.image,
-    'sh',
-    '-c',
-    input.command,
+    // Absent a command, the image's own entrypoint/CMD runs — so a
+    // container-contract image can own how it is invoked.
+    ...(input.command ? ['sh', '-c', input.command] : []),
   ];
 }
 

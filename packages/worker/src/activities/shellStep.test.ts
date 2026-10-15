@@ -112,22 +112,26 @@ beforeEach(() => {
 });
 
 describe('runShellStep — token redaction', () => {
-  it('does not leak the GitHub token into the summary when git push fails', async () => {
+  it('does not leak the GitHub token into the summary when the finalize fails', async () => {
     const result = await runShellStep({
       command: 'echo hi',
       image: 'alpine/git:latest',
       request: REQUEST,
     });
 
-    // The command itself still succeeded — only the push failed.
-    expect(result.passed).toBe(true);
-    expect(result.summary).toMatch(/git push failed/);
+    // The command itself exited 0 — only the finalize failed. The step still
+    // fails, because the change it was asked to land could not be confirmed on
+    // the branch. The message does not claim which command failed: the finalize
+    // runs as one script, and this catches all of it.
+    expect(result.passed).toBe(false);
+    expect(result.exitCode).toBe(0);
+    expect(result.summary).toMatch(/finalizing the workspace failed/);
     expect(result.persisted).toBe(false);
     expect(result.summary).not.toContain(TOKEN);
     expect(result.summary).not.toContain(CLONE_URL);
   });
 
-  it('does not leak the GitHub token into the thrown error when git push fails and no fallback text is available', async () => {
+  it('does not leak the GitHub token into the result when git push fails with no fallback text', async () => {
     // Even the raw error captured internally (pre-truncation) must never
     // carry the token — assert via the mock's own captured call, since the
     // activity always swallows the push error into `summary` rather than
@@ -148,7 +152,8 @@ describe('runShellStep — token redaction', () => {
       request: REQUEST,
     });
 
-    expect(result.passed).toBe(true);
+    expect(result.passed).toBe(false);
+    expect(result.persisted).toBe(false);
     expect(JSON.stringify(result)).not.toContain(TOKEN);
   });
 
@@ -178,6 +183,7 @@ describe('runShellStep — token redaction', () => {
     // `git remote -v` no longer prints it. This asserts the defense-in-depth
     // layer: if a token reaches stdout by any route, it must never reach the
     // stored artifact, even though the command itself succeeds.
+    mockedExec.mockImplementation(async () => '');
     mockedRunEphemeral.mockResolvedValue({
       exitCode: 0,
       signal: undefined,

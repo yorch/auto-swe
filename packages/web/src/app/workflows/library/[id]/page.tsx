@@ -42,6 +42,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
     commitSave,
     continueSave,
     costEstimate,
+    costExclusions,
     createVersion,
     editMetaOpen,
     editSchemaOpen,
@@ -185,6 +186,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
         <div className="-mx-4 md:-mx-10">
           <TemplateEditor
             actions={editorActions}
+            costEstimateExclusions={costExclusions}
             costEstimateUsd={costEstimate?.totalUsd}
             observedCostUsd={analytics?.avgCostPerRun ?? null}
             onChange={handleSpecChange}

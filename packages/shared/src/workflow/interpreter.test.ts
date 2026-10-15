@@ -97,6 +97,57 @@ const baseCtx = (): Context => ({
   workflow: { id: 'eng-test-1' },
 });
 
+describe('eval node packing', () => {
+  // A `gate` scorer runs against a branch, so the node can name which one. The
+  // activity has no run context, so the interpreter resolves the binding.
+  const evalSpec = (withCandidateRef: boolean) =>
+    parseWorkflowSpec({
+      entry: 'score',
+      name: 'eval-pack',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        score: {
+          ...(withCandidateRef ? { candidateRef: { from: 'nodes.implement.output.branch' } } : {}),
+          next: 'done',
+          scorers: [{ gate: 'runTests', kind: 'gate' }],
+          target: { from: 'nodes.implement.output.diff' },
+          type: 'eval',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+
+  const ctxWithCandidate = (): Context => ({
+    ...baseCtx(),
+    nodes: { implement: { output: { branch: 'auto/TEST-1/feature', diff: 'the diff' } } },
+  });
+
+  it('resolves candidateRef into the runEvalNode config', async () => {
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runEvalNode: { score: 1 } },
+    });
+    await runSpec(evalSpec(true), ctxWithCandidate(), dispatcher);
+
+    const call = calls.find((c) => c.step === 'runEvalNode');
+    expect(call?.config.candidateRef).toBe('auto/TEST-1/feature');
+    // The existing fields still resolve as before.
+    expect(call?.config.targetValue).toBe('the diff');
+    expect(call?.config.scorers).toEqual([{ gate: 'runTests', kind: 'gate' }]);
+  });
+
+  it('leaves candidateRef out when the node does not set one', async () => {
+    const { dispatcher, calls } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runEvalNode: { score: 1 } },
+    });
+    await runSpec(evalSpec(false), ctxWithCandidate(), dispatcher);
+
+    const call = calls.find((c) => c.step === 'runEvalNode');
+    expect(call?.config).not.toHaveProperty('candidateRef');
+  });
+});
+
 describe('runSpec', () => {
   it('walks a trivial linear spec', async () => {
     const spec = parseWorkflowSpec({

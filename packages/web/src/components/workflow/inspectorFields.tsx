@@ -7,8 +7,8 @@
  * spec-level state.
  */
 
-import type { OnFailMode, StepFieldDef } from '@auto-swe/shared/workflow';
-import type { ReactNode } from 'react';
+import type { OnFailMode, Binding as SpecBinding, StepFieldDef } from '@auto-swe/shared/workflow';
+import { type ReactNode, useRef } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Icon } from '@/components/ui/Icon';
@@ -18,7 +18,88 @@ import { Textarea } from '@/components/ui/Textarea';
 import { cn } from '@/lib/utils';
 
 export type OnFailValue = OnFailMode;
-export type Binding = { from: string } | string | number | boolean | null;
+/**
+ * A spec binding, re-exported so the inspector's casts name the real shape.
+ *
+ * It is a union of `{ from }` (a context path), `{ literal }` and `{ expr }`.
+ * A bare value is NOT one of them: `InputMapSchema` is a record of this union,
+ * so writing `inputs.x = 'hi'` produces a spec the parser refuses. The editor
+ * used to do exactly that in literal mode, which is why the conversion lives in
+ * {@link setBindingText} rather than at each call site.
+ */
+export type Binding = SpecBinding;
+
+export type BindingMode = 'from' | 'expr' | 'literal';
+
+/** Which union member a binding is, defaulting to a context path. */
+export function bindingMode(binding: Binding | undefined): BindingMode {
+  if (binding && typeof binding === 'object' && 'expr' in binding) {
+    return 'expr';
+  }
+  if (binding && typeof binding === 'object' && 'literal' in binding) {
+    return 'literal';
+  }
+  return 'from';
+}
+
+/** The binding's editable text: the path, the expression, or the literal as written. */
+export function bindingText(binding: Binding | undefined): string {
+  if (!binding || typeof binding !== 'object') {
+    return '';
+  }
+  if ('expr' in binding) {
+    return binding.expr;
+  }
+  if ('literal' in binding) {
+    const literal = binding.literal;
+    if (typeof literal === 'string') {
+      return literal;
+    }
+    return literal === undefined ? '' : (JSON.stringify(literal) ?? '');
+  }
+  return 'from' in binding ? binding.from : '';
+}
+
+/** Rewrite a binding as `mode` holding `text`, keeping it schema-valid. */
+export function setBindingText(mode: BindingMode, text: string): Binding {
+  if (mode === 'expr') {
+    return { expr: text };
+  }
+  if (mode === 'literal') {
+    return { literal: parseLiteralText(text) };
+  }
+  return { from: text };
+}
+
+/**
+ * A literal as typed. `true`, `false`, `null` and numbers become those values
+ * (a literal `false` must stay a boolean, and `"1"` vs `1` differ downstream);
+ * anything else stays the string the author typed, and text that parses as a
+ * JSON object or array becomes one, so a multi-line payload is writable.
+ */
+export function parseLiteralText(text: string): unknown {
+  const trimmed = text.trim();
+  if (trimmed === 'true') {
+    return true;
+  }
+  if (trimmed === 'false') {
+    return false;
+  }
+  if (trimmed === 'null') {
+    return null;
+  }
+  if (trimmed !== '' && !Number.isNaN(Number(trimmed)) && /^-?\d+(\.\d+)?$/.test(trimmed)) {
+    return Number(trimmed);
+  }
+  if (/^[[{]/.test(trimmed)) {
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      return text;
+    }
+  }
+  return text;
+}
 
 /**
  * One titled block of the inspector rail ("Details", "Configuration", "Outgoing
@@ -55,6 +136,26 @@ export function InspectorSubsection({ children, title }: { children: ReactNode; 
       {children}
     </div>
   );
+}
+
+/**
+ * Stable keys for the rows of an editable list.
+ *
+ * An index key is wrong when a row can be removed (every later row remounts, and
+ * any state or focus in it is lost), and a content key is worse for a list the
+ * user types into (the row remounts on each keystroke). These lists hold no id of
+ * their own, so one is minted per position and kept until the list shrinks.
+ */
+export function useListKeys(length: number): string[] {
+  const counter = useRef(0);
+  const keys = useRef<string[]>([]);
+  while (keys.current.length < length) {
+    keys.current.push(`row-${counter.current++}`);
+  }
+  if (keys.current.length > length) {
+    keys.current = keys.current.slice(0, length);
+  }
+  return keys.current;
 }
 
 /** A one-line note in the rail where a list or form would otherwise be. */
@@ -247,9 +348,13 @@ export function OnFailSection({
 export function InputsBindingsSection({
   inputs,
   onChange,
+  title = 'Input bindings',
+  note = 'No bindings. Add one to pass a context path or a literal value into this node.',
 }: {
   inputs: Record<string, Binding> | undefined;
   onChange: (v: Record<string, Binding> | undefined) => void;
+  title?: string;
+  note?: string;
 }) {
   const entries = Object.entries(inputs ?? {});
 
@@ -266,7 +371,8 @@ export function InputsBindingsSection({
     while (existing[k] !== undefined) {
       k = `input_${n++}`;
     }
-    onChange({ ...existing, [k]: '' });
+    // A path by default, which is a valid Binding; a bare `''` is not.
+    onChange({ ...existing, [k]: { from: '' } });
   };
 
   return (
@@ -277,81 +383,140 @@ export function InputsBindingsSection({
           Add
         </Button>
       }
-      title="Input bindings"
+      title={title}
     >
-      {entries.length === 0 && (
-        <InspectorNote>
-          No bindings. Add one to pass a context path or a literal value into this node.
-        </InspectorNote>
-      )}
-      {entries.map(([key, val]) => {
-        const isFrom = typeof val === 'object' && val !== null && 'from' in val;
-        const displayVal = isFrom ? (val as { from: string }).from : String(val ?? '');
-
-        return (
-          <div className="space-y-1.5 rounded-md border border-ink-600 bg-ink-900/40 p-2" key={key}>
-            <div className="flex items-center gap-1.5">
-              <div className="min-w-0 flex-1">
-                <Input
-                  aria-label="Binding key"
-                  className="font-mono text-xs"
-                  compact
-                  defaultValue={key}
-                  onBlur={(e) => {
-                    const newKey = e.target.value.trim();
-                    if (!newKey || newKey === key) {
-                      return;
-                    }
-                    const next = { ...(inputs ?? {}) };
-                    delete next[key];
-                    next[newKey] = val;
-                    onChange(next);
-                  }}
-                  placeholder="key"
-                />
-              </div>
-              <Select
-                aria-label="Binding type"
-                className="w-auto"
-                compact
-                onChange={(v) => {
-                  if (v === 'from') {
-                    setEntry(key, { from: displayVal });
-                  } else {
-                    setEntry(key, displayVal);
-                  }
-                }}
-                options={[
-                  { label: 'Path', value: 'from' },
-                  { label: 'Literal', value: 'literal' },
-                ]}
-                value={isFrom ? 'from' : 'literal'}
-              />
-              <Button
-                aria-label={`Remove binding ${key}`}
-                className="px-2 hover:text-brick-400"
-                onClick={() => removeEntry(key)}
-                size="sm"
-                title="Remove binding"
-                variant="ghost"
-              >
-                <Icon name="close" size={14} />
-              </Button>
-            </div>
+      {entries.length === 0 && <InspectorNote>{note}</InspectorNote>}
+      {entries.map(([key, val]) => (
+        <BindingRow
+          binding={val}
+          key={key}
+          keyControl={
             <Input
-              aria-label="Binding value"
-              className={isFrom ? 'font-mono text-xs' : undefined}
+              aria-label="Binding key"
+              className="font-mono text-xs"
               compact
-              onChange={(e) => {
-                const v = e.target.value;
-                setEntry(key, isFrom ? { from: v } : v);
+              defaultValue={key}
+              onBlur={(e) => {
+                const newKey = e.target.value.trim();
+                if (!newKey || newKey === key) {
+                  return;
+                }
+                const next = { ...(inputs ?? {}) };
+                delete next[key];
+                next[newKey] = val;
+                onChange(next);
               }}
-              placeholder={isFrom ? 'ctx.nodes.step.output.value' : 'literal value'}
-              value={displayVal}
+              placeholder="key"
             />
-          </div>
-        );
-      })}
+          }
+          onChange={(next) => setEntry(key, next)}
+          onRemove={() => removeEntry(key)}
+          removeLabel={`Remove binding ${key}`}
+        />
+      ))}
     </InspectorSection>
+  );
+}
+
+/**
+ * One `label → value` pair of a bindings map, with the mode picker. The mode
+ * selects a union member of `BindingSchema`: a context path (`from`), an
+ * expression (`expr`), or a literal. Everything that edits a `Binding` goes
+ * through here so the shape cannot be got wrong in one place and right in
+ * another.
+ */
+function BindingRow({
+  binding,
+  onChange,
+  onRemove,
+  removeLabel,
+  keyControl,
+  allowExpr = true,
+}: {
+  binding: Binding | undefined;
+  onChange: (next: Binding) => void;
+  onRemove?: () => void;
+  removeLabel?: string;
+  /** Replacement for the key editor; absent for a standalone binding. */
+  keyControl?: ReactNode;
+  allowExpr?: boolean;
+}) {
+  const mode = bindingMode(binding);
+  const value = bindingText(binding);
+  return (
+    <div className="space-y-1.5 rounded-md border border-ink-600 bg-ink-900/40 p-2">
+      <div className="flex items-center gap-1.5">
+        {keyControl ? <div className="min-w-0 flex-1">{keyControl}</div> : null}
+        <Select
+          aria-label={keyControl ? 'Binding type' : undefined}
+          className="w-auto"
+          compact
+          onChange={(v) => onChange(setBindingText(v as BindingMode, value))}
+          options={[
+            { label: 'Path', value: 'from' },
+            ...(allowExpr ? [{ label: 'Expression', value: 'expr' }] : []),
+            { label: 'Literal', value: 'literal' },
+          ]}
+          value={mode}
+        />
+        {onRemove ? (
+          <Button
+            aria-label={removeLabel ?? 'Remove binding'}
+            className="px-2 hover:text-brick-400"
+            onClick={onRemove}
+            size="sm"
+            title="Remove binding"
+            variant="ghost"
+          >
+            <Icon name="close" size={14} />
+          </Button>
+        ) : null}
+      </div>
+      <Input
+        aria-label="Binding value"
+        className={mode === 'from' || mode === 'expr' ? 'font-mono text-xs' : undefined}
+        compact
+        onChange={(e) => onChange(setBindingText(mode, e.target.value))}
+        placeholder={
+          mode === 'from'
+            ? 'ctx.nodes.step.output.value'
+            : mode === 'expr'
+              ? 'context.a ?? context.b'
+              : 'literal value'
+        }
+        value={value}
+      />
+    </div>
+  );
+}
+
+/**
+ * A single named `Binding` — an `eval` node's `target`/`candidateRef`, a
+ * `humanApproval`'s `approverCount`. Renders as a labelled block rather than a
+ * map entry.
+ */
+export function BindingField({
+  label,
+  hint,
+  binding,
+  onChange,
+  allowExpr = true,
+  placeholder,
+}: {
+  label: string;
+  hint?: string;
+  binding: Binding | undefined;
+  onChange: (next: Binding) => void;
+  allowExpr?: boolean;
+  placeholder?: string;
+}) {
+  const id = `binding-${label.replace(/\W+/g, '-').toLowerCase()}`;
+  return (
+    <div className="space-y-1.5" data-binding-field={id}>
+      <span className="block text-xs font-medium text-paper-400">{label}</span>
+      {hint ? <p className="text-xs leading-relaxed text-paper-500">{hint}</p> : null}
+      <BindingRow allowExpr={allowExpr} binding={binding} onChange={onChange} />
+      {placeholder ? <InspectorNote>{placeholder}</InspectorNote> : null}
+    </div>
   );
 }

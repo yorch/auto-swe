@@ -34,6 +34,7 @@ import { currentNodeTag } from '../lib/activityNodeTag.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { recordGateEval } from '../lib/evalCapture.js';
+import { throwIfActivityCancelled } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
@@ -93,7 +94,7 @@ export interface GateResult {
 export const DEFAULT_COMMANDS: Record<GateName, string | null> = {
   runBuild: 'yarn build',
   runLint: 'yarn lint',
-  // runPerfBench has no sensible default — operators must supply one or skip the step.
+  // runPerfBench has no sensible default: the operator supplies one.
   runPerfBench: null,
   runTests: 'yarn test',
   runTypecheck: 'yarn typecheck',
@@ -174,8 +175,10 @@ export function truncate(s: string, maxBytes: number): string {
 
 /**
  * Resolve gate command from step config → repo override → default. Returns
- * null when no command is configured anywhere; the caller should report this
- * as a non-failure SKIP via `passed: true` so the spec can decide policy.
+ * null when no command is configured anywhere, which the caller reports as a
+ * FAILED gate (see {@link noCommandResult}): a gate that cannot run has not
+ * verified anything, and its node's `onFail: 'warn'` is the supported way to
+ * make it optional. Only `runPerfBench` has no built-in default.
  */
 export async function resolveCommand(
   gate: GateName,
@@ -191,11 +194,39 @@ export async function resolveCommand(
     where: { id: requireRepoId(request, 'qualityGate') },
   });
   const repoOverrides = (repo.gateCommands ?? null) as Record<string, string> | null;
-  if (repoOverrides && typeof repoOverrides[gate] === 'string' && repoOverrides[gate].length > 0) {
+  // Whitespace-only counts as absent, like the step override above: a command
+  // that runs nothing must not read as a gate that ran and passed.
+  if (
+    repoOverrides &&
+    typeof repoOverrides[gate] === 'string' &&
+    repoOverrides[gate].trim().length > 0
+  ) {
     return repoOverrides[gate];
   }
 
   return DEFAULT_COMMANDS[gate];
+}
+
+/**
+ * The verdict for a gate with no command to run, after step config → repo
+ * override → built-in default all came back empty. It is a FAILURE, not a
+ * no-op: the step's whole job is to verify something and it verified nothing.
+ *
+ * This is reachable only for a gate with no built-in default (`runPerfBench`).
+ * A template that wants such a gate to be optional says so in the spec with
+ * `onFail: 'warn'`, which keeps the choice visible where it is made instead of
+ * hiding behind an unset command — and does not report an unrun benchmark as a
+ * pass to a `cond` branching on `nodes.<id>.output.passed`.
+ */
+export function noCommandResult(gate: GateName): GateResult {
+  return {
+    exitCode: 0,
+    passed: false,
+    summary:
+      `${gate}: no command configured, so the gate cannot run. Set 'command' on the step, ` +
+      `'${gate}' in the repository's gate commands, or give the node \`onFail: 'warn'\` to ` +
+      'make it optional.',
+  };
 }
 
 /**
@@ -259,142 +290,316 @@ async function provisionGateWorkspace(
  * Run a single gate. Encapsulates the workspace lifecycle, command
  * resolution, capture + artifact storage, and result shaping.
  */
+/**
+ * Run one gate's command in an already-provisioned workspace: capture the run,
+ * store the log as an artifact, shape the verdict, record the eval signal, and
+ * attest trusted evidence. Extracted from {@link runGate} so a batched gate run
+ * (one workspace, several commands) shares this path rather than a second copy
+ * of the evidence rules.
+ */
+async function runGateCommand({
+  gate,
+  command,
+  timeoutMs,
+  workspace,
+}: {
+  gate: GateName;
+  command: string;
+  timeoutMs?: number;
+  workspace: Workspace;
+}): Promise<GateResult> {
+  heartbeat(`gate ${gate}: running command`);
+  const result = await workspace.execCapture(command, { timeoutMs });
+
+  const fullLog = `$ ${command}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`;
+  const runId = await currentWorkflowRunId();
+  const artifact = await putArtifact({
+    body: fullLog,
+    contentType: 'text/plain; charset=utf-8',
+    kind: ARTIFACT_KIND[gate],
+    runId,
+  }).catch(() => null); // artifact failure should not mask the gate result
+
+  const tail = truncate(`${result.stderr || result.stdout}`.trim(), 4000);
+  const passed = result.exitCode === 0 && !result.signal;
+
+  const gateResult: GateResult = {
+    artifactId: artifact?.id,
+    command,
+    exitCode: result.exitCode,
+    passed,
+    ...(result.signal ? { signal: result.signal } : {}),
+    summary: passed
+      ? `${gate} passed (exit 0)`
+      : `${gate} failed (exit ${result.exitCode}${result.signal ? `, signal ${result.signal}` : ''}): ${tail}`,
+  };
+
+  // P0 evals: capture the gate verdict as a normalized signal (best-effort).
+  await recordGateEval(gate, gateResult, runId);
+
+  // Only an executed, passed gate with its stored artifact and exact interpreter
+  // dispatch can attest evidence. No-op gates and missing artifacts never do.
+  if (passed && artifact?.id) {
+    const tag = currentNodeTag();
+    const activityAttempt = activityInfo().attempt;
+    const evidenceCorrelation = randomUUID();
+    const [exactRunId, temporalRunId] = await Promise.all([
+      currentRunningWorkflowRunId(),
+      Promise.resolve(currentTemporalRunId()),
+    ]);
+    if (
+      tag &&
+      tag.recordingId.length > 0 &&
+      tag.specNodeId.length > 0 &&
+      Number.isInteger(tag.stepAttempt) &&
+      tag.stepAttempt > 0 &&
+      Number.isInteger(activityAttempt) &&
+      activityAttempt > 0 &&
+      exactRunId &&
+      temporalRunId
+    ) {
+      const attachedArtifact = await prisma.workflowArtifact.findFirst({
+        select: { id: true },
+        where: { id: artifact.id, runId: exactRunId },
+      });
+      if (attachedArtifact) {
+        // SAFETY: the schema and generated Prisma client define this worker-only evidence model.
+        const evidenceWriter = (
+          prisma as unknown as {
+            trustedKnowledgeEvidence: TrustedKnowledgeEvidenceWriter;
+          }
+        ).trustedKnowledgeEvidence;
+        const provenance = {
+          activityAttempt,
+          artifactId: artifact.id,
+          evidenceCorrelation,
+          gateName: gate,
+          outcome: 'PASSED',
+          producer: 'QUALITY_GATE',
+          recordingId: tag.recordingId,
+          runId: exactRunId,
+          specNodeId: tag.specNodeId,
+          stepAttempt: tag.stepAttempt,
+          summary: `${gate} passed (exit 0)`,
+          temporalRunId,
+        } as const;
+        const inserted = await evidenceWriter.createMany({
+          data: [provenance],
+          skipDuplicates: true,
+        });
+        const stored =
+          inserted.count > 0
+            ? provenance
+            : await evidenceWriter.findUnique({
+                where: {
+                  runId_recordingId_stepAttempt_activityAttempt_producer_gateName: {
+                    activityAttempt,
+                    gateName: gate,
+                    producer: 'QUALITY_GATE',
+                    recordingId: tag.recordingId,
+                    runId: exactRunId,
+                    stepAttempt: tag.stepAttempt,
+                  },
+                },
+              });
+        if (
+          stored &&
+          stored.artifactId === provenance.artifactId &&
+          typeof stored.evidenceCorrelation === 'string' &&
+          stored.evidenceCorrelation.length > 0 &&
+          stored.activityAttempt === provenance.activityAttempt &&
+          stored.gateName === provenance.gateName &&
+          stored.outcome === provenance.outcome &&
+          stored.producer === provenance.producer &&
+          stored.recordingId === provenance.recordingId &&
+          stored.runId === provenance.runId &&
+          stored.specNodeId === provenance.specNodeId &&
+          stored.stepAttempt === provenance.stepAttempt &&
+          stored.summary === provenance.summary &&
+          stored.temporalRunId === provenance.temporalRunId
+        ) {
+          gateResult.activityAttempt = activityAttempt;
+          gateResult.evidenceCorrelation = stored.evidenceCorrelation;
+          gateResult.gateName = gate;
+        }
+      }
+    }
+  }
+
+  return gateResult;
+}
+
+/**
+ * Run a single gate. Encapsulates the workspace lifecycle, command
+ * resolution, capture + artifact storage, and result shaping.
+ */
 async function runGate(gate: GateName, input: GateInput): Promise<GateResult> {
   heartbeat(`gate ${gate}: resolving command`);
   const command = await resolveCommand(gate, input.request, input.command);
 
   if (!command) {
-    return {
-      exitCode: 0,
-      passed: true,
-      summary: `${gate}: no command configured; treating as no-op`,
-    };
+    return noCommandResult(gate);
   }
 
   const { workspace } = await provisionGateWorkspace(input.request, gate, input.branch);
   try {
-    heartbeat(`gate ${gate}: running command`);
-    const result = await workspace.execCapture(command, { timeoutMs: input.timeoutMs });
-
-    const fullLog = `$ ${command}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`;
-    const runId = await currentWorkflowRunId();
-    const artifact = await putArtifact({
-      body: fullLog,
-      contentType: 'text/plain; charset=utf-8',
-      kind: ARTIFACT_KIND[gate],
-      runId,
-    }).catch(() => null); // artifact failure should not mask the gate result
-
-    const tail = truncate(`${result.stderr || result.stdout}`.trim(), 4000);
-    const passed = result.exitCode === 0 && !result.signal;
-
-    const gateResult: GateResult = {
-      artifactId: artifact?.id,
+    return await runGateCommand({
       command,
-      exitCode: result.exitCode,
-      passed,
-      ...(result.signal ? { signal: result.signal } : {}),
-      summary: passed
-        ? `${gate} passed (exit 0)`
-        : `${gate} failed (exit ${result.exitCode}${result.signal ? `, signal ${result.signal}` : ''}): ${tail}`,
-    };
-
-    // P0 evals: capture the gate verdict as a normalized signal (best-effort).
-    await recordGateEval(gate, gateResult, runId);
-
-    // Only an executed, passed gate with its stored artifact and exact interpreter
-    // dispatch can attest evidence. No-op gates and missing artifacts never do.
-    if (passed && artifact?.id) {
-      const tag = currentNodeTag();
-      const activityAttempt = activityInfo().attempt;
-      const evidenceCorrelation = randomUUID();
-      const [exactRunId, temporalRunId] = await Promise.all([
-        currentRunningWorkflowRunId(),
-        Promise.resolve(currentTemporalRunId()),
-      ]);
-      if (
-        tag &&
-        tag.recordingId.length > 0 &&
-        tag.specNodeId.length > 0 &&
-        Number.isInteger(tag.stepAttempt) &&
-        tag.stepAttempt > 0 &&
-        Number.isInteger(activityAttempt) &&
-        activityAttempt > 0 &&
-        exactRunId &&
-        temporalRunId
-      ) {
-        const attachedArtifact = await prisma.workflowArtifact.findFirst({
-          select: { id: true },
-          where: { id: artifact.id, runId: exactRunId },
-        });
-        if (attachedArtifact) {
-          // SAFETY: the schema and generated Prisma client define this worker-only evidence model.
-          const evidenceWriter = (
-            prisma as unknown as {
-              trustedKnowledgeEvidence: TrustedKnowledgeEvidenceWriter;
-            }
-          ).trustedKnowledgeEvidence;
-          const provenance = {
-            activityAttempt,
-            artifactId: artifact.id,
-            evidenceCorrelation,
-            gateName: gate,
-            outcome: 'PASSED',
-            producer: 'QUALITY_GATE',
-            recordingId: tag.recordingId,
-            runId: exactRunId,
-            specNodeId: tag.specNodeId,
-            stepAttempt: tag.stepAttempt,
-            summary: `${gate} passed (exit 0)`,
-            temporalRunId,
-          } as const;
-          const inserted = await evidenceWriter.createMany({
-            data: [provenance],
-            skipDuplicates: true,
-          });
-          const stored =
-            inserted.count > 0
-              ? provenance
-              : await evidenceWriter.findUnique({
-                  where: {
-                    runId_recordingId_stepAttempt_activityAttempt_producer_gateName: {
-                      activityAttempt,
-                      gateName: gate,
-                      producer: 'QUALITY_GATE',
-                      recordingId: tag.recordingId,
-                      runId: exactRunId,
-                      stepAttempt: tag.stepAttempt,
-                    },
-                  },
-                });
-          if (
-            stored &&
-            stored.artifactId === provenance.artifactId &&
-            typeof stored.evidenceCorrelation === 'string' &&
-            stored.evidenceCorrelation.length > 0 &&
-            stored.activityAttempt === provenance.activityAttempt &&
-            stored.gateName === provenance.gateName &&
-            stored.outcome === provenance.outcome &&
-            stored.producer === provenance.producer &&
-            stored.recordingId === provenance.recordingId &&
-            stored.runId === provenance.runId &&
-            stored.specNodeId === provenance.specNodeId &&
-            stored.stepAttempt === provenance.stepAttempt &&
-            stored.summary === provenance.summary &&
-            stored.temporalRunId === provenance.temporalRunId
-          ) {
-            gateResult.activityAttempt = activityAttempt;
-            gateResult.evidenceCorrelation = stored.evidenceCorrelation;
-            gateResult.gateName = gate;
-          }
-        }
-      }
-    }
-
-    return gateResult;
+      gate,
+      timeoutMs: input.timeoutMs,
+      workspace,
+    });
   } finally {
     await workspace.destroy();
   }
+}
+
+/** One gate of a {@link runQualityGates} batch. */
+export interface BatchGate {
+  name: GateName;
+  /** Per-gate command override, as a single gate node's `config.command` is. */
+  command?: string;
+  timeoutMs?: number;
+}
+
+export interface RunQualityGatesInput extends Omit<GateInput, 'command' | 'timeoutMs'> {
+  gates: BatchGate[];
+  /**
+   * `'shared'` (default) provisions one workspace and runs every command in it,
+   * which is the point of the step: lint, typecheck and tests would otherwise
+   * clone and install the repository three times. The commands then share a
+   * tree, so one that mutates files affects the gates after it — order them
+   * cheap-and-read-only first, or use `'per-gate'`, which is exactly the six
+   * single-gate steps run in sequence.
+   */
+  isolation?: 'shared' | 'per-gate';
+  /** Stop at the first failing gate rather than running the rest. Default: run all. */
+  stopOnFailure?: boolean;
+}
+
+export interface RunQualityGatesResult {
+  /** True only when every gate ran and passed. The node's gate-failure branch reads this. */
+  passed: boolean;
+  summary: string;
+  exitCode: number;
+  /** Per-gate verdicts, keyed by gate name, for a `cond` on one gate's outcome. */
+  gates: Record<string, GateResult>;
+  failed: number;
+  /** Gates that never ran because an earlier one failed under `stopOnFailure`. */
+  skipped: GateName[];
+}
+
+/**
+ * Run several quality gates, optionally in one workspace.
+ *
+ * The gates stay individually addressable — each keeps its own command
+ * resolution, artifact, summary and trusted-evidence row — so this is a
+ * provisioning optimisation, not a merged verdict. The aggregate `passed` is
+ * what the interpreter's gate-failure branch reads, exactly as a single gate's
+ * is.
+ */
+export async function runQualityGates(input: RunQualityGatesInput): Promise<RunQualityGatesResult> {
+  const requested = input.gates.filter((g) => Object.hasOwn(DEFAULT_COMMANDS, g.name));
+  if (requested.length === 0) {
+    return {
+      exitCode: 0,
+      failed: 0,
+      gates: {},
+      passed: false,
+      skipped: [],
+      summary: 'runQualityGates: no gates named, so nothing was verified',
+    };
+  }
+
+  const isolation = input.isolation ?? 'shared';
+  const gates: Record<string, GateResult> = {};
+  const skipped: GateName[] = [];
+  let failed = 0;
+  let stopped = false;
+
+  // Resolve every command up front: a gate with nothing to run fails the batch
+  // without provisioning a workspace for the rest.
+  const resolved: Array<
+    { gate: GateName; command: string } | { gate: GateName; result: GateResult }
+  > = [];
+  for (const { command: override, name } of requested) {
+    heartbeat(`quality gates: resolving ${name}`);
+    const command = await resolveCommand(name, input.request, override);
+    resolved.push(
+      command ? { command, gate: name } : { gate: name, result: noCommandResult(name) }
+    );
+  }
+
+  if (isolation === 'per-gate') {
+    for (const entry of resolved) {
+      if (stopped) {
+        skipped.push(entry.gate);
+        continue;
+      }
+      const result =
+        'result' in entry
+          ? entry.result
+          : await runGate(entry.gate, {
+              command: entry.command,
+              request: input.request,
+              ...(input.branch ? { branch: input.branch } : {}),
+            });
+      gates[entry.gate] = result;
+      if (!result.passed) {
+        failed += 1;
+        stopped = input.stopOnFailure === true;
+      }
+    }
+  } else {
+    const { workspace } = await provisionGateWorkspace(input.request, 'runLint', input.branch);
+    try {
+      for (const entry of resolved) {
+        if (stopped) {
+          skipped.push(entry.gate);
+          continue;
+        }
+        const result =
+          'result' in entry
+            ? entry.result
+            : await runGateCommand({
+                command: entry.command,
+                gate: entry.gate,
+                timeoutMs: requested.find((g) => g.name === entry.gate)?.timeoutMs,
+                workspace,
+              });
+        gates[entry.gate] = result;
+        if (!result.passed) {
+          failed += 1;
+          stopped = input.stopOnFailure === true;
+        }
+        // A cancelled run must not keep spending on the remaining commands.
+        if (!stopped) {
+          throwIfActivityCancelled();
+        }
+      }
+    } finally {
+      await workspace.destroy();
+    }
+  }
+
+  const ran = Object.values(gates);
+  const passed = ran.length === requested.length && failed === 0;
+  const names = requested.map((g) => g.name);
+  const failing = names.filter((n) => gates[n]?.passed === false);
+  const summary = passed
+    ? `quality gates passed (${names.join(', ')})`
+    : `quality gates failed: ${failing.length > 0 ? failing.join(', ') : 'nothing ran'}${
+        skipped.length > 0 ? ` (skipped after the first failure: ${skipped.join(', ')})` : ''
+      }`;
+
+  return {
+    exitCode: 0,
+    failed,
+    gates,
+    passed,
+    skipped,
+    summary: truncate(summary, 4000),
+  };
 }
 
 export async function runLint(input: GateInput): Promise<GateResult> {

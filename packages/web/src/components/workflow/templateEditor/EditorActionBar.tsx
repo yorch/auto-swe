@@ -7,6 +7,8 @@ import { cn, formatCost, plural } from '@/lib/utils';
 interface EditorActionBarProps {
   spec: WorkflowSpec;
   costEstimateUsd?: number | null;
+  /** What the estimate excludes; becomes the estimate's tooltip. */
+  costEstimateExclusions?: string | null;
   observedCostUsd?: number | null;
   paletteOpen: boolean;
   showOutline: boolean;
@@ -23,6 +25,7 @@ interface EditorActionBarProps {
 export function EditorActionBar({
   spec,
   costEstimateUsd,
+  costEstimateExclusions,
   observedCostUsd,
   paletteOpen,
   showOutline,
@@ -45,10 +48,18 @@ export function EditorActionBar({
           <dt className="text-paper-500">Starts at</dt>
           <dd className="truncate font-mono text-xs text-ember-300">{spec.entry}</dd>
         </div>
-        {costEstimateUsd != null && costEstimateUsd > 0 && (
+        {costEstimateUsd != null && (costEstimateUsd > 0 || costEstimateExclusions) && (
           <div
             className="flex items-baseline gap-1.5"
-            title="Estimated from each agent's model price"
+            title={
+              // The estimate is per model call priced from step and agent
+              // metadata; it is not the agent's own model price (an `agent`
+              // node is priced from a proxy role) and it omits anything without
+              // a token cost. Say so rather than implying precision.
+              costEstimateExclusions
+                ? `Rough estimate from step and agent metadata. ${costEstimateExclusions}`
+                : 'Rough estimate from step and agent metadata'
+            }
           >
             <dt className="text-paper-500">Est.</dt>
             <dd className="text-paper-200 tabular-nums">{formatCost(costEstimateUsd)}/run</dd>

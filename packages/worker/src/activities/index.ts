@@ -197,6 +197,7 @@ export {
   runBuild,
   runLint,
   runPerfBench,
+  runQualityGates,
   runTests,
   runTypecheck,
   runVulnScan,

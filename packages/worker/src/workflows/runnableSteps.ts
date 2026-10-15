@@ -35,6 +35,7 @@ import {
   contextActivities,
   evalNodeActivities,
   gateActivities,
+  gateBatchActivities,
   genericActivities,
   githubActivities,
   knowledgeActivities,
@@ -256,6 +257,7 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     'runEvalNode',
     ({ config }) =>
       evalNodeActivities.runEvalNode({
+        candidateRef: config.candidateRef as string | undefined,
         judgeAdvisory: config.judgeAdvisory as boolean | undefined,
         scorers: config.scorers as Parameters<typeof evalNodeActivities.runEvalNode>[0]['scorers'],
         spanName: config.spanName as string | undefined,
@@ -265,10 +267,11 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   [
     // P2/WS4 declarative mcp node: call one MCP tool as a workflow step.
     'mcpCallTool',
-    ({ config, inputs }) =>
+    ({ config, inputs, dispatchKey }) =>
       mcpNodeActivities.mcpCallTool({
         connectionRef: config.connectionRef as string,
         inputs,
+        nodeId: dispatchKey,
         spanName: config.spanName as string | undefined,
         tool: config.tool as string,
       }),
@@ -577,6 +580,31 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ['runVulnScan', gateExecutor],
   ['runPerfBench', gateExecutor],
   [
+    // Several gates, one workspace (the step exists to stop lint + typecheck +
+    // tests cloning the repository three times). Per-gate results stay
+    // addressable at `output.gates.<name>`; `output.passed` is the aggregate the
+    // interpreter's gate-failure branch reads.
+    'runQualityGates',
+    ({ config, ctx, inputs, request }) => {
+      const branchOverride =
+        (inputs.branch as string | undefined) ??
+        (config.branch as string | undefined) ??
+        (lookupPath(ctx, 'context.currentCodeResult.branch') as string | undefined);
+      const isolation = inputs.isolation ?? config.isolation;
+      const stopOnFailure = inputs.stopOnFailure ?? config.stopOnFailure;
+      const gates = (inputs.gates ?? config.gates) as
+        | Parameters<typeof gateBatchActivities.runQualityGates>[0]['gates']
+        | undefined;
+      return gateBatchActivities.runQualityGates({
+        ...(branchOverride ? { branch: branchOverride } : {}),
+        gates: Array.isArray(gates) ? gates : [],
+        ...(isolation === 'shared' || isolation === 'per-gate' ? { isolation } : {}),
+        request,
+        ...(typeof stopOnFailure === 'boolean' ? { stopOnFailure } : {}),
+      });
+    },
+  ],
+  [
     'planDecomposition',
     ({ request, config }) =>
       agentActivities.planDecomposition(request, config.systemPrompt as string | undefined),
@@ -814,10 +842,11 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   ],
   [
     'runTool',
-    ({ inputs, ctx, step }) =>
+    ({ inputs, ctx, step, dispatchKey }) =>
       genericActivities.runTool({
         connectionId: resolveConnectionId(step, ctx, inputs),
         inputs: inputs.inputs,
+        nodeId: dispatchKey,
         tool: inputs.tool as string,
       }),
   ],

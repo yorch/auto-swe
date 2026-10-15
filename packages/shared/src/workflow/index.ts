@@ -15,6 +15,7 @@ export {
   computeDailyRunSeries,
   computeGlobalAnalytics,
   MIN_SAMPLES_FOR_SIGNIFICANCE,
+  normalizeRecordingNodeId,
 } from './analytics.js';
 export type {
   AuthoringAgentRef,
@@ -34,10 +35,11 @@ export {
 } from './authoring.js';
 export type { Codemod } from './codemod.js';
 export { migrateSpec, registerCodemod } from './codemod.js';
-export type { CostEstimate, CostRole } from './costEstimator.js';
+export type { CostEstimate, CostRole, UnpricedReason } from './costEstimator.js';
 export {
   DEFAULT_FANOUT_WIDTH,
   DEFAULT_ROLE_PRICING,
+  describeCostExclusions,
   estimateSpecCost,
 } from './costEstimator.js';
 export { DEFAULT_ENGINEERING_SPEC } from './defaultEngineeringSpec.js';
@@ -94,6 +96,7 @@ export type {
 export {
   BindingSchema,
   findInvalidPresentation,
+  isValidWaitDuration,
   MAX_FANOUT_CONCURRENCY,
   MAX_NODE_GROUP_LENGTH,
   MAX_NODE_TITLE_LENGTH,

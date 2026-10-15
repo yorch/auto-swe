@@ -41,6 +41,58 @@ export interface AnalyticsStepRow {
   status: string;
 }
 
+/**
+ * A leading branch prefix: `<nodeId>[<index>]/`, as the interpreter builds when
+ * it walks a `fanOut` branch's subgraph.
+ */
+const BRANCH_PREFIX_RE = /^[^/]*\[\d+\]\//;
+
+/** Strip every leading branch prefix from a recorded node id. */
+function stripBranchPrefix(recordingId: string): string {
+  let out = recordingId;
+  while (BRANCH_PREFIX_RE.test(out)) {
+    out = out.replace(BRANCH_PREFIX_RE, '');
+  }
+  return out;
+}
+
+/**
+ * The node a recorded step belongs to.
+ *
+ * Inside a `fanOut` the interpreter records `<branchNode>[<index>]/<nodeId>`, one
+ * level per enclosing branch, so a single node's rows arrive under many ids
+ * (`fan[0]/impl`, `fan[1]/impl`) and a per-node failure rate is split across
+ * them. This maps them back to the node the spec declares.
+ *
+ * Recovering the node id from the text alone cannot be unambiguous: the branch
+ * form *is* `<something>[<digits>]/`, and a node id is an arbitrary string that
+ * could be written that way. So when the caller can supply `knownNodeIds` — the
+ * ids the template versions in the window declare — the id itself wins, and
+ * otherwise the longest `/`-bounded suffix that is a known id does. Without
+ * them, a leading branch prefix is stripped, which is right for every id the
+ * interpreter generates and wrong only for an author who names a node the way
+ * the interpreter names a branch.
+ */
+export function normalizeRecordingNodeId(
+  recordingId: string,
+  knownNodeIds?: ReadonlySet<string>
+): string {
+  if (knownNodeIds?.has(recordingId)) {
+    return recordingId;
+  }
+  if (knownNodeIds && knownNodeIds.size > 0) {
+    // Earliest boundary first: the candidate is longest there, so a node whose
+    // id itself contains a `/` is preferred over its own tail.
+    for (let i = recordingId.indexOf('/'); i !== -1; i = recordingId.indexOf('/', i + 1)) {
+      const candidate = recordingId.slice(i + 1);
+      if (knownNodeIds.has(candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return stripBranchPrefix(recordingId);
+}
+
 export interface AnalyticsResult {
   windowDays: number;
   totalRuns: number;
@@ -122,7 +174,14 @@ function percentile(sorted: number[], p: number): number | null {
 export function computeAnalytics(
   runs: AnalyticsRunRow[],
   steps: AnalyticsStepRow[],
-  windowDays: number
+  windowDays: number,
+  /**
+   * Node ids the template versions in the window declare, so a fan-out branch's
+   * recorded ids fold back onto the node they came from (see
+   * {@link normalizeRecordingNodeId}). Omit and a leading branch prefix is
+   * stripped structurally.
+   */
+  knownNodeIds?: ReadonlySet<string>
 ): AnalyticsResult {
   const totalRuns = runs.length;
   const finished = runs.filter((r) => isTerminalStatus(r.status));
@@ -154,12 +213,15 @@ export function computeAnalytics(
     if (STEP_STATUSES_TO_SKIP.has(s.status)) {
       continue;
     }
-    const entry = perNode.get(s.nodeId) ?? { failed: 0, total: 0 };
+    // One node, one row: a fan-out branch records under a prefixed id, and
+    // counting those separately split the node's rate across its branches.
+    const nodeId = normalizeRecordingNodeId(s.nodeId, knownNodeIds);
+    const entry = perNode.get(nodeId) ?? { failed: 0, total: 0 };
     entry.total += 1;
     if (s.status === 'FAILED') {
       entry.failed += 1;
     }
-    perNode.set(s.nodeId, entry);
+    perNode.set(nodeId, entry);
   }
 
   const versionCounts = new Map<number, number>();

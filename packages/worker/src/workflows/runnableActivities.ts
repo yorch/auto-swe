@@ -126,6 +126,16 @@ export const gateActivities = proxyActivities<
   startToCloseTimeout: T_15M,
 });
 
+// Several gates in one activity, so the wall clock is the sum rather than one
+// gate's: a batch capped like a single gate would time out and retry, re-running
+// commands that had already passed. The step's own per-gate `timeoutMs` still
+// bounds each command.
+export const gateBatchActivities = proxyActivities<Pick<typeof activitiesType, 'runQualityGates'>>({
+  heartbeatTimeout: T_5M,
+  retry: RETRY_SANDBOX,
+  startToCloseTimeout: T_60M,
+});
+
 export const githubActivities = proxyActivities<
   Pick<typeof activitiesType, 'createOrUpdatePullRequest' | 'fetchCILogs'>
 >({

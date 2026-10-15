@@ -74,6 +74,33 @@ the repo's `executorImage`, and executes the gate command. Any non-executable pa
 exec error — records `passed: false`. A floor scorer must never green-light unverified code by
 silently passing.
 
+That branch is the run's own work branch (`<branchPrefix>/<ticketId>`) unless the node names one with
+`candidateRef`, a binding resolved like `target`:
+
+```jsonc
+{
+  "type": "eval",
+  "candidateRef": { "from": "nodes.implement.output.branch" },
+  "target": { "from": "nodes.implement.output.diff" },
+  "scorers": [{ "kind": "gate", "gate": "runTests" }]
+}
+```
+
+Name one whenever the code under review is not on `<branchPrefix>/<ticketId>` — which a per-branch
+fan-out subtask is not (`<branchPrefix>/<ticketId>/<subtask>`), and a step with its own `branch`
+override or a `codeResult.branch` may not be either. A `candidateRef` that cannot be resolved falls
+back to the default, and a binding whose path is wrong is reported by `validateSpec` just like
+`target`'s, so a mistyped path does not silently score the wrong tree.
+
+Scoring the wrong branch is wrong in **both** directions, and the second is the dangerous one:
+
+- if `<branchPrefix>/<ticketId>` does not exist, the checkout fails and a floor scorer records
+  `passed: false` — a failure the change never caused;
+- if it exists — an older attempt's branch, or a sibling run's — the scorer runs against *that* tree.
+  Its tests may pass, so the eval reports a green gate while verifying code the change never touched.
+
+Leave `candidateRef` off only when the default branch really is the candidate.
+
 ---
 
 ## 3. Offline harness

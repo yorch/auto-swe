@@ -47,6 +47,8 @@ const VALID_SPEC = {
 function buildApp(state: {
   templates: FakeTemplate[];
   versions: Map<string, { spec: unknown; createdAt: Date; createdBy: string | null }>;
+  /** Step rows the analytics route rolls up. Seeded per test that needs them. */
+  steps?: Array<{ nodeId: string; status: string }>;
   runs: Array<{
     id: string;
     templateId: string;
@@ -235,6 +237,12 @@ function buildApp(state: {
           return { count: data.length };
         },
       },
+      workflowStep: {
+        // The per-step rollup reads every step in the window and folds a
+        // fan-out branch's recorded id back onto the node it came from.
+        findMany: async ({ take }: { take?: number }) =>
+          (state.steps ?? []).slice(0, take ?? Number.POSITIVE_INFINITY),
+      },
       workflowTemplate: {
         create: async ({
           data,
@@ -354,6 +362,14 @@ function buildApp(state: {
           // see it, not just the version metadata kept on `tpl.versions`.
           const stored = state.versions.get(`${where?.templateId}:${top.version}`);
           return { ...top, spec: stored?.spec, templateId: where?.templateId };
+        },
+        findMany: async ({ where }: { where?: Mutable }) => {
+          const versions = (where?.version as { in?: number[] } | undefined)?.in ?? [];
+          const templateId = where?.templateId as string | undefined;
+          return versions.flatMap((version) => {
+            const stored = state.versions.get(`${templateId}:${version}`);
+            return stored ? [{ spec: stored.spec }] : [];
+          });
         },
         findUnique: async ({ where }: { where: Mutable }) => {
           const composite = where.templateId_version as { templateId: string; version: number };
@@ -2355,5 +2371,92 @@ describe("GET / scopes the template list to the caller's teams (non-admin)", () 
     const where = await listWhere('ADMIN', '');
     expect(where.AND).toContainEqual({});
     expect(JSON.stringify(where)).toContain('system:');
+  });
+});
+
+describe('GET /workflow-templates/:id/analytics', () => {
+  const TPL_ID = '11111111-1111-4111-8111-1111111111cc';
+
+  it('folds a fan-out branch row onto the node the spec declares', async () => {
+    // A fan-out records its subgraph's steps under `fan[0]/impl`,
+    // `fan[1]/impl`, … so counting those separately reported one node's failure
+    // rate once per branch. The route supplies the ids the version declares so
+    // the text cannot be misread.
+    const state = {
+      runs: [
+        {
+          endedAt: new Date('2026-01-01T00:10:00Z'),
+          id: 'run-1',
+          startedAt: new Date('2026-01-01T00:00:00Z'),
+          status: 'SUCCESS',
+          templateId: TPL_ID,
+          templateVersion: 1,
+        },
+      ],
+      steps: [
+        { nodeId: 'fan[0]/impl', status: 'PASSED' },
+        { nodeId: 'fan[1]/impl', status: 'FAILED' },
+        { nodeId: 'openPR', status: 'PASSED' },
+      ],
+      templates: [
+        {
+          activeVersion: 1,
+          createdAt: new Date(),
+          description: '',
+          experimentSplit: null,
+          experimentVersion: null,
+          id: TPL_ID,
+          isDefault: false,
+          name: 'fanout',
+          status: 'ACTIVE',
+          team: { id: 'team-1', name: 'T', slug: 't' },
+          teamId: 'team-1',
+          updatedAt: new Date(),
+          versions: [{ createdAt: new Date(), createdBy: null, id: 'v-1', version: 1 }],
+          workspaceProvider: null,
+        },
+      ],
+      versions: new Map([
+        [
+          `${TPL_ID}:1`,
+          {
+            createdAt: new Date(),
+            createdBy: null,
+            spec: {
+              ...VALID_SPEC,
+              nodes: {
+                done: { status: 'SUCCESS', type: 'terminate' },
+                fan: {
+                  itemKey: 'subtask',
+                  join: 'done',
+                  onBranchFail: 'block',
+                  over: { literal: [] },
+                  subgraph: 'impl',
+                  type: 'fanOut',
+                },
+                impl: { next: 'openPR', step: 'executeImplementation', type: 'step' },
+                openPR: { next: 'done', step: 'createOrUpdatePullRequest', type: 'step' },
+              },
+            },
+          },
+        ],
+      ]),
+    };
+    const app = buildApp(state);
+    await app.ready();
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: `/api/v1/workflow-templates/${TPL_ID}/analytics?window=30`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.perStepFailureRates).toEqual([
+        { failed: 1, failureRate: 0.5, nodeId: 'impl', total: 2 },
+        { failed: 0, failureRate: 0, nodeId: 'openPR', total: 1 },
+      ]);
+    } finally {
+      await app.close();
+    }
   });
 });

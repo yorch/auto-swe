@@ -56,11 +56,11 @@ export interface ContainerStepResult {
 
 export async function runContainerStep(input: ContainerStepInput): Promise<ContainerStepResult> {
   const transport: ContainerStepTransport = input.transport ?? 'stdout';
-  // stdout/ndjson run `sh -c <command>`; a sidecar may rely on the image's own
-  // entrypoint, so a command is optional there.
-  if (transport !== 'sidecar' && !input.command) {
-    throw new Error('containerStep requires a command (the sandbox runs `sh -c <command>`)');
-  }
+  // `command` is optional for every transport: stdout/ndjson run it through
+  // `sh -c` when present and otherwise run the image's own entrypoint, which is
+  // how a coded capability reads `CONTAINER_STEP_INPUT` and prints its result.
+  // The node schema, the SDK helper and the bundle validator all treat it as
+  // optional; this must not be the one place that requires it.
 
   // Team allowlists: a container step is governed exactly like a shell step.
   const conn = await prisma.connection.findUnique({
@@ -96,9 +96,10 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
         }
       : undefined;
 
-  // transport is 'stdout' | 'ndjson' here (sidecar returned above); the top
-  // guard guarantees a command for these.
-  const command = input.command as string;
+  // transport is 'stdout' | 'ndjson' here (sidecar returned above). A command
+  // override is passed through when the node sets one; absent, the image's own
+  // entrypoint serves the same contract.
+  const command = input.command;
 
   // Stateless step → a throwaway empty volume for /workspace (no repo clone).
   const volume = `cstep-${randomUUID()}`;
@@ -107,7 +108,7 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
   });
   try {
     const res = await runEphemeralContainer({
-      command,
+      ...(command !== undefined ? { command } : {}),
       cpus: input.cpus,
       egressAllowlist,
       env: { CONTAINER_STEP_INPUT: JSON.stringify(input.inputs ?? {}) },

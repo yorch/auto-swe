@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { BUILTIN_MODELS, builtinModelSpec } from '../lib/builtinModels.js';
 import { SWE_AGENTS } from '../lib/syncBuiltins.js';
-import { DEFAULT_FANOUT_WIDTH, DEFAULT_ROLE_PRICING, estimateSpecCost } from './costEstimator.js';
+import {
+  type CostEstimate,
+  DEFAULT_FANOUT_WIDTH,
+  DEFAULT_ROLE_PRICING,
+  describeCostExclusions,
+  estimateSpecCost,
+  type UnpricedReason,
+} from './costEstimator.js';
 import type { StepMetadata } from './registry-types.js';
+import { getStepMetadata, hasStep, listAllSteps } from './stepRegistry.js';
 import { makeSpec as spec } from './testHelpers.js';
 
 const REGISTRY: Record<string, StepMetadata> = {
@@ -23,11 +31,29 @@ const REGISTRY: Record<string, StepMetadata> = {
     name: 'implement',
   },
   noHint: {
-    category: 'control',
+    // A model-backed step, which is the only kind whose missing hint is a gap.
+    category: 'agent',
     configFields: [],
     description: '',
     label: '',
     name: 'noHint',
+  },
+  plainGate: {
+    category: 'gate',
+    configFields: [],
+    description: '',
+    label: '',
+    name: 'plainGate',
+  },
+  // Mirrors the real registry: the declarative `agent` node is priced from this
+  // step's hint, since the referenced Agent's own model is not statically known.
+  runAgentNode: {
+    category: 'agent',
+    configFields: [],
+    costHint: { role: 'implementer', tokensIn: 1_000_000, tokensOut: 1_000_000 },
+    description: '',
+    label: '',
+    name: 'runAgentNode',
   },
 };
 const lookup = (name: string): StepMetadata | undefined => REGISTRY[name];
@@ -87,6 +113,64 @@ describe('estimateSpecCost', () => {
     );
     expect(result.totalUsd).toBe(0);
     expect(result.perStep).toEqual([]);
+    // Not silently dropped: an unpriced step is reported so the editor can say
+    // what the number leaves out.
+    expect(result.unpriced).toEqual([{ nodeId: 'n', reason: 'no-cost-hint' }]);
+  });
+
+  it('does not report a gate or control step as unpriced, because zero is its answer', () => {
+    const result = estimateSpecCost(
+      spec({
+        entry: 'g',
+        nodes: {
+          g: { next: 't', step: 'plainGate', type: 'step' },
+          t: { status: 'SUCCESS', type: 'terminate' },
+        },
+      }),
+      { pricing: PRICING, stepLookup: lookup }
+    );
+    expect(result.totalUsd).toBe(0);
+    expect(result.unpriced).toEqual([]);
+  });
+
+  it('prices a declarative agent node from the runAgentNode hint', () => {
+    const result = estimateSpecCost(
+      spec({
+        entry: 'a',
+        nodes: {
+          a: { agentRef: 'supportResponder', next: 't', type: 'agent' },
+          t: { status: 'SUCCESS', type: 'terminate' },
+        },
+      }),
+      { pricing: PRICING, stepLookup: lookup }
+    );
+    // Priced from the hint's proxy role rather than contributing nothing.
+    expect(result.totalUsd).toBeCloseTo(90, 6);
+    expect(result.perStep).toEqual([{ nodeId: 'a', step: 'runAgentNode', usd: 90 }]);
+    expect(result.unpriced).toEqual([]);
+  });
+
+  it('reports container, external, and hint-less nodes as unpriced', () => {
+    const result = estimateSpecCost(
+      spec({
+        entry: 'n',
+        nodes: {
+          c: { image: 'x', next: 'm', type: 'containerStep' },
+          m: { connectionRef: 'c1', next: 't', tool: 'do', type: 'mcp' },
+          n: { next: 'sh', step: 'noHint', type: 'step' },
+          sh: { command: 'true', image: 'alpine:latest', next: 'c', type: 'shell' },
+          t: { status: 'SUCCESS', type: 'terminate' },
+        },
+      }),
+      { pricing: PRICING, stepLookup: lookup }
+    );
+    expect(result.totalUsd).toBe(0);
+    expect(result.unpriced).toEqual([
+      { nodeId: 'n', reason: 'no-cost-hint' },
+      { nodeId: 'sh', reason: 'container-runtime' },
+      { nodeId: 'c', reason: 'container-runtime' },
+      { nodeId: 'm', reason: 'external-call' },
+    ]);
   });
 
   it('takes the max of cond arms (pessimistic)', () => {
@@ -225,6 +309,77 @@ describe('DEFAULT_ROLE_PRICING', () => {
         inputUsdPerM: model?.inputUsdPerMTok,
         outputUsdPerM: model?.outputUsdPerMTok,
       });
+    }
+  });
+});
+
+describe('describeCostExclusions', () => {
+  const est = (unpriced: Array<{ nodeId: string; reason: UnpricedReason }>): CostEstimate => ({
+    fanOutWidthAssumed: DEFAULT_FANOUT_WIDTH,
+    perStep: [],
+    totalUsd: 0,
+    unpriced,
+  });
+
+  it('still discloses retries when the walk priced everything it reached', () => {
+    // The number looks complete here, which is when a reader is most likely to
+    // treat it as a total — and a looping spec costs more.
+    expect(describeCostExclusions(est([]))).toMatch(/loops are counted once/);
+  });
+
+  it('names each excluded class, with counts and the retry caveat', () => {
+    const sentence = describeCostExclusions(
+      est([
+        { nodeId: 'a', reason: 'container-runtime' },
+        { nodeId: 'b', reason: 'external-call' },
+        { nodeId: 'c', reason: 'no-cost-hint' },
+        { nodeId: 'd', reason: 'no-cost-hint' },
+      ])
+    );
+    expect(sentence).toBe(
+      'Excludes container runtime (1 node), external calls (1 node), unpriced steps (2 nodes). Retries and loops are counted once, so a looping spec costs more than this.'
+    );
+  });
+
+  it('omits a class that is not present', () => {
+    const sentence = describeCostExclusions(est([{ nodeId: 'a', reason: 'external-call' }]));
+    expect(sentence).toBe(
+      'Excludes external calls (1 node). Retries and loops are counted once, so a looping spec costs more than this.'
+    );
+  });
+});
+
+describe('the production registry', () => {
+  const productionLookup = (name: string): StepMetadata | undefined =>
+    hasStep(name) ? getStepMetadata(name) : undefined;
+
+  it('prices a declarative agent node from the real runAgentNode hint', () => {
+    // The fixture registry above would keep every other test here green if the
+    // production hint were removed, which is exactly the regression that made
+    // agent nodes cost $0 in the first place.
+    expect(getStepMetadata('runAgentNode').costHint?.role).toBeDefined();
+    const result = estimateSpecCost(
+      spec({
+        entry: 'a',
+        nodes: {
+          a: { agentRef: 'supportResponder', next: 't', type: 'agent' },
+          t: { status: 'SUCCESS', type: 'terminate' },
+        },
+      }),
+      { stepLookup: productionLookup }
+    );
+    expect(result.totalUsd).toBeGreaterThan(0);
+    expect(result.perStep.map((s) => s.step)).toEqual(['runAgentNode']);
+    expect(result.unpriced).toEqual([]);
+  });
+
+  it('puts every registered costHint role in the pricing table', () => {
+    // A role with no entry in DEFAULT_ROLE_PRICING prices at zero silently.
+    for (const meta of listAllSteps()) {
+      const role = meta.costHint?.role;
+      if (role) {
+        expect(DEFAULT_ROLE_PRICING[role], `role '${role}' (step ${meta.name})`).toBeDefined();
+      }
     }
   });
 });

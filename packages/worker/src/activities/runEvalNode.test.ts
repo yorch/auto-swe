@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const cancel = vi.hoisted(() => ({ ctl: new AbortController() }));
 vi.mock('@temporalio/activity', async (importOriginal) => ({
@@ -10,6 +10,7 @@ vi.mock('@temporalio/activity', async (importOriginal) => ({
 
 const mocks = vi.hoisted(() => ({
   autonomyPolicyFindFirst: vi.fn(),
+  connectionFindUniqueOrThrow: vi.fn(),
   evalRubricFindFirst: vi.fn().mockResolvedValue(null),
   scannerPatternFindMany: vi.fn(),
   workflowRunFindUnique: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock('@auto-swe/shared/db', () => ({
         return row ? [row] : [];
       }),
     },
+    connection: { findUniqueOrThrow: mocks.connectionFindUniqueOrThrow },
     evalRubric: { findFirst: mocks.evalRubricFindFirst },
     scannerPattern: { findMany: mocks.scannerPatternFindMany },
     workflowRun: { findUnique: mocks.workflowRunFindUnique },
@@ -36,6 +38,14 @@ vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowRunId: vi.fn().mockResolvedValue(undefined),
 }));
 vi.mock('../lib/evalCapture.js', () => ({ recordEvalResult: vi.fn() }));
+const gateRunner = vi.hoisted(() => ({ runGateStandalone: vi.fn() }));
+vi.mock('./standaloneGateRunner.js', () => ({ runGateStandalone: gateRunner.runGateStandalone }));
+vi.mock('../lib/scm/index.js', () => ({
+  getScmProvider: () => ({
+    cloneCredentials: async () => ({ authedCloneUrl: 'https://github.com/acme/r.git' }),
+  }),
+  toRepoRef: (r: unknown) => r,
+}));
 const judge = vi.hoisted(() => ({ runAgent: vi.fn() }));
 vi.mock('./runAgent.js', () => ({ runAgent: judge.runAgent }));
 vi.mock('../lib/config/agentSpec.js', () => ({
@@ -50,6 +60,7 @@ import { currentWorkflowRunId } from '../lib/activityContext.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import type { ScoreInput } from '../lib/scorerCombination.js';
 import { assembleScores, evalAssert, runEvalNode } from './runEvalNode.js';
+import { runGateStandalone } from './standaloneGateRunner.js';
 
 const mockResolveDefaults = vi.mocked(resolveWorkflowDefaults);
 const mockCurrentWorkflowRunId = vi.mocked(currentWorkflowRunId);
@@ -291,5 +302,58 @@ describe('runEvalNode (cancellation)', () => {
     ).rejects.toThrow('activity cancelled');
     expect(recordEvalResult).not.toHaveBeenCalled();
     cancel.ctl = new AbortController();
+  });
+});
+
+describe('runEvalNode (gate scorer candidate branch)', () => {
+  // A `gate` scorer executes against a branch. The node's `candidateRef` is the
+  // only way to point it at code that is not on the run's own work branch — a
+  // fan-out subtask's, or one a step pushed under its own `branch` override —
+  // and scoring the wrong tree is wrong in both directions: a missing branch
+  // fails a change that never broke it, and an existing one passes against
+  // unrelated code. Nothing asserted that the resolved ref reached the checkout.
+  const gateScorer = { gate: 'runTests', kind: 'gate' } as EvalScorer;
+
+  beforeEach(() => {
+    vi.mocked(runGateStandalone).mockReset();
+    vi.mocked(runGateStandalone).mockResolvedValue({
+      exitCode: 0,
+      passed: true,
+      summary: 'runTests passed (exit 0)',
+    } as never);
+    mockCurrentWorkflowRunId.mockResolvedValue('run-1' as never);
+    mockResolveDefaults.mockResolvedValue({
+      branchPrefix: 'auto',
+      evalJudgeThreshold: 0.5,
+    } as never);
+    mocks.workflowRunFindUnique.mockResolvedValue({
+      workRequest: { connectionId: 'connection-1', externalTicketId: 'T-1' },
+    });
+    mocks.connectionFindUniqueOrThrow.mockResolvedValue({
+      defaultBranch: 'main',
+      executorImage: 'node:24-alpine',
+    });
+  });
+
+  it('scores the branch the node names', async () => {
+    await runEvalNode({
+      candidateRef: 'auto/T-1/subtask',
+      scorers: [gateScorer],
+      targetValue: 'diff',
+    });
+
+    expect(runGateStandalone).toHaveBeenCalledWith(
+      expect.objectContaining({
+        branch: 'auto/T-1/subtask',
+        existingBranch: true,
+        gate: 'runTests',
+      })
+    );
+  });
+
+  it('falls back to the run’s own work branch when the node names none', async () => {
+    await runEvalNode({ scorers: [gateScorer], targetValue: 'diff' });
+
+    expect(runGateStandalone).toHaveBeenCalledWith(expect.objectContaining({ branch: 'auto/T-1' }));
   });
 });

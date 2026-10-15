@@ -1065,6 +1065,21 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **Step records are cut, not spilled.** A string over 8,000 characters in a step's recorded inputs,
   outputs or error is truncated in `workflow_steps`; only the run's final context keeps the full
   value (as an artifact), so a value a later node overwrote survives only in its truncated record.
+- **Control-flow nodes are recorded only when they fail.** `set`, `cond` and `terminate` write no
+  `workflow_steps` row on the happy path, so the nodes that decide a run's shape are largely absent
+  from the per-step table. Analytics also skips `PENDING`, `RUNNING` and `SKIPPED`, and a fan-out
+  branch records under a prefixed id (`fan[0]/impl`), so one node's failure rate is split across its
+  branches rather than aggregated.
+- **A run's branch name is recomputed by every activity, not pinned.** `branchPrefix` lives on the
+  `WorkflowDefaults` singleton, and `executeImplementation`, the quality gates, the CI steps and a
+  shell step each resolve it when they run. An edit between two steps of one run makes the later step
+  compute a different work branch than the earlier one pushed to — though only where the step has no
+  explicit override: a gate's `branch` config, a node's own `branch`, and a `CodeResult.branch`
+  already in context each take precedence over the recomputed name. The failure mode is a step that
+  cannot find the branch it expects (a gate then refuses rather than checking the wrong tree), or, if
+  a branch of that name happens to exist, one that reads the wrong tree. Unlike the interpreter's
+  bounds, this is not a run-pinned setting — see
+  [configuration.md §4](./configuration.md#4-run-pinned-settings) for what is pinned and why.
 - **`Idempotency-Key` on `POST /work-requests` has an in-progress window and never expires.** The
   ledger rows are written before the Temporal start, so a same-key request that arrives while the
   start is in flight gets `409 IDEMPOTENCY_KEY_IN_PROGRESS` (`Retry-After`), not success: the key only
@@ -1271,12 +1286,15 @@ Current constraints of the system as built. Deliberate product boundaries are in
   registered. The generic trigger endpoints propagate the validated `payload` and `connectionId`
   through `RunInput` and the `RepoWorkRequest` that starts `RunnableWorkflow`, and the interpreter
   dispatches `resolveWorkspace`, `readSource`, `writeOutcome`, and `runTool` as built-in steps.
-  `writeOutcome` keys its idempotency ledger on the run, the node's recording id (its visit number
-  on a loop's later passes) and the connection, so a second visit to the same write node reuses the
-  recorded result instead of writing again, while two write nodes, two fan-out branches, or two
-  passes of a loop each write — a loop's *second visit* is a different node id, so it writes. That
-  is a guard for a retry of the same visit, not exactly-once. A write node
-  that names no explicit payload writes its own inputs, less `connectionId`. Notion, Confluence, Zendesk, Slack, and issue-tracker outcomes are concrete;
+  The three steps that change something outside the platform — `writeOutcome`, a mutating `runTool`,
+  and a non-read-only `mcpCallTool` — gate on the run's recorded autonomy decision and key the same
+  idempotency ledger on the run, the node's recording id (its visit number on a loop's later passes)
+  and the connection, so a retry of the same visit reuses the recorded result instead of acting
+  again, while two write nodes, two fan-out branches, or two passes of a loop each act — a loop's
+  *second visit* is a different node id, so it acts. That is completed-result caching, not
+  exactly-once delivery: the remote call and the ledger row are not one transaction (see
+  [autonomy-policies.md §4.1](./autonomy-policies.md#41-the-mutation-boundary)).
+  A write node that names no explicit payload writes its own inputs, less `connectionId`. Notion, Confluence, Zendesk, Slack, and issue-tracker outcomes are concrete;
   `http_api`, `hubspot`, and `mcp` still return placeholder results pending provider-specific
   activity packs. The `record` workspace provider metadata currently targets `zendesk` only.
 - **A template's declared connections are authorized at launch, and mutating tools obey the

@@ -56,6 +56,19 @@ describe('buildDockerArgs', () => {
     expect(args[sep + 4]).toBe('echo hello');
   });
 
+  it('drops the `sh -c` wrapper when no command is given, running the image entrypoint', () => {
+    // A container-contract image may own its invocation: it reads
+    // CONTAINER_STEP_INPUT and prints the result. Nothing after the image.
+    const args = buildDockerArgs(
+      { image: BASE.image, workspaceMount: BASE.workspaceMount },
+      'name'
+    );
+    const sep = args.indexOf('--');
+    expect(args[sep + 1]).toBe('alpine:latest');
+    expect(args).toHaveLength(sep + 2);
+    expect(args).not.toContain('sh');
+  });
+
   it('injects -e KEY=VALUE for env entries (container-contract JSON input)', () => {
     const args = buildDockerArgs({ ...BASE, env: { CONTAINER_STEP_INPUT: '{"q":1}' } }, 'name');
     const i = args.indexOf('-e');
