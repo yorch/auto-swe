@@ -7,7 +7,8 @@ A workflow template version is a `WorkflowSpec`: a JSON graph of nodes that the 
 Temporal, one node at a time, from the entry node until a `terminate` node ends the run. The spec
 supports 15 node types. This page is the reference for all of them; for how the engine is put
 together see [architecture.md](./architecture.md#4-workflow-engine), and for the vocabulary see
-[concepts.md](./concepts.md).
+[concepts.md](./concepts.md). [workflow-inventory.md](./workflow-inventory.md) is the generated
+catalog beside it: every node type and registered step, and which built-in templates use each.
 
 Every example below is a complete spec. A unit test
 (`packages/shared/src/workflow/nodeReference.docs.test.ts`) parses each one with the same schema a
@@ -226,7 +227,8 @@ These fields mean the same on every node type that has them; the per-type tables
 **Purpose.** Run one registered activity from the step catalog: open a pull request, run the quality
 gates, implement a change, write a status. The catalog is the registry in
 `packages/shared/src/workflow/stepRegistry.ts`, served at `GET /api/v1/workflow-steps/registry` and
-shown in the editor palette.
+shown in the editor palette; [workflow-inventory.md](./workflow-inventory.md#registered-steps) lists
+every registered step with its description and config fields.
 
 **Fields.**
 

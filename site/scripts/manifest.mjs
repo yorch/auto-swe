@@ -105,6 +105,7 @@ export const SIDEBAR = [
       'docs/product-overview',
       'docs/architecture',
       'docs/workflow-nodes',
+      'docs/workflow-inventory',
       'docs/agents',
       'docs',
     ],

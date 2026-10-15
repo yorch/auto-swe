@@ -138,7 +138,8 @@
     "dev": "tsc --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
     "prisma": "prisma",
-    "keys:rotate": "tsx src/scripts/rotateEncryptionKey.ts"
+    "keys:rotate": "tsx src/scripts/rotateEncryptionKey.ts",
+    "docs:inventory": "tsx src/scripts/generateWorkflowInventory.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.1",

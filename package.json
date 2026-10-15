@@ -34,6 +34,7 @@
     "docker:app:logs": "run docker:app logs -f",
     "docker:app:build": "run docker:app build",
     "docs:check": "node scripts/check-doc-drift.mjs",
+    "docs:inventory": "yarn workspace @auto-swe/shared docs:inventory",
     "invariants:check": "node scripts/check-invariants.mjs",
     "env:setup": "node scripts/env-setup.mjs",
     "test": "vitest run",
