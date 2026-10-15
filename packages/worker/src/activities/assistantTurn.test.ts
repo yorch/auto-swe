@@ -74,6 +74,7 @@ describe('runAssistantTurn', () => {
       'describeApi',
       'getPageContext',
       'searchDocs',
+      'workflowInventory',
     ]);
     expect(message).toBe('How do I set up GitHub?');
     expect(options).toMatchObject({

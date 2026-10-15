@@ -270,6 +270,7 @@ const TOOL_LABELS: Record<string, string> = {
   describeApi: 'Looked up API routes',
   getPageContext: 'Checked this page',
   searchDocs: 'Searched the docs',
+  workflowInventory: 'Looked up the workflow inventory',
 };
 
 function ToolStep({ step }: { step: AssistantToolStep }) {
