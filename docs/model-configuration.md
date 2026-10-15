@@ -147,7 +147,9 @@ prices (*new*), and priced models a provider no longer lists (*possibly retired*
 *New from providers* shows the new ones with a last-checked time, each provider's error if its
 listing failed, an **Add** prefilled with the id, kind and display name, and a **Dismiss**;
 **Check providers now** runs the same pass on demand. *Possibly retired* lists the other kind with an
-**Edit** that opens the row; nothing retires a model for you. Discovery only suggests, so a
+**Edit** that opens the row; nothing retires a model for you. Each new model shows its suggested
+price — the first price hint described below — or *No published price*, from one batch call for the
+whole list. Discovery only suggests, so a
 discovered model is not "known" until an admin adds it with a price, and the pricing path never reads
 a suggestion.
 
@@ -224,6 +226,7 @@ as a `ModelCatalogEntry`.
 | `GET /model-catalog/suggestions` | ADMIN. The stored suggestions (`type` `NEW` or `RETIREMENT_CANDIDATE`) and, per provider, when it was last checked and its last error. Dismissed ones only with `?includeDismissed=true`, with `hiddenDismissed` counting those hidden, per type (`NEW`, `RETIREMENT_CANDIDATE`). A `NEW` one the catalog now prices, and a `RETIREMENT_CANDIDATE` whose model is now retired or gone from the catalog, are omitted |
 | `POST /model-catalog/suggestions/:id/dismiss`, `…/undismiss` | ADMIN. Hides or restores one suggestion. Dismissal is kept across runs |
 | `POST /model-catalog/price-hints` | ADMIN. `{ provider, modelId }` → `hints` (each with its `source`, `provider` or `priceList`, the id it matched, per-MTok prices and any cache multipliers) and `unavailable` (a source that could not be read, with a fixed reason). Writes nothing |
+| `POST /model-catalog/price-hints/batch` | ADMIN. `{ specs: [{ provider, modelId }] }`, 1–200 of them → the same answer per spec, in order, each tagged with its `provider` and `modelId`. Each provider is listed and the price list fetched once per batch. Writes nothing |
 | `POST /model-catalog/discover` | ADMIN. Runs a discovery pass now and returns, per provider, the unpriced models it lists, the priced ones it no longer lists, or why it could not be listed. Writes no catalog row, but refreshes the stored suggestions exactly as the scheduled run does |
 
 **Unpriced models are reported on save, and refused at run time only under a USD cap.** Saving an agent version or the embedding config

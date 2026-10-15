@@ -27,6 +27,7 @@ import {
   useModelCatalog,
   useModelSuggestions,
   usePriceHints,
+  usePriceHintsBatch,
   useResetCatalogEntry,
   useUnpricedModels,
   useUpdateCatalogEntry,
@@ -55,6 +56,7 @@ const STATUS_TONE = { ACTIVE: 'moss', DEPRECATED: 'amber', RETIRED: 'muted' } as
 /** `DEPRECATED` → `Deprecated`, for an enum value shown as a label. */
 const sentence = (v: string) => v.charAt(0) + v.slice(1).toLowerCase();
 const kindLabel = (kind: ModelKind) => (kind === 'EMBEDDING' ? 'Embedding' : sentence(kind));
+const usd = (n: number) => `$${n}`;
 
 /// The model catalog: the per-MTok prices every LLM and embedding call is
 /// costed at. A model with no entry is recorded at $0, which USD budgets never
@@ -287,6 +289,26 @@ function UnpricedPanel({ onAdd }: { onAdd: (spec: string) => void }) {
   );
 }
 
+/// A discovered model's published price, from the batch hint call: what the
+/// Add form would prefill. Only a suggestion; the catalog has no row yet.
+function SuggestedPrice({ hint, loading }: { hint: PriceHint | undefined; loading: boolean }) {
+  if (!hint) {
+    return <span className="text-paper-500">{loading ? '…' : 'No published price'}</span>;
+  }
+  return (
+    <span
+      title={`Suggested by ${hint.source === 'provider' ? 'the provider listing' : 'the price list'} (${hint.matchedId})`}
+    >
+      <span className="text-paper-300">
+        {usd(hint.inputUsdPerMTok)} / {usd(hint.outputUsdPerMTok)}
+      </span>{' '}
+      <span className="text-paper-500">
+        per MTok · {hint.source === 'provider' ? 'listing' : 'price list'}
+      </span>
+    </span>
+  );
+}
+
 /// What the discovery run stored: models a provider lists that nothing prices,
 /// and priced ones it no longer lists. The run is scheduled; "Check providers
 /// now" runs it on demand. Both are suggestions — adding one is still an admin
@@ -329,6 +351,13 @@ function DiscoveryPanel({
           : failed.length > 0
             ? 'Nothing new from the providers that could be listed.'
             : 'Nothing new — every listed model is priced.';
+
+  const hintBatch = usePriceHintsBatch(
+    fresh.map((m) => ({ modelId: m.modelId, provider: m.provider }))
+  );
+  const hintsBySpec = new Map(
+    (hintBatch.data ?? []).map((h) => [`${h.provider}/${h.modelId}`, h.hints[0]])
+  );
 
   const dismissButton = (s: ModelSuggestion) => (
     <Button
@@ -390,6 +419,9 @@ function DiscoveryPanel({
                     {m.displayName && <div className="text-xs text-paper-500">{m.displayName}</div>}
                   </Td>
                   <Td className="py-1.5 text-xs text-paper-300">{kindLabel(m.kind)}</Td>
+                  <Td className="py-1.5 text-xs">
+                    <SuggestedPrice hint={hintsBySpec.get(m.spec)} loading={hintBatch.isFetching} />
+                  </Td>
                   <Td className="py-1.5 text-xs text-paper-500">
                     First seen {formatDate(m.firstSeenAt)}
                   </Td>
@@ -476,8 +508,6 @@ function hintSourceName(hint: Pick<PriceHint, 'source' | 'url'>, provider: strin
     return 'the price list';
   }
 }
-
-const usd = (n: number) => `$${n}`;
 
 /// What the Add form found published for the spec being added: the hint it
 /// prefilled from, any other source's price with a "Use", and a source that

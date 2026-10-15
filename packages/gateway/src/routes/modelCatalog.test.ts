@@ -472,6 +472,41 @@ describe('POST /model-catalog/price-hints', () => {
   });
 });
 
+describe('POST /model-catalog/price-hints/batch', () => {
+  const specs = [
+    { modelId: 'a', provider: 'openrouter' },
+    { modelId: 'b', provider: 'groq' },
+  ];
+
+  it('is ADMIN-only', async () => {
+    const { call } = await buildApp('ENGINEER');
+    expect((await call('POST', '/model-catalog/price-hints/batch', { specs })).statusCode).toBe(
+      403
+    );
+  });
+
+  it('answers each spec, in order, tagged with the spec it answers', async () => {
+    const { call } = await buildApp();
+    const res = await call('POST', '/model-catalog/price-hints/batch', { specs });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().data).toMatchObject([
+      { asked: 'openrouter/a', modelId: 'a', provider: 'openrouter' },
+      { asked: 'groq/b', modelId: 'b', provider: 'groq' },
+    ]);
+  });
+
+  it('refuses an empty or oversized batch', async () => {
+    const { call } = await buildApp();
+    expect((await call('POST', '/model-catalog/price-hints/batch', { specs: [] })).statusCode).toBe(
+      400
+    );
+    const many = Array.from({ length: 201 }, (_, i) => ({ modelId: `m${i}`, provider: 'p' }));
+    expect(
+      (await call('POST', '/model-catalog/price-hints/batch', { specs: many })).statusCode
+    ).toBe(400);
+  });
+});
+
 describe('model suggestions', () => {
   it('are ADMIN-only to read and to dismiss', async () => {
     const { call } = await buildApp('ENGINEER');

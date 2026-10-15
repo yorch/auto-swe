@@ -127,8 +127,13 @@ const {
   const suggestionState: { data: Record<string, unknown> } = { data: {} };
   suggestionState.data = DEFAULT_DATA();
   // One object per answer: the form tells a new answer from a re-render by identity.
-  const hintState: { data: Record<string, unknown> | undefined; asked: string[] } = {
+  const hintState: {
+    data: Record<string, unknown> | undefined;
+    asked: string[];
+    batch: Array<Record<string, unknown>> | undefined;
+  } = {
     asked: [],
+    batch: undefined,
     data: undefined,
   };
   return {
@@ -156,6 +161,7 @@ vi.mock('@/hooks/useModelCatalog', () => ({
     }
     return { data: enabled ? hintState.data : undefined, isFetching: false };
   },
+  usePriceHintsBatch: () => ({ data: hintState.batch, isFetching: false }),
   useResetCatalogEntry: mutation,
   useUnpricedModels: () => ({
     data: [{ spec: 'openai/gpt-5-5', suggestion: 'openai/gpt-5.5', usedBy: ['agent:reviewer'] }],
@@ -303,6 +309,38 @@ describe('CatalogTab price hints', () => {
   afterEach(() => {
     hintState.data = undefined;
     hintState.asked = [];
+    hintState.batch = undefined;
+  });
+
+  it("shows each discovered model's suggested price, and says when none is published", () => {
+    suggestionState.data = {
+      ...DEFAULT_DATA(),
+      suggestions: [
+        ...(DEFAULT_DATA().suggestions as unknown[]),
+        {
+          dismissedAt: null,
+          displayName: null,
+          firstSeenAt: '2026-10-01T04:00:00Z',
+          id: 's3',
+          kind: 'CHAT',
+          lastSeenAt: '2026-10-02T04:00:00Z',
+          modelId: 'qwen-9',
+          provider: 'ollama',
+          spec: 'ollama/qwen-9',
+          type: 'NEW',
+        },
+      ],
+    };
+    hintState.batch = [
+      { ...HINTS, modelId: 'nomic-embed-2', provider: 'ollama' },
+      { hints: [], modelId: 'qwen-9', provider: 'ollama', unavailable: [] },
+    ];
+    render(<CatalogTab />);
+    const priced = rowFor('ollama/nomic-embed-2');
+    expect(within(priced).getByText('$3 / $15')).toBeTruthy();
+    expect(within(priced).getByText(/listing/)).toBeTruthy();
+    expect(within(rowFor('ollama/qwen-9')).getByText('No published price')).toBeTruthy();
+    suggestionState.data = DEFAULT_DATA();
   });
 
   const openAdd = () => {
