@@ -6,6 +6,7 @@ import type { ModelCatalogEntry } from '@/lib/modelCatalog';
 
 // vi.mock is hoisted above the file's declarations, so its fixtures are too.
 const {
+  batchAsync,
   createAsync,
   DEFAULT_DATA,
   ENTRIES,
@@ -138,6 +139,7 @@ const {
     data: undefined,
   };
   return {
+    batchAsync: vi.fn(async (_entries: unknown) => ({})),
     createAsync: vi.fn(async (_body: unknown) => ({})),
     DEFAULT_DATA,
     discoverMutate: vi.fn(),
@@ -151,6 +153,7 @@ const {
 });
 
 vi.mock('@/hooks/useModelCatalog', () => ({
+  useBatchCreateCatalogEntries: () => ({ isPending: false, mutateAsync: batchAsync }),
   useCreateCatalogEntry: () => ({ isPending: false, mutate: vi.fn(), mutateAsync: createAsync }),
   useDeleteCatalogEntry: mutation,
   useDiscoverModels: () => ({ error: null, isPending: false, mutate: discoverMutate }),
@@ -388,41 +391,49 @@ describe('CatalogTab price hints', () => {
     expect(screen.queryByRole('button', { name: /at suggested prices/ })).toBeNull();
     fireEvent.click(screen.getByLabelText('Select ollama/nomic-embed-2'));
     fireEvent.click(screen.getByRole('button', { name: 'Add 1 at suggested prices' }));
-    expect(createAsync).not.toHaveBeenCalled();
+    expect(batchAsync).not.toHaveBeenCalled();
     const dialog = screen.getByRole('dialog', { name: /Add 1 model to the catalog/ });
     expect(
       within(dialog).getByText(/\$3 \/ \$15 per MTok, from ollama's model listing/)
     ).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add 1' }));
-    await vi.waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
-    expect(createAsync).toHaveBeenCalledWith({
-      cacheReadMultiplier: 0.1,
-      cacheWrite1hMultiplier: null,
-      cacheWrite5mMultiplier: null,
-      displayName: 'Nomic Embed',
-      inputUsdPerMTok: 3,
-      kind: 'EMBEDDING',
-      modelId: 'nomic-embed-2',
-      notes:
-        "Price suggested by ollama's model listing (nomic-embed-2); added in bulk from discovery.",
-      outputUsdPerMTok: 15,
-      provider: 'ollama',
-    });
-    createAsync.mockClear();
+    await vi.waitFor(() => expect(batchAsync).toHaveBeenCalledTimes(1));
+    // One request for the whole selection, so the gateway adds all of it or none.
+    expect(batchAsync).toHaveBeenCalledWith([
+      {
+        cacheReadMultiplier: 0.1,
+        cacheWrite1hMultiplier: null,
+        cacheWrite5mMultiplier: null,
+        displayName: 'Nomic Embed',
+        inputUsdPerMTok: 3,
+        kind: 'EMBEDDING',
+        modelId: 'nomic-embed-2',
+        notes:
+          "Price suggested by ollama's model listing (nomic-embed-2); added in bulk from discovery.",
+        outputUsdPerMTok: 15,
+        provider: 'ollama',
+      },
+    ]);
+    expect(createAsync).not.toHaveBeenCalled();
+    batchAsync.mockClear();
   });
 
-  it('keeps the dialog open and names a model that could not be added', async () => {
+  it('keeps the dialog open with the reason when the batch is refused', async () => {
     hintState.batch = [{ ...HINTS, modelId: 'nomic-embed-2', provider: 'ollama' }];
-    createAsync.mockRejectedValueOnce(new Error('already in the catalog'));
+    batchAsync.mockRejectedValueOnce(
+      new Error('Already in the catalog: ollama/nomic-embed-2. Nothing was added.')
+    );
     render(<CatalogTab />);
     fireEvent.click(screen.getByLabelText('Select ollama/nomic-embed-2'));
     fireEvent.click(screen.getByRole('button', { name: 'Add 1 at suggested prices' }));
     const dialog = screen.getByRole('dialog', { name: /Add 1 model/ });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Add 1' }));
     expect(
-      await within(dialog).findByText(/Not added — ollama\/nomic-embed-2: already in the catalog/)
+      await within(dialog).findByText(
+        'Already in the catalog: ollama/nomic-embed-2. Nothing was added.'
+      )
     ).toBeTruthy();
-    createAsync.mockClear();
+    batchAsync.mockClear();
   });
 
   it('offers no tick for a model with no suggested price', () => {

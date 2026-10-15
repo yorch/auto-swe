@@ -191,6 +191,18 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
       ),
     },
   };
+  // All-or-nothing, like the real one: a throw restores the rows as they were.
+  Object.assign(prisma, {
+    $transaction: async (fn: (tx: typeof prisma) => Promise<unknown>) => {
+      const before = rows.length;
+      try {
+        return await fn(prisma);
+      } catch (err) {
+        rows.splice(before);
+        throw err;
+      }
+    },
+  });
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -207,7 +219,7 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
       payload: payload as never,
       url: `/api/v1/platform${url}`,
     });
-  return { audit, call, rows };
+  return { audit, call, prisma, rows };
 }
 
 describe('GET /model-catalog', () => {
@@ -504,6 +516,79 @@ describe('POST /model-catalog/price-hints/batch', () => {
     expect(
       (await call('POST', '/model-catalog/price-hints/batch', { specs: many })).statusCode
     ).toBe(400);
+  });
+});
+
+describe('POST /model-catalog/batch', () => {
+  const entry = (modelId: string) => ({
+    inputUsdPerMTok: 1,
+    modelId,
+    notes: 'Price suggested by the price list',
+    outputUsdPerMTok: 2,
+    provider: 'openrouter',
+  });
+
+  it('is ADMIN-only', async () => {
+    const { call } = await buildApp('ENGINEER');
+    const res = await call('POST', '/model-catalog/batch', { entries: [entry('a')] });
+    expect(res.statusCode).toBe(403);
+  });
+
+  it('adds every model, auditing each one', async () => {
+    const { audit, call, rows } = await buildApp();
+    const res = await call('POST', '/model-catalog/batch', { entries: [entry('a'), entry('b')] });
+    expect(res.statusCode).toBe(201);
+    expect(res.json().data.map((r: { modelId: string }) => r.modelId)).toEqual(['a', 'b']);
+    expect(rows.map((r) => r.modelId)).toEqual(expect.arrayContaining(['a', 'b']));
+    expect(
+      audit.mock.calls.filter(
+        ([a]) => a.data.action === 'CREATE' && a.data.entityType === 'ModelCatalogEntry'
+      )
+    ).toHaveLength(2);
+  });
+
+  it('adds nothing, naming each spec, when one is already in the catalog', async () => {
+    const { audit, call, rows } = await buildApp();
+    const before = rows.length;
+    const res = await call('POST', '/model-catalog/batch', {
+      entries: [entry('a'), { ...entry('llama-4'), provider: 'ollama' }],
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatchObject({
+      code: 'MODEL_EXISTS',
+      details: { specs: ['ollama/llama-4'] },
+    });
+    expect(rows).toHaveLength(before);
+    expect(audit).not.toHaveBeenCalled();
+  });
+
+  it('refuses the same model twice in one batch', async () => {
+    const { call } = await buildApp();
+    const res = await call('POST', '/model-catalog/batch', { entries: [entry('a'), entry('a')] });
+    expect(res.statusCode).toBe(400);
+  });
+
+  it('rolls the whole batch back when a row is added between the check and the write', async () => {
+    const { call, prisma, rows } = await buildApp();
+    // The check sees nothing; the row then appears, so the second create collides.
+    prisma.modelCatalogEntry.findMany.mockResolvedValueOnce([]);
+    rows.push({ ...seedRows()[1], modelId: 'b', provider: 'openrouter' } as never);
+    const before = rows.length;
+    const res = await call('POST', '/model-catalog/batch', { entries: [entry('a'), entry('b')] });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error.message).toBe(
+      'A model in the batch was added meanwhile. Nothing was added.'
+    );
+    // `a` was created inside the transaction and rolled back with it.
+    expect(rows).toHaveLength(before);
+    expect(rows.some((r) => r.modelId === 'a')).toBe(false);
+  });
+
+  it('refuses an empty or oversized batch of models', async () => {
+    const { call } = await buildApp();
+    expect((await call('POST', '/model-catalog/batch', { entries: [] })).statusCode).toBe(400);
+    const many = Array.from({ length: 101 }, (_, i) => entry(`m${i}`));
+    expect((await call('POST', '/model-catalog/batch', { entries: many })).statusCode).toBe(400);
   });
 });
 
