@@ -25,12 +25,7 @@ import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { type HandleKind, handlePortsFor } from './dagNode';
-import {
-  type Binding,
-  InputsBindingsSection,
-  InspectorNote,
-  InspectorSection,
-} from './inspectorFields';
+import { type Binding, InputsBindingsSection, InspectorSection } from './inspectorFields';
 import {
   AgentSection,
   CondSection,
@@ -80,20 +75,11 @@ const HANDLE_LABEL_FULL: Record<HandleKind, string> = {
 };
 
 /**
- * Which node types the sections above configure.
- *
- * The dispatch is a chain of `node.type === …` guards, so a new node type
- * silently gets an inspector with no fields at all. Classifying every type
- * here makes that a compile error, and the `false` entries render a pointer
- * to JSON mode instead of blank space.
- */
-/**
  * Whether a type has a section in `NodeConfig`. All of them do; the map stays a
  * total `Record` over the union so a new node type is a compile error here
- * rather than a silently blank rail, and the fallback note below stays for the
- * case where one is added before its section is.
+ * rather than a silently blank rail.
  */
-const HAS_CONFIG_SECTION: Record<SpecNode['type'], boolean> = {
+const HAS_CONFIG_SECTION: Record<SpecNode['type'], true> = {
   agent: true,
   cond: true,
   containerStep: true,
@@ -228,22 +214,12 @@ export function NodeInspector({
             node.type === 'shell' ||
             node.type === 'agent' ||
             node.type === 'mcp' ||
-            node.type === 'eval' ||
             node.type === 'containerStep') && (
             <InputsBindingsSection
               inputs={(node as { inputs?: Record<string, Binding> }).inputs}
               onChange={(inputs) => onChangeNode({ ...node, inputs } as SpecNode)}
             />
           )}
-        {!unknownType && !HAS_CONFIG_SECTION[node.type] && (
-          <InspectorSection title="Configuration">
-            <InspectorNote>
-              This build has no form for this node type, so its settings are edited in JSON mode
-              below. Its outgoing edges are in the next section.
-            </InspectorNote>
-          </InspectorSection>
-        )}
-
         {/* Outgoing-edge connections — explicit dropdowns alongside the
             canvas drag-to-connect. On big graphs with tiny nodes the
             dropdowns are often the only practical way to retarget an edge. */}

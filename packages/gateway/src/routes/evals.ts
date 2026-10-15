@@ -27,6 +27,7 @@ import {
   toImplementerRuntime,
 } from '@auto-swe/shared/types/api';
 import { FLAKE_SCREEN_MAX_INFRA_ERRORS } from '@auto-swe/shared/types/workflow';
+import { EVAL_SCORER_ERROR_PREFIX } from '@auto-swe/shared/workflow';
 import type { FastifyBaseLogger, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -497,6 +498,13 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
           by: by ? ['scorer', by] : ['scorer'],
           where: {
             createdAt: { gte: new Date(start), lt: new Date(end) },
+            // A scorer that could not score wrote a placeholder value; a mean that
+            // counted it would read a broken judge as a mediocre candidate. The
+            // NULL arm is explicit: `NOT LIKE` alone drops every NULL rationale.
+            OR: [
+              { rationale: null },
+              { NOT: { rationale: { startsWith: EVAL_SCORER_ERROR_PREFIX } } },
+            ],
             ...(source ? { source } : {}),
             ...(templateId ? { run: { templateId } } : {}),
           },

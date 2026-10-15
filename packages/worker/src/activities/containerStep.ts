@@ -8,7 +8,7 @@ import { execShellAsync } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 
 /**
- * Container-contract coded step (P4/WS4 + P5 transports). Runs `image` in the
+ * Container-contract coded step with three result transports. Runs `image` in the
  * locked-down ephemeral container (no Docker socket, `--cap-drop=ALL`, read-only
  * root, `--network=none` unless `egress`), passing the resolved node inputs as
  * JSON on the `CONTAINER_STEP_INPUT` env var. The result is bound at
@@ -63,9 +63,18 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
   // optional; this must not be the one place that requires it.
 
   // Team allowlists: a container step is governed exactly like a shell step.
+  // The step never clones the repository (it mounts an empty volume). It reads
+  // the team, whose allowlists apply, from the run's Connection, so a run with
+  // no connection fails here rather than falling back to the built-in defaults.
   const conn = await prisma.connection.findUnique({
     include: { team: { select: { egressAllowlist: true, shellImageAllowlist: true } } },
-    where: { id: requireRepoId(input.request, 'containerStep') },
+    where: {
+      id: requireRepoId(
+        input.request,
+        'containerStep',
+        'to resolve the team whose image and egress allowlists apply'
+      ),
+    },
   });
   const imageAllowlist = (conn?.team?.shellImageAllowlist as string[] | null) ?? [];
   const egressAllowlist = (conn?.team?.egressAllowlist as string[] | null) ?? [];
@@ -178,6 +187,9 @@ async function runSidecarTransport(
       ...(input.sidecar.readinessPath ? { readinessPath: input.sidecar.readinessPath } : {}),
       ...(input.sidecar.readyTimeoutMs ? { readyTimeoutMs: input.sidecar.readyTimeoutMs } : {}),
       ...(input.sidecar.requestPath ? { requestPath: input.sidecar.requestPath } : {}),
+      // For a sidecar this bounds the request only; readiness has its own
+      // `readyTimeoutMs`. Capped like the other transports' wall clock.
+      timeoutMs: input.timeoutMs,
       workspaceMount: volume,
     });
     return { result: res.result };

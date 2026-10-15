@@ -97,6 +97,11 @@ action.
 A `require_approval` decision does not fail the run. It converts the step into a wait, which the
 inbox and the Slack teammate both surface the same way any other human gate is surfaced.
 
+The `policy` scorer is the exception: it never waits. It passes only when the class resolves to
+`auto`; any other action — `require_approval`, or a class the policy does not name — fails that
+floor scorer, which blocks the eval, and the `eval` node's `onFail` decides what happens next
+(`block` fails the run, `warn` carries on). See [evals.md §2](./evals.md#2-the-eval-node).
+
 ### 4.1 The mutation boundary
 
 A recorded decision is only a gate if the step that performs the action checks it. That check lives

@@ -22,7 +22,13 @@ import {
 } from '@auto-swe/shared/lib/regexExec';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { type Context, type EvalScorer, evalBoolean } from '@auto-swe/shared/workflow';
+import {
+  type Context,
+  EVAL_SCORER_ERROR_PREFIX,
+  type EvalScorer,
+  evalBoolean,
+} from '@auto-swe/shared/workflow';
+import { ApplicationFailure } from '@temporalio/activity';
 import { z } from 'zod';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
@@ -69,13 +75,28 @@ export interface RunEvalNodeInput {
   scorers: EvalScorer[];
   judgeAdvisory?: boolean;
   spanName?: string;
+  /**
+   * The dispatch key of the eval node (its recording id), stamped on every
+   * EvalResult row so results trace back to the node that produced them.
+   */
+  nodeId?: string;
 }
 
 export interface RunEvalNodeResult {
   score: number;
   floorPassed: boolean;
   perAxis: Record<string, number>;
+  /** Scorers that could not score, mapped to the reason; left out of `score` and `perAxis`. */
+  errors: Record<string, string>;
   decision: { blocked: boolean; reason: string };
+  /**
+   * `!decision.blocked`. The interpreter treats `passed: false` as a gate
+   * failure, so a blocked eval goes through the node's `onFail` policy
+   * (`warn` / `block` / `{ retry: N }`) like any other gate-style step.
+   */
+  passed: boolean;
+  /** The step's failure message when blocked (`eval blocked: <reason>`), else the reason. */
+  summary: string;
 }
 
 /** A score plus, for a judge, the call that produced it. */
@@ -152,7 +173,12 @@ async function evaluateScorer(
       const target: RegexTarget = { key: 'target', text };
       const budgetMs = resolveRegexBudgetMs();
       const result = await runRegexBatch(specs, [target], { budgetMs, label: 'piiScan' });
-      const passed = result.hits.length === 0 && !result.incomplete;
+      // A floor scorer fails closed: a scan that did not finish, or that skipped
+      // a quarantined pattern, cannot say the target is free of PII.
+      const passed =
+        result.hits.length === 0 &&
+        !result.incomplete &&
+        result.quarantinedPatternKeys.length === 0;
       return { kind: 'pii', passed, scorer: 'pii:pii', value: passed ? 1 : 0 };
     }
     case 'gate': {
@@ -239,13 +265,22 @@ const JudgeOutput = z.object({
   score: z.number().min(0).max(1),
 });
 
+/** Fixed reasons a judge could not score; never an error's own text. */
+const JUDGE_ERROR = {
+  budget: 'judge budget exhausted',
+  callFailed: 'judge call failed',
+  noRubric: 'rubric not found',
+  noScore: 'judge returned no score',
+} as const;
+
 /**
  * Run the LLM judge for a rubric against the target via the `evalJudge` agent.
- * Returns a normalized 0..1 — defaults to 0.5/neutral on any failure (missing
- * rubric, agent error, unparseable output) so a judge error never blocks (the
- * judge is advisory by default). Makes a real model call; the model resolution
- * is verified by `assertConfigReady` at worker boot, but the call itself is only
- * exercised end-to-end against a provider.
+ * Returns a normalized 0..1. On any failure (missing rubric, agent error,
+ * output with no score) it returns a neutral 0.5 placeholder plus an `error`:
+ * an advisory judge's error never blocks, while a blocking judge
+ * (`judgeAdvisory: false`) fails closed on it in `decideGate`. Makes a real
+ * model call; the model resolution is verified by `assertConfigReady` at worker
+ * boot, but the call itself is only exercised end-to-end against a provider.
  *
  * Also returns what the call cost and the model it was priced at — the same
  * attribution `recordLlmUsage` debited — so the EvalResult row carries it. A
@@ -255,7 +290,7 @@ const JudgeOutput = z.object({
 async function runJudge(
   rubricRef: string,
   targetValue: unknown
-): Promise<{ value: number; costUsd?: number; judgeModel?: string }> {
+): Promise<{ value: number; costUsd?: number; error?: string; judgeModel?: string }> {
   let modelSpec: string | undefined;
   try {
     const rubric = await prisma.evalRubric.findFirst({
@@ -263,7 +298,7 @@ async function runJudge(
       where: { slug: rubricRef },
     });
     if (!rubric) {
-      return { value: 0.5 };
+      return { error: JUDGE_ERROR.noRubric, value: 0.5 };
     }
     const prompt = buildJudgePrompt({
       candidate: typeof targetValue === 'string' ? targetValue : JSON.stringify(targetValue),
@@ -284,21 +319,35 @@ async function runJudge(
       spanName: 'llm.eval_judge',
     });
     const score = result.object?.score;
+    if (typeof score !== 'number') {
+      return {
+        costUsd: result.costUsd,
+        error: JUDGE_ERROR.noScore,
+        judgeModel: modelSpec,
+        value: 0.5,
+      };
+    }
     return {
       costUsd: result.costUsd,
       judgeModel: modelSpec,
-      value: typeof score === 'number' ? Math.max(0, Math.min(1, score)) : 0.5,
+      value: Math.max(0, Math.min(1, score)),
     };
   } catch (err) {
+    // A spent budget is its own reason: it is fixed by raising the cap, not by
+    // looking at the judge or its provider.
+    const error =
+      err instanceof ApplicationFailure && err.type === 'BUDGET_EXCEEDED'
+        ? JUDGE_ERROR.budget
+        : JUDGE_ERROR.callFailed;
     if (modelSpec === undefined) {
-      return { value: 0.5 };
+      return { error, value: 0.5 };
     }
     const paid = failedCallAttribution(err, modelSpec);
     // Only a call that was paid for names a model: a refusal before the call
     // (the pre-call budget gate) or a transport failure scored nothing.
     return paid.costUsd === undefined
-      ? { value: 0.5 }
-      : { costUsd: paid.costUsd, judgeModel: paid.model, value: 0.5 };
+      ? { error, value: 0.5 }
+      : { costUsd: paid.costUsd, error, judgeModel: paid.model, value: 0.5 };
   }
 }
 
@@ -312,9 +361,12 @@ export function assembleScores(
   const decision = decideGate(scoreInputs, { judgeAdvisory, judgeThreshold });
   return {
     decision: { blocked: decision.blocked, reason: decision.reason },
+    errors: combined.errors,
     floorPassed: combined.floorPassed,
+    passed: !decision.blocked,
     perAxis: combined.perAxis,
     score: combined.aggregate,
+    summary: decision.blocked ? `eval blocked: ${decision.reason}` : decision.reason,
   };
 }
 
@@ -359,6 +411,12 @@ async function runEvalNodeImpl(input: RunEvalNodeInput): Promise<RunEvalNodeResu
       recordEvalResult({
         costUsd: s.costUsd,
         judgeModel: s.judgeModel,
+        // A scorer that could not score says so on its row: its `value` is a
+        // placeholder, and trend readers must be able to tell it apart.
+        ...(s.error !== undefined
+          ? { metadata: { error: s.error }, rationale: `${EVAL_SCORER_ERROR_PREFIX}${s.error}` }
+          : {}),
+        nodeId: input.nodeId,
         passed: s.passed,
         runId,
         scorer: s.scorer,

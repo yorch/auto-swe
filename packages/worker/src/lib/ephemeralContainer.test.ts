@@ -12,7 +12,18 @@ vi.mock('./execUtils.js', async (importOriginal) => {
     spawnCaptureAsync: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: 'cid\n' })),
   };
 });
-vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
+const activityContext = vi.hoisted(() => ({ signal: undefined as AbortSignal | undefined }));
+vi.mock('@temporalio/activity', () => ({
+  Context: {
+    current: () => {
+      if (!activityContext.signal) {
+        throw new Error('not in an activity');
+      }
+      return { cancellationSignal: activityContext.signal };
+    },
+  },
+  heartbeat: vi.fn(),
+}));
 
 import {
   buildDockerArgs,
@@ -303,6 +314,8 @@ describe('runSidecarContainer request timeouts (docker + fetch mocked)', () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    activityContext.signal = undefined;
   });
 
   it('bounds both the readiness probe and the request with an abort signal', async () => {
@@ -321,6 +334,39 @@ describe('runSidecarContainer request timeouts (docker + fetch mocked)', () => {
     expect(readiness[1].signal).toBeInstanceOf(AbortSignal);
     expect(request[1].method).toBe('POST');
     expect(request[1].signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('bounds the request by the step timeoutMs, defaulting to 600s and capped at 50 minutes', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    await runSidecarContainer({
+      image: 'node:24-alpine',
+      port: 8080,
+      timeoutMs: 1_800_000,
+      workspaceMount: 'cstep-abc',
+    });
+    expect(timeoutSpy).toHaveBeenCalledWith(1_800_000);
+    timeoutSpy.mockClear();
+    await runSidecarContainer({ image: 'node:24-alpine', port: 8080, workspaceMount: 'cstep-abc' });
+    expect(timeoutSpy).toHaveBeenCalledWith(600_000);
+    timeoutSpy.mockClear();
+    await runSidecarContainer({
+      image: 'node:24-alpine',
+      port: 8080,
+      timeoutMs: 3_600_000,
+      workspaceMount: 'cstep-abc',
+    });
+    // The same 50-minute ceiling the foreground transports get.
+    expect(timeoutSpy).toHaveBeenCalledWith(50 * 60_000);
+  });
+
+  it('aborts the request when the activity is cancelled', async () => {
+    const controller = new AbortController();
+    activityContext.signal = controller.signal;
+    await runSidecarContainer({ image: 'node:24-alpine', port: 8080, workspaceMount: 'cstep-abc' });
+    const request = (fetchMock.mock.calls as [string, RequestInit][])[1][1];
+    expect(request.signal?.aborted).toBe(false);
+    controller.abort();
+    expect(request.signal?.aborted).toBe(true);
   });
 
   it('gives up on readiness at the deadline instead of polling forever', async () => {

@@ -3,18 +3,23 @@
  * WorkflowTemplate (worker-side). Shared by the channel-assistant path and the
  * async generation job so the "create a DRAFT from a generated spec" rules live
  * in one place:
- *   - refuse shell/containerStep nodes (this path is never shell-authorized — it
- *     would bypass the gateway's shell RBAC + WorkflowShellAudit),
+ *   - refuse every node that runs code an author wrote (`hasAuthoredCode`): container
+ *     code — `shell`, `containerStep`, or a `step` naming `runContainerStep` — and
+ *     authored commands — a `command` on a gate step, a `runQualityGates` gate, or an
+ *     eval `gate` scorer. This path is never shell-authorized and writes no audit, so
+ *     persisting either would bypass the gateway's shell RBAC, image allowlist and
+ *     WorkflowShellAudit (container code) or run a generated command in the agent
+ *     workspace (authored commands),
  *   - clamp the name to the 120-char spec cap,
  *   - retry with a numeric suffix on a (teamId, name) collision.
  *
- * Returns `null` when the spec contains shell nodes (caller surfaces a friendly
+ * Returns `null` when the spec contains such a node (caller surfaces a friendly
  * message); throws only on an unexpected DB error.
  */
 
 import { prisma } from '@auto-swe/shared/db';
 import { isReservedTemplateName } from '@auto-swe/shared/lib/agentRun';
-import type { WorkflowSpec } from '@auto-swe/shared/workflow';
+import { hasAuthoredCode, type WorkflowSpec } from '@auto-swe/shared/workflow';
 
 export interface PersistDraftTemplateInput {
   spec: WorkflowSpec;
@@ -39,12 +44,9 @@ export async function persistDraftTemplate(
 ): Promise<PersistDraftTemplateResult | null> {
   const spec = input.spec;
 
-  // This path is never authorized for shell/containerStep (no RBAC + no audit
-  // here). Refuse rather than persist an un-audited shell command.
-  const hasShellNode = Object.values(spec.nodes).some(
-    (n) => n.type === 'shell' || n.type === 'containerStep'
-  );
-  if (hasShellNode) {
+  // This path is never authorized for authored code (no RBAC + no audit here).
+  // Refuse rather than persist an un-audited command, in any of its spellings.
+  if (hasAuthoredCode(spec)) {
     return null;
   }
 

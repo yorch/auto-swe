@@ -1,10 +1,9 @@
 import {
   assertShellImageAllowed,
+  findContainerCodeNodes,
   findInternalSteps,
   findInvalidPresentation,
   formatValidationIssue,
-  getStepMetadata,
-  hasStep,
   parseWorkflowSpec,
   ShellImageNotAllowedError,
   SPEC_SCHEMA_VERSION,
@@ -28,17 +27,20 @@ export interface ShellNodeWithId {
 
 // `shell`, `containerStep`, and a plain `step` node naming a `shell`-category step
 // (`runContainerStep`) all execute team-authored code in a container, so they share
-// the same authoring RBAC, image allowlist, and audit trail. The `step` spelling is
-// reachable by hand-written JSON: the interpreter dispatches it to the same executor
-// as the declarative node, so gating on node type alone would leave it ungated.
+// the same authoring RBAC, image allowlist, and audit trail. Membership is decided by
+// the shared `isContainerCodeNode`, the same predicate every worker-side draft path
+// refuses on; this function only projects each node onto the image/command shape.
 export function collectShellNodes(spec: WorkflowSpec): ShellNodeWithId[] {
   const out: ShellNodeWithId[] = [];
-  for (const [id, node] of Object.entries(spec.nodes)) {
-    if (
-      node.type === 'step' &&
-      hasStep(node.step) &&
-      getStepMetadata(node.step).category === 'shell'
-    ) {
+  for (const [id, node] of findContainerCodeNodes(spec)) {
+    if (node.type === 'shell') {
+      out.push({ id, node });
+    } else if (node.type === 'containerStep') {
+      out.push({
+        id,
+        node: { command: node.command ?? '', image: node.image, network: node.network },
+      });
+    } else if (node.type === 'step') {
       const cfg = node.config ?? {};
       out.push({
         id,
@@ -48,13 +50,6 @@ export function collectShellNodes(spec: WorkflowSpec): ShellNodeWithId[] {
           image: typeof cfg.image === 'string' ? cfg.image : '',
           network: cfg.network === 'none' || cfg.network === 'egress' ? cfg.network : undefined,
         },
-      });
-    } else if (node.type === 'shell') {
-      out.push({ id, node });
-    } else if (node.type === 'containerStep') {
-      out.push({
-        id,
-        node: { command: node.command ?? '', image: node.image, network: node.network },
       });
     }
   }
@@ -300,7 +295,7 @@ export interface SpecCheckIssue {
  * or warn about, as data and without writing anything:
  *   - schema    the strict parse (a save answers 400 INVALID_SPEC); stops there, as the save does
  *   - lint      `validateSpec` (a save only warns; promote/activate refuse its errors with 409)
- *   - refs      unresolved agent / mcp references (a save only warns)
+ *   - refs      unresolved agent / mcp / eval-rubric references (a save only warns)
  *   - authoring the shell-authoring role gate (a save answers 403) and the shell image allowlist
  *               (a save answers 400), both for `user` on that team
  */

@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import { isValidWaitDuration } from './waitDuration.js';
+
+// The wait-duration grammar lives in its own zod-free module because the
+// Temporal workflow isolate reads it too (`signalSlots.ts`), and this file
+// would pull zod into the workflow bundle.
+export { isValidWaitDuration, waitDurationMs } from './waitDuration.js';
 
 /**
  * WorkflowSpec — a serializable, versioned graph that the RunnableWorkflow
@@ -9,68 +15,29 @@ import { z } from 'zod';
  * engineering spec). The interpreter caps the total node-transition count
  * (DEFAULT_MAX_TRANSITIONS) to prevent runaway specs from looping forever.
  *
- * Phase 1 node types cover the existing hardcoded EngineeringWorkflow:
- *   - step      : run a registered activity
- *   - set       : write values into the run context
- *   - cond      : branch on a jsonpath/comparison expression
- *   - signal    : wait for a Temporal signal with timeout
- *   - terminate : end the run with a status
- *
- * Phase 2 extends step nodes with `onFail` modes (block / warn / retry).
- * Phase 3 adds:
- *   - fanOut    : run a subgraph once per item in an iterable, then join
- * Phase 6 adds:
- *   - shell     : run a user-authored command in an ephemeral container
- *                 (separate from the long-lived workspace; gated by RBAC +
- *                 image allowlist; per-step network mode).
+ * Node types (the `type` discriminator):
+ *   - step           : run a registered activity (`onFail`: block / warn / retry)
+ *   - agent          : run a library Agent by reference
+ *   - mcp            : call one tool on an `mcp` Connection
+ *   - eval           : score a value already in the run context
+ *   - set            : write values into the run context
+ *   - cond           : branch on a jsonpath/comparison expression
+ *   - signal         : wait for a Temporal signal with timeout
+ *   - terminate      : end the run with a status
+ *   - fanOut         : run a subgraph once per item in an iterable, then join
+ *   - shell          : run a user-authored command in an ephemeral container
+ *                      (separate from the long-lived workspace; gated by RBAC +
+ *                      image allowlist; per-step network mode)
+ *   - containerStep  : run an image with a JSON-in / JSON-out contract
+ *   - humanApproval  : pause for a human approve / reject
+ *   - humanDecision  : pause for a human to choose among options
+ *   - humanInput     : pause for a human to supply structured input
+ *   - humanReview    : pause for a human to read and optionally edit content
  */
 
 export const SPEC_SCHEMA_VERSION = 1 as const;
 
 const NodeIdSchema = z.string().min(1).max(64);
-
-/**
- * The duration strings a signal or HITL wait accepts: the grammar Temporal's
- * `Duration` string goes through (the `ms` package — a number with an optional
- * unit, case-insensitive, optional space: `30m`, `24h`, `7d`, `2 hours`,
- * `1.5h`, `500`), restricted to positive values. Checked when the spec is
- * parsed, so a bad value fails the save or the run's setup instead of throwing
- * a `TypeError` at the wait node.
- */
-const DURATION_RE =
-  /^(?:\d+)?\.?\d+ *(milliseconds?|msecs?|ms|seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d|weeks?|w|years?|yrs?|y)?$/i;
-
-/** True when `value` is a positive duration Temporal can parse (see {@link DURATION_RE}). */
-export function isValidWaitDuration(value: string): boolean {
-  // `ms` refuses anything over 100 characters.
-  if (value.length > 100 || !DURATION_RE.test(value)) {
-    return false;
-  }
-  return Number.parseFloat(value) > 0;
-}
-
-const DURATION_UNIT_MS: Record<string, number> = {
-  d: 86_400_000,
-  h: 3_600_000,
-  m: 60_000,
-  ms: 1,
-  s: 1_000,
-  w: 604_800_000,
-  y: 31_557_600_000,
-};
-
-/**
- * Milliseconds in a wait duration, read the way Temporal reads it (no unit
- * means milliseconds). 0 when `value` is not a valid positive duration.
- */
-export function waitDurationMs(value: string): number {
-  if (!isValidWaitDuration(value)) {
-    return 0;
-  }
-  const unit = (DURATION_RE.exec(value)?.[1] ?? 'ms').toLowerCase();
-  const key = /^(ms|msecs?|milliseconds?)$/.test(unit) ? 'ms' : unit[0];
-  return Number.parseFloat(value) * (DURATION_UNIT_MS[key] ?? 0);
-}
 
 const WaitTimeoutSchema = z.string().min(1).refine(isValidWaitDuration, {
   message: "timeout must be a positive duration such as '30m', '24h' or '7d'",
@@ -227,7 +194,7 @@ const StepNodeSchema = z.object({
 });
 
 /**
- * Declarative agent node (P2). Runs a library Agent by reference
+ * Declarative agent node. Runs a library Agent by reference
  * (`agentRef` = `"<key>"` float or `"<key>@<version>"` pin) — the worker
  * resolves it via `resolveAgentSpec`/`resolveAgent` and runs it through
  * `runAgent`. The agent's output is recorded at `nodes.<id>.output` like any
@@ -260,7 +227,7 @@ const AgentNodeSchema = z.object({
 });
 
 /**
- * Declarative MCP node (P2/WS4). Calls a single tool on an `mcp` Connection as a
+ * Declarative MCP node. Calls a single tool on an `mcp` Connection as a
  * workflow step: `connectionRef` is the `mcp` Connection id, `tool` is the tool
  * name on that server, and `inputs` map to the tool's arguments. The tool result
  * is recorded at `nodes.<id>.output.result` like any step output.
@@ -283,7 +250,7 @@ const McpNodeSchema = z.object({
 });
 
 /**
- * Declarative `eval` node (P2; docs/evals-p2.md). Scores a target value already
+ * Declarative `eval` node. Scores a target value already
  * in the run context with a list of scorers and records the result. Floor
  * scorers (`gate`/`assert`) run first and short-circuit the judge on failure
  * (the combination model — RFC §2); soft scorers (`trajectory`/`judge`) are
@@ -371,7 +338,7 @@ const TerminateNodeSchema = z.object({
 });
 
 /**
- * Phase 3 — fan-out / parallel subagents.
+ * Fan-out / parallel subagents.
  *
  * `fanOut` evaluates `over` to an array and runs the subgraph (entered at the
  * node id in `subgraph`) once per element. Each branch executes in a sealed
@@ -433,7 +400,7 @@ const FanOutNodeSchema = z.object({
 });
 
 /**
- * Phase 6 — `shell`: run a user-authored command in an ephemeral, locked-down
+ * `shell`: run a user-authored command in an ephemeral, locked-down
  * container (separate from the long-lived workspace used by agents + gates).
  *
  * Authoring requires the `workflow:write:shell` permission (team admin only;
@@ -459,16 +426,21 @@ const ShellNodeSchema = z.object({
   /** Shell command run inside the container. Required; no defaults. */
   command: z.string().min(1).max(8000),
   /**
-   * Optional config block. Currently used by the editor to surface the same
-   * fields under `node.config` for the form-based inspector; the runtime
-   * reads the typed fields below.
+   * Optional config block for the editor's form-based inspector. The runtime
+   * never reads it: a shell node runs from its typed fields below, and only
+   * `inputs.command`, `inputs.image` and `inputs.branch` are read from the
+   * resolved `inputs` (a string `command` or `image` there overrides the typed
+   * field; `branch` selects the branch to clone). Any other key in `config`
+   * or `inputs` is ignored.
    */
   config: z.record(z.string(), z.unknown()).optional(),
   /** CPU cap in fractional units (Docker `--cpus`). Default 1.0. */
   cpus: z.number().min(0.1).max(8).optional(),
   /**
    * Docker image to run the command in. Must be on the team's effective
-   * allowlist (built-in defaults + per-team additions) at workflow-start.
+   * allowlist (built-in defaults + per-team additions). Checked when a version is saved through the template API (bundle installs and built-in
+   * seeding are not checked, and an `inputs.image` override is not visible then), and always
+   * inside the activity at run time against the team's current allowlist.
    */
   image: z.string().min(1).max(256),
   inputs: InputMapSchema.optional(),
@@ -494,7 +466,7 @@ const ShellNodeSchema = z.object({
 });
 
 /**
- * P4/WS4 — `containerStep`: a container-contract coded capability. Runs an image
+ * `containerStep`: a container-contract coded capability. Runs an image
  * in the same locked-down ephemeral container as `shell`, but with a structured
  * JSON contract: the node's resolved `inputs` are passed as JSON on the
  * `CONTAINER_STEP_INPUT` env var, and the container is expected to print a JSON
@@ -508,7 +480,11 @@ const ContainerStepNodeSchema = z.object({
   /** Optional command override (`sh -c`); defaults to the image entrypoint. */
   command: z.string().max(8000).optional(),
   cpus: z.number().min(0.1).max(8).optional(),
-  /** Docker image to run; must be on the team's effective allowlist at run start. */
+  /**
+   * Docker image to run; must be on the team's effective allowlist. Checked when a version is saved through the template API (bundle installs and built-in
+   * seeding are not checked, and an `inputs.image` override is not visible then), and always
+   * inside the activity at run time against the team's current allowlist.
+   */
   image: z.string().min(1).max(256),
   inputs: InputMapSchema.optional(),
   memory: z
@@ -532,7 +508,7 @@ const ContainerStepNodeSchema = z.object({
   startToCloseTimeout: z.string().optional(),
   timeoutMs: z.number().int().min(1000).max(3_600_000).optional(),
   /**
-   * How the container returns its result (P5):
+   * How the container returns its result:
    *  - `'stdout'` (default): one JSON object printed to stdout.
    *  - `'ndjson'`: a stream of newline-delimited JSON events; the result is the
    *    last `{ type: 'result', result }` event (or last bare JSON line), and all

@@ -10,7 +10,10 @@
  * + name-collision rules live in the shared {@link persistDraftTemplate} activity.
  *
  * Best-effort: returns `null` on any failure so the channel turn can post a
- * friendly "couldn't build that" note instead of erroring the whole run.
+ * friendly "couldn't build that" note instead of erroring the whole run, and
+ * `{ status: 'shell_refused' }` when the generated spec runs code an author wrote
+ * (container code or an authored gate command), so the turn can point at the
+ * canvas instead of asking for more detail.
  */
 
 import { prisma } from '@auto-swe/shared/db';
@@ -37,9 +40,14 @@ export interface CreateChannelWorkflowDraftResult {
   summary: string;
 }
 
+/** The generated spec runs authored code, which only the canvas may author. */
+export interface CreateChannelWorkflowDraftRefused {
+  status: 'shell_refused';
+}
+
 export async function createChannelWorkflowDraft(
   input: CreateChannelWorkflowDraftInput
-): Promise<CreateChannelWorkflowDraftResult | null> {
+): Promise<CreateChannelWorkflowDraftResult | CreateChannelWorkflowDraftRefused | null> {
   try {
     heartbeat('channel workflow draft: generating');
     const generated = await generateWorkflowSpec({
@@ -53,12 +61,13 @@ export async function createChannelWorkflowDraft(
       teamId: input.teamId,
     });
     if (!persisted) {
-      // null = the spec contained shell/containerStep nodes the channel path
-      // can't author (name collisions are handled by suffix-retry, not null).
+      // null = the spec runs authored code (container code or an authored gate
+      // command) the channel path can't author (name collisions are handled by
+      // suffix-retry, not null).
       console.warn(
-        `[channelAssistant] could not persist channel-authored draft for ${input.channelId} (shell/containerStep nodes)`
+        `[channelAssistant] could not persist channel-authored draft for ${input.channelId} (authored code)`
       );
-      return null;
+      return { status: 'shell_refused' };
     }
     // Link the draft to the thread so a follow-up "refine" targets it. Best-effort:
     // a failure here just means the next refine reports "nothing to refine yet".

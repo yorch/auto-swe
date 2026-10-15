@@ -20,6 +20,7 @@ import {
   readInterpreterLimits,
   runSpec,
   SignalSlots,
+  waitForSignal,
 } from '../lib/workflowEngine.js';
 import type { NodeTag } from './nodeTag.js';
 import { runWithNodeTag } from './nodeTagScope.js';
@@ -256,17 +257,27 @@ export async function RunnableWorkflow(input: RunnableWorkflowInput): Promise<Wo
       // reaches its wait node (a CI webhook racing the PR-open step is the
       // common case) is kept and satisfies that wait. `take()` consumes the
       // payload, so a wait never sees a value an earlier wait already used.
+      //
+      // One delivery, one consumer: when concurrent fan-out branches wait on
+      // the same name, one delivery wakes them all but only one gets it; the
+      // rest keep waiting out their own timeout (`waitForSignal`, patched).
       ensureSignalHandler(name);
-      const received = await condition(() => slots.hasPending(name), timeout as Duration);
-      // A wait the interpreter abandoned (block-mode cancelled its fan-out
-      // branch) still resolves here when a payload arrives, because the
-      // condition is not cancelled — that keeps the commands identical. It must
-      // not take the payload a later wait on the same name is owed. `take()`
-      // emits no command; the patch gates the payload staying in the slot.
-      if (received && opts?.abandoned?.() && patched(ORPHANED_WAIT_PATCH)) {
-        return undefined;
-      }
-      return received ? slots.take(name) : undefined;
+      return waitForSignal(
+        slots,
+        name,
+        timeout,
+        {
+          condition: (fn, wait) => condition(fn, wait as Duration),
+          now: () => Date.now(),
+          patched: (id) => patched(id),
+        },
+        // A wait the interpreter abandoned (block-mode cancelled its fan-out
+        // branch) still resolves when a payload arrives, because the condition
+        // is not cancelled — that keeps the commands identical. It must not
+        // take the payload a later wait on the same name is owed. `take()`
+        // emits no command; the patch gates the payload staying in the slot.
+        () => Boolean(opts?.abandoned?.()) && patched(ORPHANED_WAIT_PATCH)
+      );
     },
   };
 

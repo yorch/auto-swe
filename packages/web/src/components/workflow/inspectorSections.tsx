@@ -8,8 +8,8 @@
  */
 
 import type { Node as SpecNode, StepMetadata } from '@auto-swe/shared/workflow';
-import { isValidWaitDuration } from '@auto-swe/shared/workflow';
-import { useEffect, useRef, useState } from 'react';
+import { BindingSchema, isValidWaitDuration } from '@auto-swe/shared/workflow';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
@@ -21,10 +21,11 @@ import { Textarea } from '@/components/ui/Textarea';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useMcpConnections } from '@/hooks/useMcpConnections';
 import { errMsg } from '@/lib/errors';
-import { isRecord } from '@/lib/utils';
 import { CONTAINER_AUTHORING_RULE } from './containerNodes';
 import {
   BindingField,
+  BindingRow,
+  bindingFitsForm,
   InputsBindingsSection,
   InspectorNote,
   InspectorSubsection,
@@ -89,7 +90,12 @@ export function StepConfigSection({
           This step is not in the registry, so its settings cannot be checked
         </Alert>
       )}
-      <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v })}
+        onError={node.onError}
+        onOnErrorChange={(v) => onChange({ ...node, onError: v })}
+        value={node.onFail}
+      />
     </div>
   );
 }
@@ -157,7 +163,6 @@ export function FanOutSection({
   node: Extract<SpecNode, { type: 'fanOut' }>;
   onChange: (next: SpecNode) => void;
 }) {
-  const overFrom = node.over && 'from' in node.over ? (node.over as { from: string }).from : '';
   const [exportsText, setExportsText] = useState<string>(() => (node.exports ?? []).join('\n'));
   // Re-seed only when the node's own exports actually change. Keyed on the
   // serialized value rather than the array identity, so a parent re-render that
@@ -174,14 +179,16 @@ export function FanOutSection({
 
   return (
     <div className="space-y-3">
-      <Input
-        className="font-mono text-xs"
-        compact
-        hint="Context path to the array of items to run in parallel"
-        label="Items (context path)"
-        onChange={(e) => onChange({ ...node, over: { from: e.target.value } })}
-        placeholder="ctx.targets"
-        value={overFrom}
+      <BindingField
+        binding={node.over}
+        hint="The array of items to run in parallel: a context path, an expression, or a literal array"
+        label="Items"
+        onChange={(over) => {
+          // Editing the path of a `{ from, default }` keeps its default.
+          const prev = node.over as { default?: unknown } | undefined;
+          const keep = prev && 'default' in prev && 'from' in over;
+          onChange({ ...node, over: keep ? { ...over, default: prev.default } : over });
+        }}
       />
       <Input
         compact
@@ -340,7 +347,12 @@ export function ShellSection({
           value={node.cpus ?? ''}
         />
       </div>
-      <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v })}
+        onError={node.onError}
+        onOnErrorChange={(v) => onChange({ ...node, onError: v })}
+        value={node.onFail}
+      />
     </div>
   );
 }
@@ -471,7 +483,12 @@ export function ContainerStepSection({
         type="number"
         value={node.timeoutMs ?? ''}
       />
-      <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v })}
+        onError={node.onError}
+        onOnErrorChange={(v) => onChange({ ...node, onError: v })}
+        value={node.onFail}
+      />
     </div>
   );
 }
@@ -531,45 +548,237 @@ export function SetSection({
   values: Record<string, unknown>;
   onChange: (v: Record<string, unknown>) => void;
 }) {
-  const serialized = JSON.stringify(values, null, 2);
+  const entries = Object.entries(values);
+  // Positional keys: a rename must not remount the row the user is typing in.
+  const rowKeys = useListKeys(entries.length);
+  const [keyError, setKeyError] = useState<string | null>(null);
+
+  const setValue = (key: string, next: unknown) => onChange({ ...values, [key]: next });
+  const removeRow = (key: string) => {
+    onChange(Object.fromEntries(entries.filter(([k]) => k !== key)));
+  };
+  const addRow = () => {
+    let k = 'value';
+    let n = 2;
+    while (Object.hasOwn(values, k)) {
+      k = `value_${n++}`;
+    }
+    onChange({ ...values, [k]: { from: '' } });
+  };
+  // Rebuilds the record so a renamed row keeps its position. False: not applied.
+  const renameRow = (oldKey: string, rawKey: string) => {
+    const newKey = rawKey.trim();
+    if (!newKey || newKey === oldKey) {
+      setKeyError(null);
+      return false;
+    }
+    if (Object.hasOwn(values, newKey)) {
+      setKeyError(`“${newKey}” is already set by another row`);
+      return false;
+    }
+    setKeyError(null);
+    onChange(Object.fromEntries(entries.map(([k, v]) => [k === oldKey ? newKey : k, v])));
+    return true;
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs leading-relaxed text-paper-400">
+          Each row writes a value to a context path.
+        </p>
+        <Button onClick={addRow} size="sm" variant="ghost">
+          <Icon name="plus" size={13} />
+          Add
+        </Button>
+      </div>
+      {entries.length === 0 && (
+        <InspectorNote>No values. Add a row to set a context path.</InspectorNote>
+      )}
+      {keyError && (
+        <Alert className="text-xs" variant="warning">
+          {keyError}
+        </Alert>
+      )}
+      {entries.map(([key, val], i) => (
+        <SetRow
+          key={rowKeys[i]}
+          keyName={key}
+          onChange={(next) => setValue(key, next)}
+          onRemove={() => removeRow(key)}
+          onRename={(next) => renameRow(key, next)}
+          value={val}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** One `set` row: the binding form when it can hold the value exactly, else JSON. */
+function SetRow({
+  keyName,
+  value,
+  onChange,
+  onRename,
+  onRemove,
+}: {
+  keyName: string;
+  value: unknown;
+  onChange: (next: unknown) => void;
+  onRename: (next: string) => boolean;
+  onRemove: () => void;
+}) {
+  const keyControl = <RowKeyInput keyName={keyName} onCommit={onRename} />;
+  return bindingFitsForm(value) ? (
+    <BindingRow
+      binding={value}
+      keyControl={keyControl}
+      onChange={onChange}
+      onRemove={onRemove}
+      removeLabel={`Remove ${keyName}`}
+    />
+  ) : (
+    <RawJsonRow
+      keyControl={keyControl}
+      keyName={keyName}
+      onChange={onChange}
+      onRemove={onRemove}
+      value={value}
+    />
+  );
+}
+
+/**
+ * The context-path field of a `set` row. Holds its own draft and commits on
+ * blur; `onCommit` returns false when the edit was refused, which restores the
+ * stored name. Re-syncs when the stored name changes under it (a row removed
+ * above this one shifts which key this positional row shows).
+ */
+function RowKeyInput({
+  keyName,
+  onCommit,
+}: {
+  keyName: string;
+  onCommit: (next: string) => boolean;
+}) {
+  const [draft, setDraft] = useState(keyName);
+  useEffect(() => {
+    setDraft(keyName);
+  }, [keyName]);
+  return (
+    <Input
+      aria-label="Context path"
+      className="font-mono text-xs"
+      compact
+      onBlur={() => {
+        if (!onCommit(draft)) {
+          setDraft(keyName);
+        }
+      }}
+      onChange={(e) => setDraft(e.target.value)}
+      placeholder="context path"
+      value={draft}
+    />
+  );
+}
+
+/**
+ * A `set` row whose value the path / expression / literal form cannot hold
+ * exactly. Shown as the JSON it is, so opening the inspector never rewrites it.
+ */
+function RawJsonRow({
+  keyControl,
+  keyName,
+  value,
+  onChange,
+  onRemove,
+}: {
+  keyControl: ReactNode;
+  keyName: string;
+  value: unknown;
+  onChange: (next: unknown) => void;
+  onRemove: () => void;
+}) {
+  const id = useId();
+  const serialized = JSON.stringify(value, null, 2) ?? 'null';
   const [draft, setDraft] = useState(serialized);
   const [err, setErr] = useState<string | null>(null);
-
-  // `values` is a fresh object on every parent render, so re-seeding on its
-  // identity reset the JSON the user was mid-way through typing. Key on the
-  // serialized value instead: it only changes when the node's values really do.
+  // Re-seed only when the stored value really changes, not on every parent render.
   const seededRef = useRef(serialized);
   useEffect(() => {
     if (seededRef.current !== serialized) {
       seededRef.current = serialized;
       setDraft(serialized);
+      setErr(null);
     }
   }, [serialized]);
 
+  const commit = () => {
+    if (draft === serialized) {
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(draft);
+    } catch (e) {
+      setErr(errMsg(e, 'invalid JSON'));
+      return;
+    }
+    if (!BindingSchema.safeParse(parsed).success) {
+      setErr('Must be { "from": … }, { "literal": … } or { "expr": … }');
+      return;
+    }
+    setErr(null);
+    onChange(parsed);
+  };
+
   return (
-    <Textarea
-      className="h-40 font-mono text-xs"
+    <div className="space-y-1.5 rounded-md border border-ink-600 bg-ink-900/40 p-2">
+      <div className="flex items-center gap-1.5">
+        <div className="min-w-0 flex-1">{keyControl}</div>
+        <Button
+          aria-label={`Remove ${keyName}`}
+          className="px-2 hover:text-brick-400"
+          onClick={onRemove}
+          size="sm"
+          title="Remove row"
+          variant="ghost"
+        >
+          <Icon name="close" size={14} />
+        </Button>
+      </div>
+      <Textarea
+        aria-label={`Value for ${keyName} (JSON)`}
+        className="h-20 font-mono text-xs"
+        compact
+        error={err ?? undefined}
+        hint="This binding has no form; edit it as JSON. Applied when you leave the field"
+        id={id}
+        onBlur={commit}
+        onChange={(e) => setDraft(e.target.value)}
+        spellCheck={false}
+        value={draft}
+      />
+    </div>
+  );
+}
+
+/** `spanName` of an agent node: labels its trace span and its usage and cost records. */
+function SpanNameField({
+  node,
+  onChange,
+}: {
+  node: Extract<SpecNode, { type: 'agent' }>;
+  onChange: (next: SpecNode) => void;
+}) {
+  return (
+    <Input
       compact
-      error={err ?? undefined}
-      hint="A JSON object; applied when you leave the field"
-      id="set-values"
-      label="Values (JSON)"
-      onBlur={() => {
-        try {
-          const parsed: unknown = JSON.parse(draft);
-          if (isRecord(parsed)) {
-            setErr(null);
-            onChange(parsed);
-          } else {
-            setErr('Must be a JSON object');
-          }
-        } catch (e) {
-          setErr(errMsg(e, 'invalid JSON'));
-        }
-      }}
-      onChange={(e) => setDraft(e.target.value)}
-      spellCheck={false}
-      value={draft}
+      hint="Optional. Labels this node’s trace span and usage records; defaults to llm.agent_node"
+      id="agent-span-name"
+      label="Span name"
+      onChange={(e) => onChange({ ...node, spanName: e.target.value || undefined })}
+      value={node.spanName ?? ''}
     />
   );
 }
@@ -611,13 +820,19 @@ export function AgentSection({
         spellCheck={false}
         value={node.systemPrompt ?? ''}
       />
+      <SpanNameField node={node} onChange={onChange} />
       <Checkbox
         checked={node.workspace === true}
         hint="Clones the run’s repository for the agent to read; nothing it changes is kept. Runs on the agent’s own runtime"
         label="Run in a checkout of the repository"
         onChange={(e) => onChange({ ...node, workspace: e.target.checked || undefined })}
       />
-      <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v })}
+        onError={node.onError}
+        onOnErrorChange={(v) => onChange({ ...node, onError: v })}
+        value={node.onFail}
+      />
     </div>
   );
 }
@@ -681,7 +896,12 @@ export function McpSection({
         onChange={(e) => onChange({ ...node, tool: e.target.value })}
         value={node.tool}
       />
-      <OnFailSection onChange={(v) => onChange({ ...node, onFail: v })} value={node.onFail} />
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v })}
+        onError={node.onError}
+        onOnErrorChange={(v) => onChange({ ...node, onError: v })}
+        value={node.onFail}
+      />
     </div>
   );
 }
@@ -1088,22 +1308,13 @@ function scorerFor(kind: ScorerKind, previous: Scorer): Scorer {
         kind,
       };
     case 'judge':
-      return {
-        ...('baselineFrom' in previous && previous.baselineFrom
-          ? { baselineFrom: previous.baselineFrom }
-          : {}),
-        kind,
-        rubricRef: 'rubricRef' in previous ? previous.rubricRef : '',
-      };
+      return { kind, rubricRef: 'rubricRef' in previous ? previous.rubricRef : '' };
     case 'pii':
       return { kind };
     case 'policy':
       return { kind, riskClass: 'riskClass' in previous ? previous.riskClass : 'external_write' };
     case 'trajectory':
-      return {
-        ...('from' in previous && typeof previous.from === 'string' ? { from: previous.from } : {}),
-        kind,
-      };
+      return { kind };
   }
 }
 
@@ -1220,30 +1431,14 @@ export function EvalSection({
               />
             )}
             {scorer.kind === 'judge' && (
-              <>
-                <Input
-                  aria-label={`Scorer ${i + 1} rubric`}
-                  compact
-                  hint="Name of a versioned EvalRubric, e.g. code-review-quality@3"
-                  onChange={(e) => setScorer(i, { ...scorer, rubricRef: e.target.value })}
-                  placeholder="code-review-quality@3"
-                  value={scorer.rubricRef}
-                />
-                <Input
-                  aria-label={`Scorer ${i + 1} baseline`}
-                  className="font-mono text-xs"
-                  compact
-                  hint="Optional context path holding the baseline to compare against"
-                  onChange={(e) =>
-                    setScorer(i, {
-                      ...scorer,
-                      ...(e.target.value ? { baselineFrom: e.target.value } : {}),
-                    })
-                  }
-                  placeholder="nodes.baseline.output.diff"
-                  value={scorer.baselineFrom ?? ''}
-                />
-              </>
+              <Input
+                aria-label={`Scorer ${i + 1} rubric`}
+                compact
+                hint="Name of an EvalRubric, e.g. code-review-quality"
+                onChange={(e) => setScorer(i, { ...scorer, rubricRef: e.target.value })}
+                placeholder="code-review-quality"
+                value={scorer.rubricRef}
+              />
             )}
             {scorer.kind === 'policy' && (
               <Input
@@ -1253,19 +1448,6 @@ export function EvalSection({
                 onChange={(e) => setScorer(i, { ...scorer, riskClass: e.target.value })}
                 placeholder="external_write"
                 value={scorer.riskClass}
-              />
-            )}
-            {scorer.kind === 'trajectory' && (
-              <Input
-                aria-label={`Scorer ${i + 1} trace source`}
-                className="font-mono text-xs"
-                compact
-                hint="Optional context path holding the trace to score"
-                onChange={(e) =>
-                  setScorer(i, { ...scorer, ...(e.target.value ? { from: e.target.value } : {}) })
-                }
-                placeholder="nodes.implement.output.traceRef"
-                value={scorer.from ?? ''}
               />
             )}
           </div>
@@ -1284,6 +1466,12 @@ export function EvalSection({
         }
         label="Judge is advisory"
         onChange={(e) => onChange({ ...node, judgeAdvisory: e.target.checked ? undefined : false })}
+      />
+      <OnFailSection
+        onChange={(v) => onChange({ ...node, onFail: v })}
+        onError={node.onError}
+        onOnErrorChange={(v) => onChange({ ...node, onError: v })}
+        value={node.onFail}
       />
       <InspectorNote>
         Floor scorers (gate, assert, policy, pii) run first and short-circuit the judge when one

@@ -148,6 +148,102 @@ describe('eval node packing', () => {
   });
 });
 
+describe('eval node onFail', () => {
+  // The runEvalNode activity reports `passed: !decision.blocked` and a summary,
+  // so a blocked eval takes the same gate-failure path as any gate-style step.
+  const blocked = {
+    decision: { blocked: true, reason: 'floor failed: gate:runTests' },
+    floorPassed: false,
+    passed: false,
+    perAxis: { 'gate:runTests': 0 },
+    score: 0,
+    summary: 'eval blocked: floor failed: gate:runTests',
+  };
+  const clear = {
+    decision: { blocked: false, reason: 'floor passed; soft axes advisory' },
+    floorPassed: true,
+    passed: true,
+    perAxis: { 'gate:runTests': 1 },
+    score: 1,
+    summary: 'floor passed; soft axes advisory',
+  };
+  const evalSpec = (onFail?: unknown) =>
+    parseWorkflowSpec({
+      entry: 'score',
+      name: 'eval-onfail',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        rejected: { status: 'FAILED', type: 'terminate' },
+        route: {
+          expr: 'nodes.score.output.decision.blocked == true',
+          onFalse: 'done',
+          onTrue: 'rejected',
+          type: 'cond',
+        },
+        score: {
+          next: 'route',
+          ...(onFail !== undefined ? { onFail } : {}),
+          scorers: [{ gate: 'runTests', kind: 'gate' }],
+          target: { from: 'nodes.implement.output.diff' },
+          type: 'eval',
+        },
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+
+  it('onFail=block (default): a blocked eval fails the run, output kept', async () => {
+    const ctx = baseCtx();
+    const { dispatcher, records } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runEvalNode: blocked },
+    });
+    await expect(runSpec(evalSpec(), ctx, dispatcher)).rejects.toThrow(
+      'eval blocked: floor failed: gate:runTests'
+    );
+    expect(records).toContainEqual(expect.objectContaining({ nodeId: 'score', status: 'FAILED' }));
+    // The output is written before the block throws, so the failure is inspectable.
+    expect((ctx.nodes as Record<string, { output: unknown }>).score.output).toEqual(blocked);
+  });
+
+  it('onFail=warn: a blocked eval continues and a cond reads decision.blocked', async () => {
+    const { dispatcher, records } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runEvalNode: blocked },
+    });
+    const result = await runSpec(evalSpec('warn'), baseCtx(), dispatcher);
+    expect(records).toContainEqual(expect.objectContaining({ nodeId: 'score', status: 'FAILED' }));
+    // The cond routed on the bound output, to the FAILED terminate.
+    expect(result.status).toBe('FAILED');
+  });
+
+  it('onFail.retry: re-runs a blocked eval before falling back to block', async () => {
+    let calls = 0;
+    const { dispatcher } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: {
+        runEvalNode: () => {
+          calls++;
+          return blocked;
+        },
+      },
+    });
+    await expect(runSpec(evalSpec({ retry: 1 }), baseCtx(), dispatcher)).rejects.toThrow(
+      'eval blocked'
+    );
+    expect(calls).toBe(2);
+  });
+
+  it('an eval that is not blocked passes and routes on its score as before', async () => {
+    const { dispatcher, records } = makeDispatcher({
+      signalQueue: {},
+      stepOutputs: { runEvalNode: clear },
+    });
+    const result = await runSpec(evalSpec(), baseCtx(), dispatcher);
+    expect(result.status).toBe('SUCCESS');
+    expect(records).toContainEqual(expect.objectContaining({ nodeId: 'score', status: 'PASSED' }));
+  });
+});
+
 describe('runSpec', () => {
   it('walks a trivial linear spec', async () => {
     const spec = parseWorkflowSpec({

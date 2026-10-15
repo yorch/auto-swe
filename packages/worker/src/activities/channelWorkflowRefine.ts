@@ -14,12 +14,15 @@
  * Best-effort + status-typed so the workflow can post a precise message:
  *   - `no_target`  — this thread hasn't generated a workflow to refine.
  *   - `refined`    — a new version was saved.
- *   - `failed`     — generation/validation failed, or the change introduced
- *                    shell nodes (never authorable on the channel path).
+ *   - `shell_refused` — the current draft or the refinement runs code an author
+ *                    wrote (container code or an authored gate command), which the
+ *                    channel path never authors; the change belongs on the canvas.
+ *   - `failed`     — generation/validation failed.
  */
 
 import { prisma } from '@auto-swe/shared/db';
 import {
+  hasAuthoredCode,
   migrateSpec,
   parseWorkflowSpec,
   SPEC_SCHEMA_VERSION,
@@ -37,7 +40,7 @@ export interface RefineChannelWorkflowDraftInput {
 }
 
 export interface RefineChannelWorkflowDraftResult {
-  status: 'refined' | 'no_target' | 'failed';
+  status: 'refined' | 'no_target' | 'shell_refused' | 'failed';
   /** Present when `status === 'refined'`. */
   name?: string;
   version?: number;
@@ -119,6 +122,13 @@ export async function refineChannelWorkflowDraft(
       return { status: 'failed' };
     }
 
+    // A draft edited on the canvas may already carry container code or an authored
+    // command. The refinement returns the full spec, so it would carry them too and be
+    // refused below — say so now rather than spend a generation on it.
+    if (hasAuthoredCode(baseSpec)) {
+      return { status: 'shell_refused' };
+    }
+
     heartbeat('channel workflow refine: generating');
     const generated = await generateWorkflowSpec({
       allowShell: false,
@@ -128,13 +138,11 @@ export async function refineChannelWorkflowDraft(
     });
 
     // The channel path is never shell-authorized (no RBAC + no audit here), so a
-    // refinement that introduces shell/containerStep nodes is refused — the user
-    // must make that change on the canvas.
-    const hasShellNode = Object.values(generated.spec.nodes).some(
-      (n) => n.type === 'shell' || n.type === 'containerStep'
-    );
-    if (hasShellNode) {
-      return { status: 'failed' };
+    // refinement that introduces container code (a `shell` or `containerStep` node, or
+    // a `step` naming `runContainerStep`) or an authored gate command is refused; the
+    // user must make that change on the canvas.
+    if (hasAuthoredCode(generated.spec)) {
+      return { status: 'shell_refused' };
     }
 
     // Pin the name to the existing template so a refinement can't rename it.

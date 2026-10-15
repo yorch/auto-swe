@@ -111,6 +111,14 @@ const CHANNEL_WORKFLOW_DRAFT_FAILED_TEXT =
   ":warning: I couldn't turn that into a valid workflow. Try describing it with more " +
   'detail — which steps or agents should run, and in what order.';
 
+// Posted when a `generateWorkflow` or `refineWorkflow` intent was refused because the
+// workflow runs code an author wrote (a shell or container step, or a custom gate
+// command). More detail cannot fix that: the channel path never authors it.
+const CHANNEL_WORKFLOW_SHELL_REFUSED_TEXT =
+  ':no_entry: That workflow runs commands or containers (a shell or container step, or a ' +
+  'custom gate command), which I cannot author from a channel. Make that part on the ' +
+  'canvas in the *Workflow library*.';
+
 // Posted when a `refineWorkflow` intent has no draft in this thread to change.
 const CHANNEL_WORKFLOW_REFINE_NO_TARGET_TEXT =
   ":information_source: I don't have a workflow drafted in this thread yet. Ask me to " +
@@ -273,11 +281,17 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
         teamId: input.teamId,
         threadTs: input.threadTs,
       });
-      const text = draft
-        ? `:sparkles: I drafted a workflow *"${draft.name}"* for you.` +
+      let text: string;
+      if (!draft) {
+        text = CHANNEL_WORKFLOW_DRAFT_FAILED_TEXT;
+      } else if ('status' in draft) {
+        text = CHANNEL_WORKFLOW_SHELL_REFUSED_TEXT;
+      } else {
+        text =
+          `:sparkles: I drafted a workflow *"${draft.name}"* for you.` +
           `${draft.summary ? ` ${draft.summary}` : ''}` +
-          '\nReview and activate it in the *Workflow library* on the dashboard before running it.'
-        : CHANNEL_WORKFLOW_DRAFT_FAILED_TEXT;
+          '\nReview and activate it in the *Workflow library* on the dashboard before running it.';
+      }
       await deliver(input, placeholderTs, text);
       return 'SUCCESS';
     }
@@ -305,6 +319,8 @@ async function runTurn(input: ChannelAssistantTurnInput): Promise<'SUCCESS' | 'F
           '\nReview the new version in the *Workflow library* before activating.';
       } else if (result.status === 'no_target') {
         text = CHANNEL_WORKFLOW_REFINE_NO_TARGET_TEXT;
+      } else if (result.status === 'shell_refused') {
+        text = CHANNEL_WORKFLOW_SHELL_REFUSED_TEXT;
       } else {
         text = CHANNEL_WORKFLOW_REFINE_FAILED_TEXT;
       }

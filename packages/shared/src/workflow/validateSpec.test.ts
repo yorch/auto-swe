@@ -55,6 +55,112 @@ describe('validateSpec fan-out closure', () => {
   });
 });
 
+describe('validateSpec SIGNAL_SHARED_ACROSS_BRANCHES', () => {
+  const wait = {
+    name: 'ciPipelineSignal',
+    onReceive: 'ok',
+    onTimeout: 'late',
+    timeout: '1h',
+    type: 'signal',
+  };
+  const fanWithSignal = (fan: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    spec(
+      {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fan: { join: 'done', over: { literal: [1, 2] }, subgraph: 'prep', type: 'fanOut', ...fan },
+        late: { status: 'FAILED', type: 'terminate' },
+        ok: { status: 'SUCCESS', type: 'terminate' },
+        prep: { next: 'wait', step: 'executeImplementation', type: 'step' },
+        wait,
+        ...extra,
+      },
+      'fan'
+    );
+  const shared = (s: ReturnType<typeof spec>) =>
+    validateSpec(s).warnings.filter((w) => w.code === 'SIGNAL_SHARED_ACROSS_BRANCHES');
+
+  it('warns on a signal reachable inside a fan-out with the default concurrency', () => {
+    const found = shared(fanWithSignal({}));
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatchObject({ field: 'name', nodeId: 'wait', severity: 'warning' });
+    expect(found[0]?.message).toContain("'ciPipelineSignal'");
+    expect(found[0]?.message).toContain("fan-out 'fan'");
+    expect(found[0]?.message).toContain('wakes only one branch');
+  });
+
+  it('warns when the fan-out runs more than one branch at a time', () => {
+    expect(shared(fanWithSignal({ concurrency: 3 }))).toHaveLength(1);
+  });
+
+  it('is quiet when the fan-out runs its branches one at a time', () => {
+    expect(shared(fanWithSignal({ concurrency: 1 }))).toEqual([]);
+  });
+
+  it('is quiet for a signal in the main flow, outside any branch', () => {
+    const report = validateSpec(
+      spec(
+        {
+          after: wait,
+          branch: { step: 'executeImplementation', type: 'step' },
+          fan: { join: 'after', over: { literal: [1, 2] }, subgraph: 'branch', type: 'fanOut' },
+          late: { status: 'FAILED', type: 'terminate' },
+          ok: { status: 'SUCCESS', type: 'terminate' },
+        },
+        'fan'
+      )
+    );
+    expect(report.warnings.map((w) => w.code)).not.toContain('SIGNAL_SHARED_ACROSS_BRANCHES');
+  });
+
+  it('warns once for a signal inside a sequential fan-out nested in a concurrent one', () => {
+    const report = validateSpec(
+      spec(
+        {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          inner: {
+            concurrency: 1,
+            join: 'innerDone',
+            over: { literal: [1, 2] },
+            subgraph: 'wait',
+            type: 'fanOut',
+          },
+          innerDone: { status: 'SUCCESS', type: 'terminate' },
+          late: { status: 'FAILED', type: 'terminate' },
+          ok: { status: 'SUCCESS', type: 'terminate' },
+          outer: { join: 'done', over: { literal: [1, 2] }, subgraph: 'inner', type: 'fanOut' },
+          wait,
+        },
+        'outer'
+      )
+    );
+    const found = report.warnings.filter((w) => w.code === 'SIGNAL_SHARED_ACROSS_BRANCHES');
+    expect(found).toHaveLength(1);
+    expect(found[0]?.message).toContain("fan-out 'outer'");
+  });
+
+  it('does not warn on HITL nodes, which wait on a per-branch signal name', () => {
+    const report = validateSpec(
+      spec(
+        {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          fan: { join: 'done', over: { literal: [1, 2] }, subgraph: 'gate', type: 'fanOut' },
+          gate: {
+            onApprove: 'ok',
+            onReject: 'ok',
+            onTimeout: 'ok',
+            timeout: '24h',
+            title: 'Approve?',
+            type: 'humanApproval',
+          },
+          ok: { status: 'SUCCESS', type: 'terminate' },
+        },
+        'fan'
+      )
+    );
+    expect(report.warnings.map((w) => w.code)).not.toContain('SIGNAL_SHARED_ACROSS_BRANCHES');
+  });
+});
+
 describe('validateSpec IGNORED_FIELD', () => {
   it('warns on retry/timeout fields the interpreter never reads, and still parses them', () => {
     const report = validateSpec(
@@ -77,6 +183,72 @@ describe('validateSpec IGNORED_FIELD', () => {
       'retry',
       'startToCloseTimeout',
     ]);
+  });
+
+  it('warns on eval-node fields no scorer reads', () => {
+    const report = validateSpec(
+      spec({
+        a: {
+          inputs: { diff: { from: 'input.diff' } },
+          next: 'done',
+          scorers: [
+            { from: 'nodes.x.traces', kind: 'trajectory' },
+            { baselineFrom: 'nodes.x.baseline', kind: 'judge', rubricRef: 'code-review-quality' },
+          ],
+          target: { from: 'input.diff' },
+          type: 'eval',
+        },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      })
+    );
+    const ignored = report.warnings.filter((w) => w.code === 'IGNORED_FIELD');
+    expect(ignored.map((w) => w.field).sort()).toEqual([
+      'inputs',
+      'scorers[0].from',
+      'scorers[1].baselineFrom',
+    ]);
+    expect(ignored.every((w) => w.nodeId === 'a' && w.severity === 'warning')).toBe(true);
+  });
+
+  it('warns on spanName for mcp and eval nodes, which ignore it, but not for agent', () => {
+    const report = validateSpec(
+      spec(
+        {
+          agent: { agentRef: 'planner', next: 'tool', spanName: 'mine', type: 'agent' },
+          done: { status: 'SUCCESS', type: 'terminate' },
+          score: {
+            next: 'done',
+            scorers: [{ kind: 'pii' }],
+            spanName: 'mine',
+            target: { from: 'input.diff' },
+            type: 'eval',
+          },
+          tool: { connectionRef: 'c', next: 'score', spanName: 'mine', tool: 't', type: 'mcp' },
+        },
+        'agent'
+      )
+    );
+    const ignored = report.warnings.filter((w) => w.code === 'IGNORED_FIELD');
+    expect(ignored.map((w) => [w.nodeId, w.field]).sort()).toEqual([
+      ['score', 'spanName'],
+      ['tool', 'spanName'],
+    ]);
+  });
+
+  it('does not warn on an eval node that sets none of them, or an empty inputs map', () => {
+    const report = validateSpec(
+      spec({
+        a: {
+          inputs: {},
+          next: 'done',
+          scorers: [{ kind: 'trajectory' }, { kind: 'judge', rubricRef: 'code-review-quality' }],
+          target: { from: 'input.diff' },
+          type: 'eval',
+        },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      })
+    );
+    expect(report.warnings.filter((w) => w.code === 'IGNORED_FIELD')).toEqual([]);
   });
 });
 

@@ -74,6 +74,18 @@ turns pass through an addressed-to-me intent gate: a turn the model judges is no
 assistant returns `suppressed` and posts nothing. Steering a running task always takes precedence
 over conversational follow-up.
 
+**Workflow drafts.** The `generateWorkflow` and `refineWorkflow` tools only record an intent: a
+request to create an automation becomes a draft template, and a follow-up in the thread refines
+that draft. After the turn, fixed workflow code performs the generation or refinement and saves a
+DRAFT template (or a new, unpromoted version), which is never active until a person activates it. Both
+paths run with `allowShell: false`, and a spec that runs code an author wrote is refused: a `shell`
+or `containerStep` node, a `step` naming `runContainerStep`, or a `command` set on a gate step, a
+`runQualityGates` gate or an eval `gate` scorer. The author agent is asked to repair such a spec
+before it is refused; a refusal replies with a pointer to the canvas in the Workflow library, where
+that part is authored. A channel-authored workflow never contains them. The draft is budget-gated
+like a delegated task. See
+[nl-workflow-authoring.md](./nl-workflow-authoring.md) for the authoring paths and their limits.
+
 **Injection scanning.** Channel input is scanned advisorily and surfaces as a `CHANNEL_SUSPICIOUS`
 security event in `/govern/security`.
 

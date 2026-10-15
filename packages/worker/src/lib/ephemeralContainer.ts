@@ -21,7 +21,13 @@ import { promises as dnsPromises } from 'node:dns';
 import path from 'node:path';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
-import { type CapturedResult, execShellAsync, spawnCaptureAsync } from './execUtils.js';
+import { activityCancellationSignal } from './cancellation.js';
+import {
+  type CapturedResult,
+  execShellAsync,
+  spawnCaptureAsync,
+  withHeartbeat,
+} from './execUtils.js';
 
 export type EphemeralRunResult = CapturedResult;
 
@@ -387,15 +393,23 @@ export async function runSidecarContainer(input: SidecarRunInput): Promise<Sidec
     await waitForReady(`${baseUrl}${readinessPath}`, readyTimeoutMs);
 
     // The sidecar runs author-supplied code: a request it never answers must
-    // not hold the activity open forever. The step's own wall-clock cap bounds
-    // the request, exactly as it bounds a foreground container.
-    const res = await fetch(`${baseUrl}${requestPath}`, {
-      body: JSON.stringify(input.body ?? {}),
-      headers: { 'content-type': 'application/json' },
-      method: 'POST',
-      signal: AbortSignal.timeout(sandboxCommandTimeoutMs(input.timeoutMs)),
-    });
-    const text = await res.text();
+    // not hold the activity open forever. The step's wall-clock cap bounds the
+    // request, and an activity cancellation aborts it. The request can outlast
+    // the activity's heartbeat timeout, so it is heartbeated while it waits.
+    const cancellation = activityCancellationSignal();
+    const timeout = AbortSignal.timeout(sandboxCommandTimeoutMs(input.timeoutMs));
+    const { res, text } = await withHeartbeat(
+      'sidecar: request',
+      (async () => {
+        const response = await fetch(`${baseUrl}${requestPath}`, {
+          body: JSON.stringify(input.body ?? {}),
+          headers: { 'content-type': 'application/json' },
+          method: 'POST',
+          signal: cancellation ? AbortSignal.any([timeout, cancellation]) : timeout,
+        });
+        return { res: response, text: await response.text() };
+      })()
+    );
     if (!res.ok) {
       throw new Error(`sidecar request failed (${res.status}): ${text.slice(0, 500)}`);
     }

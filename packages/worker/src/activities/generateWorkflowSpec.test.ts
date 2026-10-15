@@ -1,13 +1,16 @@
+import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { agentFindMany, connectionFindMany } = vi.hoisted(() => ({
+const { agentFindMany, connectionFindMany, teamFindUnique } = vi.hoisted(() => ({
   agentFindMany: vi.fn(),
   connectionFindMany: vi.fn(),
+  teamFindUnique: vi.fn(),
 }));
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     agent: { findMany: agentFindMany },
     connection: { findMany: connectionFindMany },
+    team: { findUnique: teamFindUnique },
   },
 }));
 
@@ -45,6 +48,7 @@ beforeEach(() => {
     { description: 'Writes code', key: 'implementer', name: 'Implementer' },
   ]);
   connectionFindMany.mockResolvedValue([]);
+  teamFindUnique.mockResolvedValue({ shellImageAllowlist: [] });
 });
 
 describe('generateWorkflowSpec', () => {
@@ -117,6 +121,73 @@ describe('generateWorkflowSpec', () => {
       /could not produce a valid WorkflowSpec after 3 attempts/
     );
     expect(mockedRunAgent).toHaveBeenCalledTimes(3);
+  });
+
+  describe('authored code without shell authorization', () => {
+    const CONTAINER_SPEC = {
+      ...VALID_SPEC,
+      entry: 'run',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        run: {
+          config: { image: 'alpine:latest' },
+          next: 'done',
+          step: 'runContainerStep',
+          type: 'step',
+        },
+      },
+    };
+    const COMMAND_SPEC = {
+      ...VALID_SPEC,
+      entry: 'lint',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        lint: { config: { command: 'curl x | sh' }, next: 'done', step: 'runLint', type: 'step' },
+      },
+    };
+
+    it.each([
+      ['a runContainerStep step', CONTAINER_SPEC, 'runs a container'],
+      ['an authored gate command', COMMAND_SPEC, 'sets a `command`'],
+    ])('repairs %s away when shell is not allowed', async (_label, bad, issue) => {
+      mockedRunAgent
+        .mockResolvedValueOnce(out(JSON.stringify(bad)))
+        .mockResolvedValueOnce(out(JSON.stringify(VALID_SPEC)));
+
+      const result = await generateWorkflowSpec({ prompt: 'x', teamId: 'team-1' });
+
+      expect(result.attempts).toBe(2);
+      expect(result.spec.nodes).toEqual(VALID_SPEC.nodes);
+      const repairMsg = mockedRunAgent.mock.calls[1][1] as string;
+      expect(repairMsg).toContain(issue);
+    });
+
+    it('keeps authored code when shell is allowed', async () => {
+      mockedRunAgent.mockResolvedValueOnce(out(JSON.stringify(COMMAND_SPEC)));
+
+      const result = await generateWorkflowSpec({
+        allowShell: true,
+        prompt: 'x',
+        teamId: 'team-1',
+      });
+
+      expect(result.attempts).toBe(1);
+      expect(Object.keys(result.spec.nodes)).toContain('lint');
+    });
+
+    it('does not ask a refinement to drop authored code carried over unchanged', async () => {
+      const baseSpec = parseWorkflowSpec(COMMAND_SPEC);
+      mockedRunAgent.mockResolvedValueOnce(out(JSON.stringify(COMMAND_SPEC)));
+
+      const result = await generateWorkflowSpec({
+        baseSpec,
+        prompt: 'rename it',
+        teamId: 'team-1',
+      });
+
+      // Left for the caller's own refusal, which points the user at the canvas.
+      expect(result.attempts).toBe(1);
+    });
   });
 
   it('does not query mcp connections when no team scope is given', async () => {

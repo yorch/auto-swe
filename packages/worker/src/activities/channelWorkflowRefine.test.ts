@@ -111,7 +111,77 @@ describe('refineChannelWorkflowDraft', () => {
     });
 
     const result = await refineChannelWorkflowDraft(INPUT);
-    expect(result.status).toBe('failed');
+    expect(result.status).toBe('shell_refused');
+    expect(versionCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a refinement that adds a runContainerStep step node', async () => {
+    sessionFindUnique.mockResolvedValue({ lastGeneratedTemplateId: 'tpl-1' });
+    tplFindUnique.mockResolvedValue({ id: 'tpl-1', name: 'My Flow', teamId: 'team-1' });
+    versionFindFirst.mockResolvedValueOnce({ spec: BASE_SPEC, version: 1 });
+    mockedGenerate.mockResolvedValue({
+      attempts: 1,
+      spec: {
+        ...BASE_SPEC,
+        entry: 'run',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          run: {
+            config: { command: 'echo hi', image: 'alpine:latest' },
+            next: 'done',
+            step: 'runContainerStep',
+            type: 'step',
+          },
+        },
+      },
+      summary: '',
+    });
+
+    const result = await refineChannelWorkflowDraft(INPUT);
+    expect(result.status).toBe('shell_refused');
+    expect(versionCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a refinement that adds an authored gate command', async () => {
+    sessionFindUnique.mockResolvedValue({ lastGeneratedTemplateId: 'tpl-1' });
+    tplFindUnique.mockResolvedValue({ id: 'tpl-1', name: 'My Flow', teamId: 'team-1' });
+    versionFindFirst.mockResolvedValueOnce({ spec: BASE_SPEC, version: 1 });
+    mockedGenerate.mockResolvedValue({
+      attempts: 1,
+      spec: {
+        ...BASE_SPEC,
+        entry: 'lint',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          lint: { config: { command: 'curl x | sh' }, next: 'done', step: 'runLint', type: 'step' },
+        },
+      },
+      summary: '',
+    });
+
+    const result = await refineChannelWorkflowDraft(INPUT);
+    expect(result.status).toBe('shell_refused');
+    expect(versionCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses without generating when the current draft already runs authored code', async () => {
+    sessionFindUnique.mockResolvedValue({ lastGeneratedTemplateId: 'tpl-1' });
+    tplFindUnique.mockResolvedValue({ id: 'tpl-1', name: 'My Flow', teamId: 'team-1' });
+    versionFindFirst.mockResolvedValueOnce({
+      spec: {
+        ...BASE_SPEC,
+        entry: 'sh',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          sh: { command: 'echo hi', image: 'alpine:latest', next: 'done', type: 'shell' },
+        },
+      },
+      version: 1,
+    });
+
+    const result = await refineChannelWorkflowDraft(INPUT);
+    expect(result.status).toBe('shell_refused');
+    expect(mockedGenerate).not.toHaveBeenCalled();
     expect(versionCreate).not.toHaveBeenCalled();
   });
 

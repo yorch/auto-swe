@@ -319,20 +319,20 @@ The spec supports 15 node types.
 | Node type | Purpose | Key fields |
 |-----------|---------|-----------|
 | `step` | Dispatch a registered activity | `step`, `inputs`, `next`, `onFail`, `config` |
-| `agent` | Run a library Agent by reference | `agentRef` (`<key>` or `<key>@<version>`), `userMessage`, `systemPrompt`, `inputs`, `workspace` (run in a throwaway checkout of the run's repository) |
-| `mcp` | Call one tool on an `mcp` Connection | `connectionRef` (a literal id, checked against the run's team at run time), `tool`, `inputs` |
-| `eval` | Score a value with floor/judge/trajectory scorers, then gate or branch | `target`, `scorers[]`, `judgeAdvisory` |
+| `agent` | Run a library Agent by reference | `agentRef` (`<key>` or `<key>@<version>`), `userMessage`, `systemPrompt`, `inputs`, `workspace` (run in a throwaway checkout of the run's repository), `onFail` |
+| `mcp` | Call one tool on an `mcp` Connection | `connectionRef` (a literal id, checked against the run's team at run time), `tool`, `inputs`, `onFail` |
+| `eval` | Score a value with floor/judge/trajectory scorers, then gate or branch | `target`, `candidateRef`, `scorers[]`, `judgeAdvisory`, `onFail` |
 | `set` | Write values into the run context | `values` (path → binding) |
 | `cond` | Branch on a boolean expression | `expr`, `onTrue`, `onFalse` |
 | `signal` | Await a named Temporal signal with a timeout | `name`, `timeout`, `onReceive`, `onTimeout`, `storeAs` |
 | `terminate` | End the run with a status | `status`, `result` |
 | `fanOut` | Run a subgraph once per item in an array | `over`, `subgraph`, `join`, `itemKey`, `concurrency`, `onBranchFail`, `exports`, `pluck` |
-| `shell` | Run a user-authored command in an ephemeral container | `image`, `command`, `network`, `timeoutMs`, `memory`, `cpus` |
-| `containerStep` | Coded capability — an image with a JSON in/out contract | `image`, `command`, `inputs`, `transport` (`stdout`/`ndjson`/`sidecar`), `sidecar` |
-| `humanApproval` | Pause for a binary approve/reject | `title`, `contextFrom`, `onApprove`, `onReject`, `onTimeout`, `timeout` |
-| `humanDecision` | Pause for a 2–10 option branch | `options`, `timeout`, `onTimeout` |
-| `humanInput` | Pause for a typed form, written back into context | `fields`, `timeout`, `onTimeout`, `storeAs` |
-| `humanReview` | Pause for an annotated review of displayed content | `contentFrom`, `timeout`, `onTimeout`, `storeAs` |
+| `shell` | Run a user-authored command in an ephemeral container | `image`, `command`, `network`, `timeoutMs`, `memory`, `cpus`, `onFail` |
+| `containerStep` | Coded capability — an image with a JSON in/out contract | `image`, `command`, `inputs`, `transport` (`stdout`/`ndjson`/`sidecar`), `sidecar`, `onFail` |
+| `humanApproval` | Pause for a binary approve/reject | `title`, `description`, `approverCount`, `contextFrom`, `onApprove`, `onReject`, `onTimeout`, `timeout` |
+| `humanDecision` | Pause for a 2–10 option branch | `options`, `description`, `contextFrom`, `storeAs`, `timeout`, `onTimeout` |
+| `humanInput` | Pause for a typed form, written back into context | `fields`, `description`, `onSubmit`, `timeout`, `onTimeout`, `storeAs` |
+| `humanReview` | Pause for an annotated review of displayed content | `contentFrom`, `description`, `onSubmit`, `timeout`, `onTimeout`, `storeAs` |
 
 The four human nodes are handled inside the interpreter: each creates a `WorkflowHumanStep` row,
 optionally notifies Slack, then parks on the `hitl_<nodeId>` signal until an inbox or Slack response
@@ -496,7 +496,13 @@ run recorded before them replays as it ran.
 A block-mode cancel stops the interpreter waiting on a branch's signal or human wait but leaves the
 Temporal condition itself to run out, so the workflow's commands do not change; the wait is told it
 was `abandoned`, and a payload that arrives afterwards stays for the next wait on that name instead
-of being consumed. Step records carry each string input, output and error cut to 8,000 characters
+of being consumed. A `signal` node keeps its spec `name` inside a fan-out branch, because external
+senders address it by that name, so concurrent branches all wait on one slot, and each delivery is
+consumed by exactly one waiting branch. The others keep waiting for the rest of their own timeout
+rather than taking `onTimeout` (behind `patched('shared-signal-wait-rewaits-on-empty-slot')`, so a
+run recorded earlier still takes `onTimeout` at once), and `validateSpec` raises an advisory
+`SIGNAL_SHARED_ACROSS_BRANCHES` warning for a `signal` node reachable inside a fan-out whose
+`concurrency` is not 1. Step records carry each string input, output and error cut to 8,000 characters
 (activity inputs are written to the workflow history); the full values remain in the run context,
 which the final snapshot spills to artifacts.
 
@@ -1280,6 +1286,16 @@ Current constraints of the system as built. Deliberate product boundaries are in
   list explicitly so losing one fails loudly rather than quietly narrowing the guard. An epic's or
   channel task's own children are guarded only as `RunnableWorkflow` histories, not as part of the
   parent's.
+- **One signal delivery wakes one fan-out branch.** A `signal` node inside concurrent fan-out
+  branches waits on the same name in every branch, and a delivery cannot be addressed to a branch:
+  the first branch to resume takes it, and a sender must signal once per waiting branch for all of
+  them to go on. Even that is reliable only when the deliveries reach the workflow in separate
+  workflow tasks: a slot holds one payload, so deliveries that land in the same activation
+  coalesce and the last one wins. A branch that wakes to an already-taken delivery waits out the
+  rest of its own timeout; a run recorded before that re-wait (it sits behind
+  `patched('shared-signal-wait-rewaits-on-empty-slot')`) replays as it ran, sending that branch to
+  `onTimeout` at once. The per-branch names that human nodes get are not applied to `signal` nodes,
+  because external senders such as the CI and merge webhooks signal by the spec name.
 - **Generic workspace and outcome dispatch is wired end-to-end, with a write usable again by the same
   node.** `Connection.type`, `RunRequest`, `MemoryItem.entityType`/
   `entityId`, `workspaceProvider` on `WorkflowTemplate`, and outcome publishers are typed and
