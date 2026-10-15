@@ -330,3 +330,39 @@ describe('validateSpec reserved write-path segments', () => {
     ).toEqual([]);
   });
 });
+
+describe('the executor step spelling', () => {
+  // `step: 'runEvalNode'` and its three siblings dispatch exactly as the typed
+  // node does, so a spec using them is not refused — but only the node type has
+  // typed fields and an inspector form, so the author is pointed at it.
+  const cases: Array<[string, string]> = [
+    ['runAgentNode', 'agent'],
+    ['runEvalNode', 'eval'],
+    ['mcpCallTool', 'mcp'],
+    ['runContainerStep', 'containerStep'],
+  ];
+
+  it.each(cases)('warns that step %s is the %s node’s executor', (step, nodeType) => {
+    const r = validateSpec(
+      spec({
+        a: { next: 'done', step, type: 'step' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      })
+    );
+    const warning = r.warnings.find((w) => w.code === 'STEP_HAS_TYPED_NODE' && w.nodeId === 'a');
+    expect(warning).toBeDefined();
+    expect(warning?.message).toContain(`\`${nodeType}\``);
+    // Advisory only: the run still works, so it is not an error.
+    expect(r.errors).toEqual([]);
+  });
+
+  it('says nothing about an ordinary step', () => {
+    const r = validateSpec(
+      spec({
+        a: { next: 'done', step: 'runLint', type: 'step' },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      })
+    );
+    expect(r.warnings.filter((w) => w.code === 'STEP_HAS_TYPED_NODE')).toEqual([]);
+  });
+});

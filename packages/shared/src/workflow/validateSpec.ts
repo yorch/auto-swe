@@ -43,7 +43,7 @@
 
 import { checkExprSyntax, RESERVED_SEGMENTS } from './expr.js';
 import { type Node, nodeEdges, type WorkflowSpec } from './spec.js';
-import { getStepMetadata, hasStep } from './stepRegistry.js';
+import { EXECUTOR_STEP_ALIASES, getStepMetadata, hasStep } from './stepRegistry.js';
 
 export type ValidationSeverity = 'error' | 'warning';
 
@@ -315,6 +315,16 @@ export function validateSpec(
           severity: 'warning',
         });
       } else {
+        const typedNode = EXECUTOR_STEP_ALIASES[node.step];
+        if (typedNode) {
+          warnings.push({
+            code: 'STEP_HAS_TYPED_NODE',
+            field: 'step',
+            message: `'${node.step}' is the executor behind the \`${typedNode}\` node; author the node instead, so its settings have a form and its fields are checked`,
+            nodeId: id,
+            severity: 'warning',
+          });
+        }
         const meta = getStepMetadata(node.step);
         const config = (node.config ?? {}) as Record<string, unknown>;
         const inputs = (node.inputs ?? {}) as Record<string, unknown>;

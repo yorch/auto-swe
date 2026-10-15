@@ -625,7 +625,8 @@ register({
   // come in under it. Without any hint an agent node contributed nothing at all,
   // which is worse than a rough number.
   costHint: { role: 'implementer', tokensIn: 20000, tokensOut: 8000 },
-  description: 'Run a library Agent by reference (the declarative agent node).',
+  description:
+    'Run a library Agent by reference (the declarative agent node). Prefer the typed node: its fields are checked and it has an inspector form.',
   label: 'Run agent',
   name: 'runAgentNode',
 });
@@ -643,6 +644,23 @@ register({
   label: 'Agent run (system)',
   name: 'runAgentTask',
 });
+
+/**
+ * The registered steps that are the executor behind a declarative node type.
+ *
+ * Both spellings dispatch identically — the interpreter packs the node into a
+ * `step` dispatch — but only the node type carries typed fields, an inspector
+ * form, and the gateway's shell gating. `validateSpec` warns an author off the
+ * step spelling rather than refusing it: `mcp`, `eval`, `agent` and
+ * `containerStep` nodes are the documented way to author these, and a stored
+ * spec that names the step keeps working.
+ */
+export const EXECUTOR_STEP_ALIASES: Readonly<Record<string, string>> = {
+  mcpCallTool: 'mcp',
+  runAgentNode: 'agent',
+  runContainerStep: 'containerStep',
+  runEvalNode: 'eval',
+};
 
 // ── Executors behind the declarative eval / mcp / containerStep nodes ────────
 //
@@ -676,7 +694,8 @@ register({
   ],
   costHint: { role: 'evalJudge', tokensIn: 6000, tokensOut: 800 },
   description:
-    'Run eval scorers against a value and bind an aggregate score. The judge scorer is one evalJudge LLM call.',
+    'Run eval scorers against a value and bind an aggregate score. The judge scorer is one evalJudge LLM call.' +
+    ' Prefer the typed node: its fields are checked and it has an inspector form.',
   label: 'Run eval',
   name: 'runEvalNode',
 });
@@ -699,7 +718,8 @@ register({
       type: 'string',
     },
   ],
-  description: 'Call one tool on an external MCP server with the resolved inputs as arguments.',
+  description:
+    'Call one tool on an external MCP server with the resolved inputs as arguments. Prefer the typed node: its fields are checked and it has an inspector form.',
   label: 'Call MCP tool',
   name: 'mcpCallTool',
 });
@@ -745,7 +765,8 @@ register({
     },
   ],
   description:
-    'Run a container-contract coded step: an ephemeral image with the inputs as JSON env, output parsed from stdout.',
+    'Run a container-contract coded step: an ephemeral image with the inputs as JSON env, output parsed from stdout.' +
+    ' Prefer the typed node: its fields are checked and it has an inspector form.',
   label: 'Run container step',
   name: 'runContainerStep',
 });
