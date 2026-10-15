@@ -45,6 +45,7 @@ import {
   manageForbidden,
   ownerTeam,
 } from '../lib/automations/access.js';
+import { declaredConnectionProblem } from '../lib/automations/declaredConnections.js';
 import {
   AutomationStartError,
   automationMatches,
@@ -313,11 +314,23 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       body.inputs,
       access.kind === 'repository' || body.targetConnectionId !== null
     );
-    return problem
-      ? {
-          code: 'INVALID_INPUTS',
-          message: `The options do not fit the template: ${problem.slice(0, 500)}`,
-        }
+    if (problem) {
+      return {
+        code: 'INVALID_INPUTS',
+        message: `The options do not fit the template: ${problem.slice(0, 500)}`,
+      };
+    }
+    // The same decision the fire takes, on the author's own options, so a LEAD learns when they
+    // save rather than from a run that never started. The fire remains the boundary: it also
+    // covers a schema `default` and a field the occurrence fills, neither of which exists yet here.
+    const unusable = await declaredConnectionProblem({
+      inputSchema: template.inputSchema,
+      payload: inputs,
+      prisma: fastify.prisma,
+      teamId: team.id,
+    });
+    return unusable
+      ? { code: 'INVALID_INPUTS', message: `The options do not fit the template: ${unusable}` }
       : null;
   }
 

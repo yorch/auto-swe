@@ -23,7 +23,7 @@ import {
 } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
-import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
+import { type InputSchema, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import { isRepoMember } from '@auto-swe/shared/lib/repoMembership';
@@ -44,6 +44,7 @@ import { EXCLUDE_SYSTEM_TEMPLATES } from '../systemTemplate.js';
 import { isValidTicketId } from '../ticketId.js';
 import { launchTrackedWorkflow } from '../workflowLaunch.js';
 import { findLaunchRepo } from './access.js';
+import { declaredConnectionProblem } from './declaredConnections.js';
 
 /** Attempts at starting the workflow before the decision is given up. */
 const START_ATTEMPTS = 3;
@@ -424,6 +425,30 @@ export async function decideAndStart<F, X>(
         'FAILED_TO_START',
         `the automation's options do not fit its template: ${built.errors.join('; ').slice(0, 300)}`
       );
+    }
+    // Re-checked here for the same reason the payload is: the template may have changed since
+    // the automation was saved. `templateProblem` refuses a mapping onto a `connection`-typed
+    // input, so a field the mapping was stored against and the template *later* retyped would
+    // otherwise let the event's own sender choose which of the team's connections the run uses.
+    const filters = parseFilters(source, automation.filters);
+    const mapping = filters ? source.templateProblem?.(filters, template.inputSchema) : null;
+    if (mapping) {
+      return recordDecision(prisma, fireBase, 'FAILED_TO_START', mapping.slice(0, 300));
+    }
+    // And every connection the payload names, decided before the run exists: nothing downstream
+    // can, because the pin is derived from this same payload. A fire has no user, so the rule is
+    // the acting team's reach. The target repository's type is passed so that a field repeating it
+    // is checked for its declared type, exactly as a launch checks it against the row it loaded.
+    const unusable = await declaredConnectionProblem({
+      inputSchema: template.inputSchema,
+      payload: built.payload,
+      primaryConnectionId: connection?.id ?? null,
+      primaryConnectionType: connection?.type ?? null,
+      prisma,
+      teamId: team.id,
+    });
+    if (unusable) {
+      return recordDecision(prisma, fireBase, 'FAILED_TO_START', unusable);
     }
     const run = source.run(facts);
     if (!isValidTicketId(run.ticketId)) {
@@ -834,7 +859,12 @@ export async function resolveAutomationTemplate<F, X>(
 ): Promise<{
   id: string;
   activeVersion: number;
-  inputSchema: unknown;
+  /**
+   * Narrowed, not `unknown`: the guard below returns null rather than a template whose schema
+   * cannot be read, and every consumer of this (a payload build, a mapping check) needs the
+   * schema type to ask anything of it.
+   */
+  inputSchema: InputSchema;
   workspaceProvider: string | null;
 } | null> {
   const select = {

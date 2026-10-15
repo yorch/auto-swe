@@ -190,6 +190,18 @@ function trigger(over: Record<string, unknown> = {}) {
   };
 }
 
+/** The connection the harness's `connection.findMany` returns, owned by `team-1`. */
+const CONNECTION = 'cccccccc-0000-4000-8000-000000000001';
+/** A connection no mocked row answers for: another team's, or none at all. */
+const OTHER_CONNECTION = 'dddddddd-0000-4000-8000-000000000009';
+/** A second connection the acting team owns, so a declared field can resolve to a real one. */
+const DOC_CONNECTION = 'ffffffff-0000-4000-8000-00000000000f';
+/** `CI_TRIAGE_INPUT_SCHEMA` plus one connection-typed option, for the reachability cases. */
+const WITH_CONNECTION_INPUT = {
+  ...CI_TRIAGE_INPUT_SCHEMA,
+  properties: { ...CI_TRIAGE_INPUT_SCHEMA.properties, docConnectionId: { type: 'connection' } },
+};
+
 function harness(
   opts: {
     triggers?: ReturnType<typeof trigger>[];
@@ -203,7 +215,6 @@ function harness(
   const started: Array<{ id: string; input: Record<string, unknown> }> = [];
   const runInputs: unknown[] = [];
   const triggers = opts.triggers ?? [trigger()];
-  const CONNECTION = 'cccccccc-0000-4000-8000-000000000001';
 
   /** The subset of Prisma's `where` the decision uses, evaluated against a fire. */
   const matches = (f: Fire, where: Record<string, unknown>): boolean => {
@@ -292,19 +303,47 @@ function harness(
       ),
     },
     connection: {
-      findMany: vi.fn(async () => [
-        {
-          automations: triggers,
-          id: CONNECTION,
-          installation: null,
-          team: {
-            id: 'team-1',
-            organization: { id: 'org-1', monthlyBudgetUsdCents: null },
-            orgId: 'org-1',
+      // Honours `where.id.in`, which is how a declared-connection lookup asks: returning the
+      // trigger's own row for any query would make every declared id resolve to the primary and
+      // hide the positive non-primary path (the negative one only ever asks for a row that is
+      // absent, so it would pass either way).
+      findMany: vi.fn(async ({ where }: { where?: { id?: { in: string[] } } } = {}) => {
+        const rows = [
+          {
+            automations: triggers,
+            id: CONNECTION,
+            installation: null,
+            // Active, and owned outright: the shape `isRepoTeam` is asked about.
+            isActive: true,
+            shares: [],
+            team: {
+              id: 'team-1',
+              organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+              orgId: 'org-1',
+            },
+            teamId: 'team-1',
+            type: 'git_repo',
           },
-          teamId: 'team-1',
-        },
-      ]),
+          {
+            // A second connection the team owns: what a payload field other than the run's own
+            // target names, which is the case the reachability check exists for.
+            id: DOC_CONNECTION,
+            installation: null,
+            isActive: true,
+            shares: [],
+            team: {
+              id: 'team-1',
+              organization: { id: 'org-1', monthlyBudgetUsdCents: null },
+              orgId: 'org-1',
+            },
+            teamId: 'team-1',
+            type: 'confluence',
+          },
+        ];
+        const ids = where?.id?.in;
+        // The engine's own lookup (no id filter) still sees exactly the trigger's row.
+        return ids ? rows.filter((row) => ids.includes(row.id)) : [rows[0]];
+      }),
     },
     runInput: {
       create: vi.fn(async ({ data }: { data: unknown }) => {
@@ -686,6 +725,34 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
     expect(h.started).toHaveLength(0);
   });
 
+  it('refuses a fire whose payload names a connection the team cannot use', async () => {
+    // The run's pin is derived from this same payload, so nothing downstream asks this question:
+    // without the check the run is handed a connection its team was never authorized for.
+    const h = harness({
+      template: { activeVersion: 1, id: 't', inputSchema: WITH_CONNECTION_INPUT },
+      triggers: [trigger({ inputs: { docConnectionId: OTHER_CONNECTION } })],
+    });
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'FAILED_TO_START' });
+    expect(h.fires.at(-1)?.reason).toMatch(/not one this team can use/);
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('starts when every connection the payload names is the team’s', async () => {
+    // `DOC_CONNECTION`, not the run's own `CONNECTION`: naming the primary would take the
+    // `primaryConnectionId` skip, and `isRepoTeam` would never be asked.
+    const h = harness({
+      template: { activeVersion: 1, id: 't', inputSchema: WITH_CONNECTION_INPUT },
+      triggers: [trigger({ inputs: { docConnectionId: DOC_CONNECTION } })],
+    });
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'STARTED' });
+    expect(h.started).toHaveLength(1);
+    // And the check really ran, on the declared field: without it the assertion above still holds,
+    // so this is what makes the case fail when the decision stops being made.
+    expect(h.db.connection.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [DOC_CONNECTION] } } })
+    );
+  });
+
   it('takes the per-repository lock before deciding', async () => {
     const h = harness();
     await handle(h);
@@ -889,6 +956,29 @@ describe('inbound events (inbound.event)', () => {
       new Date(),
       0
     );
+
+  it('refuses at fire a mapping the template has since retyped to a connection input', async () => {
+    // The save-time check refuses a mapping onto a `connection` input, but it ran when the
+    // mapping was *stored*. A template that retypes the field afterwards would otherwise let the
+    // event's own sender pick which of the team's connections the run uses: an occurrence's fields
+    // win over the automation's options, and the run's pin is derived from that same payload.
+    const h = withAutomations([automation()], {
+      template: {
+        ...template,
+        inputSchema: {
+          ...template.inputSchema,
+          properties: { ...template.inputSchema.properties, severity: { type: 'connection' } },
+        },
+      },
+    });
+
+    await expect(handleEvent(h, { env: 'prod', severity: CONNECTION })).resolves.toMatchObject({
+      outcome: 'FAILED_TO_START',
+    });
+
+    expect(h.fires.at(-1)?.reason).toMatch(/cannot fill/);
+    expect(h.started).toHaveLength(0);
+  });
 
   it('starts one run per event, keyed and locked on the endpoint, however many automations match', async () => {
     const second = automation({ id: 'aaaaaaaa-0000-4000-8000-00000000000f' });

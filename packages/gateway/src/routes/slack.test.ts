@@ -2724,6 +2724,27 @@ describe('POST /api/v1/auth/slack/interactive — run modal submission', () => {
     expect(state.runInputCreates).toHaveLength(0);
   });
 
+  it('refuses a template that would let the ticket name a connection', async () => {
+    // The modal fills `ticketId` from the submitter's free text, and the run's authorized set is
+    // derived from the payload it builds. A template typing that key as a `connection` would make
+    // the ticket text the connection the run uses — and the submitter, not the template's author,
+    // would choose it. Nothing between here and the worker decides it, so it is refused here.
+    const tpl = state.templates.find((t) => t.id === 't1') as unknown as Record<string, unknown>;
+    tpl.inputSchema = {
+      properties: { ticketId: { type: 'connection' } },
+      required: ['ticketId'],
+      type: 'object',
+    };
+
+    const res = await submit(runModalPayload({ ticket: '11111111-1111-4111-8111-111111111111' }));
+
+    expect(res.json()).toMatchObject({
+      errors: { template_block: expect.stringContaining("'ticketId' is a connection input") },
+      response_action: 'errors',
+    });
+    expect(state.runnableStarts).toHaveLength(0);
+  });
+
   it('starts separate runs for different tickets', async () => {
     await submit(runModalPayload({ ticket: 'JIRA-1' }));
     await submit(runModalPayload({ ticket: 'JIRA-2' }));
