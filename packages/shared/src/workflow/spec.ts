@@ -32,7 +32,7 @@ export { isValidWaitDuration, waitDurationMs } from './waitDuration.js';
  *   - humanApproval  : pause for a human approve / reject
  *   - humanDecision  : pause for a human to choose among options
  *   - humanInput     : pause for a human to supply structured input
- *   - humanReview    : pause for a human to read and optionally edit content
+ *   - humanReview    : pause for a human to read content and optionally leave a note
  */
 
 export const SPEC_SCHEMA_VERSION = 1 as const;
@@ -583,7 +583,8 @@ const HumanInputNodeSchema = z.object({
 });
 
 /**
- * HITL — `humanReview`: show content for a human to read and optionally edit before continuing.
+ * HITL — `humanReview`: show content for a human to read and optionally leave a free-text note
+ * (the content itself is not changed) before continuing.
  */
 const HumanReviewNodeSchema = z.object({
   ...NodeGroupFields,

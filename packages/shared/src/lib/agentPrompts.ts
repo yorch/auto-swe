@@ -705,7 +705,7 @@ NODE TYPES you may encounter (so you can describe them accurately):
 - signal: waits for an external signal (e.g. CI completion) with a timeout.
 - fanOut: runs a subgraph in parallel over a list, then joins.
 - shell / containerStep: run a command/coded capability in a locked-down container.
-- humanApproval / humanDecision / humanInput / humanReview: pause for a human (approve/reject, pick an option, fill a form, or review+edit content).
+- humanApproval / humanDecision / humanInput / humanReview: pause for a human (approve/reject, pick an option, fill a form, or review content and leave a note).
 - terminate: ends the run with a status (SUCCESS/FAILED/…).
 
 OUTPUT (Markdown, in the "explanation" field):

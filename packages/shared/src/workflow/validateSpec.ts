@@ -96,6 +96,19 @@ function nodeBindings(node: Node): Array<{ field: string; binding: unknown }> {
     if (node.candidateRef) {
       out.push({ binding: node.candidateRef, field: 'candidateRef' });
     }
+    // An assert scorer's `expr` is evaluated by the shared engine after the
+    // runtime strips its `$.` path prefix (runEvalNode `evalAssert`), so lint
+    // the same stripped text. The editor may hand us an unvalidated spec.
+    const scorers: unknown[] = Array.isArray(node.scorers) ? node.scorers : [];
+    scorers.forEach((entry, i) => {
+      const s = entry as { kind?: unknown; expr?: unknown } | null;
+      if (s && typeof s === 'object' && s.kind === 'assert' && typeof s.expr === 'string') {
+        out.push({ binding: { expr: s.expr.replace(/\$\./g, '') }, field: `scorers[${i}].expr` });
+      }
+    });
+  }
+  if (node.type === 'humanApproval' && node.approverCount !== undefined) {
+    out.push({ binding: node.approverCount, field: 'approverCount' });
   }
   if (node.type === 'fanOut') {
     out.push({ binding: node.over, field: 'over' });

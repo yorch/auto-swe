@@ -538,3 +538,48 @@ describe('the executor step spelling', () => {
     expect(r.warnings.filter((w) => w.code === 'STEP_HAS_TYPED_NODE')).toEqual([]);
   });
 });
+
+describe('validateSpec expression lint: assert scorers and approverCount', () => {
+  const evalSpec = (expr: string) =>
+    spec({
+      a: {
+        next: 'done',
+        scorers: [{ expr, kind: 'assert' }],
+        target: { from: 'input.diff' },
+        type: 'eval',
+      },
+      done: { status: 'SUCCESS', type: 'terminate' },
+    });
+
+  it('flags a malformed assert expression', () => {
+    const r = validateSpec(evalSpec('$.linesChanged ==='));
+    expect(r.errors.some((e) => e.code === 'EXPR_SYNTAX' && e.field === 'scorers[0].expr')).toBe(
+      true
+    );
+  });
+
+  it('accepts a valid $.-prefixed assert expression', () => {
+    const r = validateSpec(evalSpec('$.x == 1 && $.linesChanged < 500'));
+    expect(r.errors.filter((e) => e.code === 'EXPR_SYNTAX')).toEqual([]);
+  });
+
+  it('flags a malformed approverCount expression', () => {
+    const r = validateSpec(
+      spec({
+        a: {
+          approverCount: { expr: 'nodes.x.output.n ===' },
+          onApprove: 'done',
+          onReject: 'done',
+          onTimeout: 'done',
+          timeout: '1h',
+          title: 'Approve',
+          type: 'humanApproval',
+        },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      })
+    );
+    expect(r.errors.some((e) => e.code === 'EXPR_SYNTAX' && e.field === 'approverCount')).toBe(
+      true
+    );
+  });
+});
