@@ -149,7 +149,10 @@ listing failed, an **Add** prefilled with the id, kind and display name, and a *
 **Check providers now** runs the same pass on demand. *Possibly retired* lists the other kind with an
 **Edit** that opens the row; nothing retires a model for you. Each new model shows its suggested
 price — the first price hint described below — or *No published price*, from one batch call for the
-whole list. Discovery only suggests, so a
+whole list. Ticking models that have one and choosing **Add *N* at suggested prices** adds them all
+at those prices once a dialog listing each spec, price and source is confirmed; each row's notes say
+where its price came from. A model that cannot be added is named in the dialog, and the others stay
+added. Discovery only suggests, so a
 discovered model is not "known" until an admin adds it with a price, and the pricing path never reads
 a suggestion.
 
@@ -720,7 +723,9 @@ forced delete.
   that states prices (OpenRouter's) or a community price list, and either can be stale or wrong: a
   provider's price changes before the list does, a long-context or batch rate is not shown, and a
   model the list keys under another provider name finds no hint. An admin still checks and saves every
-  number that feeds USD budgets. A hint is per-process cached, so a gateway replica can answer from a
+  number that feeds USD budgets; bulk add asks once for the whole selection rather than per model, so
+  the confirmation dialog is the only review a bulk-added price gets. Bulk add writes one model at a
+  time from the browser, so closing the page midway leaves the earlier ones added. A hint is per-process cached, so a gateway replica can answer from a
   list up to six hours older than another's. Discovery reaches only models listed through a GLOBAL
   credential; one reachable only through a team or organization credential is not found. It suggests
   by name, not by capability: speech, transcription, image, video and moderation models are dropped

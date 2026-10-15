@@ -6,6 +6,7 @@ import type { ModelCatalogEntry } from '@/lib/modelCatalog';
 
 // vi.mock is hoisted above the file's declarations, so its fixtures are too.
 const {
+  createAsync,
   DEFAULT_DATA,
   ENTRIES,
   discoverMutate,
@@ -137,6 +138,7 @@ const {
     data: undefined,
   };
   return {
+    createAsync: vi.fn(async (_body: unknown) => ({})),
     DEFAULT_DATA,
     discoverMutate: vi.fn(),
     dismissMutate: vi.fn(),
@@ -149,7 +151,7 @@ const {
 });
 
 vi.mock('@/hooks/useModelCatalog', () => ({
-  useCreateCatalogEntry: mutation,
+  useCreateCatalogEntry: () => ({ isPending: false, mutate: vi.fn(), mutateAsync: createAsync }),
   useDeleteCatalogEntry: mutation,
   useDiscoverModels: () => ({ error: null, isPending: false, mutate: discoverMutate }),
   useDismissSuggestion: () => ({ isPending: false, mutate: dismissMutate }),
@@ -378,6 +380,57 @@ describe('CatalogTab price hints', () => {
     expect(screen.getByLabelText(/^Input price/)).toHaveProperty('value', '7');
     expect(screen.queryByText(/Prices prefilled/)).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Use' })).toHaveLength(2);
+  });
+
+  it('adds the ticked models at their suggested prices, only after a confirmation', async () => {
+    hintState.batch = [{ ...HINTS, modelId: 'nomic-embed-2', provider: 'ollama' }];
+    render(<CatalogTab />);
+    expect(screen.queryByRole('button', { name: /at suggested prices/ })).toBeNull();
+    fireEvent.click(screen.getByLabelText('Select ollama/nomic-embed-2'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add 1 at suggested prices' }));
+    expect(createAsync).not.toHaveBeenCalled();
+    const dialog = screen.getByRole('dialog', { name: /Add 1 model to the catalog/ });
+    expect(
+      within(dialog).getByText(/\$3 \/ \$15 per MTok, from ollama's model listing/)
+    ).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add 1' }));
+    await vi.waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+    expect(createAsync).toHaveBeenCalledWith({
+      cacheReadMultiplier: 0.1,
+      cacheWrite1hMultiplier: null,
+      cacheWrite5mMultiplier: null,
+      displayName: 'Nomic Embed',
+      inputUsdPerMTok: 3,
+      kind: 'EMBEDDING',
+      modelId: 'nomic-embed-2',
+      notes:
+        "Price suggested by ollama's model listing (nomic-embed-2); added in bulk from discovery.",
+      outputUsdPerMTok: 15,
+      provider: 'ollama',
+    });
+    createAsync.mockClear();
+  });
+
+  it('keeps the dialog open and names a model that could not be added', async () => {
+    hintState.batch = [{ ...HINTS, modelId: 'nomic-embed-2', provider: 'ollama' }];
+    createAsync.mockRejectedValueOnce(new Error('already in the catalog'));
+    render(<CatalogTab />);
+    fireEvent.click(screen.getByLabelText('Select ollama/nomic-embed-2'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add 1 at suggested prices' }));
+    const dialog = screen.getByRole('dialog', { name: /Add 1 model/ });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add 1' }));
+    expect(
+      await within(dialog).findByText(/Not added — ollama\/nomic-embed-2: already in the catalog/)
+    ).toBeTruthy();
+    createAsync.mockClear();
+  });
+
+  it('offers no tick for a model with no suggested price', () => {
+    hintState.batch = [
+      { hints: [], modelId: 'nomic-embed-2', provider: 'ollama', unavailable: [] },
+    ];
+    render(<CatalogTab />);
+    expect(screen.queryByLabelText('Select ollama/nomic-embed-2')).toBeNull();
   });
 
   it('says when nothing is published, and why a source could not be read', () => {
