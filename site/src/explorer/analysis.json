@@ -1898,7 +1898,7 @@
     {
       "body": "A policy decision records permission to proceed; another activity writes the outcome.",
       "category": "Governance",
-      "detail": "publishOutcome returns auto/require_approval and approverCount. The template must route that result, and writeOutcome checks the latest decision. A direct runTool write is a separate path.",
+      "detail": "publishOutcome returns auto/require_approval and approverCount. The template must route that result, and the step that writes checks the latest decision: writeOutcome, a mutating runTool and a non-read-only mcp node all go through the same guard in lib/externalWrite.ts.",
       "id": "outcome",
       "refs": ["policy", "write"],
       "status": "Implemented",
@@ -2087,9 +2087,9 @@
     {
       "body": "Classify an action by risk and choose automatic publication or human approval.",
       "category": "Governance",
-      "detail": "publishOutcome records a decision; templates route it to approval. writeOutcome refuses a pending required approval. This is not a universal interceptor on every external write or MCP call.",
+      "detail": "publishOutcome records a decision; templates route it to approval. The three steps that change something outside the platform \u2014 writeOutcome, a mutating runTool and an mcp node whose server does not declare the tool read-only \u2014 refuse a pending required approval and record their result in one ledger. An agent's own MCP tool calls and sandbox steps stay outside that boundary.",
       "id": "autonomy",
-      "refs": ["policy", "fallback", "write"],
+      "refs": ["policy", "fallback", "write", "externalWrite"],
       "status": "Implemented",
       "title": "Policy-gated outcome publication"
     },
@@ -2888,13 +2888,13 @@
       "title": "Engineering push happens before the critical diff gate"
     },
     {
-      "body": "The approval guard lives in writeOutcome, conditional on a recorded publish decision.",
+      "body": "The approval guard lives in lib/externalWrite.ts and covers the three steps that change something outside the platform, conditional on a recorded publish decision.",
       "category": "Governance",
-      "detail": "A run with no recorded decision is not gated by assertApprovalSatisfied. runTool, MCP and arbitrary shell paths are not covered by that helper. Template design and tool permissions remain important.",
+      "detail": "A run with no recorded decision is not gated by assertApprovalSatisfied. An agent\u2019s own MCP tool calls, and arbitrary shell or container egress, are outside that helper. The ledger it keeps alongside the guard is completed-result caching, not exactly-once: the remote call and its row are not one transaction, so a mutation that succeeds and then crashes before the row is written is repeated. Template design and tool permissions remain important.",
       "id": "governanceCoverage",
-      "refs": ["write", "policy", "agentNode"],
+      "refs": ["write", "policy", "agentNode", "externalWrite"],
       "status": "Confirmed boundary",
-      "title": "Outcome policy is not a universal outbound-write guard"
+      "title": "Outcome policy covers the writing steps, not every outbound path"
     },
     {
       "body": "The external call completes before the outcome-reference row is inserted.",
@@ -4086,6 +4086,14 @@
       "lines": 90,
       "path": "packages/worker/src/activities/genericActions.ts",
       "title": "External write approval and retry ledger"
+    },
+    {
+      "anchor": "export async function assertApprovalSatisfied(",
+      "before": 30,
+      "id": "externalWrite",
+      "lines": 60,
+      "path": "packages/worker/src/lib/externalWrite.ts",
+      "title": "Shared approval guard and retry ledger for external mutations"
     },
     {
       "anchor": "export async function publishOutcome(",
