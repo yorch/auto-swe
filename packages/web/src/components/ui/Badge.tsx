@@ -90,10 +90,10 @@ export function Badge({
   return (
     <span
       className={cn(
-        'whitespace-nowrap text-[11.5px] font-medium',
+        'whitespace-nowrap text-xs font-medium',
         VARIANT_BASE[variant],
         dot && 'inline-flex items-center gap-1.5',
-        uppercase && 'text-[10.5px] uppercase tracking-[0.06em]',
+        uppercase && 'text-[11px] uppercase tracking-[0.06em]',
         TONE_CLASSES[tone][variant],
         className
       )}

@@ -52,7 +52,7 @@ export function SearchInput({
       />
       <input
         aria-label={label}
-        className="h-8 w-full rounded-md border border-ink-400 bg-ink-900/60 pr-2.5 pl-8 text-[13px] text-paper-100 outline-none transition-colors placeholder:text-paper-600 hover:border-ink-300 focus:border-ember-400 focus:ring-2 focus:ring-ember-400/20"
+        className="h-8 w-full rounded-md border border-ink-200 bg-ink-900 pr-2.5 pl-8 text-[13px] text-paper-100 outline-none transition-colors placeholder:text-paper-600 hover:border-paper-600 focus:border-ember-400 focus:ring-2 focus:ring-ember-400/20"
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         type="search"
