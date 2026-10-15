@@ -46,18 +46,34 @@ export async function mutationScope(): Promise<MutationScope> {
 }
 
 /**
- * Refuse a mutation while the run's latest `publishOutcome` decision requires
- * approval and none has been recorded since. A template that records the
- * decision but routes straight to a writing step would otherwise write anyway
- * while the audit log says approval was required.
+ * Refuse a mutation while the run's policy requires approval it has not received.
+ *
+ * The decision read is the latest publish that **required** approval, not the latest publish. The
+ * contract is run-wide (`docs/autonomy-policies.md`): a requirement from any risk class holds
+ * *every* mutation until it is satisfied. Reading the latest publish of any kind let a template
+ * publish `require_approval`, then publish a class its policy auto-approves, and then write —
+ * with the audit log still recording that approval was required.
  */
 export async function assertApprovalSatisfied(runId: string): Promise<void> {
   const published = await prisma.autonomyDecision.findFirst({
     orderBy: { createdAt: 'desc' },
-    where: { event: 'publish', runId },
+    where: {
+      event: 'publish',
+      // Matched in the query rather than in code so a later, more permissive decision cannot
+      // stand in for this one: the filter is the rule.
+      payload: { equals: 'require_approval', path: ['decision'] },
+      runId,
+    },
   });
-  const payload = published?.payload as { decision?: string } | null | undefined;
-  if (!published || payload?.decision !== 'require_approval') {
+  if (!published) {
+    return;
+  }
+  // Belt and braces: the query already excludes anything else, so this cannot fire on a real
+  // database. It is here because the filter is the rule, and a filter that went wrong — a payload
+  // shape that changed under it, a store that answers a narrower query loosely — would otherwise
+  // refuse every mutation instead of none.
+  const decision = (published.payload as { decision?: string } | null | undefined)?.decision;
+  if (decision !== 'require_approval') {
     return;
   }
   const approved = await prisma.autonomyDecision.findFirst({

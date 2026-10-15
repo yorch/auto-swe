@@ -345,6 +345,25 @@ export function validateSpec(
     if (node.type === 'eval') {
       warnings.push(...ignoredEvalFields(id, node));
     }
+    // The risk class is a property of the template, not of the run that executes it: a value the
+    // payload can fill lets whoever supplies the payload choose the class it is judged by, and the
+    // guard holds a run for a requirement from *any* class. Declared under `config` it is the
+    // author's; the executor reads nothing else.
+    if (
+      node.type === 'step' &&
+      node.step === 'publishOutcome' &&
+      (node.inputs as Record<string, unknown> | undefined)?.action !== undefined
+    ) {
+      errors.push({
+        code: 'ACTION_CLASS_BOUND',
+        field: 'inputs.action',
+        message:
+          "'action' is this step's risk class and is not bindable: a payload value would let the " +
+          'run choose the class it is judged by. Declare it under `config` instead.',
+        nodeId: id,
+        severity: 'error',
+      });
+    }
     for (const { field, segments } of writePathSegments(id, node)) {
       const reserved = segments.find((seg) => RESERVED_SEGMENTS.has(seg));
       if (reserved !== undefined) {

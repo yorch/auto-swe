@@ -108,15 +108,21 @@ A recorded decision is only a gate if the step that performs the action checks i
 in `packages/worker/src/lib/externalWrite.ts` and covers the three workflow steps that change
 something outside the platform — `writeOutcome`, `runTool` and `mcpCallTool`:
 
-- Before a mutation, the latest `publish` decision for the run is read. If it is `require_approval`
-  and no `approve` was recorded after it, the step is refused with a non-retryable
-  `APPROVAL_REQUIRED`. A run that recorded no `publish` decision is not gated — the policy exists
-  where something asked for it.
+- Before a mutation, the latest `publish` decision for the run **that required approval** is read. If
+  no `approve` was recorded after it, the step is refused with a non-retryable `APPROVAL_REQUIRED`.
+  A run that recorded no such decision is not gated — the policy exists where something asked for it.
 - The decision is matched to the **run**, not to the action: a run-wide requirement, from any risk
   class, holds every mutation until it is satisfied, and the guard cannot tell an approval for one
   human step from an approval for another. A template that gates one action and then performs an
   unrelated write is therefore held by the first gate. That is the conservative direction, and it is
-  the same rule `writeOutcome` has always used.
+  the same rule `writeOutcome` has always used. It also means a later decision that would have
+  allowed something else cannot clear an earlier requirement: the guard reads the latest
+  *requirement*, not the latest decision.
+- The risk class is the template's to declare, not the run's: `publishOutcome` reads `config.action`
+  and ignores an `action` input, and `validateSpec` refuses a spec that supplies one
+  (`ACTION_CLASS_BOUND`). A payload-fillable class would let whoever supplies the payload choose the
+  class it is judged by — and since a requirement from any class holds every mutation, that is a gate
+  the claimant sets for itself.
 - Connector tools that only read (`fetchTicket`, `fetchIssue`) are exempt: they change nothing, so
   they are neither gated nor recorded. So is an MCP tool its server declares read-only with the
   protocol's `readOnlyHint` annotation. Every other call — including an MCP tool with no annotation,
