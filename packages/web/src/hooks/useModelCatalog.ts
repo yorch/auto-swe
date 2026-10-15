@@ -195,3 +195,29 @@ export function usePriceHints(provider: string, modelId: string, enabled: boolea
     staleTime: Number.POSITIVE_INFINITY,
   });
 }
+
+/** One spec's answer from the batch hint call. */
+export type SpecPriceHints = PriceHintResult & { provider: string; modelId: string };
+
+/** The most specs one batch call answers; the gateway refuses more. */
+export const PRICE_HINT_BATCH_MAX = 200;
+
+/// Hints for every spec the discovery list shows, in one call. Like
+/// {@link usePriceHints}, kept for the session and never retried on its own.
+export function usePriceHintsBatch(specs: Array<{ provider: string; modelId: string }>) {
+  const batch = specs.slice(0, PRICE_HINT_BATCH_MAX);
+  return useQuery({
+    enabled: batch.length > 0,
+    queryFn: () =>
+      api
+        .post<{ data: SpecPriceHints[] }>(`${BASE}/price-hints/batch`, { specs: batch })
+        .then((r) => r.data),
+    queryKey: [
+      'model-catalog',
+      'price-hints-batch',
+      batch.map((s) => `${s.provider}/${s.modelId}`).join('\n'),
+    ],
+    retry: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}

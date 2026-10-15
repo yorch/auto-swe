@@ -6,12 +6,7 @@ vi.mock('@auto-swe/shared/config', () => ({
   resolveSetting: vi.fn(async () => []),
 }));
 
-import {
-  findPriceHints,
-  lookupPriceList,
-  PRICE_LIST_ERRORS,
-  resetPriceHintCaches,
-} from './modelPriceHints.js';
+import { findPriceHints, resetPriceHintCaches } from './modelPriceHints.js';
 
 const prisma = {} as PrismaClient;
 const LIST_URL = 'https://prices.example.com/model_prices.json';
@@ -55,42 +50,6 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 afterEach(() => {
   resetPriceHintCaches();
-});
-
-describe('lookupPriceList', () => {
-  it('reads a bare first-party key, per MTok, with cache rates as multiples of input', () => {
-    expect(lookupPriceList(TABLE, 'anthropic', 'claude-x-1')).toEqual({
-      cacheReadMultiplier: 0.1,
-      cacheWrite1hMultiplier: 2,
-      cacheWrite5mMultiplier: 1.25,
-      inputUsdPerMTok: 3,
-      kind: 'CHAT',
-      matchedId: 'claude-x-1',
-      outputUsdPerMTok: 15,
-    });
-  });
-
-  it("maps google to LiteLLM's gemini prefix", () => {
-    expect(lookupPriceList(TABLE, 'google', 'gemini-x-pro')).toMatchObject({
-      inputUsdPerMTok: 1.25,
-      matchedId: 'gemini/gemini-x-pro',
-      outputUsdPerMTok: 10,
-    });
-  });
-
-  it('prices an embedding that states no output rate at 0 output', () => {
-    expect(lookupPriceList(TABLE, 'openai', 'text-embed-x')).toMatchObject({
-      inputUsdPerMTok: 0.02,
-      kind: 'EMBEDDING',
-      outputUsdPerMTok: 0,
-    });
-  });
-
-  it("never answers with another provider's entry for the same id", () => {
-    expect(lookupPriceList(TABLE, 'openai', 'gpt-x')).toBeNull();
-    expect(lookupPriceList(TABLE, 'openai', 'claude-x-1')).toBeNull();
-    expect(lookupPriceList(TABLE, 'openai', 'missing')).toBeNull();
-  });
 });
 
 describe('findPriceHints', () => {
@@ -176,52 +135,6 @@ describe('findPriceHints', () => {
       { reason: 'request failed (Error)', source: 'priceList' },
     ]);
     expect(JSON.stringify(result)).not.toContain('secret');
-  });
-
-  it('refuses a price list that is not a JSON object, or is too large', async () => {
-    const notObject = await findPriceHints(prisma, 'anthropic', 'claude-x-1', {
-      fetcher: (async () => new Response('<html>')) as never,
-      priceListUrl: async () => LIST_URL,
-    });
-    expect(notObject.unavailable).toEqual([
-      { reason: PRICE_LIST_ERRORS.unrecognised, source: 'priceList' },
-    ]);
-    resetPriceHintCaches();
-    const huge = await findPriceHints(prisma, 'anthropic', 'claude-x-1', {
-      fetcher: (async () =>
-        new Response('{}', { headers: { 'content-length': String(64 * 1024 * 1024) } })) as never,
-      priceListUrl: async () => LIST_URL,
-    });
-    expect(huge.unavailable).toEqual([{ reason: PRICE_LIST_ERRORS.tooLarge, source: 'priceList' }]);
-  });
-
-  it('refuses a price list URL on a blocked address without fetching it', async () => {
-    const fetcher = vi.fn();
-    const result = await findPriceHints(prisma, 'anthropic', 'claude-x-1', {
-      fetcher: fetcher as never,
-      priceListUrl: async () => 'http://169.254.169.254/prices.json',
-    });
-    expect(fetcher).not.toHaveBeenCalled();
-    expect(result.unavailable).toEqual([{ reason: 'blocked address', source: 'priceList' }]);
-  });
-
-  it('keeps a fetched list for hours, and retries a failed one after minutes', async () => {
-    let now = 0;
-    const ok = vi.fn(async () => jsonResponse(TABLE));
-    const deps = { fetcher: ok as never, now: () => now, priceListUrl: async () => LIST_URL };
-    await findPriceHints(prisma, 'anthropic', 'claude-x-1', deps);
-    now += 60 * 60_000;
-    await findPriceHints(prisma, 'anthropic', 'claude-x-1', deps);
-    expect(ok).toHaveBeenCalledTimes(1);
-
-    resetPriceHintCaches();
-    now = 0;
-    const failing = vi.fn(async () => jsonResponse({}, 503));
-    const failDeps = { ...deps, fetcher: failing as never };
-    await findPriceHints(prisma, 'anthropic', 'claude-x-1', failDeps);
-    now += 6 * 60_000;
-    await findPriceHints(prisma, 'anthropic', 'claude-x-1', failDeps);
-    expect(failing).toHaveBeenCalledTimes(2);
   });
 
   it('asks a provider again once its listing failed, but reuses a good one', async () => {

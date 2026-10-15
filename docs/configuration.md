@@ -64,8 +64,9 @@ reserved addresses stay refused whatever is listed, an unreadable setting lists 
 [model-configuration.md](./model-configuration.md#troubleshooting).
 
 It also holds `models.priceListUrl` (ADMIN-only, GLOBAL only, sensitive): the community price list, in
-LiteLLM's `model_prices_and_context_window.json` format, that the catalog's **Add** form reads to
-suggest a new model's prices. It defaults to LiteLLM's file on GitHub; an empty value turns the lookup
+LiteLLM's `model_prices_and_context_window.json` format, that suggests a new model's prices to the
+catalog's **Add** form and bulk add, and gives the scheduled catalog refresh figures to cross-check.
+It defaults to LiteLLM's file on GitHub; an empty value turns the lookup
 off, and a mirror on a private network needs its host in `models.privateNetworkHosts`. See
 [model-configuration.md](./model-configuration.md#model-catalog).
 

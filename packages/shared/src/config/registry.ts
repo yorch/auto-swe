@@ -423,7 +423,7 @@ export const SETTING_DEFINITIONS = {
   'models.priceListUrl': defineSetting({
     defaultValue: DEFAULT_MODEL_PRICE_LIST_URL,
     description:
-      "A community price list in LiteLLM's model_prices_and_context_window.json format, which the catalog's Add form reads to suggest a new model's prices. Suggestions only: an admin still saves each price, and nothing costs a call from the list. Empty turns the lookup off. The gateway fetches it behind the same address guard as provider credentials (a private-network mirror needs its host in models.privateNetworkHosts), refuses redirects, and caches it for six hours.",
+      "A community price list in LiteLLM's model_prices_and_context_window.json format, which suggests a new model's prices to the catalog's Add form and bulk add, and gives the scheduled catalog refresh figures to cross-check. Suggestions only: an admin still saves each price, and nothing costs a call from the list. Empty turns the lookup off. The gateway and the worker each fetch it behind the same address guard as provider credentials (a private-network mirror needs its host in models.privateNetworkHosts), refuse redirects, and cache it for six hours.",
     group: 'models',
     label: 'Model price list URL',
     overridableAt: [],

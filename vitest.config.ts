@@ -318,6 +318,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/modelDiscovery.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/modelPriceList',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/modelPriceList.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/modelSuggestions',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/modelSuggestions.ts'),
       },

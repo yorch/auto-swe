@@ -6,6 +6,7 @@ import type { ModelCatalogEntry } from '@/lib/modelCatalog';
 
 // vi.mock is hoisted above the file's declarations, so its fixtures are too.
 const {
+  createAsync,
   DEFAULT_DATA,
   ENTRIES,
   discoverMutate,
@@ -127,11 +128,17 @@ const {
   const suggestionState: { data: Record<string, unknown> } = { data: {} };
   suggestionState.data = DEFAULT_DATA();
   // One object per answer: the form tells a new answer from a re-render by identity.
-  const hintState: { data: Record<string, unknown> | undefined; asked: string[] } = {
+  const hintState: {
+    data: Record<string, unknown> | undefined;
+    asked: string[];
+    batch: Array<Record<string, unknown>> | undefined;
+  } = {
     asked: [],
+    batch: undefined,
     data: undefined,
   };
   return {
+    createAsync: vi.fn(async (_body: unknown) => ({})),
     DEFAULT_DATA,
     discoverMutate: vi.fn(),
     dismissMutate: vi.fn(),
@@ -144,7 +151,7 @@ const {
 });
 
 vi.mock('@/hooks/useModelCatalog', () => ({
-  useCreateCatalogEntry: mutation,
+  useCreateCatalogEntry: () => ({ isPending: false, mutate: vi.fn(), mutateAsync: createAsync }),
   useDeleteCatalogEntry: mutation,
   useDiscoverModels: () => ({ error: null, isPending: false, mutate: discoverMutate }),
   useDismissSuggestion: () => ({ isPending: false, mutate: dismissMutate }),
@@ -156,6 +163,7 @@ vi.mock('@/hooks/useModelCatalog', () => ({
     }
     return { data: enabled ? hintState.data : undefined, isFetching: false };
   },
+  usePriceHintsBatch: () => ({ data: hintState.batch, isFetching: false }),
   useResetCatalogEntry: mutation,
   useUnpricedModels: () => ({
     data: [{ spec: 'openai/gpt-5-5', suggestion: 'openai/gpt-5.5', usedBy: ['agent:reviewer'] }],
@@ -303,6 +311,38 @@ describe('CatalogTab price hints', () => {
   afterEach(() => {
     hintState.data = undefined;
     hintState.asked = [];
+    hintState.batch = undefined;
+  });
+
+  it("shows each discovered model's suggested price, and says when none is published", () => {
+    suggestionState.data = {
+      ...DEFAULT_DATA(),
+      suggestions: [
+        ...(DEFAULT_DATA().suggestions as unknown[]),
+        {
+          dismissedAt: null,
+          displayName: null,
+          firstSeenAt: '2026-10-01T04:00:00Z',
+          id: 's3',
+          kind: 'CHAT',
+          lastSeenAt: '2026-10-02T04:00:00Z',
+          modelId: 'qwen-9',
+          provider: 'ollama',
+          spec: 'ollama/qwen-9',
+          type: 'NEW',
+        },
+      ],
+    };
+    hintState.batch = [
+      { ...HINTS, modelId: 'nomic-embed-2', provider: 'ollama' },
+      { hints: [], modelId: 'qwen-9', provider: 'ollama', unavailable: [] },
+    ];
+    render(<CatalogTab />);
+    const priced = rowFor('ollama/nomic-embed-2');
+    expect(within(priced).getByText('$3 / $15')).toBeTruthy();
+    expect(within(priced).getByText(/listing/)).toBeTruthy();
+    expect(within(rowFor('ollama/qwen-9')).getByText('No published price')).toBeTruthy();
+    suggestionState.data = DEFAULT_DATA();
   });
 
   const openAdd = () => {
@@ -340,6 +380,57 @@ describe('CatalogTab price hints', () => {
     expect(screen.getByLabelText(/^Input price/)).toHaveProperty('value', '7');
     expect(screen.queryByText(/Prices prefilled/)).toBeNull();
     expect(screen.getAllByRole('button', { name: 'Use' })).toHaveLength(2);
+  });
+
+  it('adds the ticked models at their suggested prices, only after a confirmation', async () => {
+    hintState.batch = [{ ...HINTS, modelId: 'nomic-embed-2', provider: 'ollama' }];
+    render(<CatalogTab />);
+    expect(screen.queryByRole('button', { name: /at suggested prices/ })).toBeNull();
+    fireEvent.click(screen.getByLabelText('Select ollama/nomic-embed-2'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add 1 at suggested prices' }));
+    expect(createAsync).not.toHaveBeenCalled();
+    const dialog = screen.getByRole('dialog', { name: /Add 1 model to the catalog/ });
+    expect(
+      within(dialog).getByText(/\$3 \/ \$15 per MTok, from ollama's model listing/)
+    ).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add 1' }));
+    await vi.waitFor(() => expect(createAsync).toHaveBeenCalledTimes(1));
+    expect(createAsync).toHaveBeenCalledWith({
+      cacheReadMultiplier: 0.1,
+      cacheWrite1hMultiplier: null,
+      cacheWrite5mMultiplier: null,
+      displayName: 'Nomic Embed',
+      inputUsdPerMTok: 3,
+      kind: 'EMBEDDING',
+      modelId: 'nomic-embed-2',
+      notes:
+        "Price suggested by ollama's model listing (nomic-embed-2); added in bulk from discovery.",
+      outputUsdPerMTok: 15,
+      provider: 'ollama',
+    });
+    createAsync.mockClear();
+  });
+
+  it('keeps the dialog open and names a model that could not be added', async () => {
+    hintState.batch = [{ ...HINTS, modelId: 'nomic-embed-2', provider: 'ollama' }];
+    createAsync.mockRejectedValueOnce(new Error('already in the catalog'));
+    render(<CatalogTab />);
+    fireEvent.click(screen.getByLabelText('Select ollama/nomic-embed-2'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add 1 at suggested prices' }));
+    const dialog = screen.getByRole('dialog', { name: /Add 1 model/ });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add 1' }));
+    expect(
+      await within(dialog).findByText(/Not added — ollama\/nomic-embed-2: already in the catalog/)
+    ).toBeTruthy();
+    createAsync.mockClear();
+  });
+
+  it('offers no tick for a model with no suggested price', () => {
+    hintState.batch = [
+      { hints: [], modelId: 'nomic-embed-2', provider: 'ollama', unavailable: [] },
+    ];
+    render(<CatalogTab />);
+    expect(screen.queryByLabelText('Select ollama/nomic-embed-2')).toBeNull();
   });
 
   it('says when nothing is published, and why a source could not be read', () => {

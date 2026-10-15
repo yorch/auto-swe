@@ -5,6 +5,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
@@ -27,6 +28,7 @@ import {
   useModelCatalog,
   useModelSuggestions,
   usePriceHints,
+  usePriceHintsBatch,
   useResetCatalogEntry,
   useUnpricedModels,
   useUpdateCatalogEntry,
@@ -55,6 +57,7 @@ const STATUS_TONE = { ACTIVE: 'moss', DEPRECATED: 'amber', RETIRED: 'muted' } as
 /** `DEPRECATED` → `Deprecated`, for an enum value shown as a label. */
 const sentence = (v: string) => v.charAt(0) + v.slice(1).toLowerCase();
 const kindLabel = (kind: ModelKind) => (kind === 'EMBEDDING' ? 'Embedding' : sentence(kind));
+const usd = (n: number) => `$${n}`;
 
 /// The model catalog: the per-MTok prices every LLM and embedding call is
 /// costed at. A model with no entry is recorded at $0, which USD budgets never
@@ -287,6 +290,26 @@ function UnpricedPanel({ onAdd }: { onAdd: (spec: string) => void }) {
   );
 }
 
+/// A discovered model's published price, from the batch hint call: what the
+/// Add form would prefill. Only a suggestion; the catalog has no row yet.
+function SuggestedPrice({ hint, loading }: { hint: PriceHint | undefined; loading: boolean }) {
+  if (!hint) {
+    return <span className="text-paper-500">{loading ? '…' : 'No published price'}</span>;
+  }
+  return (
+    <span
+      title={`Suggested by ${hint.source === 'provider' ? 'the provider listing' : 'the price list'} (${hint.matchedId})`}
+    >
+      <span className="text-paper-300">
+        {usd(hint.inputUsdPerMTok)} / {usd(hint.outputUsdPerMTok)}
+      </span>{' '}
+      <span className="text-paper-500">
+        per MTok · {hint.source === 'provider' ? 'listing' : 'price list'}
+      </span>
+    </span>
+  );
+}
+
 /// What the discovery run stored: models a provider lists that nothing prices,
 /// and priced ones it no longer lists. The run is scheduled; "Check providers
 /// now" runs it on demand. Both are suggestions — adding one is still an admin
@@ -330,6 +353,63 @@ function DiscoveryPanel({
             ? 'Nothing new from the providers that could be listed.'
             : 'Nothing new — every listed model is priced.';
 
+  const hintBatch = usePriceHintsBatch(
+    fresh.map((m) => ({ modelId: m.modelId, provider: m.provider }))
+  );
+  const hintsBySpec = new Map(
+    (hintBatch.data ?? []).map((h) => [`${h.provider}/${h.modelId}`, h.hints[0]])
+  );
+
+  // Bulk add: only a model with a suggested price can be ticked, and nothing is
+  // written until the admin confirms the list of specs and prices.
+  const create = useCreateCatalogEntry();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmingBulk, setConfirmingBulk] = useState(false);
+  const selectable = fresh.filter((m) => m.dismissedAt === null && hintsBySpec.get(m.spec));
+  const chosen = selectable.filter((m) => selected.has(m.spec));
+  const toggle = (spec: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(spec)) {
+        next.add(spec);
+      }
+      return next;
+    });
+  const addChosen = async () => {
+    const failures: string[] = [];
+    for (const m of chosen) {
+      const hint = hintsBySpec.get(m.spec);
+      if (!hint) {
+        continue;
+      }
+      try {
+        await create.mutateAsync({
+          cacheReadMultiplier: hint.cacheReadMultiplier ?? null,
+          cacheWrite1hMultiplier: hint.cacheWrite1hMultiplier ?? null,
+          cacheWrite5mMultiplier: hint.cacheWrite5mMultiplier ?? null,
+          displayName: m.displayName,
+          inputUsdPerMTok: hint.inputUsdPerMTok,
+          kind: m.kind,
+          modelId: m.modelId,
+          notes: `Price suggested by ${hintSourceName(hint, m.provider)} (${hint.matchedId}); added in bulk from discovery.`,
+          outputUsdPerMTok: hint.outputUsdPerMTok,
+          provider: m.provider,
+        });
+        setSelected((prev) => {
+          const next = new Set(prev);
+          next.delete(m.spec);
+          return next;
+        });
+      } catch (err) {
+        failures.push(`${m.spec}: ${errMsg(err, 'could not be added')}`);
+      }
+    }
+    if (failures.length > 0) {
+      // Keeps the dialog open on the ones that failed; the rest are already in the catalog.
+      throw new Error(`Not added — ${failures.join('; ')}`);
+    }
+  };
+
   const dismissButton = (s: ModelSuggestion) => (
     <Button
       disabled={dismiss.isPending}
@@ -352,6 +432,11 @@ function DiscoveryPanel({
               label="Show dismissed"
               onChange={() => setShowDismissed((v) => !v)}
             />
+            {chosen.length > 0 && (
+              <Button onClick={() => setConfirmingBulk(true)} size="sm" variant="secondary">
+                Add {chosen.length} at suggested prices
+              </Button>
+            )}
             <Button disabled={discover.isPending} onClick={() => discover.mutate()} size="sm">
               {discover.isPending ? 'Checking…' : 'Check providers now'}
             </Button>
@@ -383,6 +468,15 @@ function DiscoveryPanel({
             <tbody>
               {fresh.map((m) => (
                 <TRow key={m.id}>
+                  <Td className="w-8 py-1.5">
+                    {selectable.includes(m) && (
+                      <Checkbox
+                        checked={selected.has(m.spec)}
+                        label={<span className="sr-only">Select {m.spec}</span>}
+                        onChange={() => toggle(m.spec)}
+                      />
+                    )}
+                  </Td>
                   <Td className="py-1.5">
                     <div className={`font-mono text-xs ${m.dismissedAt ? 'text-paper-500' : ''}`}>
                       {m.spec}
@@ -390,6 +484,9 @@ function DiscoveryPanel({
                     {m.displayName && <div className="text-xs text-paper-500">{m.displayName}</div>}
                   </Td>
                   <Td className="py-1.5 text-xs text-paper-300">{kindLabel(m.kind)}</Td>
+                  <Td className="py-1.5 text-xs">
+                    <SuggestedPrice hint={hintsBySpec.get(m.spec)} loading={hintBatch.isFetching} />
+                  </Td>
                   <Td className="py-1.5 text-xs text-paper-500">
                     First seen {formatDate(m.firstSeenAt)}
                   </Td>
@@ -416,6 +513,37 @@ function DiscoveryPanel({
           </Table>
         )}
       </Card>
+
+      <ConfirmModal
+        closeOnConfirm
+        confirmLabel={`Add ${chosen.length}`}
+        message={
+          <div className="space-y-3">
+            <p>
+              Each model is added at its suggested price, and its notes say where the price came
+              from. Check the figures against each provider's pricing page: they decide what USD
+              budgets see.
+            </p>
+            <ul className="space-y-1 text-xs">
+              {chosen.map((m) => {
+                const hint = hintsBySpec.get(m.spec);
+                return (
+                  <li key={m.spec}>
+                    <span className="font-mono">{m.spec}</span>
+                    {hint &&
+                      ` — ${usd(hint.inputUsdPerMTok)} / ${usd(hint.outputUsdPerMTok)} per MTok, from ${hintSourceName(hint, m.provider)}`}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        }
+        onClose={() => setConfirmingBulk(false)}
+        onConfirm={addChosen}
+        open={confirmingBulk && chosen.length > 0}
+        pendingLabel="Adding…"
+        title={`Add ${chosen.length} model${chosen.length === 1 ? '' : 's'} to the catalog`}
+      />
 
       {retired.length > 0 && (
         <Card className="p-5 sm:p-6">
@@ -476,8 +604,6 @@ function hintSourceName(hint: Pick<PriceHint, 'source' | 'url'>, provider: strin
     return 'the price list';
   }
 }
-
-const usd = (n: number) => `$${n}`;
 
 /// What the Add form found published for the spec being added: the hint it
 /// prefilled from, any other source's price with a "Use", and a source that

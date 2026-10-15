@@ -55,6 +55,9 @@ const CreateBody = z.object({ ...CatalogFields, ...SpecFields });
 
 const PriceHintBody = z.object(SpecFields);
 
+/** The discovery list's page: one call prices every new model it shows. */
+const PriceHintBatchBody = z.object({ specs: z.array(PriceHintBody).min(1).max(200) });
+
 // Provider and modelId are the row's identity, and pinned agent versions bill
 // against it, so an edit never changes them — delete and re-create instead.
 const UpdateBody = z.object({
@@ -252,6 +255,22 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
       const { provider, modelId } = request.body;
       return { data: await findPriceHints(fastify.prisma, provider, modelId) };
     }
+  );
+
+  // The same hints for many specs at once. Each provider is listed once and the
+  // price list fetched once, whatever the batch size: both are cached and shared.
+  app.post(
+    '/model-catalog/price-hints/batch',
+    { onRequest: adminOnly, schema: { body: PriceHintBatchBody } },
+    async (request) => ({
+      data: await Promise.all(
+        request.body.specs.map(async ({ provider, modelId }) => ({
+          modelId,
+          provider,
+          ...(await findPriceHints(fastify.prisma, provider, modelId)),
+        }))
+      ),
+    })
   );
 
   app.post(

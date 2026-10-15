@@ -5,6 +5,12 @@
  * the provider calls happen here, in the worker process, and the only thing that
  * leaves is text built from model ids and fixed wording.
  *
+ * Each provider section can end with figures from the community price list
+ * (`models.priceListUrl`), as a cross-check for the prices the agent reads from
+ * the official pages. Only numbers this code formats and ids already in the
+ * section or the catalog file reach the text: nothing the list itself says, so a
+ * hostile list can skew a figure but cannot add an instruction.
+ *
  * Two rules keep it that way:
  *  - the step's output, its logs and its failures never carry a provider error
  *    string, because a transport error can quote the request (a header value, URL
@@ -21,6 +27,11 @@ import { prisma } from '@auto-swe/shared/db';
 import { BUILTIN_MODELS_PATH } from '@auto-swe/shared/lib/builtinModels';
 import { decryptSecret } from '@auto-swe/shared/lib/crypto';
 import { listProviderModels as listProviderModelsLive } from '@auto-swe/shared/lib/modelDiscovery';
+import {
+  loadPriceList,
+  lookupPriceList,
+  type PriceTable,
+} from '@auto-swe/shared/lib/modelPriceList';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -47,6 +58,32 @@ export interface ListProviderModelsResult {
 /** The providers the catalog file already prices, read from its `provider: '…'` fields. */
 function providersInCatalog(source: string): Set<string> {
   return new Set([...source.matchAll(/\bprovider:\s*'([a-z0-9._-]+)'/g)].map((m) => m[1] ?? ''));
+}
+
+/** The catalog file's rows as `(provider, modelId)`; an id that is not a plain token is skipped. */
+function catalogRows(source: string): Array<{ provider: string; modelId: string }> {
+  return [...source.matchAll(/\{[^{}]*\}/g)].flatMap(([block]) => {
+    const provider = /\bprovider:\s*'([a-z0-9._-]+)'/.exec(block)?.[1];
+    const modelId = /\bmodelId:\s*'([A-Za-z0-9._/-]+)'/.exec(block)?.[1];
+    return provider && modelId ? [{ modelId, provider }] : [];
+  });
+}
+
+/**
+ * The price list's figures for `ids`, as markdown, or '' when it has none. The
+ * list's own keys and text are never repeated: only the id asked about and the
+ * numbers, formatted here.
+ */
+function priceListFigures(table: PriceTable, provider: string, ids: Iterable<string>): string {
+  const lines = [...new Set(ids)].sort().flatMap((id) => {
+    const entry = lookupPriceList(table, provider, id);
+    return entry
+      ? [`- ${id}: $${entry.inputUsdPerMTok} input / $${entry.outputUsdPerMTok} output per MTok`]
+      : [];
+  });
+  return lines.length
+    ? `Community price-list figures, a cross-check only (never a source to copy or cite):\n\n${lines.join('\n')}`
+    : '';
 }
 
 /**
@@ -96,6 +133,9 @@ export async function listProviderModels(
   }
 
   const known = providersInCatalog(source);
+  const rows = catalogRows(source);
+  // Never throws, and null when the list is turned off.
+  const priceList = await loadPriceList();
   const credentials = (
     await runUnscoped(
       'the catalog refresh lists models through the GLOBAL provider credentials',
@@ -143,7 +183,17 @@ export async function listProviderModels(
         const retirement = listed.complete
           ? `Every id the provider still lists. Retire a catalog row only if its id is missing from this list:\n\n${bullets(listed.listedIds)}`
           : 'This listing may be incomplete: do not mark any model RETIRED.';
-        return `### ${label}\n\n${candidates}\n\n${retirement}`;
+        const figures = priceList?.ok
+          ? priceListFigures(
+              priceList.table,
+              cred.provider,
+              [
+                ...listed.models.map((m) => m.modelId),
+                ...rows.filter((r) => r.provider === cred.provider).map((r) => r.modelId),
+              ].filter(isPublicModelId)
+            )
+          : '';
+        return [`### ${label}`, candidates, retirement, figures].filter(Boolean).join('\n\n');
       } catch {
         // Decryption or an unexpected throw: nothing about it is safe to repeat.
         log.warn('catalog refresh: provider listing failed', { provider: label });
@@ -152,7 +202,11 @@ export async function listProviderModels(
     })
   );
 
-  const header = `## Live model ids\n\nCatalog file: \`${catalogPath}\`.`;
+  const header =
+    `## Live model ids\n\nCatalog file: \`${catalogPath}\`.` +
+    (priceList && !priceList.ok
+      ? '\n\nThe community price list could not be read, so no section has cross-check figures.'
+      : '');
   const guidance =
     sections.length === 0
       ? `${header}\n\nNo provider credential is configured for the providers in the catalog, so no ` +
