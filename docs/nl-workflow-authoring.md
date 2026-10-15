@@ -204,12 +204,17 @@ dynamic catalog + the user's intent go in the user message.
 - **Serving a version re-checks code that has no audit row.** Reviewing a version
   (`POST /:id/versions/:version/review`), promoting it (`POST /:id/promote`), re-activating a template
   on it (`PATCH` with `status: "ACTIVE"`) and making it an experiment arm (`PATCH` with
-  `experimentVersion`) look up the version's `WorkflowShellAudit` rows. A node of authored code with
-  no row — a version a bundle install or `syncBuiltins` wrote, which no gateway save checked, or one
-  whose rows were pruned — makes the request require the shell authoring role (`403 SHELL_AUTHOR_FORBIDDEN`
+  `experimentVersion`) look up the version's `WorkflowShellAudit` rows. A row covers exactly the node,
+  image and command it records, so one audited gate of a `runQualityGates` node vouches for no other.
+  Code no row covers — a version `syncBuiltins` wrote, which no gateway save checked, or one whose
+  rows were pruned — makes the request require the shell authoring role (`403 SHELL_AUTHOR_FORBIDDEN`
   otherwise), and on success records the missing rows with the caller as author, in the same
-  transaction as the write. A version whose code was audited at save stays promotable by any LEAD who
-  may write the template.
+  transaction as the write. A version whose code was audited at save, or by the bundle install that
+  wrote it, stays promotable by any LEAD who may write the template.
+- **Audit rows outlive their retention while their version serves.** The shell-audit prune
+  (`POST /api/v1/platform/shell-audit/prune`) deletes rows older than its cutoff except those of any
+  template's active version or experiment arm, whatever the template's status, so pruning never
+  makes a serving version need the shell authoring role again.
 
 ---
 
@@ -240,12 +245,10 @@ dynamic catalog + the user's intent go in the user message.
   network policy applies to it. The shell authoring role and `WorkflowShellAudit` are its only
   save-time controls. This also means a team LEAD who may write a template cannot set one; a LEAD
   can still use any gate step without a `command`, which runs the repository's configured command.
-- **The serving check matches audit rows by node id.** A node counts as audited when any row for
-  the version names its id, so a `runQualityGates` node whose row covers one of its gates counts for
-  all of them. Rows deleted by the shell-audit prune (`POST /api/v1/platform/shell-audit/prune`)
-  leave a version unaudited again, so the next review, promote or activation of it takes the shell
-  authoring role and records new rows. A bundle install that activates the version it appends does
-  so without this check (see [bundles.md](./bundles.md#limitations)).
+- **A pruned version that is not serving needs the role again.** The prune keeps the rows of every
+  active version and experiment arm, but an older version's rows age out like any other. Promoting
+  that version later takes the shell authoring role and records new rows with the promoter as
+  author, so the original author drops out of the record.
 - **Generated specs are DRAFT, never active.** By design — activation is an explicit human action
   through the canvas. A generated workflow cannot run until a person promotes it.
 - **Refinement replaces the whole spec.** Refine mode asks the model to return the full updated

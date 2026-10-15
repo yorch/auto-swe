@@ -62,6 +62,7 @@ import {
   checkSpec,
   collectAuthoredCode,
   parseSpecOrThrow,
+  recordShellAudit,
   type ShellNodeWithId,
   specErrorsOf,
   specValidationWarnings,
@@ -167,38 +168,6 @@ async function resolveTemplateAuthScope(
   return { allowShell: member.role === 'ADMIN', ok: true };
 }
 
-/**
- * Insert the audit rows. Accepts either the singleton prisma client or a
- * transaction client so the caller can wrap the version write + audit in a
- * single atomic step — without that, a failed audit insert leaves the version
- * row in place and the API reports an error, an inconsistency that's hard
- * to reconcile later.
- */
-async function recordShellAudit(
-  tx: Pick<FastifyInstance['prisma'], 'workflowShellAudit'>,
-  templateVersionId: string,
-  teamId: string | null,
-  authorUserId: string,
-  auditNodes: ShellNodeWithId[],
-  egressAllowlist: string[]
-): Promise<void> {
-  if (auditNodes.length === 0) {
-    return;
-  }
-  await tx.workflowShellAudit.createMany({
-    data: auditNodes.map(({ id, node }) => ({
-      authorUserId,
-      command: node.command,
-      egressAllowlistSnapshot: egressAllowlist,
-      image: node.image,
-      network: node.network ?? 'none',
-      nodeId: id,
-      teamId,
-      templateVersionId,
-    })),
-  });
-}
-
 type ServingAuthorization =
   | { ok: false; statusCode: number; body: unknown }
   | {
@@ -206,6 +175,11 @@ type ServingAuthorization =
       /** Writes the audit rows the check found missing; run it in the write's transaction. */
       record: (tx: Pick<FastifyInstance['prisma'], 'workflowShellAudit'>) => Promise<void>;
     };
+
+/** What one `WorkflowShellAudit` row vouches for: this command, in this image, on this node. */
+function auditKey(nodeId: string, image: string, command: string): string {
+  return JSON.stringify([nodeId, image, command]);
+}
 
 /** The stored spec as the predicates read it; an unparseable one still exposes its nodes. */
 function storedSpecForGates(spec: unknown): WorkflowSpec | null {
@@ -221,11 +195,13 @@ function storedSpecForGates(spec: unknown): WorkflowSpec | null {
  * The shell-authoring gate for a version about to serve runs — reviewed, promoted, made the
  * active version of a template set ACTIVE, or made an experiment arm. A version saved through
  * this API already passed `assertShellAuthoringAllowed` and carries a `WorkflowShellAudit` row
- * per node of authored code; one that arrived any other way (a bundle install, a version saved
- * before authored commands were gated) has nodes with no row. For those nodes the caller must
- * hold the shell authoring role, and their rows are recorded with the caller as author, so the
- * person who let the code serve runs is on record. A version with no authored code, or whose
- * every such node is audited, passes untouched.
+ * per container node and per authored command; one that arrived any other way (a version
+ * `syncBuiltins` wrote, or one whose rows were pruned) has code with no row. A row covers the
+ * exact node, image and command it records — one audited gate of a `runQualityGates` node
+ * vouches for no other. For the uncovered code the caller must hold the shell authoring role,
+ * and its rows are recorded with the caller as author, so the person who let the code serve
+ * runs is on record. A version with no authored code, or whose every command is audited,
+ * passes untouched.
  */
 async function authorizeServingVersion(
   fastify: FastifyInstance,
@@ -247,12 +223,14 @@ async function authorizeServingVersion(
     ['WorkflowShellAudit'],
     () =>
       fastify.prisma.workflowShellAudit.findMany({
-        select: { nodeId: true },
+        select: { command: true, image: true, nodeId: true },
         where: { templateVersionId: version.id },
       })
   );
-  const audited = new Set(rows.map((r) => r.nodeId));
-  const missing = authoredNodes.filter(({ id }) => !audited.has(id));
+  const audited = new Set(rows.map((r) => auditKey(r.nodeId, r.image, r.command)));
+  const missing = authoredNodes.filter(
+    ({ id, node }) => !audited.has(auditKey(id, node.image, node.command))
+  );
   if (missing.length === 0) {
     return { ok: true, record: async () => {} };
   }

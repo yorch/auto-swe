@@ -193,16 +193,13 @@ separately.
   "the version the previous install wrote" is the newest authorless version. After a forced install
   over a built-in template, the next built-in sync and the next bundle install each see the other's
   version as the previous one.
-- **An install does not run the shell authoring gate.** A template saved on the canvas is checked
-  for the `workflow:write:shell` role, against the team's image allowlist, and recorded in
-  `WorkflowShellAudit` — for container code and for authored gate commands alike;
-  `validateBundleTemplates` checks the graph and the lint errors instead, so a bundle can persist a
-  `shell` or `containerStep` spec, or a gate step with its own `command`, with no image check and no
-  audit row, and the install itself may make that version active. Reviewing, promoting or
-  re-activating such a version through the template routes later takes the shell authoring role and
-  records the missing rows ([nl-workflow-authoring.md](./nl-workflow-authoring.md#5-design-notes)).
-  The install endpoints are platform-ADMIN only, and a container image is still checked when the step
-  runs, so this is a missing save-time record rather than a way to escape the allowlist.
+- **An install records authored code but does not check container images.** Every template
+  version an install writes — a new template's v1, or the version an upgrade appends and may make
+  active — gets the `WorkflowShellAudit` rows a canvas save would write for its container code and
+  authored gate commands, with the installing platform admin as author and no team. The image
+  allowlist is not applied at install: `validateBundleTemplates` checks the graph and the lint errors,
+  so a bundle can persist a `shell` or `containerStep` node naming an image no allowlist admits. The
+  image is still checked when the step runs, so such a node fails then rather than at install.
 - **Bundles do not export connection instances.** A template that needs a repository, an issue
   tracker, a document store or an MCP server only declares `dependencies[].connectionType` — one of
   the types a generic step can actually reach (`git_repo`, `mcp`, `issue_tracker`, `notion`,

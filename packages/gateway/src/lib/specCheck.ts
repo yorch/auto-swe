@@ -148,6 +148,38 @@ export function collectAuthoredCode(spec: WorkflowSpec): {
 }
 
 /**
+ * Insert the audit rows. Accepts either the singleton prisma client or a
+ * transaction client so the caller can wrap the version write + audit in a
+ * single atomic step — without that, a failed audit insert leaves the version
+ * row in place and the API reports an error, an inconsistency that's hard
+ * to reconcile later.
+ */
+export async function recordShellAudit(
+  tx: Pick<FastifyInstance['prisma'], 'workflowShellAudit'>,
+  templateVersionId: string,
+  teamId: string | null,
+  authorUserId: string | null,
+  auditNodes: ShellNodeWithId[],
+  egressAllowlist: string[]
+): Promise<void> {
+  if (auditNodes.length === 0) {
+    return;
+  }
+  await tx.workflowShellAudit.createMany({
+    data: auditNodes.map(({ id, node }) => ({
+      authorUserId,
+      command: node.command,
+      egressAllowlistSnapshot: egressAllowlist,
+      image: node.image,
+      network: node.network ?? 'none',
+      nodeId: id,
+      teamId,
+      templateVersionId,
+    })),
+  });
+}
+
+/**
  * Authoring a spec with any container code or authored command requires the
  * `workflow:write:shell` permission. We map it to:
  *   - platform ADMIN, OR

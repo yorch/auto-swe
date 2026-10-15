@@ -261,14 +261,15 @@ describe('installBundle', () => {
         findFirst: vi.fn().mockResolvedValue(null),
         update: vi.fn(),
       },
+      workflowShellAudit: { createMany: vi.fn().mockResolvedValue({ count: 0 }) },
       workflowTemplate: {
-        create: vi.fn().mockResolvedValue({ id: 't1' }),
+        create: vi.fn().mockResolvedValue({ id: 't1', versions: [{ id: 'tv-1' }] }),
         findFirst: vi.fn().mockResolvedValue(null),
         update: vi.fn(),
         updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
       workflowTemplateVersion: {
-        create: vi.fn(),
+        create: vi.fn().mockResolvedValue({ id: 'tv-new' }),
         findMany: vi.fn().mockResolvedValue([]),
         update: vi.fn(),
         upsert: vi.fn(),
@@ -895,6 +896,7 @@ describe('installBundle', () => {
       await installBundle(asArg(), tplManifest(), { allowUnverified: true });
       expect(prisma.workflowTemplateVersion.create).toHaveBeenCalledWith({
         data: { spec: CHANGED_SPEC, templateId: 'tpl-1', version: 2 },
+        select: { id: true },
       });
       expect(prisma.workflowTemplateVersion.upsert).not.toHaveBeenCalled();
       expect(prisma.workflowTemplateVersion.update).not.toHaveBeenCalled();
@@ -919,6 +921,7 @@ describe('installBundle', () => {
       await installBundle(asArg(), tplManifest(), { allowUnverified: true });
       expect(prisma.workflowTemplateVersion.create).toHaveBeenCalledWith({
         data: { spec: CHANGED_SPEC, templateId: 'tpl-1', version: 3 },
+        select: { id: true },
       });
       expect(prisma.workflowTemplate.updateMany).not.toHaveBeenCalled();
     });
@@ -945,6 +948,63 @@ describe('installBundle', () => {
       expect(res.counts.templates).toBe(1);
       expect(prisma.workflowTemplateVersion.create).not.toHaveBeenCalled();
       expect(prisma.workflowTemplate.updateMany).not.toHaveBeenCalled();
+    });
+
+    describe('authored code', () => {
+      const CODE_SPEC = {
+        ...RUNNABLE_SPEC,
+        entry: 'lint',
+        nodes: {
+          ...RUNNABLE_SPEC.nodes,
+          lint: {
+            config: { command: 'npm run lint' },
+            next: RUNNABLE_SPEC.entry,
+            step: 'runLint',
+            type: 'step',
+          },
+        },
+      };
+
+      it('records a new template version with authored code under the installer', async () => {
+        await installBundle(asArg(), tplManifest(CODE_SPEC), {
+          allowUnverified: true,
+          installedById: 'admin-1',
+        });
+        expect(prisma.workflowShellAudit.createMany).toHaveBeenCalledWith({
+          data: [
+            {
+              authorUserId: 'admin-1',
+              command: 'npm run lint',
+              egressAllowlistSnapshot: [],
+              image: '(agent workspace)',
+              network: 'egress',
+              nodeId: 'lint',
+              teamId: null,
+              templateVersionId: 'tv-1',
+            },
+          ],
+        });
+      });
+
+      it('records the version an upgrade appends, which it may activate', async () => {
+        existingTemplate();
+        prisma.workflowTemplateVersion.findMany.mockResolvedValue([
+          { createdBy: null, generatedBy: null, spec: RUNNABLE_SPEC, version: 1 },
+        ]);
+        await installBundle(asArg(), tplManifest(CODE_SPEC), {
+          allowUnverified: true,
+          installedById: 'admin-1',
+        });
+        expect(prisma.workflowShellAudit.createMany).toHaveBeenCalledWith({
+          data: [expect.objectContaining({ nodeId: 'lint', templateVersionId: 'tv-new' })],
+        });
+        expect(prisma.workflowTemplate.updateMany).toHaveBeenCalled();
+      });
+
+      it('writes no audit row for a template with no authored code', async () => {
+        await installBundle(asArg(), tplManifest(RUNNABLE_SPEC), { allowUnverified: true });
+        expect(prisma.workflowShellAudit.createMany).not.toHaveBeenCalled();
+      });
     });
 
     it('refuses a same-named built-in or admin-authored GLOBAL template', async () => {

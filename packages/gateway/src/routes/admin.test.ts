@@ -34,6 +34,12 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
     workflowShellAudit: {
       deleteMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
+    workflowTemplate: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
+    workflowTemplateVersion: {
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   };
 
   app.decorate('prisma', mockPrisma as unknown as never);
@@ -190,6 +196,50 @@ describe('adminRoutes', () => {
       expect(body.data.olderThanDays).toBe(30);
       const deleteCall = ctx.mockPrisma.workflowShellAudit.deleteMany.mock.calls.at(-1)?.[0];
       expect(deleteCall?.where?.createdAt?.lt).toBeInstanceOf(Date);
+    });
+
+    it("keeps the rows of every template's active version and experiment arm", async () => {
+      ctx.mockPrisma.workflowTemplate.findMany.mockResolvedValueOnce([
+        { activeVersion: 3, experimentVersion: 4, id: 'tpl-a' },
+        { activeVersion: 1, experimentVersion: null, id: 'tpl-b' },
+      ]);
+      ctx.mockPrisma.workflowTemplateVersion.findMany.mockResolvedValueOnce([
+        { id: 'ver-a3' },
+        { id: 'ver-a4' },
+        { id: 'ver-b1' },
+      ]);
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: '/api/v1/platform/shell-audit/prune',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.workflowTemplateVersion.findMany.mock.calls.at(-1)?.[0].where).toEqual({
+        OR: [
+          { templateId: 'tpl-a', version: 3 },
+          { templateId: 'tpl-a', version: 4 },
+          { templateId: 'tpl-b', version: 1 },
+        ],
+      });
+      const deleteCall = ctx.mockPrisma.workflowShellAudit.deleteMany.mock.calls.at(-1)?.[0];
+      expect(deleteCall?.where?.templateVersionId).toEqual({
+        notIn: ['ver-a3', 'ver-a4', 'ver-b1'],
+      });
+    });
+
+    it('deletes by age alone when no template has a serving version', async () => {
+      const versionLookups = ctx.mockPrisma.workflowTemplateVersion.findMany.mock.calls.length;
+      const res = await ctx.app.inject({
+        headers: AUTH,
+        method: 'POST',
+        url: '/api/v1/platform/shell-audit/prune',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(ctx.mockPrisma.workflowTemplateVersion.findMany.mock.calls.length).toBe(
+        versionLookups
+      );
+      const deleteCall = ctx.mockPrisma.workflowShellAudit.deleteMany.mock.calls.at(-1)?.[0];
+      expect(deleteCall?.where?.templateVersionId).toBeUndefined();
     });
   });
 
