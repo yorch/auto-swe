@@ -38,7 +38,15 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     autonomyDecision: { findFirst: vi.fn() },
     connection: { findUnique: vi.fn() },
-    workflowOutcomeReference: { create: vi.fn(), findFirst: vi.fn() },
+    workflowOutcomeReference: {
+      // The effect is claimed before the provider is called and completed afterwards, so a mock
+      // needs all four: the claim (`create`), the completion (`updateMany`), the read, and the
+      // release a connector uses when it refused before sending (`deleteMany`).
+      create: vi.fn(),
+      deleteMany: vi.fn(),
+      findFirst: vi.fn(),
+      updateMany: vi.fn(),
+    },
     workflowRun: { findUnique: vi.fn() },
   },
 }));
@@ -295,7 +303,10 @@ describe('runTool governance', () => {
     (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue(null);
     (prisma.workflowOutcomeReference.findFirst as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce(null)
-      .mockResolvedValueOnce({ result: { connectionType: 'zendesk', ok: true, output: 'first' } });
+      .mockResolvedValueOnce({
+        result: { connectionType: 'zendesk', ok: true, output: 'first' },
+        state: 'DONE',
+      });
 
     const args = {
       connectionId: ZENDESK,
@@ -309,9 +320,21 @@ describe('runTool governance', () => {
     expect(first.ok).toBe(true);
     expect(second.output).toBe('first');
     expect(postZendeskComment).toHaveBeenCalledTimes(1);
+    // Claimed before the call, completed with what it returned: the claim carries no result, and
+    // the completion is what a retry reads.
     expect(prisma.workflowOutcomeReference.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({ connectionId: ZENDESK, nodeId: 'notify', runId: 'run-1' }),
+      data: expect.objectContaining({
+        connectionId: ZENDESK,
+        nodeId: 'notify',
+        runId: 'run-1',
+        state: 'PENDING',
+      }),
     });
+    expect(prisma.workflowOutcomeReference.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ state: 'DONE' }),
+      })
+    );
   });
 });
 
@@ -455,6 +478,7 @@ describe('writeOutcome', () => {
         ok: true,
         reference: 'stored-page',
       },
+      state: 'DONE',
     });
     (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
       appended: 1,
@@ -470,9 +494,9 @@ describe('writeOutcome', () => {
     expect(result).toEqual({ connectionType: 'notion', ok: true, reference: 'stored-page' });
     expect(appendNotionBlocks).not.toHaveBeenCalled();
     // The lookup must not key on the Temporal attempt: a retry is a new attempt
-    // number, so an attempt-scoped key could never find the previous write.
+    // number, so an attempt-scoped key could never find the previous write. Nor is it ordered by
+    // attempt any more — one effect has one row, so there is nothing to order.
     expect(prisma.workflowOutcomeReference.findFirst).toHaveBeenCalledWith({
-      orderBy: { attempt: 'asc' },
       where: {
         connectionId: '4dcf895a-9ed7-450c-8858-e45b8415db4b',
         nodeId: 'node-1',
@@ -496,6 +520,7 @@ describe('writeOutcome', () => {
           ok: true,
           reference: 'page-1',
         },
+        state: 'DONE',
       });
     (appendNotionBlocks as ReturnType<typeof vi.fn>).mockResolvedValue({
       appended: 1,

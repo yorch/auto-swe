@@ -3,19 +3,25 @@
  * platform, in one place because they are properties of the *effect* rather
  * than of one step.
  *
- * 1. **Approval.** If the run's latest `publishOutcome` decision required human
- *    approval and none was recorded since, the mutation is refused. Without
- *    this a template could record the decision — putting "approval required" in
- *    the audit log — and then write anyway through a different step, so the log
- *    claimed a gate that never happened. A run that recorded no decision at all
- *    is not gated: the policy exists only where something asked for it.
+ * 1. **Approval.** If the run's latest decision that *required* human approval has
+ *    no approval recorded after it, the mutation is refused. Without this a
+ *    template could record the decision — putting "approval required" in the audit
+ *    log — and then write anyway through a different step, so the log claimed a
+ *    gate that never happened. A run that recorded no such decision is not gated:
+ *    the policy exists only where something asked for it.
  *
  * 2. **Idempotency.** External writes are not idempotent by default, and a
  *    Temporal activity retry after a successful write would repeat it.
- *    `workflowOutcomeReference` remembers the result per
- *    `(run, node, connection)` — deliberately not per attempt, because a retry
- *    IS a new attempt, so an attempt-keyed row could never find the row its
- *    predecessor wrote. `attempt` is still stored for audit.
+ *    `workflowOutcomeReference` holds one row per `(run, node, connection)` —
+ *    deliberately not per attempt, because a retry IS a new attempt, so an
+ *    attempt-keyed row could never find the row its predecessor wrote; `attempt` is
+ *    stored for audit. The row is claimed **before** the provider is called and
+ *    completed with what it returned, so a retry that finds a completed row returns
+ *    that result and one that finds a bare claim refuses (`OUTCOME_AMBIGUOUS`)
+ *    instead of acting twice on an effect whose outcome nothing can tell. A
+ *    connector that refused before sending releases the claim, so a refused call is
+ *    not mistaken for an ambiguous one. What this cannot see is a *new* run for the
+ *    same work: a restart is a new workflow id and an empty ledger.
  *
  * Both live here because `writeOutcome`, `runTool` and `mcpCallTool` reach the
  * same external systems. A mutating call left ungoverned only because the author
@@ -96,28 +102,116 @@ export interface OutcomeKey {
   runId: string;
 }
 
-/** The result a previous attempt of this exact step already produced, if any. */
-export async function findRecordedOutcome<T>(key: OutcomeKey): Promise<T | undefined> {
-  const existing = await prisma.workflowOutcomeReference.findFirst({
-    orderBy: { attempt: 'asc' },
-    where: { connectionId: key.connectionId, nodeId: key.nodeId, runId: key.runId },
-  });
-  return existing ? (existing.result as T) : undefined;
+/** An error a connector raised before it contacted the provider, so the effect is known not to have
+ * happened. Anything else — a transport error, a timeout, a 5xx, an abandoned call, process death —
+ * leaves the claim behind, because nothing can tell whether the provider acted. */
+export const NOT_SENT_ERROR = 'NOT_SENT';
+
+/** Raise a refusal the ledger can recognise as "nothing was sent". */
+export function notSent(message: string): ApplicationFailure {
+  return ApplicationFailure.nonRetryable(message, NOT_SENT_ERROR);
 }
 
-/** Remember the effect so a retry returns this result instead of repeating it. */
-export async function recordOutcome(
-  key: OutcomeKey & { attempt: number; result: unknown }
-): Promise<void> {
-  await prisma.workflowOutcomeReference.create({
-    data: {
-      attempt: key.attempt,
+export function definitelyNotSent(err: unknown): boolean {
+  return err instanceof ApplicationFailure && err.type === NOT_SENT_ERROR;
+}
+
+/**
+ * The result a previous attempt of this effect produced, if one completed.
+ *
+ * A claim without a result refuses instead: the provider may have acted, so calling it again is
+ * how one effort becomes two. Refusing is the only safe answer a store can give — the alternative
+ * is a duplicate external effect nobody can undo.
+ */
+export async function findRecordedOutcome<T>(key: OutcomeKey): Promise<T | undefined> {
+  const existing = await prisma.workflowOutcomeReference.findFirst({
+    where: { connectionId: key.connectionId, nodeId: key.nodeId, runId: key.runId },
+  });
+  if (!existing) {
+    return undefined;
+  }
+  // Anything that is not a completed effect refuses: an unknown state is a state we cannot read,
+  // and acting on it is how one effect becomes two.
+  if (existing.state !== 'DONE') {
+    throw ApplicationFailure.nonRetryable(
+      `refused: an earlier attempt of '${key.nodeId}' may already have reached the provider and ` +
+        'did not record what it produced, so repeating it could act twice. Resolve it before ' +
+        'retrying.',
+      'OUTCOME_AMBIGUOUS'
+    );
+  }
+  return existing.result as T;
+}
+
+/** Claim the effect before performing it. */
+async function claimOutcome(key: OutcomeKey & { attempt: number }): Promise<void> {
+  try {
+    await prisma.workflowOutcomeReference.create({
+      data: {
+        attempt: key.attempt,
+        connectionId: key.connectionId,
+        nodeId: key.nodeId,
+        runId: key.runId,
+        state: 'PENDING',
+      },
+    });
+  } catch (err) {
+    if ((err as { code?: string }).code !== 'P2002') {
+      throw err;
+    }
+    // Another attempt holds the claim. The caller read the key first, so this is a genuine race and
+    // not a completed effect: refuse rather than let both call the provider.
+    throw ApplicationFailure.nonRetryable(
+      `refused: another attempt of '${key.nodeId}' is performing this effect right now; repeating ` +
+        'it could act twice.',
+      'OUTCOME_AMBIGUOUS'
+    );
+  }
+}
+
+/** Release a claim whose effect provably never happened, so a retry may try again. */
+async function releaseOutcome(key: OutcomeKey): Promise<void> {
+  await prisma.workflowOutcomeReference.deleteMany({
+    where: {
       connectionId: key.connectionId,
       nodeId: key.nodeId,
-      result: key.result as never,
       runId: key.runId,
+      state: 'PENDING',
     },
   });
+}
+
+/**
+ * Perform an external effect once per `(run, node, connection)`, as far as a store can tell.
+ *
+ * The claim is written before the dispatch and completed with its result, which is what makes a
+ * retry safe in both directions: it returns what a completed attempt produced, and refuses when an
+ * attempt may have reached the provider without recording anything. A connector that refused before
+ * sending — `notSent` — releases the claim, so a refused call is not mistaken for an ambiguous one.
+ */
+export async function performOnce<T>(args: {
+  attempt: number;
+  dispatch: () => Promise<T>;
+  key: OutcomeKey;
+}): Promise<T> {
+  await claimOutcome({ ...args.key, attempt: args.attempt });
+  try {
+    const result = await args.dispatch();
+    await prisma.workflowOutcomeReference.updateMany({
+      data: { attempt: args.attempt, result: result as never, state: 'DONE' },
+      where: {
+        connectionId: args.key.connectionId,
+        nodeId: args.key.nodeId,
+        runId: args.key.runId,
+      },
+    });
+    return result;
+  } catch (err) {
+    if (definitelyNotSent(err)) {
+      await releaseOutcome(args.key);
+    }
+    throw err;
+  }
 }
 
 /**

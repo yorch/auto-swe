@@ -127,12 +127,16 @@ something outside the platform — `writeOutcome`, `runTool` and `mcpCallTool`:
   they are neither gated nor recorded. So is an MCP tool its server declares read-only with the
   protocol's `readOnlyHint` annotation. Every other call — including an MCP tool with no annotation,
   whose `readOnlyHint` defaults to false — is treated as a mutation.
-- A mutation is also recorded against the outcome ledger (see
-  [architecture.md §4](./architecture.md#4-workflow-engine)). A retry that arrives after the row is
-  written returns the recorded result rather than repeating the effect. This is *completed-result
-  caching, not exactly-once delivery*: the remote call and the row are not one transaction, so a
-  mutation that succeeds and then crashes before its row is written is repeated by the retry, and two
-  concurrent attempts can both observe no row.
+- A mutation is also claimed against the outcome ledger (see
+  [architecture.md §4](./architecture.md#4-workflow-engine)): the claim is written **before** the
+  provider is called and completed with what it returned. A retry that finds a completed row returns
+  that result instead of repeating the effect, and one that finds a bare claim is refused with a
+  non-retryable `OUTCOME_AMBIGUOUS` — the provider may have acted and the attempt that called it
+  recorded nothing, so repeating it is how one effort becomes two. A connector that refused before
+  sending anything (`notSent`) releases the claim instead, so a refused call stays retryable. Two
+  limits remain, stated because they are what this is not: a **new run** for the same work starts with
+  an empty ledger, since a restart is a new workflow id, and a claim whose outcome was never learned
+  has to be resolved by a person — nothing here clears it on its own.
 
 Outside this boundary:
 

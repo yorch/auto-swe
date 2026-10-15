@@ -20,7 +20,15 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     autonomyDecision: { findFirst: vi.fn() },
     connection: { findUnique: vi.fn() },
-    workflowOutcomeReference: { create: vi.fn(), findFirst: vi.fn() },
+    workflowOutcomeReference: {
+      // The effect is claimed before the provider is called and completed afterwards, so a mock
+      // needs all four: the claim (`create`), the completion (`updateMany`), the read, and the
+      // release a connector uses when it refused before sending (`deleteMany`).
+      create: vi.fn(),
+      deleteMany: vi.fn(),
+      findFirst: vi.fn(),
+      updateMany: vi.fn(),
+    },
     workflowRun: { findUnique: vi.fn() },
   },
 }));
@@ -249,6 +257,7 @@ describe('mcpCallTool governance', () => {
     vi.mocked(prisma.autonomyDecision.findFirst).mockResolvedValue(null);
     vi.mocked(prisma.workflowOutcomeReference.findFirst).mockReset();
     vi.mocked(prisma.workflowOutcomeReference.create).mockReset();
+    vi.mocked(prisma.workflowOutcomeReference.updateMany).mockReset();
     mockedUrl.mockResolvedValue({ url: 'https://mcp.example.com/mcp' });
     const execute = vi.fn().mockResolvedValue({ ok: 1 });
     mockedLoad.mockResolvedValue(loadedTool({ execute }));
@@ -258,15 +267,15 @@ describe('mcpCallTool governance', () => {
     // change the activity's result shape on retry and break a downstream binding
     // to `nodes.<id>.output.result`.
     const recorded: unknown[] = [];
-    vi.mocked(prisma.workflowOutcomeReference.create).mockImplementation((async (arg: {
+    vi.mocked(prisma.workflowOutcomeReference.updateMany).mockImplementation((async (arg: {
       data: { result: unknown };
     }) => {
       recorded.push(arg.data.result);
-      return arg as never;
+      return { count: 1 } as never;
     }) as never);
     vi.mocked(prisma.workflowOutcomeReference.findFirst).mockImplementation((async () => {
       const next = recorded.shift();
-      return next === undefined ? null : ({ result: next } as never);
+      return next === undefined ? null : ({ result: next, state: 'DONE' } as never);
     }) as never);
 
     const args = { connectionRef: 'c1', nodeId: 'do', tool: 'search_docs' };
