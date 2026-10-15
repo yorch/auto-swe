@@ -72,6 +72,14 @@ export async function retryTemplateRequest(
       },
     });
   }
+  // The version this retry runs. Its schema, not the template's current one, is what the run's
+  // authorized set is computed from — and what the recorded payload was written against — so both
+  // decisions below read it. A version that declares no schema declares no connection either.
+  const version = await app.prisma.workflowTemplateVersion.findFirst({
+    select: { inputSchema: true },
+    where: { templateId: input.templateId, version: input.templateVersion },
+  });
+  const versionSchema = isInputSchema(version?.inputSchema) ? version.inputSchema : null;
   const providerMeta =
     template.workspaceProvider && isWorkspaceProviderType(template.workspaceProvider)
       ? getWorkspaceProviderMetadata(template.workspaceProvider)
@@ -80,7 +88,7 @@ export async function retryTemplateRequest(
     {
       connectionId: input.connectionId,
       gate: request.repoAccessGate,
-      inputSchema: isInputSchema(template.inputSchema) ? template.inputSchema : null,
+      inputSchema: versionSchema,
       log: request.log,
       // A retry re-uses the recorded payload, so its declared connections are
       // authorized again rather than trusted because the first launch passed.
@@ -135,7 +143,7 @@ export async function retryTemplateRequest(
     ...stored,
     ...(instructions && typeof stored.description === 'string' ? { description } : {}),
   };
-  if (!inputsSatisfySchema(reply, template.inputSchema, payload)) {
+  if (!inputsSatisfySchema(reply, versionSchema, payload)) {
     return;
   }
   // The original's base, re-checked: the branch prefix may have changed since.

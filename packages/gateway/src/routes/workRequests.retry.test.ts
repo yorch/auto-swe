@@ -150,7 +150,10 @@ describe('POST /work-requests/:id/retry', () => {
         findFirst: async ({ where }: { where: { status?: string } }) => {
           if (where.status) {
             launchWhere = where;
-            return launchable;
+            // The handler decides against the schema of the *version* the request recorded (it is
+            // what the run pins and validates against), so the fixture's single schema stands in
+            // for that version.
+            return launchable ? { versions: [{ inputSchema: launchable.inputSchema }] } : null;
           }
           return snapshotTemplate;
         },

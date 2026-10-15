@@ -2338,6 +2338,15 @@ model WorkflowTemplateVersion {
   template   WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   version    Int
   spec       Json
+  /// The template's declared inputs **as of this version**, snapshotted beside the spec. The
+  /// schema is what says which connections a payload may name, so a run pins its authorized set
+  /// from the version it executes: retyping an input on the template cannot then widen the pin of
+  /// a run already under way, nor refuse a connection to an experiment arm or a rollback that
+  /// runs an older version.
+  ///
+  /// Nullable: a version written before this column existed falls back to the template's current
+  /// schema, which is the behaviour that predates it.
+  inputSchema Json? @map("input_schema")
   createdBy  String?          @map("created_by") @db.Uuid
   createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz
 

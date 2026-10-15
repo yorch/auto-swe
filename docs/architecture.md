@@ -1317,13 +1317,17 @@ Current constraints of the system as built. Deliberate product boundaries are in
   connection outside it where the connection is loaded — before its credential is decrypted. The
   declared schema is therefore a boundary rather than a hint: a connection named through a field
   the template does not declare is never in the set, whichever node resolved it, including one
-  whose value came from another node's output. The set is pinned rather than derived because a
-  template's `inputSchema` is mutable while its spec is snapshotted, so deriving at check time
-  would let one schema edit widen a run already in flight; a run with **no** pin (created before
-  the column existed) is let through with a warning rather than stranded, and every new
-  execution writes one. One gap remains: a **literal** reference — an `mcp` node's `connectionRef` —
-  is in no pin and is checked against the template's team instead (`assertRunMayUseConnection`), so
-  reassigning a template mid-run moves that authority.
+  whose value came from another node's output. The schema it reads is the one **the version it
+  executes** was created under: a version snapshots `inputSchema` beside its `spec`
+  (`WorkflowTemplateVersion.inputSchema`), which a trigger fills on insert so no writer can forget
+  it and a backfill gave to the versions that predate the column. Retyping an input on the
+  template therefore cannot widen the pin of a run already under way, nor refuse an experiment arm
+  or a rollback the connection its own version declares; a version that declared no schema
+  declares no connection. A run with **no** pin (created before that column existed) is let
+  through with a warning rather than stranded, and every new execution writes one. One gap
+  remains: a **literal** reference — an `mcp` node's `connectionRef` — is in no pin and is checked
+  against the template's team instead (`assertRunMayUseConnection`), so reassigning a template
+  mid-run moves that authority.
 - **The connections a payload declares are authorized before a run is created.** The pin is derived
   from the payload, so it cannot answer "may this identity reach them" — it authorizes whatever the
   payload names. The launches that call `validateRunConnection` decide it up front; two paths that

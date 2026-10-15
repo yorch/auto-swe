@@ -908,17 +908,28 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // ACTIVE and visible to the caller, and a recorded payload must still
       // satisfy its input schema. The recorded version is what runs.
       const launchable = await fastify.prisma.workflowTemplate.findFirst({
-        select: { inputSchema: true },
+        select: {
+          // The schema of the version this retry runs, not the template's current one: the run's
+          // authorized set is computed from it, so the recorded payload is validated and its
+          // connections authorized against the declaration that version was created under.
+          versions: {
+            select: { inputSchema: true },
+            where: { version: workRequest.templateVersion as number },
+          },
+        },
         where: launchableTemplateWhere(user, workRequest.templateId),
       });
       if (!launchable) {
         return sendTemplateNotLaunchable(reply);
       }
+      const versionSchema = isInputSchema(launchable.versions[0]?.inputSchema)
+        ? launchable.versions[0].inputSchema
+        : null;
       if (
         workRequest.payload &&
         typeof workRequest.payload === 'object' &&
         !Array.isArray(workRequest.payload) &&
-        !inputsSatisfySchema(reply, launchable.inputSchema, {
+        !inputsSatisfySchema(reply, versionSchema, {
           ...workRequest.payload,
           ...(request.body?.instructions &&
           typeof (workRequest.payload as Record<string, unknown>).description === 'string'
@@ -941,7 +952,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           {
             connectionId: repo.id,
             gate: request.repoAccessGate,
-            inputSchema: isInputSchema(launchable.inputSchema) ? launchable.inputSchema : null,
+            inputSchema: versionSchema,
             log: request.log,
             payload: workRequest.payload,
             prisma: fastify.prisma,
