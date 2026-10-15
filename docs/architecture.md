@@ -1420,17 +1420,20 @@ Current constraints of the system as built. Deliberate product boundaries are in
   allowed, so a plain-HTTP internal deployment configures the address or moves to HTTPS. The
   HTTPS rule applies to the tracker connector too, so a self-hosted Jira reached over plain HTTP on
   a public address fails non-retryably and has to move to HTTPS.
-- **An external write is not exactly-once.** The outcome ledger records a result *after* the
-  mutation, so a committed write whose response or ledger insert is lost is retried by the next
-  activity attempt. A create can therefore be sent twice, and an update that did not receive a
-  caller-supplied `version` re-reads the page and can replace an edit a person made in between. A
-  supplied `version` is honoured rather than refreshed, so that retry is refused as stale instead,
-  which is the safer half of the problem. Neither an intent record nor a ledger closes this on its
-  own: an ambiguous remote commit needs the provider's own idempotency support or a reconciliation
-  protocol. What a connection *tool* writes has no ledger at all. The connector treats a 2xx whose
-  body is not JSON, is `null`, or describes a different page as a **non-retryable** failure, so an
-  ambiguous commit receives neither an automatic retry nor a reconciliation — the run stops and
-  says so, rather than reporting a write that may or may not have landed as a success.
+- **An external write is claimed before it is sent, and an unrecorded outcome stops the run.** The
+  ledger's row is written *before* the provider is called and completed with what it returned
+  (`WorkflowOutcomeReference.state`, `PENDING` → `DONE`, one row per `(run, node, connection)`), so a
+  retry returns what a completed attempt produced and refuses with a non-retryable
+  `OUTCOME_AMBIGUOUS` when an attempt may have reached the provider without recording anything. What
+  that buys is a stop rather than a second effect — and a claim is resolved by a person, because
+  nothing here can tell whether the provider acted. Two things stay outside it. A **new run** for the
+  same work starts with an empty ledger, since a restart is a new workflow id, so the claim governs
+  retries within one execution. And an update that received no caller-supplied `version` still
+  re-reads the page, so one that replaces an edit a person made in between is not detectable here; a
+  supplied `version` is honoured rather than refreshed, which refuses that retry as stale instead.
+  What a connection *tool* writes has no ledger at all. The connector treats a 2xx whose body is not
+  JSON, is `null`, or describes a different page as a **non-retryable** failure, so an ambiguous
+  commit receives neither an automatic retry nor a reconciliation.
 - **A refused outbound request is retried like a transport failure.** `SsrfBlockedError` is thrown
   both for an address the guard refuses and for a host that could not be resolved, so the connector
   does not classify it and a refused request spends the activity's retries before failing. A host

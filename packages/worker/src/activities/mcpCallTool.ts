@@ -13,7 +13,7 @@ import {
   findRecordedOutcome,
   mutationScope,
   type OutcomeKey,
-  recordOutcome,
+  performOnce,
 } from '../lib/externalWrite.js';
 
 export interface McpCallToolInput {
@@ -138,14 +138,16 @@ async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResu
     ) => Promise<unknown>;
     // The MCP call takes no abort signal, so a cancel abandons it rather than
     // waiting out its timeout; the client is still closed in `finally`.
-    const remote = await raceActivityCancellation(execute(input.inputs ?? {}));
-    const result = { result: remote };
-    // The ledger holds the activity's result, not the remote payload, so a retry
-    // returns exactly what the first call returned.
-    if (ledgerKey) {
-      await recordOutcome({ ...ledgerKey, attempt: scope.attempt, result });
-    }
-    return result;
+    // The ledger holds the activity's result, not the remote payload, so a retry returns exactly
+    // what the first call returned. The claim is taken *before* the call, so a retry cannot act
+    // twice on a response that was lost — and an MCP call is the one effect here with no
+    // intermediate system to reconcile against.
+    const call = async (): Promise<McpCallToolResult> => ({
+      result: await raceActivityCancellation(execute(input.inputs ?? {})),
+    });
+    return ledgerKey
+      ? await performOnce({ attempt: scope.attempt, dispatch: call, key: ledgerKey })
+      : await call();
   } finally {
     await loaded.close();
     await persistActivityTrace(tracer, 'mcp');

@@ -583,3 +583,64 @@ describe('validateSpec expression lint: assert scorers and approverCount', () =>
     );
   });
 });
+
+describe('validateSpec: the publishOutcome risk class is declared, not bound', () => {
+  const errorsFor = (nodes: Record<string, unknown>, entry: string) =>
+    validateSpec(spec(nodes, entry)).errors.filter((e) => e.code === 'ACTION_CLASS_BOUND');
+
+  it('flags a class supplied as an input', () => {
+    // A payload-fillable class is a class the *launcher* chooses, and the approval guard holds a run
+    // for a requirement from any class — so the claimant would set the very gate it then walks
+    // through. The step registry declares this field under `config`; the executor reads nothing else.
+    expect(
+      errorsFor(
+        {
+          do: {
+            inputs: { action: { from: 'request.payload.action' } },
+            next: 'done',
+            step: 'publishOutcome',
+            type: 'step',
+          },
+          done: { status: 'SUCCESS', type: 'terminate' },
+        },
+        'do'
+      )
+    ).toHaveLength(1);
+  });
+
+  it('accepts the class declared under config', () => {
+    expect(
+      errorsFor(
+        {
+          do: {
+            config: { action: 'external_write' },
+            next: 'done',
+            step: 'publishOutcome',
+            type: 'step',
+          },
+          done: { status: 'SUCCESS', type: 'terminate' },
+        },
+        'do'
+      )
+    ).toHaveLength(0);
+  });
+
+  it('leaves another step’s inputs alone', () => {
+    // Only the class is refused: `inputs.action` on a step that does not read it is somebody else's
+    // field, and guessing at their meaning is how a lint rule starts refusing valid specs.
+    expect(
+      errorsFor(
+        {
+          do: {
+            inputs: { action: { literal: 'anything' } },
+            next: 'done',
+            step: 'runTool',
+            type: 'step',
+          },
+          done: { status: 'SUCCESS', type: 'terminate' },
+        },
+        'do'
+      )
+    ).toHaveLength(0);
+  });
+});

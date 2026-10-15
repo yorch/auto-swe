@@ -31,7 +31,7 @@ import {
   isMutatingToolCall,
   mutationScope,
   type OutcomeKey,
-  recordOutcome,
+  performOnce,
 } from '../lib/externalWrite.js';
 
 const ConnectionIdSchema = z.string().uuid();
@@ -627,9 +627,10 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
     return existing;
   }
 
-  const result = await perform();
-  await recordOutcome({ ...ledgerKey, attempt: scope.attempt, result });
-  return result;
+  // Claimed before the dispatch and completed with its result: a retry returns what this attempt
+  // produced, and one that may have reached the provider without recording anything refuses rather
+  // than acting twice.
+  return performOnce({ attempt: scope.attempt, dispatch: perform, key: ledgerKey });
 }
 
 async function gitRepoRunTool(
@@ -874,7 +875,6 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
   if (existing) {
     return existing;
   }
-  const result = await perform();
-  await recordOutcome({ ...ledgerKey, attempt: scope.attempt, result });
-  return result;
+  // As in `writeOutcome`: the claim goes in before the dispatch.
+  return performOnce({ attempt: scope.attempt, dispatch: perform, key: ledgerKey });
 }
