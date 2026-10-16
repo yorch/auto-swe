@@ -12,6 +12,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
@@ -21,9 +22,9 @@ import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { NODE_TYPE_LABEL } from '@/components/workflow/nodeTypeTone';
@@ -38,6 +39,7 @@ import {
   useWorkflowGenerationJob,
   useWorkflowTemplates,
 } from '@/hooks/useTemplates';
+import { runHref, templateHref } from '@/lib/entityLinks';
 import { errMsg } from '@/lib/errors';
 import { HELP_LINKS } from '@/lib/helpLinks';
 import { requestHref } from '@/lib/requestDisplay';
@@ -442,7 +444,7 @@ function RunAction({ template }: { template: WorkflowTemplateSummary }) {
   );
 }
 
-function TemplateRow({
+function TemplateActions({
   canWrite,
   onArchive,
   onError,
@@ -457,7 +459,7 @@ function TemplateRow({
   // version, otherwise a draft.
   const update = useUpdateWorkflowTemplate(t.id);
   const systemManaged = isSystemManagedTemplate(t);
-  const href = `/library/${t.id}`;
+  const href = templateHref(t.id);
   const restore = async () => {
     onError(null);
     try {
@@ -497,20 +499,30 @@ function TemplateRow({
   }
 
   return (
-    <TRow hover>
-      <Td className="py-3 pr-4 pl-4 sm:pl-5" primary>
+    <>
+      {systemManaged ? (
+        <span className="max-w-[14rem] text-xs text-paper-500 max-sm:max-w-none">
+          No Run button: the platform starts this one itself, for channel assistants.
+        </span>
+      ) : (
+        <RunAction template={t} />
+      )}
+      <ActionMenu items={menuItems} label={`More actions for ${t.name}`} />
+    </>
+  );
+}
+
+const templateColumns: DataTableColumn<WorkflowTemplateSummary>[] = [
+  {
+    cell: (t) => t.name,
+    header: 'Name',
+    id: 'name',
+    primary: true,
+    secondary: (t) => (
+      <>
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-          <Link
-            className={cn(
-              'rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
-              FOCUS_RING
-            )}
-            href={href}
-          >
-            {t.name}
-          </Link>
           <VersionTags isDefault={t.isDefault} />
-          {systemManaged && (
+          {isSystemManagedTemplate(t) && (
             <Badge title="Started by the platform; it cannot be run by hand" tone="neutral">
               Used by channel assistants
             </Badge>
@@ -529,62 +541,56 @@ function TemplateRow({
             {t.description}
           </p>
         )}
-      </Td>
-      <Td className="px-4 py-3 whitespace-nowrap text-sm text-paper-300" label="Team">
+      </>
+    ),
+  },
+  {
+    cell: (t) => (
+      <span className="whitespace-nowrap text-sm text-paper-300">
         {t.team?.name ?? <span className="text-paper-500">Platform-wide</span>}
-      </Td>
-      <Td className="px-4 py-3" label="Status">
-        <StatusBadge status={t.status} />
-      </Td>
-      <Td className="px-4 py-3 text-sm text-paper-300" label="Version">
-        {t.activeVersion !== null ? (
-          <span className="tabular-nums">v{t.activeVersion}</span>
-        ) : (
-          <span className="text-paper-500">—</span>
-        )}
-      </Td>
-      <Td className="px-4 py-3" label="Last run">
-        {t.lastRun ? (
-          <Link
-            className={cn('inline-flex items-center gap-2 rounded-sm', FOCUS_RING)}
-            href={
-              t.lastRun.workRequestId
-                ? requestHref(t.lastRun.workRequestId)
-                : `/runs/${t.lastRun.id}`
-            }
-            title={formatDate(t.lastRun.startedAt)}
-          >
-            <StatusBadge status={t.lastRun.status} />
-            <span className="text-xs text-paper-500 tabular-nums">
-              {formatRelativeTime(t.lastRun.startedAt)}
-            </span>
-          </Link>
-        ) : (
-          <span className="text-sm text-paper-500">Never</span>
-        )}
-      </Td>
-      <Td
-        className="px-4 py-3 whitespace-nowrap text-sm text-paper-500 tabular-nums"
-        label="Updated"
-        title={formatDate(t.updatedAt)}
-      >
-        {formatRelativeTime(t.updatedAt)}
-      </Td>
-      <Td align="right" className="py-3 pr-3 pl-4 sm:pr-4">
-        <div className="flex items-center justify-end gap-1.5 max-sm:justify-start">
-          {systemManaged ? (
-            <span className="max-w-[14rem] text-xs text-paper-500 max-sm:max-w-none">
-              No Run button: the platform starts this one itself, for channel assistants.
-            </span>
-          ) : (
-            <RunAction template={t} />
-          )}
-          <ActionMenu items={menuItems} label={`More actions for ${t.name}`} />
-        </div>
-      </Td>
-    </TRow>
-  );
-}
+      </span>
+    ),
+    header: 'Team',
+    id: 'team',
+  },
+  { cell: (t) => <StatusBadge status={t.status} />, header: 'Status', id: 'status' },
+  {
+    cell: (t) =>
+      t.activeVersion !== null ? (
+        <span className="text-sm text-paper-300 tabular-nums">v{t.activeVersion}</span>
+      ) : (
+        <span className="text-paper-500">—</span>
+      ),
+    header: 'Version',
+    id: 'version',
+  },
+  {
+    cell: (t) =>
+      t.lastRun ? (
+        <Link
+          className={cn('inline-flex items-center gap-2 rounded-sm', FOCUS_RING)}
+          href={
+            t.lastRun.workRequestId ? requestHref(t.lastRun.workRequestId) : runHref(t.lastRun.id)
+          }
+          title={formatDate(t.lastRun.startedAt)}
+        >
+          <StatusBadge status={t.lastRun.status} />
+          <span className="text-xs text-paper-500 tabular-nums">
+            {formatRelativeTime(t.lastRun.startedAt)}
+          </span>
+        </Link>
+      ) : (
+        <span className="text-sm text-paper-500">Never</span>
+      ),
+    header: 'Last run',
+    id: 'lastRun',
+  },
+  {
+    cell: (t) => <RelativeTime className="text-sm text-paper-500" value={t.updatedAt} />,
+    header: 'Updated',
+    id: 'updated',
+  },
+];
 
 export default function TemplatesPage() {
   const router = useRouter();
@@ -787,32 +793,21 @@ export default function TemplatesPage() {
               />
             )
           ) : (
-            <Table className="max-sm:p-3" stacked>
-              <THead>
-                <Th className="pl-4 sm:pl-5" variant="plain">
-                  Name
-                </Th>
-                <Th variant="plain">Team</Th>
-                <Th variant="plain">Status</Th>
-                <Th variant="plain">Version</Th>
-                <Th variant="plain">Last run</Th>
-                <Th variant="plain">Updated</Th>
-                <Th className="pr-4" variant="plain">
-                  <span className="sr-only">Actions</span>
-                </Th>
-              </THead>
-              <tbody>
-                {visibleTemplates.map((t) => (
-                  <TemplateRow
-                    canWrite={canWrite(t.team?.id)}
-                    key={t.id}
-                    onArchive={setArchiveTarget}
-                    onError={setRestoreError}
-                    template={t}
-                  />
-                ))}
-              </tbody>
-            </Table>
+            <DataTable
+              actions={(t) => (
+                <TemplateActions
+                  canWrite={canWrite(t.team?.id)}
+                  onArchive={setArchiveTarget}
+                  onError={setRestoreError}
+                  template={t}
+                />
+              )}
+              columns={templateColumns}
+              getRowId={(t) => t.id}
+              revealActions={false}
+              rowHref={(t) => templateHref(t.id)}
+              rows={visibleTemplates}
+            />
           )}
         </QueryBoundary>
       </Card>

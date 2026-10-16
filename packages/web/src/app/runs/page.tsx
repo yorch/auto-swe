@@ -1,13 +1,12 @@
 'use client';
 
 import { Suspense } from 'react';
-import { RunListItem } from '@/components/runs/RunListItem';
+import { RunsTable } from '@/components/runs/RunsTable';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -103,7 +102,7 @@ function RunsList() {
         </Toolbar>
 
         {isLoading ? (
-          <SkeletonRows className="px-5 py-4" label="runs" rows={6} />
+          <RunsTable isLoading runs={[]} />
         ) : (
           <div className={isError ? 'p-4 sm:p-5' : undefined}>
             <QueryBoundary
@@ -139,11 +138,7 @@ function RunsList() {
                   />
                 )
               ) : (
-                <ul className="divide-y divide-ink-600">
-                  {runs.map((run) => (
-                    <RunListItem key={run.id} run={run} />
-                  ))}
-                </ul>
+                <RunsTable runs={runs} />
               )}
             </QueryBoundary>
           </div>

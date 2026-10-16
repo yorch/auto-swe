@@ -1,7 +1,7 @@
 'use client';
 
 import { Suspense, use } from 'react';
-import { RunListItem } from '@/components/runs/RunListItem';
+import { RunsTable } from '@/components/runs/RunsTable';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -206,11 +206,7 @@ function TemplateRuns({ id: rawId }: { id: string }) {
               />
             )
           ) : (
-            <ul className="divide-y divide-ink-600">
-              {rows.map((r) => (
-                <RunListItem key={r.id} run={r} />
-              ))}
-            </ul>
+            <RunsTable runs={rows} />
           )}
 
           {total > PAGE_SIZE && (

@@ -183,6 +183,7 @@ function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope })
       >
         {requests.length ? (
           <RequestList
+            density="compact"
             hrefFor={(id) => `/requests?${new URLSearchParams({ request: id, scope }).toString()}`}
             requests={requests}
           />
