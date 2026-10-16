@@ -30,6 +30,7 @@ import {
   findRecordedOutcome,
   isMutatingToolCall,
   mutationScope,
+  notSent,
   type OutcomeKey,
   performOnce,
 } from '../lib/externalWrite.js';
@@ -156,7 +157,7 @@ async function gitRepoReadSource(_connection: unknown, query: unknown): Promise<
 
 function requireToken(token: string | null): string {
   if (!token) {
-    throw ApplicationFailure.nonRetryable('Connection API token is required');
+    throw notSent('Connection API token is required');
   }
   return token;
 }
@@ -286,6 +287,18 @@ export async function readSource(input: ReadSourceInput): Promise<ReadSourceResu
   }
 }
 
+const WRITE_OUTCOME_TYPES: ReadonlySet<string> = new Set([
+  'git_repo',
+  'notion',
+  'zendesk',
+  'slack_workspace',
+  'issue_tracker',
+  'confluence',
+  'http_api',
+  'hubspot',
+  'mcp',
+]);
+
 async function gitRepoWriteOutcome(
   _connection: unknown,
   _data: unknown
@@ -314,7 +327,7 @@ async function notionWriteOutcome(
 ): Promise<WriteOutcomeResult> {
   const config = parseNotionConnectionConfig(connection.config);
   if (typeof data !== 'object' || data == null) {
-    throw ApplicationFailure.nonRetryable('Notion writeOutcome data must be an object');
+    throw notSent('Notion writeOutcome data must be an object');
   }
   const d = data as Record<string, unknown>;
   const apiToken = requireToken(token);
@@ -323,7 +336,7 @@ async function notionWriteOutcome(
   if (typeof d.text === 'string') {
     const pageId = (d.pageId as string | undefined) ?? config.sourcePageId;
     if (!pageId) {
-      throw ApplicationFailure.nonRetryable(
+      throw notSent(
         'Notion writeOutcome text requires pageId or a default sourcePageId on the connection'
       );
     }
@@ -339,7 +352,7 @@ async function notionWriteOutcome(
   if (Array.isArray(d.blocks)) {
     const pageId = (d.pageId as string | undefined) ?? config.sourcePageId;
     if (!pageId) {
-      throw ApplicationFailure.nonRetryable(
+      throw notSent(
         'Notion writeOutcome blocks requires pageId or a default sourcePageId on the connection'
       );
     }
@@ -352,9 +365,7 @@ async function notionWriteOutcome(
   }
 
   if (!isCreatePageData(d)) {
-    throw ApplicationFailure.nonRetryable(
-      'Notion writeOutcome data must include text, blocks, or a create-page request'
-    );
+    throw notSent('Notion writeOutcome data must include text, blocks, or a create-page request');
   }
 
   // Create a new page.
@@ -376,15 +387,13 @@ async function zendeskWriteOutcome(
   data: unknown
 ): Promise<WriteOutcomeResult> {
   if (typeof data !== 'object' || data == null) {
-    throw ApplicationFailure.nonRetryable('Zendesk writeOutcome data must be an object');
+    throw notSent('Zendesk writeOutcome data must be an object');
   }
   const d = data as Record<string, unknown>;
   const ticketId = d.ticketId;
   const body = d.body;
   if (typeof ticketId !== 'string' || typeof body !== 'string') {
-    throw ApplicationFailure.nonRetryable(
-      'Zendesk writeOutcome requires ticketId and body strings'
-    );
+    throw notSent('Zendesk writeOutcome requires ticketId and body strings');
   }
   const isPublic = d.public === true;
   const result = await postZendeskComment(
@@ -401,13 +410,13 @@ async function issueTrackerWriteOutcome(
   data: unknown
 ): Promise<WriteOutcomeResult> {
   if (typeof data !== 'object' || data == null) {
-    throw ApplicationFailure.nonRetryable('issue_tracker writeOutcome data must be an object');
+    throw notSent('issue_tracker writeOutcome data must be an object');
   }
   const d = data as Record<string, unknown>;
   const title = d.title;
   const description = d.description;
   if (typeof title !== 'string') {
-    throw ApplicationFailure.nonRetryable('issue_tracker writeOutcome requires a title string');
+    throw notSent('issue_tracker writeOutcome requires a title string');
   }
   const config = parseIssueTrackerConnectionConfig(connection.config);
   const projectKey = typeof d.projectKey === 'string' ? d.projectKey : config.defaultProjectKey;
@@ -445,9 +454,7 @@ function expectedVersion(value: unknown): number | undefined {
   if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
     return value;
   }
-  throw ApplicationFailure.nonRetryable(
-    'Confluence writeOutcome version must be a positive whole number'
-  );
+  throw notSent('Confluence writeOutcome version must be a positive whole number');
 }
 
 /**
@@ -476,12 +483,12 @@ async function confluenceWriteOutcome(
   data: unknown
 ): Promise<WriteOutcomeResult> {
   if (typeof data !== 'object' || data == null) {
-    throw ApplicationFailure.nonRetryable('Confluence writeOutcome data must be an object');
+    throw notSent('Confluence writeOutcome data must be an object');
   }
   const d = data as Record<string, unknown>;
   const bodyText = text(d.bodyText) ?? text(d.text);
   if (!bodyText) {
-    throw ApplicationFailure.nonRetryable('Confluence writeOutcome requires bodyText');
+    throw notSent('Confluence writeOutcome requires bodyText');
   }
   const conn = {
     apiToken: requireToken(token),
@@ -505,7 +512,7 @@ async function confluenceWriteOutcome(
 
   const title = text(d.title) ?? text(d.fallbackTitle);
   if (!title) {
-    throw ApplicationFailure.nonRetryable(
+    throw notSent(
       'Confluence writeOutcome requires a title to create a page (or a targetPageId to update one)'
     );
   }
@@ -526,18 +533,18 @@ async function slackWriteOutcome(
   data: unknown
 ): Promise<WriteOutcomeResult> {
   if (typeof data !== 'object' || data == null) {
-    throw ApplicationFailure.nonRetryable('Slack writeOutcome data must be an object');
+    throw notSent('Slack writeOutcome data must be an object');
   }
   const d = data as Record<string, unknown>;
   const channelId = d.channelId;
   const text = d.text;
   if (typeof channelId !== 'string' || typeof text !== 'string') {
-    throw ApplicationFailure.nonRetryable('Slack writeOutcome requires channelId and text strings');
+    throw notSent('Slack writeOutcome requires channelId and text strings');
   }
   const config = parseSlackConnectionConfig(connection.config);
   const resolvedChannelId = channelId || config.defaultChannelId;
   if (!resolvedChannelId) {
-    throw ApplicationFailure.nonRetryable(
+    throw notSent(
       'Slack writeOutcome requires a channelId or a defaultChannelId on the connection'
     );
   }
@@ -588,12 +595,24 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
   const ledgerKey: OutcomeKey | null =
     nodeId && scope.runId ? { connectionId, nodeId, runId: scope.runId } : null;
 
-  async function perform(): Promise<WriteOutcomeResult> {
-    if (scope.runId) {
-      await assertApprovalSatisfied(scope.runId);
-    }
+  // Everything that can refuse before the provider is contacted runs before the claim: a refusal
+  // after it leaves a PENDING row, and the next attempt then fails OUTCOME_AMBIGUOUS although
+  // nothing was sent.
+  async function prepare() {
     const connection = await loadConnection(connectionId, 'writeOutcome');
     const token = getApiToken(connection);
+    if (!WRITE_OUTCOME_TYPES.has(connection.type)) {
+      throw ApplicationFailure.nonRetryable(
+        `Unsupported connection type for writeOutcome: ${connection.type}`
+      );
+    }
+    return { connection, token };
+  }
+
+  async function perform(
+    prepared: Awaited<ReturnType<typeof prepare>>
+  ): Promise<WriteOutcomeResult> {
+    const { connection, token } = prepared;
     switch (connection.type) {
       case 'git_repo':
         return gitRepoWriteOutcome(connection, data);
@@ -612,6 +631,7 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
       case 'mcp':
         return genericWriteOutcome(connection.type, connection, token);
       default:
+        // Unreachable: `prepare()` refuses any type outside `WRITE_OUTCOME_TYPES`.
         throw ApplicationFailure.nonRetryable(
           `Unsupported connection type for writeOutcome: ${connection.type}`
         );
@@ -619,19 +639,39 @@ export async function writeOutcome(input: WriteOutcomeInput): Promise<WriteOutco
   }
 
   if (!ledgerKey) {
-    return perform();
+    if (scope.runId) {
+      await assertApprovalSatisfied(scope.runId);
+    }
+    return perform(await prepare());
   }
 
+  // As in `mcpCallTool`, the ledger is read before the approval guard: a recorded effect already
+  // happened, and returning it performs no second one. The guard and the connection checks run
+  // before the claim, so a refusal leaves no PENDING row for a later retry to mistake for ambiguity.
   const existing = await findRecordedOutcome<WriteOutcomeResult>(ledgerKey);
   if (existing) {
     return existing;
   }
+  await assertApprovalSatisfied(ledgerKey.runId);
+  const prepared = await prepare();
 
   // Claimed before the dispatch and completed with its result: a retry returns what this attempt
   // produced, and one that may have reached the provider without recording anything refuses rather
   // than acting twice.
-  return performOnce({ attempt: scope.attempt, dispatch: perform, key: ledgerKey });
+  return performOnce({ attempt: scope.attempt, dispatch: () => perform(prepared), key: ledgerKey });
 }
+
+const RUN_TOOL_TYPES: ReadonlySet<string> = new Set([
+  'git_repo',
+  'zendesk',
+  'slack_workspace',
+  'issue_tracker',
+  'confluence',
+  'http_api',
+  'hubspot',
+  'mcp',
+  'notion',
+]);
 
 async function gitRepoRunTool(
   _connection: unknown,
@@ -660,7 +700,7 @@ async function zendeskRunTool(
         ? (inputs as Record<string, unknown>).ticketId
         : undefined;
     if (typeof ticketId !== 'string') {
-      throw ApplicationFailure.nonRetryable('fetchTicket requires a string ticketId input');
+      throw notSent('fetchTicket requires a string ticketId input');
     }
     const result = await fetchZendeskTicket({ apiToken, config }, ticketId);
     return { connectionType: 'zendesk', ok: true, output: result };
@@ -670,7 +710,7 @@ async function zendeskRunTool(
     const ticketId = (data as Record<string, unknown>).ticketId;
     const body = (data as Record<string, unknown>).body;
     if (typeof ticketId !== 'string' || typeof body !== 'string') {
-      throw ApplicationFailure.nonRetryable('postComment requires string ticketId and body inputs');
+      throw notSent('postComment requires string ticketId and body inputs');
     }
     const isPublic = (data as Record<string, unknown>).public === true;
     const result = await postZendeskComment({ apiToken, config }, ticketId, {
@@ -679,7 +719,7 @@ async function zendeskRunTool(
     });
     return { connectionType: 'zendesk', ok: true, output: result };
   }
-  throw ApplicationFailure.nonRetryable(`Unsupported Zendesk tool: ${tool}`);
+  throw notSent(`Unsupported Zendesk tool: ${tool}`);
 }
 
 async function slackRunTool(
@@ -695,14 +735,12 @@ async function slackRunTool(
     const channelId = (data as Record<string, unknown>).channelId || config.defaultChannelId;
     const text = (data as Record<string, unknown>).text;
     if (typeof channelId !== 'string' || typeof text !== 'string') {
-      throw ApplicationFailure.nonRetryable(
-        'postMessage requires a channelId and text string inputs'
-      );
+      throw notSent('postMessage requires a channelId and text string inputs');
     }
     const result = await postSlackMessage({ apiToken }, { channelId, text });
     return { connectionType: 'slack_workspace', ok: true, output: result };
   }
-  throw ApplicationFailure.nonRetryable(`Unsupported Slack tool: ${tool}`);
+  throw notSent(`Unsupported Slack tool: ${tool}`);
 }
 
 async function issueTrackerRunTool(
@@ -718,7 +756,7 @@ async function issueTrackerRunTool(
     const title = (data as Record<string, unknown>).title;
     const description = (data as Record<string, unknown>).description;
     if (typeof title !== 'string') {
-      throw ApplicationFailure.nonRetryable('createIssue requires a title string');
+      throw notSent('createIssue requires a title string');
     }
     const inputProjectKey = (data as Record<string, unknown>).projectKey;
     const projectKey =
@@ -732,12 +770,12 @@ async function issueTrackerRunTool(
   if (tool === 'fetchIssue') {
     const issueId = (data as Record<string, unknown>).issueId;
     if (typeof issueId !== 'string') {
-      throw ApplicationFailure.nonRetryable('fetchIssue requires an issueId string');
+      throw notSent('fetchIssue requires an issueId string');
     }
     const result = await fetchIssue({ apiToken, config }, issueId);
     return { connectionType: 'issue_tracker', ok: true, output: result };
   }
-  throw ApplicationFailure.nonRetryable(`Unsupported issue_tracker tool: ${tool}`);
+  throw notSent(`Unsupported issue_tracker tool: ${tool}`);
 }
 
 async function confluenceRunTool(
@@ -756,7 +794,7 @@ async function confluenceRunTool(
   if (tool === 'fetchPage') {
     const pageId = text(data.pageId);
     if (!pageId) {
-      throw ApplicationFailure.nonRetryable('fetchPage requires a string pageId input');
+      throw notSent('fetchPage requires a string pageId input');
     }
     return {
       connectionType: 'confluence',
@@ -768,7 +806,7 @@ async function confluenceRunTool(
     const title = text(data.title);
     const bodyText = text(data.bodyText);
     if (!title || !bodyText) {
-      throw ApplicationFailure.nonRetryable('createPage requires string title and bodyText inputs');
+      throw notSent('createPage requires string title and bodyText inputs');
     }
     const parentPageId = text(data.parentPageId);
     const spaceKey = text(data.spaceKey);
@@ -787,9 +825,7 @@ async function confluenceRunTool(
     const pageId = text(data.pageId);
     const bodyText = text(data.bodyText);
     if (!pageId || !bodyText) {
-      throw ApplicationFailure.nonRetryable(
-        'updatePage requires string pageId and bodyText inputs'
-      );
+      throw notSent('updatePage requires string pageId and bodyText inputs');
     }
     const title = text(data.title);
     // A supplied precondition must be forwarded, not refreshed away.
@@ -804,7 +840,7 @@ async function confluenceRunTool(
       }),
     };
   }
-  throw ApplicationFailure.nonRetryable(`Unsupported Confluence tool: ${tool}`);
+  throw notSent(`Unsupported Confluence tool: ${tool}`);
 }
 
 async function genericRunTool(
@@ -840,12 +876,20 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
   const ledgerKey: OutcomeKey | null =
     mutating && nodeId && scope.runId ? { connectionId, nodeId, runId: scope.runId } : null;
 
-  async function perform(): Promise<RunToolResult> {
-    if (mutating && scope.runId) {
-      await assertApprovalSatisfied(scope.runId);
-    }
+  // See `writeOutcome`: refusals that precede the provider call run before the claim.
+  async function prepare() {
     const connection = await loadConnection(connectionId, 'runTool');
     const token = getApiToken(connection);
+    if (!RUN_TOOL_TYPES.has(connection.type)) {
+      throw ApplicationFailure.nonRetryable(
+        `Unsupported connection type for runTool: ${connection.type}`
+      );
+    }
+    return { connection, token };
+  }
+
+  async function perform(prepared: Awaited<ReturnType<typeof prepare>>): Promise<RunToolResult> {
+    const { connection, token } = prepared;
     switch (connection.type) {
       case 'git_repo':
         return gitRepoRunTool(connection, tool, inputs);
@@ -863,18 +907,27 @@ export async function runTool(input: RunToolInput): Promise<RunToolResult> {
       case 'notion':
         return genericRunTool(connection.type, connection, token);
       default:
+        // Unreachable: `prepare()` refuses any type outside `RUN_TOOL_TYPES`.
         throw ApplicationFailure.nonRetryable(
           `Unsupported connection type for runTool: ${connection.type}`
         );
     }
   }
   if (!ledgerKey) {
-    return perform();
+    if (mutating && scope.runId) {
+      await assertApprovalSatisfied(scope.runId);
+    }
+    return perform(await prepare());
   }
+  // As in `writeOutcome` and `mcpCallTool`: a recorded effect is returned before the approval
+  // guard, and the guard and connection checks run before the claim so a refusal leaves no
+  // PENDING row behind.
   const existing = await findRecordedOutcome<RunToolResult>(ledgerKey);
   if (existing) {
     return existing;
   }
+  await assertApprovalSatisfied(ledgerKey.runId);
+  const prepared = await prepare();
   // As in `writeOutcome`: the claim goes in before the dispatch.
-  return performOnce({ attempt: scope.attempt, dispatch: perform, key: ledgerKey });
+  return performOnce({ attempt: scope.attempt, dispatch: () => perform(prepared), key: ledgerKey });
 }

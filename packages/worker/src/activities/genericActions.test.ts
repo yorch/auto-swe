@@ -11,10 +11,7 @@ import { readSource, runTool, writeOutcome } from './genericActions.js';
 
 vi.mock('@temporalio/activity', () => ({
   ApplicationFailure: {
-    nonRetryable: (message: string) => {
-      const err = new Error(message);
-      return err;
-    },
+    nonRetryable: (message: string, type?: string) => Object.assign(new Error(message), { type }),
   },
   // `connectionAccess` logs through `activityLog`, which imports this to decide between
   // the Temporal logger and the console.
@@ -236,6 +233,45 @@ describe('writeOutcome approval guard', () => {
     const result = await writeOutcome(args);
     expect(result.ok).toBe(true);
   });
+
+  // The approval guard runs after the ledger is read and before the claim, as in `mcpCallTool`.
+  // A refusal must leave no PENDING row, or a retry made after approval finds the stale claim and
+  // fails with OUTCOME_AMBIGUOUS instead of writing.
+  it('refuses with APPROVAL_REQUIRED before claiming the effect', async () => {
+    (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        createdAt: publishedAt,
+        payload: { decision: 'require_approval' },
+        policyName: 'default',
+        riskClass: 'internal_write',
+      })
+      .mockResolvedValueOnce(null);
+
+    await expect(writeOutcome({ ...args, nodeId: 'node-1' })).rejects.toHaveProperty(
+      'type',
+      'APPROVAL_REQUIRED'
+    );
+    expect(appendNotionBlocks).not.toHaveBeenCalled();
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+  });
+
+  it('returns a recorded outcome without consulting approval', async () => {
+    (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      createdAt: publishedAt,
+      payload: { decision: 'require_approval' },
+    });
+    (prisma.workflowOutcomeReference.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      result: { connectionType: 'notion', ok: true, reference: 'stored-page' },
+      state: 'DONE',
+    });
+
+    const result = await writeOutcome({ ...args, nodeId: 'node-1' });
+
+    expect(result).toEqual({ connectionType: 'notion', ok: true, reference: 'stored-page' });
+    expect(prisma.autonomyDecision.findFirst).not.toHaveBeenCalled();
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+    expect(appendNotionBlocks).not.toHaveBeenCalled();
+  });
 });
 
 describe('runTool governance', () => {
@@ -297,6 +333,44 @@ describe('runTool governance', () => {
     // A read changes nothing, so it is neither gated nor recorded.
     expect(prisma.autonomyDecision.findFirst).not.toHaveBeenCalled();
     expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses with APPROVAL_REQUIRED before claiming the effect', async () => {
+    requireApprovalThenNothing();
+
+    await expect(
+      runTool({
+        connectionId: ZENDESK,
+        inputs: postInputs,
+        nodeId: 'notify',
+        tool: 'postComment',
+      })
+    ).rejects.toHaveProperty('type', 'APPROVAL_REQUIRED');
+    expect(postZendeskComment).not.toHaveBeenCalled();
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+  });
+
+  it('returns a recorded outcome without consulting approval', async () => {
+    (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      createdAt: publishedAt,
+      payload: { decision: 'require_approval' },
+    });
+    (prisma.workflowOutcomeReference.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      result: { connectionType: 'zendesk', ok: true, output: 'stored' },
+      state: 'DONE',
+    });
+
+    const result = await runTool({
+      connectionId: ZENDESK,
+      inputs: postInputs,
+      nodeId: 'notify',
+      tool: 'postComment',
+    });
+
+    expect(result).toEqual({ connectionType: 'zendesk', ok: true, output: 'stored' });
+    expect(prisma.autonomyDecision.findFirst).not.toHaveBeenCalled();
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+    expect(postZendeskComment).not.toHaveBeenCalled();
   });
 
   it('records the effect, so a retry returns it instead of posting twice', async () => {
@@ -1019,5 +1093,141 @@ describe('runTool approval guard', () => {
     // The gate is not consulted at all for a read: a run whose policy demanded
     // approval for a write has not asked for one to look a page up.
     expect(prisma.autonomyDecision.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe('refusals before the provider call leave no claim', () => {
+  const NOTION = '4dcf895a-9ed7-450c-8858-e45b8415db4b';
+  const ZENDESK = 'e9108636-3b75-440c-a4f9-987449669502';
+  const writeArgs = { connectionId: NOTION, data: { text: 'hi' }, nodeId: 'node-1' };
+
+  beforeEach(() => {
+    (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      authorizedConnectionIds: [NOTION, ZENDESK],
+      id: 'run-1',
+    });
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('notion', { token: true })
+    );
+  });
+
+  it('writeOutcome: an inactive connection is refused before the claim', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      isActive: false,
+      type: 'notion',
+    });
+
+    await expect(writeOutcome(writeArgs)).rejects.toThrow('not found or inactive');
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+  });
+
+  it('writeOutcome: a connection the run may not use is refused before the claim', async () => {
+    (prisma.workflowRun.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      authorizedConnectionIds: [],
+      id: 'run-1',
+    });
+
+    await expect(writeOutcome(writeArgs)).rejects.toThrow();
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+  });
+
+  it('writeOutcome: an unsupported connection type is refused before the claim', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('carrier_pigeon', { token: true })
+    );
+
+    await expect(writeOutcome(writeArgs)).rejects.toThrow('Unsupported connection type');
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+  });
+
+  it('writeOutcome: returns a recorded result even when the connection is now inactive', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      isActive: false,
+      type: 'notion',
+    });
+    (prisma.workflowOutcomeReference.findFirst as ReturnType<typeof vi.fn>).mockResolvedValue({
+      result: { connectionType: 'notion', ok: true, reference: 'stored' },
+      state: 'DONE',
+    });
+
+    await expect(writeOutcome(writeArgs)).resolves.toEqual({
+      connectionType: 'notion',
+      ok: true,
+      reference: 'stored',
+    });
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+  });
+
+  it('writeOutcome: a connector payload refusal releases the claim it took', async () => {
+    await expect(writeOutcome({ ...writeArgs, data: {} })).rejects.toThrow(
+      'Notion writeOutcome data must include'
+    );
+    expect(prisma.workflowOutcomeReference.create).toHaveBeenCalledTimes(1);
+    expect(prisma.workflowOutcomeReference.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('runTool: an inactive connection is refused before the claim', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue({
+      isActive: false,
+      type: 'zendesk',
+    });
+
+    await expect(
+      runTool({ connectionId: ZENDESK, inputs: {}, nodeId: 'node-1', tool: 'postComment' })
+    ).rejects.toThrow('not found or inactive');
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+  });
+
+  it('runTool: an unsupported tool name releases the claim it took', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('zendesk', { config: { email: 'a@b.com', subdomain: 'x' }, token: true })
+    );
+
+    await expect(
+      runTool({ connectionId: ZENDESK, inputs: {}, nodeId: 'node-1', tool: 'explode' })
+    ).rejects.toThrow('Unsupported Zendesk tool');
+    expect(prisma.workflowOutcomeReference.create).toHaveBeenCalledTimes(1);
+    expect(prisma.workflowOutcomeReference.deleteMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('runTool: a mutating tool without a nodeId is still refused without approval', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('zendesk', { config: { email: 'a@b.com', subdomain: 'x' }, token: true })
+    );
+    (prisma.autonomyDecision.findFirst as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce({
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        payload: { decision: 'require_approval' },
+        policyName: 'default',
+        riskClass: 'external_communication',
+      })
+      .mockResolvedValueOnce(null);
+
+    await expect(
+      runTool({
+        connectionId: ZENDESK,
+        inputs: { body: 'x', ticketId: '42' },
+        tool: 'postComment',
+      })
+    ).rejects.toHaveProperty('type', 'APPROVAL_REQUIRED');
+    expect(postZendeskComment).not.toHaveBeenCalled();
+  });
+
+  it('runTool: confluence updatePage input and unknown-tool refusals release the claim', async () => {
+    (prisma.connection.findUnique as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeConnection('confluence', { token: true })
+    );
+    for (const [tool, message] of [
+      ['updatePage', 'updatePage requires'],
+      ['explode', 'Unsupported Confluence tool'],
+    ] as const) {
+      vi.mocked(prisma.workflowOutcomeReference.create).mockClear();
+      vi.mocked(prisma.workflowOutcomeReference.deleteMany).mockClear();
+      await expect(
+        runTool({ connectionId: ZENDESK, inputs: {}, nodeId: 'node-1', tool })
+      ).rejects.toThrow(message);
+      expect(prisma.workflowOutcomeReference.create).toHaveBeenCalledTimes(1);
+      expect(prisma.workflowOutcomeReference.deleteMany).toHaveBeenCalledTimes(1);
+    }
   });
 });

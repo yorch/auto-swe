@@ -117,15 +117,16 @@ async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResu
         : null;
     // The ledger is consulted before the approval guard, as in `writeOutcome`
     // and `runTool`: the effect already happened, and returning what it produced
-    // performs no second one.
+    // performs no second one. The guard does not depend on the ledger key: a
+    // mutating call in a run without a `nodeId` is not recorded, but is still gated.
     if (ledgerKey) {
       const existing = await findRecordedOutcome<McpCallToolResult>(ledgerKey);
       if (existing) {
         return existing;
       }
-      if (scope.runId) {
-        await assertApprovalSatisfied(scope.runId);
-      }
+      await assertApprovalSatisfied(ledgerKey.runId);
+    } else if (!readOnly && scope.runId) {
+      await assertApprovalSatisfied(scope.runId);
     }
 
     // Mastra tool execute is `(input, context)`; @mastra/mcp reads every context

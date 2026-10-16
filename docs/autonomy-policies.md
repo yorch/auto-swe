@@ -132,11 +132,13 @@ something outside the platform — `writeOutcome`, `runTool` and `mcpCallTool`:
   provider is called and completed with what it returned. A retry that finds a completed row returns
   that result instead of repeating the effect, and one that finds a bare claim is refused with a
   non-retryable `OUTCOME_AMBIGUOUS` — the provider may have acted and the attempt that called it
-  recorded nothing, so repeating it is how one effort becomes two. A connector that refused before
-  sending anything (`notSent`) releases the claim instead, so a refused call stays retryable. Two
-  limits remain, stated because they are what this is not: a **new run** for the same work starts with
-  an empty ledger, since a restart is a new workflow id, and a claim whose outcome was never learned
-  has to be resolved by a person — nothing here clears it on its own.
+  recorded nothing, so repeating it is how one effort becomes two. The approval guard and the
+  connection checks (authorization, active, supported type, token decryption) run before the claim
+  is taken, and the `writeOutcome` and `runTool` handlers' payload and tool-name checks release it
+  (`notSent`), so those refusals stay retryable. Two limits remain, stated because they are what this
+  is not: a **new run** for the same work starts with an empty ledger, since a restart is a new
+  workflow id, and a claim whose outcome was never learned has to be resolved by a person — nothing
+  here clears it on its own.
 
 Outside this boundary:
 
@@ -201,3 +203,9 @@ expects.
 - **Editing a policy does not disturb waiting runs.** A run already parked at a gate keeps the
   approver count it was given. Loosening a policy will not release it, and tightening one will not
   raise its bar.
+- **Some pre-send refusals still strand a claim.** Only the checks in the `writeOutcome` and
+  `runTool` handlers release a claim as `notSent`. A refusal raised elsewhere after the claim — a
+  connection config that fails to parse, a connector's own validation or URL check before it makes
+  the request, or an MCP call that fails before reaching the server — is indistinguishable from an
+  ambiguous failure, so the claim stays and the next attempt is refused with `OUTCOME_AMBIGUOUS`
+  until a person resolves it.
