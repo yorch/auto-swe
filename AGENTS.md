@@ -502,17 +502,17 @@ skills via `skillRefs` and tools via `toolKeys`. `getModel` / `getModelSpec` / `
 **Agent identity is a free-form `string`** (`AnySkillRole = string`) — there is no enum. New agents
 are added as data, not code. Seeded built-ins split by how they bind a model:
 
-- **Model-backed** (own `modelSpec`), 18 of them. The engineering set is `implementer`, `reviewer`,
+- **Model-backed** (own `modelSpec`), 19 of them. The engineering set is `implementer`, `reviewer`,
   `planner`, `securityReview`, `validateContext`, `commitToMemory`, `channelAssistant`, `evalJudge`,
   `workflowAuthor`, `workflowExplainer`, `repoDependencyInferrer`. `appAssistant` answers in the
-  dashboard's assistant panel, acting as the signed-in user. The rest exist because the
+  dashboard's assistant panel, acting as the signed-in user, and `assistantTitler` names its
+  conversations. The rest exist because the
   platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
   `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product).
-- **Sub-role personas** (`inheritsModelFrom`), 14 of them: `securityReviewer` /
+- **Sub-role personas** (`inheritsModelFrom`), 13 of them: `securityReviewer` /
   `domainLogicReviewer` / `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` /
   `prdDecomposer` / `ciTriager` / `ticketContextGatherer` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
-  `mergeConflictResolver` (← `implementer`); `lessonConsolidator` (← `commitToMemory`);
-  `assistantTitler` (← `appAssistant`).
+  `mergeConflictResolver` (← `implementer`); `lessonConsolidator` (← `commitToMemory`).
 
 Both lists are complete as written, and `yarn docs:check` fails if one stops being — see
 [`docs/agents.md`](./docs/agents.md) for what calls each agent and its default model.
@@ -752,7 +752,7 @@ Seeded model defaults (applied to the GLOBAL Agents by `syncBuiltins`):
 | ----- | ------- |
 | `implementer`, `reviewer`, `commitToMemory`, `channelAssistant`, `workflowAuthor` | `anthropic/claude-opus-5-5` |
 | `planner`, `securityReview`, `validateContext`, `workflowExplainer` | `anthropic/claude-sonnet-5-5` |
-| `evalJudge` | `anthropic/claude-haiku-4-5-20251001` |
+| `evalJudge`, `assistantTitler` | `anthropic/claude-haiku-4-5-20251001` |
 | (embedding) | `openai/text-embedding-3-large` |
 
 When a default changes, `syncAgents` moves a GLOBAL built-in Agent forward **only** if its latest

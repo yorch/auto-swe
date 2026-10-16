@@ -44,7 +44,7 @@ call of a conversation already under way, and the dashboard does not offer the p
 request through the settings cache. `assistant.maxStepsPerTurn` (default 12) bounds the model steps
 one reply may take, each tool call being one; a reply that reaches it ends with what it has and says
 so. `assistant.generateTitles` (default on) lets the `assistantTitler` agent name each conversation
-on the assistant's model; off, a conversation keeps the start of its first message as its title
+(its model is set in the agent library); off, a conversation keeps the start of its first message as its title
 until the user renames it.
 
 The assistant's tools in the worker call the gateway at `API_INTERNAL_URL` (default

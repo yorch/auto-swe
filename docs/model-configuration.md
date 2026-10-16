@@ -412,7 +412,7 @@ failing it, because the worker starts without it.
 
 1. `yarn db:migrate && yarn db:generate && yarn db:seed` — schema + admin user.
 2. Start gateway + web only (not the worker yet).
-3. The DB seed already created the built-in `Agent` rows — 18 model-backed with default model specs, plus 14 sub-role personas that inherit a parent's model — along with the `EmbeddingConfig` singleton. Sign in as admin and add a `ProviderCredential` at `/studio/models` → Credentials.
+3. The DB seed already created the built-in `Agent` rows — 19 model-backed with default model specs, plus 13 sub-role personas that inherit a parent's model — along with the `EmbeddingConfig` singleton. Sign in as admin and add a `ProviderCredential` at `/studio/models` → Credentials.
 4. Add at least one `ProviderCredential` on the Credentials tab. For the seeded defaults you need at minimum `anthropic` (for the agent roles) and `openai` (for embeddings).
 5. Start the worker. `assertConfigReady()` walks the DB; missing pieces are listed in a single rolled-up error pointing back to the dashboard.
 
@@ -425,7 +425,7 @@ Per-role baked-in defaults seeded onto the GLOBAL Agents (also recorded in `AGEN
 | `evalJudge` | `anthropic/claude-haiku-4-5-20251001` (distinct model to avoid self-preference bias) |
 | Embeddings | `openai/text-embedding-3-large` |
 
-The 14 sub-role personas carry no `modelSpec` — each binds its parent's model via
+The 13 sub-role personas carry no `modelSpec` — each binds its parent's model via
 `inheritsModelFrom`. `contentWriter`, `brandReviewer`, `supportResponder`, `productAnalyst`,
 `prdWriter`, and `issueDrafter` are model-backed agents added for the non-SWE workflow packs. Full roster in [`agents.md` §1](./agents.md#1-agents).
 

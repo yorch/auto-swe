@@ -167,8 +167,8 @@ names a conversation that opens with "hi" poorly and for good. The `assistantTit
 it from the user's first messages alongside each turn, behind `assistant.generateTitles`, and the
 user can rename it from the panel header. A user's title is final: the model only replaces a title
 still taken from the first message. The titler reads the user's messages and not the replies, so it
-runs in parallel with the turn instead of after it, and inherits `appAssistant`'s model so it works
-with whatever provider the assistant was given.
+runs in parallel with the turn instead of after it. It has its own model, Haiku by default since a
+title is a few words, which admins change in the agent library.
 
 ## D9 — 2026-10-14 — Cost and limits
 

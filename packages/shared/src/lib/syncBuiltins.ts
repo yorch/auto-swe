@@ -738,11 +738,12 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
   // ── In-app assistant ───────────────────────────────────────────────────────
   {
     // Names an assistant conversation from the person's first messages, alongside the turn
-    // (`nameAssistantConversation`). On the assistant's model so it works with whatever provider
-    // the operator gave the assistant. No tools.
+    // (`nameAssistantConversation`). A few words of output, so the cheap model, like evalJudge;
+    // admins set another in the agent library. Resolved on demand and best-effort, so not in
+    // MODEL_BACKED_AGENT_KEYS: a missing credential costs a title, never a reply or worker boot.
     description: 'Names an in-app assistant conversation from its first messages. No tools.',
-    inheritsModelFrom: 'appAssistant',
     key: 'assistantTitler',
+    modelSpec: 'anthropic/claude-haiku-4-5-20251001',
     name: 'Assistant Titler',
     systemPrompt: ASSISTANT_TITLER_PROMPT,
   },

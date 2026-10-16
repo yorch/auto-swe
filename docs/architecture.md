@@ -638,8 +638,9 @@ server-sent events.
 A conversation starts with the first line of its first message as its title
 (`AssistantConversation.titleSource` `FIRST_MESSAGE`). Each turn also runs
 `nameAssistantConversation` alongside the reply: while the title is still the first message's and
-`assistant.generateTitles` is on, the `assistantTitler` agent (a persona on `appAssistant`'s model,
-no tools) reads the user's messages so far — never the replies — and returns a short title, written
+`assistant.generateTitles` is on, the `assistantTitler` agent (no tools; default model
+`anthropic/claude-haiku-4-5-20251001`, which an admin changes in the agent library like any other
+agent's) reads the user's messages so far — never the replies — and returns a short title, written
 as `MODEL`. It may decline when the messages do not yet say what the conversation is about; the next
 turn tries again, up to three user messages in. The reply waits up to 10 s for the title before it is
 marked COMPLETE, so the panel, which re-reads the conversation when a reply finishes, usually shows
@@ -1491,6 +1492,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   no cause, and their untagged rows are matched by time rather than by reply. For those, the worker
   log line `[assistantTurn] turn failed` and the Temporal history of `assistant-<conversationId>`
   remain the sources.
+- **A conversation title needs a credential for the titler's own model.** `assistantTitler` does not
+  share `appAssistant`'s model; its default is Anthropic's Haiku. A deployment with no Anthropic
+  credential gets no model-written titles until an admin points the agent at a model it has: each
+  failed attempt is a worker warning (`[assistantTitle] could not name the conversation`), and the
+  conversation keeps its first message as its title. The panel shows no error.
 - **The assistant's workflow inventory covers built-ins only.** `workflowInventory` lists the node
   types, registered steps and built-in templates the code defines. Teams' own templates and
   bundle-installed ones are not in it, so "which templates use this step" counts built-in templates
