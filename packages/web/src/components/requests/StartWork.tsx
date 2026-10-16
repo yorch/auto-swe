@@ -263,7 +263,6 @@ export function StartWork({
                   isFetching={templates.isFetching}
                   isLoading={templates.isLoading}
                   label="workflows"
-                  loadingMessage="Loading workflows…"
                   onRetry={() => void templates.refetch()}
                 >
                   {!runnable.length ? (

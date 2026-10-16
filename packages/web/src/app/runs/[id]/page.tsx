@@ -93,8 +93,13 @@ const CRUMB = cn(
 /** The page's shape while the run loads: a header band, then the layout area. */
 function RunDetailSkeleton() {
   return (
-    <div aria-live="polite" className="flex h-full flex-col bg-ink-800" role="status">
-      <span className="sr-only">Loading run…</span>
+    <div
+      aria-busy="true"
+      aria-live="polite"
+      className="flex h-full flex-col bg-ink-800"
+      role="status"
+    >
+      <span className="sr-only">Loading run</span>
       <div className="shrink-0 space-y-3 border-b border-ink-600/40 bg-ink-900 px-4 py-4 md:px-6">
         <Skeleton className="h-3 w-24" />
         <Skeleton className="h-6 w-80 max-w-full" />

@@ -134,6 +134,8 @@ function EvalsWorkspace() {
         isLoading={trendsQuery.isLoading}
         label="eval trends"
         onRetry={() => void trendsQuery.refetch()}
+        rows={3}
+        shape="cards"
       >
         {trends.length === 0 ? (
           <EmptyState
@@ -293,6 +295,7 @@ function EvalsWorkspace() {
             isLoading={latestRuns.isLoading}
             label="eval runs"
             onRetry={() => void latestRuns.refetch()}
+            rows={3}
           >
             {latestRuns.data && latestRuns.data.length > 0 ? (
               <ul className="-mx-2">
@@ -363,6 +366,7 @@ function EvalsWorkspace() {
             isLoading={datasetsQuery.isLoading}
             label="eval datasets"
             onRetry={() => void datasetsQuery.refetch()}
+            rows={3}
           >
             {datasets && datasets.length > 0 ? (
               <ul className="-mx-2">
@@ -421,6 +425,8 @@ function EvalsWorkspace() {
           isLoading={healthQuery.isLoading}
           label="suite health"
           onRetry={() => void healthQuery.refetch()}
+          rows={3}
+          shape="cards"
         >
           {healthQuery.data && (
             <SuiteHealthChart

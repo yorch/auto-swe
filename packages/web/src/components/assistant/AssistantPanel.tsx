@@ -17,6 +17,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ExpandablePre } from '@/components/ui/ExpandablePre';
 import { SparkleIcon } from '@/components/ui/icons';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import {
   useAssistantConversation,
   useAssistantConversations,
@@ -145,7 +146,11 @@ function PanelBody() {
 
       {showingList ? (
         <ul className="flex-1 overflow-y-auto p-2">
-          {conversations.isLoading && <li className="p-3 text-sm text-paper-500">Loading…</li>}
+          {conversations.isLoading && (
+            <li className="p-3">
+              <SkeletonRows label="conversations" rows={3} />
+            </li>
+          )}
           {conversations.data?.length === 0 && (
             <li className="p-3 text-sm text-paper-500">No conversations yet.</li>
           )}

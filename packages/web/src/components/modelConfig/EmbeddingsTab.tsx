@@ -58,6 +58,7 @@ export function EmbeddingsTab() {
         isLoading={isLoading}
         label="embedding config"
         onRetry={() => void refetch()}
+        shape="form"
       />
     );
   }

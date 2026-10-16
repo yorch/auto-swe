@@ -9,7 +9,6 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
@@ -140,8 +139,8 @@ export function SkillSourcesTab() {
           isFetching={isFetching}
           isLoading={isLoading}
           label="skill sources"
-          loading={<SkeletonRows rows={3} />}
           onRetry={() => void refetch()}
+          rows={3}
         >
           {!sources?.length ? (
             <EmptyState

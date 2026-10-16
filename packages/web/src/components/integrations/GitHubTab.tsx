@@ -129,6 +129,7 @@ export function GitHubTab() {
         isLoading={isLoading}
         label="GitHub config"
         onRetry={() => void refetch()}
+        shape="form"
       />
     );
   }

@@ -74,13 +74,14 @@ export function ConsolidationForm() {
       />
 
       <QueryBoundary
-        compact
         error={loadError}
         isError={isError}
         isFetching={isFetching}
         isLoading={isLoading}
         label="the consolidation schedule"
         onRetry={() => void refetch()}
+        rows={2}
+        shape="form"
       >
         <form className="space-y-6" onSubmit={submit}>
           <Card>

@@ -49,7 +49,7 @@ export function AutomationHistory({
   const retry = useRetryAutomationFire(automationId);
   const descriptor = eventSource(source);
   if (isLoading) {
-    return <SkeletonRows rows={2} />;
+    return <SkeletonRows label="automation history" rows={2} />;
   }
   if (isError) {
     return <Alert>{errMsg(error, 'Could not load what this automation decided.')}</Alert>;

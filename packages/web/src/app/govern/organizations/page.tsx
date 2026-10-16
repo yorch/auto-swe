@@ -7,7 +7,6 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
@@ -99,8 +98,8 @@ export default function GovernOrganizationsPage() {
           isFetching={isFetching}
           isLoading={isLoading}
           label="organizations"
-          loading={<SkeletonRows rows={4} />}
           onRetry={() => void refetch()}
+          rows={4}
         >
           {rows.length === 0 ? (
             filtering && all.length > 0 ? (

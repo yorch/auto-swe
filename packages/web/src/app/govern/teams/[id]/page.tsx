@@ -136,6 +136,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
           isLoading={isLoading}
           label="team"
           onRetry={() => void refetch()}
+          shape="detail"
         />
       </TeamFrame>
     );

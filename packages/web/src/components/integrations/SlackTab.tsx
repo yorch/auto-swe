@@ -7,7 +7,6 @@ import { Button, ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type SlackConfigInput,
@@ -246,8 +245,8 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
         isFetching={workspacesIsFetching}
         isLoading={isLoading}
         label="workspaces"
-        loading={<SkeletonRows rows={2} />}
         onRetry={() => void refetch()}
+        rows={2}
       >
         {!workspaces || workspaces.length === 0 ? (
           <EmptyState

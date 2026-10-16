@@ -325,7 +325,7 @@ export function EventEndpointsCard({ team }: { team: { id: string; name: string 
           Other services post signed events to these URLs. The team’s automations decide what each
           event starts; an event never runs anything on its own.
         </p>
-        {isLoading && <SkeletonRows rows={2} />}
+        {isLoading && <SkeletonRows label="event endpoints" rows={2} />}
         {isError && <Alert>{errMsg(error, 'Could not load the event endpoints.')}</Alert>}
         {secret && <FreshSecret secret={secret} />}
         {data && data.endpoints.length > 0 && (

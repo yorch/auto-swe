@@ -208,13 +208,14 @@ export function GitHubHostCredentialsCard() {
       title="Per-host credentials"
     >
       <QueryBoundary
-        compact
         error={loadError}
         isError={isError}
         isFetching={isFetching}
         isLoading={isLoading}
         label="Host credentials"
         onRetry={() => void refetch()}
+        rows={2}
+        shape="form"
       >
         {!credentials || credentials.length === 0 ? (
           <EmptyState

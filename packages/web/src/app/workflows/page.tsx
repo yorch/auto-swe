@@ -164,7 +164,7 @@ function RequestsWorkspace() {
           label={showEpics ? 'epics' : 'requests'}
           loading={
             <Card className="px-5 py-3">
-              <SkeletonRows rows={6} />
+              <SkeletonRows label="requests" rows={6} />
             </Card>
           }
           onRetry={() => void active.refetch()}

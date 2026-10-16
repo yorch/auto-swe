@@ -86,6 +86,7 @@ export function FigmaTab() {
         isLoading={isLoading}
         label="Figma config"
         onRetry={() => void refetch()}
+        shape="form"
       />
     );
   }

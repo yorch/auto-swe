@@ -117,7 +117,7 @@ export default function UsersPage() {
           label="users"
           loading={
             <Card>
-              <SkeletonRows rows={5} />
+              <SkeletonRows label="users" rows={5} />
             </Card>
           }
           onRetry={() => void refetch()}

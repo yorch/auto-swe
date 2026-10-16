@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { type McpGrant, useMcpGrants, useRevokeMcpGrant } from '@/hooks/useMcpGrants';
 import { describeRedirect, MCP_SCOPE_WRITE } from '@/lib/mcpConsent';
@@ -42,14 +41,13 @@ export function ConnectedAppsSection() {
         title="Connected apps"
       >
         <QueryBoundary
-          compact
           error={error}
           isError={isError}
           isFetching={isFetching}
           isLoading={isLoading}
           label="apps"
-          loading={<SkeletonRows rows={2} />}
           onRetry={() => void refetch()}
+          rows={2}
         >
           {grants.length === 0 ? (
             <EmptyState

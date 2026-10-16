@@ -163,6 +163,8 @@ function AnalyticsWorkspace() {
         isLoading={isLoading}
         label="analytics"
         onRetry={() => void refetch()}
+        rows={3}
+        shape="cards"
       >
         {!data ? (
           <EmptyState

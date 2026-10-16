@@ -180,6 +180,7 @@ export function KnowledgeBaseTab() {
         isLoading={isLoading}
         label="knowledge base config"
         onRetry={() => void refetch()}
+        shape="form"
       />
     );
   }

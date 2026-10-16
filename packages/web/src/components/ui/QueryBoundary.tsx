@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { errMsg } from '@/lib/errors';
 import { Alert } from './Alert';
 import { Button } from './Button';
-import { LoadingState } from './LoadingState';
+import { SkeletonFor, type SkeletonShape } from './LoadingState';
 
 interface QueryBoundaryProps {
   isLoading: boolean;
@@ -10,13 +10,16 @@ interface QueryBoundaryProps {
   /** True while a refetch is running; the Retry button disables and says so. */
   isFetching?: boolean;
   error?: unknown;
-  /** Rendered while loading instead of the spinner — e.g. `<SkeletonRows />` shaped like the list. */
+  /** Shape of the skeleton shown while loading; match what `children` will render. Default `rows`. */
+  shape?: SkeletonShape;
+  /** Placeholder count: rows, cards or form fields (ignored by `detail`). */
+  rows?: number;
+  /** Replaces the shaped skeleton for a layout none of the shapes fits; give it `role="status"`. */
   loading?: ReactNode;
-  /** Caption for the loading indicator. */
-  loadingMessage?: string;
-  /** One-line loading indicator, for a section inside a card rather than a whole page. */
-  compact?: boolean;
-  /** What was being loaded, for the error alert — "Could not load teams: …". */
+  /**
+   * What is being loaded. Names the skeleton for screen readers ("Loading teams")
+   * and the error alert ("Could not load teams: …").
+   */
   label?: string;
   /** Re-runs the failed query; shows a Retry button on the error alert. */
   onRetry?: () => void;
@@ -24,7 +27,7 @@ interface QueryBoundaryProps {
 }
 
 /**
- * The three states every list page shares: a loading indicator while the
+ * The three states every list page shares: a skeleton shaped like the content while the
  * query is in flight, an error alert when it failed, and `children` once it
  * settled. Pages that only checked `isLoading` rendered their empty state on a
  * 403 or 500 — `data` is simply undefined then — so route every list query's
@@ -32,18 +35,18 @@ interface QueryBoundaryProps {
  */
 export function QueryBoundary({
   children,
-  compact = false,
   error,
   isError = false,
   isFetching = false,
   isLoading,
   label,
   loading,
-  loadingMessage,
+  rows,
+  shape = 'rows',
   onRetry,
 }: QueryBoundaryProps) {
   if (isLoading) {
-    return loading ?? <LoadingState compact={compact} message={loadingMessage} />;
+    return loading ?? <SkeletonFor label={label} rows={rows} shape={shape} />;
   }
   if (isError) {
     const detail = errMsg(error, 'request failed');

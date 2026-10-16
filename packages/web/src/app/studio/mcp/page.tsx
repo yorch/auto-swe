@@ -12,7 +12,6 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -612,8 +611,8 @@ export default function StudioMcpConnectionsPage() {
           isFetching={isFetching}
           isLoading={isLoading}
           label="MCP connections"
-          loading={<SkeletonRows rows={3} />}
           onRetry={() => void refetch()}
+          rows={3}
         >
           {!connections || connections.length === 0 ? (
             <EmptyState

@@ -8,7 +8,6 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
@@ -300,8 +299,8 @@ export default function StudioBundlesPage() {
           isFetching={isFetching}
           isLoading={isLoading}
           label="bundles"
-          loading={<SkeletonRows rows={3} />}
           onRetry={() => void refetch()}
+          rows={3}
         >
           {!bundles || bundles.length === 0 ? (
             <EmptyState

@@ -46,6 +46,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
         isLoading={dataset.isLoading}
         label="eval dataset"
         onRetry={() => void dataset.refetch()}
+        shape="detail"
       >
         {ds && (
           <>
@@ -84,6 +85,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                 isLoading={runs.isLoading}
                 label="eval runs"
                 onRetry={() => void runs.refetch()}
+                shape="detail"
               >
                 <div className="-mx-4">
                   <Table className="max-sm:px-4" stacked>

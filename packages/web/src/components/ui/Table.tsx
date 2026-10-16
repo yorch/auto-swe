@@ -158,8 +158,8 @@ export function TRow({
 
 /**
  * A full-width body row for a table's loading, empty or error state, so the
- * header stays in place while the body explains itself. Pass `LoadingState`,
- * `EmptyState` or `Alert` as `children`.
+ * header stays in place while the body explains itself. Pass a skeleton from
+ * `LoadingState.tsx`, `EmptyState` or `Alert` as `children`.
  */
 export function TableStatusRow({ children, colSpan }: { children: ReactNode; colSpan: number }) {
   return (

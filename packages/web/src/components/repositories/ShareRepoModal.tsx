@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { useSetRepoShares, useShareCandidates } from '@/hooks/useRepositories';
 import { connectionLabel } from '@/lib/connectionDisplay';
@@ -55,7 +55,7 @@ export function ShareRepoModal({
       title={connectionLabel(repo)}
     >
       <form className="space-y-5" onSubmit={(e) => void handleSave(e).catch(() => {})}>
-        {candidates.isLoading && <LoadingState compact message="Loading teams…" />}
+        {candidates.isLoading && <SkeletonRows label="teams" rows={3} />}
         {candidates.isError && (
           <Alert>{errMsg(candidates.error, 'Could not load the teams.')}</Alert>
         )}

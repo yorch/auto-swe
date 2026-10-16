@@ -16,7 +16,6 @@ import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -463,8 +462,8 @@ function EffectivenessCard() {
         isFetching={isFetching}
         isLoading={isLoading}
         label="skill effectiveness"
-        loading={<SkeletonRows rows={3} />}
         onRetry={() => void refetch()}
+        rows={3}
       >
         {!data?.perSkill.length ? (
           <EmptyState
@@ -670,8 +669,8 @@ export default function StudioSkillsPage() {
               isFetching={isFetching}
               isLoading={isLoading}
               label="skills"
-              loading={<SkeletonRows rows={8} />}
               onRetry={() => void refetch()}
+              rows={8}
             >
               {!skills?.length ? (
                 <EmptyState

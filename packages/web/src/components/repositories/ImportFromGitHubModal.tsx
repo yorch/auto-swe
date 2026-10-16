@@ -52,7 +52,7 @@ export function ImportFromGitHubModal({
           value={search}
         />
 
-        {isLoading && <SkeletonRows rows={5} />}
+        {isLoading && <SkeletonRows label="repositories" rows={5} />}
 
         {error && !isLoading && (
           <Alert

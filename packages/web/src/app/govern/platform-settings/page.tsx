@@ -317,7 +317,7 @@ export default function GovernSettingsPage() {
 
           {settings.isLoading && (
             <Card>
-              <SkeletonRows rows={6} />
+              <SkeletonRows label="platform settings" rows={6} />
             </Card>
           )}
           {settings.isError && (

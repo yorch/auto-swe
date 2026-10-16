@@ -101,6 +101,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
         isLoading={latest.isLoading}
         label="request attempts"
         onRetry={() => void latest.refetch()}
+        shape="detail"
       >
         {!latestId && (
           <Alert variant="info">
@@ -116,6 +117,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
             isLoading={query.isLoading}
             label="request details"
             onRetry={() => void query.refetch()}
+            shape="detail"
           >
             {run && (
               <>
@@ -194,6 +196,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
             isLoading={attempts.isLoading}
             label="attempt history"
             onRetry={() => void attempts.refetch()}
+            rows={3}
           >
             <ul className="space-y-2">
               {attempts.data?.data.map((attempt) => (
@@ -315,6 +318,7 @@ function AttemptContent({
         isLoading={approvalQuery.isLoading}
         label="pending responses"
         onRetry={() => void approvalQuery.refetch()}
+        rows={2}
       />
       <RunSummary
         answeredSteps={answered}
@@ -468,6 +472,7 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
             isLoading={traces.isLoading}
             label="traces"
             onRetry={() => void traces.refetch()}
+            rows={4}
           >
             <p className="text-sm text-paper-400">
               {traces.data?.traces.length ?? 0} events. Open the full page for complete trace

@@ -215,7 +215,7 @@ export function RepoDependenciesModal({
         title={connectionLabel(repo)}
       >
         {isLoading ? (
-          <SkeletonRows rows={4} />
+          <SkeletonRows label="dependencies" rows={4} />
         ) : isError ? (
           <Alert>
             {errMsg(

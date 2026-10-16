@@ -9,7 +9,6 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
@@ -106,8 +105,8 @@ export default function GovernSlackChannelsPage() {
           isFetching={isFetching}
           isLoading={isLoading}
           label="Slack channels"
-          loading={<SkeletonRows rows={4} />}
           onRetry={() => void refetch()}
+          rows={4}
         >
           {!channels || channels.length === 0 ? (
             <EmptyState

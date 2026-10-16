@@ -123,13 +123,14 @@ export function GitHubHostSecretsCard() {
       title="Per-host webhook secrets"
     >
       <QueryBoundary
-        compact
         error={loadError}
         isError={isError}
         isFetching={isFetching}
         isLoading={isLoading}
         label="Host webhook secrets"
         onRetry={() => void refetch()}
+        rows={2}
+        shape="form"
       >
         {!secrets || secrets.length === 0 ? (
           <EmptyState

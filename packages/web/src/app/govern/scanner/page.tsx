@@ -634,7 +634,7 @@ export default function GovernScannerPage() {
         label="scanner patterns"
         loading={
           <Card>
-            <SkeletonRows rows={8} />
+            <SkeletonRows label="scanner patterns" rows={8} />
           </Card>
         }
         onRetry={() => void refetch()}

@@ -193,7 +193,7 @@ function SecurityWorkspace() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {['blocked', 'advisory'].map((k) => (
             <Card key={k}>
-              <SkeletonRows rows={3} />
+              <SkeletonRows label="security events" rows={3} />
             </Card>
           ))}
         </div>
@@ -230,7 +230,7 @@ function SecurityWorkspace() {
             </div>
           </CardHeader>
           {isLoading ? (
-            <SkeletonRows rows={6} />
+            <SkeletonRows label="security events" rows={6} />
           ) : (
             <SecurityEventList
               emptyHint={

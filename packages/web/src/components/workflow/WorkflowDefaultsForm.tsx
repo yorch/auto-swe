@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { SkeletonForm } from '@/components/ui/LoadingState';
 import { SaveBar } from '@/components/ui/SaveBar';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
@@ -181,7 +181,7 @@ export function WorkflowDefaultsForm() {
   const num = (key: NumericKey) => (v: number) => setField(key, v);
 
   if (isLoading) {
-    return <LoadingState />;
+    return <SkeletonForm fields={6} label="workflow defaults" />;
   }
   // A failed load must not render the form: it would show the built-in
   // defaults as if they were the saved values, and saving would overwrite them.

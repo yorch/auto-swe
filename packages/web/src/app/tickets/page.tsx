@@ -94,7 +94,7 @@ function Tickets() {
             isFetching={isFetching}
             isLoading={isLoading}
             label="tickets"
-            loading={<SkeletonRows className="px-4 py-4" rows={6} />}
+            loading={<SkeletonRows className="px-4 py-4" label="tickets" rows={6} />}
             onRetry={() => void refetch()}
           >
             {groups.length === 0 ? (

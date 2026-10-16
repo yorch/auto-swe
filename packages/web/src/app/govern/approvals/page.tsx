@@ -243,8 +243,8 @@ export default function GovernApprovalsPage() {
 /** The inbox's shape while it loads: a few step cards. */
 function ApprovalSkeleton() {
   return (
-    <div aria-live="polite" className="space-y-3" role="status">
-      <span className="sr-only">Loading…</span>
+    <div aria-busy="true" aria-live="polite" className="space-y-3" role="status">
+      <span className="sr-only">Loading approvals</span>
       {['a', 'b', 'c'].map((key) => (
         <div className="rounded-xl border border-ink-400/40 bg-ink-900/50 p-4" key={key}>
           <div className="flex items-start gap-3">

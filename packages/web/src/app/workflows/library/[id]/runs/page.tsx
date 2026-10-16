@@ -171,7 +171,7 @@ function TemplateRuns({ id: rawId }: { id: string }) {
           isFetching={isFetching}
           isLoading={isLoading}
           label="runs"
-          loading={<SkeletonRows className="px-5 py-4" rows={6} />}
+          loading={<SkeletonRows className="px-5 py-4" label="runs" rows={6} />}
           onRetry={() => void refetch()}
         >
           {rows.length === 0 ? (

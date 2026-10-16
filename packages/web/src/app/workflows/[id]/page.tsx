@@ -56,6 +56,7 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
         isLoading={isLoading}
         label="request"
         onRetry={() => void refetch()}
+        shape="detail"
       />
     );
   }

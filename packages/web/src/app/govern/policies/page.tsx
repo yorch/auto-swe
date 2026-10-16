@@ -522,7 +522,7 @@ export default function AutonomyPoliciesPage() {
         label="policies"
         loading={
           <Card>
-            <SkeletonRows rows={3} />
+            <SkeletonRows label="policies" rows={3} />
           </Card>
         }
         onRetry={() => void refetch()}

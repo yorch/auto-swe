@@ -104,8 +104,13 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
       >
         {!stats && !isError && (
           <Card>
-            <div aria-live="polite" className="grid grid-cols-2 gap-6 sm:grid-cols-4" role="status">
-              <span className="sr-only">Loading analytics…</span>
+            <div
+              aria-busy="true"
+              aria-live="polite"
+              className="grid grid-cols-2 gap-6 sm:grid-cols-4"
+              role="status"
+            >
+              <span className="sr-only">Loading analytics</span>
               {['a', 'b', 'c', 'd'].map((k) => (
                 <div className="space-y-3" key={k}>
                   <Skeleton className="h-3 w-24" />

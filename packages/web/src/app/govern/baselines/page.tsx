@@ -15,7 +15,6 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -263,8 +262,8 @@ export default function GovernBaselinesPage() {
           isFetching={orgsIsFetching || baselinesIsFetching}
           isLoading={orgsLoading || baselinesLoading}
           label="baselines"
-          loading={<SkeletonRows rows={3} />}
           onRetry={() => void (orgsIsError ? refetchOrgs() : refetch())}
+          rows={3}
         >
           {!baselines || baselines.length === 0 ? (
             <EmptyState

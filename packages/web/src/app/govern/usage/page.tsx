@@ -338,6 +338,7 @@ function UsageWorkspace() {
         isLoading={scopes.isLoading}
         label="the scopes you can report on"
         onRetry={() => void scopes.refetch()}
+        rows={1}
       >
         <QueryBoundary
           error={error}
@@ -346,6 +347,8 @@ function UsageWorkspace() {
           isLoading={isLoading}
           label="LLM usage"
           onRetry={() => void refetch()}
+          rows={3}
+          shape="cards"
         >
           {data && (
             <div

@@ -10,7 +10,6 @@ import { CopyButton } from '@/components/ui/CopyButton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
@@ -121,14 +120,13 @@ export function AccessTokensSection() {
         title="API tokens"
       >
         <QueryBoundary
-          compact
           error={loadError}
           isError={isError}
           isFetching={isFetching}
           isLoading={isLoading}
           label="tokens"
-          loading={<SkeletonRows rows={3} />}
           onRetry={() => void refetch()}
+          rows={3}
         >
           {list.length === 0 ? (
             <EmptyState

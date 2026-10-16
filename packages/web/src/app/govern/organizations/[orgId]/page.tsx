@@ -11,7 +11,6 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
@@ -259,8 +258,8 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
             isFetching={membersQuery.isFetching}
             isLoading={membersQuery.isLoading}
             label="members"
-            loading={<SkeletonRows rows={3} />}
             onRetry={() => void membersQuery.refetch()}
+            rows={3}
           >
             {memberCount === 0 ? (
               <EmptyState
@@ -457,8 +456,8 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               isFetching={budgetQuery.isFetching}
               isLoading={budgetQuery.isLoading}
               label="budget"
-              loading={<SkeletonRows rows={3} />}
               onRetry={() => void budgetQuery.refetch()}
+              rows={3}
             >
               <div className="space-y-4">
                 {budgetError ? <Alert variant="error">{budgetError}</Alert> : null}
@@ -596,8 +595,8 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
               isFetching={orgQuery.isFetching}
               isLoading={orgQuery.isLoading}
               label="organization"
-              loading={<SkeletonRows rows={2} />}
               onRetry={() => void orgQuery.refetch()}
+              rows={2}
             >
               <div className="space-y-4">
                 {orgError ? <Alert variant="error">{orgError}</Alert> : null}

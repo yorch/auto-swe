@@ -9,7 +9,7 @@ import { Button, ButtonLink } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { DocLink } from '@/components/ui/DocLink';
 import { Icon } from '@/components/ui/Icon';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { SkeletonDetail, SkeletonRows } from '@/components/ui/LoadingState';
 import { useMcpGrants } from '@/hooks/useMcpGrants';
 import { useConsentDecision, useOAuthClientName } from '@/hooks/useOAuthConsent';
 import { errMsg } from '@/lib/errors';
@@ -59,7 +59,7 @@ export function ConsentScreen({ search }: { search: string }) {
   if (session === 'checking') {
     return (
       <AuthLayout embedded>
-        <LoadingState message="Checking your session…" />
+        <SkeletonDetail label="your session" />
       </AuthLayout>
     );
   }
@@ -241,7 +241,7 @@ function ConsentDecision({ search }: { search: string }) {
             the page to try again.
           </Alert>
         )}
-        {grants.isLoading && <LoadingState compact message="Loading permissions…" />}
+        {grants.isLoading && <SkeletonRows label="permissions" rows={2} />}
         {error && <Alert>{error}</Alert>}
       </div>
 

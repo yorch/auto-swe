@@ -52,7 +52,7 @@ export default function EpicsPage() {
         label="epics"
         loading={
           <Card className="px-5 py-3">
-            <SkeletonRows rows={5} />
+            <SkeletonRows label="epics" rows={5} />
           </Card>
         }
         onRetry={() => void epicsQuery.refetch()}

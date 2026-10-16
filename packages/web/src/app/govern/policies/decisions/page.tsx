@@ -9,7 +9,6 @@ import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -150,8 +149,8 @@ export default function AutonomyDecisionsPage() {
             isFetching={isFetching}
             isLoading={isLoading}
             label="autonomy decisions"
-            loading={<SkeletonRows rows={6} />}
             onRetry={() => void refetch()}
+            rows={6}
           >
             <Table stacked>
               <THead>

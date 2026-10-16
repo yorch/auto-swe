@@ -164,6 +164,7 @@ export function IssueTrackerTab() {
         isLoading={isLoading}
         label="issue tracker config"
         onRetry={() => void refetch()}
+        shape="form"
       />
     );
   }

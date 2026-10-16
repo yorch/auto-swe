@@ -13,7 +13,6 @@ import { Badge } from '@/components/ui/Badge';
 import { BUTTON_STYLE, Button, buttonClassName } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Icon } from '@/components/ui/Icon';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useAuthProviders, useLinkedAccounts } from '@/hooks/useAccountSettings';
@@ -158,17 +157,16 @@ export default function SettingsPage() {
         title="Sign-in methods"
       >
         <QueryBoundary
-          compact
           error={providersQuery.error ?? linkedQuery.error}
           isError={providersQuery.isError || linkedQuery.isError}
           isFetching={providersQuery.isFetching || linkedQuery.isFetching}
           isLoading={providersQuery.isLoading || linkedQuery.isLoading}
           label="your sign-in methods"
-          loading={<SkeletonRows rows={4} />}
           onRetry={() => {
             void providersQuery.refetch();
             void linkedQuery.refetch();
           }}
+          rows={4}
         >
           <ul className="divide-y divide-ink-600">
             <SettingsListRow

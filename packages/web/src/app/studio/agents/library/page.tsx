@@ -23,7 +23,6 @@ import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -516,8 +515,8 @@ export default function AgentLibraryPage() {
           isFetching={isFetching}
           isLoading={isLoading}
           label="agents"
-          loading={<SkeletonRows rows={8} />}
           onRetry={() => void refetch()}
+          rows={8}
         >
           {visibleAgents.length === 0 ? (
             filtering ? (

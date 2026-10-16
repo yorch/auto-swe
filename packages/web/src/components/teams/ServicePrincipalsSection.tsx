@@ -18,7 +18,6 @@ import { CopyButton } from '@/components/ui/CopyButton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
@@ -100,14 +99,13 @@ export function ServicePrincipalsSection({
         </Alert>
       )}
       <QueryBoundary
-        compact
         error={error}
         isError={isError}
         isFetching={isFetching}
         isLoading={isLoading}
         label="service principals"
-        loading={<SkeletonRows rows={2} />}
         onRetry={() => void refetch()}
+        rows={2}
       >
         {principals.length === 0 ? (
           <EmptyState

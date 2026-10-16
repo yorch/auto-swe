@@ -5,7 +5,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { SkeletonDetail } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Textarea } from '@/components/ui/Textarea';
 import {
@@ -125,8 +125,8 @@ export default function TemplateDetailPage({ params }: PageProps) {
           isFetching={isFetching}
           isLoading={isLoading}
           label="workflow"
-          loadingMessage="loading workflow…"
           onRetry={() => void refetch()}
+          shape="detail"
         />
       </PagePad>
     );
@@ -285,7 +285,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                     title="This version cannot be drawn"
                   />
                 ) : (
-                  <LoadingState message="Loading the definition…" />
+                  <SkeletonDetail label="the definition" />
                 )}
               </Card>
             )}

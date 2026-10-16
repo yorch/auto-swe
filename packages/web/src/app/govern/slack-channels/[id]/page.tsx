@@ -47,6 +47,7 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
         isLoading={isLoading}
         label="Slack channel"
         onRetry={() => void refetch()}
+        shape="detail"
       >
         {!channel ? (
           <EmptyState

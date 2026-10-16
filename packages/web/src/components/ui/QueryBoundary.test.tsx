@@ -25,9 +25,70 @@ describe('QueryBoundary', () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  it('announces loading as a status', () => {
+  it('announces loading as a busy status naming what loads', () => {
+    render(
+      <QueryBoundary isLoading label="runs">
+        content
+      </QueryBoundary>
+    );
+    const status = screen.getByRole('status');
+    expect(status.getAttribute('aria-busy')).toBe('true');
+    expect(status.textContent).toContain('Loading runs');
+    expect(screen.queryByText('content')).toBeNull();
+  });
+
+  it('falls back to a bare "Loading" label', () => {
     render(<QueryBoundary isLoading>content</QueryBoundary>);
-    expect(screen.getByRole('status')).toBeTruthy();
+    expect(screen.getByRole('status').textContent).toBe('Loading');
+  });
+
+  it('renders the rows skeleton by default, one line per requested row', () => {
+    const { container } = render(
+      <QueryBoundary isLoading label="things" rows={3}>
+        content
+      </QueryBoundary>
+    );
+    expect(screen.getByRole('status').textContent).toBe('Loading things');
+    expect(container.querySelectorAll('.flex.items-center.gap-4').length).toBe(3);
+  });
+
+  it('renders the cards skeleton', () => {
+    const { container } = render(
+      <QueryBoundary isLoading label="things" rows={4} shape="cards">
+        content
+      </QueryBoundary>
+    );
+    expect(screen.getByRole('status').textContent).toBe('Loading things');
+    expect(container.querySelectorAll('.grid > .rounded-lg').length).toBe(4);
+  });
+
+  it('renders the form skeleton', () => {
+    const { container } = render(
+      <QueryBoundary isLoading label="settings" rows={2} shape="form">
+        content
+      </QueryBoundary>
+    );
+    expect(screen.getByRole('status').textContent).toBe('Loading settings');
+    expect(container.querySelectorAll('.space-y-2').length).toBe(2);
+  });
+
+  it('renders the detail skeleton', () => {
+    const { container } = render(
+      <QueryBoundary isLoading label="run" shape="detail">
+        content
+      </QueryBoundary>
+    );
+    expect(screen.getByRole('status').textContent).toBe('Loading run');
+    expect(container.querySelector('.h-24')).toBeTruthy();
+  });
+
+  it('lets a caller supply its own skeleton', () => {
+    render(
+      <QueryBoundary isLoading loading={<div role="status">Custom shape</div>}>
+        content
+      </QueryBoundary>
+    );
+    expect(screen.getByRole('status').textContent).toBe('Custom shape');
   });
 });
 

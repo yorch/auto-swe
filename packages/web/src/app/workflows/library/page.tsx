@@ -750,7 +750,7 @@ export default function TemplatesPage() {
           isFetching={isFetching}
           isLoading={isLoading}
           label="workflows"
-          loading={<SkeletonRows className="px-5 py-4" rows={8} />}
+          loading={<SkeletonRows className="px-5 py-4" label="workflows" rows={8} />}
           onRetry={() => void refetch()}
         >
           {visibleTemplates.length === 0 ? (

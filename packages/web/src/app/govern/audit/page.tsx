@@ -9,7 +9,6 @@ import { Card } from '@/components/ui/Card';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -250,8 +249,8 @@ function AuditWorkspace() {
           isFetching={isFetching}
           isLoading={isLoading}
           label="audit log"
-          loading={<SkeletonRows rows={8} />}
           onRetry={() => void refetch()}
+          rows={8}
         >
           {rows.length === 0 ? (
             hasFilters ? (

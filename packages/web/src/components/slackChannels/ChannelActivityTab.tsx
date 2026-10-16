@@ -75,7 +75,7 @@ export function ChannelActivityTab({ channel }: { channel: SlackChannel }) {
       </p>
 
       {isLoading ? (
-        <SkeletonRows rows={3} />
+        <SkeletonRows label="activity" rows={3} />
       ) : isError ? (
         <QueryBoundary
           error={loadError}

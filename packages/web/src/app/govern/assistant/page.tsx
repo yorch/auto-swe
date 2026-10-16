@@ -46,7 +46,6 @@ function TurnTraces({ id }: { id: string }) {
   const { data, error, isError, isFetching, isLoading, refetch } = useAssistantFailure(id, true);
   return (
     <QueryBoundary
-      compact
       error={error}
       isError={isError}
       isFetching={isFetching}
@@ -218,7 +217,7 @@ function AssistantFailuresWorkspace() {
             </CardTitle>
           </CardHeader>
           {isLoading ? (
-            <SkeletonRows rows={6} />
+            <SkeletonRows label="assistant failures" rows={6} />
           ) : failures.length === 0 ? (
             <EmptyState
               hint="A reply the assistant could not finish appears here. Widen the date range to look further back."

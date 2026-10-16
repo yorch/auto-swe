@@ -113,7 +113,7 @@ export default function GovernAccessTokensPage() {
           label="tokens"
           loading={
             <Card>
-              <SkeletonRows rows={5} />
+              <SkeletonRows label="API tokens" rows={5} />
             </Card>
           }
           onRetry={() => void refetch()}

@@ -215,6 +215,7 @@ export default function EvalRunPage({ params }: { params: Promise<{ id: string }
         isLoading={isLoading}
         label="eval run"
         onRetry={() => void refetch()}
+        shape="detail"
       >
         {run && id && (
           <>

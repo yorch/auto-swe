@@ -334,6 +334,7 @@ function TemplateDiffContent({ params }: PageProps) {
           isLoading={templateLoading}
           label="workflow"
           onRetry={() => void refetchTemplate()}
+          shape="detail"
         >
           {singleVersion || (before !== null && before === after) ? (
             <EmptyState
@@ -358,8 +359,8 @@ function TemplateDiffContent({ params }: PageProps) {
               isFetching={diffFetching}
               isLoading={isLoading}
               label="the diff"
-              loadingMessage="Comparing versions…"
               onRetry={() => void refetchDiff()}
+              shape="detail"
             >
               {parseError && <Alert>{parseError}</Alert>}
               {diffPayload && !parseError && specPair && (

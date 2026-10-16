@@ -213,7 +213,7 @@ export default function ConnectionsPage() {
             isFetching={isFetching}
             isLoading={isLoading}
             label="connections"
-            loading={<SkeletonRows className="px-4 py-4" rows={4} />}
+            loading={<SkeletonRows className="px-4 py-4" label="repositories" rows={4} />}
             onRetry={() => void refetch()}
           >
             {rows.length === 0 ? (

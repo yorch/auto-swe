@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import {
   type DiffAddedSkill,
@@ -119,7 +119,7 @@ function InstallBody({ onClose, sourceId }: { onClose: () => void; sourceId: str
     return (
       <div className="space-y-4">
         {sources.isLoading ? (
-          <LoadingState message="Loading…" />
+          <SkeletonRows label="skill source" rows={2} />
         ) : (
           <Alert>This source no longer exists.</Alert>
         )}
@@ -228,7 +228,7 @@ function InstallList({
   }
 
   if (diffQuery.isLoading) {
-    return <LoadingState message="Reading the repository…" />;
+    return <SkeletonRows label="repository contents" rows={4} />;
   }
   if (!diff) {
     return (

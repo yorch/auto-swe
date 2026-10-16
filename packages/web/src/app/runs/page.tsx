@@ -103,7 +103,7 @@ function RunsList() {
         </Toolbar>
 
         {isLoading ? (
-          <SkeletonRows className="px-5 py-4" rows={6} />
+          <SkeletonRows className="px-5 py-4" label="runs" rows={6} />
         ) : (
           <div className={isError ? 'p-4 sm:p-5' : undefined}>
             <QueryBoundary

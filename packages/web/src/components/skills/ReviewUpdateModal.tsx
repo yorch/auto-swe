@@ -5,7 +5,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import {
   type AcceptResult,
@@ -242,7 +242,7 @@ function ReviewBody({ onClose, sourceId }: { onClose: () => void; sourceId: stri
   }
 
   if (diffQuery.isLoading) {
-    return <LoadingState message="Reading the repository…" />;
+    return <SkeletonRows label="repository contents" rows={4} />;
   }
   if (!diff) {
     return (

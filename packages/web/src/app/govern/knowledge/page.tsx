@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { SkeletonDetail } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
@@ -302,7 +303,7 @@ export default function GovernKnowledgePage() {
             </Button>
           </div>
           {detail.isLoading ? (
-            <p>Loading detail…</p>
+            <SkeletonDetail label="knowledge detail" />
           ) : detail.isError ? (
             <Alert>Unable to load detail. It may no longer be available.</Alert>
           ) : (

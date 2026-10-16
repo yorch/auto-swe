@@ -61,7 +61,7 @@ export default function GovernSessionsPage() {
           label="sessions"
           loading={
             <Card>
-              <SkeletonRows rows={5} />
+              <SkeletonRows label="sessions" rows={5} />
             </Card>
           }
           onRetry={() => void refetch()}

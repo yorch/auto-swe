@@ -76,7 +76,7 @@ export function AllowlistEditor({
       </CardHeader>
       <p className="mb-4 text-sm leading-relaxed text-paper-400">{description}</p>
       {isLoading ? (
-        <SkeletonRows rows={3} />
+        <SkeletonRows label="allowlist" rows={3} />
       ) : (
         <>
           <Textarea
