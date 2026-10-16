@@ -5,10 +5,13 @@ import {
 } from '@auto-swe/shared/lib/agentRunAdmission';
 import {
   ASSISTANT_CONVERSATION_WORKFLOW,
+  ASSISTANT_TITLE_WORKFLOW,
   ASSISTANT_TURN_SIGNAL,
   type AssistantConversationInput,
+  type AssistantTitleInput,
   type AssistantTurnRequest,
   assistantConversationWorkflowId,
+  assistantTitleWorkflowId,
 } from '@auto-swe/shared/lib/assistantConversation';
 import { resolveTemporalAddress } from '@auto-swe/shared/lib/systemConfig';
 import { traceContextClientInterceptor } from '@auto-swe/shared/lib/temporalTracing';
@@ -294,6 +297,11 @@ declare module 'fastify' {
         input: AssistantConversationInput,
         turn: AssistantTurnRequest
       ) => Promise<void>;
+      /**
+       * Name an in-app assistant conversation now (its user reset the title to automatic). A
+       * request while one runs for the same conversation joins it.
+       */
+      nameAssistantConversation: (input: AssistantTitleInput) => Promise<void>;
       /** Explain a WorkflowSpec in plain language (request/response). */
       explainWorkflowSpec: (
         workflowId: string,
@@ -977,6 +985,23 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
           return false;
         }
         throw err;
+      }
+    },
+
+    async nameAssistantConversation(input) {
+      // A server that ignores the conflict policy answers a running id with
+      // WorkflowExecutionAlreadyStartedError, which is the same join.
+      try {
+        await client.workflow.start(ASSISTANT_TITLE_WORKFLOW, {
+          args: [input],
+          taskQueue: 'engineering-workflow',
+          workflowId: assistantTitleWorkflowId(input.conversationId),
+          workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        });
+      } catch (err) {
+        if (getErrorName(err) !== 'WorkflowExecutionAlreadyStartedError') {
+          throw err;
+        }
       }
     },
 

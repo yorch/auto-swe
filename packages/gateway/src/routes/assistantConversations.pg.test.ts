@@ -31,6 +31,7 @@ describe.skipIf(!enabled)('assistant conversations against Postgres', () => {
   const suffix = crypto.randomBytes(4).toString('hex');
   const userIds: string[] = [];
   const turns: Array<{ input: { conversationId: string }; turn: { token: string } }> = [];
+  const namings: Array<{ conversationId: string; userId: string }> = [];
   let app: FastifyInstance;
 
   beforeAll(async () => {
@@ -43,6 +44,9 @@ describe.skipIf(!enabled)('assistant conversations against Postgres', () => {
     }
     app = await buildAssistantApp(prisma as never, async (a) => {
       a.decorate('temporal', {
+        nameAssistantConversation: async (input: never) => {
+          namings.push(input);
+        },
         sendAssistantTurn: async (input: never, turn: never) => {
           turns.push({ input, turn });
         },
@@ -112,6 +116,57 @@ describe.skipIf(!enabled)('assistant conversations against Postgres', () => {
     const after = await read();
     expect(after.statusCode).toBe(401);
     expect(after.json().error.code).toBe('TOKEN_INVALID');
+  });
+
+  it('records who titled a conversation: renamed by its user, then reset to automatic', async () => {
+    const res = await app.inject({
+      headers: { authorization: person(0) },
+      method: 'POST',
+      payload: { message: 'Why did   run 42\nfail?' },
+      url: `${PREFIX}/conversations`,
+    });
+    const { conversation } = res.json().data;
+    expect(conversation).toMatchObject({
+      title: 'Why did run 42 fail?',
+      titleSource: 'FIRST_MESSAGE',
+    });
+
+    const renamed = await app.inject({
+      headers: { authorization: person(0) },
+      method: 'PATCH',
+      payload: { title: 'Run 42' },
+      url: `${PREFIX}/conversations/${conversation.id}`,
+    });
+    expect(renamed.json().data).toMatchObject({ title: 'Run 42', titleSource: 'USER' });
+
+    // Another user can neither rename nor reset it.
+    for (const [method, url, payload] of [
+      ['PATCH', `${PREFIX}/conversations/${conversation.id}`, { title: 'Mine' }],
+      ['POST', `${PREFIX}/conversations/${conversation.id}/title/reset`, undefined],
+    ] as const) {
+      const other = await app.inject({
+        headers: { authorization: person(1) },
+        method,
+        payload,
+        url,
+      });
+      expect(other.statusCode, url).toBe(404);
+    }
+
+    const reset = await app.inject({
+      headers: { authorization: person(0) },
+      method: 'POST',
+      url: `${PREFIX}/conversations/${conversation.id}/title/reset`,
+    });
+    expect(reset.json().data).toMatchObject({
+      conversation: { title: 'Why did run 42 fail?', titleSource: 'FIRST_MESSAGE' },
+      naming: true,
+    });
+    expect(namings.at(-1)).toEqual({ conversationId: conversation.id, userId: userIds[0] });
+    const row = await prisma.assistantConversation.findUniqueOrThrow({
+      where: { id: conversation.id },
+    });
+    expect([row.title, row.titleSource]).toEqual(['Why did run 42 fail?', 'FIRST_MESSAGE']);
   });
 
   it("never shows one user another's conversation", async () => {

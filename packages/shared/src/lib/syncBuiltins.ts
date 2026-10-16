@@ -796,6 +796,7 @@ export const PREVIOUS_DEFAULT_MODEL_SPECS: Readonly<Record<string, string>> = {
  */
 export const PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES: Readonly<Record<string, readonly string[]>> = {
   appAssistant: ['d5a52c2596f39753b18d3bd46d4ba06da99208eb846d7b6bb76cf71111ddef29'],
+  assistantTitler: ['067c7e378495f75ae9741d60fb480e61fcefb2f2c188f1bce4a58fd2135dc91d'],
   workflowAuthor: ['c3c88e3157e74a9ffc9be506d7317b6ed68a3cf9c61b2c6bf5c29f7e1a94c16a'],
   workflowExplainer: ['4ca25fbd0ca975380190be914a35bf813dedf4238418a4c39d0239e7fe156065'],
 };

@@ -1,6 +1,7 @@
 // Barrel export for all Temporal workflows.
 // The worker's workflowsPath points here so Temporal can bundle them all.
 export { AssistantConversationWorkflow, assistantTurnSignal } from './assistantConversation.js';
+export { AssistantTitleWorkflow } from './assistantTitle.js';
 export { ChannelAmbientWorkflow } from './channelAmbient.js';
 export { ChannelAssistantWorkflow } from './channelAssistant.js';
 export { ChannelReactiveWorkflow } from './channelReactive.js';

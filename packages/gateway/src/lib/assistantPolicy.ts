@@ -229,6 +229,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/assistant/conversations': { never: 'assistantPanel' },
   'POST /api/v1/assistant/conversations/:id/close': { never: 'assistantPanel' },
   'POST /api/v1/assistant/conversations/:id/messages': { never: 'assistantPanel' },
+  'POST /api/v1/assistant/conversations/:id/title/reset': { never: 'assistantPanel' },
   'POST /api/v1/auth/tokens': { never: 'secret' },
   'POST /api/v1/automations/events': 'confirm',
   'POST /api/v1/automations/events/:id/fires/:fireId/retry': 'confirm',

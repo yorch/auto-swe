@@ -39,7 +39,13 @@ function message(overrides: Record<string, unknown> = {}) {
   };
 }
 
-const conversation = { createdAt: NOW, id: CONVERSATION_ID, title: 'How do I', updatedAt: NOW };
+const conversation = {
+  createdAt: NOW,
+  id: CONVERSATION_ID,
+  title: 'How do I',
+  titleSource: 'FIRST_MESSAGE',
+  updatedAt: NOW,
+};
 
 function makePrisma() {
   const base = makeAssistantPrisma();
@@ -70,13 +76,14 @@ function makePrisma() {
 describe('assistant conversation routes', () => {
   let app: FastifyInstance;
   let prisma: ReturnType<typeof makePrisma>;
-  const temporal = { sendAssistantTurn: vi.fn() };
+  const temporal = { nameAssistantConversation: vi.fn(), sendAssistantTurn: vi.fn() };
   const catalog = new ApiCatalog();
 
   beforeEach(async () => {
     _resetAuthCachesForTests();
     settings.resolveSetting.mockReset().mockResolvedValue(true);
     temporal.sendAssistantTurn.mockReset().mockResolvedValue(undefined);
+    temporal.nameAssistantConversation.mockReset().mockResolvedValue(undefined);
     prisma = makePrisma();
     app = await buildAssistantApp(prisma as never, async (a) => {
       a.decorate('temporal', temporal as never);
@@ -312,6 +319,96 @@ describe('assistant conversation routes', () => {
       expect(res.statusCode).toBe(403);
       expect(res.json().error.code).toBe('ASSISTANT_NOT_ALLOWED');
       expect(prisma.assistantConversation.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('POST /conversations/:id/title/reset', () => {
+    const url = `${PREFIX}/conversations/${CONVERSATION_ID}/title/reset`;
+
+    beforeEach(() => {
+      prisma.assistantConversation.findFirst.mockResolvedValue({
+        ...conversation,
+        title: 'My name for it',
+        titleSource: 'USER',
+      });
+      prisma.assistantMessage.findFirst.mockResolvedValue({
+        content: '  How do I\n connect GitHub? ',
+      });
+    });
+
+    it('puts back the first message as the title and asks the model to name it now', async () => {
+      prisma.assistantConversation.findFirst
+        .mockResolvedValueOnce({ id: CONVERSATION_ID, title: 'My name for it' })
+        .mockResolvedValueOnce({ ...conversation, title: 'How do I connect GitHub?' });
+      const res = await app.inject({
+        headers: { authorization: personBearer(app) },
+        method: 'POST',
+        url,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toMatchObject({
+        conversation: { title: 'How do I connect GitHub?', titleSource: 'FIRST_MESSAGE' },
+        naming: true,
+      });
+      expect(prisma.assistantMessage.findFirst.mock.calls[0]?.[0]).toMatchObject({
+        orderBy: { createdAt: 'asc' },
+        where: { conversationId: CONVERSATION_ID, role: 'USER' },
+      });
+      expect(prisma.assistantConversation.updateMany).toHaveBeenCalledWith({
+        data: { title: 'How do I connect GitHub?', titleSource: 'FIRST_MESSAGE' },
+        where: { closedAt: null, id: CONVERSATION_ID, userId: USER_ID },
+      });
+      expect(temporal.nameAssistantConversation).toHaveBeenCalledWith({
+        conversationId: CONVERSATION_ID,
+        userId: USER_ID,
+      });
+    });
+
+    it('resets without naming while the assistant or model titles are off', async () => {
+      settings.resolveSetting.mockImplementation(
+        async (key: string) => key !== 'assistant.generateTitles'
+      );
+      const res = await app.inject({
+        headers: { authorization: personBearer(app) },
+        method: 'POST',
+        url,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.naming).toBe(false);
+      expect(temporal.nameAssistantConversation).not.toHaveBeenCalled();
+      expect(prisma.assistantConversation.updateMany).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the reset when the naming cannot be started', async () => {
+      temporal.nameAssistantConversation.mockRejectedValue(new Error('temporal down'));
+      const res = await app.inject({
+        headers: { authorization: personBearer(app) },
+        method: 'POST',
+        url,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.naming).toBe(false);
+    });
+
+    it("is not found for another user's or a closed conversation", async () => {
+      prisma.assistantConversation.findFirst.mockResolvedValue(null);
+      const res = await app.inject({
+        headers: { authorization: personBearer(app) },
+        method: 'POST',
+        url,
+      });
+      expect(res.statusCode).toBe(404);
+      expect(prisma.assistantConversation.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('is refused to the assistant itself', async () => {
+      const res = await app.inject({
+        headers: { authorization: assistantBearer(app) },
+        method: 'POST',
+        url,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('ASSISTANT_NOT_ALLOWED');
     });
   });
 

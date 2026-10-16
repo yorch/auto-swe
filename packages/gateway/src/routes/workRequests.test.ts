@@ -209,6 +209,7 @@ describe('POST /api/v1/work-requests', () => {
       isReembedStaleMemoryRunning: async () => false,
       isWorkflowGone: async () => false,
       isWorkflowRunning: async () => false,
+      nameAssistantConversation: async () => {},
       sendAssistantTurn: async () => {},
       signalWorkflow: async () => {},
       startChannelAssistant: async () => {},

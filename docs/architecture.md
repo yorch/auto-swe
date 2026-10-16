@@ -652,14 +652,25 @@ A conversation starts with the first line of its first message as its title
 `nameAssistantConversation` alongside the reply: while the title is still the first message's and
 `assistant.generateTitles` is on, the `assistantTitler` agent (no tools; default model
 `anthropic/claude-haiku-4-5-20251001`, which an admin changes in the agent library like any other
-agent's) reads the user's messages so far — never the replies — and returns a short title, written
-as `MODEL`. It may decline when the messages do not yet say what the conversation is about; the next
-turn tries again, up to three user messages in. The reply waits up to 10 s for the title before it is
-marked COMPLETE, so the panel, which re-reads the conversation when a reply finishes, usually shows
-the title at once. The user renames a conversation from the panel header
+agent's) reads the user's first message and their latest three — never the replies — and returns a
+short title, written as `MODEL`. It may decline when the messages do not yet say what the
+conversation is about. A turn tries on each of the user's first three messages and then on the 5th,
+10th, 20th and every doubling after, so a conversation that finds its topic late is still named
+while one that never does costs a call per doubling. A title the model wrote is not revisited as the
+conversation moves on, so it never changes under the user. The reply waits up to 10 s for the title
+before it is marked COMPLETE, so the panel, which re-reads the conversation when a reply finishes,
+usually shows the title at once.
+
+The user renames a conversation from the panel header or from the history list
 (`PATCH /api/v1/assistant/conversations/:id`), which writes `USER`; the model's write is conditional
-on `FIRST_MESSAGE`, so a rename made while it works is never overwritten. The titler's calls are
-priced like the turn's, to the same user, and its trace rows carry the turn's reply id.
+on `FIRST_MESSAGE`, so a rename made while it works is never overwritten. **Auto** in the rename
+field hands the title back (`POST /api/v1/assistant/conversations/:id/title/reset`): the title
+returns to the first message's and, while `assistant.enabled` and `assistant.generateTitles` are both
+on, the gateway starts `AssistantTitleWorkflow` (id `assistant-title-<conversationId>`; a reset
+while one runs joins it), which names the conversation at once whatever its message count. The
+response's `naming` says whether it did, and the panel re-reads the conversation every 2.5 s, up to
+eight times, until a title other than the first message's appears. The titler's calls are priced
+like the turn's, to the same user, and a turn's trace rows carry its reply id.
 
 A reply that fails shows the user a fixed sentence (`error`), and also records the underlying cause
 in `AssistantMessage.errorDetail`: the error's name, failure type and message and the first few causes
@@ -1512,6 +1523,10 @@ Current constraints of the system as built. Deliberate product boundaries are in
   credential gets no model-written titles until an admin points the agent at a model it has: each
   failed attempt is a worker warning (`[assistantTitle] could not name the conversation`), and the
   conversation keeps its first message as its title. The panel shows no error.
+- **A model-written title does not follow the conversation.** Once the model names a conversation it
+  is not asked again, so a conversation that moves on keeps its first topic's title until the user
+  renames it or presses **Auto**. After **Auto**, the panel looks for the new title for about 20 s; a
+  title written later shows on the panel's next read of the conversation.
 - **The assistant's workflow inventory covers built-ins only.** `workflowInventory` lists the node
   types, registered steps and built-in templates the code defines. Teams' own templates and
   bundle-installed ones are not in it, so "which templates use this step" counts built-in templates

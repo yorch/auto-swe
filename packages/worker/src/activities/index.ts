@@ -1,4 +1,6 @@
 // In-app assistant — one conversation turn, and the reply it leaves when a turn cannot run
+
+export { nameAssistantConversationNow } from './assistantTitle.js';
 export type { AssistantTurnInput, AssistantTurnResult } from './assistantTurn.js';
 export { failAssistantReply, runAssistantTurn } from './assistantTurn.js';
 // Channel assistant (Phase 3) — ambient digest
