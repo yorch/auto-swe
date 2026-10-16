@@ -150,7 +150,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
             )}
             <Card>
               <CardHeader>
-                <CardTitle eyebrow={`Last ${windowDays} days`}>Overview</CardTitle>
+                <CardTitle hint={`Last ${windowDays} days`}>Overview</CardTitle>
               </CardHeader>
               <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 lg:grid-cols-4">
                 <Stat label="Total runs" tone="ember" unit="runs" value={stats.totalRuns} />
@@ -233,7 +233,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
             {stats.significanceHint && (
               <Card>
                 <CardHeader>
-                  <CardTitle eyebrow="Two-proportion z-test">A/B significance</CardTitle>
+                  <CardTitle hint="Two-proportion z-test">A/B significance</CardTitle>
                   <Badge
                     dot
                     tone={stats.significanceHint.isSignificant ? 'moss' : 'amber'}
@@ -285,7 +285,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                 {stats.perVersionCounts.length > 1 && (
                   <Card>
                     <CardHeader>
-                      <CardTitle eyebrow="Traffic split">Runs per version</CardTitle>
+                      <CardTitle>Runs per version</CardTitle>
                     </CardHeader>
                     <p className="mb-4 text-sm text-paper-400">
                       Confirms the A/B traffic split lands where you configured it.
@@ -325,7 +325,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                 {stats.perOutcome.length > 0 && (
                   <Card>
                     <CardHeader>
-                      <CardTitle eyebrow="Cost by outcome">Outcomes</CardTitle>
+                      <CardTitle hint="Cost by outcome">Outcomes</CardTitle>
                     </CardHeader>
                     <p className="mb-4 text-sm text-paper-400">
                       Runs grouped by the type of outcome they produced.
@@ -353,7 +353,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
 
             <Card>
               <CardHeader>
-                <CardTitle eyebrow="Highest failure rate first">Step failure rates</CardTitle>
+                <CardTitle hint="Highest failure rate first">Step failure rates</CardTitle>
                 <Select
                   aria-label="Minimum runs per step"
                   className="h-8 w-full text-sm sm:w-56"

@@ -121,7 +121,7 @@ export function TeamCallbackEndpointsSection({
   return (
     <Card className="p-4 sm:p-6">
       <CardHeader className="mb-2">
-        <CardTitle eyebrow="Integrations">Run callbacks</CardTitle>
+        <CardTitle>Run callbacks</CardTitle>
         <Button onClick={() => openForm('new')} size="sm" variant="secondary">
           <Icon name="plus" size={14} />
           Add endpoint

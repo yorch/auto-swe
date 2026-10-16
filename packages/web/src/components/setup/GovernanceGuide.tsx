@@ -142,7 +142,6 @@ export function GovernanceGuide() {
     <Card data-testid="governance-guide">
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
         <div className="min-w-0">
-          <div className="kicker mb-1">Admin guide</div>
           <h2 className="text-lg font-semibold tracking-tight text-paper-50">Set up governance</h2>
           <p className="mt-1 text-sm text-paper-400">
             A suggested order for reading the Govern pages. It is a guide, not a checklist: nothing

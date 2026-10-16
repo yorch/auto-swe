@@ -111,7 +111,6 @@ function CreateTemplateModal({ open, onClose }: { open: boolean; onClose: () => 
 
   return (
     <Modal
-      eyebrow="§ Workflows"
       onClose={() => {
         onClose();
         setName('');
@@ -269,7 +268,6 @@ function NewTemplateModal({
 
   return (
     <Modal
-      eyebrow="§ Workflows"
       onClose={() => {
         onClose();
         reset();

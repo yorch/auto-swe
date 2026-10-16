@@ -90,7 +90,6 @@ function PickRepository({
   const picked = gitRepos.find((r) => r.id === id);
   return (
     <Modal
-      eyebrow="New automation"
       onClose={onClose}
       open
       subtitle="Event automations live on a repository. Pick one; only its owning team’s leads and admins can add one."

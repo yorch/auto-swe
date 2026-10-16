@@ -25,7 +25,6 @@ export function RepoAutomationsModal({
 }) {
   return (
     <Modal
-      eyebrow="Automations"
       onClose={onClose}
       open
       size="lg"

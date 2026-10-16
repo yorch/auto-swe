@@ -37,7 +37,6 @@ export function ImportFromGitHubModal({
 
   return (
     <Modal
-      eyebrow="Connections"
       onClose={onClose}
       open={open}
       size="lg"

@@ -75,7 +75,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
 
             <Card>
               <CardHeader>
-                <CardTitle eyebrow="Offline harness runs, newest first">Runs</CardTitle>
+                <CardTitle hint="Offline harness runs, newest first">Runs</CardTitle>
               </CardHeader>
               <QueryBoundary
                 error={runs.error}
@@ -163,7 +163,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
 
             <Card>
               <CardHeader>
-                <CardTitle eyebrow="Golden cases">Cases</CardTitle>
+                <CardTitle>Cases</CardTitle>
                 <span className="flex items-center gap-3">
                   <span className="text-xs text-paper-500 tabular-nums">
                     {ds.caseCount} case{ds.caseCount === 1 ? '' : 's'}

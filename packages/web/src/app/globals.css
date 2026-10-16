@@ -85,13 +85,12 @@
      `text-3xl` 26.25px). Each step is pinned to whole pixels here instead; `text-base`
      is the 14px root itself. Use these steps, never an arbitrary `text-[Npx]` between
      them — half-pixel neighbours read as "slightly off", not as hierarchy.
-       2xs 11  uppercase eyebrows      lg  16  card, section and panel titles; doc prose
+       2xs 11  uppercase labels        lg  16  card, section and panel titles; doc prose
        xs  12  metadata, hints         xl  18  modal and detail-page titles
        sm  13  dense UI, tables, forms 2xl 22  page titles (small screens), doc h2
        base 14 body, chat              3xl 28  page titles, KPI figures
                                        4xl 34  doc h1, display    5xl 44  login headline
-     `text-2xs` is for UPPERCASE eyebrow labels only (`.kicker`, nav group names,
-     uppercase badges): capitals read about a step larger, so 11px caps sit beside 12px
+     `text-2xs` is for UPPERCASE labels only (nav group names, uppercase badges): capitals read about a step larger, so 11px caps sit beside 12px
      sentence-case text. Never use it for sentence-case text. */
   --text-2xs: 11px;
   --text-2xs--line-height: 14px;
@@ -350,17 +349,7 @@
    Utilities
    ──────────────────────────────────────────────────────────────────────── */
 @layer utilities {
-  /* Eyebrow above a card or section title — the ember-coloured section marker. */
-  .kicker {
-    font-family: var(--font-sans);
-    font-size: var(--text-2xs);
-    font-weight: 600;
-    color: var(--color-ember-300);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-
-  /* Field labels, rail keys, column captions — the neutral sibling of .kicker.
+  /* Field labels, rail keys, column captions.
      Sentence case in the sans face: the name is historical (it was a mono
      small-caps label), kept so every call site picks up the one treatment. */
   .label-mono {

@@ -78,12 +78,7 @@ function ResetPasswordInner() {
   if (done) {
     return (
       <AuthLayout>
-        <AuthHeading
-          icon="checkCircle"
-          kicker="Password reset"
-          kickerTone="moss"
-          title="Password updated"
-        >
+        <AuthHeading icon="checkCircle" title="Password updated" tone="moss">
           Taking you to sign in with your new password…
         </AuthHeading>
         <ButtonLink className="w-full" href="/login" size="lg" variant="primary">
@@ -95,7 +90,7 @@ function ResetPasswordInner() {
 
   return (
     <AuthLayout footer={backToSignIn}>
-      <AuthHeading icon="lock" kicker="Reset password" title="Choose a new password">
+      <AuthHeading icon="lock" title="Choose a new password">
         Use 8 to 128 characters. Once it is saved, you will sign in with it.
       </AuthHeading>
 

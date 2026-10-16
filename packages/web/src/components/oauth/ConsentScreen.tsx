@@ -68,8 +68,8 @@ export function ConsentScreen({ search }: { search: string }) {
       <AuthLayout embedded>
         <AuthHeading
           icon={session === 'unknown' ? 'warning' : 'lock'}
-          kickerTone={session === 'unknown' ? 'amber' : 'ember'}
           title="Sign in to continue"
+          tone={session === 'unknown' ? 'amber' : 'neutral'}
         >
           {session === 'unknown'
             ? 'The gateway did not answer, so your session could not be checked.'
@@ -148,7 +148,7 @@ function ConsentDecision({ search }: { search: string }) {
 
   return (
     <AuthLayout embedded>
-      <AuthHeading icon="plug" kicker="Authorize access" title="Connect an app">
+      <AuthHeading icon="plug" title="Connect an app">
         <span className="font-semibold text-paper-100">{name ?? 'An app'}</span> wants to act on
         your behalf in auto-swe.
       </AuthHeading>

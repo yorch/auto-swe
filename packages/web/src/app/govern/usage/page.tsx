@@ -412,7 +412,7 @@ function UsageWorkspace() {
                 <>
                   <Card>
                     <CardHeader>
-                      <CardTitle eyebrow="Trend">
+                      <CardTitle>
                         {data.bucketDays === 7 ? 'Spend per week' : 'Spend per day'}
                       </CardTitle>
                       <span className="text-xs text-paper-500">US dollars · days are UTC</span>
@@ -426,7 +426,7 @@ function UsageWorkspace() {
 
                   <Card className="overflow-hidden p-0">
                     <CardHeader className="items-center px-4 pt-5">
-                      <CardTitle eyebrow="Breakdown">Where the spend goes</CardTitle>
+                      <CardTitle>Where the spend goes</CardTitle>
                       <SegmentedControl
                         ariaLabel="Break down by"
                         onChange={setDimension}
@@ -439,7 +439,7 @@ function UsageWorkspace() {
 
                   <Card className="overflow-hidden p-0">
                     <CardHeader className="px-4 pt-5">
-                      <CardTitle eyebrow="Top runs">Costliest runs in this window</CardTitle>
+                      <CardTitle>Costliest runs in this window</CardTitle>
                     </CardHeader>
                     <Table className="max-sm:px-4" stacked>
                       <THead className="bg-ink-900/40">

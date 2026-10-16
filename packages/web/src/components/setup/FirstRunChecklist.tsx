@@ -106,7 +106,6 @@ function FirstRunChecklistBody() {
     <Card data-testid="first-run-checklist">
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
         <div className="min-w-0">
-          <div className="kicker mb-1">Getting started</div>
           <h2 className="text-lg font-semibold tracking-tight text-paper-50">Your first run</h2>
           <p className="mt-1 text-sm text-paper-400">
             Steps tick themselves off from what the platform records for you.

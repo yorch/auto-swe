@@ -98,7 +98,7 @@ export function CanaryForm() {
         <form className="space-y-6" onSubmit={submit}>
           <Card>
             <CardHeader>
-              <CardTitle eyebrow="A/B">Canary configuration</CardTitle>
+              <CardTitle>Canary configuration</CardTitle>
             </CardHeader>
             <div className="space-y-4">
               <ToggleSwitch

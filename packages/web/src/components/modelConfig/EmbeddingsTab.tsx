@@ -88,7 +88,7 @@ export function EmbeddingsTab() {
     <div className="space-y-6">
       <Card className="max-w-3xl p-5 sm:p-6">
         <CardHeader className="items-start">
-          <CardTitle eyebrow="Embeddings">System-wide model</CardTitle>
+          <CardTitle>System-wide model</CardTitle>
           <Badge dot tone={noCredential ? 'brick' : 'moss'} variant="outline">
             {noCredential ? 'No credential' : 'Ready'}
           </Badge>
@@ -167,7 +167,7 @@ function ReembedMemoryCard() {
   return (
     <Card className="max-w-3xl p-5 sm:p-6">
       <CardHeader className="items-start">
-        <CardTitle eyebrow="Memory">Re-embed older memory</CardTitle>
+        <CardTitle>Re-embed older memory</CardTitle>
       </CardHeader>
       <p className="-mt-1 mb-5 text-sm leading-relaxed text-paper-400">
         {status.stale.toLocaleString()} of {status.total.toLocaleString()} memory items were

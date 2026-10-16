@@ -16,7 +16,6 @@ export function TeamAutomationsModal({
 }) {
   return (
     <Modal
-      eyebrow="Automations"
       onClose={onClose}
       open
       size="lg"

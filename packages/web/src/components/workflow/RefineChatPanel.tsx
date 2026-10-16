@@ -94,7 +94,6 @@ export function RefineChatPanel({
 
   return (
     <Modal
-      eyebrow="§ Workflow"
       onClose={onClose}
       open={open}
       size="lg"

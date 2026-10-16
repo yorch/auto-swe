@@ -105,7 +105,6 @@ export function FigmaTab() {
             instead.
           </>
         }
-        eyebrow="Figma"
         footer={
           <>
             <div className="flex flex-wrap items-center justify-between gap-3">

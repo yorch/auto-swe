@@ -58,7 +58,6 @@ export function MyCredentialModal({
   return (
     <>
       <Modal
-        eyebrow="My GitHub credential"
         onClose={onClose}
         open
         subtitle="Runs you start against this repository clone, push and open pull requests as this token instead of the platform's. Nobody else's runs ever use it."

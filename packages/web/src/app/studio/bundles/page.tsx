@@ -142,7 +142,7 @@ export default function StudioBundlesPage() {
       <div className="grid gap-6 lg:grid-cols-5">
         <Card className="p-5 sm:p-6 lg:col-span-3">
           <CardHeader>
-            <CardTitle eyebrow="Install">Add a bundle</CardTitle>
+            <CardTitle>Add a bundle</CardTitle>
           </CardHeader>
           <p className="-mt-1 mb-5 text-sm leading-relaxed text-paper-400">
             Load a bundle from a URL or a file. You review what it contains and what it replaces
@@ -235,7 +235,7 @@ export default function StudioBundlesPage() {
 
         <Card className="p-5 sm:p-6 lg:col-span-2">
           <CardHeader>
-            <CardTitle eyebrow="Export">Download a bundle</CardTitle>
+            <CardTitle>Download a bundle</CardTitle>
           </CardHeader>
           <p className="-mt-1 mb-5 text-sm leading-relaxed text-paper-400">
             Package this deployment&apos;s library content as a bundle file to install elsewhere.
@@ -289,7 +289,7 @@ export default function StudioBundlesPage() {
 
       <Card className="p-5 sm:p-6">
         <CardHeader>
-          <CardTitle eyebrow="Library">Installed bundles</CardTitle>
+          <CardTitle>Installed bundles</CardTitle>
           {bundles && bundles.length > 0 && (
             <span className="text-xs text-paper-500 tabular-nums">{bundles.length} installed</span>
           )}

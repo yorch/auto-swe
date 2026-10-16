@@ -113,7 +113,6 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
     <form className="space-y-6" onSubmit={handleSubmit}>
       <IntegrationCard
         description="Changes apply immediately: these are read on every request, not at startup."
-        eyebrow="Slack"
         footer={
           <>
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -186,7 +185,6 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
 
       <IntegrationCard
         description="Add these in your Slack App settings under OAuth & Permissions and Event Subscriptions."
-        eyebrow="Slack App"
         title="URLs to register"
       >
         <div className="space-y-3">
@@ -233,7 +231,6 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
   return (
     <IntegrationCard
       description="Install the app into each Slack workspace to give it its own bot token. Workspaces without their own token fall back to the singleton bot token above."
-      eyebrow="Slack App"
       headerAction={addButton}
       title="Workspaces"
     >

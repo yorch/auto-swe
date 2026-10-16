@@ -198,7 +198,6 @@ function PolicyModal({
   }, [editing]);
 
   const title = editing ? 'Edit autonomy policy' : 'New autonomy policy';
-  const eyebrow = 'Autonomy policy';
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -273,7 +272,7 @@ function PolicyModal({
   }
 
   return (
-    <Modal eyebrow={eyebrow} onClose={onClose} open={open} size="lg" title={title}>
+    <Modal onClose={onClose} open={open} size="lg" title={title}>
       <form className="space-y-4" onSubmit={handleSubmit}>
         <Input
           label="Name"

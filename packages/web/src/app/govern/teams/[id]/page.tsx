@@ -353,7 +353,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
       {canManage && (
         <Card>
           <CardHeader className="mb-1">
-            <CardTitle eyebrow="Channel assistant">Default persona</CardTitle>
+            <CardTitle>Default persona</CardTitle>
             {!team.defaultPersonaPrompt && (
               <Badge tone="muted" variant="outline">
                 Not set

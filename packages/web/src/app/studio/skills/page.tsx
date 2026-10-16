@@ -446,7 +446,7 @@ function EffectivenessCard() {
   return (
     <Card className="p-4 sm:p-6">
       <CardHeader>
-        <CardTitle eyebrow={`Last ${data?.windowDays ?? 30} days`}>Skill effectiveness</CardTitle>
+        <CardTitle hint={`Last ${data?.windowDays ?? 30} days`}>Skill effectiveness</CardTitle>
       </CardHeader>
       <p className="-mt-2 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
         Run outcomes for runs where each skill was active, against the all-runs baseline of{' '}

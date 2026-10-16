@@ -68,7 +68,7 @@ export function EditMetadataModal({
   };
 
   return (
-    <Modal eyebrow="§ Workflow" onClose={onClose} open={open} title="Edit metadata">
+    <Modal onClose={onClose} open={open} title="Edit metadata">
       <div className="space-y-4">
         {error && <Alert>{error}</Alert>}
         <Input label="Name" onChange={(e) => setName(e.target.value)} value={name} />

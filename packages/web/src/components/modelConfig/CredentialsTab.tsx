@@ -180,7 +180,7 @@ export function CredentialsTab() {
       {readiness && readiness.providers.length > 0 && (
         <Card className="p-5 sm:p-6">
           <CardHeader className="items-start">
-            <CardTitle eyebrow="Checklist">Providers your agents use</CardTitle>
+            <CardTitle>Providers your agents use</CardTitle>
             <Badge dot tone={missing > 0 ? 'brick' : 'moss'} variant="outline">
               {missing > 0 ? `${missing} missing` : 'All covered'}
             </Badge>
@@ -224,7 +224,7 @@ export function CredentialsTab() {
 
       <Card className="p-5 sm:p-6">
         <CardHeader className="items-start">
-          <CardTitle eyebrow="Provider credentials">API keys</CardTitle>
+          <CardTitle>API keys</CardTitle>
           {(credentials ?? []).length > 0 && (
             <Button onClick={() => openCreate()} size="sm" variant="primary">
               <Icon name="plus" size={14} />

@@ -82,7 +82,7 @@ export function RevalidationForm() {
         <form className="space-y-6" onSubmit={submit}>
           <Card>
             <CardHeader>
-              <CardTitle eyebrow="Schedule">Re-validation schedule</CardTitle>
+              <CardTitle>Re-validation schedule</CardTitle>
             </CardHeader>
 
             <div className="space-y-4">

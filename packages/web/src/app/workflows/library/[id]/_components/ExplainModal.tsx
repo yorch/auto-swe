@@ -19,7 +19,7 @@ export function ExplainModal({
   const { data, error, isFetching } = useExplainWorkflowTemplate(templateId, activeVersion, open);
 
   return (
-    <Modal eyebrow="§ Workflow" onClose={onClose} open={open} title="What this workflow does">
+    <Modal onClose={onClose} open={open} title="What this workflow does">
       <div className="space-y-4">
         {isFetching && !data && <LoadingState message="Explaining…" />}
         {error && <Alert>{errMsg(error, 'Could not explain')}</Alert>}

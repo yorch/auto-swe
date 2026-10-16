@@ -87,7 +87,7 @@ export function CatalogTab() {
       <DiscoveryPanel cataloged={entries ?? []} onAdd={setCreating} onEdit={setEditing} />
       <Card className="p-5 sm:p-6">
         <CardHeader>
-          <CardTitle eyebrow="Model catalog">Prices per million tokens</CardTitle>
+          <CardTitle>Prices per million tokens</CardTitle>
           <div className="flex items-center gap-4">
             <ToggleSwitch
               checked={showRetired}
@@ -257,7 +257,7 @@ function UnpricedPanel({ onAdd }: { onAdd: (spec: string) => void }) {
   return (
     <Card className="p-5 sm:p-6">
       <CardHeader>
-        <CardTitle eyebrow="Unpriced in use">Recorded at $0</CardTitle>
+        <CardTitle hint="Unpriced in use">Recorded at $0</CardTitle>
       </CardHeader>
       <p className="-mt-1 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
         These models are configured or were called in the last 30 days, but nothing prices them, so
@@ -417,7 +417,7 @@ function DiscoveryPanel({
     <>
       <Card className="p-5 sm:p-6">
         <CardHeader>
-          <CardTitle eyebrow="New from providers">Models the catalog lacks</CardTitle>
+          <CardTitle>Models the catalog lacks</CardTitle>
           <div className="flex items-center gap-4">
             <ToggleSwitch
               checked={showDismissed}
@@ -540,7 +540,7 @@ function DiscoveryPanel({
       {retired.length > 0 && (
         <Card className="p-5 sm:p-6">
           <CardHeader>
-            <CardTitle eyebrow="Possibly retired">Priced, but no longer listed</CardTitle>
+            <CardTitle hint="Possibly retired">Priced, but no longer listed</CardTitle>
           </CardHeader>
           <p className="-mt-1 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
             A provider whose listing succeeded no longer lists these. Nothing is retired for you: a

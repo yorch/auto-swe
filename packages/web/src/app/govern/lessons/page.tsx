@@ -208,7 +208,7 @@ export default function GovernLessonsPage() {
       {/* Per-repo breakdown */}
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Repositories">Lessons by repository</CardTitle>
+          <CardTitle>Lessons by repository</CardTitle>
         </CardHeader>
 
         <QueryBoundary
@@ -260,7 +260,7 @@ export default function GovernLessonsPage() {
       {/* Recent active lessons */}
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Recent">Active lessons</CardTitle>
+          <CardTitle>Active lessons</CardTitle>
         </CardHeader>
         <Toolbar
           end={

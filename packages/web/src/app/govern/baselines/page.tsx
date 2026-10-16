@@ -123,7 +123,7 @@ function CreateBaselineModal({
   }
 
   return (
-    <Modal eyebrow="Baselines" onClose={onClose} open={open} title="New human error baseline">
+    <Modal onClose={onClose} open={open} title="New human error baseline">
       <form className="space-y-4" onSubmit={handleSubmit}>
         {error && <Alert>{error}</Alert>}
         <Combobox
@@ -236,7 +236,7 @@ export default function GovernBaselinesPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Baselines">Recorded baselines</CardTitle>
+          <CardTitle>Recorded baselines</CardTitle>
         </CardHeader>
         <Toolbar
           end={

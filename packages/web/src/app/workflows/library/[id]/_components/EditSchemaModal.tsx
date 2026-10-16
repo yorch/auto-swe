@@ -46,7 +46,6 @@ export function EditSchemaModal({
 
   return (
     <Modal
-      eyebrow="§ Workflow"
       onClose={onClose}
       open={open}
       size="lg"

@@ -195,7 +195,7 @@ export function WorkflowDefaultsForm() {
     <form className="space-y-6" onSubmit={submit}>
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Git &amp; pull request">Branch and pull request templates</CardTitle>
+          <CardTitle>Branch and pull request templates</CardTitle>
         </CardHeader>
         <div className="space-y-4">
           <Input
@@ -232,7 +232,7 @@ export function WorkflowDefaultsForm() {
 
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Teams">Default team</CardTitle>
+          <CardTitle>Default team</CardTitle>
         </CardHeader>
         <Input
           hint="Work requests without an explicit team are assigned to this team."
@@ -246,7 +246,7 @@ export function WorkflowDefaultsForm() {
 
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Resources &amp; tuning">Resource &amp; tuning defaults</CardTitle>
+          <CardTitle>Resource &amp; tuning defaults</CardTitle>
         </CardHeader>
         <div className="space-y-6">
           <FieldGroup

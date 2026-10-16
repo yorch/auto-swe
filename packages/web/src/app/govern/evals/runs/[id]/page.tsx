@@ -225,13 +225,13 @@ export default function EvalRunPage({ params }: { params: Promise<{ id: string }
             />
             <Card>
               <CardHeader>
-                <CardTitle eyebrow="Candidate vs baseline">Verdict</CardTitle>
+                <CardTitle hint="Candidate vs baseline">Verdict</CardTitle>
               </CardHeader>
               <VerdictView summary={run.summary} />
             </Card>
             <Card>
               <CardHeader>
-                <CardTitle eyebrow="Every signal this run captured">Results</CardTitle>
+                <CardTitle hint="Every signal this run captured">Results</CardTitle>
               </CardHeader>
               <EvalResultsTable
                 evalRunId={id}

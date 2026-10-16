@@ -398,7 +398,7 @@ function DiffBody({
     <div className="space-y-6">
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Summary">What changed</CardTitle>
+          <CardTitle>What changed</CardTitle>
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge tone="moss" variant="outline">
               {diff.addedNodes.length} added
@@ -473,7 +473,7 @@ function DiffBody({
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <Card className="p-4">
             <CardHeader className="mb-3">
-              <CardTitle eyebrow="Before">v{diffPayload.a.version}</CardTitle>
+              <CardTitle>Before · v{diffPayload.a.version}</CardTitle>
             </CardHeader>
             <WorkflowDag
               diffMarkers={diffMarkers(diffPayload.diff, 'a')}
@@ -483,7 +483,7 @@ function DiffBody({
           </Card>
           <Card className="p-4">
             <CardHeader className="mb-3">
-              <CardTitle eyebrow="After">v{diffPayload.b.version}</CardTitle>
+              <CardTitle>After · v{diffPayload.b.version}</CardTitle>
             </CardHeader>
             <WorkflowDag
               diffMarkers={diffMarkers(diffPayload.diff, 'b')}

@@ -435,7 +435,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
           {/* ── Budget ── */}
           <Card>
             <CardHeader className="mb-3">
-              <CardTitle eyebrow="Billing">Monthly budget</CardTitle>
+              <CardTitle>Monthly budget</CardTitle>
               {budget &&
                 (cap == null ? (
                   <Badge tone="muted" variant="outline">
@@ -588,7 +588,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
           {/* ── Profile ── */}
           <Card>
             <CardHeader className="mb-3">
-              <CardTitle eyebrow="Organization">Profile</CardTitle>
+              <CardTitle>Profile</CardTitle>
             </CardHeader>
             <QueryBoundary
               error={orgQuery.error}
@@ -635,7 +635,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
           {isPlatformAdmin && org && (
             <Card>
               <CardHeader className="mb-3">
-                <CardTitle eyebrow="Access">Invite trust</CardTitle>
+                <CardTitle>Invite trust</CardTitle>
               </CardHeader>
               <div className="space-y-1">
                 <ToggleSwitch

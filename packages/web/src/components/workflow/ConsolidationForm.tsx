@@ -85,7 +85,7 @@ export function ConsolidationForm() {
         <form className="space-y-6" onSubmit={submit}>
           <Card>
             <CardHeader>
-              <CardTitle eyebrow="Schedule">Consolidation schedule</CardTitle>
+              <CardTitle>Consolidation schedule</CardTitle>
             </CardHeader>
             <div className="space-y-4">
               <ScheduleToggleRow

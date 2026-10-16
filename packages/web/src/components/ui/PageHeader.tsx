@@ -55,13 +55,11 @@ export function PageHeader({
 }
 
 export function SectionHeader({
-  number,
   title,
   hint,
   actions,
   className,
 }: {
-  number?: string;
   title: string;
   hint?: string;
   actions?: React.ReactNode;
@@ -75,7 +73,6 @@ export function SectionHeader({
       )}
     >
       <div className="flex min-w-0 flex-wrap items-baseline gap-x-3">
-        {number && <span className="font-mono text-xs text-ember-300 tabular-nums">{number}</span>}
         <h2 className="text-lg font-semibold tracking-tight text-paper-100">{title}</h2>
         {hint && <span className="text-sm text-paper-500">{hint}</span>}
       </div>

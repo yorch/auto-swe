@@ -412,7 +412,7 @@ export default function GovernSettingsPage() {
         {visibleGroups.length > 1 && (
           <nav aria-label="Setting groups" className="hidden xl:block">
             <div className="sticky top-6">
-              <p className="kicker mb-3">Groups</p>
+              <p className="mb-3 text-xs font-medium text-paper-500">Groups</p>
               <ul className="space-y-0.5 border-l border-ink-500">
                 {visibleGroups.map(([group, items]) => (
                   <li key={group}>

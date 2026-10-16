@@ -113,10 +113,9 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
 
       <Modal
         closeOnBackdropClick={false}
-        eyebrow="Shown only once"
         onClose={handleRevealClose}
         open={revealed !== null}
-        subtitle="Copy it now and pass it on securely. The user signs in with email and password, and can change it through the password reset on the sign-in page."
+        subtitle="Shown only once: copy it now and pass it on securely. The user signs in with email and password, and can change it through the password reset on the sign-in page."
         title={revealed ? `Temporary password for ${revealed.email}` : ''}
       >
         {revealed?.temporaryPassword && (

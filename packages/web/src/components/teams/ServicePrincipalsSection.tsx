@@ -83,7 +83,7 @@ export function ServicePrincipalsSection({
   return (
     <Card className="p-4 sm:p-6">
       <CardHeader>
-        <CardTitle eyebrow="Automation">Service principals</CardTitle>
+        <CardTitle>Service principals</CardTitle>
         <Button onClick={() => setEditing('new')} size="sm" variant="primary">
           <Icon name="plus" size={14} />
           New principal

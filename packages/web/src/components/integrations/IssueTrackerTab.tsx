@@ -172,7 +172,6 @@ export function IssueTrackerTab() {
     <form className="space-y-6" onSubmit={handleSubmit}>
       <IntegrationCard
         description="A read-only connector that fetches the external ticket at submit time and attaches its title, description, status and labels to the work request's context snapshot, so agents see the real ticket instead of only the pasted description. Fetch failures never block a submission."
-        eyebrow="Issue tracker"
         status={
           data?.provider ? (
             <ConfigStatusBadge
@@ -282,7 +281,6 @@ export function IssueTrackerTab() {
       {effectiveProvider === 'jira' && (
         <IntegrationCard
           description="Customize field names for your Jira configuration. The defaults work for most cloud instances."
-          eyebrow="Jira"
           title="Field mapping"
         >
           <FieldGrid>
@@ -377,7 +375,6 @@ export function IssueTrackerTab() {
       {effectiveProvider === 'jira' && (
         <IntegrationCard
           description="Configure a webhook in Jira pointing at the endpoint below, then enter the shared secret here and set the same value as the webhook secret in Jira."
-          eyebrow="Jira"
           status={
             <ConfigStatusBadge state={fieldState(data?.webhookSecret, sources.webhookSecret)} />
           }
@@ -417,7 +414,6 @@ export function IssueTrackerTab() {
 
       <IntegrationCard
         description="Fetches a real ticket through the configuration on screen, including values you have not saved yet, and shows its title and status."
-        eyebrow="Issue tracker"
         title="Test connection"
       >
         <div className="flex flex-wrap items-end gap-3">

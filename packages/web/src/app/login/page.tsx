@@ -392,12 +392,7 @@ function LoginPageInner() {
   if (pendingEmail) {
     return (
       <AuthLayout footer={versionLine}>
-        <AuthHeading
-          icon="clock"
-          kicker="Account pending"
-          kickerTone="amber"
-          title="Awaiting approval"
-        >
+        <AuthHeading icon="clock" title="Awaiting approval" tone="amber">
           <p>
             We received your sign-in for{' '}
             <span className="break-all font-mono text-sm text-paper-100">{pendingEmail}</span>. An
@@ -443,7 +438,6 @@ function LoginPageInner() {
         </header>
 
         <div className="relative z-10 max-w-lg">
-          <p className="kicker mb-4">Autonomous workflows</p>
           <h2 className="text-4xl font-semibold leading-[1.1] tracking-[-0.03em] text-paper-50 xl:text-5xl">
             Ticket in, reviewed pull request out.
           </h2>

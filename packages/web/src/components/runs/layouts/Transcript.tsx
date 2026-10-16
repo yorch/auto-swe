@@ -132,7 +132,6 @@ export function Transcript({
       <div className="flex-1 px-4 py-5 max-lg:min-w-0 lg:overflow-y-auto lg:px-8 lg:py-7">
         {/* Editorial intro */}
         <div className="mb-8 max-w-2xl">
-          <div className="kicker mb-2">Run narrative</div>
           <h2 className="mb-2 text-xl font-semibold tracking-[-0.01em] text-paper-50">
             {run.templateName}
           </h2>

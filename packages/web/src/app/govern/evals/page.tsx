@@ -121,7 +121,7 @@ function EvalsWorkspace() {
     <Card>
       <CardHeader>
         <CardTitle
-          eyebrow={`${weekly ? 'Weekly' : 'Daily'} mean · ${describeRange(range).toLowerCase()}`}
+          hint={`${weekly ? 'Weekly' : 'Daily'} mean · ${describeRange(range).toLowerCase()}`}
         >
           {scorer ? <span className="font-mono">{scorer}</span> : 'Scorer trends'}
         </CardTitle>
@@ -284,7 +284,7 @@ function EvalsWorkspace() {
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle eyebrow="Latest benchmark runs">Latest eval runs</CardTitle>
+            <CardTitle>Latest eval runs</CardTitle>
           </CardHeader>
           <QueryBoundary
             error={latestRuns.error}
@@ -349,7 +349,7 @@ function EvalsWorkspace() {
 
         <Card>
           <CardHeader>
-            <CardTitle eyebrow="Golden cases">Datasets</CardTitle>
+            <CardTitle>Datasets</CardTitle>
             {datasets && datasets.length > 0 && (
               <span className="text-xs text-paper-500 tabular-nums">
                 {datasets.length} dataset{datasets.length === 1 ? '' : 's'}
@@ -407,7 +407,7 @@ function EvalsWorkspace() {
 
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Share of golden cases quarantined as stale">Suite health</CardTitle>
+          <CardTitle hint="Share of golden cases quarantined as stale">Suite health</CardTitle>
           {healthQuery.data && (
             <span className="text-xs text-paper-500">
               Gate fails above {Math.round(healthQuery.data.thresholds.maxStaleRate * 100)}%
@@ -434,7 +434,7 @@ function EvalsWorkspace() {
 
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Every captured signal">Results</CardTitle>
+          <CardTitle>Results</CardTitle>
         </CardHeader>
         <EvalResultsTable
           onScorerChange={setResultScorer}

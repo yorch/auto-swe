@@ -336,7 +336,6 @@ export function StartWork({
         </div>
         <aside aria-label="What happens next" className="space-y-4">
           <Card className="p-5 xl:sticky xl:top-20" variant="inset">
-            <div className="kicker mb-1">What happens next</div>
             <h2 className="text-sm font-semibold text-paper-100">{guide.title}</h2>
             <ul className="mt-3 space-y-2.5">
               {guide.points.map((point) => (

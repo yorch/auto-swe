@@ -81,7 +81,6 @@ export function Modal({
   open,
   onClose,
   title,
-  eyebrow,
   subtitle,
   children,
   size = 'md',
@@ -91,7 +90,6 @@ export function Modal({
   open: boolean;
   onClose: () => void;
   title: string;
-  eyebrow?: string;
   subtitle?: React.ReactNode;
   children: React.ReactNode;
   /** `full` is for wide content such as a diff; it spans nearly the whole viewport. */
@@ -186,7 +184,6 @@ export function Modal({
       <div className="space-y-6 p-6">
         <header className="flex items-start justify-between gap-4">
           <div className="space-y-1">
-            {eyebrow && <div className="kicker">{eyebrow.replace(/^§\s*/, '')}</div>}
             <h2 className="text-xl font-semibold tracking-[-0.01em] text-paper-50" id={titleId}>
               {title}
             </h2>

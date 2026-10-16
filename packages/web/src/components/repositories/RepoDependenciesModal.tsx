@@ -208,7 +208,6 @@ export function RepoDependenciesModal({
   return (
     <>
       <Modal
-        eyebrow="Repository dependencies"
         onClose={onClose}
         open={open}
         size="lg"

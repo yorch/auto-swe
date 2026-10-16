@@ -245,7 +245,7 @@ function AnalyticsWorkspace() {
 
             <Card>
               <CardHeader>
-                <CardTitle eyebrow="Volume">Runs over time</CardTitle>
+                <CardTitle>Runs over time</CardTitle>
                 <span className="text-xs text-paper-500">
                   Per day, stacked by outcome · {rangePhrase(range)}
                 </span>
@@ -254,7 +254,9 @@ function AnalyticsWorkspace() {
             </Card>
 
             <Card className="p-5 sm:p-6">
-              <h2 className="kicker mb-4">Efficiency</h2>
+              <h2 className="mb-4 text-lg font-semibold tracking-tight text-paper-50">
+                Efficiency
+              </h2>
               <div className="grid grid-cols-1 gap-x-4 gap-y-8 sm:grid-cols-3">
                 <Stat
                   hint="Average cost of a run in this window"
@@ -276,7 +278,7 @@ function AnalyticsWorkspace() {
 
             <Card>
               <CardHeader>
-                <CardTitle eyebrow="Templates">Ranked by traffic</CardTitle>
+                <CardTitle>Ranked by traffic</CardTitle>
               </CardHeader>
               <Toolbar
                 end={
@@ -419,7 +421,7 @@ function AnalyticsWorkspace() {
             {domains.length > 0 && (
               <Card>
                 <CardHeader>
-                  <CardTitle eyebrow="Breakdown">By domain</CardTitle>
+                  <CardTitle>By domain</CardTitle>
                   <span className="text-xs text-paper-500">
                     Agent vs human compares error rates, in percentage points
                   </span>
@@ -547,7 +549,7 @@ function AnalyticsWorkspace() {
             {outcomes.length > 0 && (
               <Card>
                 <CardHeader>
-                  <CardTitle eyebrow="Breakdown">By outcome</CardTitle>
+                  <CardTitle>By outcome</CardTitle>
                 </CardHeader>
                 <div className="-mx-4">
                   <Table>

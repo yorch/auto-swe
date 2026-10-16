@@ -100,41 +100,32 @@ export function AuthLayout({
   );
 }
 
-type HeadingTone = 'ember' | 'moss' | 'amber' | 'brick';
-
-const TONE_TEXT: Record<HeadingTone, string> = {
-  amber: 'text-amber-400',
-  brick: 'text-brick-400',
-  ember: 'text-ember-300',
-  moss: 'text-moss-400',
-};
+type HeadingTone = 'neutral' | 'moss' | 'amber' | 'brick';
 
 const TONE_CHIP: Record<HeadingTone, string> = {
   amber: 'border-amber-400/30 bg-amber-400/10 text-amber-400',
   brick: 'border-brick-400/30 bg-brick-400/10 text-brick-400',
-  ember: 'border-ember-400/30 bg-ember-400/10 text-ember-300',
   moss: 'border-moss-400/30 bg-moss-400/10 text-moss-400',
+  neutral: 'border-ink-400 bg-ink-600 text-paper-300',
 };
 
 /**
- * The opening of every auth card: an optional status icon, an eyebrow, the
- * heading, and a lede. The icon and eyebrow take `tone`, so a success or
- * pending screen reads as such before a word of it is read — and the words
- * still say it, so the state is never colour alone.
+ * The opening of every auth card: an optional icon, the heading, and a lede.
+ * The icon takes `tone`, so a success or pending screen reads as such before a
+ * word of it is read — and the words still say it, so the state is never colour
+ * alone. Neutral is the default: a status colour only where there is a status.
  */
 export function AuthHeading({
   children,
   icon,
-  kicker,
-  kickerTone = 'ember',
   title,
+  tone = 'neutral',
 }: {
   /** Lede under the heading. */
   children?: ReactNode;
   icon?: IconName;
-  kicker?: string;
-  kickerTone?: HeadingTone;
   title: string;
+  tone?: HeadingTone;
 }) {
   return (
     <div className="mb-6">
@@ -143,13 +134,12 @@ export function AuthHeading({
           aria-hidden="true"
           className={cn(
             'mb-4 flex h-11 w-11 items-center justify-center rounded-xl border',
-            TONE_CHIP[kickerTone]
+            TONE_CHIP[tone]
           )}
         >
           <Icon name={icon} size={20} />
         </div>
       )}
-      {kicker && <div className={cn('kicker mb-1.5', TONE_TEXT[kickerTone])}>{kicker}</div>}
       <h1 className="text-2xl font-semibold tracking-[-0.02em] text-paper-50">{title}</h1>
       {children && <div className="mt-2 text-sm leading-relaxed text-paper-400">{children}</div>}
     </div>

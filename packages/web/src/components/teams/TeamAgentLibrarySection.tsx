@@ -188,7 +188,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   return (
     <Card className="p-4 sm:p-6">
       <CardHeader className="mb-1">
-        <CardTitle eyebrow="Team scope">Agent overrides</CardTitle>
+        <CardTitle>Agent overrides</CardTitle>
         {(agents ?? []).length > 0 && (
           <Button onClick={openCreate} size="sm" variant="secondary">
             <Icon name="plus" size={14} />

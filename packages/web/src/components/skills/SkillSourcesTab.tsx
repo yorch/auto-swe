@@ -117,7 +117,7 @@ export function SkillSourcesTab() {
     <>
       <Card className="p-4 sm:p-6">
         <CardHeader>
-          <CardTitle eyebrow="GitHub repositories">External sources</CardTitle>
+          <CardTitle>External sources</CardTitle>
           {sources && sources.length > 0 && (
             <Button onClick={() => setAddOpen(true)} variant="primary">
               <Icon name="plus" size={14} />

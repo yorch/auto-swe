@@ -49,11 +49,15 @@ export function CardHeader({
   );
 }
 
-export function CardTitle({ children, eyebrow }: { children: React.ReactNode; eyebrow?: string }) {
+/**
+ * A card's heading, with an optional `hint` under it for what the title alone does
+ * not say — the window a chart covers, the order of a list, the test behind a figure.
+ */
+export function CardTitle({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
     <div>
-      {eyebrow && <div className="kicker mb-1">{eyebrow}</div>}
       <h3 className="text-lg font-semibold tracking-tight text-paper-50">{children}</h3>
+      {hint && <p className="mt-0.5 text-sm text-paper-500">{hint}</p>}
     </div>
   );
 }

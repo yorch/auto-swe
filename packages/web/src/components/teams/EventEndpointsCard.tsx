@@ -315,7 +315,7 @@ export function EventEndpointsCard({ team }: { team: { id: string; name: string 
   return (
     <Card>
       <CardHeader className="mb-2">
-        <CardTitle eyebrow="Inbound events">Event endpoints</CardTitle>
+        <CardTitle>Event endpoints</CardTitle>
         <Button onClick={() => setAutomations(true)} size="sm" variant="secondary">
           Automations
         </Button>

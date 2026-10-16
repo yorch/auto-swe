@@ -49,7 +49,6 @@ export function ShareRepoModal({
 
   return (
     <Modal
-      eyebrow="Share repository"
       onClose={onClose}
       open
       subtitle={`Members of the teams you pick can see this repository and start runs on it. ${repo.team.name} keeps managing it, and runs keep its budget and settings.`}

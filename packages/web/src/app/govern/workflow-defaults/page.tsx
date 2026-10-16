@@ -71,7 +71,7 @@ export default function GovernWorkflowPage() {
         </div>
         <nav aria-label="On this page" className="hidden xl:block">
           <div className="sticky top-6">
-            <p className="kicker mb-3">On this page</p>
+            <p className="mb-3 text-xs font-medium text-paper-500">On this page</p>
             <ul className="space-y-0.5 border-l border-ink-500">
               {SECTIONS.map((s) => (
                 <li key={s.id}>
