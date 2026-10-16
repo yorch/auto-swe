@@ -450,7 +450,7 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
                 <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                   <span className="font-mono text-paper-100">{step.nodeId}</span>
                   <span className="text-paper-500">attempt {step.attempt}</span>
-                  <StatusBadge showDot={false} status={step.status} />
+                  <StatusBadge status={step.status} />
                 </span>
                 {step.error && (
                   <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-brick-400">

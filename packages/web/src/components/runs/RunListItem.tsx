@@ -10,12 +10,14 @@ import {
   formatDate,
   formatDuration,
   formatRelativeTime,
+  ROW_ACTION,
 } from '@/lib/utils';
 
 /**
  * One run in a history list. The title opens the request panel (the run's
  * request, with its result and approvals); "Diagnostics" opens the full run
- * page. A run with no request goes straight to diagnostics. From `sm` up the
+ * page; it is repeated on every row, so it shows only on hover or keyboard
+ * focus within the row (always on touch). A run with no request goes straight to diagnostics. From `sm` up the
  * row reads as one line — status, title, then duration, cost and start time in
  * fixed columns so a page of runs scans down; on a phone the figures wrap under
  * the title instead of scrolling a table.
@@ -33,7 +35,7 @@ export function RunListItem({ run }: { run: WorkflowRunSummary }) {
     : null;
   const ticket = run.workRequest?.externalTicketId;
   return (
-    <li className="flex flex-col gap-2 px-4 py-3 transition-colors hover:bg-ink-600/35 sm:flex-row sm:items-center sm:gap-4 sm:px-5">
+    <li className="group flex flex-col gap-2 px-4 py-3 transition-colors hover:bg-ink-600/35 sm:flex-row sm:items-center sm:gap-4 sm:px-5">
       <div className="shrink-0 sm:w-28">
         <StatusBadge status={run.status} />
       </div>
@@ -41,7 +43,7 @@ export function RunListItem({ run }: { run: WorkflowRunSummary }) {
       <div className="min-w-0 flex-1">
         <Link
           className={cn(
-            'line-clamp-2 break-words rounded-sm text-sm font-medium text-paper-100 transition-colors hover:text-ember-400 sm:line-clamp-1',
+            'line-clamp-2 break-words rounded-sm text-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline sm:line-clamp-1',
             FOCUS_RING
           )}
           href={run.workRequest ? requestHref(run.workRequest.id) : diagnostics}
@@ -96,8 +98,9 @@ export function RunListItem({ run }: { run: WorkflowRunSummary }) {
       <Link
         aria-label={`Diagnostics for ${title}`}
         className={cn(
-          'inline-flex shrink-0 items-center gap-1 self-start rounded-sm text-sm text-ember-400 transition-colors hover:text-ember-300 sm:self-center',
-          FOCUS_RING
+          'inline-flex shrink-0 items-center gap-1 self-start rounded-sm text-sm text-paper-400 underline-offset-2 hover:text-paper-100 hover:underline focus-visible:underline sm:self-center',
+          FOCUS_RING,
+          ROW_ACTION
         )}
         href={diagnostics}
       >

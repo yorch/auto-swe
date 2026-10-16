@@ -1,31 +1,28 @@
 import { cn, STATUS_META } from '@/lib/utils';
-import { Badge } from './Badge';
 
-export function StatusBadge({ status, showDot = true }: { status: string; showDot?: boolean }) {
+/**
+ * A run, step or template status as a coloured dot and its name — no bordered or
+ * filled pill. The dot carries the status colour (and pulses while the work is
+ * live); the words carry the meaning in body colour, so the state is never colour
+ * alone and a table of statuses reads calmly.
+ */
+export function StatusBadge({ status }: { status: string }) {
   const meta = STATUS_META[status] ?? STATUS_META.UNKNOWN;
-  const isLive = meta.live;
 
-  // The shape comes from Badge; the status palette overrides its tone colours.
   return (
-    <Badge
-      className={cn('gap-1.5 rounded-full pr-2 pl-1.5', meta.classes)}
-      tone="neutral"
-      variant="outline"
-    >
-      {showDot && (
-        <span
-          aria-hidden
-          className={cn(
-            'inline-block h-1.5 w-1.5 rounded-full shrink-0',
-            meta.dotClass,
-            isLive && 'pulse-dot'
-          )}
-        />
-      )}
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap text-xs font-medium text-paper-300">
+      <span
+        aria-hidden
+        className={cn(
+          'inline-block h-2 w-2 shrink-0 rounded-full',
+          meta.dotClass,
+          meta.live && 'pulse-dot'
+        )}
+      />
       {/* Lower-cased text, shown sentence-case: `first-letter` needs a block box. */}
       <span className="inline-block first-letter:uppercase">
         {status.replace(/_/g, ' ').toLowerCase()}
       </span>
-    </Badge>
+    </span>
   );
 }

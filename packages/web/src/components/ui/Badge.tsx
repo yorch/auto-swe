@@ -57,14 +57,15 @@ const TONE_CLASSES: Record<BadgeTone, Record<BadgeVariant, string>> = {
 };
 
 const VARIANT_BASE: Record<BadgeVariant, string> = {
-  outline: 'inline-flex items-center rounded-md border px-1.5 py-px leading-5',
-  solid: 'inline-flex items-center rounded-md px-1.5 py-px leading-5',
+  outline: 'inline-flex items-center rounded-sm border px-1.5 py-px leading-5',
+  solid: 'inline-flex items-center rounded-sm px-1.5 py-px leading-5',
   text: '',
 };
 
 /**
- * Small inline label with a semantic colour. `solid` is a tinted pill,
- * `outline` a bordered pill, `text` colour only. Size / spacing tweaks go
+ * Small inline label with a semantic colour. `solid` is a tinted label,
+ * `outline` a bordered one, `text` colour only. Every badge shares the 4px
+ * (`rounded-sm`) shape — do not round one into a pill. Size / spacing tweaks go
  * through `className` (merged with tailwind-merge, so overrides win).
  * Workflow / run statuses have their own `StatusBadge`; this is for everything
  * else that used to hand-roll a coloured span.

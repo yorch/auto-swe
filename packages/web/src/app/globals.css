@@ -112,14 +112,22 @@
   --text-5xl: 44px;
   --text-5xl--line-height: 48px;
 
-  /* Border radius — the scale the primitives use (inputs/alerts 9, buttons 10,
-     cards/modals 14), so a `rounded-*` class and a primitive agree. */
+  /* Border radius — three sizes plus full, so neighbouring shapes agree:
+       4px   small controls, badges, inline focus outlines   rounded, rounded-xs, rounded-sm
+       8px   inputs, buttons, menus, alerts, list rows        rounded-md, rounded-lg
+       12px  cards, modals, panels                            rounded-xl, rounded-2xl
+       full  pills that must be round: dots, avatars, switches, counts
+     The class names are kept (they read as relative sizes) and re-pointed here, so a
+     call site never needs editing to follow the scale. Do not add a fourth size. */
+  --radius: 4px;
   --radius-none: 0;
-  --radius-xs: 3px;
-  --radius-sm: 7px;
-  --radius-md: 9px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
+  --radius-xs: 4px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 12px;
+  --radius-3xl: 12px;
   --radius-full: 9999px;
 }
 

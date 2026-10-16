@@ -36,7 +36,7 @@ type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   size?: Size;
 };
 
-// Radius is the `rounded-lg` token (10px) in `buttonClassName`, not an inline style, so a
+// Radius is the `rounded-lg` token (8px) in `buttonClassName`, not an inline style, so a
 // caller's className can override it.
 export const BUTTON_STYLE = {
   fontSize: '13px',
