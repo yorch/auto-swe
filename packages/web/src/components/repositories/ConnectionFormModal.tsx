@@ -148,10 +148,13 @@ export function ConnectionFormModal({
     try {
       if (mode.kind === 'create') {
         if (connType === 'git_repo') {
+          // Only a set that runs something is sent, so onboarding without one needs no role.
+          const gateCreate = gateCommandsPatch(null, gateCommands);
           await create.mutateAsync({
             defaultBranch,
             description: description.trim() || undefined,
             executorImage: executorImage.trim() || undefined,
+            ...(gateCreate ? { gateCommands: gateCreate } : {}),
             githubApiUrl: prefill?.githubApiUrl || undefined,
             githubUrl: prefill?.githubUrl || undefined,
             language: language.trim() || undefined,
@@ -310,32 +313,30 @@ export function ConnectionFormModal({
                 value={language}
               />
             </div>
-            {isEdit && (
-              <fieldset className="space-y-3">
-                <legend className="text-sm font-medium text-paper-200">Gate commands</legend>
-                <p className="text-xs leading-relaxed text-paper-400">
-                  Run by a gate step that sets no command of its own. Blank uses the built-in
-                  default. {GATE_COMMANDS_RULE}
-                </p>
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {REPO_GATE_COMMAND_KEYS.map((key) => (
-                    <Input
-                      className="font-mono text-xs"
-                      disabled={!canEditGateCommands}
-                      id={`gate-command-${key}`}
-                      key={key}
-                      label={GATE_COMMAND_LABELS[key]}
-                      onChange={(e) =>
-                        setGateCommands((prev) => ({ ...prev, [key]: e.target.value }))
-                      }
-                      placeholder="Built-in default"
-                      spellCheck={false}
-                      value={gateCommands[key]}
-                    />
-                  ))}
-                </div>
-              </fieldset>
-            )}
+            <fieldset className="space-y-3">
+              <legend className="text-sm font-medium text-paper-200">Gate commands</legend>
+              <p className="text-xs leading-relaxed text-paper-400">
+                Run by a gate step that sets no command of its own. Blank uses the built-in default.{' '}
+                {GATE_COMMANDS_RULE}
+              </p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {REPO_GATE_COMMAND_KEYS.map((key) => (
+                  <Input
+                    className="font-mono text-xs"
+                    disabled={!canEditGateCommands}
+                    id={`gate-command-${key}`}
+                    key={key}
+                    label={GATE_COMMAND_LABELS[key]}
+                    onChange={(e) =>
+                      setGateCommands((prev) => ({ ...prev, [key]: e.target.value }))
+                    }
+                    placeholder="Built-in default"
+                    spellCheck={false}
+                    value={gateCommands[key]}
+                  />
+                ))}
+              </div>
+            </fieldset>
           </>
         ) : (
           <>

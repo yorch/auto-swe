@@ -208,16 +208,19 @@ A repository can give each gate step its own command (`Connection.gateCommands`)
 `runTypecheck`, `runTests`, `runBuild`, `runVulnScan` and `runPerfBench`. A gate step that sets no
 `command` of its own runs the repository's, else the worker's built-in default; the implementer's
 test loop reads `runTests` the same way. They are edited in the connection form's **Gate commands**
-section, or with `PATCH /repositories/:id` `{ gateCommands }`, which replaces the stored set — a gate
-left out, null or blank falls back to the default, and `null` clears them all.
+section (when onboarding or editing), with `POST /repositories` / `PATCH /repositories/:id`
+`{ gateCommands }` — a PATCH replaces the stored set; a gate left out, null or blank falls back to
+the default, and `null` clears them all — or with the CLI's `auto-swe repos gate-commands`.
 
 A gate command runs in the agent workspace of every run on the repository, so changing the set takes
 the same role as writing a command into a template: a platform admin, or an admin of the team that
 will own the repository (`403 GATE_COMMANDS_FORBIDDEN` otherwise; see
 [`nl-workflow-authoring.md`](./nl-workflow-authoring.md#5-design-notes)). Re-sending the stored set
-is not a change, so a lead can still edit the rest of the repository. Each change writes a
-`Connection` entry to the config audit log with the set before and after. Only a `git_repo`
-connection has gate commands.
+is not a change, so a lead can still edit the rest of the repository, and onboarding with none (or
+only blank ones) needs no role. Moving a repository that has gate commands to another team takes
+the same role on the destination, because its commands start running in that team's runs. Each
+change writes a `Connection` entry to the config audit log with the set before and after. Only a
+`git_repo` connection has gate commands.
 
 ---
 
@@ -319,10 +322,9 @@ longer fit.
 - **Onboarding access is checked once.** Losing access on GitHub afterwards does not remove the
   repository; only [`repoAccess.mode`](./repo-access-gating.md) gates later use. A platform ADMIN is
   never asked.
-- **Gate commands are checked when they are saved, not when a run starts.** The worker runs
-  whatever set the row holds, so a stored command stays in use until an admin changes it, whoever
-  stored it. Moving a repository to another team keeps its commands without asking the
-  destination's admins; only a change to the set asks for the role.
+- **Gate commands are checked when they are saved or moved, not when a run starts.** The worker runs
+  whatever set the row holds, so a command stays in use after the admin who set it loses the role,
+  and a value written to the column outside the API has no audit entry.
 - **An executor image is checked when it is saved, not when a run starts.** Only a platform admin
   may set one (see [`deployment.md`](./deployment.md)), but the worker runs whatever image the row
   holds, so an image already stored stays in use until an admin changes or clears it.

@@ -58,6 +58,13 @@ workflows explain <name>             Explain a template's active version in plai
                                      --global: names are unique per team, and a name found in more
                                      than one scope is an error until one is picked
 
+repos gate-commands <org/name> [--lint=CMD] [--typecheck=CMD] [--tests=CMD] [--build=CMD]
+      [--vuln-scan=CMD] [--perf-bench=CMD] [--clear]
+                                     Print a repository's gate commands, or set them: an empty
+                                     value (--lint=) removes one, --clear removes all first.
+                                     Setting needs a platform admin or the team's admin
+                                     (see docs/repositories.md)
+
 runs list [--status=S] [--template-id=ID] [--work-request-id=ID] [--limit=N]
                                      List recent workflow runs
 runs show <runId>                    Print one run (with steps) as JSON

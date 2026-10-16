@@ -66,6 +66,12 @@ const GitRefSchema = z
     message: 'must be a valid git ref name',
   });
 
+/** A repository's gate commands in a request body; see `normaliseGateCommands`. */
+const GateCommandsSchema = z
+  .partialRecord(z.enum(REPO_GATE_COMMAND_KEYS), z.string().max(4000).nullable())
+  .nullable()
+  .optional();
+
 const CreateRepoSchema = z.object({
   apiToken: z.string().optional(),
   config: z.record(z.string(), z.unknown()).optional(),
@@ -77,6 +83,8 @@ const CreateRepoSchema = z.object({
     .trim()
     .transform((v) => v || undefined)
     .optional(),
+  /** Gate commands to onboard with; setting any takes the shell authoring role on `teamId`. */
+  gateCommands: GateCommandsSchema,
   githubApiUrl: z.string().url().optional(),
   githubUrl: z.string().url().optional(),
   /**
@@ -133,10 +141,7 @@ const UpdateRepoSchema = z.object({
    * falls back to the built-in default, and null clears them all. Commands an author writes, so
    * changing them takes the shell authoring role (see `gateCommandsProblem`).
    */
-  gateCommands: z
-    .partialRecord(z.enum(REPO_GATE_COMMAND_KEYS), z.string().max(4000).nullable())
-    .nullable()
-    .optional(),
+  gateCommands: GateCommandsSchema,
   githubApiUrl: z.string().url().nullable().optional(),
   githubUrl: z.string().url().nullable().optional(),
   /** Null repoints the repository at the singleton's installation. */
@@ -654,8 +659,17 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const { apiToken, organizationName, repoName, teamId, type, name, config, ...rest } =
-        request.body;
+      const {
+        apiToken,
+        organizationName,
+        repoName,
+        teamId,
+        type,
+        name,
+        config,
+        gateCommands: rawGateCommands,
+        ...rest
+      } = request.body;
 
       if (type === 'git_repo' && (!organizationName || !repoName)) {
         return sendError(
@@ -692,6 +706,19 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       const imageProblem = executorImageProblem(user, request.body.executorImage, null);
       if (imageProblem) {
         return sendError(reply, imageProblem.status, imageProblem.code, imageProblem.message);
+      }
+
+      // Judged as a change from none, the same rule an edit applies.
+      const gateCommands = normaliseGateCommands(rawGateCommands);
+      const gateProblem = await gateCommandsProblem(
+        fastify,
+        user,
+        { gateCommands: null, teamId, type: type ?? 'git_repo' },
+        gateCommands,
+        teamId
+      );
+      if (gateProblem) {
+        return sendError(reply, gateProblem.status, gateProblem.code, gateProblem.message);
       }
 
       const urls = await normaliseRepositoryUrls({
@@ -772,6 +799,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             teamId,
             type: type ?? 'git_repo',
             ...rest,
+            ...(gateCommands ? { gateCommands: gateCommands as Prisma.InputJsonValue } : {}),
             githubApiUrl: urls.githubApiUrl ?? null,
             githubUrl: urls.githubUrl ?? null,
           },
@@ -782,6 +810,15 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           return sendConflict(reply, 'REPO_EXISTS', 'Repository already onboarded');
         }
         throw err;
+      }
+      if (gateCommands) {
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor: user,
+          after: { gateCommands },
+          entityId: repo.id,
+          entityType: 'Connection',
+        });
       }
 
       return reply.status(201).send({ data: redactConnection(repo) });
@@ -877,6 +914,27 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         if (gateProblem) {
           return sendError(reply, gateProblem.status, gateProblem.code, gateProblem.message);
         }
+      }
+      // Moving a repository hands its gate commands to the destination team: they run in every
+      // run the new owners launch. Unchanged commands were not vouched for by anyone there, so
+      // the move takes the role on the destination, as a change would.
+      const keptGateCommands =
+        nextGateCommands === undefined
+          ? normaliseGateCommands(repo.gateCommands)
+          : nextGateCommands;
+      if (
+        newTeamId &&
+        newTeamId !== repo.teamId &&
+        keptGateCommands !== null &&
+        !gateCommandsChange &&
+        !(await isShellAuthor(fastify, user, newTeamId))
+      ) {
+        return sendError(
+          reply,
+          403,
+          'GATE_COMMANDS_FORBIDDEN',
+          'Moving a repository with gate commands requires team-admin role in the target team'
+        );
       }
 
       // Only the overrides this request sets; a row already pointing somewhere

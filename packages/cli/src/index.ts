@@ -5,6 +5,7 @@ import { runAgentCommand } from './commands/agent.js';
 import { runBundleCommand } from './commands/bundle.js';
 import { runBundlesCommand } from './commands/bundles.js';
 import { runEvalsCommand } from './commands/evals.js';
+import { runReposCommand } from './commands/repos.js';
 import { runRunsCommand } from './commands/runs.js';
 import { runSkillsCommand } from './commands/skills.js';
 import { runTokensCommand } from './commands/tokens.js';
@@ -40,6 +41,11 @@ COMMANDS
                                        show / export / import / run / explain take --team=<slug> or
                                        --global: names are unique per team, and a name found in more
                                        than one scope is an error until one is picked
+
+  repos gate-commands <org/name> [--lint=CMD] [--typecheck=CMD] [--tests=CMD] [--build=CMD]
+        [--vuln-scan=CMD] [--perf-bench=CMD] [--clear]
+                                       Print a repository's gate commands, or set them (an empty
+                                       value removes one); setting needs team admin
 
   runs list [--status=S] [--template-id=ID] [--work-request-id=ID] [--limit=N]
                                        List recent workflow runs
@@ -135,6 +141,9 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'evals') {
     return await runEvalsCommand(rest, env);
+  }
+  if (cmd === 'repos') {
+    return await runReposCommand(rest, env);
   }
   process.stderr.write(`Unknown command: ${cmd}\n${HELP}`);
   return 1;

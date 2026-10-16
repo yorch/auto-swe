@@ -877,6 +877,97 @@ describe('repositoryRoutes', () => {
       expect(written().gateCommands).toBe(DB_NULL);
     });
 
+    describe('onboarding with gate commands', () => {
+      const onboard = (gateCommands: unknown) => {
+        ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({ id: TEAM_ID, isActive: true });
+        ctx.mockPrisma.connection.findFirst.mockResolvedValueOnce(null);
+        ctx.mockPrisma.connection.create.mockImplementationOnce(
+          async ({ data }: { data: Record<string, unknown> }) => ({ ...data, id: REPO_ID })
+        );
+        return ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'POST',
+          payload: { gateCommands, organizationName: 'acme', repoName: 'widgets', teamId: TEAM_ID },
+          url: '/api/v1/repositories',
+        });
+      };
+      const created = () =>
+        (ctx.mockPrisma.connection.create.mock.calls.at(-1)?.[0] ?? { data: {} }) as {
+          data: Record<string, unknown>;
+        };
+
+      it('refuses a team lead who is not the team admin', async () => {
+        asTeamMember('LEAD');
+        const res = await onboard({ runTests: 'npm test' });
+        expect(res.statusCode).toBe(403);
+        expect(JSON.parse(res.payload).error.code).toBe('GATE_COMMANDS_FORBIDDEN');
+        expect(ctx.mockPrisma.connection.create).not.toHaveBeenCalled();
+      });
+
+      it('lets a team lead onboard with none, or with only blank ones', async () => {
+        asTeamMember('LEAD');
+        const res = await onboard({ runLint: '  ', runTests: null });
+        expect(res.statusCode, res.payload).toBe(201);
+        expect(created().data).not.toHaveProperty('gateCommands');
+        expect(ctx.mockPrisma.configAuditLog.create).not.toHaveBeenCalled();
+      });
+
+      it('stores them for a team admin and audits them', async () => {
+        asTeamMember('ADMIN');
+        const res = await onboard({ runLint: '', runTests: 'npm test' });
+        expect(res.statusCode, res.payload).toBe(201);
+        expect(created().data.gateCommands).toEqual({ runTests: 'npm test' });
+        expect(ctx.mockPrisma.configAuditLog.create).toHaveBeenCalledWith({
+          data: expect.objectContaining({
+            action: 'CREATE',
+            afterJson: { gateCommands: { runTests: 'npm test' } },
+            entityId: REPO_ID,
+            entityType: 'Connection',
+          }),
+        });
+      });
+    });
+
+    describe('moving the repository to another team', () => {
+      const DEST = '44444444-4444-4444-8444-444444444444';
+      const memberships = (dest: 'LEAD' | 'ADMIN') => {
+        ctx.authState.role = 'LEAD';
+        ctx.authState.sub = 'lead-1';
+        ctx.mockPrisma.teamMembership.findUnique.mockImplementation(
+          async ({ where }: { where: { userId_teamId: { teamId: string } } }) => ({
+            role: where.userId_teamId.teamId === DEST ? dest : 'LEAD',
+            team: { isActive: true },
+          })
+        );
+        ctx.mockPrisma.team.findUnique.mockResolvedValue({ isActive: true, orgId: null });
+      };
+
+      it('refuses a lead of the destination who is not its admin when commands go with it', async () => {
+        memberships('LEAD');
+        stored({ runTests: 'npm test' });
+        const res = await patch({ teamId: DEST });
+        expect(res.statusCode).toBe(403);
+        expect(JSON.parse(res.payload).error.message).toBe(
+          'Moving a repository with gate commands requires team-admin role in the target team'
+        );
+        expect(ctx.mockPrisma.connection.update).not.toHaveBeenCalled();
+      });
+
+      it('lets an admin of the destination move it with its commands', async () => {
+        memberships('ADMIN');
+        stored({ runTests: 'npm test' });
+        const res = await patch({ teamId: DEST });
+        expect(res.statusCode, res.payload).toBe(200);
+      });
+
+      it('lets a lead move a repository that has no gate commands', async () => {
+        memberships('LEAD');
+        stored(null);
+        const res = await patch({ teamId: DEST });
+        expect(res.statusCode, res.payload).toBe(200);
+      });
+    });
+
     it('refuses an unknown gate, and gate commands on a connection that is not a repository', async () => {
       stored(null);
       const unknown = await patch({ gateCommands: { runDeploy: 'make deploy' } });
