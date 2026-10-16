@@ -43,7 +43,10 @@ vi.mock('../lib/config/agentSkills.js', () => ({
   loadAgentSkills: vi.fn(async () => []),
   loadAgentToolConfig: vi.fn(async () => null),
 }));
-vi.mock('../lib/config/mcpConnection.js', () => ({ resolveAgentMcpUrl: vi.fn(async () => null) }));
+vi.mock('../lib/config/mcpConnection.js', () => ({
+  resolveAgentMcpBinding: vi.fn(async () => ({ kind: 'none' })),
+  resolveAgentMcpUrl: vi.fn(async () => null),
+}));
 vi.mock('./mcpTools.js', () => ({
   isMcpToolEnabled: () => false,
   loadMcpTools: vi.fn(),
@@ -61,7 +64,7 @@ vi.mock('../lib/shellCommandScanner.js', () => ({
 import { SECURITY_TRACE_ERRORS } from '@auto-swe/shared/lib/scannerCache';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { loadAgentSkills, loadAgentToolConfig } from '../lib/config/agentSkills.js';
-import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
+import { resolveAgentMcpBinding, resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { getModel } from '../lib/models.js';
 import { scoreTrajectory, type TraceLike } from '../lib/trajectoryScorer.js';
 import {
@@ -69,6 +72,7 @@ import {
   createImplementerAgent,
   effectivePersonaToolKeys,
   resolveImplementerConfig,
+  resolveImplementerMcpTarget,
   skillMenuLine,
 } from './implementer.js';
 
@@ -185,7 +189,9 @@ describe('buildImplementerForActivity', () => {
     expect(loadAgentToolConfig).toHaveBeenCalledWith('ciFixer', ctx);
     expect(loadAgentSkills).toHaveBeenCalledWith('ciFixer', ctx);
     expect(loadAgentSkills).not.toHaveBeenCalledWith('implementer', ctx);
-    expect(resolveAgentMcpUrl).toHaveBeenCalledWith('ciFixer', ctx);
+    expect(resolveAgentMcpBinding).toHaveBeenCalledWith('ciFixer', ctx, {
+      tracer: expect.any(AgentTracer),
+    });
     // The model resolves through the persona key, so `inheritsModelFrom`
     // reaches the implementer's model unless the persona overrides it.
     expect(getModel).toHaveBeenCalledWith('ciFixer', ctx);
@@ -219,23 +225,35 @@ describe('buildImplementerForActivity', () => {
 
   it("falls back to the implementer's MCP binding when the persona has none", async () => {
     vi.mocked(loadAgentSkills).mockResolvedValue([]);
-    vi.mocked(resolveAgentMcpUrl).mockImplementation(async (key: string) =>
-      key === 'implementer' ? { url: 'https://mcp.example.com' } : null
-    );
-    await buildImplementerForActivity(workspace, new AgentTracer(), ctx, 'reviewFixer');
-    expect(resolveAgentMcpUrl).toHaveBeenCalledWith('reviewFixer', ctx);
-    expect(resolveAgentMcpUrl).toHaveBeenCalledWith('implementer', ctx);
-    vi.mocked(resolveAgentMcpUrl).mockResolvedValue(null);
+    vi.mocked(resolveAgentMcpBinding).mockResolvedValueOnce({ kind: 'none' });
+    vi.mocked(resolveAgentMcpUrl).mockResolvedValueOnce({ url: 'https://mcp.example.com' });
+    const tracer = new AgentTracer();
+    await buildImplementerForActivity(workspace, tracer, ctx, 'reviewFixer');
+    expect(resolveAgentMcpBinding).toHaveBeenCalledWith('reviewFixer', ctx, { tracer });
+    expect(resolveAgentMcpUrl).toHaveBeenCalledWith('implementer', ctx, { tracer });
   });
 
   it("prefers the persona's own MCP binding over the implementer's", async () => {
     vi.mocked(loadAgentSkills).mockResolvedValue([]);
     vi.mocked(resolveAgentMcpUrl).mockClear();
-    vi.mocked(resolveAgentMcpUrl).mockResolvedValue({ url: 'https://persona.example.com' });
+    vi.mocked(resolveAgentMcpBinding).mockResolvedValueOnce({
+      kind: 'bound',
+      target: { url: 'https://persona.example.com' },
+    });
     await buildImplementerForActivity(workspace, new AgentTracer(), ctx, 'gateFixer');
-    expect(resolveAgentMcpUrl).toHaveBeenCalledTimes(1);
-    expect(resolveAgentMcpUrl).toHaveBeenCalledWith('gateFixer', ctx);
-    vi.mocked(resolveAgentMcpUrl).mockResolvedValue(null);
+    expect(resolveAgentMcpBinding).toHaveBeenLastCalledWith('gateFixer', ctx, expect.anything());
+    expect(resolveAgentMcpUrl).not.toHaveBeenCalled();
+  });
+
+  it("never swaps a persona's refused MCP binding for the implementer's", async () => {
+    vi.mocked(loadAgentSkills).mockResolvedValue([]);
+    vi.mocked(resolveAgentMcpUrl).mockClear();
+    vi.mocked(resolveAgentMcpBinding).mockResolvedValueOnce({
+      connectionId: 'c1',
+      kind: 'refused',
+    });
+    expect(await resolveImplementerMcpTarget('ciFixer', ctx)).toBeNull();
+    expect(resolveAgentMcpUrl).not.toHaveBeenCalled();
   });
 
   it('does not intersect the implementer with itself', async () => {
@@ -304,6 +322,7 @@ describe('resolveImplementerConfig', () => {
     vi.mocked(loadAgentSkills).mockResolvedValue([]);
     vi.mocked(getModel).mockClear();
     vi.mocked(resolveAgentMcpUrl).mockClear();
+    vi.mocked(resolveAgentMcpBinding).mockClear();
     vi.mocked(loadAgentToolConfig).mockImplementation(async (role: string) =>
       role === 'implementer' ? ['readFile', 'bash', 'mcp'] : ['readFile', 'writeFile', 'mcp']
     );
@@ -315,6 +334,7 @@ describe('resolveImplementerConfig', () => {
     });
     expect(getModel).not.toHaveBeenCalled();
     expect(resolveAgentMcpUrl).not.toHaveBeenCalled();
+    expect(resolveAgentMcpBinding).not.toHaveBeenCalled();
     vi.mocked(loadAgentToolConfig).mockResolvedValue(null);
   });
 });

@@ -2,6 +2,9 @@ import { prisma } from '@auto-swe/shared/db';
 import { decryptSecret } from '@auto-swe/shared/lib/crypto';
 import { type McpHeader, openMcpHeaders } from '@auto-swe/shared/lib/mcpHeaders';
 import { isMcpToolEnabled } from '../../agents/mcpTools.js';
+import { logWarn } from '../activityLog.js';
+import type { AgentTracer } from '../agentTracer.js';
+import { type AgentConnectionTenant, agentMayUseConnection } from '../connectionAccess.js';
 import { fetchActiveAgent } from './agentResolver.js';
 import { parseToolKeys } from './toolKeys.js';
 import type { ResolveCtx } from './types.js';
@@ -108,16 +111,40 @@ export async function mcpUrlForConnection(
   }
 }
 
+/** What binding an Agent's MCP configuration yields for this run. */
+export type AgentMcpBinding =
+  | { kind: 'none' }
+  | { kind: 'refused'; connectionId: string }
+  | { kind: 'bound'; target: McpConnectionTarget };
+
+export interface AgentMcpOptions {
+  /**
+   * What the connection is checked against; defaults to the resolution `ctx`. A caller that
+   * resolves the Agent in a narrower cascade than the run's tenant — an agent run resolves at
+   * GLOBAL and ORGANIZATION scope only, so its `ctx` carries no team — passes the run's team.
+   */
+  tenant?: AgentConnectionTenant;
+  /** Records `mcp.binding_refused` (with a `reason`) when the connection is not bound for the run. */
+  tracer?: Pick<AgentTracer, 'addActivityEvent'>;
+}
+
 /**
- * The MCP connection target an agent should bind tools from for this run: null
- * unless the resolved Agent both enables the `'mcp'` tool key
- * (`isMcpToolEnabled`) and references an active `mcp` Connection with a
+ * The MCP binding an agent gets for this run. `none` unless the resolved Agent both enables the
+ * `'mcp'` tool key (`isMcpToolEnabled`) and references an active `mcp` Connection with a
  * `config.url` (`mcpConnectionId`).
+ *
+ * `refused` when the connection is active but this run's team does not own it, or the check itself
+ * failed (`agentMayUseConnection`; the logged and traced `reason` is `refused` or `check_failed`):
+ * the credential is never read. The agent continues with its built-in tools, as for every other unusable binding. A
+ * caller that falls back to another Agent's binding must not do so on `refused`.
+ *
+ * Never throws: a resolution error yields `none`.
  */
-export async function resolveAgentMcpUrl(
+export async function resolveAgentMcpBinding(
   key: string,
-  ctx?: ResolveCtx
-): Promise<McpConnectionTarget | null> {
+  ctx?: ResolveCtx,
+  options: AgentMcpOptions = {}
+): Promise<AgentMcpBinding> {
   // Read the raw Agent row (no model bind / credential decrypt — only toolKeys +
   // mcpConnectionId are needed) and stay best-effort: a resolution error must
   // never break the activity, which degrades to built-in tools.
@@ -125,14 +152,42 @@ export async function resolveAgentMcpUrl(
   try {
     agent = await fetchActiveAgent(key, ctx);
   } catch {
-    return null;
+    return { kind: 'none' };
   }
   if (!agent) {
-    return null;
+    return { kind: 'none' };
   }
   const toolKeys = parseToolKeys(agent.toolKeys);
   if (!isMcpToolEnabled(toolKeys)) {
-    return null;
+    return { kind: 'none' };
   }
-  return mcpUrlForConnection(agent.mcpConnectionId ?? null);
+  const connectionId = agent.mcpConnectionId ?? null;
+  if (!connectionId) {
+    return { kind: 'none' };
+  }
+  const access = await agentMayUseConnection(connectionId, options.tenant ?? ctx);
+  if (access !== 'allowed') {
+    logWarn('agent MCP connection is not usable by this run; continuing without its tools', {
+      agentKey: key,
+      connectionId,
+      reason: access,
+    });
+    options.tracer?.addActivityEvent({
+      name: 'mcp.binding_refused',
+      outputJson: { agentKey: key, connectionId, reason: access },
+    });
+    return { connectionId, kind: 'refused' };
+  }
+  const target = await mcpUrlForConnection(connectionId);
+  return target ? { kind: 'bound', target } : { kind: 'none' };
+}
+
+/** The connection target of {@link resolveAgentMcpBinding}, or null when nothing is bound. */
+export async function resolveAgentMcpUrl(
+  key: string,
+  ctx?: ResolveCtx,
+  options?: AgentMcpOptions
+): Promise<McpConnectionTarget | null> {
+  const binding = await resolveAgentMcpBinding(key, ctx, options);
+  return binding.kind === 'bound' ? binding.target : null;
 }

@@ -177,6 +177,26 @@ describe('runAgentNode', () => {
     });
   });
 
+  it("checks the MCP connection against the channel's team and the run's template", async () => {
+    vi.mocked(currentRequestContext).mockResolvedValueOnce({ workflowTemplateId: 'tpl-1' });
+    findChannel.mockResolvedValueOnce({ orgId: 'org-9', teamId: 'team-9' });
+
+    await runAgentNode({ agentRef: 'channelAssistant', channelId: 'chan-1', userMessage: 'go' });
+
+    // The tenant the binding is checked against is this ctx: a repo-less channel run has its
+    // team only from the channel, and its template from the ambient context.
+    expect(mockedResolveMcpUrl).toHaveBeenCalledWith(
+      'channelAssistant',
+      {
+        channelId: 'chan-1',
+        orgId: 'org-9',
+        teamId: 'team-9',
+        workflowTemplateId: 'tpl-1',
+      },
+      { tracer: expect.any(AgentTracer) }
+    );
+  });
+
   it('pins the version from an "@version" agentRef on top of the run snapshot', async () => {
     await runAgentNode({ agentRef: 'reviewer@5' });
 
@@ -245,6 +265,10 @@ describe('runAgentNode', () => {
       expect.any(AgentTracer),
       { callTimeoutMs: undefined, listTimeoutMs: undefined }
     );
+    // The binding records a refusal on the node's own tracer — the one the MCP client uses.
+    expect(mockedResolveMcpUrl).toHaveBeenCalledWith('reviewer', expect.anything(), {
+      tracer: mockedLoadMcpTools.mock.calls[0]?.[1],
+    });
     // Spec/built-in tools win over MCP tools on key collision. Only the MCP
     // tool records itself, so only it is skipped when the loop's steps are read.
     expect(mockedRunAgent).toHaveBeenCalledWith(

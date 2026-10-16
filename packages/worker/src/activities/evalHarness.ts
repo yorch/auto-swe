@@ -252,7 +252,8 @@ export async function runCaseDefault(
     // Built exactly as production builds it (`buildImplementerTurnRunner`), so the
     // eval grades what a run gets: the runtime the setting chooses, the tool keys
     // with persona narrowing, the skills, the MCP binding with its headers and
-    // private-network opt-in, and the step and tool-output budgets — an eval run
+    // private-network opt-in (for a case whose dataset names a team; a GLOBAL dataset has no team
+    // to own the connection, so it binds none), and the step and tool-output budgets — an eval run
     // under different conditions than production is not measuring production.
     // Chosen once for the whole case: a runtime that resumes its session across
     // iterations must not be rebuilt per iteration.

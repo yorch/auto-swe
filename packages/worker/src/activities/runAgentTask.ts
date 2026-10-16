@@ -455,8 +455,9 @@ async function runOnMastra(
   spec.systemPrompt = `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}`.trim();
 
   // MCP per the agent's own configuration (a known exfiltration channel next
-  // to a workspace; documented in docs/agent-runs.md).
-  const mcpTarget = await resolveAgentMcpUrl(key, agentCtx);
+  // to a workspace; documented in docs/agent-runs.md). The agent resolves with
+  // no team, so the connection is checked against the repository's team.
+  const mcpTarget = await resolveAgentMcpUrl(key, agentCtx, { tenant: input.settingsCtx, tracer });
   let mcpTools: AgentTools | undefined;
   if (mcpTarget) {
     const loaded = await loadMcpTools(mcpTarget.url, tracer, {
@@ -518,7 +519,7 @@ async function runOnHarness(
     loadProjectSettings: true,
     maxTurns: input.maxSteps,
     // The connection the Mastra loop would bind, relayed from the worker.
-    mcp: await resolveAgentMcpUrl(key, agentCtx),
+    mcp: await resolveAgentMcpUrl(key, agentCtx, { tenant: input.settingsCtx, tracer }),
     tracer,
     workspace: input.workspace,
   });

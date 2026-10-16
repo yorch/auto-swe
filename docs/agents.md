@@ -387,11 +387,27 @@ private-range refusal, with the semantics of the issue-tracker and knowledge-bas
 without it. Save, the Test probe and the worker's connect all apply the same check against the saved
 flag, and the flag appears in the audit trail.
 
-**Activation requires all three:**
+**Activation requires all four:**
 
 1. The resolved Agent has an `mcpConnectionId` pointing at an active `mcp` Connection.
-2. The effective `Agent.toolKeys` allows the `mcp` pseudo-tool key (`isMcpToolEnabled`): `null`/empty = all tools enabled (MCP included, mirrors the built-in gating); a non-empty `toolKeys` must explicitly contain `'mcp'` — now accepted by the gateway tool-key validation.
-3. The MCP server is reachable: connection/listing failure logs + records an `mcp.connect_failed` activity event and the agent continues with built-in tools only — it never fails the implementation.
+2. The effective `Agent.toolKeys` allows the `mcp` pseudo-tool key (`isMcpToolEnabled`): `null`/empty = all tools enabled (MCP included, mirrors the built-in gating); a non-empty `toolKeys` must explicitly contain `'mcp'`, which the gateway tool-key validation accepts.
+3. The run's team owns the connection (`agentMayUseConnection`, `worker/src/lib/connectionAccess.ts`).
+   The binding is chosen on the Agent row, not by the run or its template's author, and a GLOBAL or
+   organization-scope row applies to every team's runs, so the connection is checked against the run
+   each time it is resolved, before its token is decrypted. With a team for the run (its
+   repository's team, or a channel's), that team must own the connection.
+   With no team but a template (a run with no repository), the template's own team must; a global
+   template has no team, so it binds nothing — unlike an `mcp` node's `connectionRef`, which the
+   template's author wrote. With neither, it binds nothing. A refusal, or a check that cannot
+   complete, logs a warning and records an `mcp.binding_refused` activity event
+   (`{ agentKey, connectionId, reason }`, where `reason` is `refused` or `check_failed`), and the agent continues with its built-in tools. A persona whose
+   own binding is refused does not fall back to the implementer's connection. A missing or inactive
+   connection is not a refusal: it binds nothing.
+4. The MCP server is reachable: connection/listing failure logs + records an `mcp.connect_failed` activity event and the agent continues with built-in tools only.
+
+No unusable MCP binding fails the step: an inactive connection, a refusal under item 3, a stored
+token or headers that no longer decrypt, and an unreachable server each leave the agent with its
+built-in tools.
 
 **Security and observability:**
 
@@ -413,7 +429,9 @@ flag, and the flag appears in the audit trail.
   `DELETE :id` soft-delete; `PATCH` rebuilds `config` from the body so a blank timeout clears the
   override) and attach one to an Agent via the `mcpConnectionId` field on the
   agent-library form. `validateMcpConnectionRef` enforces that the reference is an active `mcp`
-  Connection, and TEAM-scoped agents may only reference their own team's connection (tenancy).
+  Connection, and a TEAM-scoped agent may reference only a connection its team owns
+  (tenancy). Any other scope may save any connection; which runs may then use it is
+  decided at run time (item 3 above).
 - **Test and usage:** `POST /api/v1/platform/mcp-connections/:id/test` connects to the saved URL
   over streamable HTTP, initializes, and lists the tools within the connection's list timeout,
   answering `{ ok, toolCount, toolNames, durationMs }` or a fixed reason. The SSRF guard runs first,
@@ -1640,6 +1658,17 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   refused by the token-carrying client and by the Test probe, so the connection URL must be the final
   one. Rotating the token is an edit of the connection; runs already connected keep the token they
   started with.
+
+- **An agent's MCP connection is read live, not pinned at run start.** Like an `mcp` node's
+  `connectionRef`, it is resolved — URL, token, headers and the reach check — each time a step binds
+  it, so an edit, a deactivation or an unsharing lands on the run's next step that binds it. Moving a
+  connection to a different origin while keeping its stored token or headers is refused at save
+  (`TOKEN_ORIGIN_CHANGE`, `HEADERS_ORIGIN_CHANGE`), so an edit cannot redirect a stored credential.
+  An agent resolved with no team and no team-owned template — an eval of a GLOBAL dataset, a channel
+  with no team that runs no team template, or a run of a global template with no repository — binds
+  no MCP connection, because nothing identifies whose connection it may use; it runs with its
+  built-in tools. A teamless run of a team's template binds when that template's team owns the
+  connection.
 
 - **A skill created after a run starts is not in its pin.** It resolves its current revision, which is
   also its only one. An epic's children are runs of their own and pin at their own start, so an edit

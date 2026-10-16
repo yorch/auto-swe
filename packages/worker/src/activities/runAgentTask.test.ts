@@ -832,7 +832,12 @@ describe('the Claude Code harness, for an agent that asks for it', () => {
 
     await runAgentTask({ request: request() });
 
-    expect(resolveAgentMcpUrl).toHaveBeenCalledWith('contentWriter', expect.anything());
+    // The agent resolves with no team; its connection is checked against the repository's.
+    expect(resolveAgentMcpUrl).toHaveBeenCalledWith(
+      'contentWriter',
+      expect.not.objectContaining({ teamId: expect.anything() }),
+      expect.objectContaining({ tenant: expect.objectContaining({ teamId: 'team-1' }) })
+    );
     expect(m.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ mcp: target });
     expect(close).toHaveBeenCalledTimes(1);
   });

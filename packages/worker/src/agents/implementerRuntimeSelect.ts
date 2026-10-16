@@ -116,7 +116,7 @@ export async function buildImplementerTurnRunner(input: {
   const [config, { model }, mcpTarget] = await Promise.all([
     resolveImplementerConfig(input.ctx, agentKey),
     resolveAgent(agentKey, input.ctx),
-    resolveImplementerMcpTarget(agentKey, input.ctx),
+    resolveImplementerMcpTarget(agentKey, input.ctx, input.tracer),
   ]);
   const runtime = harness.bind(agentKey, model).build({
     // The repository's own harness configuration (Claude Code's CLAUDE.md and

@@ -207,7 +207,7 @@ async function bindMcpTools(
   tracer: AgentTracer,
   onOpen: (close: () => Promise<void>) => void
 ): Promise<AgentTools | undefined> {
-  const mcpTarget = await resolveAgentMcpUrl(key, ctx);
+  const mcpTarget = await resolveAgentMcpUrl(key, ctx, { tracer });
   if (!mcpTarget) {
     return undefined;
   }
@@ -314,7 +314,7 @@ async function runInCheckout(args: {
       loadProjectSettings: true,
       maxTurns: await resolveSetting('workspace.agentMaxSteps', resolveCtx),
       // The connection the Mastra loop would bind, relayed from the worker.
-      mcp: await resolveAgentMcpUrl(key, resolveCtx),
+      mcp: await resolveAgentMcpUrl(key, resolveCtx, { tracer }),
       tracer,
       workspace,
     });

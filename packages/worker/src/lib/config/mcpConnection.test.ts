@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { connection: { findUnique: vi.fn() } },
+  prisma: {
+    connection: { findUnique: vi.fn() },
+    workflowTemplate: { findUnique: vi.fn() },
+  },
 }));
 vi.mock('./agentResolver.js', () => ({ fetchActiveAgent: vi.fn() }));
 
@@ -9,9 +12,14 @@ import { prisma } from '@auto-swe/shared/db';
 import { _resetKeyCacheForTests, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { sealMcpHeaders } from '@auto-swe/shared/lib/mcpHeaders';
 import { fetchActiveAgent } from './agentResolver.js';
-import { mcpUrlForConnection, resolveAgentMcpUrl } from './mcpConnection.js';
+import {
+  mcpUrlForConnection,
+  resolveAgentMcpBinding,
+  resolveAgentMcpUrl,
+} from './mcpConnection.js';
 
 const findUnique = vi.mocked(prisma.connection.findUnique);
+const findTemplate = vi.mocked(prisma.workflowTemplate.findUnique);
 const mockedFetchActiveAgent = vi.mocked(fetchActiveAgent);
 
 const mcpConn = (over: Record<string, unknown> = {}) => ({
@@ -97,11 +105,15 @@ describe('resolveAgentMcpUrl', () => {
 
   const agent = (over: Record<string, unknown> = {}) =>
     ({ key: 'implementer', mcpConnectionId: 'c1', toolKeys: ['bash', 'mcp'], ...over }) as never;
+  /** The run's team owns the connection unless a test says otherwise. */
+  const teamCtx = { teamId: 'team-a' };
+  const ownedConn = (over: Record<string, unknown> = {}) =>
+    mcpConn({ shares: [], teamId: 'team-a', ...over });
 
   it('returns the target when the agent enables mcp and references an mcp connection', async () => {
     mockedFetchActiveAgent.mockResolvedValue(agent());
-    findUnique.mockResolvedValue(mcpConn() as never);
-    expect(await resolveAgentMcpUrl('implementer')).toEqual({
+    findUnique.mockResolvedValue(ownedConn() as never);
+    expect(await resolveAgentMcpUrl('implementer', teamCtx)).toEqual({
       url: 'https://mcp.example.com/mcp',
     });
   });
@@ -109,7 +121,7 @@ describe('resolveAgentMcpUrl', () => {
   it('carries the per-connection timeouts through to the agent resolution', async () => {
     mockedFetchActiveAgent.mockResolvedValue(agent());
     findUnique.mockResolvedValue(
-      mcpConn({
+      ownedConn({
         config: {
           callTimeoutMs: 90_000,
           listTimeoutMs: 30_000,
@@ -117,7 +129,7 @@ describe('resolveAgentMcpUrl', () => {
         },
       }) as never
     );
-    expect(await resolveAgentMcpUrl('implementer')).toEqual({
+    expect(await resolveAgentMcpUrl('implementer', teamCtx)).toEqual({
       callTimeoutMs: 90_000,
       listTimeoutMs: 30_000,
       url: 'https://mcp.example.com/mcp',
@@ -126,18 +138,155 @@ describe('resolveAgentMcpUrl', () => {
 
   it('returns null when the agent does not enable mcp', async () => {
     mockedFetchActiveAgent.mockResolvedValue(agent({ toolKeys: ['bash'] }));
-    expect(await resolveAgentMcpUrl('implementer')).toBeNull();
+    expect(await resolveAgentMcpUrl('implementer', teamCtx)).toBeNull();
     expect(findUnique).not.toHaveBeenCalled();
   });
 
   it('returns null when the agent enables mcp but has no connection', async () => {
     mockedFetchActiveAgent.mockResolvedValue(agent({ mcpConnectionId: null }));
-    expect(await resolveAgentMcpUrl('implementer')).toBeNull();
+    expect(await resolveAgentMcpUrl('implementer', teamCtx)).toBeNull();
   });
 
   it('never throws — a resolution error yields null', async () => {
     mockedFetchActiveAgent.mockRejectedValueOnce(new Error('config missing'));
-    expect(await resolveAgentMcpUrl('implementer')).toBeNull();
+    expect(await resolveAgentMcpUrl('implementer', teamCtx)).toBeNull();
+  });
+});
+
+describe("resolveAgentMcpBinding: the run's team must reach the bound connection", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const agent = () => ({ key: 'implementer', mcpConnectionId: 'c1', toolKeys: ['mcp'] }) as never;
+  const conn = (over: Record<string, unknown> = {}) =>
+    mcpConn({ shares: [], teamId: 'team-b', ...over });
+  const refused = { connectionId: 'c1', kind: 'refused' };
+
+  it("binds a connection shared with the run's team", async () => {
+    mockedFetchActiveAgent.mockResolvedValue(agent());
+    findUnique.mockResolvedValue(conn({ shares: [{ teamId: 'team-a' }] }) as never);
+    expect(await resolveAgentMcpUrl('implementer', { teamId: 'team-a' })).toEqual({
+      url: 'https://mcp.example.com/mcp',
+    });
+  });
+
+  it("refuses another team's connection without reading its credential, and says so", async () => {
+    mockedFetchActiveAgent.mockResolvedValue(agent());
+    // Carries a token: a refusal must never get as far as decrypting it.
+    findUnique.mockResolvedValue(
+      conn({ apiKeyAuthTag: 'x', apiKeyCiphertext: 'x', apiKeyNonce: 'x' }) as never
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const tracer = { addActivityEvent: vi.fn() };
+    expect(await resolveAgentMcpBinding('implementer', { teamId: 'team-a' }, { tracer })).toEqual(
+      refused
+    );
+    // Only the reach check read the row: the target (and its token) was never resolved.
+    expect(findUnique).toHaveBeenCalledTimes(1);
+    expect(tracer.addActivityEvent).toHaveBeenCalledWith({
+      name: 'mcp.binding_refused',
+      outputJson: { agentKey: 'implementer', connectionId: 'c1', reason: 'refused' },
+    });
+    expect(warn.mock.calls.flat().join(' ')).toContain('not usable by this run');
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('not usable by this run'),
+      expect.objectContaining({ reason: 'refused' })
+    );
+    warn.mockRestore();
+  });
+
+  it('yields no target for a refused binding', async () => {
+    mockedFetchActiveAgent.mockResolvedValue(agent());
+    findUnique.mockResolvedValue(conn() as never);
+    expect(await resolveAgentMcpUrl('implementer', { teamId: 'team-a' })).toBeNull();
+  });
+
+  it("refuses a connection unshared from the run's team", async () => {
+    mockedFetchActiveAgent.mockResolvedValue(agent());
+    findUnique.mockResolvedValue(conn({ shares: [{ teamId: 'team-c' }] }) as never);
+    expect(await resolveAgentMcpBinding('implementer', { teamId: 'team-a' })).toEqual(refused);
+  });
+
+  it("does not let a template widen the run's team", async () => {
+    mockedFetchActiveAgent.mockResolvedValue(agent());
+    findUnique.mockResolvedValue(conn() as never);
+    findTemplate.mockResolvedValue({ teamId: 'team-b' } as never);
+    expect(
+      await resolveAgentMcpBinding('implementer', { teamId: 'team-a', workflowTemplateId: 't1' })
+    ).toEqual(refused);
+    expect(findTemplate).not.toHaveBeenCalled();
+  });
+
+  it('with no team, refuses for a global template', async () => {
+    mockedFetchActiveAgent.mockResolvedValue(agent());
+    findUnique.mockResolvedValue(conn() as never);
+    findTemplate.mockResolvedValue({ teamId: null } as never);
+    expect(await resolveAgentMcpBinding('implementer', { workflowTemplateId: 't1' })).toEqual(
+      refused
+    );
+  });
+
+  it("with no team, binds only what the template's own team reaches", async () => {
+    mockedFetchActiveAgent.mockResolvedValue(agent());
+    findUnique.mockResolvedValue(conn({ shares: [{ teamId: 'team-a' }] }) as never);
+    findTemplate.mockResolvedValueOnce({ teamId: 'team-a' } as never);
+    expect(await resolveAgentMcpUrl('implementer', { workflowTemplateId: 't1' })).toEqual({
+      url: 'https://mcp.example.com/mcp',
+    });
+    findTemplate.mockResolvedValueOnce({ teamId: 'team-c' } as never);
+    expect(await resolveAgentMcpBinding('implementer', { workflowTemplateId: 't1' })).toEqual(
+      refused
+    );
+  });
+
+  it('with no team, refuses when the template row is gone', async () => {
+    mockedFetchActiveAgent.mockResolvedValue(agent());
+    findUnique.mockResolvedValue(conn() as never);
+    findTemplate.mockResolvedValue(null as never);
+    expect(await resolveAgentMcpBinding('implementer', { workflowTemplateId: 't1' })).toEqual(
+      refused
+    );
+  });
+
+  it('checks the tenant the caller names, not the cascade context', async () => {
+    mockedFetchActiveAgent.mockResolvedValue(agent());
+    findUnique.mockResolvedValue(conn() as never);
+    // An agent run resolves its Agent with no team; the repository's team is the tenant.
+    const cascade = { orgId: 'org-1' };
+    expect(
+      await resolveAgentMcpUrl('implementer', cascade, { tenant: { teamId: 'team-b' } })
+    ).toEqual({ url: 'https://mcp.example.com/mcp' });
+    expect(
+      await resolveAgentMcpBinding('implementer', cascade, { tenant: { teamId: 'team-a' } })
+    ).toEqual(refused);
+    expect(mockedFetchActiveAgent).toHaveBeenCalledWith('implementer', cascade);
+  });
+
+  it('refuses when nothing identifies a team', async () => {
+    mockedFetchActiveAgent.mockResolvedValue(agent());
+    findUnique.mockResolvedValue(conn() as never);
+    expect(await resolveAgentMcpBinding('implementer')).toEqual(refused);
+  });
+
+  it('degrades on a failed reach check, without reading the credential', async () => {
+    mockedFetchActiveAgent.mockResolvedValue(agent());
+    findUnique.mockRejectedValueOnce(new Error('db down'));
+    const tracer = { addActivityEvent: vi.fn() };
+    expect(await resolveAgentMcpBinding('implementer', { teamId: 'team-b' }, { tracer })).toEqual(
+      refused
+    );
+    expect(findUnique).toHaveBeenCalledTimes(1);
+    expect(tracer.addActivityEvent).toHaveBeenCalledWith({
+      name: 'mcp.binding_refused',
+      outputJson: { agentKey: 'implementer', connectionId: 'c1', reason: 'check_failed' },
+    });
+  });
+
+  it('binds nothing, and refuses nothing, for an inactive connection', async () => {
+    mockedFetchActiveAgent.mockResolvedValue(agent());
+    findUnique.mockResolvedValue(conn({ isActive: false }) as never);
+    expect(await resolveAgentMcpBinding('implementer', { teamId: 'team-a' })).toEqual({
+      kind: 'none',
+    });
   });
 });
 

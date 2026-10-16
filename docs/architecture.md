@@ -1406,8 +1406,11 @@ Current constraints of the system as built. Deliberate product boundaries are in
   authorizes it: `assertRunMayUseConnection` (`worker/src/lib/connectionAccess.ts`) refuses one the
   run's template may not use, before the server is contacted. The rule is
   `templateReachesConnection`: a team's template may use a connection that team owns or has had
-  shared with it, and a global template — which only an ADMIN may author — may use any, the rule an
-  agent's `mcpConnectionId` already followed. The save-time reference check reports the same
+  shared with it, and a global template — which only an ADMIN may author — may use any. An agent's
+  `mcpConnectionId` follows a stricter rule (`agentMayUseConnection`,
+  [agents.md §3.5](./agents.md#35-mcp-tools-first-class-mcp-connection-opt-in)): the Agent row chose
+  it, not the template's author, and a GLOBAL Agent row applies to every team's runs, so only a team
+  that owns the connection — the run's, else its template's — authorizes it. The save-time reference check reports the same
   violation as a warning (`MCP_REF_NOT_REACHABLE`), so an author learns at edit time instead of at
   run time. It is a **run-time** check because a save-time one cannot be a boundary: the value a
   binding reads can be written by a `set` node, by a `signal` node's `storeAs`, or by a binding's own

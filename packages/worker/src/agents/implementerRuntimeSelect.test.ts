@@ -235,7 +235,10 @@ describe('buildImplementerTurnRunner', () => {
     h.resolveImplementerMcpTarget.mockResolvedValue(target);
 
     await buildImplementerTurnRunner(input({ agentKey: 'ciFixer' }));
-    expect(h.resolveImplementerMcpTarget).toHaveBeenCalledWith('ciFixer', expect.anything());
+    // The session's tracer goes along, so a refused binding is recorded on its trace.
+    const given = h.resolveImplementerMcpTarget.mock.calls[0] as unknown[];
+    expect(given[0]).toBe('ciFixer');
+    expect(given[2]).toBeDefined();
     expect(h.claudeCodeRuntime.mock.calls[0]?.[0]).toMatchObject({ mcp: target });
 
     h.resolveImplementerConfig.mockResolvedValue({
