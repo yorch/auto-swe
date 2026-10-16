@@ -120,12 +120,6 @@ export function useAdminRevokeToken() {
   });
 }
 
-export function useAdminPruneShellAudit(days = 90) {
-  return useMutation({
-    mutationFn: () => api.post(`/api/v1/platform/shell-audit/prune?days=${days}`, {}),
-  });
-}
-
 export function useAdminRevokeUserSessions() {
   const qc = useQueryClient();
   return useMutation({

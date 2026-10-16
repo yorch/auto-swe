@@ -1,6 +1,5 @@
 import { Readable } from 'node:stream';
 import type { Prisma } from '@auto-swe/shared';
-import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
@@ -27,7 +26,7 @@ import {
  *   DELETE /api/v1/platform/sessions/:id           — revoke a session
  *   POST   /api/v1/platform/sessions/revoke-user   — revoke every session of one user (not the caller's own)
  *   GET    /api/v1/platform/audit-log               — config-audit rows, filtered + paginated
- *   POST   /api/v1/platform/shell-audit/prune      — delete old WorkflowShellAudit rows, except a serving version's
+ *   POST   /api/v1/platform/shell-audit/prune      — deletes nothing: shell audit rows live as long as their version
  */
 
 const TokenIdParam = z.object({ id: z.string().uuid() });
@@ -516,49 +515,17 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // Intended for cron use; returns count so callers can alert on anomalies.
+  // Kept for the callers (crons) that already call it; it deletes nothing. A
+  // `WorkflowShellAudit` row is the record of who let a version's code run, and a
+  // version is kept as long as its template exists — any version can be promoted
+  // again — so its rows are kept exactly as long: they go when the template is
+  // deleted (the foreign key cascades), never by age.
   app.post(
     '/shell-audit/prune',
     {
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
       schema: { querystring: PruneQuery },
     },
-    async (request) => {
-      const cutoff = new Date(Date.now() - request.query.days * 24 * 60 * 60 * 1000);
-      // Retention applies to the whole table; pruning per tenant would leave
-      // other teams' audit rows growing forever.
-      const { count } = await runUnscoped(
-        'audit retention sweep is table-wide',
-        ['WorkflowShellAudit', 'WorkflowTemplate'],
-        async () => {
-          // A version serving runs — any template's active version or experiment arm — keeps
-          // its rows whatever their age: they are the record of who let its code run, and
-          // without them re-activating it would ask for the shell authoring role again.
-          const serving = await fastify.prisma.workflowTemplate.findMany({
-            select: { activeVersion: true, experimentVersion: true, id: true },
-            where: { OR: [{ activeVersion: { not: null } }, { experimentVersion: { not: null } }] },
-          });
-          const pairs = serving.flatMap((t) =>
-            [t.activeVersion, t.experimentVersion]
-              .filter((v): v is number => v !== null)
-              .map((version) => ({ templateId: t.id, version }))
-          );
-          const kept =
-            pairs.length === 0
-              ? []
-              : await fastify.prisma.workflowTemplateVersion.findMany({
-                  select: { id: true },
-                  where: { OR: pairs },
-                });
-          return fastify.prisma.workflowShellAudit.deleteMany({
-            where: {
-              createdAt: { lt: cutoff },
-              ...(kept.length > 0 ? { templateVersionId: { notIn: kept.map((v) => v.id) } } : {}),
-            },
-          });
-        }
-      );
-      return { data: { deleted: count, olderThanDays: request.query.days } };
-    }
+    async (request) => ({ data: { deleted: 0, olderThanDays: request.query.days } })
   );
 };

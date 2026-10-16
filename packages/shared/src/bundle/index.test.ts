@@ -1,5 +1,7 @@
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
+import { BUILTIN_SHELL_IMAGES } from '../workflow/shellImageAllowlist.js';
+import { SPEC_SCHEMA_VERSION } from '../workflow/spec.js';
 import {
   BUNDLE_SCHEMA_VERSION,
   type BundleEntities,
@@ -7,6 +9,7 @@ import {
   BundleSchemaVersionError,
   buildBundleManifest,
   bundleAgentRuntimeWarnings,
+  bundleContainerImageWarnings,
   computeContentHash,
   parseBundle,
   signContentHash,
@@ -579,5 +582,48 @@ describe('validateBundleTemplates and the system template', () => {
       })
     );
     expect(errors.join('\n')).toContain('INTERNAL_STEP');
+  });
+});
+
+describe('bundleContainerImageWarnings', () => {
+  const withTemplate = (nodes: Record<string, unknown>) =>
+    manifest({
+      entities: {
+        ...emptyEntities,
+        templates: [
+          {
+            name: 'build-it',
+            spec: {
+              description: '',
+              entry: 'sh',
+              name: 'build-it',
+              nodes: { ...nodes, done: { status: 'SUCCESS', type: 'terminate' } },
+              schemaVersion: SPEC_SCHEMA_VERSION,
+            },
+          },
+        ],
+      },
+    });
+
+  it('names each container node whose image is not a built-in shell image', () => {
+    const warnings = bundleContainerImageWarnings(
+      withTemplate({
+        ok: { command: 'echo', image: BUILTIN_SHELL_IMAGES[0], next: 'done', type: 'shell' },
+        sh: { command: 'cargo build', image: 'rust:1.78-alpine', next: 'ok', type: 'shell' },
+      })
+    );
+    expect(warnings).toEqual([
+      expect.stringMatching(
+        /^template 'build-it' node 'sh': image 'rust:1\.78-alpine' is not a built-in shell image/
+      ),
+    ]);
+  });
+
+  it('says nothing about a template with no container node', () => {
+    expect(
+      bundleContainerImageWarnings(
+        withTemplate({ sh: { next: 'done', step: 'runLint', type: 'step' } })
+      )
+    ).toEqual([]);
   });
 });

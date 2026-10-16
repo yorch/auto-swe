@@ -1001,6 +1001,30 @@ describe('installBundle', () => {
         expect(prisma.workflowTemplate.updateMany).toHaveBeenCalled();
       });
 
+      it('installs a container step whose image is not built in, and warns about it', async () => {
+        const res = await installBundle(
+          asArg(),
+          tplManifest({
+            ...RUNNABLE_SPEC,
+            entry: 'sh',
+            nodes: {
+              ...RUNNABLE_SPEC.nodes,
+              sh: {
+                command: 'cargo build',
+                image: 'rust:1.78-alpine',
+                next: RUNNABLE_SPEC.entry,
+                type: 'shell',
+              },
+            },
+          }),
+          { allowUnverified: true, installedById: 'admin-1' }
+        );
+        expect(prisma.workflowTemplate.create).toHaveBeenCalled();
+        expect(res.warnings).toEqual([
+          expect.stringMatching(/^template 'std' node 'sh': image 'rust:1\.78-alpine'/),
+        ]);
+      });
+
       it('writes no audit row for a template with no authored code', async () => {
         await installBundle(asArg(), tplManifest(RUNNABLE_SPEC), { allowUnverified: true });
         expect(prisma.workflowShellAudit.createMany).not.toHaveBeenCalled();

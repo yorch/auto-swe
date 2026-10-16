@@ -3,6 +3,7 @@ import { Prisma } from '@auto-swe/shared';
 import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
 import { inputSchemaProblems, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { CallbackRequestSchema } from '@auto-swe/shared/lib/runCallbacks';
+import { findUnauditedNodes, recordShellAudit } from '@auto-swe/shared/lib/shellAudit';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   getWorkspaceProviderMetadata,
@@ -62,7 +63,6 @@ import {
   checkSpec,
   collectAuthoredCode,
   parseSpecOrThrow,
-  recordShellAudit,
   type ShellNodeWithId,
   specErrorsOf,
   specValidationWarnings,
@@ -176,11 +176,6 @@ type ServingAuthorization =
       record: (tx: Pick<FastifyInstance['prisma'], 'workflowShellAudit'>) => Promise<void>;
     };
 
-/** What one `WorkflowShellAudit` row vouches for: this command, in this image, on this node. */
-function auditKey(nodeId: string, image: string, command: string): string {
-  return JSON.stringify([nodeId, image, command]);
-}
-
 /** The stored spec as the predicates read it; an unparseable one still exposes its nodes. */
 function storedSpecForGates(spec: unknown): WorkflowSpec | null {
   try {
@@ -216,21 +211,7 @@ async function authorizeServingVersion(
   if (authoredNodes.length === 0) {
     return { ok: true, record: async () => {} };
   }
-  // Scoped by the version, whose template the caller already passed the write filter for. A
-  // row's own `teamId` cannot scope it: it is null on a global template and on a deleted team.
-  const rows = await runUnscoped(
-    'audit rows of one template version the caller may write',
-    ['WorkflowShellAudit'],
-    () =>
-      fastify.prisma.workflowShellAudit.findMany({
-        select: { command: true, image: true, nodeId: true },
-        where: { templateVersionId: version.id },
-      })
-  );
-  const audited = new Set(rows.map((r) => auditKey(r.nodeId, r.image, r.command)));
-  const missing = authoredNodes.filter(
-    ({ id, node }) => !audited.has(auditKey(id, node.image, node.command))
-  );
+  const missing = await findUnauditedNodes(fastify.prisma, version.id, authoredNodes);
   if (missing.length === 0) {
     return { ok: true, record: async () => {} };
   }

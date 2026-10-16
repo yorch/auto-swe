@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
+import { hasAuthoredCode } from '../workflow/containerCode.js';
 import {
   PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES,
   PREVIOUS_BUILTIN_INPUT_SCHEMAS,
@@ -51,6 +52,7 @@ function makeFake() {
     scannerPattern: [] as Row[],
     skill: [] as Row[],
     skillRevision: [] as Row[],
+    workflowShellAudit: [] as Row[],
     workflowTemplate: [] as Row[],
     workflowTemplateVersion: [] as Row[],
   };
@@ -266,6 +268,64 @@ describe('syncBuiltins — templates', () => {
     await seedSweStarter(prisma);
     expect(par.status).toBe('ARCHIVED');
     expect(par.activeVersion).toBe(1);
+  });
+});
+
+describe('syncBuiltins — authored code in built-in templates', () => {
+  // The built-in templates that run code an author wrote: a gate step with its own command,
+  // and a container step. Each version the sync writes puts that code on record.
+  const withCode = BUILTIN_TEMPLATES.filter((t) => hasAuthoredCode(t.spec as never)).map(
+    (t) => t.name
+  );
+
+  it('ships at least one built-in with authored code, so the rest of this block runs', () => {
+    expect(withCode.length).toBeGreaterThan(0);
+  });
+
+  it('records each one with no author and no team on its built-in version', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    for (const name of withCode) {
+      const [v1] = versionsOf(tables, template(tables, name).id);
+      const rows = tables.workflowShellAudit.filter((r) => r.templateVersionId === v1?.id);
+      expect(rows.length).toBeGreaterThan(0);
+      for (const row of rows) {
+        expect(row).toMatchObject({ authorUserId: null, teamId: null });
+      }
+    }
+    const templatesWithRows = new Set(
+      tables.workflowShellAudit.map(
+        (r) => tables.workflowTemplateVersion.find((v) => v.id === r.templateVersionId)?.templateId
+      )
+    );
+    expect(templatesWithRows.size).toBe(withCode.length);
+  });
+
+  it('writes nothing on a second boot', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const rows = tables.workflowShellAudit.length;
+    await seedSweStarter(prisma);
+    expect(tables.workflowShellAudit).toHaveLength(rows);
+  });
+
+  it('fills in the rows of a built-in version seeded before they existed', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const rows = tables.workflowShellAudit.length;
+    tables.workflowShellAudit.length = 0;
+    await seedSweStarter(prisma);
+    expect(tables.workflowShellAudit).toHaveLength(rows);
+  });
+
+  it('records the version a changed built-in spec appends', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const tpl = template(tables, withCode[0] as string);
+    (versionsOf(tables, tpl.id)[0] as Row).spec = { old: 'spec' };
+    await seedSweStarter(prisma);
+    const v2 = versionsOf(tables, tpl.id)[1] as Row;
+    expect(tables.workflowShellAudit.some((r) => r.templateVersionId === v2.id)).toBe(true);
   });
 });
 

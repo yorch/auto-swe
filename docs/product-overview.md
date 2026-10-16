@@ -290,8 +290,8 @@ end-to-end path. Where the platform stops today:
   multiplied out per run; it is not measured.
 - Execution is a DAG only; there is no linear or case-management mode.
 - Enterprise controls stop at Okta SSO and org/team RBAC: no per-org SSO scoping, no
-  data-residency controls, and no retention policy beyond the manual shell-audit prune and manual
-  `memory_items` deletion.
+  data-residency controls, and no retention policy beyond template deletion (which removes its shell
+  audit rows) and manual `memory_items` deletion.
 
 Two limitations in §7 are deliberate rather than pending: shell-step egress filtering is DNS-based,
 so IP-direct connections are unfiltered and wildcard entries are informational only. Both would

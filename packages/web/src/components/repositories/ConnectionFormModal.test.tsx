@@ -7,6 +7,7 @@ import { stubDialogPrototype } from '@/test/rtl-helpers';
 
 const auth = vi.hoisted(() => ({ role: 'LEAD', teamRole: 'LEAD' as 'LEAD' | 'ADMIN' }));
 const update = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
+const create = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
 
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: (select: (s: { user: { role: string } }) => unknown) =>
@@ -18,7 +19,7 @@ vi.mock('@/hooks/useTeams', () => ({
   useTeams: () => ({ data: [{ id: 't1', name: 'Payments' }] }),
 }));
 vi.mock('@/hooks/useRepositories', () => ({
-  useCreateRepository: () => ({ isPending: false, mutateAsync: vi.fn() }),
+  useCreateRepository: () => ({ isPending: false, mutateAsync: create.mutateAsync }),
   useUpdateRepository: () => ({ isPending: false, mutateAsync: update.mutateAsync }),
 }));
 
@@ -53,6 +54,7 @@ describe('ConnectionFormModal gate commands', () => {
   beforeAll(() => stubDialogPrototype());
   beforeEach(() => {
     update.mutateAsync.mockReset().mockResolvedValue({});
+    create.mutateAsync.mockReset().mockResolvedValue({});
     auth.role = 'LEAD';
     auth.teamRole = 'LEAD';
   });
@@ -79,6 +81,36 @@ describe('ConnectionFormModal gate commands', () => {
     expect(update.mutateAsync.mock.calls[0]?.[0].gateCommands).toEqual({
       runLint: 'pnpm lint',
       runTests: 'npm test',
+    });
+  });
+
+  describe('onboarding', () => {
+    function renderCreate() {
+      render(
+        <ConnectionFormModal
+          mode={{ kind: 'create', prefill: { organizationName: 'acme', repoName: 'api' } }}
+          onClose={() => {}}
+          open
+        />
+      );
+    }
+    const createButton = () => screen.getByRole('button', { name: 'Create connection' });
+
+    it("sends a team admin's commands with the new repository", async () => {
+      auth.teamRole = 'ADMIN';
+      renderCreate();
+      fireEvent.change(screen.getByLabelText('Tests'), { target: { value: 'npm test' } });
+      fireEvent.click(createButton());
+      await waitFor(() => expect(create.mutateAsync).toHaveBeenCalled());
+      expect(create.mutateAsync.mock.calls[0]?.[0].gateCommands).toEqual({ runTests: 'npm test' });
+    });
+
+    it('sends none for a team lead, whose fields are read-only', async () => {
+      renderCreate();
+      expect((screen.getByLabelText('Tests') as HTMLInputElement).disabled).toBe(true);
+      fireEvent.click(createButton());
+      await waitFor(() => expect(create.mutateAsync).toHaveBeenCalled());
+      expect(create.mutateAsync.mock.calls[0]?.[0]).not.toHaveProperty('gateCommands');
     });
   });
 });

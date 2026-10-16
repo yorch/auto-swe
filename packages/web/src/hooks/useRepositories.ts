@@ -23,6 +23,8 @@ export interface CreateRepoBody {
   defaultBranch?: string;
   teamId: string;
   executorImage?: string;
+  /** Onboard with these; any at all takes team ADMIN. */
+  gateCommands?: RepoGateCommands;
   language?: string;
   description?: string;
   githubUrl?: string;
