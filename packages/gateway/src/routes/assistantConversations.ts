@@ -1,8 +1,10 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import {
   ASSISTANT_TURN_NOT_STARTED_DETAIL,
+  type AssistantConversationSummary,
   type AssistantMessageView,
   type AssistantPageContext,
+  type AssistantTitleSource,
   type AssistantToolStep,
   assistantErrorDetail,
   assistantPageContextSchema,
@@ -103,11 +105,26 @@ function messageView(row: MessageRow): AssistantMessageView {
   };
 }
 
-function conversationView(row: { id: string; title: string; createdAt: Date; updatedAt: Date }) {
+const conversationSelect = {
+  createdAt: true,
+  id: true,
+  title: true,
+  titleSource: true,
+  updatedAt: true,
+} as const;
+
+function conversationView(row: {
+  id: string;
+  title: string;
+  titleSource: AssistantTitleSource;
+  createdAt: Date;
+  updatedAt: Date;
+}): AssistantConversationSummary {
   return {
     createdAt: row.createdAt.toISOString(),
     id: row.id,
     title: row.title,
+    titleSource: row.titleSource,
     updatedAt: row.updatedAt.toISOString(),
   };
 }
@@ -223,7 +240,7 @@ export const assistantConversationRoutes: FastifyPluginAsync<{ catalog: ApiCatal
       const user = requireUser(request);
       const rows = await fastify.prisma.assistantConversation.findMany({
         orderBy: { updatedAt: 'desc' },
-        select: { createdAt: true, id: true, title: true, updatedAt: true },
+        select: conversationSelect,
         take: request.query.limit,
         where: { closedAt: null, userId: user.sub },
       });
@@ -243,7 +260,7 @@ export const assistantConversationRoutes: FastifyPluginAsync<{ catalog: ApiCatal
       const { message, pageContext } = request.body;
       const conversation = await fastify.prisma.assistantConversation.create({
         data: { title: normalizeAssistantTitle(message), userId: user.sub },
-        select: { createdAt: true, id: true, title: true, updatedAt: true },
+        select: conversationSelect,
       });
       const turn = await startTurn(request, reply, user.sub, conversation.id, message, pageContext);
       if (!turn) {
@@ -262,7 +279,7 @@ export const assistantConversationRoutes: FastifyPluginAsync<{ catalog: ApiCatal
     async (request, reply) => {
       const user = requireUser(request);
       const conversation = await fastify.prisma.assistantConversation.findFirst({
-        select: { createdAt: true, id: true, title: true, updatedAt: true },
+        select: conversationSelect,
         where: { closedAt: null, id: request.params.id, userId: user.sub },
       });
       if (!conversation) {
@@ -340,13 +357,73 @@ export const assistantConversationRoutes: FastifyPluginAsync<{ catalog: ApiCatal
         count === 0
           ? null
           : await fastify.prisma.assistantConversation.findFirst({
-              select: { createdAt: true, id: true, title: true, updatedAt: true },
+              select: conversationSelect,
               where,
             });
       if (!conversation) {
         return sendError(reply, 404, 'NOT_FOUND', 'Conversation not found');
       }
       return { data: conversationView(conversation) };
+    }
+  );
+
+  // POST /api/v1/assistant/conversations/:id/title/reset — give a conversation back to automatic
+  // naming: its title returns to the start of its first message, and the assistantTitler agent is
+  // asked to name it now. `naming` says whether it was, so the panel knows to look again.
+  app.post(
+    '/conversations/:id/title/reset',
+    { onRequest: requireAuth(), schema: { params: ConversationParams } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const where = { closedAt: null, id: request.params.id, userId: user.sub };
+      const found = await fastify.prisma.assistantConversation.findFirst({
+        select: { id: true, title: true },
+        where,
+      });
+      if (!found) {
+        return sendError(reply, 404, 'NOT_FOUND', 'Conversation not found');
+      }
+      const first = await fastify.prisma.assistantMessage.findFirst({
+        orderBy: { createdAt: 'asc' },
+        select: { content: true },
+        where: { conversationId: found.id, role: 'USER' },
+      });
+      const { count } = await fastify.prisma.assistantConversation.updateMany({
+        data: {
+          title: (first && normalizeAssistantTitle(first.content)) || found.title,
+          titleSource: 'FIRST_MESSAGE',
+        },
+        where,
+      });
+      const conversation =
+        count === 0
+          ? null
+          : await fastify.prisma.assistantConversation.findFirst({
+              select: conversationSelect,
+              where,
+            });
+      if (!conversation) {
+        return sendError(reply, 404, 'NOT_FOUND', 'Conversation not found');
+      }
+      let naming = false;
+      try {
+        // Both switches, as a turn would: off, the first message's title is the automatic one.
+        const [enabled, generateTitles] = await Promise.all([
+          resolveSetting('assistant.enabled'),
+          resolveSetting('assistant.generateTitles'),
+        ]);
+        if (enabled && generateTitles) {
+          await fastify.temporal.nameAssistantConversation({
+            conversationId: conversation.id,
+            userId: user.sub,
+          });
+          naming = true;
+        }
+      } catch (err) {
+        // The reset stands; the user's next turn names the conversation instead.
+        request.log.warn({ conversationId: conversation.id, err }, 'assistant title not started');
+      }
+      return { data: { conversation: conversationView(conversation), naming } };
     }
   );
 

@@ -26,6 +26,19 @@ export interface AssistantConversationInput {
   pending?: AssistantTurnRequest[];
 }
 
+/** The workflow type the gateway starts to name a conversation now (a reset to automatic). */
+export const ASSISTANT_TITLE_WORKFLOW = 'AssistantTitleWorkflow';
+
+/** The title workflow's id: at most one naming per conversation at a time. */
+export function assistantTitleWorkflowId(conversationId: string): string {
+  return `assistant-title-${conversationId}`;
+}
+
+export interface AssistantTitleInput {
+  conversationId: string;
+  userId: string;
+}
+
 /** One turn: the reply row to fill, and the token its tools call the gateway with. */
 export interface AssistantTurnRequest {
   /** The ASSISTANT message row the gateway created PENDING for this turn. */
@@ -189,6 +202,7 @@ export interface AssistantMessageView {
 export interface AssistantConversationSummary {
   id: string;
   title: string;
+  titleSource: AssistantTitleSource;
   createdAt: string;
   updatedAt: string;
 }

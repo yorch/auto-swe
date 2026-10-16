@@ -6,7 +6,7 @@ import type {
   AssistantPageContext,
 } from '@auto-swe/shared/lib/assistantConversation';
 import { isAssistantReplyOpen } from '@auto-swe/shared/lib/assistantConversation';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { type QueryClient, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { API_BASE } from '@/lib/config';
@@ -46,15 +46,28 @@ export function useAssistantConversations(enabled: boolean) {
   });
 }
 
+function fetchConversation(id: string | null) {
+  return api
+    .get<{ data: AssistantConversationDetail }>(`/api/v1/assistant/conversations/${id}`)
+    .then((r) => r.data);
+}
+
 export function useAssistantConversation(id: string | null) {
   return useQuery({
     enabled: id !== null,
-    queryFn: () =>
-      api
-        .get<{ data: AssistantConversationDetail }>(`/api/v1/assistant/conversations/${id}`)
-        .then((r) => r.data),
+    queryFn: () => fetchConversation(id),
     queryKey: conversationKey(id),
   });
+}
+
+/** Write a conversation's new title into the open conversation and the list. */
+function writeConversation(qc: QueryClient, next: AssistantConversationSummary) {
+  qc.setQueryData<AssistantConversationDetail>(conversationKey(next.id), (prev) =>
+    prev ? { ...prev, conversation: next } : prev
+  );
+  qc.setQueryData<AssistantConversationSummary[]>(LIST_KEY, (prev) =>
+    prev?.map((c) => (c.id === next.id ? next : c))
+  );
 }
 
 interface SendInput {
@@ -138,13 +151,56 @@ export function useRenameAssistantConversation() {
           title,
         })
         .then((r) => r.data),
-    onSuccess: (renamed) => {
-      qc.setQueryData<AssistantConversationDetail>(conversationKey(renamed.id), (prev) =>
-        prev ? { ...prev, conversation: renamed } : prev
-      );
-      qc.setQueryData<AssistantConversationSummary[]>(LIST_KEY, (prev) =>
-        prev?.map((c) => (c.id === renamed.id ? renamed : c))
-      );
+    onSuccess: (renamed) => writeConversation(qc, renamed),
+  });
+}
+
+/** How often, and how many times, the panel looks for a title being written after a reset. */
+const TITLE_POLL_MS = 2500;
+const TITLE_POLL_TRIES = 8;
+
+/**
+ * Re-read a conversation until the model has named it, or the user has, or the tries run out (the
+ * model may decline: the first message's title then stays until a later turn names it).
+ */
+async function watchForTitle(qc: QueryClient, id: string) {
+  for (let i = 0; i < TITLE_POLL_TRIES; i++) {
+    await new Promise((resolve) => setTimeout(resolve, TITLE_POLL_MS));
+    try {
+      const detail = await qc.fetchQuery({
+        queryFn: () => fetchConversation(id),
+        queryKey: conversationKey(id),
+        staleTime: 0,
+      });
+      if (detail.conversation.titleSource !== 'FIRST_MESSAGE') {
+        writeConversation(qc, detail.conversation);
+        return;
+      }
+    } catch {
+      return;
+    }
+  }
+}
+
+/**
+ * Give a conversation back to automatic naming: the title returns to its first message at once,
+ * and the model's title replaces it a few seconds later when it writes one.
+ */
+export function useResetAssistantTitle() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api
+        .post<{ data: { conversation: AssistantConversationSummary; naming: boolean } }>(
+          `/api/v1/assistant/conversations/${id}/title/reset`,
+          {}
+        )
+        .then((r) => r.data),
+    onSuccess: ({ conversation, naming }) => {
+      writeConversation(qc, conversation);
+      if (naming) {
+        void watchForTitle(qc, conversation.id);
+      }
     },
   });
 }

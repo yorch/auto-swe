@@ -169,6 +169,13 @@ user can rename it from the panel header. A user's title is final: the model onl
 still taken from the first message. The titler reads the user's messages and not the replies, so it
 runs in parallel with the turn instead of after it. It has its own model, Haiku by default since a
 title is a few words, which admins change in the agent library.
+**Update (2026-10-16, title follow-ups)**: Renaming also works from the history list, and a user can
+hand a title back to the model, which names the conversation at once through a one-activity
+`AssistantTitleWorkflow` rather than on the next message, so the action visibly does something. An
+untitled conversation keeps being tried past its third message, at the 5th, 10th, 20th and each
+doubling, from the first message and the latest three. A title the model already wrote is not
+revisited as the topic drifts: a title that changes under the user while they look at the list costs
+more than a stale one, which they can rename or reset.
 
 ## D9 — 2026-10-14 — Cost and limits
 
