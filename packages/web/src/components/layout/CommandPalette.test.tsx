@@ -68,13 +68,13 @@ async function openPalette() {
 }
 
 const type = (value: string) =>
-  fireEvent.change(screen.getByRole('searchbox'), { target: { value } });
+  fireEvent.change(screen.getByRole('combobox'), { target: { value } });
 
 describe('CommandPalette', () => {
   it('runs a theme command in place instead of navigating', async () => {
     const onOpenChange = await openPalette();
     type('theme');
-    fireEvent.click(screen.getByRole('button', { name: /Theme: light/ }));
+    fireEvent.click(screen.getByRole('option', { name: /Theme: light/ }));
 
     expect(useThemeStore.getState().preference).toBe('light');
     expect(onOpenChange).toHaveBeenCalledWith(false);
@@ -85,15 +85,15 @@ describe('CommandPalette', () => {
     await openPalette();
     type('theme');
     for (const name of [/Theme: dark/, /Theme: light/, /Theme: follow system/]) {
-      expect(screen.getByRole('button', { name })).toBeTruthy();
+      expect(screen.getByRole('option', { name })).toBeTruthy();
     }
   });
 
   it('offers both palettes and switches in place', async () => {
     const onOpenChange = await openPalette();
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'palette' } });
-    expect(screen.getByRole('button', { name: /Palette: navy/ })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /Palette: graphite/ }));
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'palette' } });
+    expect(screen.getByRole('option', { name: /Palette: navy/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('option', { name: /Palette: graphite/ }));
 
     expect(useThemeStore.getState().palette).toBe('graphite');
     expect(document.documentElement.dataset.palette).toBe('graphite');
@@ -103,10 +103,23 @@ describe('CommandPalette', () => {
 
   it('still opens a page on Enter', async () => {
     await openPalette();
-    const input = screen.getByRole('searchbox');
+    const input = screen.getByRole('combobox');
     fireEvent.change(input, { target: { value: 'runs' } });
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(push).toHaveBeenCalledWith('/runs');
+  });
+
+  it('names the active option to assistive technology while focus stays in the input', async () => {
+    await openPalette();
+    const input = screen.getByRole('combobox');
+    const options = screen.getAllByRole('option');
+    expect(input.getAttribute('aria-activedescendant')).toBe(options[0]?.id);
+    expect(options[0]?.getAttribute('aria-selected')).toBe('true');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(input.getAttribute('aria-activedescendant')).toBe(options[1]?.id);
+    expect(options[1]?.getAttribute('aria-selected')).toBe('true');
+    expect(options[0]?.getAttribute('aria-selected')).toBe('false');
+    expect(options).not.toContain(document.activeElement);
   });
 });
 
@@ -115,7 +128,7 @@ describe('CommandPalette searching work', () => {
     const calls = stubApi({});
     await openPalette();
     type('runs');
-    expect(screen.getByRole('button', { name: /Runs/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /Runs/ })).toBeTruthy();
     expect(calls).toHaveLength(0);
   });
 
@@ -132,10 +145,10 @@ describe('CommandPalette searching work', () => {
       requests: () => [request('req-1', 'JIRA-4077', 'Harden the auth middleware')],
     });
     await openPalette();
-    const input = screen.getByRole('searchbox');
+    const input = screen.getByRole('combobox');
     fireEvent.change(input, { target: { value: 'JIRA-4077' } });
 
-    const row = await screen.findByRole('button', { name: /Harden the auth middleware/ });
+    const row = await screen.findByRole('option', { name: /Harden the auth middleware/ });
     expect(row.textContent).toContain('JIRA-4077');
     const requestsCall = calls.find((u) => u.pathname.endsWith('/requests'));
     expect(requestsCall?.searchParams.get('search')).toBe('JIRA-4077');
@@ -156,9 +169,9 @@ describe('CommandPalette searching work', () => {
       templates: () => [{ id: 'tpl-1', name: 'Auth rollout', status: 'ACTIVE' }],
     });
     await openPalette();
-    const input = screen.getByRole('searchbox');
+    const input = screen.getByRole('combobox');
     fireEvent.change(input, { target: { value: 'auth' } });
-    await screen.findByRole('button', { name: /Auth rollout/ });
+    await screen.findByRole('option', { name: /Auth rollout/ });
 
     for (const heading of ['Requests', 'Runs', 'Workflows']) {
       expect(screen.getByText(heading)).toBeTruthy();
@@ -182,8 +195,8 @@ describe('CommandPalette searching work', () => {
     });
     await openPalette();
     type('deploy');
-    await screen.findByRole('button', { name: /Deploy 0/ });
-    expect(screen.getAllByRole('button', { name: /^Deploy \d/ })).toHaveLength(5);
+    await screen.findByRole('option', { name: /Deploy 0/ });
+    expect(screen.getAllByRole('option', { name: /^Deploy \d/ })).toHaveLength(5);
   });
 
   it('never shows the answer to an earlier query after the query changes', async () => {
@@ -204,24 +217,24 @@ describe('CommandPalette searching work', () => {
     );
 
     type('beta');
-    await screen.findByRole('button', { name: /Beta result/ });
+    await screen.findByRole('option', { name: /Beta result/ });
 
     // The slow answer to the older query lands last; it must not appear.
     await act(async () => {
       releaseFirst([request('req-1', 'JIRA-1', 'Alpha result')]);
     });
-    expect(screen.queryByRole('button', { name: /Alpha result/ })).toBeNull();
-    expect(screen.getByRole('button', { name: /Beta result/ })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: /Alpha result/ })).toBeNull();
+    expect(screen.getByRole('option', { name: /Beta result/ })).toBeTruthy();
   });
 
   it('hides earlier results while the user is typing a new query, and says it is searching', async () => {
     stubApi({ requests: () => [request('req-1', 'JIRA-1', 'Alpha result')] });
     await openPalette();
     type('alpha');
-    await screen.findByRole('button', { name: /Alpha result/ });
+    await screen.findByRole('option', { name: /Alpha result/ });
 
     type('alphab');
-    expect(screen.queryByRole('button', { name: /Alpha result/ })).toBeNull();
+    expect(screen.queryByRole('option', { name: /Alpha result/ })).toBeNull();
     expect(screen.getByTestId('palette-loading')).toBeTruthy();
   });
 
@@ -234,6 +247,6 @@ describe('CommandPalette searching work', () => {
     await openPalette();
     type('runs');
     await new Promise((resolve) => setTimeout(resolve, 350));
-    expect(screen.getByRole('button', { name: /Runs/ })).toBeTruthy();
+    expect(screen.getByRole('option', { name: /Runs/ })).toBeTruthy();
   });
 });

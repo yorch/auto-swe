@@ -62,8 +62,8 @@ function score(query: string, entry: Entry): number {
 /**
  * Jump to any page the user may open by typing part of its name. Opens on
  * ⌘K / Ctrl+K from anywhere, or from the TopBar's search button. Built as a
- * combobox over a listbox: the input keeps focus, arrows move the active option,
- * Enter opens it, Escape closes.
+ * combobox over a listbox: the input keeps focus and names the active option
+ * through `aria-activedescendant`, arrows move it, Enter opens it, Escape closes.
  */
 export function CommandPalette({
   open,
@@ -102,6 +102,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
   const listId = useId();
+  const optionId = (i: number) => `${listId}-option-${i}`;
   const setThemePreference = useThemeStore((s) => s.setPreference);
   const setPalette = useThemeStore((s) => s.setPalette);
 
@@ -194,6 +195,11 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
     };
   }, []);
 
+  // Focus never leaves the input, so keep the active option in view as the arrows move it.
+  useEffect(() => {
+    document.getElementById(`${listId}-option-${active}`)?.scrollIntoView?.({ block: 'nearest' });
+  }, [active, listId]);
+
   const go = (entry: Entry | undefined) => {
     if (!entry) {
       return;
@@ -234,7 +240,10 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
         <div className="flex items-center gap-3 border-b border-ink-500 px-4">
           <Icon className="text-paper-500" name="search" size={16} />
           <input
+            aria-activedescendant={options[active] ? optionId(active) : undefined}
+            aria-autocomplete="list"
             aria-controls={listId}
+            aria-expanded={options.length > 0}
             aria-label="Search pages"
             className="h-12 w-full bg-transparent text-lg text-paper-50 outline-none placeholder:text-paper-600"
             onChange={(e) => {
@@ -244,6 +253,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
             onKeyDown={onKeyDown}
             placeholder="Search pages, requests, runs and workflows…"
             ref={inputRef}
+            role="combobox"
             type="search"
             value={query}
           />
@@ -258,33 +268,35 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
               : 'No matches'
             : `${options.length} results`}
         </span>
-        <ul className="max-h-[50vh] overflow-y-auto p-1.5" id={listId}>
+        <div className="max-h-[50vh] overflow-y-auto p-1.5">
           {options.length === 0 && !remote.loading && (
-            <li className="px-3 py-8 text-center text-sm text-paper-500">
+            <p className="px-3 py-8 text-center text-sm text-paper-500">
               Nothing matches “{query}”.
-            </li>
+            </p>
           )}
-          {options.map((entry, i) => (
-            <Fragment key={entry.id}>
-              {i >= results.length && entry.group !== options[i - 1]?.group && (
-                <li
-                  className="px-3 pt-2 pb-1 text-xs font-medium text-paper-600"
-                  role="presentation"
-                >
-                  {entry.group}
-                </li>
-              )}
-              <li>
-                <button
+          <div aria-label="Results" id={listId} role="listbox">
+            {options.map((entry, i) => (
+              <Fragment key={entry.id}>
+                {i >= results.length && entry.group !== options[i - 1]?.group && (
+                  <div
+                    className="px-3 pt-2 pb-1 text-xs font-medium text-paper-600"
+                    role="presentation"
+                  >
+                    {entry.group}
+                  </div>
+                )}
+                <div
+                  aria-selected={i === active}
                   className={cn(
-                    'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm outline-none',
+                    'flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-sm',
                     i === active ? 'bg-ink-600 text-paper-50' : 'text-paper-300'
                   )}
+                  id={optionId(i)}
                   onClick={() => go(entry)}
-                  onFocus={() => setActive(i)}
                   onKeyDown={onKeyDown}
                   onMouseMove={() => setActive(i)}
-                  type="button"
+                  role="option"
+                  tabIndex={-1}
                 >
                   <span
                     className={cn(
@@ -305,16 +317,16 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
                   {i < results.length && (
                     <span className="shrink-0 text-xs text-paper-600">{entry.group}</span>
                   )}
-                </button>
-              </li>
-            </Fragment>
-          ))}
+                </div>
+              </Fragment>
+            ))}
+          </div>
           {remote.loading && (
-            <li className="px-3 py-2 text-xs text-paper-600" data-testid="palette-loading">
+            <p className="px-3 py-2 text-xs text-paper-600" data-testid="palette-loading">
               Searching requests, runs and workflows…
-            </li>
+            </p>
           )}
-        </ul>
+        </div>
         <div className="flex items-center gap-4 border-t border-ink-500 px-4 py-2 text-xs text-paper-600">
           <span>
             <kbd className="font-sans">↑↓</kbd> to move
