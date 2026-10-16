@@ -12,8 +12,8 @@
 @theme {
   /* Ink / surface ramp — deep navy/indigo */
   --color-ink-950: #0a0c12; /* panel, deepest */
-  --color-ink-900: #0e111a; /* bg-2, recessed rails, code blocks */
-  --color-ink-800: #0c0f17; /* bg, page ground */
+  --color-ink-900: #0c0f17; /* bg-2, recessed rails, code blocks, inputs */
+  --color-ink-800: #0e111a; /* bg, page ground */
   --color-ink-700: #141926; /* panel-2, slightly cooler than bg */
   --color-ink-600: #232a3d; /* surface, raised / selected rows, dividers */
   --color-ink-500: #2a3349; /* surface-2 */
@@ -26,16 +26,17 @@
      (ink-950 / 900 / 800 / 700). Every step is used for real text — nav group labels,
      placeholders, hints, muted badges — so all clear AA (4.5:1), and the ramp keeps
      visible steps between them:
-       paper-300 #c7cdda  12.3 / 11.8 / 12.0 / 11.0   (9.0 on ink-600, 7.9 on ink-500)
-       paper-400 #bac1d1  10.8 / 10.5 / 10.6 /  9.7   (7.9 on ink-600, 7.0 on ink-500)
-       paper-500 #a9b2c6   9.2 /  8.9 /  9.0 /  8.3   (6.7 on ink-600, 5.9 on ink-500)
-       paper-600 #909cb5   7.1 /  6.8 /  6.9 /  6.4   (5.2 on ink-600, 4.6 on ink-500)
+       paper-300 #c7cdda  12.3 / 12.0 / 11.8 / 11.0   (9.0 on ink-600, 7.9 on ink-500)
+       paper-400 #bac1d1  10.8 / 10.6 / 10.4 /  9.7   (7.9 on ink-600, 7.0 on ink-500)
+       paper-500 #a9b2c6   9.2 /  9.0 /  8.9 /  8.2   (6.7 on ink-600, 5.9 on ink-500)
+       paper-600 #909cb5   7.1 /  6.9 /  6.8 /  6.4   (5.2 on ink-600, 4.6 on ink-500)
      These sit well above the AA floor on purpose: paper-500 is the most used text tone
      and most of it is 12px metadata, where a grey that merely passes reads as fuzz.
      Do not dim the muted steps back toward the floor.
-     Ink ramp: ink-800 (#0c0f17, the page ground) is slightly darker than ink-900
-     (#0e111a, recessed rails); swapping them would shift every surface, so the
-     ordering is left as is. */
+     Ink ramp: in the dark theme lightness rises with the role — 950 deepest, then
+     900 recessed (rails, code blocks, inputs), 800 the page, 700 the card, and on up
+     through the raised surfaces and borders to 200. `palette.test.ts` holds it to
+     that order, so a recessed surface is never lighter than the page it sits on. */
   --color-paper-50: #f7f8fb; /* primary ink, headings */
   --color-paper-100: #eef1f7; /* titles, field values */
   --color-paper-200: #e4e8f0; /* main body text */
@@ -510,7 +511,7 @@
   stroke-width: 2.5 !important;
 }
 .react-flow__minimap-mask {
-  fill: rgba(14, 17, 26, 0.85);
+  fill: rgba(12, 15, 23, 0.85);
 }
 :root[data-theme='light'] .react-flow__minimap-mask {
   fill: rgba(243, 245, 249, 0.85);

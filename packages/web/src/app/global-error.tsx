@@ -3,11 +3,11 @@
 // Replaces the root layout when it itself throws, so it renders its own <html>
 // and cannot rely on the app's providers or stylesheet: styles are inline, and
 // every colour is a design token's value from globals.css, named after it.
-const INK_800 = '#0c0f17';
-const INK_900 = '#0e111a';
-const INK_400 = '#232b40';
-const PAPER_50 = '#eef1f7';
-const PAPER_400 = '#aeb6c9';
+const INK_800 = '#0e111a';
+const INK_900 = '#0c0f17';
+const INK_400 = '#2f3850';
+const PAPER_50 = '#f7f8fb';
+const PAPER_400 = '#bac1d1';
 const EMBER_500 = '#6a5bff';
 const BRICK_400 = '#ff7a7a';
 

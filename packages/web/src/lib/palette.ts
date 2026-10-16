@@ -22,7 +22,7 @@ export const TOKEN = {
   ink500: '#2a3349',
   ink600: '#232a3d',
   ink700: '#141926',
-  ink900: '#0e111a',
+  ink900: '#0c0f17',
   ink950: '#0a0c12',
   moss400: '#46d28a',
   paper200: '#e4e8f0',
