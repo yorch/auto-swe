@@ -210,8 +210,8 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
   consolidation leaves its cluster. Recall in that case returns nothing. Items already stored are still
   recalled, checked against the patterns that did run, so a stored item that only a skipped
   pattern would catch can reach a prompt in that window.
-- **Not every loop that fails writes a lesson.** The release templates `canary-rollout` and
-  `signal-gated-rollout` have the same review and CI loops and write none. Nor does the sign-off
+- **Not every loop that fails writes a lesson.** The release templates `staged-deploy-signals` and
+  `external-approval-gate` have the same review and CI loops and write none. Nor does the sign-off
   loop of `four-eyes`, when people reject the change three times: those rejections are people's,
   often without a written reason, and a `REVIEW_FAILED` lesson is written as the review network's.
   A run whose CI wait times out writes no lesson, and only `ticket-to-merge` writes one when the

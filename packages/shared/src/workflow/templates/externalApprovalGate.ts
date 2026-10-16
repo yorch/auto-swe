@@ -17,14 +17,15 @@ import {
  * Standard review + CI loop, then waits for an explicit deployment-gate signal
  * before declaring success. Models a release-train or change-management process
  * where a separate system (CD pipeline, change board) must send a go/no-go.
+ * The run deploys nothing itself: it waits for that system's decision.
  */
-export const SIGNAL_GATED_ROLLOUT_SPEC: WorkflowSpec = {
+export const EXTERNAL_APPROVAL_GATE_SPEC: WorkflowSpec = {
   description:
     'Implement, have the review agents check it, open a pull request and wait for CI. Then ' +
     'pause until an external system (a deploy pipeline or change-management board) sends ' +
     'its decision. An approval lets the run finish; a rejection or a timeout ends it.',
   entry: 'setValidating',
-  name: 'signal-gated-rollout',
+  name: 'external-approval-gate',
   nodes: mergeNodes(
     validatePhase({ next: 'setImplementing' }),
     {

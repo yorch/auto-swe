@@ -1,7 +1,7 @@
 {
   "description": "Implement, run tests, then require explicit human approval before the pull request is opened. Useful when a person must sign off on every change before reviewers can see it.",
   "entry": "setValidating",
-  "name": "pr-approval-gate",
+  "name": "approve-before-pr",
   "nodes": {
     "approve": {
       "description": "Tests passed. Approve to open the PR or reject to discard.",

@@ -19,13 +19,13 @@ import {
  *
  * Demonstrates: shell node + contextFrom on humanApproval.
  */
-export const MIGRATION_SPEC: WorkflowSpec = {
+export const DB_MIGRATION_DRY_RUN_SPEC: WorkflowSpec = {
   description:
     'Implement the migration code, run it as a dry run in a throwaway container to preview ' +
     'the SQL, then require a person to review the plan and approve it before the pull ' +
     'request is opened.',
   entry: 'setValidating',
-  name: 'migration',
+  name: 'db-migration-dry-run',
   nodes: mergeNodes(
     validatePhase({ next: 'setImplementing', successCriteria: false }),
     {

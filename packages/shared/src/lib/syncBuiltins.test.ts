@@ -371,11 +371,11 @@ describe('syncBuiltins — rolling the helper-built templates out', () => {
     const hadIt = BUILTIN_TEMPLATES.filter((t) => 'setCompleted' in (golden(t.name) as Spec).nodes);
     expect(hadIt.map((t) => t.name).sort()).toEqual([
       'agent-reviewed-pr',
+      'approve-before-pr',
       'code-and-ci',
       'consensus-review',
       'dependency-update',
       'four-eyes',
-      'pr-approval-gate',
       'ticket-to-merge',
     ]);
     for (const t of hadIt) {

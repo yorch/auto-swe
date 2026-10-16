@@ -1,7 +1,7 @@
 {
-  "description": "Implement, have the review agents check it (up to 3 attempts), open a pull request and wait for CI. Then pause until an external system confirms the staging deploy, and again until it confirms production monitoring is healthy. Models a canary or release-train pipeline where each promotion stage must be confirmed before the next one starts.",
+  "description": "Implement, have the review agents check it, open a pull request and wait for CI. Then pause until an external system (a deploy pipeline or change-management board) sends its decision. An approval lets the run finish; a rejection or a timeout ends it.",
   "entry": "setValidating",
-  "name": "canary-rollout",
+  "name": "external-approval-gate",
   "nodes": {
     "checkApproval": {
       "expr": "nodes.review.output.approved == true",
@@ -12,7 +12,7 @@
     "checkCI": {
       "expr": "context.ciResultPayload.passed == true",
       "onFalse": "incCIRetries",
-      "onTrue": "waitForStaging",
+      "onTrue": "waitForDeployGate",
       "type": "cond"
     },
     "checkCILimit": {
@@ -21,9 +21,9 @@
       "onTrue": "terminateCIFailed",
       "type": "cond"
     },
-    "checkMonitoring": {
-      "expr": "context.monitorPayload.healthy == true",
-      "onFalse": "terminateRollbackRequired",
+    "checkDeployGate": {
+      "expr": "context.deployPayload.approved == true",
+      "onFalse": "terminateDeployRejected",
       "onTrue": "done",
       "type": "cond"
     },
@@ -31,12 +31,6 @@
       "expr": "context.reviewRetries >= 3",
       "onFalse": "reviewFix",
       "onTrue": "terminateReviewFailed",
-      "type": "cond"
-    },
-    "checkStaging": {
-      "expr": "context.stagingPayload.deployed == true",
-      "onFalse": "terminateStagingFailed",
-      "onTrue": "waitForMonitoring",
       "type": "cond"
     },
     "ciFix": {
@@ -255,7 +249,19 @@
       "status": "TIMED_OUT",
       "type": "terminate"
     },
-    "terminateMonitorTimedOut": {
+    "terminateDeployRejected": {
+      "result": {
+        "prNumber": {
+          "from": "context.prNumber"
+        },
+        "prUrl": {
+          "from": "context.prUrl"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "terminateDeployTimedOut": {
       "result": {
         "prNumber": {
           "from": "context.prNumber"
@@ -269,42 +275,6 @@
     },
     "terminateReviewFailed": {
       "status": "FAILED",
-      "type": "terminate"
-    },
-    "terminateRollbackRequired": {
-      "result": {
-        "prNumber": {
-          "from": "context.prNumber"
-        },
-        "prUrl": {
-          "from": "context.prUrl"
-        }
-      },
-      "status": "FAILED",
-      "type": "terminate"
-    },
-    "terminateStagingFailed": {
-      "result": {
-        "prNumber": {
-          "from": "context.prNumber"
-        },
-        "prUrl": {
-          "from": "context.prUrl"
-        }
-      },
-      "status": "FAILED",
-      "type": "terminate"
-    },
-    "terminateStagingTimedOut": {
-      "result": {
-        "prNumber": {
-          "from": "context.prNumber"
-        },
-        "prUrl": {
-          "from": "context.prUrl"
-        }
-      },
-      "status": "TIMED_OUT",
       "type": "terminate"
     },
     "updateCodeAfterCIFix": {
@@ -339,20 +309,12 @@
       "timeout": "4h",
       "type": "signal"
     },
-    "waitForMonitoring": {
-      "name": "productionMonitorSignal",
-      "onReceive": "checkMonitoring",
-      "onTimeout": "terminateMonitorTimedOut",
-      "storeAs": "context.monitorPayload",
-      "timeout": "2h",
-      "type": "signal"
-    },
-    "waitForStaging": {
-      "name": "stagingDeploySignal",
-      "onReceive": "checkStaging",
-      "onTimeout": "terminateStagingTimedOut",
-      "storeAs": "context.stagingPayload",
-      "timeout": "1h",
+    "waitForDeployGate": {
+      "name": "deploymentGateSignal",
+      "onReceive": "checkDeployGate",
+      "onTimeout": "terminateDeployTimedOut",
+      "storeAs": "context.deployPayload",
+      "timeout": "48h",
       "type": "signal"
     }
   },

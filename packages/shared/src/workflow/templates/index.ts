@@ -3,30 +3,30 @@ import type { WorkspaceProviderType } from '../../lib/workspaceProviders.js';
 import { BUDGET_TIERS } from '../../types/workflow.js';
 import type { WorkflowSpec } from '../spec.js';
 import { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
-import { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
+import { APPROVE_BEFORE_PR_SPEC } from './approveBeforePr.js';
 import { CI_TRIAGE_AND_FIX_SPEC, CI_TRIAGE_INPUT_SCHEMA } from './ciTriageAndFix.js';
 import { CODE_AND_CI_SPEC } from './codeAndCi.js';
 import { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
 import { CREATE_ISSUE_SPEC } from './createIssue.js';
 import { CREATE_ISSUE_FROM_BRIEF_SPEC } from './createIssueFromBrief.js';
+import { DB_MIGRATION_DRY_RUN_SPEC } from './dbMigrationDryRun.js';
 import { DEPENDENCY_UPDATE_SPEC } from './dependencyUpdate.js';
+import { EXTERNAL_APPROVAL_GATE_SPEC } from './externalApprovalGate.js';
 import { FOUR_EYES_SPEC } from './fourEyes.js';
-import { FULL_SUPERVISED_SPEC } from './fullSupervised.js';
+import { FULLY_SUPERVISED_SPEC } from './fullySupervised.js';
 import { HOTFIX_SPEC } from './hotfix.js';
 import { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
 import { ISSUE_TO_CONFLUENCE_PAGE_SPEC } from './issueToConfluencePage.js';
-import { MIGRATION_SPEC } from './migration.js';
 import { MODEL_CATALOG_REFRESH_SPEC } from './modelCatalogRefresh.js';
 import { NOTION_CONTENT_BRAND_REVIEW_SPEC } from './notionContentBrandReview.js';
 import { NOTION_CONTENT_DRAFT_SPEC } from './notionContentDraft.js';
 import { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
-import { PR_APPROVAL_GATE_SPEC } from './prApprovalGate.js';
 import { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';
 import { PRODUCT_PRD_DRAFT_SPEC } from './productPrdDraft.js';
 import { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 import { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
 import { SEND_SLACK_UPDATE_SPEC } from './sendSlackUpdate.js';
-import { SIGNAL_GATED_ROLLOUT_SPEC } from './signalGatedRollout.js';
+import { STAGED_DEPLOY_SIGNALS_SPEC } from './stagedDeploySignals.js';
 import { TICKET_TO_MERGE_SPEC } from './ticketToMerge.js';
 import { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';
 import { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';
@@ -111,14 +111,14 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
 
   // ── Signal-driven ────────────────────────────────────────────────────────
   {
-    description: SIGNAL_GATED_ROLLOUT_SPEC.description,
-    name: SIGNAL_GATED_ROLLOUT_SPEC.name,
-    spec: SIGNAL_GATED_ROLLOUT_SPEC,
+    description: EXTERNAL_APPROVAL_GATE_SPEC.description,
+    name: EXTERNAL_APPROVAL_GATE_SPEC.name,
+    spec: EXTERNAL_APPROVAL_GATE_SPEC,
   },
   {
-    description: CANARY_ROLLOUT_SPEC.description,
-    name: CANARY_ROLLOUT_SPEC.name,
-    spec: CANARY_ROLLOUT_SPEC,
+    description: STAGED_DEPLOY_SIGNALS_SPEC.description,
+    name: STAGED_DEPLOY_SIGNALS_SPEC.name,
+    spec: STAGED_DEPLOY_SIGNALS_SPEC,
   },
 
   // ── Parallel execution ───────────────────────────────────────────────────
@@ -130,9 +130,9 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
 
   // ── HITL examples ────────────────────────────────────────────────────────
   {
-    description: PR_APPROVAL_GATE_SPEC.description,
-    name: PR_APPROVAL_GATE_SPEC.name,
-    spec: PR_APPROVAL_GATE_SPEC,
+    description: APPROVE_BEFORE_PR_SPEC.description,
+    name: APPROVE_BEFORE_PR_SPEC.name,
+    spec: APPROVE_BEFORE_PR_SPEC,
   },
   {
     description: SCOPE_CLARIFICATION_SPEC.description,
@@ -155,11 +155,15 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     spec: TIERED_ESCALATION_SPEC,
   },
   { description: FOUR_EYES_SPEC.description, name: FOUR_EYES_SPEC.name, spec: FOUR_EYES_SPEC },
-  { description: MIGRATION_SPEC.description, name: MIGRATION_SPEC.name, spec: MIGRATION_SPEC },
   {
-    description: FULL_SUPERVISED_SPEC.description,
-    name: FULL_SUPERVISED_SPEC.name,
-    spec: FULL_SUPERVISED_SPEC,
+    description: DB_MIGRATION_DRY_RUN_SPEC.description,
+    name: DB_MIGRATION_DRY_RUN_SPEC.name,
+    spec: DB_MIGRATION_DRY_RUN_SPEC,
+  },
+  {
+    description: FULLY_SUPERVISED_SPEC.description,
+    name: FULLY_SUPERVISED_SPEC.name,
+    spec: FULLY_SUPERVISED_SPEC,
   },
 
   // ── Record workspace (Zendesk) ───────────────────────────────────────────
@@ -331,30 +335,30 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
 ];
 
 export { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
-export { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
+export { APPROVE_BEFORE_PR_SPEC } from './approveBeforePr.js';
 export { CI_TRIAGE_AND_FIX_SPEC, CI_TRIAGE_INPUT_SCHEMA } from './ciTriageAndFix.js';
 export { CODE_AND_CI_SPEC } from './codeAndCi.js';
 export { CONSENSUS_REVIEW_SPEC } from './consensusReview.js';
 export { CREATE_ISSUE_SPEC } from './createIssue.js';
 export { CREATE_ISSUE_FROM_BRIEF_SPEC } from './createIssueFromBrief.js';
+export { DB_MIGRATION_DRY_RUN_SPEC } from './dbMigrationDryRun.js';
 export { DEPENDENCY_UPDATE_SPEC } from './dependencyUpdate.js';
+export { EXTERNAL_APPROVAL_GATE_SPEC } from './externalApprovalGate.js';
 export { FOUR_EYES_SPEC } from './fourEyes.js';
-export { FULL_SUPERVISED_SPEC } from './fullSupervised.js';
+export { FULLY_SUPERVISED_SPEC } from './fullySupervised.js';
 export { HOTFIX_SPEC } from './hotfix.js';
 export { HUMAN_CODE_REVIEW_SPEC } from './humanCodeReview.js';
 export { ISSUE_TO_CONFLUENCE_PAGE_SPEC } from './issueToConfluencePage.js';
-export { MIGRATION_SPEC } from './migration.js';
 export { MODEL_CATALOG_REFRESH_SPEC } from './modelCatalogRefresh.js';
 export { NOTION_CONTENT_BRAND_REVIEW_SPEC } from './notionContentBrandReview.js';
 export { NOTION_CONTENT_DRAFT_SPEC } from './notionContentDraft.js';
 export { PARALLEL_FAN_OUT_SPEC } from './parallelFanOut.js';
-export { PR_APPROVAL_GATE_SPEC } from './prApprovalGate.js';
 export { PRD_DECOMPOSITION_SPEC } from './prdDecomposition.js';
 export { PRODUCT_PRD_DRAFT_SPEC } from './productPrdDraft.js';
 export { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 export { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
 export { SEND_SLACK_UPDATE_SPEC } from './sendSlackUpdate.js';
-export { SIGNAL_GATED_ROLLOUT_SPEC } from './signalGatedRollout.js';
+export { STAGED_DEPLOY_SIGNALS_SPEC } from './stagedDeploySignals.js';
 // Re-export individual specs so callers can import from this module directly.
 export { TICKET_TO_MERGE_SPEC } from './ticketToMerge.js';
 export { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';

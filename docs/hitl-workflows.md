@@ -211,7 +211,7 @@ applyFeedbackDecision: {
 },
 ```
 
-The `pr-approval-gate` template ([`packages/shared/src/workflow/templates/prApprovalGate.ts`](../packages/shared/src/workflow/templates/prApprovalGate.ts)) shows the simplest pattern — implement, test, `humanApproval`, then open PR:
+The `approve-before-pr` template ([`packages/shared/src/workflow/templates/approveBeforePr.ts`](../packages/shared/src/workflow/templates/approveBeforePr.ts)) shows the simplest pattern — implement, test, `humanApproval`, then open PR:
 
 ```typescript
 approve: {
