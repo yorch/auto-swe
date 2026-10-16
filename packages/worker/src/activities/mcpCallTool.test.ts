@@ -222,6 +222,28 @@ describe('mcpCallTool governance', () => {
     expect(execute).not.toHaveBeenCalled();
   });
 
+  it('gates a mutating call that has a run but no nodeId, without touching the ledger', async () => {
+    vi.mocked(prisma.autonomyDecision.findFirst)
+      .mockResolvedValueOnce({
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+        payload: { decision: 'require_approval' },
+        policyName: 'default',
+        riskClass: 'external_write',
+      } as never)
+      .mockResolvedValueOnce(null);
+    mockedUrl.mockResolvedValue({ url: 'https://mcp.example.com/mcp' });
+    const execute = vi.fn().mockResolvedValue({ ok: 1 });
+    mockedLoad.mockResolvedValue(loadedTool({ execute }));
+
+    await expect(mcpCallTool({ connectionRef: 'c1', tool: 'search_docs' })).rejects.toHaveProperty(
+      'type',
+      'APPROVAL_REQUIRED'
+    );
+    expect(execute).not.toHaveBeenCalled();
+    expect(prisma.workflowOutcomeReference.findFirst).not.toHaveBeenCalled();
+    expect(prisma.workflowOutcomeReference.create).not.toHaveBeenCalled();
+  });
+
   it('lets a server-declared read-only tool through under the same policy', async () => {
     // The MCP `readOnlyHint` annotation is the protocol's own signal that a call
     // has no effect. Refusing a read because an unrelated write is waiting for a
