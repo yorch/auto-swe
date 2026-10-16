@@ -131,8 +131,9 @@ against the shell-command scanner. Skills are inlined into the system prompt (no
 persona and skill fallbacks that `buildImplementerForActivity` applies to sub-role agents do not apply.
 
 **MCP tools** bind per the agent's own configuration (`'mcp'` in `toolKeys`, or `null`/`[]`, plus an
-`mcpConnectionId`), exactly as on an `agent` node. See Limitations: next to a workspace this is an
-exfiltration channel.
+`mcpConnectionId`), exactly as on an `agent` node, and only when the repository's team owns the
+connection; otherwise the agent runs without MCP tools and the trace records `mcp.binding_refused`.
+See Limitations: next to a workspace this is an exfiltration channel.
 
 **The loop.** The agent runs on the platform's Mastra loop unless the Agent version sets
 `runtime: claude-code` or `runtime: pi`; the run-wide `workspace.implementerRuntime` setting does not
@@ -405,10 +406,9 @@ hidden template's own link is not shown.
   branches. The platform does not currently require the launcher to hold push permission on the
   repository when a run delivers (`deliver: branch` or `draft_pr`). `workspace.agentRunAllowWorkflowChanges` narrows this and does
   not close it. Use `deliver: none` (the default) where that matters, and restrict who may launch.
-- **An agent's MCP connection is reachable across teams.** The connection an agent binds is not checked
-  against the run's team: a GLOBAL (or organization-scope) agent bound to one team's MCP connection is
-  usable, through a text box, by every member of every team that can launch it, with that connection's
-  credentials and reach. Bind MCP only on agents meant for everyone who can launch them.
+- **An agent's MCP connection is checked against the repository's team, not the launcher's.** A
+  member of a team the repository is shared with launches under the repository's owning team, and so
+  uses any MCP connection that team owns, through a text box, with its credentials and reach.
 - **Usage of the step in flight at a deadline abort is unrecorded.** Each completed model step is
   debited as it lands, but when the wall-clock deadline or a cancellation aborts a step mid-flight,
   that step's tokens are not recorded, so spend can exceed the ledger by at most one step.

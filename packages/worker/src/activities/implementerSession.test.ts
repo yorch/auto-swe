@@ -156,6 +156,7 @@ vi.mock('../lib/config/contextLookup.js', () => ({
 }));
 
 vi.mock('../lib/config/mcpConnection.js', () => ({
+  resolveAgentMcpBinding: vi.fn(async () => ({ kind: 'none' })),
   resolveAgentMcpUrl: vi.fn(async () => null),
 }));
 

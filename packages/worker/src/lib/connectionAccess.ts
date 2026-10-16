@@ -14,9 +14,10 @@
  * (admin-authored) template may use any (`templateReachesConnection`).
  */
 import { prisma } from '@auto-swe/shared/db';
-import { templateReachesConnection } from '@auto-swe/shared/lib/repoMembership';
+import { isRepoTeam, templateReachesConnection } from '@auto-swe/shared/lib/repoMembership';
 import { ApplicationFailure, Context } from '@temporalio/activity';
 import { logWarn } from './activityLog.js';
+import type { ResolveCtx } from './config/types.js';
 
 /** The workflow execution's id, or null outside an activity. */
 function currentWorkflowId(): string | null {
@@ -118,5 +119,57 @@ export async function assertRunMayUseConnection(connectionId: string, step: stri
       'CONNECTION_NOT_REACHABLE',
       { connectionId, step }
     );
+  }
+}
+
+/** What an Agent's MCP connection is checked against: the run's team, else its template's team. */
+export type AgentConnectionTenant = Pick<ResolveCtx, 'teamId' | 'workflowTemplateId'>;
+
+/** How {@link agentMayUseConnection} answered: `check_failed` is a lookup error, not a verdict. */
+export type AgentConnectionAccess = 'allowed' | 'refused' | 'check_failed';
+
+/**
+ * Whether this run's tenant may use the `mcp` connection an Agent binds (`Agent.mcpConnectionId`).
+ *
+ * The binding is chosen on the Agent row, not by the run or its template's author, and a GLOBAL or
+ * organization-scope row applies to every team's runs: without this, a platform-wide agent bound
+ * to one team's server would call it, with that team's token and reach, from any other team's run
+ * — steered by whatever prompt that run supplies. So the only authority is a team, and that team
+ * must own the connection (`isRepoTeam`, which would also count a share, though MCP connections
+ * cannot be shared):
+ *
+ * - With a team in the tenant (the run's repository's team, or a channel's), that team is checked.
+ * - With no team but a template, the template's own team is checked. A global template has no
+ *   team, and is refused: unlike an `mcp` node's `connectionRef`, the id was not written by the
+ *   template's (admin) author, and any member may launch a global template.
+ * - With neither, nothing identifies a team, and it is refused.
+ *
+ * A missing, inactive or non-`mcp` connection is `allowed`: there is nothing to refuse, and
+ * `mcpUrlForConnection` binds nothing for it. Never throws: a lookup that fails answers
+ * `check_failed`, so the caller degrades without reading the connection's credential.
+ */
+export async function agentMayUseConnection(
+  connectionId: string,
+  tenant?: AgentConnectionTenant
+): Promise<AgentConnectionAccess> {
+  try {
+    const connection = await prisma.connection.findUnique({
+      select: { isActive: true, shares: { select: { teamId: true } }, teamId: true, type: true },
+      where: { id: connectionId },
+    });
+    if (!connection?.isActive || connection.type !== 'mcp') {
+      return 'allowed';
+    }
+    let teamId: string | null | undefined = tenant?.teamId;
+    if (!teamId && tenant?.workflowTemplateId) {
+      const template = await prisma.workflowTemplate.findUnique({
+        select: { teamId: true },
+        where: { id: tenant.workflowTemplateId },
+      });
+      teamId = template?.teamId;
+    }
+    return teamId && isRepoTeam(connection, teamId) ? 'allowed' : 'refused';
+  } catch {
+    return 'check_failed';
   }
 }

@@ -76,8 +76,9 @@ export function isRepoTeam(repo: RepoTeams, teamId: string): boolean {
  * A team's template may reference only a connection that team owns or has had shared
  * with it. A global template has no team — only an ADMIN may author one
  * (`routes/workflowTemplates.ts` refuses everyone else) — and may reference any
- * connection, which is the rule an agent's `mcpConnectionId` already follows
- * (`validateMcpConnectionRef` in the agent library).
+ * connection. (An agent's `mcpConnectionId` is checked against a team instead —
+ * `agentMayUseConnection` in the worker — because the Agent row, not the template's author,
+ * chose it, and a GLOBAL Agent row applies to every team's runs.)
  *
  * A reference is a literal id written into the spec, so unlike a payload binding it
  * is fully known when the spec is saved; but the authority that matters is the one

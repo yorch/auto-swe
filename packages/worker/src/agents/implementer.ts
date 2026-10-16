@@ -12,7 +12,12 @@ import {
   loadAgentToolConfig,
   type ResolvedSkill,
 } from '../lib/config/agentSkills.js';
-import { type McpConnectionTarget, resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
+import {
+  type AgentMcpOptions,
+  type McpConnectionTarget,
+  resolveAgentMcpBinding,
+  resolveAgentMcpUrl,
+} from '../lib/config/mcpConnection.js';
 import { skillMenuLine, skillPromptBlock } from '../lib/config/skillPrompt.js';
 import type { ResolveCtx } from '../lib/config/types.js';
 import { getModel, type LanguageModel } from '../lib/models.js';
@@ -346,17 +351,24 @@ export async function resolveImplementerConfig(
 
 /**
  * The MCP connection an implementer-family session binds: the agent's own, else
- * — for a persona — the implementer's. Shared by both runtimes, so the Mastra
- * loop and the harness relay the same connection.
+ * — for a persona with no binding of its own — the implementer's. A persona
+ * whose own binding this run may not use gets none: it never silently swaps to
+ * a different connection. Shared by both runtimes, so the Mastra loop and the
+ * harness relay the same connection.
  */
 export async function resolveImplementerMcpTarget(
   agentKey: string,
-  ctx?: ResolveCtx
+  ctx?: ResolveCtx,
+  tracer?: AgentMcpOptions['tracer']
 ): Promise<McpConnectionTarget | null> {
-  return (
-    (await resolveAgentMcpUrl(agentKey, ctx)) ??
-    (agentKey !== 'implementer' ? await resolveAgentMcpUrl('implementer', ctx) : null)
-  );
+  const own = await resolveAgentMcpBinding(agentKey, ctx, { tracer });
+  if (own.kind === 'bound') {
+    return own.target;
+  }
+  if (own.kind === 'refused' || agentKey === 'implementer') {
+    return null;
+  }
+  return resolveAgentMcpUrl('implementer', ctx, { tracer });
 }
 
 /**
@@ -394,7 +406,7 @@ export async function buildImplementerForActivity(
     ctx,
     agentKey
   );
-  const mcpTarget = await resolveImplementerMcpTarget(agentKey, ctx);
+  const mcpTarget = await resolveImplementerMcpTarget(agentKey, ctx, tracer);
   const { agent, promptSuffix, closeMcp } = await createImplementerAgent(
     workspace,
     tracer,

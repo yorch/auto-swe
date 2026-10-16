@@ -5,6 +5,7 @@ import {
   normalizeModelSpec,
   parseProviderModelSpec,
 } from '@auto-swe/shared/lib/modelSpec';
+import { isRepoTeam } from '@auto-swe/shared/lib/repoMembership';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   type ImplementerRuntimeKind,
@@ -336,10 +337,11 @@ export async function validateAgentScopeRefs(
 }
 
 /**
- * Validate an Agent's `mcpConnectionId` reference (P2/WS3): it must point at an
- * active `mcp`-type Connection. TEAM-scoped agents may only reference their own
- * team's connection (tenancy); GLOBAL / WORKFLOW_TEMPLATE agents are admin-owned
- * and may reference any. Returns an error message or null.
+ * Validate an Agent's `mcpConnectionId` reference: it must point at an active
+ * `mcp`-type Connection. A TEAM-scoped agent may reference only a connection its
+ * team owns (`isRepoTeam`; MCP connections cannot be shared, so ownership is the
+ * only way in); other scopes are admin-owned and may save any — the worker decides
+ * per run whether the run's team owns it (`agentMayUseConnection`). Returns an error message or null.
  */
 export async function validateMcpConnectionRef(
   prisma: PrismaClient,
@@ -350,7 +352,13 @@ export async function validateMcpConnectionRef(
     return null;
   }
   const conn = await prisma.connection.findUnique({
-    select: { id: true, isActive: true, teamId: true, type: true },
+    select: {
+      id: true,
+      isActive: true,
+      shares: { select: { teamId: true } },
+      teamId: true,
+      type: true,
+    },
     where: { id: mcpConnectionId },
   });
   if (!conn?.isActive) {
@@ -359,8 +367,8 @@ export async function validateMcpConnectionRef(
   if (conn.type !== 'mcp') {
     return 'Referenced connection is not an mcp connection';
   }
-  if (scopeKey.scope === 'TEAM' && scopeKey.teamId && conn.teamId !== scopeKey.teamId) {
-    return 'MCP connection belongs to a different team';
+  if (scopeKey.scope === 'TEAM' && scopeKey.teamId && !isRepoTeam(conn, scopeKey.teamId)) {
+    return "MCP connection is not owned by this agent's team";
   }
   return null;
 }
