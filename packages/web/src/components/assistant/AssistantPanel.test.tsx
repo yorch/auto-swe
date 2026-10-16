@@ -9,19 +9,23 @@ import { AssistantMarkdown, AssistantPanel, AssistantToggle } from './AssistantP
 const state = vi.hoisted(() => ({
   enabled: true,
   messages: [] as unknown[],
+  rename: vi.fn(),
   send: vi.fn(),
 }));
 
 vi.mock('next/navigation', () => ({ usePathname: () => '/runs/run-42' }));
 vi.mock('@/hooks/useAssistant', () => ({
   useAssistantConversation: (id: string | null) => ({
-    data: id ? { conversation: { title: 'Why did it fail' }, messages: state.messages } : undefined,
+    data: id
+      ? { conversation: { id, title: 'Why did it fail' }, messages: state.messages }
+      : undefined,
     error: null,
   }),
   useAssistantConversations: () => ({ data: [], isLoading: false }),
   useAssistantReplyStream: () => undefined,
   useAssistantStatus: () => ({ data: { enabled: state.enabled } }),
   useCloseAssistantConversation: () => ({ mutate: vi.fn() }),
+  useRenameAssistantConversation: () => ({ mutate: state.rename }),
   useSendAssistantMessage: () => ({ error: null, isPending: false, mutate: state.send }),
 }));
 
@@ -40,6 +44,7 @@ const msg = (overrides: Partial<AssistantMessageView>): AssistantMessageView => 
 beforeEach(() => {
   state.enabled = true;
   state.messages = [];
+  state.rename.mockReset();
   state.send.mockReset();
   useAssistantStore.setState({ conversationId: null, open: true, showingList: false });
 });
@@ -110,6 +115,34 @@ describe('AssistantPanel', () => {
     state.messages = [msg({ error: 'The assistant could not start.', status: 'FAILED' })];
     render(<AssistantPanel />);
     expect(screen.getByText('The assistant could not start.')).toBeTruthy();
+  });
+
+  it('renames the open conversation from its header', () => {
+    useAssistantStore.setState({ conversationId: 'conv-1' });
+    render(<AssistantPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Rename the conversation' }));
+    const field = screen.getByLabelText('Conversation title');
+    fireEvent.change(field, { target: { value: '  Run 42 failure ' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(state.rename).toHaveBeenCalledWith({ id: 'conv-1', title: 'Run 42 failure' });
+    expect(screen.queryByLabelText('Conversation title')).toBeNull();
+  });
+
+  it('cancels a rename on Escape without closing the panel', () => {
+    useAssistantStore.setState({ conversationId: 'conv-1' });
+    render(<AssistantPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Rename the conversation' }));
+    const field = screen.getByLabelText('Conversation title');
+    fireEvent.change(field, { target: { value: 'Something else' } });
+    fireEvent.keyDown(field, { key: 'Escape' });
+    expect(state.rename).not.toHaveBeenCalled();
+    expect(useAssistantStore.getState().open).toBe(true);
+    expect(screen.getByRole('heading', { name: 'Why did it fail' })).toBeTruthy();
+  });
+
+  it('offers no rename before a conversation exists', () => {
+    render(<AssistantPanel />);
+    expect(screen.queryByRole('button', { name: 'Rename the conversation' })).toBeNull();
   });
 
   it('closes on Escape', () => {

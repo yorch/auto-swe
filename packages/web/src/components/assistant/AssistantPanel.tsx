@@ -7,6 +7,7 @@ import type {
 import {
   isAssistantReplyOpen,
   MAX_ASSISTANT_MESSAGE_CHARS,
+  MAX_ASSISTANT_TITLE_CHARS,
 } from '@auto-swe/shared/lib/assistantConversation';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -22,6 +23,7 @@ import {
   useAssistantReplyStream,
   useAssistantStatus,
   useCloseAssistantConversation,
+  useRenameAssistantConversation,
   useSendAssistantMessage,
 } from '@/hooks/useAssistant';
 import { pageContextFor } from '@/lib/assistantPageContext';
@@ -102,14 +104,31 @@ function PanelBody() {
   const close = useCloseAssistantConversation();
   const messages = conversation.data?.messages;
   useAssistantReplyStream(conversationId, messages);
+  const current = showingList ? undefined : conversation.data?.conversation;
+  // Keyed by conversation, so opening another one (or the list) leaves a rename in progress behind.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const renaming = current !== undefined && renamingId === current.id;
 
   return (
     <>
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-ink-500/70 px-4">
         <SparkleIcon className="text-ember-300" size={14} />
-        <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-paper-100">
-          {showingList ? 'Conversations' : (conversation.data?.conversation.title ?? 'Assistant')}
-        </h2>
+        {current && renaming ? (
+          <RenameForm
+            conversationId={current.id}
+            onDone={() => setRenamingId(null)}
+            title={current.title}
+          />
+        ) : (
+          <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-paper-100">
+            {showingList ? 'Conversations' : (current?.title ?? 'Assistant')}
+          </h2>
+        )}
+        {current && !renaming && (
+          <HeaderButton label="Rename the conversation" onClick={() => setRenamingId(current.id)}>
+            Rename
+          </HeaderButton>
+        )}
         <HeaderButton label="New conversation" onClick={() => select(null)}>
           New
         </HeaderButton>
@@ -175,6 +194,65 @@ function PanelBody() {
         </>
       )}
     </>
+  );
+}
+
+/** The header's title as an input: Enter or leaving the field saves, Escape cancels. */
+function RenameForm({
+  conversationId,
+  onDone,
+  title,
+}: {
+  conversationId: string;
+  onDone: () => void;
+  title: string;
+}) {
+  const rename = useRenameAssistantConversation();
+  const [value, setValue] = useState(title);
+  const done = useRef(false);
+  const field = useRef<HTMLInputElement | null>(null);
+
+  // The field appears because the user asked to rename, so it takes the focus with its text selected.
+  useEffect(() => {
+    field.current?.focus();
+    field.current?.select();
+  }, []);
+
+  const finish = (save: boolean) => {
+    if (done.current) {
+      return;
+    }
+    done.current = true;
+    const next = value.trim();
+    if (save && next !== '' && next !== title) {
+      rename.mutate({ id: conversationId, title: next });
+    }
+    onDone();
+  };
+
+  return (
+    <input
+      aria-label="Conversation title"
+      className={cn(
+        'min-w-0 flex-1 rounded-md border border-ink-400 bg-ink-900 px-2 py-1 text-sm font-semibold text-paper-100',
+        FOCUS_RING
+      )}
+      maxLength={MAX_ASSISTANT_TITLE_CHARS}
+      onBlur={() => finish(true)}
+      onChange={(e) => setValue(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          finish(true);
+        } else if (e.key === 'Escape') {
+          // Cancel the rename, not close the panel.
+          e.stopPropagation();
+          finish(false);
+        }
+      }}
+      ref={field}
+      value={value}
+    />
   );
 }
 

@@ -126,6 +126,30 @@ export function useCloseAssistantConversation() {
 }
 
 /**
+ * Rename a conversation. The new title is written into the open conversation and the list at once;
+ * the assistant never renames one the user has.
+ */
+export function useRenameAssistantConversation() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) =>
+      api
+        .patch<{ data: AssistantConversationSummary }>(`/api/v1/assistant/conversations/${id}`, {
+          title,
+        })
+        .then((r) => r.data),
+    onSuccess: (renamed) => {
+      qc.setQueryData<AssistantConversationDetail>(conversationKey(renamed.id), (prev) =>
+        prev ? { ...prev, conversation: renamed } : prev
+      );
+      qc.setQueryData<AssistantConversationSummary[]>(LIST_KEY, (prev) =>
+        prev?.map((c) => (c.id === renamed.id ? renamed : c))
+      );
+    },
+  });
+}
+
+/**
  * Follow the open reply in a conversation, if it has one, and write each update into the cache.
  * The stream ends itself when the reply finishes; it is reopened if the panel is (or the reply is
  * still open after the gateway's stream time limit).
@@ -162,6 +186,8 @@ export function useAssistantReplyStream(
     });
     es.addEventListener('done', () => {
       es.close();
+      // The turn may have named the conversation, so its title is re-read with the list.
+      qc.invalidateQueries({ queryKey: conversationKey(conversationId) });
       qc.invalidateQueries({ queryKey: LIST_KEY });
     });
     let retry: ReturnType<typeof setTimeout> | undefined;

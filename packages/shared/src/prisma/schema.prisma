@@ -3624,9 +3624,11 @@ model AssistantConversation {
   id        String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId    String             @map("user_id") @db.Uuid
   user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  /// The start of the first message, so the conversation list has something to show.
-  title     String
-  closedAt  DateTime?          @map("closed_at") @db.Timestamptz
+  /// The start of the first message until the `assistantTitler` agent names the conversation or the
+  /// user renames it; `titleSource` says which.
+  title       String
+  titleSource AssistantTitleSource @default(FIRST_MESSAGE) @map("title_source")
+  closedAt    DateTime?            @map("closed_at") @db.Timestamptz
   createdAt DateTime           @default(now()) @map("created_at") @db.Timestamptz
   /// Bumped on every message, so the list sorts by last activity.
   updatedAt DateTime           @updatedAt @map("updated_at") @db.Timestamptz
@@ -3667,6 +3669,13 @@ model AssistantMessage {
   // The admin failure feed: FAILED replies, newest first.
   @@index([status, createdAt])
   @@map("assistant_messages")
+}
+
+/// Where a conversation's title came from. A USER title is never replaced by a model's.
+enum AssistantTitleSource {
+  FIRST_MESSAGE
+  MODEL
+  USER
 }
 
 enum AssistantMessageRole {

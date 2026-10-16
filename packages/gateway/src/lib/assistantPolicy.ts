@@ -194,6 +194,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/workflow-templates/generate/jobs/:jobId': 'read',
   'GET /api/v1/workflows': 'read',
   'GET /api/v1/workflows/:id': 'read',
+  'PATCH /api/v1/assistant/conversations/:id': { never: 'assistantPanel' },
   'PATCH /api/v1/automations/events/:id': 'confirm',
   'PATCH /api/v1/me/preferences': 'confirm',
   'PATCH /api/v1/platform/autonomy-policies/:id': 'confirm',
