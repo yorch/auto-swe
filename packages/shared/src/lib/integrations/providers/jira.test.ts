@@ -154,3 +154,23 @@ describe('JiraProvider.fetchIssue extras', () => {
     });
   });
 });
+
+describe('JiraProvider.addComment', () => {
+  it('posts the text as an ADF comment and reports it posted', async () => {
+    const post = vi.fn(async (..._args: unknown[]) => ({ id: '10001' }));
+    const client = { post } as unknown as AtlassianClient;
+    await expect(provider(client).addComment('AIDEVEX-8', 'Looks good')).resolves.toBe(true);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post).toHaveBeenCalledWith('/rest/api/3/issue/AIDEVEX-8/comment', {
+      body: adf('Looks good'),
+    });
+  });
+
+  it('reports a failed post as not posted, without throwing', async () => {
+    const post = vi.fn(async () => {
+      throw new AtlassianError(403, 'auth', 'forbidden');
+    });
+    const client = { post } as unknown as AtlassianClient;
+    await expect(provider(client).addComment('AIDEVEX-8', 'Looks good')).resolves.toBe(false);
+  });
+});

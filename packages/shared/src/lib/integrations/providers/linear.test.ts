@@ -107,3 +107,31 @@ describe('LinearProvider.syncOnEvent', () => {
     expect(updateCall(calls)?.variables).toEqual({ id: 'iss-1', stateId: expectedId });
   });
 });
+
+describe('LinearProvider.addComment', () => {
+  it('reports a comment Linear accepted as posted', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        json: async () => ({ data: { commentCreate: { success: true } } }),
+        ok: true,
+      }))
+    );
+    await expect(provider().addComment('iss-1', 'hi')).resolves.toBe(true);
+  });
+
+  it.each([
+    ['an HTTP failure', { ok: false, status: 500 }],
+    [
+      'a refused mutation',
+      { json: async () => ({ data: { commentCreate: { success: false } } }), ok: true },
+    ],
+    ['a GraphQL error', { json: async () => ({ errors: [{ message: 'nope' }] }), ok: true }],
+  ])('reports %s as not posted, without throwing', async (_label, response) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => response)
+    );
+    await expect(provider().addComment('iss-1', 'hi')).resolves.toBe(false);
+  });
+});

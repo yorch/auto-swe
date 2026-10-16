@@ -5,7 +5,7 @@ steps the step registry holds, and which built-in templates use each. It lists w
 [workflow-nodes.md](./workflow-nodes.md) explains how to use it. This page is generated from
 the code by `yarn docs:inventory`, and a test fails when it no longer matches.
 
-There are 15 node types, 55 registered steps (1 of them internal) and 29 built-in templates.
+There are 15 node types, 56 registered steps (1 of them internal) and 29 built-in templates.
 
 ## Node types
 
@@ -108,6 +108,7 @@ owns it, and is left out of the editor’s palette. A step’s built-in template
 | `fetchCILogs` | Fetch CI logs | Fetch and truncate CI logs from the given URL. | — | — | 11 nodes in 10 templates: `address-pr-feedback`, `agent-reviewed-pr`, `ci-triage-and-fix`, `code-and-ci`, `consensus-review`, `dependency-update`, `external-approval-gate`, `four-eyes`, `staged-deploy-signals`, `ticket-to-merge` |
 | `gatherPrFeedback` | Gather pull-request feedback | Gather one round of pull-request feedback: re-read the trigger and the pull request from the host by id, re-derive the pull request's origin from the database, keep the threads a repo member wrote, screen every comment for injection, count this source's rounds, and create the work branch at the pull request's head. output.decision decides. | — | — | 1 node in 1 template: `address-pr-feedback` |
 | `mcpCallTool` (backs [`mcp`](./workflow-nodes.md#mcp)) | Call MCP tool | Call one tool on an external MCP server with the resolved inputs as arguments. Prefer the typed node: its fields are checked and it has an inspector form. | `connectionRef` (required), `tool` (required) | — | — |
+| `postTicketComment` | Post ticket comment | Post one comment to the run's tracker ticket through the configured issue tracker. Output: `posted`, and a `reason` when it did not post. A run with no ticket, a platform-generated ticket id, no tracker configured, a body that is not text, a comment the tracker refuses, or a step that times out or loses its worker returns `posted: false` without failing the run; after a timeout the comment may or may not have been posted. Credential-shaped text is masked, and on GitHub and Linear @mentions and images are neutralised. | `body` (required), `heading` | — | — |
 | `publishOutcome` | Publish outcome | Evaluate the autonomy policy for an external-facing action and decide whether to auto-publish or require approval. | `action` | — | 8 nodes in 8 templates: `create-issue`, `create-issue-from-brief`, `issue-to-confluence-page`, `notion-content-brand-review`, `notion-content-draft`, `product-prd-draft`, `send-slack-update`, `zendesk-ticket-reply` |
 | `readSource` | Read source | Read a source object from the target connection (page, ticket, record, issue). | — | — | 5 nodes in 5 templates: `issue-to-confluence-page`, `notion-content-brand-review`, `notion-content-draft`, `product-prd-draft`, `zendesk-ticket-reply` |
 | `resolveCiWaitConfig` | Resolve CI wait config | Read the CI wait strategy (webhook signal vs. active polling) from the workflow defaults. Returns { mode, intervalSec, graceSec, deadlineSec } for a downstream cond + poll step. | — | — | 2 nodes in 2 templates: `ci-triage-and-fix`, `ticket-to-merge` |

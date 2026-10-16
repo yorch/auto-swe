@@ -225,14 +225,22 @@ export class LinearProvider implements IssueTrackerProvider {
     }
   }
 
-  async addComment(issueId: string, bodyText: string): Promise<void> {
+  async addComment(issueId: string, bodyText: string): Promise<boolean> {
     try {
-      await linearGraphql(this.apiToken, LINEAR_COMMENT_MUTATION, {
-        body: bodyText,
-        issueId,
-      });
+      // GraphQL reports a refused mutation in a 200 body, so `success` is what says it landed.
+      const result = await linearGraphql<{ data?: { commentCreate?: { success?: boolean } } }>(
+        this.apiToken,
+        LINEAR_COMMENT_MUTATION,
+        { body: bodyText, issueId }
+      );
+      if (result.data?.commentCreate?.success === true) {
+        return true;
+      }
+      this.log?.warn({ issueId }, 'Linear addComment was not accepted');
+      return false;
     } catch (err) {
       this.log?.warn({ err, issueId }, 'Linear addComment failed');
+      return false;
     }
   }
 
