@@ -45,7 +45,6 @@ export function HelpButton() {
         <Icon name="help" size={14} />
       </button>
       <Modal
-        eyebrow="Help"
         onClose={() => {
           setOpen(false);
           // A modal dialog hands focus back to its opener in a browser; say it here too so the
@@ -54,7 +53,7 @@ export function HelpButton() {
         }}
         open={open}
         size="lg"
-        title={pageTitle(pathname)}
+        title={`Help · ${pageTitle(pathname)}`}
       >
         <div id={HELP_PANEL_ID}>
           <div className="space-y-4 text-sm leading-relaxed text-paper-400" ref={targetRef} />

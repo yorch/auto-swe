@@ -25,7 +25,7 @@ export function EditorStatusBar({
         </div>
         <div className="flex min-w-0 items-baseline gap-1.5">
           <dt className="text-paper-500">Starts at</dt>
-          <dd className="truncate font-mono text-ember-300">{spec.entry}</dd>
+          <dd className="truncate font-mono text-paper-200">{spec.entry}</dd>
         </div>
         {costEstimateUsd != null && (costEstimateUsd > 0 || costEstimateExclusions) && (
           <div

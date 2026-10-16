@@ -45,7 +45,7 @@ describe('Help panel', () => {
     fireEvent.click(button());
     expect(button().getAttribute('aria-expanded')).toBe('true');
     expect(dialog().hasAttribute('open')).toBe(true);
-    expect(screen.getByRole('heading', { hidden: true, name: 'All runs' })).toBeTruthy();
+    expect(screen.getByRole('heading', { hidden: true, name: 'Help · All runs' })).toBeTruthy();
   });
 
   it('shows the help the current page declares', () => {
