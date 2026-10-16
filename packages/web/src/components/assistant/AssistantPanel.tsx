@@ -239,7 +239,7 @@ function RenameForm({
     <input
       aria-label="Conversation title"
       className={cn(
-        'min-w-0 flex-1 rounded-md border border-ink-400 bg-ink-900 px-2 py-1 text-sm font-semibold text-paper-100',
+        'min-w-0 flex-1 rounded-md border border-ink-200 bg-ink-900 px-2 py-1 text-sm font-semibold text-paper-100',
         FOCUS_RING
       )}
       maxLength={MAX_ASSISTANT_TITLE_CHARS}
