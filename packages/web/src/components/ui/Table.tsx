@@ -1,4 +1,4 @@
-import { createContext, type ReactNode, useContext } from 'react';
+import { createContext, type MouseEventHandler, type ReactNode, useContext } from 'react';
 import { cn, FOCUS_RING } from '@/lib/utils';
 
 type Align = 'left' | 'right' | 'center';
@@ -70,15 +70,12 @@ export function THead({ children, className }: { children: ReactNode; className?
 }
 
 /**
- * The header treatments in use: `mono` (small caps, admin lists), `plain`
- * (main list pages), `compact` (dense admin cards without side padding) and
- * `dense` (numeric admin tables). New tables should pick `mono` or `plain`.
+ * The header treatments: `plain` (the default; list pages and tables with side
+ * padding) and `compact` (dense admin cards that supply their own side padding).
  */
-export type ThVariant = 'mono' | 'plain' | 'compact' | 'dense';
+export type ThVariant = 'plain' | 'compact';
 const TH_VARIANT: Record<ThVariant, string> = {
   compact: 'py-2 text-xs font-medium text-paper-500',
-  dense: 'px-4 py-2 text-xs font-medium text-paper-500',
-  mono: 'px-4 py-2.5 text-xs font-medium whitespace-nowrap text-paper-500',
   plain: 'px-4 py-2.5 text-xs font-medium whitespace-nowrap text-paper-500',
 };
 
@@ -95,7 +92,7 @@ export function Th({
   className,
   onSort,
   sort,
-  variant = 'mono',
+  variant = 'plain',
 }: {
   align?: Align;
   children?: ReactNode;
@@ -106,11 +103,7 @@ export function Th({
 }) {
   const sortable = sort !== undefined;
   return (
-    <th
-      aria-sort={sort}
-      className={cn(TH_VARIANT[variant], ALIGN[align], className)}
-      scope={sortable ? 'col' : undefined}
-    >
+    <th aria-sort={sort} className={cn(TH_VARIANT[variant], ALIGN[align], className)} scope="col">
       {sortable ? (
         <button
           className={cn(
@@ -138,10 +131,13 @@ export function TRow({
   children,
   className,
   hover = false,
+  onClick,
 }: {
   children: ReactNode;
   className?: string;
   hover?: boolean;
+  /** Pointer convenience only (a row-wide click target); keyboard users reach a link inside the row. */
+  onClick?: MouseEventHandler<HTMLTableRowElement>;
 }) {
   return (
     <tr
@@ -150,6 +146,7 @@ export function TRow({
         hover && 'transition-colors hover:bg-ink-600/35',
         className
       )}
+      onClick={onClick}
     >
       {children}
     </tr>

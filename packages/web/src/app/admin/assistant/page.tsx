@@ -63,16 +63,24 @@ function TurnTraces({ id }: { id: string }) {
         <Table>
           <THead>
             <tr>
-              <Th variant="dense">When</Th>
-              <Th variant="dense">Kind</Th>
-              <Th variant="dense">Tool / model</Th>
-              <Th align="right" variant="dense">
+              <Th className="px-4" variant="compact">
+                When
+              </Th>
+              <Th className="px-4" variant="compact">
+                Kind
+              </Th>
+              <Th className="px-4" variant="compact">
+                Tool / model
+              </Th>
+              <Th align="right" className="px-4" variant="compact">
                 Tokens in / out
               </Th>
-              <Th align="right" variant="dense">
+              <Th align="right" className="px-4" variant="compact">
                 Duration
               </Th>
-              <Th variant="dense">Error</Th>
+              <Th className="px-4" variant="compact">
+                Error
+              </Th>
             </tr>
           </THead>
           <tbody>

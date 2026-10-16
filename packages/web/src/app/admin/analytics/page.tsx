@@ -334,41 +334,46 @@ function AnalyticsWorkspace() {
                     <Table>
                       <THead>
                         <Th
+                          className="px-4"
                           onSort={() => templateSort.toggle('name')}
                           sort={templateSort.direction('name')}
-                          variant="dense"
+                          variant="compact"
                         >
                           Template
                         </Th>
                         <Th
                           align="right"
+                          className="px-4"
                           onSort={() => templateSort.toggle('runs')}
                           sort={templateSort.direction('runs')}
-                          variant="dense"
+                          variant="compact"
                         >
                           Runs
                         </Th>
                         <Th
                           align="right"
+                          className="px-4"
                           onSort={() => templateSort.toggle('successRate')}
                           sort={templateSort.direction('successRate')}
-                          variant="dense"
+                          variant="compact"
                         >
                           Success rate
                         </Th>
                         <Th
                           align="right"
+                          className="px-4"
                           onSort={() => templateSort.toggle('totalCost')}
                           sort={templateSort.direction('totalCost')}
-                          variant="dense"
+                          variant="compact"
                         >
                           Total cost
                         </Th>
                         <Th
                           align="right"
+                          className="px-4"
                           onSort={() => templateSort.toggle('avgCost')}
                           sort={templateSort.direction('avgCost')}
-                          variant="dense"
+                          variant="compact"
                         >
                           Avg cost per run
                         </Th>
@@ -435,57 +440,64 @@ function AnalyticsWorkspace() {
                   <Table className="max-sm:px-4" stacked>
                     <THead>
                       <Th
+                        className="px-4"
                         onSort={() => domainSort.toggle('domain')}
                         sort={domainSort.direction('domain')}
-                        variant="dense"
+                        variant="compact"
                       >
                         Domain
                       </Th>
                       <Th
                         align="right"
+                        className="px-4"
                         onSort={() => domainSort.toggle('runs')}
                         sort={domainSort.direction('runs')}
-                        variant="dense"
+                        variant="compact"
                       >
                         Runs
                       </Th>
                       <Th
                         align="right"
+                        className="px-4"
                         onSort={() => domainSort.toggle('cost')}
                         sort={domainSort.direction('cost')}
-                        variant="dense"
+                        variant="compact"
                       >
                         Total cost
                       </Th>
                       <Th
                         align="right"
+                        className="px-4"
                         onSort={() => domainSort.toggle('timeSaved')}
                         sort={domainSort.direction('timeSaved')}
-                        variant="dense"
+                        variant="compact"
                       >
                         Time saved
                       </Th>
                       <Th
                         align="right"
+                        className="px-4"
                         onSort={() => domainSort.toggle('agentError')}
                         sort={domainSort.direction('agentError')}
-                        variant="dense"
+                        variant="compact"
                       >
                         Agent error rate
                       </Th>
                       <Th
                         align="right"
+                        className="px-4"
                         onSort={() => domainSort.toggle('humanError')}
                         sort={domainSort.direction('humanError')}
-                        variant="dense"
+                        variant="compact"
                       >
                         Human error rate
                       </Th>
                       <Th
                         align="right"
+                        className="px-4"
                         onSort={() => domainSort.toggle('vsHuman')}
                         sort={domainSort.direction('vsHuman')}
-                        variant="dense"
+                        variant="compact"
                       >
                         <span title="Agent error rate minus the human baseline, in percentage points. Needs at least 30 baseline cases.">
                           Agent vs human
@@ -560,25 +572,28 @@ function AnalyticsWorkspace() {
                   <Table>
                     <THead>
                       <Th
+                        className="px-4"
                         onSort={() => outcomeSort.toggle('outcome')}
                         sort={outcomeSort.direction('outcome')}
-                        variant="dense"
+                        variant="compact"
                       >
                         Outcome
                       </Th>
                       <Th
                         align="right"
+                        className="px-4"
                         onSort={() => outcomeSort.toggle('runs')}
                         sort={outcomeSort.direction('runs')}
-                        variant="dense"
+                        variant="compact"
                       >
                         Runs
                       </Th>
                       <Th
                         align="right"
+                        className="px-4"
                         onSort={() => outcomeSort.toggle('cost')}
                         sort={outcomeSort.direction('cost')}
-                        variant="dense"
+                        variant="compact"
                       >
                         Total cost
                       </Th>
