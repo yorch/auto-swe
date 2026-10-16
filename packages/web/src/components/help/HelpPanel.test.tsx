@@ -81,7 +81,7 @@ describe('Help panel', () => {
     fireEvent.click(button());
     expect(screen.queryByText('Runs help')).toBeNull();
     expect(screen.getByText('Tickets help')).toBeTruthy();
-    expect(screen.getByRole('heading', { hidden: true, name: 'Tickets' })).toBeTruthy();
+    expect(screen.getByRole('heading', { hidden: true, name: 'Help · Tickets' })).toBeTruthy();
     nav.pathname = '/runs';
   });
 

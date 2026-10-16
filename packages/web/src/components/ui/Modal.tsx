@@ -179,7 +179,7 @@ export function Modal({
         pressStartedOnBackdrop.current = e.target === e.currentTarget;
       }}
       ref={dialogRef}
-      style={{ borderRadius: 14 }}
+      style={{ borderRadius: 12 }}
     >
       <div className="space-y-6 p-6">
         <header className="flex items-start justify-between gap-4">
