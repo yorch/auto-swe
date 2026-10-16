@@ -10,7 +10,7 @@
    Two palettes for the neutral ramps (ink surfaces, paper text), each in dark and light:
      navy      the default — deep navy/indigo surfaces, cool blue-grey text
      graphite  `data-palette="graphite"` on <html> — unsaturated greys, no blue cast
-   The accent (violet "ember") and status colours are shared by both palettes.
+   The accent (violet) and status colours are shared by both palettes.
    Four blocks hold the values: this `@theme` (navy dark), `:root[data-theme='light']`
    (navy light), and the two `:root[data-palette='graphite']…` blocks below it.
    `lib/palette.ts` mirrors the values SVG needs and `palette.test.ts` holds every block
@@ -53,31 +53,31 @@
   --color-paper-500: #a9b2c6; /* labels / muted */
   --color-paper-600: #909cb5; /* faint / numerals / captions */
 
-  /* Accent — violet ("ember"). Reserved for three jobs: the primary action, the current
+  /* Accent — violet. Reserved for three jobs: the primary action, the current
      selection (active nav item, selected tab / row / node) and keyboard focus. Links are
      body colour with an underline (on hover/focus when standalone, always inside a
      sentence); eyebrows, icons and figures are neutral. Status colours below mean a
      status and nothing else. */
-  --color-ember-50: #f0eeff; /* violet tint near-white */
-  --color-ember-100: #d8d4ff; /* violet light */
-  --color-ember-200: #b5afff; /* violet mid */
-  --color-ember-300: #9b8fff; /* violet-soft */
-  --color-ember-400: #7c6cff; /* violet — PRIMARY ACCENT */
-  --color-ember-500: #6a5bff; /* violet-deep */
-  --color-ember-600: #5244cc; /* violet-darker */
-  --color-ember-700: #3c3199; /* violet darkest */
+  --color-accent-50: #f0eeff; /* violet tint near-white */
+  --color-accent-100: #d8d4ff; /* violet light */
+  --color-accent-200: #b5afff; /* violet mid */
+  --color-accent-300: #9b8fff; /* violet-soft */
+  --color-accent-400: #7c6cff; /* violet — PRIMARY ACCENT */
+  --color-accent-500: #6a5bff; /* violet-deep */
+  --color-accent-600: #5244cc; /* violet-darker */
+  --color-accent-700: #3c3199; /* violet darkest */
 
   /* Status — used for badges, graph nodes, timing bars */
-  --color-moss-400: #46d28a; /* passed / ok */
-  --color-moss-600: #2a9062;
-  --color-amber-400: #f6b545; /* events / suggested-fix hints */
-  --color-amber-600: #c48a18;
-  --color-brick-400: #ff7a7a; /* failed / timeout */
-  --color-brick-600: #cc4040;
-  --color-dust-400: #4d8dff; /* running / LLM turn (blue) */
-  --color-dust-600: #2d6acc;
-  --color-violet-400: #34d8c0; /* in-review — teal secondary accent */
-  --color-violet-600: #1aa88f;
+  --color-success-400: #46d28a; /* passed / ok */
+  --color-success-600: #2a9062;
+  --color-warning-400: #f6b545; /* events / suggested-fix hints */
+  --color-warning-600: #c48a18;
+  --color-danger-400: #ff7a7a; /* failed / timeout */
+  --color-danger-600: #cc4040;
+  --color-info-400: #4d8dff; /* running / LLM turn (blue) */
+  --color-info-600: #2d6acc;
+  --color-accent2-400: #34d8c0; /* in-review — teal secondary accent */
+  --color-accent2-600: #1aa88f;
 
   /* Type stack — three families only */
   --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -167,25 +167,25 @@
   --color-paper-500: #545d72;
   --color-paper-600: #626b80;
 
-  --color-ember-50: #f1efff;
-  --color-ember-100: #e3dfff;
-  --color-ember-200: #c8c0ff;
-  --color-ember-300: #5b4ce0;
-  --color-ember-400: #5143d6;
-  --color-ember-500: #5a4bf0;
-  --color-ember-600: #4334c4;
-  --color-ember-700: #33289a;
+  --color-accent-50: #f1efff;
+  --color-accent-100: #e3dfff;
+  --color-accent-200: #c8c0ff;
+  --color-accent-300: #5b4ce0;
+  --color-accent-400: #5143d6;
+  --color-accent-500: #5a4bf0;
+  --color-accent-600: #4334c4;
+  --color-accent-700: #33289a;
 
-  --color-moss-400: #13804b;
-  --color-moss-600: #0f6b3e;
-  --color-amber-400: #9a5b00;
-  --color-amber-600: #7a4800;
-  --color-brick-400: #c53030;
-  --color-brick-600: #a32424;
-  --color-dust-400: #2457c5;
-  --color-dust-600: #1c46a0;
-  --color-violet-400: #0b7a6b;
-  --color-violet-600: #08665a;
+  --color-success-400: #13804b;
+  --color-success-600: #0f6b3e;
+  --color-warning-400: #9a5b00;
+  --color-warning-600: #7a4800;
+  --color-danger-400: #c53030;
+  --color-danger-600: #a32424;
+  --color-info-400: #2457c5;
+  --color-info-600: #1c46a0;
+  --color-accent2-400: #0b7a6b;
+  --color-accent2-600: #08665a;
   color-scheme: light;
 }
 
@@ -260,12 +260,12 @@
     --muted-foreground: var(--color-paper-400);
     --border: var(--color-ink-600);
     --border-strong: var(--color-ink-500);
-    --primary: var(--color-ember-400);
+    --primary: var(--color-accent-400);
     --primary-foreground: var(--color-ink-950);
-    --destructive: var(--color-brick-400);
-    --success: var(--color-moss-400);
-    --warning: var(--color-amber-400);
-    --info: var(--color-dust-400);
+    --destructive: var(--color-danger-400);
+    --success: var(--color-success-400);
+    --warning: var(--color-warning-400);
+    --info: var(--color-info-400);
   }
 
   html,
@@ -535,7 +535,7 @@
   --xy-controls-button-background-color: var(--color-ink-600);
   --xy-controls-button-background-color-hover: var(--color-ink-500);
   --xy-controls-button-color: var(--color-paper-400);
-  --xy-controls-button-color-hover: var(--color-ember-400);
+  --xy-controls-button-color-hover: var(--color-accent-400);
   --xy-controls-button-border-color: var(--color-ink-400);
   --xy-minimap-background-color: var(--color-ink-900);
 }
@@ -560,7 +560,7 @@
 .react-flow__edge:focus .react-flow__edge-path,
 .react-flow__edge:focus-visible .react-flow__edge-path {
   /* biome-ignore lint/complexity/noImportantStyles: needs to win against React Flow's inline edge stroke */
-  stroke: var(--color-ember-400) !important;
+  stroke: var(--color-accent-400) !important;
   /* biome-ignore lint/complexity/noImportantStyles: needs to win against React Flow's inline edge stroke-width */
   stroke-width: 2.5 !important;
 }
@@ -607,7 +607,7 @@
    arrow-key DAG traversal is visible before selection lands. */
 .react-flow__node:focus,
 .react-flow__node:focus-visible {
-  outline: 2px solid var(--color-ember-400);
+  outline: 2px solid var(--color-accent-400);
   outline-offset: 2px;
   border-radius: 2px;
 }

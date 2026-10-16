@@ -16,7 +16,7 @@ export function cn(...inputs: ClassValue[]) {
  * the style to none.
  */
 export const FOCUS_RING =
-  'outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ember-400';
+  'outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent-400';
 
 /**
  * A secondary action repeated on every row of a list ("Diagnostics ›"): hidden
@@ -193,12 +193,12 @@ const percent = lazy(
 /** Traffic-light colour for a 0–1 quality score (eval means, review signals). */
 export function scoreColor(value: number): string {
   if (value >= 0.9) {
-    return 'var(--color-moss-400)';
+    return 'var(--color-success-400)';
   }
   if (value >= 0.5) {
-    return 'var(--color-amber-400)';
+    return 'var(--color-warning-400)';
   }
-  return 'var(--color-brick-400)';
+  return 'var(--color-danger-400)';
 }
 
 export function formatPercent(p: number | null): string {
@@ -210,7 +210,7 @@ export function formatPercent(p: number | null): string {
 
 // ── Status palette ──────────────────────────────────────────────────────────
 // `StatusBadge` draws a status as a coloured dot beside its name. The dot is the
-// only coloured part, and only status colours appear here: violet (ember) is
+// only coloured part, and only status colours appear here: the accent (violet) is
 // reserved for the primary action, the current selection and focus, so in-flight
 // work is blue like every other running state.
 type StatusMeta = {
@@ -220,34 +220,34 @@ type StatusMeta = {
   live?: boolean;
 };
 
-const MOSS: StatusMeta = { dotClass: 'bg-moss-400' };
-const DUST_LIVE: StatusMeta = { dotClass: 'bg-dust-400', live: true };
-const AMBER: StatusMeta = { dotClass: 'bg-amber-400' };
-const BRICK: StatusMeta = { dotClass: 'bg-brick-400' };
-const VIOLET: StatusMeta = { dotClass: 'bg-violet-400' };
+const SUCCESS: StatusMeta = { dotClass: 'bg-success-400' };
+const INFO_LIVE: StatusMeta = { dotClass: 'bg-info-400', live: true };
+const WARNING: StatusMeta = { dotClass: 'bg-warning-400' };
+const DANGER: StatusMeta = { dotClass: 'bg-danger-400' };
+const ACCENT2: StatusMeta = { dotClass: 'bg-accent2-400' };
 const NEUTRAL: StatusMeta = { dotClass: 'bg-paper-600' };
 
 export const STATUS_META: Record<string, StatusMeta> = {
   // ── WorkflowTemplateStatus ──
-  ACTIVE: MOSS,
+  ACTIVE: SUCCESS,
   ARCHIVED: NEUTRAL,
   // ── ActiveWorkflow.currentStatus ──
-  AWAITING_CI: AMBER,
-  AWAITING_HUMAN_MERGE: { ...AMBER, live: true },
+  AWAITING_CI: WARNING,
+  AWAITING_HUMAN_MERGE: { ...WARNING, live: true },
   // ── WorkflowRunStatus ──
   CANCELLED: NEUTRAL,
-  COMPLETED: MOSS,
-  DRAFT: AMBER,
-  FAILED: BRICK,
-  IMPLEMENTING: DUST_LIVE,
-  IN_REVIEW: VIOLET,
+  COMPLETED: SUCCESS,
+  DRAFT: WARNING,
+  FAILED: DANGER,
+  IMPLEMENTING: INFO_LIVE,
+  IN_REVIEW: ACCENT2,
   // ── WorkflowStepRecordStatus ──
-  PASSED: MOSS,
-  PENDING: AMBER,
-  RUNNING: DUST_LIVE,
+  PASSED: SUCCESS,
+  PENDING: WARNING,
+  RUNNING: INFO_LIVE,
   SKIPPED: NEUTRAL,
-  SUCCESS: MOSS,
+  SUCCESS: SUCCESS,
   TIMED_OUT: NEUTRAL,
   UNKNOWN: NEUTRAL,
-  VALIDATING_CONTEXT: DUST_LIVE,
+  VALIDATING_CONTEXT: INFO_LIVE,
 };

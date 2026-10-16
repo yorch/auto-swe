@@ -78,7 +78,7 @@ function ResetPasswordInner() {
   if (done) {
     return (
       <AuthLayout>
-        <AuthHeading icon="checkCircle" title="Password updated" tone="moss">
+        <AuthHeading icon="checkCircle" title="Password updated" tone="success">
           Taking you to sign in with your new password…
         </AuthHeading>
         <ButtonLink className="w-full" href="/login" size="lg" variant="primary">

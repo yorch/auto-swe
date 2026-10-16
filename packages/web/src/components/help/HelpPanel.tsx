@@ -33,8 +33,8 @@ export function HelpButton() {
         aria-haspopup="dialog"
         aria-label="Help for this page"
         className={cn(
-          'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-ink-400 text-paper-300 transition-colors hover:border-ember-400/60 hover:text-paper-100',
-          open && 'border-ember-400/60 text-ember-300',
+          'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-ink-400 text-paper-300 transition-colors hover:border-accent-400/60 hover:text-paper-100',
+          open && 'border-accent-400/60 text-accent-300',
           FOCUS_RING
         )}
         onClick={() => setOpen(true)}
@@ -63,7 +63,7 @@ export function HelpButton() {
           <p className="mt-6 border-t border-ink-600 pt-4">
             <Link
               className={cn(
-                'inline-flex items-center gap-1.5 rounded-sm text-sm text-ember-300 transition-colors hover:text-ember-200',
+                'inline-flex items-center gap-1.5 rounded-sm text-sm text-accent-300 transition-colors hover:text-accent-200',
                 FOCUS_RING
               )}
               href="/docs"

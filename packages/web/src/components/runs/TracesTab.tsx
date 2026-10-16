@@ -32,8 +32,8 @@ const TOOL_LABELS: Record<string, string> = {
 
 // Type glyph — colored chip labelling the trace event kind
 const TYPE_GLYPH: Record<string, { label: string; tone: BadgeTone; title: string }> = {
-  activity_event: { label: 'Event', title: 'Activity event', tone: 'amber' },
-  llm_response: { label: 'LLM', title: 'Model response', tone: 'dust' },
+  activity_event: { label: 'Event', title: 'Activity event', tone: 'warning' },
+  llm_response: { label: 'LLM', title: 'Model response', tone: 'info' },
   tool_call: { label: 'Tool', title: 'Tool call', tone: 'muted' },
 };
 
@@ -512,7 +512,7 @@ function EventRow({
             <span
               className={cn(
                 'font-mono text-xs font-medium max-lg:shrink-0',
-                hasError ? 'text-brick-400' : 'text-paper-100'
+                hasError ? 'text-danger-400' : 'text-paper-100'
               )}
             >
               {label}
@@ -532,7 +532,7 @@ function EventRow({
               <span className="tabular text-xs text-paper-500">{durationLabel}</span>
             )}
             {hasError && (
-              <Badge dot tone="brick">
+              <Badge dot tone="danger">
                 Error
               </Badge>
             )}
@@ -726,7 +726,7 @@ export function TracesTab({
 
       {anyAmbiguous && (
         <p
-          className="border-ink-600/40 border-b px-4 py-2 text-xs leading-relaxed text-amber-400"
+          className="border-ink-600/40 border-b px-4 py-2 text-xs leading-relaxed text-warning-400"
           id={noteId}
         >
           Traces marked ambiguous were recorded before traces named their node. They are matched by
@@ -786,7 +786,7 @@ export function TracesTab({
                       {group.ambiguous && (
                         <span
                           aria-describedby={noteId}
-                          className="rounded-md bg-amber-400/15 px-1.5 py-px text-xs font-medium text-amber-400"
+                          className="rounded-md bg-warning-400/15 px-1.5 py-px text-xs font-medium text-warning-400"
                         >
                           Ambiguous
                         </span>

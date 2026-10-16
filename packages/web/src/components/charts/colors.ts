@@ -103,5 +103,5 @@ export function topNWithOther<T>(
 
 /** Colors used for the stacked area / workflow-over-time chart. */
 export function trendColors(t: Tokens) {
-  return { active: t.ember400, completed: t.moss400, failed: t.brick400 } as const;
+  return { active: t.accent400, completed: t.success400, failed: t.danger400 } as const;
 }

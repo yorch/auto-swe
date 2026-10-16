@@ -73,7 +73,10 @@ export function SplitConsole({
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               <h2 className={PANEL_TITLE}>Console</h2>
               {selectedNodeId && (
-                <Badge className="font-mono max-lg:whitespace-normal max-lg:break-all" tone="ember">
+                <Badge
+                  className="font-mono max-lg:whitespace-normal max-lg:break-all"
+                  tone="accent"
+                >
                   {selectedNodeId}
                 </Badge>
               )}

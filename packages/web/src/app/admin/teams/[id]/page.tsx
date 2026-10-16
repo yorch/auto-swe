@@ -324,7 +324,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                     key={r.id}
                     name={`${r.organizationName}/${r.repoName}`}
                     trailing={
-                      <Badge dot tone={r.isActive ? 'moss' : 'muted'} variant="text">
+                      <Badge dot tone={r.isActive ? 'success' : 'muted'} variant="text">
                         {r.isActive ? 'Active' : 'Inactive'}
                       </Badge>
                     }

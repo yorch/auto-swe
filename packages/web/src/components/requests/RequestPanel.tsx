@@ -207,7 +207,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
                       'flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border px-3.5 py-2.5 text-left transition-colors',
                       FOCUS_RING,
                       runId === attempt.id
-                        ? 'border-ember-400/70 bg-ember-400/[0.06]'
+                        ? 'border-accent-400/70 bg-accent-400/[0.06]'
                         : 'border-ink-500 hover:border-ink-300 hover:bg-ink-700/60'
                     )}
                     onClick={() => setSelected(attempt.id)}
@@ -385,7 +385,7 @@ function AttemptContent({
         <div className="flex items-center gap-3">
           <div aria-hidden="true" className="h-1.5 flex-1 overflow-hidden rounded-full bg-ink-600">
             <div
-              className="h-full rounded-full bg-moss-400"
+              className="h-full rounded-full bg-success-400"
               style={{
                 width: `${currentSteps.length ? (currentSteps.filter((step) => step.status === 'PASSED').length / currentSteps.length) * 100 : 0}%`,
               }}
@@ -457,7 +457,7 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
                   <StatusBadge status={step.status} />
                 </span>
                 {step.error && (
-                  <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-brick-400">
+                  <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-danger-400">
                     {step.error}
                   </pre>
                 )}
@@ -482,7 +482,7 @@ function TechnicalDetails({ run }: { run: WorkflowRunDetail }) {
               <div className="border-t border-ink-600 pt-2 text-xs text-paper-400" key={trace.id}>
                 <span className="font-mono text-paper-300">{trace.agentKey}</span> ·{' '}
                 <span className="font-mono">{trace.toolName ?? trace.type}</span>
-                {trace.error && <p className="break-words text-brick-400">{trace.error}</p>}
+                {trace.error && <p className="break-words text-danger-400">{trace.error}</p>}
               </div>
             ))}
           </QueryBoundary>

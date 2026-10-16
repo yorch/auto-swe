@@ -100,7 +100,7 @@ export function RunSummary({
           className="space-y-3"
           id={full ? NEEDS_RESPONSE_ANCHOR : undefined}
         >
-          <SummaryHeading count={pendingSteps.length} tone="amber">
+          <SummaryHeading count={pendingSteps.length} tone="warning">
             Needs a response
           </SummaryHeading>
           {pendingSteps.map((step) => (

@@ -99,7 +99,7 @@ function TurnTraces({ id }: { id: string }) {
                 <Td align="right" className="text-xs tabular-nums">
                   {t.durationMs === null ? '—' : `${t.durationMs} ms`}
                 </Td>
-                <Td className={cn('text-xs', t.error ? 'text-brick-400' : 'text-paper-500')}>
+                <Td className={cn('text-xs', t.error ? 'text-danger-400' : 'text-paper-500')}>
                   {t.error ?? '—'}
                 </Td>
               </TRow>
@@ -149,7 +149,7 @@ function FailureItem({ failure }: { failure: AssistantFailure }) {
           <p
             className={cn(
               'break-words font-mono text-xs',
-              failure.errorDetail ? 'text-brick-400' : 'text-paper-400'
+              failure.errorDetail ? 'text-danger-400' : 'text-paper-400'
             )}
           >
             {failure.errorDetail ?? 'No cause was recorded for this reply.'}

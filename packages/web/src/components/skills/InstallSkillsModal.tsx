@@ -85,17 +85,17 @@ function AddedSkill({
         </div>
       )}
       {keyed(a.errors).map((e) => (
-        <div className="text-xs text-brick-400" key={e.key}>
+        <div className="text-xs text-danger-400" key={e.key}>
           error: {visibleText(e.text)}
         </div>
       ))}
       {a.conflicts.map((c) => (
-        <div className="text-xs text-brick-400" key={c.id}>
+        <div className="text-xs text-danger-400" key={c.id}>
           name already used by a {visibleText(c.scope)} skill
         </div>
       ))}
       {keyed(a.scanWarnings).map((w) => (
-        <div className="text-xs text-amber-400" key={w.key}>
+        <div className="text-xs text-warning-400" key={w.key}>
           scan: {visibleText(w.text)}
         </div>
       ))}
@@ -107,7 +107,7 @@ function AddedSkill({
             .join(', ')}
         </div>
       )}
-      {error && <div className="text-xs text-brick-400">{error}</div>}
+      {error && <div className="text-xs text-danger-400">{error}</div>}
     </li>
   );
 }

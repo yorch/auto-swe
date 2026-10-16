@@ -61,7 +61,7 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
           <>
             <PageHeader
               actions={
-                <Badge dot tone={channel.isActive ? 'moss' : 'muted'} variant="outline">
+                <Badge dot tone={channel.isActive ? 'success' : 'muted'} variant="outline">
                   {channel.isActive ? 'Active' : 'Inactive'}
                 </Badge>
               }

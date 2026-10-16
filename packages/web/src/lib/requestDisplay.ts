@@ -39,7 +39,7 @@ export function requestHref(requestId: string): string {
 
 export interface AttentionReason {
   label: string;
-  tone: 'amber' | 'brick' | 'violet';
+  tone: 'warning' | 'danger' | 'accent2';
 }
 
 /** Why a request is asking for attention, in the order a person would act on it. */
@@ -55,13 +55,13 @@ export function attentionReasons(
       const msLeft = new Date(request.pendingStepDeadline).getTime() - now;
       label += msLeft <= 0 ? ' · overdue' : ` · ${formatDuration(msLeft)} left`;
     }
-    reasons.push({ label, tone: 'amber' });
+    reasons.push({ label, tone: 'warning' });
   }
   if (request.status === 'FAILED' || request.status === 'TIMED_OUT') {
-    reasons.push({ label: request.status === 'FAILED' ? 'Failed' : 'Timed out', tone: 'brick' });
+    reasons.push({ label: request.status === 'FAILED' ? 'Failed' : 'Timed out', tone: 'danger' });
   }
   if (request.needsMerge) {
-    reasons.push({ label: 'Needs review', tone: 'violet' });
+    reasons.push({ label: 'Needs review', tone: 'accent2' });
   }
   return reasons;
 }

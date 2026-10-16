@@ -37,7 +37,7 @@ export function LaunchCardHeader({
                 className={cn(
                   'inline-flex items-center gap-1.5 rounded-sm border px-2 py-0.5',
                   current
-                    ? 'border-ember-400/50 bg-ember-400/10 text-ember-300'
+                    ? 'border-accent-400/50 bg-accent-400/10 text-accent-300'
                     : done
                       ? 'border-ink-400 text-paper-300'
                       : 'border-ink-500 text-paper-500'

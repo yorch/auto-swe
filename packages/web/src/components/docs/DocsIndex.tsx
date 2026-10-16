@@ -53,7 +53,7 @@ function Highlighted({ segments }: { segments: Segment[] }) {
         const key = offset;
         offset += seg.text.length;
         return seg.match ? (
-          <mark className="rounded-sm bg-ember-400/25 px-0.5 text-paper-100" key={key}>
+          <mark className="rounded-sm bg-accent-400/25 px-0.5 text-paper-100" key={key}>
             {seg.text}
           </mark>
         ) : (

@@ -71,10 +71,13 @@ const SOCIAL_BUTTONS: { id: SocialProviderId; label: string }[] = [
 
 type GatewayState = 'checking' | 'up' | 'down';
 
-const GATEWAY_STATUS: Record<GatewayState, { label: string; tone: 'moss' | 'brick' | 'muted' }> = {
+const GATEWAY_STATUS: Record<
+  GatewayState,
+  { label: string; tone: 'success' | 'danger' | 'muted' }
+> = {
   checking: { label: 'Checking gateway', tone: 'muted' },
-  down: { label: 'Gateway offline', tone: 'brick' },
-  up: { label: 'Gateway online', tone: 'moss' },
+  down: { label: 'Gateway offline', tone: 'danger' },
+  up: { label: 'Gateway online', tone: 'success' },
 };
 
 /** The reachability light: a dot plus words, so the state is not colour alone. */
@@ -392,7 +395,7 @@ function LoginPageInner() {
   if (pendingEmail) {
     return (
       <AuthLayout footer={versionLine}>
-        <AuthHeading icon="clock" title="Awaiting approval" tone="amber">
+        <AuthHeading icon="clock" title="Awaiting approval" tone="warning">
           <p>
             We received your sign-in for{' '}
             <span className="break-all font-mono text-sm text-paper-100">{pendingEmail}</span>. An
@@ -402,7 +405,7 @@ function LoginPageInner() {
         </AuthHeading>
         <div className="mb-6 flex items-center justify-between gap-3 rounded-lg border border-ink-400/60 bg-ink-900/60 px-3.5 py-3">
           <span className="text-sm text-paper-400">Account status</span>
-          <Badge dot tone="amber" variant="outline">
+          <Badge dot tone="warning" variant="outline">
             Pending approval
           </Badge>
         </div>

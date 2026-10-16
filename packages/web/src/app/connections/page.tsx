@@ -371,7 +371,7 @@ export default function ConnectionsPage() {
                           {r._count?.activeWorkflows ?? 0}
                         </Td>
                         <Td className="px-4 py-3" label="Status">
-                          <Badge dot tone={r.isActive ? 'moss' : 'muted'}>
+                          <Badge dot tone={r.isActive ? 'success' : 'muted'}>
                             {r.isActive ? 'Active' : 'Inactive'}
                           </Badge>
                         </Td>

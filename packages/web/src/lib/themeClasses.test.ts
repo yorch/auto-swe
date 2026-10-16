@@ -6,10 +6,10 @@ import { describe, expect, it } from 'vitest';
  * A colour utility naming a shade the theme does not define compiles to
  * nothing: Tailwind emits no rule, nothing warns, and the element silently
  * renders without its background or text colour. The status families define
- * only 400 and 600, so `bg-brick-900` or `text-moss-300` look plausible and
- * produce bare, uncoloured pills. `amber` and `violet` are worse — Tailwind's
- * defaults fill their other shades, so `violet-300` renders purple next to a
- * theme `violet-400` that is teal.
+ * only 400 and 600, so `bg-danger-900` or `text-success-300` look plausible and
+ * produce bare, uncoloured pills. `amber` and `violet` are worse — the project defines
+ * neither, so Tailwind's defaults fill every shade and a stray default class renders a real
+ * colour instead of failing to compile.
  *
  * This fails on any colour utility whose `family-shade` is not declared in
  * globals.css `@theme`, including families the theme never declares at all
@@ -28,8 +28,8 @@ describe('theme colour classes', () => {
   );
 
   it('parses the colour tokens out of the @theme block', () => {
-    expect(declared.has('brick-400')).toBe(true);
-    expect(declared.has('brick-900')).toBe(false);
+    expect(declared.has('danger-400')).toBe(true);
+    expect(declared.has('danger-900')).toBe(false);
   });
 
   it('keeps governed knowledge borders on a declared structural token', () => {

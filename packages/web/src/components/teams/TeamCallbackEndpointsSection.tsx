@@ -175,7 +175,7 @@ export function TeamCallbackEndpointsSection({
                     </Badge>
                   )}
                   {row.allowPrivateNetwork && (
-                    <Badge className="ml-2" tone="amber">
+                    <Badge className="ml-2" tone="warning">
                       Private network
                     </Badge>
                   )}
@@ -379,7 +379,7 @@ function EndpointDeliveries({
   return <CallbackDeliveriesTable rows={deliveries.data?.data ?? []} showRun />;
 }
 
-const STATUS_TONE = { DEAD: 'brick', DELIVERED: 'moss', PENDING: 'amber' } as const;
+const STATUS_TONE = { DEAD: 'danger', DELIVERED: 'success', PENDING: 'warning' } as const;
 
 /** Deliveries as a table, with redelivery where the caller manages the endpoint. */
 export function CallbackDeliveriesTable({

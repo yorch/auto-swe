@@ -148,7 +148,7 @@ export function HelpTip(props: HelpTipProps) {
         aria-label={buttonName}
         className={cn(
           'inline-flex h-5 w-5 items-center justify-center rounded-full text-paper-500 transition-colors hover:text-paper-100',
-          open && 'text-ember-300',
+          open && 'text-accent-300',
           FOCUS_RING
         )}
         onBlur={(event) => {

@@ -119,7 +119,7 @@ export function WebhookCard({
       ) : template.webhookConfigured ? (
         <div className="space-y-3">
           <p className="flex items-center gap-2 text-sm text-paper-200">
-            <Badge dot tone="moss">
+            <Badge dot tone="success">
               Configured
             </Badge>
           </p>
@@ -207,11 +207,11 @@ function WebhookSigning({
       <p className="flex flex-wrap items-center gap-2 text-sm text-paper-200">
         Signing
         {signing.configured ? (
-          <Badge dot tone="moss">
+          <Badge dot tone="success">
             Secret set{signing.lastFour ? ` ···${signing.lastFour}` : ''}
           </Badge>
         ) : (
-          <Badge dot tone="amber">
+          <Badge dot tone="warning">
             Unsigned
           </Badge>
         )}

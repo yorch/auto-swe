@@ -67,14 +67,14 @@ function isInputFields(value: unknown): value is InputField[] {
 }
 
 const KIND_TONE: Record<string, BadgeTone> = {
-  APPROVAL: 'amber',
-  DECISION: 'dust',
-  INPUT: 'moss',
-  REVIEW: 'violet',
+  APPROVAL: 'warning',
+  DECISION: 'info',
+  INPUT: 'success',
+  REVIEW: 'accent2',
 };
 
 const STATUS_TONE: Record<string, BadgeTone> = {
-  RESOLVED: 'moss',
+  RESOLVED: 'success',
   TIMED_OUT: 'muted',
 };
 
@@ -92,17 +92,17 @@ function settledBadge(step: HumanStepSummary): { label: string; tone: BadgeTone 
   if (step.status !== 'RESOLVED') {
     return {
       label: sentence(step.status),
-      tone: STATUS_TONE[step.status] ?? 'brick',
+      tone: STATUS_TONE[step.status] ?? 'danger',
     };
   }
   const decision = step.responses?.at(-1)?.action;
   if (step.kind === 'APPROVAL' && decision === 'reject') {
-    return { label: 'Rejected', tone: 'brick' };
+    return { label: 'Rejected', tone: 'danger' };
   }
   if (step.kind === 'APPROVAL' && decision === 'approve') {
-    return { label: 'Approved', tone: 'moss' };
+    return { label: 'Approved', tone: 'success' };
   }
-  return { label: 'Resolved', tone: 'moss' };
+  return { label: 'Resolved', tone: 'success' };
 }
 
 /** Auto-generated ticket ids (a UUID or an agent-run id) say nothing to a person. */
@@ -138,10 +138,10 @@ function contextToString(context: unknown): string {
 function getTimestampColor(requestedAt: string): string {
   const ageMs = Date.now() - new Date(requestedAt).getTime();
   if (ageMs > 72 * 3600_000) {
-    return 'text-brick-400';
+    return 'text-danger-400';
   }
   if (ageMs > 24 * 3600_000) {
-    return 'text-amber-400';
+    return 'text-warning-400';
   }
   return 'text-paper-500';
 }
@@ -157,10 +157,10 @@ function formatTimeRemaining(timeoutAt: string): string {
 function getTimeoutColor(timeoutAt: string): string {
   const msLeft = new Date(timeoutAt).getTime() - Date.now();
   if (msLeft < 2 * 3_600_000) {
-    return 'text-brick-400';
+    return 'text-danger-400';
   }
   if (msLeft < 8 * 3_600_000) {
-    return 'text-amber-400';
+    return 'text-warning-400';
   }
   return 'text-paper-500';
 }
@@ -174,10 +174,10 @@ const ACTION_LABEL: Record<string, string> = {
 
 /** How each recorded answer is marked in the response list. */
 const RESPONSE_ICON: Record<string, { icon: IconName; tone: string }> = {
-  approve: { icon: 'checkCircle', tone: 'text-moss-400' },
-  reject: { icon: 'error', tone: 'text-brick-400' },
-  select: { icon: 'check', tone: 'text-dust-400' },
-  submit: { icon: 'chat', tone: 'text-dust-400' },
+  approve: { icon: 'checkCircle', tone: 'text-success-400' },
+  reject: { icon: 'error', tone: 'text-danger-400' },
+  select: { icon: 'check', tone: 'text-info-400' },
+  submit: { icon: 'chat', tone: 'text-info-400' },
 };
 
 const LINK = cn(
@@ -384,7 +384,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
         </div>
         <div className="flex shrink-0 items-center gap-2 max-sm:w-full max-sm:justify-end">
           {youApproved && (
-            <Badge className="shrink-0" dot tone="moss">
+            <Badge className="shrink-0" dot tone="success">
               You approved
             </Badge>
           )}

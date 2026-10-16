@@ -68,7 +68,7 @@ function OutcomeShell({
   return (
     <Card className="space-y-2.5 p-4" variant="inset">
       <h3 className="flex items-center gap-2 text-sm font-semibold text-paper-100">
-        <Icon className="text-moss-400" name={icon} size={15} />
+        <Icon className="text-success-400" name={icon} size={15} />
         {title}
       </h3>
       {children}
@@ -148,7 +148,7 @@ export function RunOutcomeCard({ result, templateName, isAgentRun }: RunOutcomeC
       <OutcomeShell icon="chat">
         <div className="flex flex-wrap items-center gap-2 text-sm">
           {channelId ? <span className="font-mono text-paper-200">#{channelId}</span> : null}
-          <Badge dot tone={posted ? 'moss' : 'amber'}>
+          <Badge dot tone={posted ? 'success' : 'warning'}>
             {posted ? 'Posted' : 'Not posted'}
           </Badge>
         </div>

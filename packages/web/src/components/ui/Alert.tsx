@@ -4,17 +4,17 @@ import { Icon, type IconName } from './Icon';
 type AlertVariant = 'error' | 'success' | 'warning' | 'info';
 
 const VARIANT_CLASSES: Record<AlertVariant, string> = {
-  error: 'border-brick-400/35 bg-brick-400/[0.07] text-brick-400',
-  info: 'border-dust-400/30 bg-dust-400/[0.06] text-dust-400',
-  success: 'border-moss-400/30 bg-moss-400/[0.07] text-moss-400',
-  warning: 'border-amber-400/35 bg-amber-400/[0.07] text-amber-400',
+  error: 'border-danger-400/35 bg-danger-400/[0.07] text-danger-400',
+  info: 'border-info-400/30 bg-info-400/[0.06] text-info-400',
+  success: 'border-success-400/30 bg-success-400/[0.07] text-success-400',
+  warning: 'border-warning-400/35 bg-warning-400/[0.07] text-warning-400',
 };
 
 const VARIANT_ACCENT: Record<AlertVariant, string> = {
-  error: 'text-brick-400',
-  info: 'text-dust-400',
-  success: 'text-moss-400',
-  warning: 'text-amber-400',
+  error: 'text-danger-400',
+  info: 'text-info-400',
+  success: 'text-success-400',
+  warning: 'text-warning-400',
 };
 
 const VARIANT_ICON: Record<AlertVariant, IconName> = {

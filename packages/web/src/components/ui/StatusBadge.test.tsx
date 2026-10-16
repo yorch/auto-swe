@@ -15,7 +15,7 @@ describe('StatusBadge', () => {
   it('shows the status as words beside a coloured dot', () => {
     render(<StatusBadge status="AWAITING_CI" />);
     const { badge, dot } = dotOf('awaiting ci');
-    expect(dot.className).toContain('bg-amber-400');
+    expect(dot.className).toContain('bg-warning-400');
     expect(dot.className).toContain('rounded-full');
     // The words stay in body colour: the dot carries the status colour.
     expect(badge.className).toContain('text-paper-300');
@@ -35,8 +35,8 @@ describe('StatusBadge', () => {
   it('keeps violet for actions and selection: in-flight work is blue', () => {
     render(<StatusBadge status="IMPLEMENTING" />);
     const { dot } = dotOf('implementing');
-    expect(dot.className).toContain('bg-dust-400');
-    expect(dot.className).not.toContain('ember');
+    expect(dot.className).toContain('bg-info-400');
+    expect(dot.className).not.toContain('accent');
   });
 
   it('falls back to a neutral dot for an unknown status', () => {

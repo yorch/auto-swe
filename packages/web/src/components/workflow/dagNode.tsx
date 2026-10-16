@@ -65,18 +65,18 @@ const CATEGORY_LABEL: Record<SpecNode['type'], string> = {
 const ELEVATED = new Set<SpecNode['type']>(['containerStep', 'shell']);
 
 const STATUS_STRIPE: Record<string, string> = {
-  FAILED: 'bg-brick-400',
-  PASSED: 'bg-moss-400',
-  PENDING: 'bg-amber-400',
-  RUNNING: 'bg-dust-400',
+  FAILED: 'bg-danger-400',
+  PASSED: 'bg-success-400',
+  PENDING: 'bg-warning-400',
+  RUNNING: 'bg-info-400',
   SKIPPED: 'bg-paper-500',
-  SUCCESS: 'bg-moss-400',
+  SUCCESS: 'bg-success-400',
 };
 
 const DIFF_BORDER: Record<DiffKind, string> = {
-  added: 'border-moss-400',
-  changed: 'border-amber-400',
-  removed: 'border-brick-400 border-dashed',
+  added: 'border-success-400',
+  changed: 'border-warning-400',
+  removed: 'border-danger-400 border-dashed',
 };
 
 /**
@@ -153,16 +153,16 @@ function handleKindsFor(node: SpecNode): HandleKind[] {
 }
 
 const HANDLE_BG: Record<HandleKind, string> = {
-  join: 'bg-ember-400',
+  join: 'bg-accent-400',
   next: 'bg-paper-400',
-  onApprove: 'bg-moss-400',
-  onFalse: 'bg-brick-400',
-  onReceive: 'bg-dust-400',
-  onReject: 'bg-brick-400',
-  onSubmit: 'bg-moss-400',
-  onTimeout: 'bg-amber-400',
-  onTrue: 'bg-moss-400',
-  subgraph: 'bg-violet-400',
+  onApprove: 'bg-success-400',
+  onFalse: 'bg-danger-400',
+  onReceive: 'bg-info-400',
+  onReject: 'bg-danger-400',
+  onSubmit: 'bg-success-400',
+  onTimeout: 'bg-warning-400',
+  onTrue: 'bg-success-400',
+  subgraph: 'bg-accent2-400',
 };
 
 const HANDLE_LABEL: Record<HandleKind, string> = {
@@ -210,7 +210,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
         nodeTypeTone(d.node.type).border,
         unknown && 'border-dashed',
         selected
-          ? 'border-ember-400 shadow-[0_0_0_1px_var(--color-ember-400)]'
+          ? 'border-accent-400 shadow-[0_0_0_1px_var(--color-accent-400)]'
           : diffBorder
             ? diffBorder
             : 'border-ink-500'
@@ -256,7 +256,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
           </span>
           <span className="flex shrink-0 items-center gap-1 text-xs text-paper-500">
             {!folded && ELEVATED.has(d.node.type) && (
-              <span className="text-brick-400" title="Elevated: runs code in a container">
+              <span className="text-danger-400" title="Elevated: runs code in a container">
                 <Icon name="lock" size={11} />
               </span>
             )}
@@ -270,7 +270,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
           </div>
         )}
         {unknown && (
-          <div className="truncate text-xs font-medium text-brick-400">
+          <div className="truncate text-xs font-medium text-danger-400">
             {nodeTypeLabel(d.node.type)}
           </div>
         )}

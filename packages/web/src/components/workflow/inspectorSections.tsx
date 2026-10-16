@@ -752,7 +752,7 @@ function RawJsonRow({
         <div className="min-w-0 flex-1">{keyControl}</div>
         <Button
           aria-label={`Remove ${keyName}`}
-          className="px-2 hover:text-brick-400"
+          className="px-2 hover:text-danger-400"
           onClick={onRemove}
           size="sm"
           title="Remove row"
@@ -1082,7 +1082,7 @@ export function HumanDecisionSection({
               </div>
               <Button
                 aria-label={`Remove option ${i + 1}`}
-                className="px-2 hover:text-brick-400"
+                className="px-2 hover:text-danger-400"
                 disabled={options.length <= 2}
                 onClick={() => removeOption(i)}
                 size="sm"
@@ -1192,7 +1192,7 @@ export function HumanInputSection({
               />
               <Button
                 aria-label={`Remove field ${i + 1}`}
-                className="px-2 hover:text-brick-400"
+                className="px-2 hover:text-danger-400"
                 disabled={fields.length <= 1}
                 onClick={() => removeField(i)}
                 size="sm"
@@ -1398,7 +1398,7 @@ export function EvalSection({
               </div>
               <Button
                 aria-label={`Remove scorer ${i + 1}`}
-                className="px-2 hover:text-brick-400"
+                className="px-2 hover:text-danger-400"
                 disabled={scorers.length <= 1}
                 onClick={() => removeScorer(i)}
                 size="sm"

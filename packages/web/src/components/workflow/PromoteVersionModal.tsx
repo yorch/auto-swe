@@ -54,13 +54,13 @@ export function PromoteVersionModal({
     summary = (
       <span className="flex flex-wrap items-center gap-1.5">
         <span>Compared with v{activeVersion}:</span>
-        <Badge tone="moss" variant="outline">
+        <Badge tone="success" variant="outline">
           {diff.diff.addedNodes.length} added
         </Badge>
-        <Badge tone="brick" variant="outline">
+        <Badge tone="danger" variant="outline">
           {diff.diff.removedNodes.length} removed
         </Badge>
-        <Badge tone="amber" variant="outline">
+        <Badge tone="warning" variant="outline">
           {diff.diff.changedNodes.length} changed
         </Badge>
       </span>

@@ -69,7 +69,7 @@ export function ConsentScreen({ search }: { search: string }) {
         <AuthHeading
           icon={session === 'unknown' ? 'warning' : 'lock'}
           title="Sign in to continue"
-          tone={session === 'unknown' ? 'amber' : 'neutral'}
+          tone={session === 'unknown' ? 'warning' : 'neutral'}
         >
           {session === 'unknown'
             ? 'The gateway did not answer, so your session could not be checked.'
@@ -161,7 +161,7 @@ function ConsentDecision({ search }: { search: string }) {
         <div className="p-4">
           <div className="mb-1 flex items-center justify-between gap-2">
             <span className="label-mono">App</span>
-            <Badge dot tone="amber" variant="outline">
+            <Badge dot tone="warning" variant="outline">
               Unverified
             </Badge>
           </div>
@@ -190,7 +190,7 @@ function ConsentDecision({ search }: { search: string }) {
           <ul className="space-y-3 text-sm leading-relaxed text-paper-300">
             {wantsRead && (
               <li className="flex gap-2.5">
-                <Icon className="mt-0.5 text-moss-400" name="check" size={15} />
+                <Icon className="mt-0.5 text-success-400" name="check" size={15} />
                 <span>
                   <span className="font-semibold text-paper-100">Read</span>: see repositories, work
                   requests, runs and pending approvals.

@@ -146,7 +146,7 @@ export default function GovernSessionsPage() {
                   <div className="flex min-w-0 flex-wrap items-center gap-2">
                     <span className="truncate font-medium text-paper-100">{s.user.email}</span>
                     {s.current && (
-                      <Badge dot tone="ember" variant="outline">
+                      <Badge dot tone="accent" variant="outline">
                         This session
                       </Badge>
                     )}

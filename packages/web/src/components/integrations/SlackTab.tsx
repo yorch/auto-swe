@@ -273,7 +273,7 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
                   </div>
                 </div>
                 {w.installed ? (
-                  <Badge dot tone="moss">
+                  <Badge dot tone="success">
                     Installed{w.tokenLastFour ? ` · …${w.tokenLastFour}` : ''}
                   </Badge>
                 ) : (

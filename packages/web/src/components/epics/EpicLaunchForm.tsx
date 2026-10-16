@@ -190,7 +190,7 @@ export function EpicLaunchForm({
                   <Checkbox
                     checked={checked}
                     className={`border-b border-ink-600 px-3 py-2.5 last:border-b-0 ${
-                      checked ? 'bg-ember-400/[0.06]' : 'hover:bg-ink-700/40'
+                      checked ? 'bg-accent-400/[0.06]' : 'hover:bg-ink-700/40'
                     }`}
                     key={r.id}
                     label={

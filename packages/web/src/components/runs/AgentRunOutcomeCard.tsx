@@ -64,17 +64,17 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
     <Card className="space-y-3 p-4" variant="inset">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-paper-100">
-          <Icon className="text-moss-400" name="agents" size={15} />
+          <Icon className="text-success-400" name="agents" size={15} />
           Agent run outcome
         </h3>
         <div className="flex flex-wrap gap-1.5">
           {o.gate && (
-            <Badge tone={o.gate === 'passed' ? 'moss' : 'neutral'}>{GATE_LABEL[o.gate]}</Badge>
+            <Badge tone={o.gate === 'passed' ? 'success' : 'neutral'}>{GATE_LABEL[o.gate]}</Badge>
           )}
-          <Badge tone={o.diffVerified ? 'moss' : 'amber'}>
+          <Badge tone={o.diffVerified ? 'success' : 'warning'}>
             {o.diffVerified ? 'Diff verified' : 'Diff unverified'}
           </Badge>
-          {o.stoppedReason && <Badge tone="amber">{STOP_LABEL[o.stoppedReason]}</Badge>}
+          {o.stoppedReason && <Badge tone="warning">{STOP_LABEL[o.stoppedReason]}</Badge>}
         </div>
       </div>
 
@@ -129,8 +129,8 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
                   {OPERATION_MARK[f.operation] ?? '~'}
                 </span>
                 <span className="min-w-0 break-all text-paper-200">{f.path}</span>
-                <span className="tabular ml-auto shrink-0 text-moss-400">+{f.linesAdded}</span>
-                <span className="tabular shrink-0 text-brick-400">−{f.linesRemoved}</span>
+                <span className="tabular ml-auto shrink-0 text-success-400">+{f.linesAdded}</span>
+                <span className="tabular shrink-0 text-danger-400">−{f.linesRemoved}</span>
               </li>
             ))}
           </ul>
@@ -153,7 +153,7 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
             Show diff{o.diffTruncated ? ' (truncated)' : ''}
           </summary>
           {!o.diffVerified && (
-            <p className="mt-2 text-xs text-amber-400">
+            <p className="mt-2 text-xs text-warning-400">
               This is the agent’s own view of its container. It is for reading, not for trust.
             </p>
           )}
@@ -179,13 +179,13 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
 export function AgentRunFailureNote({ failure }: { failure: AgentRunFailureView }) {
   return (
     <div
-      className="flex items-start gap-3 rounded-lg border border-amber-400/35 bg-amber-400/[0.07] px-3.5 py-3 text-sm"
+      className="flex items-start gap-3 rounded-lg border border-warning-400/35 bg-warning-400/[0.07] px-3.5 py-3 text-sm"
       role="note"
     >
-      <Icon className="mt-0.5 text-amber-400" name="warning" />
+      <Icon className="mt-0.5 text-warning-400" name="warning" />
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex flex-wrap items-center gap-2">
-          <span className="font-semibold text-amber-400">{failure.title}</span>
+          <span className="font-semibold text-warning-400">{failure.title}</span>
           {failure.code && <span className="font-mono text-xs text-paper-500">{failure.code}</span>}
         </div>
         <p className="leading-relaxed text-paper-300">{failure.explanation}</p>

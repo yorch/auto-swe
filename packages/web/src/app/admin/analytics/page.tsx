@@ -47,7 +47,11 @@ function formatMinutes(min: number): string {
 
 function successRateClass(rate: number): string {
   const tone = successTone(rate);
-  return tone === 'moss' ? 'text-moss-400' : tone === 'amber' ? 'text-amber-400' : 'text-brick-400';
+  return tone === 'success'
+    ? 'text-success-400'
+    : tone === 'warning'
+      ? 'text-warning-400'
+      : 'text-danger-400';
 }
 
 /** The agent's error rate against the human baseline, in percentage points. */
@@ -242,7 +246,7 @@ function AnalyticsWorkspace() {
                   }
                   hint="Estimated from each template's expected human effort"
                   label="Time saved (estimate)"
-                  tone={(data.estimatedHumanTimeSavedTotal ?? 0) > 0 ? 'moss' : 'default'}
+                  tone={(data.estimatedHumanTimeSavedTotal ?? 0) > 0 ? 'success' : 'default'}
                   value={formatMinutes(data.estimatedHumanTimeSavedTotal ?? 0)}
                 />
               </div>
@@ -538,7 +542,7 @@ function AnalyticsWorkspace() {
                               // Positive means the agent errs more than the human baseline.
                               <span
                                 className={
-                                  d.errorRateVsHuman > 0 ? 'text-brick-400' : 'text-moss-400'
+                                  d.errorRateVsHuman > 0 ? 'text-danger-400' : 'text-success-400'
                                 }
                               >
                                 {formatPoints(d.errorRateVsHuman)}

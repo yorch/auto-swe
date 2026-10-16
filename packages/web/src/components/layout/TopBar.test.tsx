@@ -39,7 +39,7 @@ describe('TopBar gateway indicator', () => {
 
   it('shows a steady offline state when unreachable', () => {
     const { container } = renderBar('offline');
-    expect(screen.getByText('offline').className).toContain('text-brick-400');
+    expect(screen.getByText('offline').className).toContain('text-danger-400');
     expect(container.querySelector('.pulse-dot')).toBeNull();
   });
 

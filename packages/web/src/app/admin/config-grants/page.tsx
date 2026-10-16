@@ -167,7 +167,7 @@ export default function GovernConfigGrantsPage() {
                     className={cn(
                       'rounded-md border px-1.5 py-0.5 font-mono text-xs transition-colors',
                       pattern === p
-                        ? 'border-ember-400/50 bg-ember-400/10 text-ember-300'
+                        ? 'border-accent-400/50 bg-accent-400/10 text-accent-300'
                         : 'border-ink-400 bg-ink-700 text-paper-300 hover:border-ink-300 hover:text-paper-100',
                       FOCUS_RING
                     )}

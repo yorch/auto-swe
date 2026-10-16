@@ -528,7 +528,7 @@ const templateColumns: DataTableColumn<WorkflowTemplateSummary>[] = [
             </Badge>
           )}
           {t.webhookConfigured && (
-            <Badge title="A webhook URL can start this workflow" tone="violet" variant="outline">
+            <Badge title="A webhook URL can start this workflow" tone="accent2" variant="outline">
               Webhook
             </Badge>
           )}

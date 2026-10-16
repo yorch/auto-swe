@@ -33,7 +33,7 @@ export function fieldDescribedBy(
 /** The required marker. Hidden from assistive tech, which gets the native `required` instead. */
 export function RequiredMark() {
   return (
-    <span aria-hidden="true" className="text-brick-400">
+    <span aria-hidden="true" className="text-danger-400">
       {' '}
       *
     </span>
@@ -56,7 +56,7 @@ export function FieldWrapper({ id, label, hint, error, required, children }: Fie
         </p>
       )}
       {error && (
-        <p className="text-xs text-brick-400" id={id ? `${id}-error` : undefined}>
+        <p className="text-xs text-danger-400" id={id ? `${id}-error` : undefined}>
           {error}
         </p>
       )}

@@ -99,11 +99,11 @@ function ChangedSkill({
         <span className="text-xs text-paper-500">
           installed revision {c.installedRevision} · {c.textLength.old} → {c.textLength.new} chars
         </span>
-        {c.handEdited && <Badge tone="amber">edited by hand</Badge>}
+        {c.handEdited && <Badge tone="warning">edited by hand</Badge>}
         {c.diffIncomplete && (
-          <Badge tone="amber">{c.diffTooLarge ? 'diff too large' : 'diff incomplete'}</Badge>
+          <Badge tone="warning">{c.diffTooLarge ? 'diff too large' : 'diff incomplete'}</Badge>
         )}
-        {c.blockedByScan && <Badge tone="brick">blocked by scan warnings</Badge>}
+        {c.blockedByScan && <Badge tone="danger">blocked by scan warnings</Badge>}
       </div>
       {c.renamedTo && (
         <div className="text-xs text-paper-400">
@@ -113,9 +113,9 @@ function ChangedSkill({
       {c.description.changed && (
         <div className="text-xs text-paper-400">
           description:{' '}
-          <span className="text-brick-400">{visibleOrNull(c.description.old) ?? '—'}</span>
+          <span className="text-danger-400">{visibleOrNull(c.description.old) ?? '—'}</span>
           {' → '}
-          <span className="text-moss-400">{visibleOrNull(c.description.new) ?? '—'}</span>
+          <span className="text-success-400">{visibleOrNull(c.description.new) ?? '—'}</span>
         </div>
       )}
       {c.textDiff ? (
@@ -127,7 +127,7 @@ function ChangedSkill({
       )}
       <FileChanges files={c.referenceFiles} />
       {keyed(c.scanWarnings).map((w) => (
-        <div className="text-xs text-amber-400" key={w.key}>
+        <div className="text-xs text-warning-400" key={w.key}>
           scan: {visibleText(w.text)}
         </div>
       ))}
@@ -268,7 +268,7 @@ function ReviewBody({ onClose, sourceId }: { onClose: () => void; sourceId: stri
           ))}
         </ul>
         {result.conflicts.length > 0 && (
-          <div className="text-xs text-amber-400">
+          <div className="text-xs text-warning-400">
             Left alone (edited by hand): {result.conflicts.map((n) => visibleText(n)).join(', ')}
           </div>
         )}

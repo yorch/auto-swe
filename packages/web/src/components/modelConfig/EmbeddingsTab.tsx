@@ -90,7 +90,7 @@ export function EmbeddingsTab() {
       <Card className="max-w-3xl p-5 sm:p-6">
         <CardHeader className="items-start">
           <CardTitle>System-wide model</CardTitle>
-          <Badge dot tone={noCredential ? 'brick' : 'moss'} variant="outline">
+          <Badge dot tone={noCredential ? 'danger' : 'success'} variant="outline">
             {noCredential ? 'No credential' : 'Ready'}
           </Badge>
         </CardHeader>

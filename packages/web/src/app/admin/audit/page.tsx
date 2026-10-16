@@ -347,9 +347,9 @@ function AuditActor({ row, onFilter }: { row: AuditLogRow; onFilter: (id: string
 }
 
 const AUDIT_ACTION_TONE: Record<AuditAction, BadgeTone> = {
-  CREATE: 'moss',
-  DELETE: 'brick',
-  UPDATE: 'dust',
+  CREATE: 'success',
+  DELETE: 'danger',
+  UPDATE: 'info',
 };
 
 function AuditActionBadge({ action }: { action: AuditAction }) {

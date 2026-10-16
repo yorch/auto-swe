@@ -171,7 +171,7 @@ function EditorInner({
           role="application"
         >
           <ReactFlow
-            connectionLineStyle={{ stroke: 'var(--color-ember-400)', strokeWidth: 2 }}
+            connectionLineStyle={{ stroke: 'var(--color-accent-400)', strokeWidth: 2 }}
             deleteKeyCode="Delete"
             edges={edges}
             maxZoom={2.5}

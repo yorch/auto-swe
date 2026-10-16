@@ -58,7 +58,7 @@ function ExternalBadge({ source }: { source: Skill['externalSource'] }) {
     <Badge
       className="font-mono"
       title={`${source.host}/${source.owner}/${source.repo}`}
-      tone="violet"
+      tone="accent2"
     >
       {visibleText(`external: ${source.owner}/${source.repo}@${shortSha(source.sha)}`)}
     </Badge>
@@ -747,12 +747,12 @@ export default function StudioSkillsPage() {
                         <Td className="px-4 py-2.5" label="Status">
                           <div className="flex flex-wrap items-center gap-1 max-sm:justify-end">
                             {skill.isVerified && (
-                              <Badge dot tone="moss">
+                              <Badge dot tone="success">
                                 Verified
                               </Badge>
                             )}
                             {!skill.isVerified && !skill.isBuiltIn && (
-                              <Badge dot tone="amber">
+                              <Badge dot tone="warning">
                                 Unverified
                               </Badge>
                             )}

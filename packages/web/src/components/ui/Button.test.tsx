@@ -15,11 +15,11 @@ describe('Button', () => {
     expect(screen.getByRole('button').getAttribute('type')).toBe('submit');
   });
 
-  it('paints primary as solid ember-500 with white text — no gradient, no glow', () => {
+  it('paints primary as solid accent-500 with white text — no gradient, no glow', () => {
     const primary = buttonClassName('primary', 'md');
-    expect(primary).toContain('bg-ember-500');
+    expect(primary).toContain('bg-accent-500');
     expect(primary).toContain('text-white');
-    // ember-400 is only 3.9:1 behind white text; 500 and its darker hover clear 4.5:1.
-    expect(primary).not.toMatch(/bg-ember-400|gradient|brightness|shadow/);
+    // accent-400 is only 3.9:1 behind white text; 500 and its darker hover clear 4.5:1.
+    expect(primary).not.toMatch(/bg-accent-400|gradient|brightness|shadow/);
   });
 });

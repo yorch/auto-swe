@@ -343,7 +343,7 @@ function NodeHelpRegion({ active }: { active: ActiveHelp | null }) {
           </p>
           {active.text && <p className="mt-0.5 text-paper-400">{active.text}</p>}
           {active.note && (
-            <p className="mt-1 flex items-start gap-1 text-brick-400">
+            <p className="mt-1 flex items-start gap-1 text-danger-400">
               <Icon className="mt-px shrink-0" name="lock" size={12} />
               <span>{active.note}</span>
             </p>
@@ -410,9 +410,9 @@ function PaletteItem({
         aria-label={`Add ${label} node`}
         aria-roledescription="draggable palette item"
         className={cn(
-          'group flex min-w-0 flex-1 cursor-grab items-center gap-2.5 rounded-md border px-2.5 py-1.5 transition-colors hover:border-ink-300 hover:bg-ink-700 focus-visible:border-ember-400 focus-visible:bg-ink-700 active:cursor-grabbing',
+          'group flex min-w-0 flex-1 cursor-grab items-center gap-2.5 rounded-md border px-2.5 py-1.5 transition-colors hover:border-ink-300 hover:bg-ink-700 focus-visible:border-accent-400 focus-visible:bg-ink-700 active:cursor-grabbing',
           FOCUS_RING,
-          elevated ? 'border-brick-400/30 bg-brick-400/5' : 'border-ink-600 bg-ink-800/50'
+          elevated ? 'border-danger-400/30 bg-danger-400/5' : 'border-ink-600 bg-ink-800/50'
         )}
         draggable
         onBlur={() => onActivate('focus', null, id)}
@@ -450,7 +450,7 @@ function PaletteItem({
           )}
         </div>
         {elevated && (
-          <span className="shrink-0 text-brick-400">
+          <span className="shrink-0 text-danger-400">
             <Icon name="lock" size={13} />
             <span hidden id={lockId}>
               {ELEVATED_NOTE}

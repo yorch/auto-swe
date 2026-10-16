@@ -28,12 +28,12 @@ function EntryList({ entries, label }: { entries: BundlePreviewEntry[]; label: s
       <ul className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-ink-600 bg-ink-900/40 p-2 text-xs">
         {entries.map((e) => (
           <li className="flex items-center gap-2" key={e.name}>
-            <Badge tone={e.action === 'create' ? 'moss' : 'amber'}>
+            <Badge tone={e.action === 'create' ? 'success' : 'warning'}>
               {e.action === 'create' ? 'New' : 'Replaces'}
             </Badge>
             <span className="min-w-0 break-words font-mono text-paper-200">{e.name}</span>
             {e.protected && (
-              <Badge tone="brick" variant="outline">
+              <Badge tone="danger" variant="outline">
                 Built-in or admin-authored
               </Badge>
             )}
@@ -103,7 +103,7 @@ export function BundlePreviewModal({
       >
         <div className="space-y-4">
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <Badge tone={unverified ? 'amber' : 'moss'} variant="outline">
+            <Badge tone={unverified ? 'warning' : 'success'} variant="outline">
               {unverified ? 'Unverified' : 'Verified'}
             </Badge>
             <span className="text-paper-400">

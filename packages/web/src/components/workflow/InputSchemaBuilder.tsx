@@ -181,7 +181,7 @@ export function InputSchemaBuilder({
             </h3>
             <Button
               aria-label={`Remove field ${f.key.trim() || i + 1}`}
-              className="px-2 hover:text-brick-400"
+              className="px-2 hover:text-danger-400"
               onClick={() => removeField(i)}
               size="sm"
               title="Remove field"

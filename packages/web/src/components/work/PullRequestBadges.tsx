@@ -7,12 +7,12 @@ export function pullRequestStateMeta(
   isDraft: boolean
 ): { label: string; tone: BadgeTone } {
   if (status === 'MERGED') {
-    return { label: 'Merged', tone: 'violet' };
+    return { label: 'Merged', tone: 'accent2' };
   }
   if (status === 'CLOSED') {
-    return { label: 'Closed', tone: 'brick' };
+    return { label: 'Closed', tone: 'danger' };
   }
-  return isDraft ? { label: 'Draft', tone: 'neutral' } : { label: 'Open', tone: 'moss' };
+  return isDraft ? { label: 'Draft', tone: 'neutral' } : { label: 'Open', tone: 'success' };
 }
 
 export function PullRequestStateBadge({
@@ -31,9 +31,9 @@ export function PullRequestStateBadge({
 }
 
 const CI_TONES: Record<string, { label: string; tone: BadgeTone }> = {
-  FAILED: { label: 'CI failed', tone: 'brick' },
-  PASSED: { label: 'CI passed', tone: 'moss' },
-  PENDING: { label: 'CI pending', tone: 'amber' },
+  FAILED: { label: 'CI failed', tone: 'danger' },
+  PASSED: { label: 'CI passed', tone: 'success' },
+  PENDING: { label: 'CI pending', tone: 'warning' },
 };
 
 /** The CI verdict as words, so the colour is never the only signal. */

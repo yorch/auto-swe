@@ -192,7 +192,9 @@ export default function GovernLessonsPage() {
             }
             label="Schedule"
             tone={
-              consolidation?.schedule.exists && !consolidation.schedule.paused ? 'moss' : 'default'
+              consolidation?.schedule.exists && !consolidation.schedule.paused
+                ? 'success'
+                : 'default'
             }
             value={
               consolidation?.schedule.exists
@@ -358,7 +360,7 @@ export default function GovernLessonsPage() {
                   </div>
                   <Button
                     aria-label="Delete lesson"
-                    className="shrink-0 px-2 text-paper-500 hover:text-brick-400"
+                    className="shrink-0 px-2 text-paper-500 hover:text-danger-400"
                     onClick={() => setDeleting({ id: lesson.id, summary: lesson.lessonSummary })}
                     size="sm"
                     title="Delete lesson"

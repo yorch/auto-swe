@@ -22,20 +22,20 @@ function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badg
         'relative mx-2.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium no-underline transition-colors',
         FOCUS_RING,
         active
-          ? 'bg-ink-600 text-paper-50 before:absolute before:inset-y-1.5 before:-left-2.5 before:w-[3px] before:rounded-r-full before:bg-ember-400'
+          ? 'bg-ink-600 text-paper-50 before:absolute before:inset-y-1.5 before:-left-2.5 before:w-[3px] before:rounded-r-full before:bg-accent-400'
           : 'text-paper-500 hover:bg-ink-700/70 hover:text-paper-200'
       )}
       data-tour={`nav:${item.href}`}
       href={item.href}
     >
       <Icon
-        className={active ? 'text-ember-300' : undefined}
+        className={active ? 'text-accent-300' : undefined}
         name={isIconName(item.icon) ? item.icon : 'dashboard'}
         size={15}
       />
       <span className="flex-1">{item.label}</span>
       {badge !== undefined && badge > 0 && (
-        <span className="rounded-full bg-ember-500 px-1.5 py-px text-xs font-semibold tabular-nums text-white">
+        <span className="rounded-full bg-accent-500 px-1.5 py-px text-xs font-semibold tabular-nums text-white">
           {badge}
         </span>
       )}
@@ -279,7 +279,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           <Link
             aria-current={isStartWorkPath(pathname) ? 'page' : undefined}
             className={cn(
-              'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-ember-500 px-3 py-2 text-sm font-semibold text-white no-underline transition-colors hover:bg-ember-600',
+              'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-accent-500 px-3 py-2 text-sm font-semibold text-white no-underline transition-colors hover:bg-accent-600',
               FOCUS_RING
             )}
             data-tour="nav:/start"

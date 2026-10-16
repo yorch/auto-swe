@@ -236,7 +236,9 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                             {/* A failed check (runs recorded, no pass) is skipped like an unchecked case. */}
                             <Badge
                               dot
-                              tone={c.flakeScreened ? 'moss' : c.flakeRuns > 0 ? 'amber' : 'muted'}
+                              tone={
+                                c.flakeScreened ? 'success' : c.flakeRuns > 0 ? 'warning' : 'muted'
+                              }
                               variant="text"
                             >
                               {c.flakeScreened

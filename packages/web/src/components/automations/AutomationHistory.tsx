@@ -9,7 +9,7 @@ import { RelativeTime } from '@/components/ui/RelativeTime';
 import { useAutomationFires, useRetryAutomationFire } from '@/hooks/useAutomations';
 import { errMsg } from '@/lib/errors';
 
-const OUTCOME_TONE: Record<string, BadgeTone> = { FAILED_TO_START: 'brick', STARTED: 'moss' };
+const OUTCOME_TONE: Record<string, BadgeTone> = { FAILED_TO_START: 'danger', STARTED: 'success' };
 
 /** A plain label for a decision: `SUPPRESSED_SAME_SUBJECT` → "already handled". */
 export function outcomeLabel(outcome: string): string {
@@ -31,7 +31,7 @@ export function outcomeLabel(outcome: string): string {
 }
 
 export function outcomeTone(outcome: string): BadgeTone {
-  return OUTCOME_TONE[outcome] ?? 'amber';
+  return OUTCOME_TONE[outcome] ?? 'warning';
 }
 
 /** What one event automation decided, newest first. */

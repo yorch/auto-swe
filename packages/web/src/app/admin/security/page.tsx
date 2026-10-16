@@ -36,19 +36,19 @@ const GROUPS: {
   group: SecurityEventGroup;
   hint: string;
   title: string;
-  tone: 'brick' | 'amber';
+  tone: 'danger' | 'warning';
 }[] = [
   {
     group: 'blocked',
     hint: 'A scanner stopped the agent from doing this.',
     title: 'Blocked',
-    tone: 'brick',
+    tone: 'danger',
   },
   {
     group: 'advisory',
     hint: 'A scanner flagged this, and the work went on.',
     title: 'Advisory',
-    tone: 'amber',
+    tone: 'warning',
   },
 ];
 

@@ -139,8 +139,8 @@ function TemplateRuns({ id: rawId }: { id: string }) {
             />
           )}
           {failedNodeId && (
-            <span className="inline-flex h-8 items-center gap-2 rounded-md border border-brick-400/30 bg-brick-400/5 pr-1 pl-2.5 text-sm text-paper-200">
-              <Icon className="text-brick-400" name="filter" size={13} />
+            <span className="inline-flex h-8 items-center gap-2 rounded-md border border-danger-400/30 bg-danger-400/5 pr-1 pl-2.5 text-sm text-paper-200">
+              <Icon className="text-danger-400" name="filter" size={13} />
               <span className="max-w-[16rem] truncate">
                 Failed at “{nodeTitles.get(failedNodeId) ?? failedNodeId}”
               </span>

@@ -35,7 +35,7 @@ const LABEL: Record<ConfigState, string> = {
   unset: 'Not set',
 };
 
-const TONE = { configured: 'moss', env: 'amber', partial: 'amber', unset: 'muted' } as const;
+const TONE = { configured: 'success', env: 'warning', partial: 'warning', unset: 'muted' } as const;
 
 /** The status pill in an integration card's header. */
 export function ConfigStatusBadge({ state, title }: { state: ConfigState; title?: string }) {

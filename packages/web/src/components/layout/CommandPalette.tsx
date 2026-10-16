@@ -290,7 +290,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
                     className={cn(
                       'flex h-7 w-7 shrink-0 items-center justify-center rounded-md border',
                       i === active
-                        ? 'border-ember-400/40 bg-ember-400/10 text-ember-300'
+                        ? 'border-accent-400/40 bg-accent-400/10 text-accent-300'
                         : 'border-ink-500 bg-ink-700 text-paper-500'
                     )}
                   >

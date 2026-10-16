@@ -6,7 +6,7 @@ import { createPortal } from 'react-dom';
 import { Button } from '@/components/ui/Button';
 import type { TourStep } from '@/lib/tourSteps';
 
-const RING_OUTLINE = '2px solid var(--color-ember-400)';
+const RING_OUTLINE = '2px solid var(--color-accent-400)';
 
 /**
  * An anchor the card can point at: in the document, laid out with a size, not

@@ -46,7 +46,7 @@ export function RadioGroup<T extends string>({
         >
           <input
             checked={value === o.value}
-            className="mt-0.5 h-4 w-4 shrink-0 accent-ember-400"
+            className="mt-0.5 h-4 w-4 shrink-0 accent-accent-400"
             disabled={o.disabled}
             name={name}
             onChange={() => onChange(o.value)}

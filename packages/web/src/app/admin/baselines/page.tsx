@@ -312,7 +312,7 @@ export default function GovernBaselinesPage() {
                           {b.sampleSize < MIN_BASELINE_SAMPLE && (
                             <Badge
                               title={`Analytics compares only from ${MIN_BASELINE_SAMPLE} cases`}
-                              tone="amber"
+                              tone="warning"
                               variant="outline"
                             >
                               Too small to compare
@@ -347,7 +347,7 @@ export default function GovernBaselinesPage() {
                       <Td align="right" className="px-4 py-3">
                         <Button
                           aria-label={`Delete ${domainLabel(b.domain)} baseline`}
-                          className="px-2 text-paper-500 hover:text-brick-400"
+                          className="px-2 text-paper-500 hover:text-danger-400"
                           onClick={() => setDeleteTarget(b)}
                           size="sm"
                           title="Delete baseline"

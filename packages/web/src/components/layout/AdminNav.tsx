@@ -28,7 +28,7 @@ function SubNavLink({ item, active }: { item: NavItem; active: boolean }) {
       href={item.href}
     >
       <Icon
-        className={active ? 'text-ember-300' : undefined}
+        className={active ? 'text-accent-300' : undefined}
         name={isIconName(item.icon) ? item.icon : 'dashboard'}
         size={15}
       />

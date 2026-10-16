@@ -345,7 +345,7 @@ export default function RunDetailPage({ params }: PageProps) {
                 </Badge>
               )}
               {securityEvents.length > 0 && (
-                <Badge dot tone="amber" variant="outline">
+                <Badge dot tone="warning" variant="outline">
                   {securityEvents.length} security event{securityEvents.length !== 1 ? 's' : ''}
                 </Badge>
               )}
@@ -452,11 +452,14 @@ export default function RunDetailPage({ params }: PageProps) {
               <Alert variant="success">
                 New run started —{' '}
                 {retried.runId ? (
-                  <Link className="underline hover:text-moss-600" href={`/runs/${retried.runId}`}>
+                  <Link
+                    className="underline hover:text-success-600"
+                    href={`/runs/${retried.runId}`}
+                  >
                     view run
                   </Link>
                 ) : retried.timedOut ? (
-                  <Link className="underline hover:text-moss-600" href="/runs">
+                  <Link className="underline hover:text-success-600" href="/runs">
                     view runs
                   </Link>
                 ) : (

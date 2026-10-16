@@ -175,9 +175,9 @@ describe('Install from file', () => {
     fireEvent.dragEnter(zone);
     fireEvent.dragEnter(input);
     fireEvent.dragLeave(input);
-    expect(zone.className).toContain('border-ember-400');
+    expect(zone.className).toContain('border-accent-400');
     fireEvent.dragLeave(zone);
-    expect(zone.className).not.toContain('border-ember-400');
+    expect(zone.className).not.toContain('border-accent-400');
 
     fireEvent.change(input, { target: { files: [fileOf(JSON.stringify(BUNDLE))] } });
     await waitFor(() =>

@@ -47,7 +47,7 @@ function SpendMeter({ channel }: { channel: SlackChannel }) {
       <div
         className={cn(
           'h-full rounded-full',
-          share >= 1 ? 'bg-brick-400' : share >= 0.8 ? 'bg-amber-400' : 'bg-paper-600'
+          share >= 1 ? 'bg-danger-400' : share >= 0.8 ? 'bg-warning-400' : 'bg-paper-600'
         )}
         style={{ width: `${Math.min(100, Math.max(share * 100, share > 0 ? 4 : 0))}%` }}
       />
@@ -172,7 +172,7 @@ export default function GovernSlackChannelsPage() {
                                 {ch.name ? `#${ch.name}` : 'Unnamed channel'}
                               </Link>
                               {ch.isPrivate && (
-                                <Badge tone="amber" variant="outline">
+                                <Badge tone="warning" variant="outline">
                                   Private
                                 </Badge>
                               )}
@@ -185,7 +185,7 @@ export default function GovernSlackChannelsPage() {
                             {teamNames.get(ch.teamId) ?? '—'}
                           </Td>
                           <Td className="px-4 py-3">
-                            <Badge dot tone={ch.isActive ? 'moss' : 'muted'} variant="text">
+                            <Badge dot tone={ch.isActive ? 'success' : 'muted'} variant="text">
                               {ch.isActive ? 'Active' : 'Inactive'}
                             </Badge>
                           </Td>

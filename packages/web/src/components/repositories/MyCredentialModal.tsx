@@ -66,7 +66,7 @@ export function MyCredentialModal({
         <form className="space-y-5" onSubmit={(e) => void handleSave(e).catch(() => {})}>
           {credential && (
             <div className="flex items-center gap-3 rounded-lg border border-ink-500/60 bg-ink-800/40 px-4 py-3">
-              <Icon className="text-moss-400" name="key" size={16} />
+              <Icon className="text-success-400" name="key" size={16} />
               <p className="text-sm text-paper-300">
                 Saved token ending in{' '}
                 <code className="font-mono text-paper-100">…{credential.lastFour || '????'}</code>

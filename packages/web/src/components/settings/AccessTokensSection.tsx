@@ -26,20 +26,20 @@ import { SettingsSection } from './SettingsSection';
 function TokenStatus({ revoked, expired }: { revoked: boolean; expired: boolean }) {
   if (revoked) {
     return (
-      <Badge dot tone="brick" variant="outline">
+      <Badge dot tone="danger" variant="outline">
         Revoked
       </Badge>
     );
   }
   if (expired) {
     return (
-      <Badge dot tone="amber" variant="outline">
+      <Badge dot tone="warning" variant="outline">
         Expired
       </Badge>
     );
   }
   return (
-    <Badge dot tone="moss" variant="outline">
+    <Badge dot tone="success" variant="outline">
       Active
     </Badge>
   );
@@ -254,7 +254,7 @@ export function AccessTokensSection() {
               auto-swe stores only a hash. Copy the token now and keep it in your secret manager; if
               you lose it, revoke it and create another.
             </Alert>
-            <div className="rounded-lg border border-amber-400/40 bg-ink-950/70 p-3">
+            <div className="rounded-lg border border-warning-400/40 bg-ink-950/70 p-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="label-mono">Token</span>
                 <CopyButton value={revealed.token} />

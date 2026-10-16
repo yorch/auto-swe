@@ -33,7 +33,7 @@ export function LaunchInputsCard({ inputSchema, canManage, onEdit }: LaunchInput
               <span className="flex shrink-0 items-center gap-1.5 text-xs text-paper-500">
                 {prop.type}
                 {inputSchema.required?.includes(key) && (
-                  <Badge tone="amber" variant="outline">
+                  <Badge tone="warning" variant="outline">
                     Required
                   </Badge>
                 )}

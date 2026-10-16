@@ -8,8 +8,8 @@ const INK_900 = '#0c0f17';
 const INK_400 = '#2f3850';
 const PAPER_50 = '#f7f8fb';
 const PAPER_400 = '#bac1d1';
-const EMBER_500 = '#6a5bff';
-const BRICK_400 = '#ff7a7a';
+const ACCENT_500 = '#6a5bff';
+const DANGER_400 = '#ff7a7a';
 
 export default function GlobalError({ reset }: { error: Error; reset: () => void }) {
   const button = {
@@ -56,9 +56,9 @@ export default function GlobalError({ reset }: { error: Error; reset: () => void
             aria-hidden="true"
             style={{
               alignItems: 'center',
-              border: `1px solid ${BRICK_400}55`,
+              border: `1px solid ${DANGER_400}55`,
               borderRadius: 14,
-              color: BRICK_400,
+              color: DANGER_400,
               display: 'flex',
               fontSize: 24,
               fontWeight: 700,
@@ -79,7 +79,7 @@ export default function GlobalError({ reset }: { error: Error; reset: () => void
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
             <button
               onClick={() => reset()}
-              style={{ ...button, background: EMBER_500, color: '#ffffff' }}
+              style={{ ...button, background: ACCENT_500, color: '#ffffff' }}
               type="button"
             >
               Try again

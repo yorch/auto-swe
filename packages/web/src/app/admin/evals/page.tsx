@@ -62,7 +62,7 @@ function ChangeCell({ value }: { value: number | null }) {
   const up = value > 0;
   return (
     <span
-      className={cn('text-sm tabular-nums', up ? 'text-moss-400' : 'text-brick-400')}
+      className={cn('text-sm tabular-nums', up ? 'text-success-400' : 'text-danger-400')}
       title="Latest day's mean minus the first day's mean in this window"
     >
       {up ? '▲' : '▼'} {up ? '+' : '−'}
@@ -190,7 +190,7 @@ function EvalsWorkspace() {
                     const selected = t.scorer === scorer;
                     return (
                       <TRow
-                        className={cn(selected && 'bg-ember-400/[0.06]')}
+                        className={cn(selected && 'bg-accent-400/[0.06]')}
                         hover
                         key={`${t.scorer}\u0000${t.breakdown ?? ''}`}
                       >
@@ -200,7 +200,7 @@ function EvalsWorkspace() {
                             className={cn(
                               'inline-flex items-center gap-2 rounded-sm font-mono text-sm underline-offset-2 hover:underline focus-visible:underline',
                               FOCUS_RING,
-                              selected ? 'text-ember-300' : 'text-paper-200'
+                              selected ? 'text-accent-300' : 'text-paper-200'
                             )}
                             onClick={() => update({ scorer: t.scorer })}
                             title="Chart this scorer"
@@ -210,7 +210,7 @@ function EvalsWorkspace() {
                               aria-hidden
                               className={cn(
                                 'h-1.5 w-1.5 shrink-0 rounded-full',
-                                selected ? 'bg-ember-400' : 'bg-ink-400'
+                                selected ? 'bg-accent-400' : 'bg-ink-400'
                               )}
                             />
                             {t.scorer}

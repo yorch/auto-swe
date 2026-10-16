@@ -54,11 +54,11 @@ export function fieldBoxClass(compact: boolean, invalid: boolean) {
     compact ? 'h-8 px-2.5 text-sm' : 'h-9 px-3 text-sm',
     // data-focused: a Select's trigger button; data-focus-within: a Combobox's
     // Group around its input. Each primitive gets the attribute that applies.
-    'hover:border-paper-600 data-[focused]:border-ember-400 data-[focused]:ring-2 data-[focused]:ring-ember-400/20',
-    'data-[focus-within]:border-ember-400',
+    'hover:border-paper-600 data-[focused]:border-accent-400 data-[focused]:ring-2 data-[focused]:ring-accent-400/20',
+    'data-[focus-within]:border-accent-400',
     'data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50',
     invalid &&
-      'border-brick-400 data-[focused]:border-brick-400 data-[focus-within]:border-brick-400'
+      'border-danger-400 data-[focused]:border-danger-400 data-[focus-within]:border-danger-400'
   );
 }
 
@@ -93,7 +93,7 @@ export function validationProps(error: string | undefined) {
 export function FieldHelp({ hint, error }: { hint?: string; error?: string }) {
   if (error) {
     return (
-      <Text className={cn(HELP_LINE, 'text-brick-400')} slot="errorMessage">
+      <Text className={cn(HELP_LINE, 'text-danger-400')} slot="errorMessage">
         {error}
       </Text>
     );
@@ -108,7 +108,7 @@ export function FieldHelp({ hint, error }: { hint?: string; error?: string }) {
       {/* Native validation's verdict, after a submit attempt. React Aria
           suppresses the browser's own bubble, so without this a required
           dropdown would block submit silently. */}
-      <FieldError className={cn(HELP_LINE, 'text-brick-400')}>
+      <FieldError className={cn(HELP_LINE, 'text-danger-400')}>
         {({ validationDetails }) =>
           validationDetails.valueMissing ? 'Choose an option' : 'Not a valid choice'
         }
@@ -139,7 +139,7 @@ export function DropdownItem({ option, compact }: { option: DropdownOption; comp
       className={cn(
         'flex cursor-pointer items-start gap-2 rounded-md px-2.5 py-1.5 text-paper-200 outline-none',
         compact ? 'text-sm' : 'text-sm',
-        'data-[focused]:bg-ink-600 data-[selected]:text-ember-400',
+        'data-[focused]:bg-ink-600 data-[selected]:text-accent-400',
         'data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40'
       )}
       id={toKey(option.value)}
@@ -148,7 +148,7 @@ export function DropdownItem({ option, compact }: { option: DropdownOption; comp
     >
       {({ isSelected }) => (
         <>
-          <span aria-hidden className="w-3 shrink-0 text-center text-ember-400">
+          <span aria-hidden className="w-3 shrink-0 text-center text-accent-400">
             {isSelected ? '✓' : ''}
           </span>
           <span className="min-w-0">

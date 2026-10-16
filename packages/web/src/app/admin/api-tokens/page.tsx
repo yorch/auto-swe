@@ -25,7 +25,7 @@ function StatusChip({ status }: { status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }) {
   return (
     <Badge
       dot={status === 'ACTIVE'}
-      tone={status === 'ACTIVE' ? 'moss' : status === 'EXPIRED' ? 'amber' : 'muted'}
+      tone={status === 'ACTIVE' ? 'success' : status === 'EXPIRED' ? 'warning' : 'muted'}
       variant={status === 'ACTIVE' ? 'text' : 'outline'}
     >
       {STATUS_LABELS[status]}

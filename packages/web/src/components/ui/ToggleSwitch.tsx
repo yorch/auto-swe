@@ -45,7 +45,7 @@ export function ToggleSwitch({
       <span
         className={cn(
           'inline-block h-5 w-10 shrink-0 rounded-full transition-colors',
-          checked ? 'bg-ember-400' : 'bg-ink-500'
+          checked ? 'bg-accent-400' : 'bg-ink-500'
         )}
       >
         <span

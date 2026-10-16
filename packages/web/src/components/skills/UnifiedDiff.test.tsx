@@ -19,8 +19,8 @@ describe('UnifiedDiff', () => {
       ['del', '-old line'],
       ['add', '+new line'],
     ]);
-    expect(screen.getByText('+new line').className).toContain('text-moss-400');
-    expect(screen.getByText('-old line').className).toContain('text-brick-400');
+    expect(screen.getByText('+new line').className).toContain('text-success-400');
+    expect(screen.getByText('-old line').className).toContain('text-danger-400');
   });
 
   it('shows direction-changing and zero-width characters instead of acting on them', () => {

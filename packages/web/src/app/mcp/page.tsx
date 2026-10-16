@@ -655,7 +655,7 @@ export default function StudioMcpConnectionsPage() {
                         </code>
                         {result && (
                           <div className="mt-1.5 space-y-1">
-                            <Badge dot tone={result.ok ? 'moss' : 'brick'}>
+                            <Badge dot tone={result.ok ? 'success' : 'danger'}>
                               {result.ok
                                 ? `Reachable · ${result.toolCount} ${
                                     result.toolCount === 1 ? 'tool' : 'tools'
@@ -681,7 +681,7 @@ export default function StudioMcpConnectionsPage() {
                           </div>
                         )}
                         {c.config?.allowPrivateNetwork && (
-                          <Badge className="mt-1" tone="amber" variant="outline">
+                          <Badge className="mt-1" tone="warning" variant="outline">
                             Private network
                           </Badge>
                         )}
@@ -726,7 +726,7 @@ export default function StudioMcpConnectionsPage() {
                             size="sm"
                             variant="ghost"
                           >
-                            <Icon className="text-brick-400" name="trash" size={14} />
+                            <Icon className="text-danger-400" name="trash" size={14} />
                           </Button>
                         </div>
                       </Td>

@@ -248,17 +248,17 @@ export default function GovernKnowledgePage() {
                   <Badge
                     tone={
                       item.status === 'APPROVED'
-                        ? 'moss'
+                        ? 'success'
                         : item.status === 'UNREVIEWED'
-                          ? 'amber'
+                          ? 'warning'
                           : 'muted'
                     }
                   >
                     {item.status}
                   </Badge>
-                  <Badge tone="violet">{item.trustLabel}</Badge>
+                  <Badge tone="accent2">{item.trustLabel}</Badge>
                   <Badge tone="neutral">{item.type}</Badge>
-                  <Badge tone="dust">{item.visibility}</Badge>
+                  <Badge tone="info">{item.visibility}</Badge>
                 </div>
                 <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm text-paper-300">
                   {item.content}

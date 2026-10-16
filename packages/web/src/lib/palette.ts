@@ -13,23 +13,23 @@
  * `palette.test.ts` parses `globals.css` and fails if any entry stops matching.
  */
 export const TOKEN = {
-  amber400: '#f6b545',
-  brick400: '#ff7a7a',
-  dust400: '#4d8dff',
-  dust600: '#2d6acc',
-  ember300: '#9b8fff',
-  ember400: '#7c6cff',
+  accent300: '#9b8fff',
+  accent400: '#7c6cff',
+  accent2400: '#34d8c0',
+  danger400: '#ff7a7a',
+  info400: '#4d8dff',
+  info600: '#2d6acc',
   ink500: '#2a3349',
   ink600: '#232a3d',
   ink700: '#141926',
   ink900: '#0c0f17',
   ink950: '#0a0c12',
-  moss400: '#46d28a',
   paper200: '#e4e8f0',
   paper300: '#c7cdda',
   paper400: '#bac1d1',
   paper500: '#a9b2c6',
-  violet400: '#34d8c0',
+  success400: '#46d28a',
+  warning400: '#f6b545',
 } as const;
 
 /** Shape shared by every theme × palette literal set. */
@@ -40,23 +40,23 @@ export type Tokens = { readonly [K in keyof typeof TOKEN]: string };
  * block in `globals.css`, checked by `palette.test.ts` like `TOKEN` is.
  */
 export const TOKEN_LIGHT: Tokens = {
-  amber400: '#9a5b00',
-  brick400: '#c53030',
-  dust400: '#2457c5',
-  dust600: '#1c46a0',
-  ember300: '#5b4ce0',
-  ember400: '#5143d6',
+  accent300: '#5b4ce0',
+  accent400: '#5143d6',
+  accent2400: '#0b7a6b',
+  danger400: '#c53030',
+  info400: '#2457c5',
+  info600: '#1c46a0',
   ink500: '#e1e5ee',
   ink600: '#e4e7ef',
   ink700: '#ffffff',
   ink900: '#f3f5f9',
   ink950: '#ffffff',
-  moss400: '#13804b',
   paper200: '#1d2333',
   paper300: '#353d51',
   paper400: '#475066',
   paper500: '#545d72',
-  violet400: '#0b7a6b',
+  success400: '#13804b',
+  warning400: '#9a5b00',
 };
 
 /**
@@ -101,21 +101,21 @@ export function tokensFor(theme: 'dark' | 'light', palette: 'navy' | 'graphite')
 
 /** `TOKEN` key → the custom-property name it mirrors in `globals.css`. */
 export const TOKEN_CSS_VAR: Record<keyof typeof TOKEN, string> = {
-  amber400: '--color-amber-400',
-  brick400: '--color-brick-400',
-  dust400: '--color-dust-400',
-  dust600: '--color-dust-600',
-  ember300: '--color-ember-300',
-  ember400: '--color-ember-400',
+  accent300: '--color-accent-300',
+  accent400: '--color-accent-400',
+  accent2400: '--color-accent2-400',
+  danger400: '--color-danger-400',
+  info400: '--color-info-400',
+  info600: '--color-info-600',
   ink500: '--color-ink-500',
   ink600: '--color-ink-600',
   ink700: '--color-ink-700',
   ink900: '--color-ink-900',
   ink950: '--color-ink-950',
-  moss400: '--color-moss-400',
   paper200: '--color-paper-200',
   paper300: '--color-paper-300',
   paper400: '--color-paper-400',
   paper500: '--color-paper-500',
-  violet400: '--color-violet-400',
+  success400: '--color-success-400',
+  warning400: '--color-warning-400',
 };

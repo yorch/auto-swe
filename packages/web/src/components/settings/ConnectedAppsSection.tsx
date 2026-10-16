@@ -85,13 +85,13 @@ export function ConnectedAppsSection() {
                       <>
                         <Badge
                           title="The app named itself; auto-swe has not checked it"
-                          tone="amber"
+                          tone="warning"
                           variant="outline"
                         >
                           Unverified
                         </Badge>
                         {canWrite && (
-                          <Badge tone="ember" variant="outline">
+                          <Badge tone="accent" variant="outline">
                             Can write
                           </Badge>
                         )}

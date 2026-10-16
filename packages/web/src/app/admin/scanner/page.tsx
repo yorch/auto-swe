@@ -315,12 +315,12 @@ function PatternDetailModal({
 
 /** What a match in each category does, so a row's weight is visible at a glance. */
 const ENFORCEMENT: Record<PatternType, { label: string; tone: BadgeTone }> = {
-  CODE_SECURITY: { label: 'Advisory', tone: 'dust' },
-  EXFILTRATION: { label: 'Advisory', tone: 'dust' },
-  INJECTION: { label: 'Advisory', tone: 'dust' },
-  PII: { label: 'Eval scorer', tone: 'violet' },
-  SENSITIVE_FILE: { label: 'Hard block', tone: 'brick' },
-  SHELL_COMMAND: { label: 'Soft block', tone: 'amber' },
+  CODE_SECURITY: { label: 'Advisory', tone: 'info' },
+  EXFILTRATION: { label: 'Advisory', tone: 'info' },
+  INJECTION: { label: 'Advisory', tone: 'info' },
+  PII: { label: 'Eval scorer', tone: 'accent2' },
+  SENSITIVE_FILE: { label: 'Hard block', tone: 'danger' },
+  SHELL_COMMAND: { label: 'Soft block', tone: 'warning' },
 };
 
 function EnforcementBadge({ type }: { type: PatternType }) {
@@ -411,7 +411,7 @@ function PatternRow({
               Built-in
             </Badge>
           ) : (
-            <Badge tone="ember" variant="outline">
+            <Badge tone="accent" variant="outline">
               Custom
             </Badge>
           )}

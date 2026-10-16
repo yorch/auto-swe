@@ -22,7 +22,7 @@ export interface StarterTemplate {
   /** Node types this starter demonstrates (each distinct type once, in reading order). */
   teaches: SpecNode['type'][];
   /** Display tone for the card; maps to the existing palette. */
-  tone: 'ember' | 'moss' | 'amber' | 'dust' | 'violet' | 'paper';
+  tone: 'accent' | 'success' | 'warning' | 'info' | 'accent2' | 'paper';
   spec: WorkflowSpec;
 }
 
@@ -113,7 +113,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     tagline: 'Agent + eval + bounded retry · 7 nodes',
     teaches: ['set', 'agent', 'eval', 'cond', 'terminate'],
-    tone: 'moss',
+    tone: 'success',
   },
   {
     description:
@@ -171,7 +171,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     tagline: 'Agent + human review + approval · 6 nodes',
     teaches: ['agent', 'humanReview', 'humanApproval', 'terminate'],
-    tone: 'amber',
+    tone: 'warning',
   },
   {
     description:
@@ -226,7 +226,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     tagline: 'Form + decision routing · 5 nodes',
     teaches: ['humanInput', 'humanDecision', 'terminate'],
-    tone: 'violet',
+    tone: 'accent2',
   },
   {
     description:
@@ -279,7 +279,7 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     tagline: 'Parallel agent per item · 5 nodes',
     teaches: ['set', 'fanOut', 'agent', 'terminate'],
-    tone: 'ember',
+    tone: 'accent',
   },
   {
     description:
@@ -310,6 +310,6 @@ export const STARTER_TEMPLATES: StarterTemplate[] = [
     },
     tagline: 'External signal with timeout · 3 nodes',
     teaches: ['signal', 'terminate'],
-    tone: 'dust',
+    tone: 'info',
   },
 ];

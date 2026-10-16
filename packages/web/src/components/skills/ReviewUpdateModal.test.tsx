@@ -132,8 +132,8 @@ describe('diff rendering', () => {
       ],
     });
     show();
-    expect(screen.getByText('+new').className).toContain('text-moss-400');
-    expect(screen.getByText('-old').className).toContain('text-brick-400');
+    expect(screen.getByText('+new').className).toContain('text-success-400');
+    expect(screen.getByText('-old').className).toContain('text-danger-400');
     expect(screen.getByText('stale')).toBeTruthy();
     expect(screen.getByText('fresh')).toBeTruthy();
     expect(screen.getByText(/Upstream now names it a-two/)).toBeTruthy();

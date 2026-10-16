@@ -33,16 +33,16 @@ export function EntityMetaBadges({
         </Badge>
       )}
       {isVerified === true && (
-        <Badge dot tone="moss">
+        <Badge dot tone="success">
           Verified
         </Badge>
       )}
       {isVerified === false && !isBuiltIn && (
-        <Badge dot tone="amber">
+        <Badge dot tone="warning">
           Unverified
         </Badge>
       )}
-      <Badge dot tone={isActive ? 'moss' : 'muted'}>
+      <Badge dot tone={isActive ? 'success' : 'muted'}>
         {isActive ? 'Active' : 'Inactive'}
       </Badge>
       {children}

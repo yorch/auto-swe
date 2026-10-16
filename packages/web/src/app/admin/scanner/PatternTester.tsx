@@ -65,10 +65,10 @@ function Outcome({
   return (
     <li className="space-y-1 rounded-md border border-ink-600 bg-ink-900/50 p-2.5">
       <div className="flex flex-wrap items-center gap-2">
-        {result.status === 'matched' && <Badge tone="amber">Matched</Badge>}
+        {result.status === 'matched' && <Badge tone="warning">Matched</Badge>}
         {result.status === 'no_match' && <Badge tone="muted">No match</Badge>}
-        {result.status === 'timed_out' && <Badge tone="brick">Timed out</Badge>}
-        {result.status === 'error' && <Badge tone="brick">Error</Badge>}
+        {result.status === 'timed_out' && <Badge tone="danger">Timed out</Badge>}
+        {result.status === 'error' && <Badge tone="danger">Error</Badge>}
         {result.status === 'not_run' && <Badge tone="muted">Skipped</Badge>}
         <span className="text-xs font-medium text-paper-200">Sample {number}</span>
         <code className="min-w-0 flex-1 truncate font-mono text-xs text-paper-400">
@@ -83,7 +83,7 @@ function Outcome({
             <>
               First match ({result.match.length} characters
               {result.match.truncated ? ', excerpt shortened' : ''}):{' '}
-              <mark className="rounded-sm bg-ember-400/20 px-1 font-mono text-ember-200">
+              <mark className="rounded-sm bg-accent-400/20 px-1 font-mono text-accent-200">
                 {result.match.excerpt}
               </mark>
             </>
@@ -91,12 +91,12 @@ function Outcome({
         </p>
       )}
       {result.status === 'timed_out' && (
-        <p className="text-xs text-brick-400">
+        <p className="text-xs text-danger-400">
           The pattern ran past the time limit on this sample, so it could not be evaluated.
         </p>
       )}
       {result.status === 'error' && (
-        <p className="text-xs text-brick-400">
+        <p className="text-xs text-danger-400">
           The check failed before it could finish, so this sample could not be evaluated. This is
           not a verdict on the pattern; try again.
         </p>

@@ -83,7 +83,7 @@ export function TabBar<T extends string>({
       'shrink-0 whitespace-nowrap border-b-2 px-4 py-2 text-sm transition-colors',
       FOCUS_RING,
       selected
-        ? 'border-ember-400 text-ember-400'
+        ? 'border-accent-400 text-accent-400'
         : 'border-transparent text-paper-400 hover:text-paper-100'
     );
 

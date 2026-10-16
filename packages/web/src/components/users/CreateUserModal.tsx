@@ -120,7 +120,7 @@ export function CreateUserModal({ open, onClose }: { open: boolean; onClose: () 
       >
         {revealed?.temporaryPassword && (
           <div className="space-y-4">
-            <div className="flex items-center gap-3 rounded-lg border border-amber-400/40 bg-ink-950/70 p-4">
+            <div className="flex items-center gap-3 rounded-lg border border-warning-400/40 bg-ink-950/70 p-4">
               <code className="min-w-0 flex-1 break-all font-mono text-sm text-paper-50">
                 {revealed.temporaryPassword}
               </code>

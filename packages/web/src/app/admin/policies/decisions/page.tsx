@@ -25,10 +25,10 @@ const LIMIT = 50;
 
 /** Approvals read as go, rejections as stop; anything else stays neutral. */
 const EVENT_TONE: Record<string, BadgeTone> = {
-  approve: 'moss',
-  approve_partial: 'amber',
-  publish: 'dust',
-  reject: 'brick',
+  approve: 'success',
+  approve_partial: 'warning',
+  publish: 'info',
+  reject: 'danger',
 };
 
 type Filters = {

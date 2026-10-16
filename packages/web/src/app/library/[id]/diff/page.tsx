@@ -63,9 +63,9 @@ const GLYPH_LABEL: Record<FieldChange['kind'], string> = {
   removed: 'removed',
 };
 const GLYPH_CLASS: Record<FieldChange['kind'], string> = {
-  added: 'text-moss-400',
-  changed: 'text-amber-400',
-  removed: 'text-brick-400',
+  added: 'text-success-400',
+  changed: 'text-warning-400',
+  removed: 'text-danger-400',
 };
 
 function show(v: unknown): string {
@@ -401,13 +401,13 @@ function DiffBody({
         <CardHeader>
           <CardTitle>What changed</CardTitle>
           <div className="flex flex-wrap items-center gap-1.5">
-            <Badge tone="moss" variant="outline">
+            <Badge tone="success" variant="outline">
               {diff.addedNodes.length} added
             </Badge>
-            <Badge tone="brick" variant="outline">
+            <Badge tone="danger" variant="outline">
               {diff.removedNodes.length} removed
             </Badge>
-            <Badge tone="amber" variant="outline">
+            <Badge tone="warning" variant="outline">
               {diff.changedNodes.length} changed
             </Badge>
             <Badge tone="neutral" variant="outline">
@@ -420,9 +420,9 @@ function DiffBody({
           exist in both but differ in at least one field.
         </p>
         <dl className="divide-y divide-ink-600 text-sm">
-          <DiffStat ids={diff.addedNodes} label="Added" tone="moss" />
-          <DiffStat ids={diff.removedNodes} label="Removed" tone="brick" />
-          <DiffStat ids={diff.changedNodes} label="Changed" tone="amber" />
+          <DiffStat ids={diff.addedNodes} label="Added" tone="success" />
+          <DiffStat ids={diff.removedNodes} label="Removed" tone="danger" />
+          <DiffStat ids={diff.changedNodes} label="Changed" tone="warning" />
           {presentationOnly.length > 0 && (
             <DiffStat ids={presentationOnly} label="Title or group only" tone="neutral" />
           )}
@@ -505,7 +505,7 @@ function DiffStat({
 }: {
   label: string;
   ids: string[];
-  tone: 'moss' | 'brick' | 'amber' | 'neutral';
+  tone: 'success' | 'danger' | 'warning' | 'neutral';
 }) {
   return (
     <div className="flex flex-col gap-1 py-2 first:pt-0 last:pb-0 sm:flex-row sm:items-baseline sm:gap-4">

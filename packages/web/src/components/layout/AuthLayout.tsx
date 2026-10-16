@@ -29,7 +29,7 @@ export function BrandMark({
     >
       <span
         aria-hidden="true"
-        className={cn('flex shrink-0 items-center justify-center bg-ember-500 text-white', tile)}
+        className={cn('flex shrink-0 items-center justify-center bg-accent-500 text-white', tile)}
       >
         <svg aria-hidden="true" fill="none" height={glyph} viewBox="0 0 24 24" width={glyph}>
           <path
@@ -100,13 +100,13 @@ export function AuthLayout({
   );
 }
 
-type HeadingTone = 'neutral' | 'moss' | 'amber' | 'brick';
+type HeadingTone = 'neutral' | 'success' | 'warning' | 'danger';
 
 const TONE_CHIP: Record<HeadingTone, string> = {
-  amber: 'border-amber-400/30 bg-amber-400/10 text-amber-400',
-  brick: 'border-brick-400/30 bg-brick-400/10 text-brick-400',
-  moss: 'border-moss-400/30 bg-moss-400/10 text-moss-400',
+  danger: 'border-danger-400/30 bg-danger-400/10 text-danger-400',
   neutral: 'border-ink-400 bg-ink-600 text-paper-300',
+  success: 'border-success-400/30 bg-success-400/10 text-success-400',
+  warning: 'border-warning-400/30 bg-warning-400/10 text-warning-400',
 };
 
 /**

@@ -43,11 +43,11 @@ const KIND_LABEL: Record<AutomationKind, string> = {
 /** The tone of the last-activity badge for kinds whose activity is a run, not a decision. */
 const RUN_TONE: Record<string, BadgeTone> = {
   CANCELLED: 'muted',
-  COMPLETED: 'moss',
-  FAILED: 'brick',
-  RUNNING: 'violet',
-  TERMINATED: 'brick',
-  TIMED_OUT: 'brick',
+  COMPLETED: 'success',
+  FAILED: 'danger',
+  RUNNING: 'accent2',
+  TERMINATED: 'danger',
+  TIMED_OUT: 'danger',
 };
 
 /**
@@ -286,7 +286,7 @@ export default function GovernAutomationsPage() {
                                   {KIND_LABEL[r.kind]}
                                 </Badge>
                                 {!r.enabled && (
-                                  <Badge tone="amber" variant="outline">
+                                  <Badge tone="warning" variant="outline">
                                     off
                                   </Badge>
                                 )}
@@ -298,7 +298,7 @@ export default function GovernAutomationsPage() {
                                         : 'Anyone holding the URL can call it: no signing secret'
                                     }
                                   >
-                                    <Badge tone="amber" variant="outline">
+                                    <Badge tone="warning" variant="outline">
                                       {r.signed ? 'signature optional' : 'unsigned'}
                                     </Badge>
                                   </span>

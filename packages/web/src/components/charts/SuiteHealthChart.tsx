@@ -120,7 +120,7 @@ export function SuiteHealthChart({ datasets, maxStaleRate, title }: Props) {
               position: 'top',
               value: `max ${percent(maxStaleRate)}`,
             }}
-            stroke={t.amber400}
+            stroke={t.warning400}
             strokeDasharray="4 3"
             x={maxStaleRate}
           />
@@ -131,7 +131,7 @@ export function SuiteHealthChart({ datasets, maxStaleRate, title }: Props) {
             radius={[0, 4, 4, 0]}
           >
             {datasets.map((d) => (
-              <Cell fill={d.staleRate > maxStaleRate ? t.brick400 : t.ember400} key={d.slug} />
+              <Cell fill={d.staleRate > maxStaleRate ? t.danger400 : t.accent400} key={d.slug} />
             ))}
           </Bar>
         </BarChart>

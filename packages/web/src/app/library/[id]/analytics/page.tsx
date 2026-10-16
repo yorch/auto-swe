@@ -170,10 +170,10 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                   tone={successTone(stats.successRate)}
                   value={formatPercent(stats.successRate)}
                 />
-                <Stat label="Succeeded" tone="moss" value={stats.succeeded} />
+                <Stat label="Succeeded" tone="success" value={stats.succeeded} />
                 <Stat
                   label="Failed"
-                  tone={stats.failed > 0 ? 'brick' : 'default'}
+                  tone={stats.failed > 0 ? 'danger' : 'default'}
                   value={stats.failed}
                 />
                 <Stat
@@ -205,7 +205,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                     </HelpTip>
                   }
                   label="Time saved"
-                  tone="moss"
+                  tone="success"
                   value={
                     stats.estimatedHumanTimeSavedTotal == null
                       ? '—'
@@ -241,7 +241,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                   <CardTitle hint="Two-proportion z-test">A/B significance</CardTitle>
                   <Badge
                     dot
-                    tone={stats.significanceHint.isSignificant ? 'moss' : 'amber'}
+                    tone={stats.significanceHint.isSignificant ? 'success' : 'warning'}
                     variant="outline"
                   >
                     {stats.significanceHint.isSignificant
@@ -442,9 +442,9 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                           className={cn(
                             'py-2.5 pl-4 text-sm font-medium tabular-nums',
                             row.failureRate > 0.25
-                              ? 'text-brick-400'
+                              ? 'text-danger-400'
                               : row.failureRate > 0.05
-                                ? 'text-amber-400'
+                                ? 'text-warning-400'
                                 : 'text-paper-500'
                           )}
                         >

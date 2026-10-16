@@ -175,9 +175,9 @@ packages/
 | `src/lib/api.ts` | `ApiClient` — all fetches; no direct `fetch` in components |
 
 **Design system.** Tokens are defined via Tailwind v4 `@theme` in `globals.css`: `ink-*`
-surfaces and borders, `paper-*` text, `ember-*` (violet) accent, and status colours `moss-*`
-(success), `brick-*` (failure), `amber-*` (waiting, warning), `dust-*` (running, info) and
-`violet-*` (teal; in review). The accent is reserved for the primary action, the current selection
+surfaces and borders, `paper-*` text, `accent-*` (violet, the primary accent), `accent2-*`
+(teal, the secondary accent; in review), and status colours named by role: `success-*`,
+`warning-*` (waiting), `danger-*` (failure), `info-*` (running). The accent is reserved for the primary action, the current selection
 and keyboard focus; links are body colour with an underline, and status colours only ever mean a
 status. The design is flat: solid fills and visible borders, no gradients or glows, and a three-step
 radius scale (4px small controls and badges, 8px inputs, buttons and menus, 12px cards and modals).

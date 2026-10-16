@@ -238,7 +238,7 @@ function BreakdownTable({ dimension, data }: { dimension: Dimension; data: Platf
                 align="right"
                 className={cn(
                   'px-4 py-2 text-sm tabular-nums',
-                  r.errors > 0 ? 'text-brick-400' : 'text-paper-300'
+                  r.errors > 0 ? 'text-danger-400' : 'text-paper-300'
                 )}
                 label="Error rate"
               >
@@ -379,7 +379,7 @@ function UsageWorkspace() {
                   <Stat label="LLM calls" value={formatCount(data.totals.calls)} />
                   <Stat
                     label="Error rate"
-                    tone={data.totals.errors > 0 ? 'brick' : 'default'}
+                    tone={data.totals.errors > 0 ? 'danger' : 'default'}
                     value={formatPercent(errorRate(data.totals))}
                   />
                   <Stat

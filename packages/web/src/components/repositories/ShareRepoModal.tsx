@@ -78,7 +78,7 @@ export function ShareRepoModal({
                 <Checkbox
                   checked={selected.has(team.id)}
                   className={`border-b border-ink-600 px-3 py-2.5 last:border-b-0 ${
-                    selected.has(team.id) ? 'bg-ember-400/[0.06]' : 'hover:bg-ink-700/40'
+                    selected.has(team.id) ? 'bg-accent-400/[0.06]' : 'hover:bg-ink-700/40'
                   }`}
                   disabled={save.isPending}
                   key={team.id}

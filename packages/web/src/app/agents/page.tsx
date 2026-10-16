@@ -486,7 +486,7 @@ export default function AgentLibraryPage() {
           <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
             <span className="mr-auto text-paper-400">{selectedVisibleIds.size} selected</span>
             {selectedVisibleIds.size > BULK_MODEL_LIMIT && (
-              <span className="text-amber-400">
+              <span className="text-warning-400">
                 At most {BULK_MODEL_LIMIT} can be changed at once — narrow the list with the
                 filters.
               </span>
@@ -664,7 +664,7 @@ export default function AgentLibraryPage() {
                             <Badge
                               dot
                               title={`No ${missingProvider} credential. Runs that use this agent fail at their first model call. Add one under Model configuration.`}
-                              tone="brick"
+                              tone="danger"
                             >
                               No credential
                             </Badge>
@@ -676,7 +676,7 @@ export default function AgentLibraryPage() {
                         </div>
                       </Td>
                       <Td className="px-4 py-3 align-top" label="Scope">
-                        <Badge tone={a.scope === 'GLOBAL' ? 'neutral' : 'dust'}>
+                        <Badge tone={a.scope === 'GLOBAL' ? 'neutral' : 'info'}>
                           {scopeLabel(a.scope)}
                         </Badge>
                         {target && (
@@ -702,7 +702,7 @@ export default function AgentLibraryPage() {
                           </Badge>
                           <Badge
                             title={originLabel(a.origin)}
-                            tone={a.isVerified ? 'moss' : 'amber'}
+                            tone={a.isVerified ? 'success' : 'warning'}
                           >
                             {a.isVerified ? 'Verified' : 'Unverified'}
                           </Badge>

@@ -253,7 +253,7 @@ export function GitHubHostCredentialsCard() {
                         size="sm"
                         variant="ghost"
                       >
-                        <Icon className="text-brick-400" name="trash" size={14} />
+                        <Icon className="text-danger-400" name="trash" size={14} />
                       </Button>
                     </div>
                   </Td>

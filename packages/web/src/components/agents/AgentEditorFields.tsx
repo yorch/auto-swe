@@ -120,7 +120,7 @@ export function SkillRefEditor({
               </Button>
               <Button
                 aria-label={`Remove ${nameFor(ref.skillId)}`}
-                className="w-7 px-0 text-brick-400 hover:text-brick-400"
+                className="w-7 px-0 text-danger-400 hover:text-danger-400"
                 onClick={() => remove(i)}
                 size="sm"
                 variant="ghost"

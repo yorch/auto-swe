@@ -2,42 +2,37 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 
 export type BadgeTone =
-  | 'moss'
-  | 'amber'
-  | 'brick'
-  | 'violet'
-  | 'dust'
-  | 'ember'
+  | 'success'
+  | 'warning'
+  | 'danger'
+  | 'accent2'
+  | 'info'
+  | 'accent'
   | 'neutral'
   | 'muted';
 export type BadgeVariant = 'solid' | 'outline' | 'text';
 
 // Full literal class strings so Tailwind's scanner sees every one.
 const TONE_CLASSES: Record<BadgeTone, Record<BadgeVariant, string>> = {
-  amber: {
-    outline: 'border-amber-400/30 bg-amber-400/10 text-amber-400',
-    solid: 'bg-amber-400/20 text-amber-400',
-    text: 'text-amber-400',
+  accent: {
+    outline: 'border-accent-400/30 bg-accent-400/10 text-accent-400',
+    solid: 'bg-accent-400/20 text-accent-400',
+    text: 'text-accent-400',
   },
-  brick: {
-    outline: 'border-brick-400/30 bg-brick-400/10 text-brick-400',
-    solid: 'bg-brick-400/20 text-brick-400',
-    text: 'text-brick-400',
+  accent2: {
+    outline: 'border-accent2-400/30 bg-accent2-400/10 text-accent2-400',
+    solid: 'bg-accent2-400/20 text-accent2-400',
+    text: 'text-accent2-400',
   },
-  dust: {
-    outline: 'border-dust-400/30 bg-dust-400/10 text-dust-400',
-    solid: 'bg-dust-400/20 text-dust-400',
-    text: 'text-dust-400',
+  danger: {
+    outline: 'border-danger-400/30 bg-danger-400/10 text-danger-400',
+    solid: 'bg-danger-400/20 text-danger-400',
+    text: 'text-danger-400',
   },
-  ember: {
-    outline: 'border-ember-400/30 bg-ember-400/10 text-ember-400',
-    solid: 'bg-ember-400/20 text-ember-400',
-    text: 'text-ember-400',
-  },
-  moss: {
-    outline: 'border-moss-400/30 bg-moss-400/10 text-moss-400',
-    solid: 'bg-moss-400/20 text-moss-400',
-    text: 'text-moss-400',
+  info: {
+    outline: 'border-info-400/30 bg-info-400/10 text-info-400',
+    solid: 'bg-info-400/20 text-info-400',
+    text: 'text-info-400',
   },
   muted: {
     outline: 'border-ink-500 bg-ink-700 text-paper-400',
@@ -49,10 +44,15 @@ const TONE_CLASSES: Record<BadgeTone, Record<BadgeVariant, string>> = {
     solid: 'bg-ink-600 text-paper-400',
     text: 'text-paper-400',
   },
-  violet: {
-    outline: 'border-violet-400/30 bg-violet-400/10 text-violet-400',
-    solid: 'bg-violet-400/20 text-violet-400',
-    text: 'text-violet-400',
+  success: {
+    outline: 'border-success-400/30 bg-success-400/10 text-success-400',
+    solid: 'bg-success-400/20 text-success-400',
+    text: 'text-success-400',
+  },
+  warning: {
+    outline: 'border-warning-400/30 bg-warning-400/10 text-warning-400',
+    solid: 'bg-warning-400/20 text-warning-400',
+    text: 'text-warning-400',
   },
 };
 

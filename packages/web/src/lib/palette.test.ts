@@ -127,9 +127,11 @@ describe('design tokens are the only colour scale in use', () => {
     'pink',
     'rose',
   ];
-  // `amber` and `violet` are also project token names, so they are excluded:
-  // the project defines --color-amber-400 / --color-violet-400 itself.
-  const PROJECT_OWNED = new Set(['amber', 'violet']);
+  // The project's token families are named by role (accent, success, warning, …), none of
+  // which is a Tailwind default scale, so no default is shadowed: `amber` and `violet` are
+  // banned like the rest. A future token family that collides with a default would be listed
+  // here, with a reason, rather than silently exempting the whole scale.
+  const PROJECT_OWNED = new Set<string>();
   const scales = DEFAULT_SCALES.filter((s) => !PROJECT_OWNED.has(s));
 
   it('no component uses a default Tailwind colour scale', () => {

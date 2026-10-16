@@ -29,9 +29,9 @@ import { shortSha, sourceLabel } from './sourceDisplay';
 
 const STATUS_TONE: Record<SourceStatus, BadgeTone> = {
   DISABLED: 'muted',
-  ERROR: 'brick',
-  OK: 'moss',
-  UPDATE_AVAILABLE: 'amber',
+  ERROR: 'danger',
+  OK: 'success',
+  UPDATE_AVAILABLE: 'warning',
 };
 
 const STATUS_LABEL: Record<SourceStatus, string> = {
@@ -202,7 +202,7 @@ export function SkillSourcesTab() {
                             : 'Never checked'}
                         </div>
                         {s.lastError && (
-                          <div className="mt-0.5 text-xs text-brick-400">
+                          <div className="mt-0.5 text-xs text-danger-400">
                             {visibleText(s.lastError)}
                           </div>
                         )}

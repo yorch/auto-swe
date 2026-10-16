@@ -260,7 +260,7 @@ export default function StudioGithubInstallationsPage() {
                         {repos}
                       </Td>
                       <Td className="px-4 py-2.5" label="Status">
-                        <Badge dot tone={i.isActive ? 'moss' : 'muted'}>
+                        <Badge dot tone={i.isActive ? 'success' : 'muted'}>
                           {i.isActive ? 'In use' : 'Retired'}
                         </Badge>
                       </Td>

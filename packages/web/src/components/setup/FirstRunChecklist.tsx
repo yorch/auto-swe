@@ -142,7 +142,7 @@ function FirstRunChecklistBody() {
               className={cn(
                 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs tabular',
                 step.done
-                  ? 'border-moss-400/40 bg-moss-400/15 text-moss-400'
+                  ? 'border-success-400/40 bg-success-400/15 text-success-400'
                   : 'border-ink-400 text-paper-400'
               )}
             >
@@ -164,7 +164,7 @@ function FirstRunChecklistBody() {
               <Link
                 className={cn(
                   'inline-flex shrink-0 items-center gap-1 rounded-sm text-sm hover:underline',
-                  step.id === nextId ? 'font-medium text-ember-400' : 'text-paper-300',
+                  step.id === nextId ? 'font-medium text-accent-400' : 'text-paper-300',
                   FOCUS_RING
                 )}
                 href={step.href}

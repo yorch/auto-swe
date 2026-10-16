@@ -54,7 +54,7 @@ export function EditorActionBar({
         </Button>
         <Button
           aria-pressed={showOutline}
-          className={cn(showOutline && 'border-ember-400/50 bg-ember-400/10 text-ember-300')}
+          className={cn(showOutline && 'border-accent-400/50 bg-accent-400/10 text-accent-300')}
           onClick={() => {
             setShowOutline((v) => !v);
             setPaletteOpen(false);

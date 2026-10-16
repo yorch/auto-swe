@@ -552,7 +552,7 @@ export default function AutonomyPoliciesPage() {
                         <div className="flex flex-wrap items-center gap-2">
                           <h2 className="text-base font-semibold text-paper-50">{p.name}</h2>
                           <Badge
-                            tone={p.template ? 'violet' : p.team ? 'dust' : 'neutral'}
+                            tone={p.template ? 'accent2' : p.team ? 'info' : 'neutral'}
                             variant="outline"
                           >
                             {scopeLabel(p)}
@@ -589,9 +589,9 @@ export default function AutonomyPoliciesPage() {
                           >
                             <span className="text-paper-200">{riskClassLabel(riskClass)}</span>
                             {rule.action === 'auto' ? (
-                              <Badge tone="moss">Automatic</Badge>
+                              <Badge tone="success">Automatic</Badge>
                             ) : (
-                              <Badge tone="amber">
+                              <Badge tone="warning">
                                 {(rule.approverCount ?? 1) === 1
                                   ? '1 approver'
                                   : `${rule.approverCount} approvers`}

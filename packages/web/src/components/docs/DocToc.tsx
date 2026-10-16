@@ -52,7 +52,7 @@ export function DocToc({ className, toc }: { className?: string; toc: TocEntry[]
                 '-ml-px block border-l py-1 leading-snug transition-colors',
                 entry.level === 3 ? 'pl-6' : 'pl-3',
                 current
-                  ? 'border-ember-400 text-paper-50'
+                  ? 'border-accent-400 text-paper-50'
                   : 'border-transparent text-paper-500 hover:border-ink-300 hover:text-paper-200',
                 FOCUS_RING
               )}

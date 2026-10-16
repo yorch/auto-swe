@@ -296,7 +296,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                               {m.user.email}
                             </span>
                             {isMe && (
-                              <Badge tone="ember" variant="outline">
+                              <Badge tone="accent" variant="outline">
                                 You
                               </Badge>
                             )}
@@ -323,7 +323,7 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                           ) : (
                             <Badge
                               title={isMe ? 'You cannot change your own role' : undefined}
-                              tone={m.role === 'ORG_ADMIN' ? 'ember' : 'neutral'}
+                              tone={m.role === 'ORG_ADMIN' ? 'accent' : 'neutral'}
                               variant="outline"
                             >
                               {orgRoleLabel(m.role)}
@@ -441,11 +441,11 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                     No cap
                   </Badge>
                 ) : overThreshold ? (
-                  <Badge dot tone="brick">
+                  <Badge dot tone="danger">
                     Over threshold
                   </Badge>
                 ) : (
-                  <Badge dot tone="moss" variant="text">
+                  <Badge dot tone="success" variant="text">
                     Within budget
                   </Badge>
                 ))}
@@ -492,10 +492,10 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                         className={cn(
                           'absolute inset-y-0 left-0 rounded-full',
                           usedPercent >= 100
-                            ? 'bg-brick-400'
+                            ? 'bg-danger-400'
                             : overThreshold
-                              ? 'bg-amber-400'
-                              : 'bg-moss-400'
+                              ? 'bg-warning-400'
+                              : 'bg-success-400'
                         )}
                         style={{ width: `${Math.min(100, usedPercent)}%` }}
                       />

@@ -176,7 +176,7 @@ export default function StudioBundlesPage() {
           <div
             className={cn(
               'flex flex-col items-center rounded-lg border border-dashed px-4 py-6 text-center transition-colors',
-              dragging ? 'border-ember-400 bg-ember-500/5' : 'border-ink-400 bg-ink-900/30'
+              dragging ? 'border-accent-400 bg-accent-500/5' : 'border-ink-400 bg-ink-900/30'
             )}
             onDragEnter={() => {
               dragDepth.current += 1;
@@ -334,7 +334,7 @@ export default function StudioBundlesPage() {
                       {b.version}
                     </Td>
                     <Td className="px-4 py-2.5" label="Trust">
-                      <Badge dot tone={b.trustState === 'VERIFIED' ? 'moss' : 'amber'}>
+                      <Badge dot tone={b.trustState === 'VERIFIED' ? 'success' : 'warning'}>
                         {b.trustState === 'VERIFIED' ? 'Verified' : 'Unverified'}
                         {b.signedBy ? ` · ${b.signedBy}` : ''}
                       </Badge>

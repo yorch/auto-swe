@@ -93,12 +93,12 @@ export function TemplateHeader({
         </Badge>
         <VersionTags isDefault={template.isDefault} />
         {template.webhookConfigured && (
-          <Badge title="A webhook URL can start this workflow" tone="violet" variant="outline">
+          <Badge title="A webhook URL can start this workflow" tone="accent2" variant="outline">
             Webhook
           </Badge>
         )}
         {template.experimentVersion && (
-          <Badge tone="violet" variant="outline">
+          <Badge tone="accent2" variant="outline">
             A/B test: v{template.experimentVersion} at {template.experimentSplit ?? 0}%
           </Badge>
         )}

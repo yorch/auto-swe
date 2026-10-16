@@ -71,7 +71,7 @@ export function EditorActions({
         </Button>
       )}
       {isDirty && jsonInvalid && (
-        <span className="text-xs text-brick-400" id="save-blocked-reason">
+        <span className="text-xs text-danger-400" id="save-blocked-reason">
           Fix the JSON to save
         </span>
       )}
@@ -87,7 +87,7 @@ export function EditorActions({
         </Button>
       )}
       {canPromote && promoteReason && (
-        <span className="text-xs text-brick-400" id="promote-blocked-reason">
+        <span className="text-xs text-danger-400" id="promote-blocked-reason">
           {promoteReason}
         </span>
       )}

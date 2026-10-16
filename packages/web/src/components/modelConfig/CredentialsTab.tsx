@@ -91,7 +91,7 @@ export function deleteMessage(target: ProviderCredentialRow, all: ProviderCreden
         </p>
       )}
       {stranded.length > 0 && (
-        <div className="font-medium text-brick-400">
+        <div className="font-medium text-danger-400">
           <p>
             {stranded.length === 1 ? 'This leaves one' : `This leaves ${stranded.length}`} with no
             credential it can use, so {stranded.length === 1 ? 'it fails' : 'they fail'} at the next
@@ -108,7 +108,7 @@ export function deleteMessage(target: ProviderCredentialRow, all: ProviderCreden
         </div>
       )}
       {isLast && (
-        <p className="font-medium text-brick-400">
+        <p className="font-medium text-danger-400">
           This is the last platform-wide {target.provider} credential. Every agent using{' '}
           {target.provider} models will fail.
         </p>
@@ -180,7 +180,7 @@ export function CredentialsTab() {
         <Card className="p-5 sm:p-6">
           <CardHeader className="items-start">
             <CardTitle>Providers your agents use</CardTitle>
-            <Badge dot tone={missing > 0 ? 'brick' : 'moss'} variant="outline">
+            <Badge dot tone={missing > 0 ? 'danger' : 'success'} variant="outline">
               {missing > 0 ? `${missing} missing` : 'All covered'}
             </Badge>
           </CardHeader>
@@ -194,7 +194,7 @@ export function CredentialsTab() {
                 key={p.provider}
               >
                 <Icon
-                  className={p.present ? 'text-moss-400' : 'text-brick-400'}
+                  className={p.present ? 'text-success-400' : 'text-danger-400'}
                   name={p.present ? 'checkCircle' : 'warning'}
                   size={18}
                 />
@@ -203,7 +203,7 @@ export function CredentialsTab() {
                     <span className="font-mono text-sm font-medium text-paper-100">
                       {p.provider}
                     </span>
-                    <Badge tone={p.present ? 'moss' : 'brick'}>
+                    <Badge tone={p.present ? 'success' : 'danger'}>
                       {p.present ? 'Credential present' : 'Credential missing'}
                     </Badge>
                   </div>
@@ -284,7 +284,7 @@ export function CredentialsTab() {
                         )}
                       </Td>
                       <Td className="px-4 py-2.5" label="Scope">
-                        <Badge tone={c.scope === 'GLOBAL' ? 'neutral' : 'dust'}>
+                        <Badge tone={c.scope === 'GLOBAL' ? 'neutral' : 'info'}>
                           {c.scope === 'GLOBAL' ? 'Platform-wide' : 'Team'}
                         </Badge>
                         {c.teamId && (
@@ -298,7 +298,7 @@ export function CredentialsTab() {
                       </Td>
                       <Td className="px-4 py-2.5" label="Last test">
                         {probe ? (
-                          <Badge dot tone={probe.ok ? 'moss' : 'brick'}>
+                          <Badge dot tone={probe.ok ? 'success' : 'danger'}>
                             {probe.ok
                               ? `OK (${probe.status})`
                               : (probe.error ?? `HTTP ${probe.status}`)}

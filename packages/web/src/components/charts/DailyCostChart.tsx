@@ -87,7 +87,7 @@ export function DailyCostChart({ data, granularity = 'day', title }: Props) {
           />
           <Bar
             dataKey="costUsd"
-            fill={t.ember400}
+            fill={t.accent400}
             maxBarSize={BAR_MAX_SIZE}
             radius={[4, 4, 0, 0]}
           />

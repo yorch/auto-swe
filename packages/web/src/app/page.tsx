@@ -47,7 +47,7 @@ const BUCKETS: Bucket[] = [
     id: 'attention',
     state: 'attention',
     title: 'Needs your attention',
-    tone: 'text-amber-400',
+    tone: 'text-warning-400',
   },
   {
     empty: {
@@ -58,7 +58,7 @@ const BUCKETS: Bucket[] = [
     id: 'in-progress',
     state: 'active',
     title: 'In progress',
-    tone: 'text-dust-400',
+    tone: 'text-info-400',
   },
   {
     empty: {
@@ -69,7 +69,7 @@ const BUCKETS: Bucket[] = [
     id: 'recent-results',
     state: 'success',
     title: 'Recent results',
-    tone: 'text-moss-400',
+    tone: 'text-success-400',
   },
 ];
 

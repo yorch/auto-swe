@@ -35,10 +35,10 @@ export const NODE_TYPE_CATEGORY: Record<SpecNode['type'], NodeCategory> = {
 
 /** One colour per category, shared by the canvas node's left stripe and the palette swatch. Full literal class strings so Tailwind's scanner sees every one. */
 export const CATEGORY_TONE: Record<NodeCategory, { border: string; swatch: string }> = {
-  agent: { border: 'border-l-ember-400', swatch: 'bg-ember-400' },
-  control: { border: 'border-l-violet-400', swatch: 'bg-violet-400' },
-  execution: { border: 'border-l-dust-400', swatch: 'bg-dust-400' },
-  human: { border: 'border-l-amber-600', swatch: 'bg-amber-600' },
+  agent: { border: 'border-l-accent-400', swatch: 'bg-accent-400' },
+  control: { border: 'border-l-accent2-400', swatch: 'bg-accent2-400' },
+  execution: { border: 'border-l-info-400', swatch: 'bg-info-400' },
+  human: { border: 'border-l-warning-600', swatch: 'bg-warning-600' },
 };
 
 /** The specific kind, drawn small in the node header. */
@@ -96,7 +96,7 @@ export function isKnownNodeType(type: unknown): type is SpecNode['type'] {
 }
 
 /** Tone for a node whose type is not known: red, so it reads as "not a real kind". */
-export const UNKNOWN_NODE_TONE = { border: 'border-l-brick-400', swatch: 'bg-brick-400' };
+export const UNKNOWN_NODE_TONE = { border: 'border-l-danger-400', swatch: 'bg-danger-400' };
 
 /** `NODE_TYPE_TONE[type]`, safe for a type this build does not know. */
 export function nodeTypeTone(type: unknown): { border: string; swatch: string } {

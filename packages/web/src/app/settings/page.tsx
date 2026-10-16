@@ -141,7 +141,7 @@ export default function SettingsPage() {
             <div>
               <dt className="label-mono">Role</dt>
               <dd className="mt-1">
-                <Badge tone="ember" variant="outline">
+                <Badge tone="accent" variant="outline">
                   {roleLabel}
                 </Badge>
               </dd>
@@ -223,7 +223,7 @@ export default function SettingsPage() {
                   leading={<ProviderMark id={p.id} />}
                   status={
                     isLinked ? (
-                      <Badge dot tone="moss" variant="outline">
+                      <Badge dot tone="success" variant="outline">
                         Linked
                       </Badge>
                     ) : configured ? null : (
@@ -268,7 +268,7 @@ export default function SettingsPage() {
               leading={<ProviderMark id="slack" />}
               status={
                 user?.slackId ? (
-                  <Badge dot tone="moss" variant="outline">
+                  <Badge dot tone="success" variant="outline">
                     Connected
                   </Badge>
                 ) : null

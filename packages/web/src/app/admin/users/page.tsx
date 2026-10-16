@@ -231,10 +231,10 @@ export default function UsersPage() {
       </Card>
 
       {pending.length > 0 && (
-        <Card className="fade-up stagger-2 border-amber-400/30">
+        <Card className="fade-up stagger-2 border-warning-400/30">
           <CardHeader className="mb-1">
             <CardTitle>Pending sign-ups</CardTitle>
-            <Badge dot tone="amber">
+            <Badge dot tone="warning">
               {pending.length} awaiting approval
             </Badge>
           </CardHeader>
@@ -326,7 +326,7 @@ export default function UsersPage() {
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate font-medium text-paper-100">{u.email}</span>
                     {u.id === currentUserId && (
-                      <Badge tone="ember" variant="outline">
+                      <Badge tone="accent" variant="outline">
                         You
                       </Badge>
                     )}
@@ -338,7 +338,7 @@ export default function UsersPage() {
                 <Td className="px-4 py-3" label="Role">
                   {/* Changing your own role could lock you out mid-session. */}
                   {u.id === currentUserId ? (
-                    <Badge title="You cannot change your own role" tone="ember" variant="outline">
+                    <Badge title="You cannot change your own role" tone="accent" variant="outline">
                       {platformRoleLabel(u.role)}
                     </Badge>
                   ) : (

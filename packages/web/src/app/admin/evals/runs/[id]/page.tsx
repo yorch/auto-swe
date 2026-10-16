@@ -73,9 +73,9 @@ const describeRuntimes = (runtimes: string[]) =>
 
 /** A difference is coloured only when the whole likely range agrees on its direction. */
 const DELTA_TONE = {
-  better: 'text-moss-400',
+  better: 'text-success-400',
   none: 'text-paper-200',
-  worse: 'text-brick-400',
+  worse: 'text-danger-400',
 } as const;
 
 function DeltaRow({ label, d }: { label: string; d: PairedDelta }) {

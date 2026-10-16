@@ -459,7 +459,7 @@ function TokensModal({
               auto-swe stores only a hash. Copy the token into the calling service's secret store
               now.
             </Alert>
-            <div className="rounded-lg border border-amber-400/40 bg-ink-950/70 p-3">
+            <div className="rounded-lg border border-warning-400/40 bg-ink-950/70 p-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="label-mono">Token</span>
                 <CopyButton value={revealed.token} />

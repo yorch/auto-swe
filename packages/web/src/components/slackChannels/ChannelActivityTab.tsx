@@ -29,9 +29,9 @@ const KIND_LABELS: Record<ChannelAuditKind | 'all', string> = {
 };
 
 const KIND_TONES: Record<ChannelAuditKind, BadgeTone> = {
-  ambient: 'moss',
-  mention: 'dust',
-  reactive: 'amber',
+  ambient: 'success',
+  mention: 'info',
+  reactive: 'warning',
 };
 
 /** Who triggered the assistant in this channel, what they asked, and what it cost. */

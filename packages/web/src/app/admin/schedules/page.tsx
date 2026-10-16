@@ -337,13 +337,13 @@ function ScheduleRow({
         </Td>
         <Td className="px-4 py-3" label="Status">
           <div className="flex flex-wrap items-center gap-1.5">
-            <Badge dot tone={livePaused ? 'muted' : 'moss'} variant="outline">
+            <Badge dot tone={livePaused ? 'muted' : 'success'} variant="outline">
               {livePaused ? 'Paused' : 'Active'}
             </Badge>
             {mismatch && (
               <Badge
                 title={`The dashboard records this schedule as ${schedule.isActive ? 'active' : 'paused'}, but the scheduler has it ${live.paused ? 'paused' : 'running'}. An owning-team lead can pause it again to re-sync it; resuming it makes it run as you.`}
-                tone="brick"
+                tone="danger"
                 variant="outline"
               >
                 Out of sync
@@ -361,7 +361,7 @@ function ScheduleRow({
             {schedule.schedule.exists === false && (
               <Badge
                 title="The scheduler has no trigger for this schedule. Edit and save it to create the trigger again."
-                tone="brick"
+                tone="danger"
                 variant="outline"
               >
                 Not running — re-save to repair

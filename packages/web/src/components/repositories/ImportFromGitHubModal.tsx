@@ -107,7 +107,7 @@ export function ImportFromGitHubModal({
                     <span className="flex shrink-0 items-center gap-2">
                       {r.language && <Badge tone="muted">{r.language}</Badge>}
                       {r.alreadyImported ? (
-                        <Badge dot tone="moss">
+                        <Badge dot tone="success">
                           Imported
                         </Badge>
                       ) : (

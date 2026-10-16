@@ -507,7 +507,7 @@ export function BindingRow({
         {onRemove ? (
           <Button
             aria-label={removeLabel ?? 'Remove binding'}
-            className="px-2 hover:text-brick-400"
+            className="px-2 hover:text-danger-400"
             onClick={onRemove}
             size="sm"
             title="Remove binding"

@@ -106,17 +106,17 @@ function Notes({ skill }: { skill: PreviewSkill }) {
   return (
     <ul className="space-y-0.5 text-xs">
       {keyed(skill.errors).map((e) => (
-        <li className="text-brick-400" key={`e-${e.key}`}>
+        <li className="text-danger-400" key={`e-${e.key}`}>
           error: {visibleText(e.text)}
         </li>
       ))}
       {skill.conflicts.map((c) => (
-        <li className="text-brick-400" key={`c-${c.id}`}>
+        <li className="text-danger-400" key={`c-${c.id}`}>
           name already used by a {visibleText(c.scope)} skill
         </li>
       ))}
       {keyed(skill.scanWarnings).map((w) => (
-        <li className="text-amber-400" key={`w-${w.key}`}>
+        <li className="text-warning-400" key={`w-${w.key}`}>
           scan: {visibleText(w.text)}
         </li>
       ))}
@@ -380,7 +380,7 @@ export function AddSourceModal({ open, onClose }: { open: boolean; onClose: () =
                                   : 'Read full text'}
                             </Button>
                             {readErrors[s.folder] && (
-                              <div className="text-xs text-brick-400">{readErrors[s.folder]}</div>
+                              <div className="text-xs text-danger-400">{readErrors[s.folder]}</div>
                             )}
                           </div>
                         )}

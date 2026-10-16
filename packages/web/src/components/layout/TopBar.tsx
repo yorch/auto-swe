@@ -16,8 +16,8 @@ import { cn, FOCUS_RING } from '@/lib/utils';
 import { useTeamStore } from '@/stores/teamStore';
 
 const GATEWAY_TONE: Record<GatewayStatus, BadgeTone> = {
-  offline: 'brick',
-  online: 'moss',
+  offline: 'danger',
+  online: 'success',
   pending: 'neutral',
   unknown: 'neutral',
 };

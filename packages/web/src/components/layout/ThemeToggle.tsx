@@ -46,7 +46,7 @@ export function ThemeToggle() {
     <button
       aria-label={label}
       className={cn(
-        'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-ink-400 text-paper-300 transition-colors hover:border-ember-400/60 hover:text-paper-100',
+        'inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-ink-400 text-paper-300 transition-colors hover:border-accent-400/60 hover:text-paper-100',
         FOCUS_RING
       )}
       onClick={() => setPreference(next.value)}

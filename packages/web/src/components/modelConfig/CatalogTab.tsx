@@ -53,7 +53,7 @@ interface NewEntryDraft {
   displayName?: string | null;
 }
 
-const STATUS_TONE = { ACTIVE: 'moss', DEPRECATED: 'amber', RETIRED: 'muted' } as const;
+const STATUS_TONE = { ACTIVE: 'success', DEPRECATED: 'warning', RETIRED: 'muted' } as const;
 
 /** `DEPRECATED` → `Deprecated`, for an enum value shown as a label. */
 const sentence = (v: string) => v.charAt(0) + v.slice(1).toLowerCase();
@@ -140,7 +140,7 @@ export function CatalogTab() {
                   <Td className="py-2 text-xs text-paper-300 tabular-nums">
                     {formatPrice(e)}
                     {divergesFromBuiltin(e) && e.builtin && (
-                      <div className="text-xs text-amber-400">
+                      <div className="text-xs text-warning-400">
                         built-in is now {formatPrice({ ...e.builtin })}
                         {e.builtin.status !== e.status && `, ${e.builtin.status.toLowerCase()}`}
                       </div>
@@ -170,7 +170,7 @@ export function CatalogTab() {
                     )}
                     {!e.isBuiltIn && (
                       <Button
-                        className="text-brick-400 hover:text-brick-400"
+                        className="text-danger-400 hover:text-danger-400"
                         onClick={() => setDeleting(e)}
                         size="sm"
                         variant="ghost"
@@ -240,10 +240,10 @@ function splitSpec(spec: string): { provider: string; modelId: string } {
 
 function SourceBadge({ entry }: { entry: ModelCatalogEntry }) {
   if (!entry.isBuiltIn) {
-    return <Badge tone="violet">Custom</Badge>;
+    return <Badge tone="accent2">Custom</Badge>;
   }
   return entry.isCustomized ? (
-    <Badge tone="amber">Customized</Badge>
+    <Badge tone="warning">Customized</Badge>
   ) : (
     <Badge tone="neutral">Built-in</Badge>
   );
@@ -444,7 +444,7 @@ function DiscoveryPanel({
         {error && <Alert>{errMsg(error, 'Could not load suggestions')}</Alert>}
         {discover.error && <Alert>{errMsg(discover.error, 'Could not check providers')}</Alert>}
         {failed.map((p) => (
-          <p className="mb-2 text-xs text-brick-400" key={p.provider}>
+          <p className="mb-2 text-xs text-danger-400" key={p.provider}>
             {p.provider}: could not list models ({p.error}) at {formatDate(p.checkedAt)}.{' '}
             {p.lastSuccessAt
               ? `Its last complete listing was ${formatDate(p.lastSuccessAt)}.`

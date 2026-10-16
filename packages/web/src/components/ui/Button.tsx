@@ -6,13 +6,13 @@ type Size = 'sm' | 'md' | 'lg';
 
 const VARIANTS: Record<Variant, string> = {
   danger:
-    'border-brick-400/40 bg-transparent text-brick-400 hover:bg-brick-400/10 hover:border-brick-400',
+    'border-danger-400/40 bg-transparent text-danger-400 hover:bg-danger-400/10 hover:border-danger-400',
   ghost:
     'border-transparent bg-transparent text-paper-400 hover:text-paper-200 hover:bg-ink-600/50',
   primary:
-    // Solid ember-500, not ember-400: white text needs 4.5:1 and ember-500 is 4.6:1 (5.7:1 in the
-    // light theme) where ember-400 is only 3.9:1. Hover goes one step darker, so contrast only rises.
-    'border-transparent bg-ember-500 text-white hover:bg-ember-600',
+    // Solid accent-500, not accent-400: white text needs 4.5:1 and accent-500 is 4.6:1 (5.7:1 in the
+    // light theme) where accent-400 is only 3.9:1. Hover goes one step darker, so contrast only rises.
+    'border-transparent bg-accent-500 text-white hover:bg-accent-600',
   secondary:
     'border-ink-400 bg-ink-600 text-paper-300 hover:bg-ink-500 hover:text-paper-100 hover:border-ink-300',
 };

@@ -14,10 +14,10 @@ const kindOf = (line: string): Kind =>
         : 'ctx';
 
 const KIND_CLASS: Record<Kind, string> = {
-  add: 'bg-moss-400/10 text-moss-400',
+  add: 'bg-success-400/10 text-success-400',
   ctx: 'text-paper-300',
-  del: 'bg-brick-400/10 text-brick-400',
-  hunk: 'text-dust-400',
+  del: 'bg-danger-400/10 text-danger-400',
+  hunk: 'text-info-400',
 };
 
 /**

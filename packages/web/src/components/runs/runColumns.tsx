@@ -79,7 +79,7 @@ export function durationColumn<Row extends WorkflowRunSummary>(): DataTableColum
             {ms !== null ? (
               formatDuration(ms)
             ) : (
-              <span className="text-dust-400">Still running</span>
+              <span className="text-info-400">Still running</span>
             )}
           </span>
         </span>

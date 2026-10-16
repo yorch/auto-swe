@@ -131,7 +131,7 @@ function MatchTester({
       </div>
       <p aria-live="polite" className="text-xs">
         {mismatch === null ? (
-          <span className="text-moss-400">
+          <span className="text-success-400">
             Would start a run — unless a limit, an earlier run or the budget holds it back.
           </span>
         ) : (
