@@ -243,6 +243,8 @@ const ListRunsQuery = RunListPaginationQuery.extend({
    * engineering runs. Opt in with `?includeChannel=true`.
    */
   includeChannel: booleanQueryParam(false),
+  /** Text filter over the request's description and ticket ID and the template's name. */
+  q: z.string().trim().max(200).optional(),
   scope: z.enum(['ALL', 'MINE', 'TEAM']).optional(),
   status: z.enum(WORKFLOW_RUN_STATUSES).optional(),
   templateId: z.string().uuid().optional(),
@@ -288,6 +290,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
         includeChannel,
         limit,
         offset,
+        q,
         scope,
         status,
         templateId,
@@ -304,7 +307,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           : scope === 'MINE'
             ? { AND: [teamFilter, { workRequest: { requestedById: user.sub } }] }
             : teamFilter;
-      const where: Prisma.WorkflowRunWhereInput = {
+      const filtered: Prisma.WorkflowRunWhereInput = {
         ...visibilityFilter,
         ...(status ? { status } : {}),
         ...(templateId ? { templateId } : {}),
@@ -318,6 +321,23 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
           ? {}
           : { template: { name: { notIn: CHANNEL_TEMPLATE_NAMES } } }),
       };
+      // The text filter is ANDed with everything above, visibility included, so a query can
+      // only narrow the list. It sits in its own `AND` term because the visibility filter
+      // already owns the `OR` and `AND` keys.
+      const where: Prisma.WorkflowRunWhereInput = q
+        ? {
+            AND: [
+              filtered,
+              {
+                OR: [
+                  { workRequest: { description: { contains: q, mode: 'insensitive' } } },
+                  { workRequest: { externalTicketId: { contains: q, mode: 'insensitive' } } },
+                  { template: { name: { contains: q, mode: 'insensitive' } } },
+                ],
+              },
+            ],
+          }
+        : filtered;
       const [rows, total] = await Promise.all([
         fastify.prisma.workflowRun.findMany({
           include: {

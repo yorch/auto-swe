@@ -871,6 +871,52 @@ describe('workflowRunRoutes GET / (status and templateVersion filters)', () => {
   });
 });
 
+describe('workflowRunRoutes GET / (q text filter)', () => {
+  const list = (app: Awaited<ReturnType<typeof buildApp>>['app'], qs: string) =>
+    app.inject({ headers: AUTH, method: 'GET', url: `/api/v1/workflow-runs?${qs}` });
+
+  it('matches the request title, the ticket ID and the template name, case-insensitively', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    expect((await list(app, 'q=JIRA-4077')).statusCode).toBe(200);
+    const where = lastListWhere(prisma) as { AND: Record<string, unknown>[] };
+    expect(where.AND[1]).toEqual({
+      OR: [
+        { workRequest: { description: { contains: 'JIRA-4077', mode: 'insensitive' } } },
+        { workRequest: { externalTicketId: { contains: 'JIRA-4077', mode: 'insensitive' } } },
+        { template: { name: { contains: 'JIRA-4077', mode: 'insensitive' } } },
+      ],
+    });
+  });
+
+  it('ANDs the query with the caller visibility filter, so it cannot reach another team', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    await list(app, 'q=auth%20middleware&status=FAILED');
+    const where = lastListWhere(prisma) as { AND: Record<string, unknown>[] };
+    // The visibility filter (team and repository-share branches) is still in the first term...
+    expect(JSON.stringify(where.AND[0].OR)).toContain('"shares"');
+    expect(where.AND[0]).toMatchObject({ status: 'FAILED' });
+    // ...and the query is a second term, not a replacement for it.
+    expect(where.AND).toHaveLength(2);
+    expect(where).not.toHaveProperty('OR');
+    // The count describes the same filtered set.
+    expect(prisma.workflowRun.count.mock.calls[0][0].where).toEqual(where);
+  });
+
+  it('keeps the MINE restriction when a query is added', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    await list(app, 'q=x&scope=MINE');
+    const where = lastListWhere(prisma) as { AND: Record<string, unknown>[] };
+    expect(JSON.stringify(where.AND[0])).toContain('"requestedById":"u-1"');
+  });
+
+  it('adds no query term when q is empty, and rejects an over-long one', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    await list(app, 'q=%20%20');
+    expect(JSON.stringify(lastListWhere(prisma))).not.toContain('insensitive');
+    expect((await list(app, `q=${'a'.repeat(201)}`)).statusCode).toBe(400);
+  });
+});
+
 describe('workflowRunRoutes with a service principal token', () => {
   const SP = '33333333-3333-4333-8333-333333333333';
   const RUN = '6f9619ff-8b86-4a08-8b86-3e6f9619ffd1';

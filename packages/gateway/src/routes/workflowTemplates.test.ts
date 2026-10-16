@@ -908,6 +908,52 @@ describe('workflow-templates routes', () => {
     expect(first.lastRun?.workRequestId).toBe('wr-1');
   });
 
+  it('filters the list by q over name and description, ANDed with team membership', async () => {
+    const prisma = app.prisma as unknown as {
+      workflowTemplate: { findMany: (args: { where?: Mutable }) => Promise<unknown> };
+    };
+    const original = prisma.workflowTemplate.findMany;
+    const wheres: Mutable[] = [];
+    prisma.workflowTemplate.findMany = async (args) => {
+      wheres.push(args.where ?? {});
+      return original(args);
+    };
+    try {
+      const res = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: '/api/v1/workflow-templates?q=%20Deploy%20',
+      });
+      expect(res.statusCode).toBe(200);
+      const and = wheres[0]?.AND as Mutable[];
+      expect(and).toHaveLength(3);
+      // Term 0 is the caller's membership scope (global or a team they belong to).
+      expect(JSON.stringify(and[0])).toContain('"teamId":null');
+      expect(JSON.stringify(and[0])).toContain('user-1');
+      expect(and[2]).toEqual({
+        OR: [
+          { name: { contains: 'Deploy', mode: 'insensitive' } },
+          { description: { contains: 'Deploy', mode: 'insensitive' } },
+        ],
+      });
+      const none = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: '/api/v1/workflow-templates',
+      });
+      expect(none.statusCode).toBe(200);
+      expect(wheres[1]?.AND as Mutable[]).toHaveLength(2);
+      const long = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: `/api/v1/workflow-templates?q=${'a'.repeat(201)}`,
+      });
+      expect(long.statusCode).toBe(400);
+    } finally {
+      prisma.workflowTemplate.findMany = original;
+    }
+  });
+
   it('reports the newest run the caller may see as lastRun, not another team’s', async () => {
     const tpl = state.templates[0];
     if (!tpl) {

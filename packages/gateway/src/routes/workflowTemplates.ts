@@ -275,7 +275,11 @@ const ValidateSpecBody = z.object({
 });
 const PromoteBody = z.object({ version: z.number().int().min(1) });
 const RequireSignatureBody = z.object({ required: z.boolean() });
-const ListTemplatesQuery = z.object({ teamId: z.string().uuid().optional() });
+const ListTemplatesQuery = z.object({
+  /** Text filter over the template's name and description. */
+  q: z.string().trim().max(200).optional(),
+  teamId: z.string().uuid().optional(),
+});
 const TEMPLATE_INCLUDE = {
   _count: { select: { versions: true } },
   team: { select: { id: true, name: true, orgId: true, slug: true } },
@@ -913,7 +917,20 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const where: Prisma.WorkflowTemplateWhereInput = {
         // Both fragments are keyed `OR`; spreading them would let the second
         // overwrite the first and drop the membership scope for non-admins.
-        AND: [teamMembershipFilter(user), EXCLUDE_SYSTEM_TEMPLATES],
+        AND: [
+          teamMembershipFilter(user),
+          EXCLUDE_SYSTEM_TEMPLATES,
+          ...(request.query.q
+            ? [
+                {
+                  OR: [
+                    { name: { contains: request.query.q, mode: 'insensitive' as const } },
+                    { description: { contains: request.query.q, mode: 'insensitive' as const } },
+                  ],
+                },
+              ]
+            : []),
+        ],
         ...(request.query.teamId ? { teamId: request.query.teamId } : {}),
       };
       // `teamMembershipFilter` is `{}` for a platform admin.
