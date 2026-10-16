@@ -27,7 +27,7 @@ export function Slider({
         <input
           aria-describedby={fieldDescribedBy(sliderId, hint, undefined)}
           aria-valuetext={formatValue(value)}
-          className="h-1.5 flex-1 cursor-pointer accent-ember-400"
+          className="h-1.5 flex-1 cursor-pointer accent-accent-400"
           id={sliderId}
           onChange={(e) => onChange(Number(e.target.value))}
           type="range"

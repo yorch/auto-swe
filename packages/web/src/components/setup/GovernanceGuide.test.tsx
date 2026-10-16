@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { NAV_ITEMS, visibleNavGroups } from '@/lib/navigation';
+import { flattenNavItems, NAV_ITEMS, visibleNavGroups } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/authStore';
 import { installMemoryStorage } from '@/test/memoryStorage';
 import { GOVERNANCE_GROUPS, GovernanceGuide } from './GovernanceGuide';
@@ -59,7 +59,9 @@ describe('GovernanceGuide', () => {
   });
 
   it('only links real pages an admin can open, labelled as the nav labels them', () => {
-    const visible = new Set(visibleNavGroups('ADMIN').flatMap((g) => g.items.map((i) => i.href)));
+    const visible = new Set(
+      visibleNavGroups('ADMIN').flatMap((g) => flattenNavItems(g.items).map((i) => i.href))
+    );
     for (const link of GOVERNANCE_GROUPS.flatMap((g) => g.links)) {
       expect(visible.has(link.href), link.href).toBe(true);
       expect(NAV_ITEMS.find((i) => i.href === link.href)?.label).toBe(link.label);

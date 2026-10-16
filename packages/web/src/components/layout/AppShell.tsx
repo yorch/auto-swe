@@ -12,9 +12,19 @@ import { useApprovalsStream } from '@/hooks/useApprovals';
 // without the app chrome, whose queries would 401 for a signed-out visitor.
 const CHROMELESS_ROUTES = ['/login', '/reset-password'];
 
-// Run detail and template diff pages manage their own full-height layout.
-function isFullscreenRoute(pathname: string): boolean {
-  return /^\/runs\/[^/]+$/.test(pathname) || /^\/workflows\/library\/[^/]+\/diff/.test(pathname);
+// Routes that manage their own full-height layout: the shell gives them the whole main area (no
+// padding, no page scroll) and the page decides what scrolls. Each pattern is one named entry, so
+// a URL change is a one-line edit here (and in AppShell.test.tsx).
+const FULLSCREEN_ROUTES: Record<string, RegExp> = {
+  runDetail: /^\/runs\/[^/]+$/,
+  templateDiff: /^\/library\/[^/]+\/diff/,
+  // The template detail page hosts the visual editor, which fills the viewport height. Exactly one
+  // segment after the library: its analytics/runs/diff sub-pages are ordinary scrolling pages.
+  templateEditor: /^\/library\/[^/]+\/?$/,
+};
+
+export function isFullscreenRoute(pathname: string): boolean {
+  return Object.values(FULLSCREEN_ROUTES).some((re) => re.test(pathname));
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
@@ -42,7 +52,7 @@ function Chrome({ children, fullscreen }: { children: React.ReactNode; fullscree
   return (
     <>
       <a
-        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:bg-ember-500 focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
+        className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-lg focus:bg-accent-500 focus:px-4 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
         href="#main-content"
       >
         Skip to content

@@ -87,18 +87,19 @@ export function CanaryForm() {
       </p>
 
       <QueryBoundary
-        compact
         error={loadError}
         isError={isError}
         isFetching={isFetching}
         isLoading={isLoading}
         label="the canary configuration"
         onRetry={() => void refetch()}
+        rows={2}
+        shape="form"
       >
         <form className="space-y-6" onSubmit={submit}>
           <Card>
             <CardHeader>
-              <CardTitle eyebrow="A/B">Canary configuration</CardTitle>
+              <CardTitle>Canary configuration</CardTitle>
             </CardHeader>
             <div className="space-y-4">
               <ToggleSwitch

@@ -224,7 +224,7 @@ export function ChannelMemoryTab({ channel }: { channel: SlackChannel }) {
         message={
           <div className="space-y-3">
             <p>Delete this memory? The assistant will no longer use it. This cannot be undone.</p>
-            <blockquote className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border-l-2 border-ember-400 bg-ink-900/60 px-3 py-2 text-paper-200">
+            <blockquote className="max-h-48 overflow-y-auto whitespace-pre-wrap break-words rounded-md border-l-2 border-ink-300 bg-ink-900/60 px-3 py-2 text-paper-200">
               {confirmItem?.lessonSummary ?? ''}
             </blockquote>
           </div>

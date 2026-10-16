@@ -6,8 +6,9 @@ const VARIANT_CLASSES: Record<CardVariant, string> = {
   ghost: 'border border-transparent bg-transparent',
   inset: 'border border-ink-400/40 bg-ink-900/50',
   panel:
-    // Solid, not a gradient: a card that fades toward the page loses its bottom edge.
-    'border border-ink-400 bg-ink-700 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_32px_-20px_rgba(0,0,0,0.6)]',
+    // Flat: a solid fill and a visible border define the card, with no gradient (a card that
+    // fades toward the page loses its bottom edge) and no drop shadow.
+    'border border-ink-400 bg-ink-700',
 };
 
 type CardProps = React.HTMLAttributes<HTMLDivElement> & {
@@ -48,11 +49,15 @@ export function CardHeader({
   );
 }
 
-export function CardTitle({ children, eyebrow }: { children: React.ReactNode; eyebrow?: string }) {
+/**
+ * A card's heading, with an optional `hint` under it for what the title alone does
+ * not say — the window a chart covers, the order of a list, the test behind a figure.
+ */
+export function CardTitle({ children, hint }: { children: React.ReactNode; hint?: string }) {
   return (
     <div>
-      {eyebrow && <div className="kicker mb-1">{eyebrow}</div>}
       <h3 className="text-lg font-semibold tracking-tight text-paper-50">{children}</h3>
+      {hint && <p className="mt-0.5 text-sm text-paper-500">{hint}</p>}
     </div>
   );
 }

@@ -1,12 +1,16 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Role } from '@auto-swe/shared';
 import { describe, expect, it } from 'vitest';
+import { hasRole } from '@/lib/roles';
 import {
+  ADMIN_HREF,
   activeNavHref,
+  flattenNavItems,
   isStartWorkPath,
   knownPageTitle,
+  NAV_GROUPS,
   NAV_ITEMS,
   navLabel,
   navSections,
@@ -66,29 +70,35 @@ describe('NAV_GROUPS', () => {
 });
 
 describe('visibleNavGroups', () => {
-  it('shows an ENGINEER only ENGINEER pages', () => {
-    const hrefs = visibleNavGroups('ENGINEER').flatMap((g) => g.items.map((i) => i.href));
-    expect(hrefs).toContain('/govern/automations');
-    expect(hrefs).not.toContain('/govern/baselines');
-    expect(hrefs).toContain('/connections');
-    expect(hrefs).not.toContain('/studio/skills');
-    expect(hrefs).not.toContain('/govern/users');
+  const hrefsFor = (role: string, scoped?: boolean) =>
+    visibleNavGroups(role, scoped).flatMap((g) => flattenNavItems(g.items).map((i) => i.href));
+
+  it('groups the sidebar into Work, Build and Admin, plus the account links', () => {
+    expect(NAV_GROUPS.map((g) => g.label)).toEqual(['Work', 'Build', 'Admin', 'Account']);
   });
 
-  it('shows a LEAD the LEAD pages but not the ADMIN-only studio', () => {
-    const hrefs = visibleNavGroups('LEAD').flatMap((g) => g.items.map((i) => i.href));
-    expect(hrefs).toContain('/govern/baselines');
-    expect(hrefs).toContain('/govern/organizations');
-    expect(hrefs).not.toContain('/studio/skills');
-    expect(hrefs).not.toContain('/studio/mcp');
-    expect(visibleNavGroups('LEAD').map((g) => g.label)).not.toContain('Studio');
+  it('shows an ENGINEER only ENGINEER pages', () => {
+    const hrefs = hrefsFor('ENGINEER');
+    expect(hrefs).toContain('/admin/automations');
+    expect(hrefs).not.toContain('/admin/baselines');
+    expect(hrefs).toContain('/connections');
+    expect(hrefs).toContain('/library');
+    expect(hrefs).not.toContain('/skills');
+    expect(hrefs).not.toContain('/admin/users');
+  });
+
+  it('shows a LEAD the LEAD pages but not the ADMIN-only authoring pages', () => {
+    const hrefs = hrefsFor('LEAD');
+    expect(hrefs).toContain('/admin/baselines');
+    expect(hrefs).toContain('/admin/organizations');
+    expect(hrefs).not.toContain('/skills');
+    expect(hrefs).not.toContain('/mcp');
+    expect(hrefs).not.toContain('/admin/integrations');
   });
 
   it('offers LLM usage by usage scope, not by platform role', () => {
     const offered = (role: string, scoped?: boolean) =>
-      visibleNavGroups(role, scoped)
-        .flatMap((g) => g.items)
-        .some((i) => i.href === '/govern/usage');
+      hrefsFor(role, scoped).includes('/admin/usage');
     expect(offered('ENGINEER')).toBe(false);
     expect(offered('ENGINEER', true)).toBe(true);
     // A LEAD who leads no team has no scope, so the page would bounce them.
@@ -98,27 +108,77 @@ describe('visibleNavGroups', () => {
   });
 
   it('shows an ADMIN everything', () => {
-    const count = visibleNavGroups('ADMIN').flatMap((g) => g.items).length;
-    expect(count).toBe(NAV_ITEMS.length);
+    expect(hrefsFor('ADMIN').length).toBe(NAV_ITEMS.length);
   });
 
   it('shows nothing to an unknown role', () => {
     expect(visibleNavGroups(undefined)).toEqual([]);
   });
+
+  it('gives Admin one sidebar entry, holding only the pages the role may open', () => {
+    for (const role of ['ENGINEER', 'LEAD', 'ADMIN']) {
+      const admin = visibleNavGroups(role, true).find((g) => g.label === 'Admin');
+      expect(admin?.items.map((i) => i.href)).toEqual([ADMIN_HREF]);
+      const children = admin?.items[0].children ?? [];
+      expect(children.length).toBeGreaterThan(0);
+      for (const child of children) {
+        expect(hasRole(role, child.minRole), `${role} ${child.href}`).toBe(true);
+        expect(child.href.startsWith(`${ADMIN_HREF}/`)).toBe(true);
+      }
+    }
+  });
+
+  it('drops an entry with children when none of them is visible', () => {
+    // An unknown role sees no Admin page, so it gets no Admin entry either.
+    expect(hrefsFor('NOPE')).not.toContain(ADMIN_HREF);
+  });
+});
+
+describe('nav hrefs', () => {
+  /** The URL of every `page.tsx` under the app directory, `[param]` segments kept. */
+  function appRoutes(dir = APP_DIR, url = ''): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      if (entry.isFile()) {
+        return entry.name === 'page.tsx' ? [url || '/'] : [];
+      }
+      return entry.isDirectory() ? appRoutes(join(dir, entry.name), `${url}/${entry.name}`) : [];
+    });
+  }
+
+  it.each(NAV_ITEMS.map((i) => [i.href]))('%s resolves to a page in the app', (href) => {
+    expect(appRoutes()).toContain(href);
+  });
+
+  it.each(NAV_ITEMS.flatMap((i) => i.alsoActiveFor ?? []).map((p) => [p]))(
+    'the sub-area %s is a page in the app',
+    (prefix) => {
+      expect(appRoutes()).toContain(prefix);
+    }
+  );
 });
 
 describe('activeNavHref', () => {
   it('picks the most specific match', () => {
-    expect(activeNavHref('/workflows/library/abc', NAV_ITEMS)).toBe('/workflows/library');
-    expect(activeNavHref('/workflows/xyz', NAV_ITEMS)).toBe('/workflows');
+    expect(activeNavHref('/library/abc', NAV_ITEMS)).toBe('/library');
+    expect(activeNavHref('/requests/xyz', NAV_ITEMS)).toBe('/requests');
+    expect(activeNavHref('/admin/policies/decisions', NAV_ITEMS)).toBe('/admin/policies/decisions');
+    expect(activeNavHref('/admin/policies', NAV_ITEMS)).toBe('/admin/policies');
     expect(activeNavHref('/', NAV_ITEMS)).toBe('/');
     expect(activeNavHref('/nowhere', NAV_ITEMS)).toBe('');
   });
 
-  it('highlights All runs on a run page and Requests on an epic', () => {
+  it('lights the one Admin entry for every Admin page among the sidebar items', () => {
+    const sidebar = NAV_GROUPS.flatMap((g) => g.items);
+    expect(activeNavHref('/admin', sidebar)).toBe(ADMIN_HREF);
+    expect(activeNavHref('/admin/users', sidebar)).toBe(ADMIN_HREF);
+    expect(activeNavHref('/admin/evals/runs/r1', sidebar)).toBe(ADMIN_HREF);
+  });
+
+  it('highlights All runs on a run page, Requests on an epic and Automations on a schedule', () => {
     expect(activeNavHref('/runs', NAV_ITEMS)).toBe('/runs');
     expect(activeNavHref('/runs/abc', NAV_ITEMS)).toBe('/runs');
-    expect(activeNavHref('/epics/wf-1', NAV_ITEMS)).toBe('/workflows');
+    expect(activeNavHref('/epics/wf-1', NAV_ITEMS)).toBe('/requests');
+    expect(activeNavHref('/admin/schedules', NAV_ITEMS)).toBe('/admin/automations');
   });
 
   it('knows the Start work path', () => {
@@ -142,10 +202,24 @@ describe('pageTitle', () => {
     expect(pageTitle('/oauth/consent')).toBe('Authorize app');
     expect(pageSection('/docs')).toBe('Help');
     expect(pageTitle('/runs')).toBe('All runs');
-    expect(pageTitle('/govern/teams/abc')).toBe('Teams');
-    expect(pageTitle('/govern/policies/decisions')).toBe('Autonomy decisions');
+    expect(pageTitle('/admin/teams/abc')).toBe('Teams');
+    expect(pageTitle('/admin/policies/decisions')).toBe('Autonomy decisions');
     expect(pageTitle('/epics/wf-1')).toBe('Epics');
     expect(pageTitle('/docs/architecture')).toBe('Docs');
+    expect(pageTitle('/library/tpl-1/diff')).toBe('Workflow library');
+  });
+
+  it('puts each page in its sidebar group for the breadcrumb', () => {
+    expect(pageSection('/approvals')).toBe('Work');
+    expect(pageSection('/requests/abc')).toBe('Work');
+    expect(pageSection('/library/abc')).toBe('Build');
+    expect(pageSection('/agents')).toBe('Build');
+    expect(pageSection('/admin/users')).toBe('Admin');
+    expect(pageSection('/admin/integrations')).toBe('Admin');
+    expect(pageSection('/admin/slack-channels/abc')).toBe('Admin');
+    expect(pageTitle('/admin/slack-channels/abc')).toBe('Slack channels');
+    expect(pageSection('/lessons')).toBe('Admin');
+    expect(pageSection('/')).toBeNull();
   });
 
   it('throws for an href with no nav entry', () => {
@@ -154,34 +228,32 @@ describe('pageTitle', () => {
 });
 
 describe('navSections', () => {
-  it('groups the Govern items into the five decided sections, in order', () => {
-    const govern = visibleNavGroups('ADMIN', true).find((g) => g.label === 'Govern');
-    expect(govern).toBeDefined();
-    expect(navSections(govern?.items ?? []).map((s) => s.label)).toEqual([
+  const adminPages = () =>
+    visibleNavGroups('ADMIN', true)
+      .flatMap((g) => g.items)
+      .find((i) => i.href === ADMIN_HREF)?.children ?? [];
+
+  it('groups the Admin pages into the decided sections, in order', () => {
+    expect(navSections(adminPages()).map((s) => s.label)).toEqual([
       'Access',
       'Security',
       'Spend & insights',
       'Configuration',
+      'Credentials',
       'Knowledge',
     ]);
   });
 
-  it('gives every Govern item its own icon within a section', () => {
-    const govern = visibleNavGroups('ADMIN', true).find((g) => g.label === 'Govern');
-    for (const section of navSections(govern?.items ?? [])) {
+  it('gives every Admin page its own icon within a section', () => {
+    for (const section of navSections(adminPages())) {
       const icons = section.items.map((i) => i.icon);
       expect(new Set(icons).size).toBe(icons.length);
     }
   });
 
-  it('no longer offers Budget alerts, but its URL still belongs to Organizations', () => {
-    expect(NAV_ITEMS.some((i) => i.href === '/govern/budget-alerts')).toBe(false);
-    expect(pageTitle('/govern/budget-alerts')).toBe('Organizations');
-    expect(pageSection('/govern/budget-alerts')).toBe('Govern');
-  });
-
-  it('titles a Slack channel detail page and keeps it in Govern', () => {
-    expect(pageTitle('/govern/slack-channels/abc')).toBe('Slack channels');
-    expect(pageSection('/govern/slack-channels/abc')).toBe('Govern');
+  it('keeps every sidebar item out of a section, so the sidebar stays flat', () => {
+    for (const item of NAV_GROUPS.flatMap((g) => g.items)) {
+      expect(item.section).toBeUndefined();
+    }
   });
 });

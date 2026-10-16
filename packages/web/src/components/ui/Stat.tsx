@@ -2,16 +2,15 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { Icon } from './Icon';
 
-type StatTone = 'default' | 'muted' | 'ember' | 'moss' | 'amber' | 'brick' | 'dust';
+type StatTone = 'default' | 'muted' | 'success' | 'warning' | 'danger' | 'info';
 
 const TONE: Record<StatTone, string> = {
-  amber: 'text-amber-400',
-  brick: 'text-brick-400',
+  danger: 'text-danger-400',
   default: 'text-paper-100',
-  dust: 'text-dust-400',
-  ember: 'text-ember-400',
-  moss: 'text-moss-400',
+  info: 'text-info-400',
   muted: 'text-paper-500',
+  success: 'text-success-400',
+  warning: 'text-warning-400',
 };
 
 export function Stat({
@@ -45,7 +44,7 @@ export function Stat({
         <div
           className={cn(
             'mt-2 inline-flex items-center gap-1 text-xs font-medium',
-            delta.positive ? 'text-moss-400' : 'text-brick-400'
+            delta.positive ? 'text-success-400' : 'text-danger-400'
           )}
         >
           <Icon name={delta.positive ? 'arrowUp' : 'arrowDown'} size={12} strokeWidth={2.2} />

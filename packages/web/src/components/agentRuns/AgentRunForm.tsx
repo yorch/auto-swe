@@ -56,7 +56,10 @@ function LaunchErrorAlert({ view }: { view: LaunchErrorView }) {
       <div>{view.message}</div>
       {view.hint && <div className="mt-1 opacity-80">{view.hint}</div>}
       {view.duplicate && (
-        <Link className="mt-1 inline-block font-medium text-ember-400 underline" href="/runs">
+        <Link
+          className="mt-1 inline-block font-medium text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
+          href="/runs"
+        >
           View runs
         </Link>
       )}

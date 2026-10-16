@@ -1,9 +1,22 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { HelpButton } from '@/components/help/HelpPanel';
 import { DocLink, docHref } from './DocLink';
 import { PageHeader } from './PageHeader';
+
+vi.mock('next/navigation', () => ({ usePathname: () => '/runs' }));
+
+beforeAll(() => {
+  HTMLDialogElement.prototype.showModal = function (this: HTMLDialogElement) {
+    this.setAttribute('open', '');
+  };
+  HTMLDialogElement.prototype.close = function (this: HTMLDialogElement) {
+    this.removeAttribute('open');
+    this.dispatchEvent(new Event('close'));
+  };
+});
 
 afterEach(cleanup);
 
@@ -42,10 +55,27 @@ describe('PageHeader learnMore', () => {
     expect(screen.queryByRole('link')).toBeNull();
   });
 
-  it('renders a docs link under the subtitle', () => {
+  it('keeps the docs link out of the page, in the Help panel', () => {
     render(<PageHeader learnMore={{ anchor: 'x', slug: 'evals' }} subtitle="sub" title="Evals" />);
-    expect(screen.getByRole('link', { name: 'Learn more' }).getAttribute('href')).toBe(
-      '/docs/evals#x'
+    expect(screen.queryByRole('link', { name: 'Learn more' })).toBeNull();
+  });
+
+  it('puts the docs link and the extra help in the Help panel', () => {
+    render(
+      <>
+        <HelpButton />
+        <PageHeader
+          help={<p>Days are UTC.</p>}
+          learnMore={{ anchor: 'x', slug: 'evals' }}
+          subtitle="sub"
+          title="Evals"
+        />
+      </>
     );
+    fireEvent.click(screen.getByRole('button', { name: 'Help for this page' }));
+    expect(
+      screen.getByRole('link', { hidden: true, name: 'Learn more' }).getAttribute('href')
+    ).toBe('/docs/evals#x');
+    expect(screen.getByText('Days are UTC.')).toBeTruthy();
   });
 });

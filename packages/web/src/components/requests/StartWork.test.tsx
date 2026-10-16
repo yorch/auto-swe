@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 
 const auth = vi.hoisted(() => ({ role: 'ENGINEER' }));
+vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: (selector: (s: { user: { role: string } | null }) => unknown) =>

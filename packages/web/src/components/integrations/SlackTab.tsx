@@ -7,7 +7,6 @@ import { Button, ButtonLink } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type SlackConfigInput,
@@ -113,7 +112,6 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
     <form className="space-y-6" onSubmit={handleSubmit}>
       <IntegrationCard
         description="Changes apply immediately: these are read on every request, not at startup."
-        eyebrow="Slack"
         footer={
           <>
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -186,7 +184,6 @@ export function SlackTab({ installedTeamId }: SlackTabProps) {
 
       <IntegrationCard
         description="Add these in your Slack App settings under OAuth & Permissions and Event Subscriptions."
-        eyebrow="Slack App"
         title="URLs to register"
       >
         <div className="space-y-3">
@@ -233,7 +230,6 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
   return (
     <IntegrationCard
       description="Install the app into each Slack workspace to give it its own bot token. Workspaces without their own token fall back to the singleton bot token above."
-      eyebrow="Slack App"
       headerAction={addButton}
       title="Workspaces"
     >
@@ -249,8 +245,8 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
         isFetching={workspacesIsFetching}
         isLoading={isLoading}
         label="workspaces"
-        loading={<SkeletonRows rows={2} />}
         onRetry={() => void refetch()}
+        rows={2}
       >
         {!workspaces || workspaces.length === 0 ? (
           <EmptyState
@@ -277,7 +273,7 @@ function WorkspaceInstallCard({ installedTeamId }: SlackTabProps) {
                   </div>
                 </div>
                 {w.installed ? (
-                  <Badge dot tone="moss">
+                  <Badge dot tone="success">
                     Installed{w.tokenLastFour ? ` · …${w.tokenLastFour}` : ''}
                   </Badge>
                 ) : (

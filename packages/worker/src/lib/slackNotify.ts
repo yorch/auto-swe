@@ -624,7 +624,7 @@ function hitlButton(
  *   - APPROVAL → Approve / Reject
  *   - DECISION → one button per option (`action: 'select'`, value = option value)
  * INPUT and REVIEW need free-form payloads, so they stay link-only.
- * The "Open inbox" link button is always present. `stepId` is required for
+ * The "Open approvals" link button is always present. `stepId` is required for
  * resolve buttons — without it (e.g. the DB row couldn't be identified) the
  * message degrades to link-only.
  */
@@ -665,7 +665,7 @@ export function buildHumanStepBlocks(input: {
 
   elements.push({
     action_id: 'open_inbox',
-    text: { text: 'Open inbox', type: 'plain_text' },
+    text: { text: 'Open approvals', type: 'plain_text' },
     type: 'button',
     url: input.inboxUrl,
   });
@@ -711,9 +711,9 @@ export async function notifySlackHumanStep(input: {
       REVIEW: 'Review required',
     };
     const descriptionLine = input.description ? `\n${truncate(input.description, 400)}` : '';
-    const inboxUrl = `${resolveWebUrl()}/inbox`;
+    const inboxUrl = `${resolveWebUrl()}/approvals`;
     const header = `*[${resolved.ticket}]* *${kindLabel[input.kind] ?? input.kind}:* ${input.title}${descriptionLine}`;
-    const text = `:hourglass_flowing_sand: ${header}\n<${inboxUrl}|Open inbox →>`;
+    const text = `:hourglass_flowing_sand: ${header}\n<${inboxUrl}|Open approvals →>`;
     const blocks = buildHumanStepBlocks({
       inboxUrl,
       kind: input.kind,

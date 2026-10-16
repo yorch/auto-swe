@@ -14,12 +14,12 @@ export function VersionDiff({ changes }: { changes: FieldChange[] }) {
           <h4 className="label-mono mb-1.5">{change.label}</h4>
           {change.kind === 'text' && (
             <div className="space-y-1 text-sm">
-              <div className="rounded-sm bg-brick-400/10 px-2 py-1 text-paper-300">
-                <span className="mr-2 text-brick-400">−</span>
+              <div className="rounded-sm bg-danger-400/10 px-2 py-1 text-paper-300">
+                <span className="mr-2 text-danger-400">−</span>
                 {change.before || <span className="text-paper-500">empty</span>}
               </div>
-              <div className="rounded-sm bg-moss-400/10 px-2 py-1 text-paper-200">
-                <span className="mr-2 text-moss-400">+</span>
+              <div className="rounded-sm bg-success-400/10 px-2 py-1 text-paper-200">
+                <span className="mr-2 text-success-400">+</span>
                 {change.after || <span className="text-paper-500">empty</span>}
               </div>
             </div>
@@ -27,12 +27,12 @@ export function VersionDiff({ changes }: { changes: FieldChange[] }) {
           {change.kind === 'list' && (
             <div className="flex flex-wrap items-center gap-1.5">
               {change.added.map((x) => (
-                <Badge key={`+${x}`} tone="moss" variant="text">
+                <Badge key={`+${x}`} tone="success" variant="text">
                   + {x}
                 </Badge>
               ))}
               {change.removed.map((x) => (
-                <Badge key={`-${x}`} tone="brick" variant="text">
+                <Badge key={`-${x}`} tone="danger" variant="text">
                   − {x}
                 </Badge>
               ))}
@@ -45,8 +45,8 @@ export function VersionDiff({ changes }: { changes: FieldChange[] }) {
                 <div
                   className={cn(
                     'whitespace-pre-wrap break-words px-1',
-                    line.kind === 'added' && 'bg-moss-400/10 text-paper-100',
-                    line.kind === 'removed' && 'bg-brick-400/10 text-paper-300',
+                    line.kind === 'added' && 'bg-success-400/10 text-paper-100',
+                    line.kind === 'removed' && 'bg-danger-400/10 text-paper-300',
                     line.kind === 'same' && 'text-paper-500'
                   )}
                   // biome-ignore lint/suspicious/noArrayIndexKey: a diff's lines have no identity; the list is never reordered

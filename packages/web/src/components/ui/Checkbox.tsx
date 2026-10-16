@@ -28,7 +28,7 @@ export function Checkbox({ className, disabled, hint, label, marked, ...props }:
       )}
     >
       <input
-        className={cn('mt-0.5 h-4 w-4 shrink-0 accent-ember-400', FOCUS_RING)}
+        className={cn('mt-0.5 h-4 w-4 shrink-0 accent-accent-400', FOCUS_RING)}
         disabled={disabled}
         type="checkbox"
         {...props}

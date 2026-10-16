@@ -346,7 +346,7 @@ export async function verifyGithubLoginOwnership(
  * Record a takeover in the governance audit log.
  *
  * A log line is where this was reported before, and a log line is gone by the
- * time anyone asks. This is durable, it sits at `/govern/audit` beside every
+ * time anyone asks. This is durable, it sits at `/admin/audit` beside every
  * other governance change, and it survives the process — which matters for the
  * one event in this subsystem that says somebody's recorded identity was
  * claimed by a stranger.

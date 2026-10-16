@@ -18,7 +18,7 @@ export default function LessonsRedirect() {
 
   useEffect(() => {
     if (isAdmin) {
-      router.replace('/govern/lessons');
+      router.replace('/admin/lessons');
     }
   }, [isAdmin, router]);
 

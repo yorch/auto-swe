@@ -109,7 +109,7 @@ export function AgentHistoryModal({
                     <Td className="py-2 pr-3">
                       <span className="tabular-nums text-paper-100">v{v.version}</span>
                       {v.version === latestVersion && (
-                        <Badge className="ml-2" tone="moss">
+                        <Badge className="ml-2" tone="success">
                           Current
                         </Badge>
                       )}

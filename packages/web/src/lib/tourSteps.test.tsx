@@ -24,32 +24,36 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('buildTourSteps', () => {
-  it('gives an engineer the work steps and nothing from Studio or the restricted Govern pages', () => {
+  it('gives an engineer the work steps, the library and the Admin entry, but no ADMIN-only page', () => {
     const ids = buildTourSteps('ENGINEER').map((s) => s.id);
     expect(ids).toEqual([
       'sidebar',
       'start-work',
+      'approvals',
       'requests',
       'pull-requests',
-      'approvals',
+      'workflow-library',
+      'admin',
       'docs',
       'help-tips',
     ]);
     const anchors = buildTourSteps('ENGINEER').map((s) => s.anchor);
-    expect(anchors.some((a) => a?.startsWith('nav:/studio'))).toBe(false);
-    // Approvals lives under /govern but sits in the Work group for every role.
-    expect(anchors.filter((a) => a?.startsWith('nav:/govern'))).toEqual(['nav:/govern/approvals']);
+    expect(anchors).not.toContain('nav:/agents');
+    // Admin pages are reached through the one Admin entry, never pointed at one by one.
+    expect(anchors.filter((a) => a?.startsWith('nav:/admin'))).toEqual(['nav:/admin']);
   });
 
-  it('adds Platform settings for a lead, and Studio and Autonomy policies only for an admin', () => {
-    const lead = buildTourSteps('LEAD').map((s) => s.id);
-    expect(lead).toContain('platform-settings');
-    expect(lead).not.toContain('agents');
-    expect(lead).not.toContain('autonomy-policies');
-    const admin = buildTourSteps('ADMIN').map((s) => s.id);
-    expect(admin).toEqual(expect.arrayContaining(['platform-settings', 'agents', 'integrations']));
-    expect(admin).toContain('autonomy-policies');
+  it('adds Agents only for an admin, and words the Admin step for each role', () => {
+    const lead = buildTourSteps('LEAD');
+    expect(lead.map((s) => s.id)).not.toContain('agents');
+    const admin = buildTourSteps('ADMIN');
+    expect(admin.map((s) => s.id)).toContain('agents');
     expect(admin.length).toBeGreaterThan(lead.length);
+    const adminBody = (steps: typeof admin) => steps.find((s) => s.id === 'admin')?.body;
+    expect(adminBody(buildTourSteps('ENGINEER'))).not.toMatch(/platform settings/i);
+    expect(adminBody(lead)).toMatch(/platform settings/i);
+    expect(adminBody(lead)).not.toMatch(/integration/i);
+    expect(adminBody(admin)).toMatch(/integration/i);
   });
 
   it('describes epics in the Start work step only to roles that may start one', () => {
@@ -63,7 +67,7 @@ describe('buildTourSteps', () => {
 
   it('does not name sidebar sections a role may not see', () => {
     const body = buildTourSteps('ENGINEER').find((s) => s.id === 'sidebar')?.body;
-    expect(body).not.toMatch(/Studio/);
+    expect(body).not.toMatch(/Studio|Govern/);
   });
 
   it('treats an unknown or missing role as an engineer', () => {
@@ -119,6 +123,6 @@ describe('tour anchors exist in the real shell', () => {
   it('does not render an anchor for a page the role cannot open', () => {
     useAuthStore.setState({ user: { email: 'a@x.dev', role: 'ENGINEER', sub: 'u1' } } as never);
     render(<Sidebar onClose={() => undefined} open />);
-    expect(document.querySelector('[data-tour="nav:/studio/agents/library"]')).toBeNull();
+    expect(document.querySelector('[data-tour="nav:/agents"]')).toBeNull();
   });
 });

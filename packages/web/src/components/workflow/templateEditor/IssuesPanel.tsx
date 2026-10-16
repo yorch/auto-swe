@@ -55,25 +55,25 @@ export function IssuesPanel({
         />
         <Icon
           className={
-            shownErrors > 0 || serverIssues.length > 0 ? 'text-brick-400' : 'text-amber-400'
+            shownErrors > 0 || serverIssues.length > 0 ? 'text-danger-400' : 'text-warning-400'
           }
           name="warning"
           size={13}
         />
         {serverIssues.length > 0 && (
-          <span className="text-brick-400">
+          <span className="text-danger-400">
             Save rejected: {serverIssues.length} problem{serverIssues.length === 1 ? '' : 's'}
           </span>
         )}
         {serverIssues.length > 0 && shownErrors + shownWarnings > 0 && ' · '}
         {shownErrors > 0 && (
-          <span className="text-brick-400">
+          <span className="text-danger-400">
             {shownErrors} error{shownErrors === 1 ? '' : 's'}
           </span>
         )}
         {shownErrors > 0 && shownWarnings > 0 && ' · '}
         {shownWarnings > 0 && (
-          <span className="text-amber-400">
+          <span className="text-warning-400">
             {shownWarnings} warning{shownWarnings === 1 ? '' : 's'}
           </span>
         )}
@@ -81,7 +81,7 @@ export function IssuesPanel({
       <ul className="mt-2 max-h-32 space-y-1 overflow-y-auto pl-5">
         {serverIssues.map((message) => (
           <li className="text-paper-300" key={`server:${message}`}>
-            <span className="font-medium text-brick-400">Server:</span> {message}
+            <span className="font-medium text-danger-400">Server:</span> {message}
           </li>
         ))}
         {issues.map((issue) => (
@@ -98,7 +98,7 @@ export function IssuesPanel({
               <span
                 className={cn(
                   'font-mono text-xs',
-                  issue.severity === 'error' ? 'text-brick-400' : 'text-amber-400'
+                  issue.severity === 'error' ? 'text-danger-400' : 'text-warning-400'
                 )}
               >
                 {issue.code}
@@ -126,7 +126,7 @@ export function IssuesPanel({
               <span
                 className={cn(
                   'font-mono text-xs',
-                  issue.severity === 'error' ? 'text-brick-400' : 'text-amber-400'
+                  issue.severity === 'error' ? 'text-danger-400' : 'text-warning-400'
                 )}
               >
                 {issue.code}

@@ -111,19 +111,19 @@ each by the text that says what it is working on (`recallLessonsBlock`, `lib/les
 
 Each takes unsuperseded, unconsolidated rows embedded by the current model, at or above
 `lessonRetrievalThreshold` similarity, at most `lessonRetrievalLimit` of them (both on
-`/govern/workflow-defaults`, default 0.7 and 5). Matches are added inside a `<recalled_memory>`
+`/admin/workflow-defaults`, default 0.7 and 5). Matches are added inside a `<recalled_memory>`
 fence that marks them as reference data, each with its id, its failure type and a
 `low confidence` label where it applies. Recall failing is logged and the agent runs without
 lessons.
 
-**Lessons can age out.** `memory.lessonMaxAgeDays` (setting registry, `/govern/platform-settings`,
+**Lessons can age out.** `memory.lessonMaxAgeDays` (setting registry, `/admin/platform-settings`,
 overridable per team and organization) is the age in days past which a lesson is no longer recalled.
 It is 0 by default, which keeps every lesson whatever its age. It is resolved at the repository's
 owning team and its organization, since lessons belong to the repository, and applied as a filter
 on `created_at` inside the similarity query, so `lessonRetrievalLimit` still counts only lessons
 that may be recalled. `searchLessons` applies it too; `explainLesson` explains any lesson of the
 repository whatever its age. An aged-out lesson is not deleted: it stays in the table and on
-`/govern/lessons`, can still be superseded, and comes back into recall if the setting is raised or
+`/admin/lessons`, can still be superseded, and comes back into recall if the setting is raised or
 cleared. The owning team is cached for the ~30 s config-cache window; if the setting cannot be
 read, the failure is logged and aging is treated as off rather than failing recall or
 consolidation.
@@ -143,7 +143,7 @@ crowded one would get nothing back. The setting needs pgvector 0.8 or later.
 
 A Temporal Schedule (`consolidationCron`, default weekly) starts one `ConsolidateLessonsWorkflow`
 per repository with `Connection.consolidationEnabled`. Admins can also run it from
-`/govern/lessons`. It clusters the repository's active lessons that have not aged out (§3) by embedding similarity
+`/admin/lessons`. It clusters the repository's active lessons that have not aged out (§3) by embedding similarity
 (`consolidationSimilarityThreshold`, default 0.85), and for each cluster of at least
 `consolidationMinClusterSize` (default 3) asks the `lessonConsolidator` agent for one or two
 generalised lessons. In one transaction, under a per-repository advisory lock, it inserts those and
@@ -160,13 +160,13 @@ pattern is refused, and so is a write whose scan did not complete (an `INJECTION
 its budget or is quarantined); a pattern set that could not be loaded fails the write (only `commitToMemory` is retried; the other
 writers log and drop the note). A recalled item that matches is dropped; a partial scan alone does not
 drop one, while a pattern set that could not be loaded, or a scan that throws, recalls nothing. A write
-refused for a match and a drop are security events on `/govern/security` — `MEMORY_WRITE_REFUSED` or
+refused for a match and a drop are security events on `/admin/security` — `MEMORY_WRITE_REFUSED` or
 `MEMORY_RECALL_DROPPED` — naming the patterns and, for a drop, the item ids, never the text. See
 [agents.md §6.4](./agents.md#64-custom-skill-security-scanning).
 
 ## 6. Administration
 
-`/govern/lessons` lists, searches and deletes lessons and starts consolidation. Channel memory is
+`/admin/lessons` lists, searches and deletes lessons and starts consolidation. Channel memory is
 edited and deleted per channel ([channel-assistant.md §6](./channel-assistant.md#6-memory)).
 
 **Deleting forgets, through every copy.** Both delete routes run `forgetMemoryItems`
@@ -189,7 +189,7 @@ from that Slack user's turns (`metadata.userSlackId`) in every channel. Its audi
 Slack user id and how many items went and came back — never their text, which would keep what was
 erased. There is no dashboard control for it; it is API-only.
 
-After the embedding model changes, the Embeddings tab at `/studio/models` shows how many memory rows
+After the embedding model changes, the Embeddings tab at `/models` shows how many memory rows
 the configured model did not embed (`GET /api/v1/platform/embedding-config/reembed`) and starts
 `ReembedStaleMemoryWorkflow` (`POST` to the same path, ADMIN, audited). The workflow walks those
 rows in id order, 100 per activity and four embedding calls at a time, and continues as new every

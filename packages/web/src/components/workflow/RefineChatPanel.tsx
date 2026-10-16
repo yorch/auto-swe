@@ -94,7 +94,6 @@ export function RefineChatPanel({
 
   return (
     <Modal
-      eyebrow="§ Workflow"
       onClose={onClose}
       open={open}
       size="lg"
@@ -127,18 +126,20 @@ export function RefineChatPanel({
                 <div
                   className={
                     m.role === 'user'
-                      ? 'max-w-[80%] rounded-lg rounded-br-sm bg-ember-600/20 px-3 py-2 text-sm text-paper-100'
+                      ? 'max-w-[80%] rounded-lg rounded-br-sm bg-ink-600 px-3 py-2 text-sm text-paper-100'
                       : `max-w-[80%] rounded-lg rounded-bl-sm px-3 py-2 text-sm ${
-                          m.isError ? 'bg-brick-400/10 text-brick-400' : 'bg-ink-700 text-paper-200'
+                          m.isError
+                            ? 'bg-danger-400/10 text-danger-400'
+                            : 'bg-ink-700 text-paper-200'
                         }`
                   }
                 >
                   {m.role === 'assistant' && !m.isError && (
-                    <SparkleIcon className="mr-1 inline-block align-[-2px] text-ember-400" />
+                    <SparkleIcon className="mr-1 inline-block align-[-2px] text-paper-300" />
                   )}
                   {m.text}
                   {m.warnings && m.warnings.length > 0 && (
-                    <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs text-amber-400">
+                    <ul className="mt-2 list-disc space-y-0.5 pl-4 text-xs text-warning-400">
                       {m.warnings.map((w) => (
                         <li key={w}>{w}</li>
                       ))}
@@ -153,7 +154,7 @@ export function RefineChatPanel({
               <div className="flex items-center gap-2 rounded-lg rounded-bl-sm bg-ink-700 px-3 py-2 text-sm text-paper-400">
                 <span
                   aria-hidden
-                  className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-ink-400 border-t-ember-400"
+                  className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-ink-400 border-t-accent-400"
                 />
                 Refining…
               </div>

@@ -77,11 +77,11 @@ The two modes are controlled by the **Auth mode** field in Admin → Integration
 ### GitHub Enterprise Server
 
 The same steps apply; navigate to your GHE instance's settings instead of github.com, and set the
-instance's web and API URLs at `/studio/integrations → GitHub`.
+instance's web and API URLs at `/admin/integrations → GitHub`.
 
 **Webhook secret for an additional GHE host.** The webhook secret in the GitHub integration belongs
 to the instance's own host. For a repository on a further GitHub Enterprise Server host, first list
-that host in the `github.repositoryHosts` setting. Then, at `/studio/integrations → GitHub`, add a
+that host in the `github.repositoryHosts` setting. Then, at `/admin/integrations → GitHub`, add a
 **Per-host webhook secret** with the host exactly as that server sends it in
 `X-GitHub-Enterprise-Host` (lowercase, with `:port` if it is not 443) and the secret configured on
 that server's webhook. Deliveries naming that host are then verified with that secret alone; a
@@ -112,14 +112,14 @@ one however it was written.
 ### An App on another host
 
 Each GitHub host has its own App registrations, so a host other than the instance's has its own App
-(or PAT), recorded at `/studio/integrations → GitHub → Per-host credentials`:
+(or PAT), recorded at `/admin/integrations → GitHub → Per-host credentials`:
 
 1. List the host in `github.repositoryHosts`.
 2. Register and install the App on that host, following the steps above on that host's settings.
 3. Add **Per-host credentials** for the host: the App ID and the private key (and/or a PAT). Use the
    host as a family key — `ghe.corp`, `ghe.corp:8443`, `acme.ghe.com`, or `github.com` when the
    instance is not on github.com.
-4. Record each installation at `/studio/github-installations` with the **Host** field set to that
+4. Record each installation at `/admin/github-installations` with the **Host** field set to that
    host. The same numeric installation id may exist on two hosts; the pair is the identity.
 5. Point each repository on that host at its installation (an admin action). A repository cannot
    be pointed at an installation recorded for another host.

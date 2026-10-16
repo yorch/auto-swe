@@ -186,7 +186,7 @@ export function parseIssueTrackerConnectionConfig(config: unknown): IssueTracker
  * `Connection` row, which a team LEAD can edit, and the worker sends the
  * connection's token to it — so a self-service private-address opt-in would be
  * no guard at all. The worker's SSRF check honours the opt-in only for the exact
- * origin an ADMIN configured at /studio/integrations → Knowledge Base, the same
+ * origin an ADMIN configured at /admin/integrations → Knowledge Base, the same
  * narrower rule the tracker connection follows.
  */
 export const ConfluenceConnectionConfigSchema = z.object({

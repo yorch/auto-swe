@@ -35,7 +35,7 @@ export class GitHubTokenMissingError extends Error {
 export class PlatformCredentialHostError extends Error {
   constructor(readonly apiUrl: string) {
     super(
-      `A platform GitHub credential is valid only on the GitHub host it belongs to and is not sent to ${apiUrl}. That host is reachable with a platform credential configured for it (Studio > Integrations > GitHub > Host credentials) or a user's own saved token.`
+      `A platform GitHub credential is valid only on the GitHub host it belongs to and is not sent to ${apiUrl}. That host is reachable with a platform credential configured for it (Admin > Integrations > GitHub > Host credentials) or a user's own saved token.`
     );
     this.name = 'PlatformCredentialHostError';
   }

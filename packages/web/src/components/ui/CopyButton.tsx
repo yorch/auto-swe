@@ -27,9 +27,9 @@ export function CopyButton({ value, className }: CopyButtonProps) {
     <>
       <button
         className={cn(
-          'inline-flex items-center gap-1 rounded-md border border-ink-500 bg-ink-700 px-2 py-0.5 text-xs font-medium text-paper-400 transition-colors hover:border-ember-400/60 hover:text-paper-100',
+          'inline-flex items-center gap-1 rounded-md border border-ink-500 bg-ink-700 px-2 py-0.5 text-xs font-medium text-paper-400 transition-colors hover:border-accent-400/60 hover:text-paper-100',
           FOCUS_RING,
-          failed && 'border-brick-400 text-brick-400',
+          failed && 'border-danger-400 text-danger-400',
           className
         )}
         onClick={handleCopy}

@@ -7,7 +7,15 @@
 
 /* ─────────────────────────────────────────────────────────────────────────
    Design tokens — "auto·swe"
-   Deep navy/indigo backgrounds · violet+teal accent · Inter sans · IBM Plex Mono
+   Two palettes for the neutral ramps (ink surfaces, paper text), each in dark and light:
+     navy      the default — deep navy/indigo surfaces, cool blue-grey text
+     graphite  `data-palette="graphite"` on <html> — unsaturated greys, no blue cast
+   The accent (violet) and status colours are shared by both palettes.
+   Four blocks hold the values: this `@theme` (navy dark), `:root[data-theme='light']`
+   (navy light), and the two `:root[data-palette='graphite']…` blocks below it.
+   `lib/palette.ts` mirrors the values SVG needs and `palette.test.ts` holds every block
+   to the same contrast floors and ramp order.
+   Type: Inter (sans), JetBrains Mono (code and identifiers).
    ──────────────────────────────────────────────────────────────────────── */
 @theme {
   /* Ink / surface ramp — deep navy/indigo */
@@ -45,45 +53,48 @@
   --color-paper-500: #a9b2c6; /* labels / muted */
   --color-paper-600: #909cb5; /* faint / numerals / captions */
 
-  /* Accent — violet, primary accent */
-  --color-ember-50: #f0eeff; /* violet tint near-white */
-  --color-ember-100: #d8d4ff; /* violet light */
-  --color-ember-200: #b5afff; /* violet mid */
-  --color-ember-300: #9b8fff; /* violet-soft */
-  --color-ember-400: #7c6cff; /* violet — PRIMARY ACCENT */
-  --color-ember-500: #6a5bff; /* violet-deep */
-  --color-ember-600: #5244cc; /* violet-darker */
-  --color-ember-700: #3c3199; /* violet darkest */
+  /* Accent — violet. Reserved for three jobs: the primary action, the current
+     selection (active nav item, selected tab / row / node) and keyboard focus. Links are
+     body colour with an underline (on hover/focus when standalone, always inside a
+     sentence); eyebrows, icons and figures are neutral. Status colours below mean a
+     status and nothing else. */
+  --color-accent-50: #f0eeff; /* violet tint near-white */
+  --color-accent-100: #d8d4ff; /* violet light */
+  --color-accent-200: #b5afff; /* violet mid */
+  --color-accent-300: #9b8fff; /* violet-soft */
+  --color-accent-400: #7c6cff; /* violet — PRIMARY ACCENT */
+  --color-accent-500: #6a5bff; /* violet-deep */
+  --color-accent-600: #5244cc; /* violet-darker */
+  --color-accent-700: #3c3199; /* violet darkest */
 
   /* Status — used for badges, graph nodes, timing bars */
-  --color-moss-400: #46d28a; /* passed / ok */
-  --color-moss-600: #2a9062;
-  --color-amber-400: #f6b545; /* events / suggested-fix hints */
-  --color-amber-600: #c48a18;
-  --color-brick-400: #ff7a7a; /* failed / timeout */
-  --color-brick-600: #cc4040;
-  --color-dust-400: #4d8dff; /* running / LLM turn (blue) */
-  --color-dust-600: #2d6acc;
-  --color-violet-400: #34d8c0; /* in-review — teal secondary accent */
-  --color-violet-600: #1aa88f;
+  --color-success-400: #46d28a; /* passed / ok */
+  --color-success-600: #2a9062;
+  --color-warning-400: #f6b545; /* events / suggested-fix hints */
+  --color-warning-600: #c48a18;
+  --color-danger-400: #ff7a7a; /* failed / timeout */
+  --color-danger-600: #cc4040;
+  --color-info-400: #4d8dff; /* running / LLM turn (blue) */
+  --color-info-600: #2d6acc;
+  --color-accent2-400: #34d8c0; /* in-review — teal secondary accent */
+  --color-accent2-600: #1aa88f;
 
   /* Type stack — three families only */
   --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', monospace;
 
   /* Type scale. The root is 14px (the html rule below), and Tailwind's defaults are rem,
      so left alone every step lands on a fraction (`text-xs` 10.5px, `text-lg` 15.75px,
      `text-3xl` 26.25px). Each step is pinned to whole pixels here instead; `text-base`
      is the 14px root itself. Use these steps, never an arbitrary `text-[Npx]` between
      them — half-pixel neighbours read as "slightly off", not as hierarchy.
-       2xs 11  uppercase eyebrows      lg  16  card, section and panel titles; doc prose
+       2xs 11  uppercase labels        lg  16  card, section and panel titles; doc prose
        xs  12  metadata, hints         xl  18  modal and detail-page titles
        sm  13  dense UI, tables, forms 2xl 22  page titles (small screens), doc h2
        base 14 body, chat              3xl 28  page titles, KPI figures
                                        4xl 34  doc h1, display    5xl 44  login headline
-     `text-2xs` is for UPPERCASE eyebrow labels only (`.kicker`, nav group names,
-     uppercase badges): capitals read about a step larger, so 11px caps sit beside 12px
+     `text-2xs` is for UPPERCASE labels only (nav group names, uppercase badges): capitals read about a step larger, so 11px caps sit beside 12px
      sentence-case text. Never use it for sentence-case text. */
   --text-2xs: 11px;
   --text-2xs--line-height: 14px;
@@ -104,14 +115,22 @@
   --text-5xl: 44px;
   --text-5xl--line-height: 48px;
 
-  /* Border radius — the scale the primitives use (inputs/alerts 9, buttons 10,
-     cards/modals 14), so a `rounded-*` class and a primitive agree. */
+  /* Border radius — three sizes plus full, so neighbouring shapes agree:
+       4px   small controls, badges, inline focus outlines   rounded, rounded-xs, rounded-sm
+       8px   inputs, buttons, menus, alerts, list rows        rounded-md, rounded-lg
+       12px  cards, modals, panels                            rounded-xl, rounded-2xl
+       full  pills that must be round: dots, avatars, switches, counts
+     The class names are kept (they read as relative sizes) and re-pointed here, so a
+     call site never needs editing to follow the scale. Do not add a fourth size. */
+  --radius: 4px;
   --radius-none: 0;
-  --radius-xs: 3px;
-  --radius-sm: 7px;
-  --radius-md: 9px;
-  --radius-lg: 10px;
-  --radius-xl: 14px;
+  --radius-xs: 4px;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 12px;
+  --radius-3xl: 12px;
   --radius-full: 9999px;
 }
 
@@ -145,29 +164,84 @@
   --color-paper-200: #1d2333; /* body text */
   --color-paper-300: #353d51;
   --color-paper-400: #475066;
-  --color-paper-500: #586176;
+  --color-paper-500: #545d72;
   --color-paper-600: #626b80;
 
-  --color-ember-50: #f1efff;
-  --color-ember-100: #e3dfff;
-  --color-ember-200: #c8c0ff;
-  --color-ember-300: #5b4ce0;
-  --color-ember-400: #5143d6;
-  --color-ember-500: #5a4bf0;
-  --color-ember-600: #4334c4;
-  --color-ember-700: #33289a;
+  --color-accent-50: #f1efff;
+  --color-accent-100: #e3dfff;
+  --color-accent-200: #c8c0ff;
+  --color-accent-300: #5b4ce0;
+  --color-accent-400: #5143d6;
+  --color-accent-500: #5a4bf0;
+  --color-accent-600: #4334c4;
+  --color-accent-700: #33289a;
 
-  --color-moss-400: #13804b;
-  --color-moss-600: #0f6b3e;
-  --color-amber-400: #9a5b00;
-  --color-amber-600: #7a4800;
-  --color-brick-400: #c53030;
-  --color-brick-600: #a32424;
-  --color-dust-400: #2457c5;
-  --color-dust-600: #1c46a0;
-  --color-violet-400: #0b7a6b;
-  --color-violet-600: #08665a;
+  --color-success-400: #13804b;
+  --color-success-600: #0f6b3e;
+  --color-warning-400: #9a5b00;
+  --color-warning-600: #7a4800;
+  --color-danger-400: #c53030;
+  --color-danger-600: #a32424;
+  --color-info-400: #2457c5;
+  --color-info-600: #1c46a0;
+  --color-accent2-400: #0b7a6b;
+  --color-accent2-600: #08665a;
   color-scheme: light;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Graphite palette — neutral greys in place of navy, same roles and steps.
+
+   Only the ink and paper ramps change; accent and status colours are navy's.
+   Dark text contrasts (WCAG 2.x on ink-950 / 900 / 800 / 700, then ink-600, ink-500):
+     paper-300 #cbcbd1  12.3 / 12.1 / 11.9 / 11.2   (9.7 on ink-600, 8.8 on ink-500)
+     paper-400 #bdbdc4  10.7 / 10.5 / 10.2 /  9.7   (8.4 on ink-600, 7.6 on ink-500)
+     paper-500 #acacb4   8.8 /  8.7 /  8.5 /  8.0   (6.9 on ink-600, 6.3 on ink-500)
+     paper-600 #93939c   6.5 /  6.4 /  6.3 /  5.9   (5.1 on ink-600, 4.7 on ink-500)
+   Light text contrasts, same surfaces:
+     paper-300 #38383f  11.6 / 10.6 / 10.9 / 11.6   (9.3 on ink-600, 9.1 on ink-500)
+     paper-400 #4a4a52   8.8 /  8.0 /  8.2 /  8.8   (7.1 on ink-600, 6.9 on ink-500)
+     paper-500 #5b5b64   6.7 /  6.1 /  6.3 /  6.7   (5.4 on ink-600, 5.3 on ink-500)
+     paper-600 #66666f   5.7 /  5.2 /  5.3 /  5.7   (4.6 on ink-600, 4.4 on ink-500)
+   ──────────────────────────────────────────────────────────────────────── */
+:root[data-palette='graphite']:not([data-theme='light']) {
+  --color-ink-950: #09090b;
+  --color-ink-900: #0c0c0e;
+  --color-ink-800: #0f0f12;
+  --color-ink-700: #161619;
+  --color-ink-600: #232328;
+  --color-ink-500: #2a2a30;
+  --color-ink-400: #303037;
+  --color-ink-300: #42424b;
+  --color-ink-200: #64646f;
+
+  --color-paper-50: #f8f8f9;
+  --color-paper-100: #efeff1;
+  --color-paper-200: #e5e5e8;
+  --color-paper-300: #cbcbd1;
+  --color-paper-400: #bdbdc4;
+  --color-paper-500: #acacb4;
+  --color-paper-600: #93939c;
+}
+
+:root[data-palette='graphite'][data-theme='light'] {
+  --color-ink-950: #ffffff;
+  --color-ink-900: #f4f4f5;
+  --color-ink-800: #f7f7f8;
+  --color-ink-700: #ffffff;
+  --color-ink-600: #e6e6e9;
+  --color-ink-500: #e3e3e7;
+  --color-ink-400: #cdcdd3;
+  --color-ink-300: #b9b9c1;
+  --color-ink-200: #8a8a94;
+
+  --color-paper-50: #111113;
+  --color-paper-100: #17171a;
+  --color-paper-200: #1f1f23;
+  --color-paper-300: #38383f;
+  --color-paper-400: #4a4a52;
+  --color-paper-500: #5b5b64;
+  --color-paper-600: #66666f;
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -186,37 +260,27 @@
     --muted-foreground: var(--color-paper-400);
     --border: var(--color-ink-600);
     --border-strong: var(--color-ink-500);
-    --primary: var(--color-ember-400);
+    --primary: var(--color-accent-400);
     --primary-foreground: var(--color-ink-950);
-    --destructive: var(--color-brick-400);
-    --success: var(--color-moss-400);
-    --warning: var(--color-amber-400);
-    --info: var(--color-dust-400);
+    --destructive: var(--color-danger-400);
+    --success: var(--color-success-400);
+    --warning: var(--color-warning-400);
+    --info: var(--color-info-400);
   }
 
   html,
   body {
     font-family: var(--font-sans);
     font-size: 14px;
+    /* Inter's optical-size axis follows the rendered size. cv05 is lowercase l with a tail
+       and cv08 is capital I with serifs. Both tell l and I apart in IDs and hashes. */
+    font-optical-sizing: auto;
+    font-feature-settings: 'cv05', 'cv08';
     -webkit-font-smoothing: antialiased;
     line-height: 1.5;
     color: var(--color-paper-200);
     background: var(--color-ink-800);
     text-rendering: optimizeLegibility;
-  }
-
-  /* Atmosphere: violet+teal glow at top corners. */
-  body {
-    background-image:
-      radial-gradient(900px 500px at 12% -8%, rgba(124, 108, 255, 0.16), transparent 60%),
-      radial-gradient(900px 500px at 100% 0%, rgba(52, 216, 192, 0.1), transparent 55%);
-    background-repeat: no-repeat;
-    background-attachment: fixed;
-  }
-  :root[data-theme='light'] body {
-    background-image:
-      radial-gradient(900px 500px at 12% -8%, rgba(90, 75, 240, 0.07), transparent 60%),
-      radial-gradient(900px 500px at 100% 0%, rgba(11, 122, 107, 0.05), transparent 55%);
   }
 
   /* Sans-serif for all headlines */
@@ -289,17 +353,7 @@
    Utilities
    ──────────────────────────────────────────────────────────────────────── */
 @layer utilities {
-  /* Eyebrow above a card or section title — the ember-coloured section marker. */
-  .kicker {
-    font-family: var(--font-sans);
-    font-size: var(--text-2xs);
-    font-weight: 600;
-    color: var(--color-ember-300);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-
-  /* Field labels, rail keys, column captions — the neutral sibling of .kicker.
+  /* Field labels, rail keys, column captions.
      Sentence case in the sans face: the name is historical (it was a mono
      small-caps label), kept so every call site picks up the one treatment. */
   .label-mono {
@@ -324,22 +378,6 @@
   .small-caps {
     font-variant-caps: all-small-caps;
     letter-spacing: 0.12em;
-  }
-
-  .display-italic {
-    font-family: var(--font-display);
-    font-style: italic;
-  }
-
-  /* Hairline rule using gradient fade */
-  .ink-rule {
-    background-image: linear-gradient(
-      to right,
-      transparent,
-      var(--color-ink-400) 18%,
-      var(--color-ink-400) 82%,
-      transparent
-    );
   }
 
   /* ── Animations ── */
@@ -497,7 +535,7 @@
   --xy-controls-button-background-color: var(--color-ink-600);
   --xy-controls-button-background-color-hover: var(--color-ink-500);
   --xy-controls-button-color: var(--color-paper-400);
-  --xy-controls-button-color-hover: var(--color-ember-400);
+  --xy-controls-button-color-hover: var(--color-accent-400);
   --xy-controls-button-border-color: var(--color-ink-400);
   --xy-minimap-background-color: var(--color-ink-900);
 }
@@ -522,7 +560,7 @@
 .react-flow__edge:focus .react-flow__edge-path,
 .react-flow__edge:focus-visible .react-flow__edge-path {
   /* biome-ignore lint/complexity/noImportantStyles: needs to win against React Flow's inline edge stroke */
-  stroke: var(--color-ember-400) !important;
+  stroke: var(--color-accent-400) !important;
   /* biome-ignore lint/complexity/noImportantStyles: needs to win against React Flow's inline edge stroke-width */
   stroke-width: 2.5 !important;
 }
@@ -531,6 +569,12 @@
 }
 :root[data-theme='light'] .react-flow__minimap-mask {
   fill: rgba(243, 245, 249, 0.85);
+}
+:root[data-palette='graphite']:not([data-theme='light']) .react-flow__minimap-mask {
+  fill: rgba(12, 12, 14, 0.85);
+}
+:root[data-palette='graphite'][data-theme='light'] .react-flow__minimap-mask {
+  fill: rgba(244, 244, 245, 0.85);
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
@@ -563,7 +607,7 @@
    arrow-key DAG traversal is visible before selection lands. */
 .react-flow__node:focus,
 .react-flow__node:focus-visible {
-  outline: 2px solid var(--color-ember-400);
+  outline: 2px solid var(--color-accent-400);
   outline-offset: 2px;
   border-radius: 2px;
 }

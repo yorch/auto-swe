@@ -20,7 +20,7 @@ export default function EpicsPage() {
 
   return (
     <div className="space-y-6">
-      <ButtonLink className="-ml-3" href="/workflows" size="sm" variant="ghost">
+      <ButtonLink className="-ml-3" href="/requests" size="sm" variant="ghost">
         <Icon name="arrowLeft" size={14} />
         Requests
       </ButtonLink>
@@ -34,12 +34,13 @@ export default function EpicsPage() {
             </ButtonLink>
           )
         }
-        subtitle={
-          <>
+        help={
+          <p>
             An epic <HelpTip term="epic" /> is a change that spans several repositories, split by
             the planner into ordered per-repository work.
-          </>
+          </p>
         }
+        subtitle="Changes that span several repositories, split into per-repository work."
         title="Epics"
       />
 
@@ -51,7 +52,7 @@ export default function EpicsPage() {
         label="epics"
         loading={
           <Card className="px-5 py-3">
-            <SkeletonRows rows={5} />
+            <SkeletonRows label="epics" rows={5} />
           </Card>
         }
         onRetry={() => void epicsQuery.refetch()}

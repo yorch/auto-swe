@@ -15,7 +15,7 @@ export function ErrorPanel({ error, onRetry }: { error: Error | null; onRetry?: 
       <div className="w-full max-w-md text-center" role="alert">
         <div
           aria-hidden="true"
-          className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-brick-400/30 bg-brick-400/10 text-brick-400"
+          className="mx-auto mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-danger-400/30 bg-danger-400/10 text-danger-400"
         >
           <Icon name="warning" size={26} />
         </div>

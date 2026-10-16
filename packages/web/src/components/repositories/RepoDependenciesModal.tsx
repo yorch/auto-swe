@@ -31,7 +31,7 @@ function neighborLabel(edge: DepEdgeView): string {
   return edge.toRef ?? '(unknown)';
 }
 
-const EDGE_STATUS_TONE: Record<string, BadgeTone> = { active: 'moss', dismissed: 'brick' };
+const EDGE_STATUS_TONE: Record<string, BadgeTone> = { active: 'success', dismissed: 'danger' };
 
 /** `92% confidence` for an LLM-inferred edge; nothing for a deterministic one. */
 function ConfidenceNote({ edge }: { edge: DepEdgeView }) {
@@ -96,7 +96,7 @@ function EdgeRow({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1.5">
-        <Badge tone={EDGE_STATUS_TONE[edge.status] ?? 'amber'} variant="outline">
+        <Badge tone={EDGE_STATUS_TONE[edge.status] ?? 'warning'} variant="outline">
           {status}
         </Badge>
         {items.length > 0 && (
@@ -208,7 +208,6 @@ export function RepoDependenciesModal({
   return (
     <>
       <Modal
-        eyebrow="Repository dependencies"
         onClose={onClose}
         open={open}
         size="lg"
@@ -216,7 +215,7 @@ export function RepoDependenciesModal({
         title={connectionLabel(repo)}
       >
         {isLoading ? (
-          <SkeletonRows rows={4} />
+          <SkeletonRows label="dependencies" rows={4} />
         ) : isError ? (
           <Alert>
             {errMsg(

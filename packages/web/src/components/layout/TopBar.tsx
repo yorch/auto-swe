@@ -1,15 +1,14 @@
 'use client';
 
-import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { type RefObject, useState } from 'react';
 import { AssistantToggle } from '@/components/assistant/AssistantPanel';
+import { HelpButton } from '@/components/help/HelpPanel';
 import { CommandPalette, CommandPaletteButton } from '@/components/layout/CommandPalette';
 import { SIDEBAR_ID } from '@/components/layout/Sidebar';
 import { ThemeToggle } from '@/components/layout/ThemeToggle';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Select } from '@/components/ui/Select';
-import { useApprovalsCount } from '@/hooks/useApprovals';
 import { type GatewayStatus, useGatewayStatus } from '@/hooks/useGatewayStatus';
 import { useTeams } from '@/hooks/useTeams';
 import { pageSection, pageTitle } from '@/lib/navigation';
@@ -17,8 +16,8 @@ import { cn, FOCUS_RING } from '@/lib/utils';
 import { useTeamStore } from '@/stores/teamStore';
 
 const GATEWAY_TONE: Record<GatewayStatus, BadgeTone> = {
-  offline: 'brick',
-  online: 'moss',
+  offline: 'danger',
+  online: 'success',
   pending: 'neutral',
   unknown: 'neutral',
 };
@@ -41,14 +40,13 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
   const { selectedTeamId, setSelectedTeamId } = useTeamStore();
   const { data: teams } = useTeams();
 
-  const inboxCount = useApprovalsCount();
   const gatewayStatus = useGatewayStatus();
   const title = pageTitle(pathname);
   const section = pageSection(pathname);
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   return (
-    <header className="sticky top-0 z-20 flex h-14 min-w-0 items-center gap-2 border-b border-ink-500/70 bg-ink-950/70 px-3 backdrop-blur-md sm:gap-3 md:px-6">
+    <header className="sticky top-0 z-20 flex h-14 min-w-0 items-center gap-2 border-b border-ink-500/70 bg-ink-950 px-3 sm:gap-3 md:px-6">
       {/* Menu button — opens the sidebar drawer below md */}
       <button
         aria-controls={SIDEBAR_ID}
@@ -106,17 +104,6 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
         value={selectedTeamId ?? ''}
       />
 
-      {/* Inbox badge */}
-      {inboxCount > 0 && (
-        <Link
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-1 text-xs font-semibold text-amber-400 no-underline transition-colors hover:bg-amber-400/20 max-sm:hidden"
-          href="/govern/approvals"
-        >
-          <span className="inline-block h-[7px] w-[7px] rounded-full bg-amber-400" />
-          {inboxCount} pending
-        </Link>
-      )}
-
       {/* Spacer */}
       <div className="flex-1" />
 
@@ -126,6 +113,7 @@ export function TopBar({ navOpen, onOpenNav, menuButtonRef }: TopBarProps) {
         <AssistantToggle />
         <CommandPaletteButton onClick={() => setPaletteOpen(true)} />
         <ThemeToggle />
+        <HelpButton />
         <Badge
           className="max-sm:hidden"
           dot={gatewayStatus === 'online' ? 'pulse' : true}

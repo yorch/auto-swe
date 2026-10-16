@@ -109,10 +109,10 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
             ) : (
               <Link
                 className={cn(
-                  'rounded-sm text-sm text-ember-400 transition-colors hover:text-ember-300',
+                  'rounded-sm text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
                   FOCUS_RING
                 )}
-                href={`/workflows/library/${run.templateId}`}
+                href={`/library/${run.templateId}`}
               >
                 {run.templateName}
               </Link>
@@ -123,7 +123,7 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
               <a
                 className={cn(
                   RAIL_CODE,
-                  'block max-w-[150px] truncate rounded-sm text-right text-ember-400 hover:underline',
+                  'block max-w-[150px] truncate rounded-sm text-right text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
                   FOCUS_RING
                 )}
                 href={temporalUrl}

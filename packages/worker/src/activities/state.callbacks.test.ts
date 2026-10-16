@@ -73,7 +73,11 @@ describe('createHumanStep and the run.waiting_for_human callback', () => {
     });
     expect(row.payload).toMatchObject({
       context: { k: 1 },
-      humanStep: { dashboardUrl: 'https://app.example.com/inbox', id: 'step-1', kind: 'APPROVAL' },
+      humanStep: {
+        dashboardUrl: 'https://app.example.com/approvals',
+        id: 'step-1',
+        kind: 'APPROVAL',
+      },
       launchedBy: { id: 'user-1', kind: 'user' },
       run: { costUsd: 0.5, endedAt: null, status: 'RUNNING' },
       type: 'run.waiting_for_human',

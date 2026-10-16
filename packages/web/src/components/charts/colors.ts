@@ -59,14 +59,18 @@ export const CHART_DASHES: (string | undefined)[] = [
 
 export const OTHER_LABEL = 'Other';
 
-/** A series colour by position; the merged "Other" series is always neutral. */
+/**
+ * A series colour by position; the merged "Other" series is always neutral — the
+ * painted palette's muted text tone (`tokens`, from `useTokens()`), navy when omitted.
+ */
 export function seriesColor(
   index: number,
   label?: string,
-  theme: 'dark' | 'light' = 'dark'
+  theme: 'dark' | 'light' = 'dark',
+  tokens?: Tokens
 ): string {
   if (label === OTHER_LABEL) {
-    return theme === 'light' ? TOKEN_LIGHT.paper500 : CHART_OTHER_COLOR;
+    return (tokens ?? (theme === 'light' ? TOKEN_LIGHT : TOKEN)).paper500;
   }
   const palette = theme === 'light' ? CHART_PALETTE_LIGHT : CHART_PALETTE;
   return palette[index % palette.length];
@@ -99,5 +103,5 @@ export function topNWithOther<T>(
 
 /** Colors used for the stacked area / workflow-over-time chart. */
 export function trendColors(t: Tokens) {
-  return { active: t.ember400, completed: t.moss400, failed: t.brick400 } as const;
+  return { active: t.accent400, completed: t.success400, failed: t.danger400 } as const;
 }

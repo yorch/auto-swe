@@ -118,7 +118,7 @@ function EditorFor({
 }) {
   const templates = useAutomationTemplates(owner, sourceKey);
   if (templates.isLoading) {
-    return <SkeletonRows rows={3} />;
+    return <SkeletonRows label="automations" rows={3} />;
   }
   if (templates.isError) {
     return <Alert>{errMsg(templates.error, 'Could not load the templates.')}</Alert>;
@@ -154,7 +154,7 @@ export function EventAutomationsPanel({ owner }: { owner: AutomationOwner }) {
   const canManage = data?.canManage ?? false;
 
   if (isLoading) {
-    return <SkeletonRows rows={3} />;
+    return <SkeletonRows label="automations" rows={3} />;
   }
   if (isError) {
     return <Alert>{errMsg(error, `Could not load ${where}’s automations.`)}</Alert>;

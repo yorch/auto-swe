@@ -126,13 +126,15 @@ describe('Transcript layout', () => {
     const rail = screen.getByTestId('rail');
     expect(rail.dataset.collapsible).toBe('true');
     expect(before(screen.getByText('Steps'), rail)).toBe(true);
-    expect(before(rail, screen.getByText('Run narrative'))).toBe(true);
+    expect(before(rail, screen.getByRole('heading', { name: 'T' }))).toBe(true);
   });
 
   it('keeps the spine, narrative, rail order at desktop width', () => {
     mockViewport(1280);
     render(<Transcript {...props} />);
-    expect(before(screen.getByText('Run narrative'), screen.getByTestId('rail'))).toBe(true);
+    expect(before(screen.getByRole('heading', { name: 'T' }), screen.getByTestId('rail'))).toBe(
+      true
+    );
   });
 
   it('lays the step spine out as a horizontal strip below the breakpoint only', () => {
@@ -212,9 +214,9 @@ describe('crossing the breakpoint keeps the tree', () => {
   it('keeps the narrative of the Transcript layout mounted', () => {
     const viewport = mockViewport(1440);
     render(<Transcript {...props} />);
-    const narrative = screen.getByText('Run narrative');
+    const narrative = screen.getByRole('heading', { name: 'T' });
     act(() => viewport.setViewportWidth(500));
-    expect(screen.getByText('Run narrative')).toBe(narrative);
+    expect(screen.getByRole('heading', { name: 'T' })).toBe(narrative);
   });
 
   it('keeps the topology graph and the feed of the Timeline layout mounted', () => {

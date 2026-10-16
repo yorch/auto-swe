@@ -35,7 +35,7 @@ export function ScheduleToggleRow({
     <div className="flex items-center gap-3">
       <ToggleSwitch checked={enabled} label="Schedule enabled" onChange={onToggle} />
       {schedule?.exists && (
-        <Badge className="ml-auto" dot tone={schedule.paused ? 'muted' : 'moss'}>
+        <Badge className="ml-auto" dot tone={schedule.paused ? 'muted' : 'success'}>
           {schedule.paused
             ? 'Paused'
             : schedule.nextRunAt

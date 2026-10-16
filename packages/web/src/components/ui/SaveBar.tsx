@@ -29,19 +29,19 @@ export function SaveBar({
   return (
     <div
       className={cn(
-        'sticky bottom-0 z-10 flex flex-nowrap items-center justify-between gap-3 rounded-lg border bg-ink-800/95 px-4 py-3 backdrop-blur',
-        dirty ? 'border-amber-400/50' : 'border-ink-400'
+        'sticky bottom-0 z-10 flex flex-nowrap items-center justify-between gap-3 rounded-lg border bg-ink-800 px-4 py-3',
+        dirty ? 'border-warning-400/50' : 'border-ink-400'
       )}
     >
       <p aria-live="polite" className="min-w-0 text-sm" role={error ? 'alert' : 'status'}>
         {error ? (
-          <span className="text-brick-400">{error}</span>
+          <span className="text-danger-400">{error}</span>
         ) : dirty ? (
-          <span className="text-amber-400">
+          <span className="text-warning-400">
             {dirtyCount} unsaved change{dirtyCount === 1 ? '' : 's'}
           </span>
         ) : saved ? (
-          <span className="text-moss-400">✓ {savedMessage}</span>
+          <span className="text-success-400">✓ {savedMessage}</span>
         ) : (
           <span className="hidden text-paper-500 sm:inline">No unsaved changes</span>
         )}

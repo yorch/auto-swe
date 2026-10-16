@@ -1,15 +1,9 @@
-import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
-import { cn, formatCost, plural } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 
 interface EditorActionBarProps {
-  spec: WorkflowSpec;
-  costEstimateUsd?: number | null;
-  /** What the estimate excludes; becomes the estimate's tooltip. */
-  costEstimateExclusions?: string | null;
-  observedCostUsd?: number | null;
   paletteOpen: boolean;
   showOutline: boolean;
   setPaletteOpen: Dispatch<SetStateAction<boolean>>;
@@ -21,12 +15,8 @@ interface EditorActionBarProps {
   actions?: ReactNode;
 }
 
-/** The strip above the canvas: graph summary on the left, editor controls on the right. */
+/** The strip above the canvas: editor actions only. The graph's read-only stats live in `EditorStatusBar`. */
 export function EditorActionBar({
-  spec,
-  costEstimateUsd,
-  costEstimateExclusions,
-  observedCostUsd,
   paletteOpen,
   showOutline,
   setPaletteOpen,
@@ -36,42 +26,7 @@ export function EditorActionBar({
   actions,
 }: EditorActionBarProps) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-ink-600 bg-ink-950/60 px-4 py-2">
-      <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-        <div className="flex items-baseline gap-1.5">
-          <dt className="sr-only">Nodes</dt>
-          <dd className="text-paper-200 tabular-nums">
-            {plural(Object.keys(spec.nodes).length, 'node')}
-          </dd>
-        </div>
-        <div className="flex min-w-0 items-baseline gap-1.5">
-          <dt className="text-paper-500">Starts at</dt>
-          <dd className="truncate font-mono text-xs text-ember-300">{spec.entry}</dd>
-        </div>
-        {costEstimateUsd != null && (costEstimateUsd > 0 || costEstimateExclusions) && (
-          <div
-            className="flex items-baseline gap-1.5"
-            title={
-              // The estimate is per model call priced from step and agent
-              // metadata; it is not the agent's own model price (an `agent`
-              // node is priced from a proxy role) and it omits anything without
-              // a token cost. Say so rather than implying precision.
-              costEstimateExclusions
-                ? `Rough estimate from step and agent metadata. ${costEstimateExclusions}`
-                : 'Rough estimate from step and agent metadata'
-            }
-          >
-            <dt className="text-paper-500">Est.</dt>
-            <dd className="text-paper-200 tabular-nums">{formatCost(costEstimateUsd)}/run</dd>
-          </div>
-        )}
-        {observedCostUsd != null && (
-          <div className="flex items-baseline gap-1.5" title="Average over the last 30 days">
-            <dt className="text-paper-500">Observed</dt>
-            <dd className="text-paper-200 tabular-nums">{formatCost(observedCostUsd)}/run</dd>
-          </div>
-        )}
-      </dl>
+    <div className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2 border-b border-ink-600 bg-ink-950/60 px-4 py-2">
       <div className="flex flex-wrap items-center gap-2">
         <Button
           aria-expanded={paletteOpen}
@@ -99,7 +54,7 @@ export function EditorActionBar({
         </Button>
         <Button
           aria-pressed={showOutline}
-          className={cn(showOutline && 'border-ember-400/50 bg-ember-400/10 text-ember-300')}
+          className={cn(showOutline && 'border-accent-400/50 bg-accent-400/10 text-accent-300')}
           onClick={() => {
             setShowOutline((v) => !v);
             setPaletteOpen(false);

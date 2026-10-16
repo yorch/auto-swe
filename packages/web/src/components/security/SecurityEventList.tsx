@@ -26,15 +26,15 @@ export const SECURITY_EVENT_META: Record<
   SecurityEventType,
   { group: SecurityEventGroup; label: string; tone: BadgeTone }
 > = {
-  CHANNEL_SUSPICIOUS: { group: 'advisory', label: 'Suspicious channel input', tone: 'violet' },
-  CODE_SECURITY: { group: 'advisory', label: 'Code finding', tone: 'dust' },
-  CONTENT_SECURITY_BLOCK: { group: 'blocked', label: 'Content blocked', tone: 'brick' },
-  CONTENT_SECURITY_WARN: { group: 'advisory', label: 'Content warning', tone: 'amber' },
-  FILE_BLOCK: { group: 'blocked', label: 'File write blocked', tone: 'brick' },
-  LLM_SUSPICIOUS: { group: 'advisory', label: 'Suspicious model output', tone: 'violet' },
-  MEMORY_RECALL_DROPPED: { group: 'blocked', label: 'Memory recall dropped', tone: 'brick' },
-  MEMORY_WRITE_REFUSED: { group: 'blocked', label: 'Memory write refused', tone: 'brick' },
-  SHELL_BLOCK: { group: 'blocked', label: 'Command blocked', tone: 'brick' },
+  CHANNEL_SUSPICIOUS: { group: 'advisory', label: 'Suspicious channel input', tone: 'accent2' },
+  CODE_SECURITY: { group: 'advisory', label: 'Code finding', tone: 'info' },
+  CONTENT_SECURITY_BLOCK: { group: 'blocked', label: 'Content blocked', tone: 'danger' },
+  CONTENT_SECURITY_WARN: { group: 'advisory', label: 'Content warning', tone: 'warning' },
+  FILE_BLOCK: { group: 'blocked', label: 'File write blocked', tone: 'danger' },
+  LLM_SUSPICIOUS: { group: 'advisory', label: 'Suspicious model output', tone: 'accent2' },
+  MEMORY_RECALL_DROPPED: { group: 'blocked', label: 'Memory recall dropped', tone: 'danger' },
+  MEMORY_WRITE_REFUSED: { group: 'blocked', label: 'Memory write refused', tone: 'danger' },
+  SHELL_BLOCK: { group: 'blocked', label: 'Command blocked', tone: 'danger' },
 };
 
 export const SECURITY_EVENT_TYPES = Object.keys(SECURITY_EVENT_META) as SecurityEventType[];
@@ -148,7 +148,7 @@ function expandedDetail(event: SecurityEvent): ReactNode {
             className="flex flex-wrap gap-x-2 font-mono text-xs text-paper-300"
             key={`${f.file}:${f.line}:${f.label}`}
           >
-            <span className="text-dust-400 shrink-0">{f.label}</span>
+            <span className="text-info-400 shrink-0">{f.label}</span>
             <span className="text-paper-400">
               {f.file}:{f.line}
             </span>
@@ -167,7 +167,7 @@ function expandedDetail(event: SecurityEvent): ReactNode {
     return (
       <ul className="mt-1.5 space-y-0.5">
         {warnings.map((w) => (
-          <li className="break-words font-mono text-xs text-violet-400" key={w}>
+          <li className="break-words font-mono text-xs text-accent2-400" key={w}>
             {w}
           </li>
         ))}
@@ -271,7 +271,10 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
       {showRunLink && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 pr-2 pl-8 text-xs">
           {event.runId ? (
-            <Link className="text-ember-400 hover:underline" href={`/runs/${event.runId}`}>
+            <Link
+              className="text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
+              href={`/runs/${event.runId}`}
+            >
               {event.externalTicketId ?? 'view run'}
             </Link>
           ) : (

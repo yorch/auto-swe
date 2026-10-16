@@ -88,7 +88,7 @@ export function ScorerTrendChart({ data, granularity = 'day', title }: Props) {
             dataKey="mean"
             dot={DOT_PROPS}
             isAnimationActive={false}
-            stroke={t.ember400}
+            stroke={t.accent400}
             strokeWidth={LINE_WIDTH}
             type="monotone"
           />

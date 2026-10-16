@@ -82,7 +82,7 @@ function FirstRunChecklistBody() {
       action: 'Open approvals',
       body: 'When a run reaches a gate, it waits for a person. Answer it in Approvals. A workflow with no gates never needs this step, so the card stays until you dismiss it.',
       done: (answered.data?.meta.total ?? 0) > 0,
-      href: '/govern/approvals',
+      href: '/approvals',
       id: 'gate',
       title: 'Answer a gate when a run reaches one',
     },
@@ -106,7 +106,6 @@ function FirstRunChecklistBody() {
     <Card data-testid="first-run-checklist">
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
         <div className="min-w-0">
-          <div className="kicker mb-1">Getting started</div>
           <h2 className="text-lg font-semibold tracking-tight text-paper-50">Your first run</h2>
           <p className="mt-1 text-sm text-paper-400">
             Steps tick themselves off from what the platform records for you.
@@ -143,7 +142,7 @@ function FirstRunChecklistBody() {
               className={cn(
                 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs tabular',
                 step.done
-                  ? 'border-moss-400/40 bg-moss-400/15 text-moss-400'
+                  ? 'border-success-400/40 bg-success-400/15 text-success-400'
                   : 'border-ink-400 text-paper-400'
               )}
             >
@@ -165,7 +164,7 @@ function FirstRunChecklistBody() {
               <Link
                 className={cn(
                   'inline-flex shrink-0 items-center gap-1 rounded-sm text-sm hover:underline',
-                  step.id === nextId ? 'font-medium text-ember-400' : 'text-paper-300',
+                  step.id === nextId ? 'font-medium text-accent-400' : 'text-paper-300',
                   FOCUS_RING
                 )}
                 href={step.href}

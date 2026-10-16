@@ -9,7 +9,6 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
@@ -30,9 +29,9 @@ import { shortSha, sourceLabel } from './sourceDisplay';
 
 const STATUS_TONE: Record<SourceStatus, BadgeTone> = {
   DISABLED: 'muted',
-  ERROR: 'brick',
-  OK: 'moss',
-  UPDATE_AVAILABLE: 'amber',
+  ERROR: 'danger',
+  OK: 'success',
+  UPDATE_AVAILABLE: 'warning',
 };
 
 const STATUS_LABEL: Record<SourceStatus, string> = {
@@ -117,7 +116,7 @@ export function SkillSourcesTab() {
     <>
       <Card className="p-4 sm:p-6">
         <CardHeader>
-          <CardTitle eyebrow="GitHub repositories">External sources</CardTitle>
+          <CardTitle>External sources</CardTitle>
           {sources && sources.length > 0 && (
             <Button onClick={() => setAddOpen(true)} variant="primary">
               <Icon name="plus" size={14} />
@@ -140,8 +139,8 @@ export function SkillSourcesTab() {
           isFetching={isFetching}
           isLoading={isLoading}
           label="skill sources"
-          loading={<SkeletonRows rows={3} />}
           onRetry={() => void refetch()}
+          rows={3}
         >
           {!sources?.length ? (
             <EmptyState
@@ -203,7 +202,7 @@ export function SkillSourcesTab() {
                             : 'Never checked'}
                         </div>
                         {s.lastError && (
-                          <div className="mt-0.5 text-xs text-brick-400">
+                          <div className="mt-0.5 text-xs text-danger-400">
                             {visibleText(s.lastError)}
                           </div>
                         )}

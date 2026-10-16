@@ -16,7 +16,6 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
@@ -188,7 +187,7 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
   return (
     <Card className="p-4 sm:p-6">
       <CardHeader className="mb-1">
-        <CardTitle eyebrow="Team scope">Agent overrides</CardTitle>
+        <CardTitle>Agent overrides</CardTitle>
         {(agents ?? []).length > 0 && (
           <Button onClick={openCreate} size="sm" variant="secondary">
             <Icon name="plus" size={14} />
@@ -223,8 +222,8 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
         isFetching={isFetching}
         isLoading={isLoading}
         label="team agents"
-        loading={<SkeletonRows rows={2} />}
         onRetry={() => void refetch()}
+        rows={2}
       >
         {(agents ?? []).length === 0 ? (
           <EmptyState

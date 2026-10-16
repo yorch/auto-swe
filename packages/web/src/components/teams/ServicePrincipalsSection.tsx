@@ -18,7 +18,6 @@ import { CopyButton } from '@/components/ui/CopyButton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
@@ -83,7 +82,7 @@ export function ServicePrincipalsSection({
   return (
     <Card className="p-4 sm:p-6">
       <CardHeader>
-        <CardTitle eyebrow="Automation">Service principals</CardTitle>
+        <CardTitle>Service principals</CardTitle>
         <Button onClick={() => setEditing('new')} size="sm" variant="primary">
           <Icon name="plus" size={14} />
           New principal
@@ -100,14 +99,13 @@ export function ServicePrincipalsSection({
         </Alert>
       )}
       <QueryBoundary
-        compact
         error={error}
         isError={isError}
         isFetching={isFetching}
         isLoading={isLoading}
         label="service principals"
-        loading={<SkeletonRows rows={2} />}
         onRetry={() => void refetch()}
+        rows={2}
       >
         {principals.length === 0 ? (
           <EmptyState
@@ -461,12 +459,12 @@ function TokensModal({
               auto-swe stores only a hash. Copy the token into the calling service's secret store
               now.
             </Alert>
-            <div className="rounded-lg border border-ember-400/40 bg-ink-950/70 p-3">
+            <div className="rounded-lg border border-warning-400/40 bg-ink-950/70 p-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="label-mono">Token</span>
                 <CopyButton value={revealed.token} />
               </div>
-              <code className="block break-all font-mono text-sm leading-relaxed text-ember-100 select-all">
+              <code className="block break-all font-mono text-sm leading-relaxed text-paper-50 select-all">
                 {revealed.token}
               </code>
             </div>

@@ -104,7 +104,7 @@ const CreateRepoSchema = z.object({
   // A team LEAD must not be able to create or point one at an arbitrary URL
   // through the repository onboarding path.
   type: ConnectionTypeSchema.refine((t) => t !== 'mcp', {
-    message: 'MCP connections are managed at /studio/mcp',
+    message: 'MCP connections are managed at /mcp',
   }).default('git_repo'),
 });
 
@@ -539,7 +539,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             reply,
             503,
             'GITHUB_NOT_CONFIGURED',
-            'GitHub integration not configured. Visit /studio/integrations to add a PAT or GitHub App.'
+            'GitHub integration not configured. Visit /admin/integrations to add a PAT or GitHub App.'
           );
         }
         throw err;

@@ -12,7 +12,7 @@ import { usePromoteWorkflowVersion, useWorkflowSpecDiff } from '@/hooks/useTempl
  * match the counts above it.
  */
 export function diffHref(templateId: string, activeVersion: number, version: number): string {
-  const base = `/workflows/library/${templateId}/diff?a=${activeVersion}&b=${version}`;
+  const base = `/library/${templateId}/diff?a=${activeVersion}&b=${version}`;
   return version < activeVersion ? `${base}&reversed=1` : base;
 }
 
@@ -54,13 +54,13 @@ export function PromoteVersionModal({
     summary = (
       <span className="flex flex-wrap items-center gap-1.5">
         <span>Compared with v{activeVersion}:</span>
-        <Badge tone="moss" variant="outline">
+        <Badge tone="success" variant="outline">
           {diff.diff.addedNodes.length} added
         </Badge>
-        <Badge tone="brick" variant="outline">
+        <Badge tone="danger" variant="outline">
           {diff.diff.removedNodes.length} removed
         </Badge>
-        <Badge tone="amber" variant="outline">
+        <Badge tone="warning" variant="outline">
           {diff.diff.changedNodes.length} changed
         </Badge>
       </span>
@@ -84,7 +84,7 @@ export function PromoteVersionModal({
           <div className="text-sm text-paper-300">{summary}</div>
           {comparing && !hideDiffLink && (
             <Link
-              className="inline-flex items-center gap-1 text-sm text-ember-400 hover:underline"
+              className="inline-flex items-center gap-1 text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
               href={diffHref(templateId, activeVersion, version)}
             >
               View the full diff

@@ -180,6 +180,7 @@ export function KnowledgeBaseTab() {
         isLoading={isLoading}
         label="knowledge base config"
         onRetry={() => void refetch()}
+        shape="form"
       />
     );
   }
@@ -188,7 +189,6 @@ export function KnowledgeBaseTab() {
     <form className="space-y-6" onSubmit={handleSubmit}>
       <IntegrationCard
         description="Connect a knowledge base so agents can search internal documentation at run time. Confluence and Notion are supported. The connector is read-only: it never writes to your knowledge base."
-        eyebrow="Knowledge base"
         footer={
           <>
             <div className="flex flex-wrap items-center justify-between gap-3">

@@ -47,10 +47,9 @@ export function SetupReadiness() {
   // The first unfinished step is the one to do next; it gets the primary button.
   const nextId = data.items.find((i) => !i.ok)?.id;
   return (
-    <Card className="border-amber-400/30" data-testid="setup-readiness">
+    <Card className="border-warning-400/30" data-testid="setup-readiness">
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
         <div className="min-w-0">
-          <div className="kicker mb-1">Getting started</div>
           <h2 className="text-lg font-semibold tracking-tight text-paper-50">Finish setting up</h2>
           <p className="mt-1 text-sm text-paper-400">
             {missing === 1 ? 'One step is' : `${missing} steps are`} left before runs can succeed.
@@ -70,7 +69,7 @@ export function SetupReadiness() {
         role="progressbar"
       >
         <div
-          className="h-full rounded-full bg-gradient-to-r from-ember-500 to-ember-400 transition-[width]"
+          className="h-full rounded-full bg-accent-500 transition-[width]"
           style={{ width: `${percent}%` }}
         />
       </div>
@@ -88,7 +87,7 @@ export function SetupReadiness() {
               className={cn(
                 'flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-xs tabular',
                 item.ok
-                  ? 'border-moss-400/40 bg-moss-400/15 text-moss-400'
+                  ? 'border-success-400/40 bg-success-400/15 text-success-400'
                   : 'border-ink-400 text-paper-400'
               )}
             >
@@ -104,7 +103,7 @@ export function SetupReadiness() {
               {!item.ok && <div className="mt-0.5 text-xs text-paper-400">{item.detail}</div>}
             </div>
             {item.ok ? (
-              <span className="shrink-0 text-xs text-moss-400">Done</span>
+              <span className="shrink-0 text-xs text-success-400">Done</span>
             ) : (
               <ButtonLink
                 className="shrink-0"
@@ -145,7 +144,7 @@ export function SetupBanner({
     return null;
   }
   const linkClass = cn(
-    'inline-flex items-center gap-1 rounded-sm font-medium text-ember-400 hover:underline',
+    'inline-flex items-center gap-1 rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
     FOCUS_RING
   );
   return (

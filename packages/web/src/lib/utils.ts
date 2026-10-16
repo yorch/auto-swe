@@ -16,7 +16,16 @@ export function cn(...inputs: ClassValue[]) {
  * the style to none.
  */
 export const FOCUS_RING =
-  'outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ember-400';
+  'outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-accent-400';
+
+/**
+ * A secondary action repeated on every row of a list ("Diagnostics ›"): hidden
+ * until its row (the nearest `group`) is hovered or holds keyboard focus, and
+ * always shown where there is no hover (touch). Opacity, not `hidden`/`invisible`,
+ * so the action stays in the tab order — tabbing onto it is what reveals it.
+ */
+export const ROW_ACTION =
+  'opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100';
 
 /** A plain JSON-style object — not null, not an array. */
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -184,12 +193,12 @@ const percent = lazy(
 /** Traffic-light colour for a 0–1 quality score (eval means, review signals). */
 export function scoreColor(value: number): string {
   if (value >= 0.9) {
-    return 'var(--color-moss-400)';
+    return 'var(--color-success-400)';
   }
   if (value >= 0.5) {
-    return 'var(--color-amber-400)';
+    return 'var(--color-warning-400)';
   }
-  return 'var(--color-brick-400)';
+  return 'var(--color-danger-400)';
 }
 
 export function formatPercent(p: number | null): string {
@@ -199,68 +208,46 @@ export function formatPercent(p: number | null): string {
   return percent().format(p);
 }
 
-// ── Status palette aligned with the Workshop Telemetry design system ────────
+// ── Status palette ──────────────────────────────────────────────────────────
+// `StatusBadge` draws a status as a coloured dot beside its name. The dot is the
+// only coloured part, and only status colours appear here: the accent (violet) is
+// reserved for the primary action, the current selection and focus, so in-flight
+// work is blue like every other running state.
 type StatusMeta = {
-  /** Border + text colour combo for the pill */
-  classes: string;
-  /** Background colour for the leading status dot */
+  /** Background colour for the status dot */
   dotClass: string;
   /** If true, dot pulses to indicate an in-flight workflow */
   live?: boolean;
 };
 
-const MOSS: StatusMeta = {
-  classes: 'border-moss-600/50 bg-moss-600/10 text-moss-400',
-  dotClass: 'bg-moss-400',
-};
-const EMBER_LIVE: StatusMeta = {
-  classes: 'border-ember-600/50 bg-ember-600/10 text-ember-400',
-  dotClass: 'bg-ember-400',
-  live: true,
-};
-const DUST_LIVE: StatusMeta = {
-  classes: 'border-dust-600/50 bg-dust-600/10 text-dust-400',
-  dotClass: 'bg-dust-400',
-  live: true,
-};
-const AMBER: StatusMeta = {
-  classes: 'border-amber-600/50 bg-amber-600/10 text-amber-400',
-  dotClass: 'bg-amber-400',
-};
-const BRICK: StatusMeta = {
-  classes: 'border-brick-600/50 bg-brick-600/10 text-brick-400',
-  dotClass: 'bg-brick-400',
-};
-const VIOLET: StatusMeta = {
-  classes: 'border-violet-600/50 bg-violet-600/10 text-violet-400',
-  dotClass: 'bg-violet-400',
-};
-const NEUTRAL: StatusMeta = {
-  classes: 'border-ink-400/60 bg-ink-600/30 text-paper-500',
-  dotClass: 'bg-paper-600',
-};
+const SUCCESS: StatusMeta = { dotClass: 'bg-success-400' };
+const INFO_LIVE: StatusMeta = { dotClass: 'bg-info-400', live: true };
+const WARNING: StatusMeta = { dotClass: 'bg-warning-400' };
+const DANGER: StatusMeta = { dotClass: 'bg-danger-400' };
+const ACCENT2: StatusMeta = { dotClass: 'bg-accent2-400' };
+const NEUTRAL: StatusMeta = { dotClass: 'bg-paper-600' };
 
 export const STATUS_META: Record<string, StatusMeta> = {
   // ── WorkflowTemplateStatus ──
-  ACTIVE: MOSS,
+  ACTIVE: SUCCESS,
   ARCHIVED: NEUTRAL,
   // ── ActiveWorkflow.currentStatus ──
-  AWAITING_CI: AMBER,
-  AWAITING_HUMAN_MERGE: { ...AMBER, dotClass: 'bg-ember-400', live: true },
+  AWAITING_CI: WARNING,
+  AWAITING_HUMAN_MERGE: { ...WARNING, live: true },
   // ── WorkflowRunStatus ──
   CANCELLED: NEUTRAL,
-  COMPLETED: MOSS,
-  DRAFT: AMBER,
-  FAILED: BRICK,
-  IMPLEMENTING: EMBER_LIVE,
-  IN_REVIEW: VIOLET,
+  COMPLETED: SUCCESS,
+  DRAFT: WARNING,
+  FAILED: DANGER,
+  IMPLEMENTING: INFO_LIVE,
+  IN_REVIEW: ACCENT2,
   // ── WorkflowStepRecordStatus ──
-  PASSED: MOSS,
-  PENDING: AMBER,
-  RUNNING: DUST_LIVE,
+  PASSED: SUCCESS,
+  PENDING: WARNING,
+  RUNNING: INFO_LIVE,
   SKIPPED: NEUTRAL,
-  SUCCESS: MOSS,
+  SUCCESS: SUCCESS,
   TIMED_OUT: NEUTRAL,
   UNKNOWN: NEUTRAL,
-  VALIDATING_CONTEXT: EMBER_LIVE,
+  VALIDATING_CONTEXT: INFO_LIVE,
 };

@@ -80,13 +80,13 @@ until the credentials below exist.
 
 ## 6. Add model credentials
 
-Sign in at `http://localhost:3000` as `admin@auto-swe.local`, then open **Studio → Models**
-(`/studio/models`) and add a credential for `anthropic` and one for `openai` on the Credentials
+Sign in at `http://localhost:3000` as `admin@auto-swe.local`, then open **Build → Model configuration**
+(`/models`) and add a credential for `anthropic` and one for `openai` on the Credentials
 tab.
 
 ## 7. Connect GitHub and a repository
 
-- **Studio → Integrations → GitHub** (`/studio/integrations`): enter the token and save. Skip this
+- **Admin → Integrations → GitHub** (`/admin/integrations`): enter the token and save. Skip this
   if `GITHUB_TOKEN` is set in `.env`.
 - **Connections** (`/connections`): add the repository as a **Git repo** connection, or import it
   from GitHub.
@@ -111,7 +111,7 @@ Then watch it:
 | Where | Shows |
 |---|---|
 | **Runs** (`/runs`) | Every run, and per run its steps, agent transcripts, tool calls, and cost |
-| **Govern → Approvals** (`/govern/approvals`) | Steps waiting for a person, in workflows that have them |
+| **Work → Approvals** (`/approvals`) | Steps waiting for a person, in workflows that have them |
 | Temporal UI, `http://localhost:8233` | The durable workflow underneath: its event history and signals |
 
 The run ends with a pull request on your repository and then waits for a person to merge it.

@@ -7,7 +7,7 @@ export default function NotFound() {
       <div className="w-full max-w-md text-center">
         <p
           aria-hidden="true"
-          className="bg-gradient-to-b from-ember-300 to-ember-600 bg-clip-text text-7xl font-semibold tracking-[-0.04em] text-transparent tabular"
+          className="text-7xl font-semibold tracking-[-0.04em] text-paper-600 tabular"
         >
           404
         </p>

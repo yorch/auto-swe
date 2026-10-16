@@ -15,7 +15,7 @@ export function SourceBadge({ source }: SourceBadgeProps) {
   return (
     <Badge
       title="Value comes from an environment variable. Saving here will override it."
-      tone="amber"
+      tone="warning"
       variant="outline"
     >
       From env

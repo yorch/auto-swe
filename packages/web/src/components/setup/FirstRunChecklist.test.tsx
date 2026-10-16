@@ -87,7 +87,7 @@ describe('FirstRunChecklist', () => {
   it('shows four tracked steps with their links', () => {
     render(<FirstRunChecklist />);
     expect(screen.getByText('0 of 4 done')).toBeTruthy();
-    expect(hrefs()).toEqual(['/connections', '/start', '/govern/approvals', '/pull-requests']);
+    expect(hrefs()).toEqual(['/connections', '/start', '/approvals', '/pull-requests']);
     expect(screen.getByText(/nothing merges it for you/)).toBeTruthy();
     expect(screen.getByText(/A workflow with no gates never needs this step/)).toBeTruthy();
     expect(screen.queryByText(/not tracked/)).toBeNull();
@@ -134,7 +134,7 @@ describe('FirstRunChecklist', () => {
     state.requests = { data: { meta: { total: 1 } }, isLoading: false };
     render(<FirstRunChecklist />);
     expect(screen.getByText('2 of 4 done')).toBeTruthy();
-    expect(hrefs()).toEqual(['/govern/approvals', '/pull-requests']);
+    expect(hrefs()).toEqual(['/approvals', '/pull-requests']);
   });
 
   it('ticks the gate step only when the viewer has answered a gate', () => {
@@ -149,7 +149,7 @@ describe('FirstRunChecklist', () => {
     expect(screen.getByText(/Answer a gate when a run reaches one/).textContent).toContain(
       '(done)'
     );
-    expect(hrefs()).not.toContain('/govern/approvals');
+    expect(hrefs()).not.toContain('/approvals');
   });
 
   it('stays while the gate step is open, and hides once all four steps are done', () => {

@@ -147,13 +147,13 @@ export function NodeInspector({
             {unknownType ? 'Unknown node type' : `${nodeTypeLabel(node.type)} node`}
           </h2>
           {isEntry && (
-            <Badge title="The workflow starts here" tone="ember" variant="outline">
+            <Badge title="The workflow starts here" tone="accent" variant="outline">
               First step
             </Badge>
           )}
           <Button
             aria-label={`Delete node ${nodeId}`}
-            className="ml-auto px-2 hover:text-brick-400"
+            className="ml-auto px-2 hover:text-danger-400"
             disabled={isEntry}
             onClick={onDelete}
             size="sm"

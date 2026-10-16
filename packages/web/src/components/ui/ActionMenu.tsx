@@ -76,7 +76,7 @@ export function ActionMenu({
               className={cn(
                 'flex cursor-pointer items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm outline-none',
                 item.tone === 'danger'
-                  ? 'text-brick-400 data-[focused]:bg-brick-400/10'
+                  ? 'text-danger-400 data-[focused]:bg-danger-400/10'
                   : 'text-paper-200 data-[focused]:bg-ink-600',
                 'data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40'
               )}

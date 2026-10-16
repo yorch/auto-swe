@@ -225,7 +225,7 @@ contract and cannot be launched. It is checked at the gateway and again in the w
 
 ## 6. Bounds
 
-| Setting (`/govern/platform-settings`) | Default | Meaning |
+| Setting (`/admin/platform-settings`) | Default | Meaning |
 |---|---|---|
 | `workspace.agentRunMaxSteps` | 50 (max 500) | Ceiling on model steps in one run |
 | `workspace.agentRunMaxWallClockSeconds` | 1800 (60 to 14,400) | Ceiling on time in the agent loop |
@@ -332,7 +332,7 @@ gateway, so the entry point would be too.
 launch paths. The `/agent-runs` URL redirects to `/start?mode=agent`. The agent path is a form over
 the same `POST /api/v1/agent-runs`. A review screen shows the repository, agent, task, delivery, and
 limits before launch. Returning to the inputs preserves the draft. Launching opens the request
-side panel in **Requests** (`/workflows`), which groups its execution attempts.
+side panel in **Requests** (`/requests`), which groups its execution attempts.
 Choosing a repository first scopes everything else to it, because the repository decides which agents
 exist (its organization's overrides) and which ceilings apply (they cascade to team and organization).
 Two read endpoints, both ENGINEER, serve the form:

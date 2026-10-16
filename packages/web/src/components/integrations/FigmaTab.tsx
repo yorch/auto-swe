@@ -86,6 +86,7 @@ export function FigmaTab() {
         isLoading={isLoading}
         label="Figma config"
         onRetry={() => void refetch()}
+        shape="form"
       />
     );
   }
@@ -99,13 +100,15 @@ export function FigmaTab() {
             compact design summary (frames, text, tokens) that the implementer matches against. The
             connector is read-only: it never writes to Figma. To give agents live, on-demand design
             access during a run, add the Figma Dev Mode endpoint as an{' '}
-            <Link className="text-ember-400 hover:underline" href="/studio/mcp">
+            <Link
+              className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
+              href="/mcp"
+            >
               MCP connection
             </Link>{' '}
             instead.
           </>
         }
-        eyebrow="Figma"
         footer={
           <>
             <div className="flex flex-wrap items-center justify-between gap-3">

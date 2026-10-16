@@ -119,13 +119,13 @@ export function MemberUserPicker({
         </Button>
       </div>
       {found && value && (
-        <p className="flex items-center gap-1.5 text-xs text-moss-400">
+        <p className="flex items-center gap-1.5 text-xs text-success-400">
           <Icon name="checkCircle" size={13} />
           {found}
         </p>
       )}
       {lookupError && (
-        <p className="text-xs text-brick-400" role="alert">
+        <p className="text-xs text-danger-400" role="alert">
           {lookupError}
         </p>
       )}

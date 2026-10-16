@@ -137,7 +137,7 @@ describe('GET /readiness', () => {
     const creds = item(data, 'credentials');
     expect(creds.ok).toBe(false);
     expect(creds.detail).toContain('implementer (anthropic)');
-    expect(creds.href).toBe('/studio/models?tab=credentials');
+    expect(creds.href).toBe('/models?tab=credentials');
   });
 
   it('reports, without failing, an agent no installed template runs', async () => {

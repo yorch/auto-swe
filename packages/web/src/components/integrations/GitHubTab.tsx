@@ -129,6 +129,7 @@ export function GitHubTab() {
         isLoading={isLoading}
         label="GitHub config"
         onRetry={() => void refetch()}
+        shape="form"
       />
     );
   }
@@ -149,7 +150,6 @@ export function GitHubTab() {
       <form className="space-y-6" onSubmit={handleSubmit}>
         <IntegrationCard
           description="The token the platform uses to clone, push and open pull requests, and the secret that signs the webhooks GitHub sends back."
-          eyebrow="GitHub"
           footer={
             <>
               <div className="flex flex-wrap items-center justify-between gap-3">
@@ -214,7 +214,6 @@ export function GitHubTab() {
               <DocLink label="GitHub App setup guide" {...HELP_LINKS.githubAppSetup} />.
             </>
           }
-          eyebrow="GitHub App"
           status={<ConfigStatusBadge state={appState} />}
           title="App authentication (optional)"
         >
@@ -324,7 +323,6 @@ export function GitHubTab() {
 
         <IntegrationCard
           description="Only for GitHub Enterprise Server. Leave both blank to use github.com."
-          eyebrow="GitHub Enterprise"
           status={
             enterpriseState === 'unset' ? (
               <Badge tone="muted" variant="outline">

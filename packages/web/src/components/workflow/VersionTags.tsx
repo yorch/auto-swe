@@ -19,22 +19,22 @@ export function VersionTags({
   return (
     <>
       {isDefault && (
-        <Badge tone="ember" variant="outline">
+        <Badge tone="accent" variant="outline">
           Default
         </Badge>
       )}
       {active && (
-        <Badge tone="moss" variant="outline">
+        <Badge tone="success" variant="outline">
           Active
         </Badge>
       )}
       {experiment && (
-        <Badge tone="violet" variant="outline">
+        <Badge tone="accent2" variant="outline">
           Experiment
         </Badge>
       )}
       {needsReview && (
-        <Badge tone="amber" variant="outline">
+        <Badge tone="warning" variant="outline">
           Needs review
         </Badge>
       )}

@@ -240,7 +240,7 @@ restarts like any other run.
 ## 4. Scheduling and canary
 
 **Nightly regression.** `ScheduledEvalWorkflow` runs on a Temporal Schedule configured per
-deployment at `/govern/workflow-defaults`.
+deployment at `/admin/workflow-defaults`.
 
 **Golden-set re-validation.** `ScheduledRevalidationWorkflow` fans out over datasets due for
 re-validation and quarantines cases that have gone stale, so the benchmark does not silently decay
@@ -249,7 +249,7 @@ nothing about the case, so the case is left as it is — neither quarantined nor
 same classification as flake screening (below). A quarantined case whose reference passes again is
 restored, and
 its flake screen is reset to never-screened: it passed its last screen in an older repository
-state, so it is scored again only after a new one passes. Managed at `/govern/workflow-defaults`,
+state, so it is scored again only after a new one passes. Managed at `/admin/workflow-defaults`,
 with `GET`/`PUT /api/v1/admin/config/revalidation` and a manual trigger endpoint
 (`POST /api/v1/admin/config/revalidation/trigger`). The schedule is off by default. Its
 `revalidationDatasetSlug` (the `datasetSlug` field of that endpoint) limits a sweep — re-validation
@@ -309,7 +309,7 @@ thresholds in the Tier-2 defaults (`evalHealthMaxFlakeRate`, `evalHealthMaxStale
 re-validation quarantined as stale, how many are flake-screened, and the count of the
 non-quarantined cases the harness skips as never screened or failed screens, each with the ids of
 the oldest 50 of them, with the three
-thresholds, and `/govern/evals` charts the stale rate per dataset against its ceiling. The dataset
+thresholds, and `/admin/evals` charts the stale rate per dataset against its ceiling. The dataset
 page and `auto-swe evals show` mark each case as screened, flaky, or not checked yet.
 
 ---
@@ -333,13 +333,13 @@ verdicts into trends per template, model, and prompt version.
 
 | Surface | Where |
 |---|---|
-| Dashboard | `/govern/evals` — each scorer's daily mean over a 7, 30, or 90-day UTC window or a custom span of up to 366 days, charted by week above 90 days (`since` / `until` on `GET /api/v1/platform/evals/trends`); every captured result, paginated and filterable by scorer and source, linked to the run or harness run it scored; the datasets |
-| Dataset detail | `/govern/evals/datasets/[id]` — the cases with their stability (flake-screen) state, a re-check of every case or of one already checked, and the dataset's harness runs, each side with its runtime override |
-| Harness run detail | `/govern/evals/runs/[id]` — the paired verdict, overall and per tag, the runtimes each side ran on, the cases left unscored for want of a passing screen, why a run is inconclusive, and that run's results with the runtime of each |
+| Dashboard | `/admin/evals` — each scorer's daily mean over a 7, 30, or 90-day UTC window or a custom span of up to 366 days, charted by week above 90 days (`since` / `until` on `GET /api/v1/platform/evals/trends`); every captured result, paginated and filterable by scorer and source, linked to the run or harness run it scored; the datasets |
+| Dataset detail | `/admin/evals/datasets/[id]` — the cases with their stability (flake-screen) state, a re-check of every case or of one already checked, and the dataset's harness runs, each side with its runtime override |
+| Harness run detail | `/admin/evals/runs/[id]` — the paired verdict, overall and per tag, the runtimes each side ran on, the cases left unscored for want of a passing screen, why a run is inconclusive, and that run's results with the runtime of each |
 | Run detail | The eval panel on `/runs/[id]` |
 | REST | `/api/v1/platform/evals` (datasets, cases, runs, rubrics, `results`, `trends` — one bounded aggregate per UTC day — and `rescreen`) |
 | CLI | `auto-swe evals` — list, show, `rescreen`, and `run` a dataset, optionally on a runtime per side; `results` prints a harness row's runtime |
-| Schedules | `/govern/workflow-defaults` — nightly regression and re-validation cadence |
+| Schedules | `/admin/workflow-defaults` — nightly regression and re-validation cadence |
 
 ---
 
@@ -373,7 +373,7 @@ verdicts into trends per template, model, and prompt version.
 - **End-to-end paths need real infrastructure.** The unit suite covers orchestration against mocked
   Docker, Temporal, and LLM calls; the harness has not been exercised against a live stack.
 - **Only the stale rate of suite health is measured, and only as it is now.** The flake-rate and
-  kappa thresholds are set at `/govern/workflow-defaults`, but nothing compares the failed-screen
+  kappa thresholds are set at `/admin/workflow-defaults`, but nothing compares the failed-screen
   share against the flake-rate ceiling or stores a judge/human agreement figure, so there is nothing
   to chart for them; the stale rate is the quarantined share of cases today, with no history, so it
   is a bar per dataset and not a trend.

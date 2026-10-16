@@ -47,14 +47,14 @@ describe('TourLauncher', () => {
     render(<TourLauncher />);
     fireEvent.click(screen.getByRole('button', { name: 'Take the tour' }));
     expect(screen.getByRole('dialog')).toBeTruthy();
-    expect(screen.getByText('Step 1 of 7')).toBeTruthy();
+    expect(screen.getByText('Step 1 of 9')).toBeTruthy();
   });
 
   it('shows more steps to an admin', () => {
     useAuthStore.setState({ user: { email: 'a@x.dev', role: 'ADMIN', sub: 'u1' } } as never);
     render(<TourLauncher />);
     fireEvent.click(screen.getByRole('button', { name: 'Take the tour' }));
-    expect(screen.getByText('Step 1 of 11')).toBeTruthy();
+    expect(screen.getByText('Step 1 of 10')).toBeTruthy();
   });
 
   it('does not mark the tour seen until it ends', () => {
@@ -134,7 +134,7 @@ describe('TourLauncher', () => {
     localStorage.clear();
     render(<TourLauncher />);
     fireEvent.click(screen.getByRole('button', { name: 'Take the tour' }));
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 8; i++) {
       fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     }
     fireEvent.click(screen.getByRole('button', { name: 'Done' }));
@@ -146,7 +146,7 @@ describe('TourLauncher', () => {
     render(<TourLauncher />);
     expect(screen.queryByRole('button', { name: 'Take the tour' })).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Take the tour again' }));
-    expect(screen.getByText('Step 1 of 7')).toBeTruthy();
+    expect(screen.getByText('Step 1 of 9')).toBeTruthy();
   });
 
   it('keeps one viewer\'s "seen" from affecting another', () => {
@@ -175,7 +175,7 @@ describe('TourLauncher', () => {
       renderWithMain(<TourLauncher />);
       const button = screen.getByRole('button', { name: 'Take the tour' });
       fireEvent.click(button);
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 8; i++) {
         fireEvent.click(screen.getByRole('button', { name: 'Next' }));
       }
       fireEvent.click(screen.getByRole('button', { name: 'Done' }));

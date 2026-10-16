@@ -2,7 +2,7 @@
  * Eval admin routes (docs/evals.md §6).
  *
  * CRUD for frozen-benchmark datasets/cases and a paginated results-query
- * endpoint (the read path the `/govern/evals` dashboard uses). Admin-only,
+ * endpoint (the read path the `/admin/evals` dashboard uses). Admin-only,
  * mirroring the agent-library + security-events route patterns. This file also
  * starts an offline harness run (a Temporal workflow) and owns the datasets,
  * cases, and result/run reads.
@@ -449,7 +449,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // ── Results query (paginated; the /govern/evals dashboard reads it) ──
+  // ── Results query (paginated; the /admin/evals dashboard reads it) ──
   app.get(
     '/evals/results',
     { onRequest: adminOnly, schema: { querystring: ResultsQuery } },

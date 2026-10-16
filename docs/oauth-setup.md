@@ -32,7 +32,7 @@ All three providers follow the same shape: register an OAuth app on the provider
 
 ### 2. Set the credentials
 
-Set the **OAuth App** client id and secret in the gateway's environment (not the GitHub App fields on `/studio/integrations → GitHub`, which are for repo access):
+Set the **OAuth App** client id and secret in the gateway's environment (not the GitHub App fields on `/admin/integrations → GitHub`, which are for repo access):
 
 ```sh
 GITHUB_CLIENT_ID=...
@@ -54,7 +54,7 @@ Refresh the login page. The **Continue with GitHub** button should now appear. C
 To sign in against a GitHub Enterprise (GHE) instance instead of github.com:
 
 1. Register the OAuth app on the GHE instance itself (**Settings → Developer settings → OAuth Apps → New OAuth App**), using the same form values as above. The callback URL is unchanged: `{BETTER_AUTH_URL}/api/auth/callback/github`.
-2. On `/studio/integrations → GitHub tab`, set the **Base URL** to the instance (for example `https://ghe.example.com`). Leave the **API URL** blank (or at `https://api.github.com`) and it is derived as `{Base URL}/api/v3`; set it explicitly only if the API lives elsewhere.
+2. On `/admin/integrations → GitHub tab`, set the **Base URL** to the instance (for example `https://ghe.example.com`). Leave the **API URL** blank (or at `https://api.github.com`) and it is derived as `{Base URL}/api/v3`; set it explicitly only if the API lives elsewhere.
 3. Set the GHE app's client ID and secret as `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` in the gateway's environment (not the GitHub App fields).
 4. Restart the gateway. OAuth credentials and URLs are read once at startup.
 
@@ -80,7 +80,7 @@ Notes:
 
 ### Auto-approving an organization's members
 
-New sign-ups wait in the approval queue at `/govern/users`. To let the members of chosen
+New sign-ups wait in the approval queue at `/admin/users`. To let the members of chosen
 organizations skip it, list their lowercase logins in **Platform settings → GitHub → Auto-approve
 sign-ins from organizations** (`github.signInAutoApproveOrgs`). An empty list, the default, turns
 auto-approval off. There is deliberately no "approve every GitHub user" mode.
@@ -106,7 +106,7 @@ then asks GitHub whether that user is a member of a listed organization
   re-approved by the rule. It does not change an account that is already active.
 - **Default team.** Every new user, auto-approved or not, is added to the default team on creation.
   With `repoAccess.mode` off, team membership alone grants that team's repositories, so set
-  `repoAccess.mode` to `enforce` or point the default team slug (`/govern/workflow-defaults`) at a team with nothing
+  `repoAccess.mode` to `enforce` or point the default team slug (`/admin/workflow-defaults`) at a team with nothing
   sensitive before listing a large organization.
 - **Timing.** The list is read through the ~30 s settings cache, so removing an organization takes
   up to that long to apply. It never revokes anyone already approved.
@@ -122,7 +122,7 @@ skips the approval queue:
 |---|---|
 | A platform ADMIN (`POST /users/invite`, or an organization's invite) | active, approved (`approvalSource` `admin`), email marked verified |
 | An organization's `ORG_ADMIN` (`POST /platform/organizations/:orgId/members/invite`), organization **trusted** | active, approved (`approvalSource` `org_admin`), email marked verified |
-| An organization's `ORG_ADMIN` (`POST /platform/organizations/:orgId/members/invite`), organization not trusted (the default) | inactive and unapproved, email unverified — it waits in the queue at `/govern/users` like a sign-up |
+| An organization's `ORG_ADMIN` (`POST /platform/organizations/:orgId/members/invite`), organization not trusted (the default) | inactive and unapproved, email unverified — it waits in the queue at `/admin/users` like a sign-up |
 
 Administering an organization is not, by itself, authority to approve sign-ins, so by default an
 org admin's invitee gets the organization membership at once but cannot use the platform until a
@@ -130,7 +130,7 @@ platform admin approves them. Following the magic link verifies the address and 
 the pending-approval screen.
 
 A platform admin can delegate that decision per organization with the **Trust organization admin
-invites** switch on the organization's page (`/govern/organizations/:orgId`), stored as
+invites** switch on the organization's page (`/admin/organizations/:orgId`), stored as
 `Organization.trustedInvites` and set through `PATCH /platform/organizations/:orgId`. Only a
 platform admin can change it; an `ORG_ADMIN` sending the field gets `403`, and each change is
 audited. Trust applies only while the organization is active, and it is read on every invite, so
@@ -276,7 +276,7 @@ If Okta is unreachable at that moment, the gateway still boots — the discovery
 ### Notes
 
 - **Account linking.** Okta joins GitHub and Google in better-auth's trusted-provider set when configured, so a user who already exists under the same verified email is linked to that existing account rather than duplicated. Email+password deliberately stays untrusted.
-- **Approval queue.** Okta sign-ups land with `isActive=false` like every other new user and wait for an admin to approve them at `/govern/users`. Group-based auto-approval is not implemented — Okta group claims are not read.
+- **Approval queue.** Okta sign-ups land with `isActive=false` like every other new user and wait for an admin to approve them at `/admin/users`. Group-based auto-approval is not implemented — Okta group claims are not read.
 - **SAML.** Only OIDC is supported. Okta's SAML app type will not work; create an **OIDC — Web Application** integration.
 
 ---

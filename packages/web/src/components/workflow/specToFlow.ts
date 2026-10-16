@@ -40,16 +40,16 @@ const EDGE_LABEL: Partial<Record<EdgeKind, string>> = {
 // checked against globals.css by lib/palette.test.ts.
 function edgeStroke(t: Tokens): Record<EdgeKind, string> {
   return {
-    join: t.ember400,
+    join: t.accent400,
     next: t.paper400,
-    onApprove: t.moss400,
-    onFalse: t.brick400,
-    onReceive: t.dust400,
-    onReject: t.brick400,
-    onSubmit: t.moss400,
-    onTimeout: t.amber400,
-    onTrue: t.moss400,
-    subgraph: t.violet400,
+    onApprove: t.success400,
+    onFalse: t.danger400,
+    onReceive: t.info400,
+    onReject: t.danger400,
+    onSubmit: t.success400,
+    onTimeout: t.warning400,
+    onTrue: t.success400,
+    subgraph: t.accent2400,
   };
 }
 

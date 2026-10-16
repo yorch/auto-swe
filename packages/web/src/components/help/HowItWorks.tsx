@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
+import { PageHelp } from '@/components/help/PageHelp';
 import { DocLink } from '@/components/ui/DocLink';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { HELP_LINKS } from '@/lib/helpLinks';
-import { cn } from '@/lib/utils';
 
 interface Step {
   title: string;
@@ -47,38 +47,32 @@ const STEPS: Step[] = [
   },
 ];
 
-/** A compact, collapsible overview of the request-to-merge lifecycle. */
-export function HowItWorks({
-  defaultOpen = false,
-  className,
-}: {
-  defaultOpen?: boolean;
-  className?: string;
-}) {
+/**
+ * The request-to-merge lifecycle, as help: it shows in the Help panel (the "?" in the top bar)
+ * on any page that renders it, rather than as a block on the page.
+ */
+export function HowItWorks() {
   return (
-    <details
-      className={cn('group rounded-lg border border-ink-500/70 bg-ink-800/60', className)}
-      open={defaultOpen}
-    >
-      <summary className="cursor-pointer select-none rounded-lg px-4 py-3 text-sm font-medium text-paper-100 outline-none focus-visible:ring-2 focus-visible:ring-ember-400">
-        How auto-swe works
-      </summary>
-      <div className="border-t border-ink-600 px-4 py-4">
-        <ol className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+    <PageHelp>
+      <section aria-labelledby="how-it-works-title">
+        <h3 className="text-sm font-semibold text-paper-100" id="how-it-works-title">
+          How auto-swe works
+        </h3>
+        <ol className="mt-3 space-y-3">
           {STEPS.map((step, index) => (
             <li className="min-w-0" key={step.title}>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-xs text-ember-300 tabular-nums">{index + 1}</span>
+                <span className="font-mono text-xs text-paper-500 tabular-nums">{index + 1}</span>
                 <p className="text-sm font-semibold text-paper-100">{step.title}</p>
               </div>
-              <p className="mt-1.5 text-sm leading-relaxed text-paper-400">{step.body}</p>
+              <p className="mt-1 text-sm leading-relaxed text-paper-400">{step.body}</p>
             </li>
           ))}
         </ol>
         <p className="mt-4">
           <DocLink label="Read the concepts guide" {...HELP_LINKS.concepts} />
         </p>
-      </div>
-    </details>
+      </section>
+    </PageHelp>
   );
 }

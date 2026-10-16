@@ -79,8 +79,8 @@ describe('the type tables', () => {
     expect(nodeTypeLabel('step')).toBe('Step');
     expect(nodeTypeLabel('bogus')).toBe('Unknown type "bogus"');
     expect(nodeTypeLabel(undefined)).toBe('Unknown type');
-    expect(nodeTypeTone('bogus').border).toBe('border-l-brick-400');
-    expect(nodeTypeTone('step').border).toBe('border-l-ember-400');
+    expect(nodeTypeTone('bogus').border).toBe('border-l-danger-400');
+    expect(nodeTypeTone('step').border).toBe('border-l-accent-400');
   });
 });
 

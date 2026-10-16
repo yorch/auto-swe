@@ -30,8 +30,8 @@ const STATUS_LABELS: Record<ChannelOpenItemStatus, string> = {
 
 const STATUS_TONES: Record<ChannelOpenItemStatus, BadgeTone> = {
   DISMISSED: 'muted',
-  OPEN: 'amber',
-  RESOLVED: 'moss',
+  OPEN: 'warning',
+  RESOLVED: 'success',
 };
 
 /** Follow-ups the assistant is tracking in this channel, which an admin can resolve or dismiss. */

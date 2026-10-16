@@ -185,7 +185,7 @@ function buildModelUncached(spec: string, apiKey: string, apiBase?: string): Lan
       if (!apiBase) {
         // Deterministic: retrying the activity cannot add the missing apiBase.
         throw ApplicationFailure.nonRetryable(
-          `Provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models.`,
+          `Provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /models.`,
           'MODEL_CONFIG_INVALID'
         );
       }

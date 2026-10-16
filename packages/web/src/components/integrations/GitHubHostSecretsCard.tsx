@@ -119,18 +119,18 @@ export function GitHubHostSecretsCard() {
   return (
     <IntegrationCard
       description="A GitHub Enterprise Server host names itself in each delivery. When it has a secret here, its deliveries are verified with that secret instead of the one above. A host with none uses the one above, and github.com always does."
-      eyebrow="Webhooks"
       headerAction={secrets && secrets.length > 0 ? addButton : undefined}
       title="Per-host webhook secrets"
     >
       <QueryBoundary
-        compact
         error={loadError}
         isError={isError}
         isFetching={isFetching}
         isLoading={isLoading}
         label="Host webhook secrets"
         onRetry={() => void refetch()}
+        rows={2}
+        shape="form"
       >
         {!secrets || secrets.length === 0 ? (
           <EmptyState
@@ -168,7 +168,7 @@ export function GitHubHostSecretsCard() {
                         size="sm"
                         variant="ghost"
                       >
-                        <Icon className="text-brick-400" name="trash" size={14} />
+                        <Icon className="text-danger-400" name="trash" size={14} />
                       </Button>
                     </div>
                   </Td>

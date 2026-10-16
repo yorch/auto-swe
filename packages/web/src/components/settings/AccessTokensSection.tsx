@@ -10,7 +10,6 @@ import { CopyButton } from '@/components/ui/CopyButton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
@@ -27,20 +26,20 @@ import { SettingsSection } from './SettingsSection';
 function TokenStatus({ revoked, expired }: { revoked: boolean; expired: boolean }) {
   if (revoked) {
     return (
-      <Badge dot tone="brick" variant="outline">
+      <Badge dot tone="danger" variant="outline">
         Revoked
       </Badge>
     );
   }
   if (expired) {
     return (
-      <Badge dot tone="amber" variant="outline">
+      <Badge dot tone="warning" variant="outline">
         Expired
       </Badge>
     );
   }
   return (
-    <Badge dot tone="moss" variant="outline">
+    <Badge dot tone="success" variant="outline">
       Active
     </Badge>
   );
@@ -121,14 +120,13 @@ export function AccessTokensSection() {
         title="API tokens"
       >
         <QueryBoundary
-          compact
           error={loadError}
           isError={isError}
           isFetching={isFetching}
           isLoading={isLoading}
           label="tokens"
-          loading={<SkeletonRows rows={3} />}
           onRetry={() => void refetch()}
+          rows={3}
         >
           {list.length === 0 ? (
             <EmptyState
@@ -256,12 +254,12 @@ export function AccessTokensSection() {
               auto-swe stores only a hash. Copy the token now and keep it in your secret manager; if
               you lose it, revoke it and create another.
             </Alert>
-            <div className="rounded-lg border border-ember-400/40 bg-ink-950/70 p-3">
+            <div className="rounded-lg border border-warning-400/40 bg-ink-950/70 p-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="label-mono">Token</span>
                 <CopyButton value={revealed.token} />
               </div>
-              <code className="block break-all font-mono text-sm leading-relaxed text-ember-100 select-all">
+              <code className="block break-all font-mono text-sm leading-relaxed text-paper-50 select-all">
                 {revealed.token}
               </code>
             </div>

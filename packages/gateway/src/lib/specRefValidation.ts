@@ -86,7 +86,7 @@ export async function findSpecRefProblems(
         warnings.push({
           code: 'AGENT_REF_UNRESOLVED',
           field: 'agentRef',
-          message: `Node '${r.id}': agent '${r.key}' has no active Agent at any scope — create it at /studio/agents/library or this node will fail at run time.`,
+          message: `Node '${r.id}': agent '${r.key}' has no active Agent at any scope — create it at /agents or this node will fail at run time.`,
           nodeId: r.id,
         });
       }
@@ -113,7 +113,7 @@ export async function findSpecRefProblems(
         warnings.push({
           code: 'MCP_REF_UNRESOLVED',
           field: 'connectionRef',
-          message: `Node '${r.id}': mcp connection '${r.connectionRef}' is not an active mcp connection — create one at /studio/mcp or this node will fail at run time.`,
+          message: `Node '${r.id}': mcp connection '${r.connectionRef}' is not an active mcp connection — create one at /mcp or this node will fail at run time.`,
           nodeId: r.id,
         });
         continue;

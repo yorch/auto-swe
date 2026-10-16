@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { visibleNavGroups } from '@/lib/navigation';
 import { useAuthStore } from '@/stores/authStore';
@@ -15,50 +15,46 @@ vi.mock('@/hooks/useAdmin', () => ({
 import { Sidebar } from './Sidebar';
 
 beforeEach(() => {
-  // Some runtimes leave jsdom without Storage (Node's own localStorage global can shadow it); the
-  // sidebar treats storage as optional, so the tests must not assume it either.
-  try {
-    window.localStorage?.clear();
-  } catch {
-    // No storage: nothing remembered to reset.
-  }
   useAuthStore.setState({ user: { email: 'a@x.dev', role: 'ADMIN', sub: 'u1' } } as never);
 });
 afterEach(cleanup);
 
-describe('Sidebar govern sections', () => {
-  it('starts every section open, so the pages inside are discoverable', () => {
+describe('Sidebar structure', () => {
+  it('shows the Work and Build groups and one Admin entry, not the Admin pages', () => {
     resetNavigation('', '/');
-    render(<Sidebar onClose={() => undefined} open />);
-    // The user menu trigger is also a disclosure; only the section toggles control a nav panel.
-    const sections = screen
-      .getAllByRole('button')
-      .filter((b) => b.getAttribute('aria-controls')?.startsWith('nav-section-'));
-    expect(sections.length).toBeGreaterThan(0);
-    expect(sections.every((b) => b.getAttribute('aria-expanded') === 'true')).toBe(true);
+    const { container } = render(<Sidebar onClose={() => undefined} open />);
+    const nav = container.querySelector('nav') as HTMLElement;
+    expect(nav.textContent).toContain('Work');
+    expect(nav.textContent).toContain('Build');
+    const hrefs = Array.from(nav.querySelectorAll('a[href]')).map((a) => a.getAttribute('href'));
+    expect(hrefs).toContain('/admin');
+    expect(hrefs.filter((h) => h?.startsWith('/admin/'))).toEqual([]);
+    // No collapsible sections remain in the sidebar itself.
+    expect(container.querySelector('[aria-controls^="nav-section-"]')).toBeNull();
   });
 
-  it('collapses on click, naming the panel it controls', () => {
-    resetNavigation('', '/');
-    render(<Sidebar onClose={() => undefined} open />);
-    const toggle = screen.getAllByRole('button', { expanded: true })[0];
-    const panelId = toggle.getAttribute('aria-controls');
-    expect(panelId).toBeTruthy();
-    expect(document.getElementById(panelId as string)).not.toBeNull();
-    fireEvent.click(toggle);
-    expect(toggle.getAttribute('aria-expanded')).toBe('false');
-  });
+  it.each(['/admin', '/admin/users', '/admin/evals/runs/r1'])(
+    'marks the Admin entry as the current page on %s',
+    (path) => {
+      resetNavigation('', path);
+      render(<Sidebar onClose={() => undefined} open />);
+      const admin = screen.getByRole('link', { name: 'Admin' });
+      expect(admin.getAttribute('aria-current')).toBe('page');
+    }
+  );
 
-  it('keeps the section holding the current page open and focusable, marked aria-disabled', () => {
-    resetNavigation('', '/govern/scanner');
+  it('marks Requests current on a request and Workflow library on a template', () => {
+    resetNavigation('', '/requests/abc');
     render(<Sidebar onClose={() => undefined} open />);
-    const holder = screen
-      .getAllByRole('button', { expanded: true })
-      .find((b) => b.getAttribute('aria-disabled') === 'true');
-    expect(holder).toBeTruthy();
-    expect((holder as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(holder as HTMLElement);
-    expect(holder?.getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('link', { name: 'Requests' }).getAttribute('aria-current')).toBe(
+      'page'
+    );
+    cleanup();
+    resetNavigation('', '/library/tpl-1/diff');
+    render(<Sidebar onClose={() => undefined} open />);
+    expect(
+      screen.getByRole('link', { name: 'Workflow library' }).getAttribute('aria-current')
+    ).toBe('page');
   });
 });
 
@@ -97,39 +93,14 @@ describe('Sidebar data-tour anchors', () => {
     }
   );
 
-  it('has no Studio anchor for an ENGINEER, and one for an ADMIN', () => {
+  it('has no Agents anchor for an ENGINEER, and one for an ADMIN', () => {
     useRole('ENGINEER');
     resetNavigation('', '/');
     const { container } = render(<Sidebar onClose={() => undefined} open />);
-    expect(container.querySelector('[data-tour="nav:/studio/agents/library"]')).toBeNull();
+    expect(container.querySelector('[data-tour="nav:/agents"]')).toBeNull();
     useRole('ADMIN');
     cleanup();
     const admin = render(<Sidebar onClose={() => undefined} open />);
-    expect(
-      admin.container.querySelector('[data-tour="nav:/studio/agents/library"]')
-    ).not.toBeNull();
-  });
-
-  it('removes a collapsed section and its links, so their anchors are absent until reopened', () => {
-    useRole('ADMIN');
-    resetNavigation('', '/');
-    const { container } = render(<Sidebar onClose={() => undefined} open />);
-    const access = screen.getByRole('button', { name: 'Access' });
-    expect(container.querySelector('[data-tour="nav:/govern/users"]')).not.toBeNull();
-    fireEvent.click(access);
-    expect(access.getAttribute('aria-expanded')).toBe('false');
-    expect(container.querySelector('[data-tour="nav:/govern/users"]')).toBeNull();
-    fireEvent.click(access);
-    expect(container.querySelector('[data-tour="nav:/govern/users"]')).not.toBeNull();
-  });
-
-  it('keeps the section holding the current page open, so its anchors stay present', () => {
-    useRole('ADMIN');
-    resetNavigation('', '/govern/users');
-    const { container } = render(<Sidebar onClose={() => undefined} open />);
-    const access = screen.getByRole('button', { name: 'Access' });
-    fireEvent.click(access);
-    expect(access.getAttribute('aria-expanded')).toBe('true');
-    expect(container.querySelector('[data-tour="nav:/govern/users"]')).not.toBeNull();
+    expect(admin.container.querySelector('[data-tour="nav:/agents"]')).not.toBeNull();
   });
 });

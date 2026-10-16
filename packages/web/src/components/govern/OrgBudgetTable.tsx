@@ -33,7 +33,11 @@ function UsageMeter({ org }: { org: OrgBudgetTableRow }) {
   }
   const pct = org.alert.percent;
   const threshold = org.budgetAlertThresholdPercent;
-  const tone = org.alert.triggered ? (pct >= 100 ? 'bg-brick-400' : 'bg-amber-400') : 'bg-moss-400';
+  const tone = org.alert.triggered
+    ? pct >= 100
+      ? 'bg-danger-400'
+      : 'bg-warning-400'
+    : 'bg-success-400';
   return (
     <span className="inline-flex items-center justify-end gap-2">
       <span
@@ -76,10 +80,10 @@ const COLUMNS: Record<
       <>
         <Link
           className={cn(
-            'rounded-sm font-medium text-paper-100 hover:text-ember-300 hover:underline',
+            'rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
             FOCUS_RING
           )}
-          href={`/govern/organizations/${org.id}`}
+          href={`/admin/organizations/${org.id}`}
         >
           {org.name}
         </Link>
@@ -97,7 +101,7 @@ const COLUMNS: Record<
     alignRight: false,
     cell: (org) =>
       org.role ? (
-        <Badge tone={org.role === 'ORG_ADMIN' ? 'ember' : 'neutral'} variant="outline">
+        <Badge tone={org.role === 'ORG_ADMIN' ? 'accent' : 'neutral'} variant="outline">
           {orgRoleLabel(org.role)}
         </Badge>
       ) : (
@@ -120,11 +124,11 @@ const COLUMNS: Record<
     alignRight: true,
     cell: (org) =>
       org.alert.triggered ? (
-        <Badge dot tone="brick">
+        <Badge dot tone="danger">
           Over threshold
         </Badge>
       ) : (
-        <Badge dot tone="moss" variant="text">
+        <Badge dot tone="success" variant="text">
           OK
         </Badge>
       ),

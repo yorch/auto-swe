@@ -3,76 +3,39 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
+import { BrandMark } from '@/components/layout/AuthLayout';
+import { PALETTE_CHOICES } from '@/components/layout/ThemeToggle';
 import { Icon, isIconName } from '@/components/ui/Icon';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { useApprovalsCount } from '@/hooks/useApprovals';
 import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
-import { activeNavHref, isStartWorkPath, type NavItem, navSections } from '@/lib/navigation';
+import { APPROVALS_HREF, activeNavHref, isStartWorkPath, type NavItem } from '@/lib/navigation';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
-import { type ThemePreference, useThemeStore } from '@/stores/themeStore';
+import { type PalettePreference, type ThemePreference, useThemeStore } from '@/stores/themeStore';
 
-const SECTIONS_KEY = 'auto-swe.nav.sections';
-
-/** Which collapsible nav sections the user has closed or reopened (all start open), remembered per user in this browser. */
-function useOpenSections(userKey: string) {
-  const key = `${SECTIONS_KEY}.${userKey}`;
-  const [open, setOpen] = useState<Record<string, boolean>>({});
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(key);
-      setOpen(raw ? (JSON.parse(raw) as Record<string, boolean>) : {});
-    } catch {
-      setOpen({});
-    }
-  }, [key]);
-  const toggle = (label: string, current: boolean) => {
-    setOpen((prev) => {
-      const next = { ...prev, [label]: !current };
-      try {
-        window.localStorage.setItem(key, JSON.stringify(next));
-      } catch {
-        // Storage is a convenience; the section still toggles for this visit.
-      }
-      return next;
-    });
-  };
-  return { open, toggle };
-}
-
-function NavLink({
-  item,
-  active,
-  badge,
-  indent,
-}: {
-  item: NavItem;
-  active: boolean;
-  badge?: number;
-  indent?: boolean;
-}) {
+function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badge?: number }) {
   return (
     <Link
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'relative mx-2.5 flex items-center gap-2.5 rounded-md py-1.5 text-sm font-medium no-underline transition-colors',
-        indent ? 'pr-2.5 pl-6' : 'px-2.5',
+        'relative mx-2.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium no-underline transition-colors',
         FOCUS_RING,
         active
-          ? 'bg-ink-600 text-paper-50 before:absolute before:inset-y-1.5 before:-left-2.5 before:w-[3px] before:rounded-r-full before:bg-ember-400'
+          ? 'bg-ink-600 text-paper-50 before:absolute before:inset-y-1.5 before:-left-2.5 before:w-[3px] before:rounded-r-full before:bg-accent-400'
           : 'text-paper-500 hover:bg-ink-700/70 hover:text-paper-200'
       )}
       data-tour={`nav:${item.href}`}
       href={item.href}
     >
       <Icon
-        className={active ? 'text-ember-300' : undefined}
+        className={active ? 'text-accent-300' : undefined}
         name={isIconName(item.icon) ? item.icon : 'dashboard'}
         size={15}
       />
       <span className="flex-1">{item.label}</span>
       {badge !== undefined && badge > 0 && (
-        <span className="rounded-full bg-ember-500 px-1.5 py-px text-xs font-semibold tabular-nums text-white">
+        <span className="rounded-full bg-accent-500 px-1.5 py-px text-xs font-semibold tabular-nums text-white">
           {badge}
         </span>
       )}
@@ -120,6 +83,8 @@ function UserMenu() {
 
   const themePreference = useThemeStore((s) => s.preference);
   const setThemePreference = useThemeStore((s) => s.setPreference);
+  const palette = useThemeStore((s) => s.palette);
+  const setPalette = useThemeStore((s) => s.setPalette);
   const name = user?.email?.split('@')[0] ?? 'user';
   const handleLogout = async () => {
     // logout() clears the gateway session and local cookies; navigating before
@@ -143,7 +108,7 @@ function UserMenu() {
       >
         <span
           aria-hidden="true"
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-dust-400 to-ember-400 text-xs font-bold text-ink-950"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-ink-300 bg-ink-600 text-xs font-semibold text-paper-100"
         >
           {name[0].toUpperCase()}
         </span>
@@ -179,6 +144,15 @@ function UserMenu() {
               options={THEME_OPTIONS}
               value={themePreference}
             />
+            <div className="mt-2.5 mb-1.5 text-xs text-paper-500">Palette</div>
+            <SegmentedControl
+              ariaLabel="Palette"
+              className="w-full"
+              onChange={setPalette}
+              optionClassName="flex-1"
+              options={PALETTE_OPTIONS}
+              value={palette}
+            />
           </div>
           <Link
             className={cn(
@@ -212,6 +186,12 @@ const THEME_OPTIONS: SegmentedOption<ThemePreference>[] = [
   { label: 'Dark', value: 'dark' },
 ];
 
+const PALETTE_OPTIONS: SegmentedOption<PalettePreference>[] = PALETTE_CHOICES.map((c) => ({
+  label: c.label,
+  title: c.title,
+  value: c.value,
+}));
+
 /** The user menu is a plain disclosure (links and a button), not an ARIA menu. */
 const MENU_ID = 'user-menu';
 
@@ -228,11 +208,10 @@ interface SidebarProps {
 
 export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
   const pathname = usePathname();
-  const user = useAuthStore((s) => s.user);
   const inboxCount = useApprovalsCount();
 
   const groups = useVisibleNavGroups();
-  // The most-specific matching nav item wins (e.g. /workflows/library over /workflows).
+  // The most-specific matching sidebar item wins; every /admin page lights the Admin entry.
   const activeHref = useMemo(
     () =>
       activeNavHref(
@@ -241,8 +220,6 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
       ),
     [pathname, groups]
   );
-
-  const sections = useOpenSections(user?.sub ?? 'anonymous');
 
   return (
     <aside
@@ -267,30 +244,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           className={cn('flex items-center gap-3 px-[18px] py-[18px] no-underline', FOCUS_RING)}
           href="/"
         >
-          {/* Gradient logo mark */}
-          <span className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-sm bg-gradient-to-br from-ember-400 to-violet-400 shadow-[0_6px_18px_-6px_color-mix(in_oklab,var(--color-ember-400)_70%,transparent)]">
-            <svg
-              aria-hidden="true"
-              className="text-paper-50"
-              fill="none"
-              height={15}
-              viewBox="0 0 24 24"
-              width={15}
-            >
-              <path
-                d="M4 7h7M4 12h16M13 17h7"
-                stroke="currentColor"
-                strokeLinecap="round"
-                strokeWidth={2.2}
-              />
-              <circle cx={17} cy={7} fill="currentColor" r={2.4} />
-              <circle cx={7} cy={17} fill="currentColor" r={2.4} />
-            </svg>
-          </span>
-          <span className="flex items-baseline gap-[3px]">
-            <span className="text-lg font-bold tracking-[-0.02em] text-paper-100">auto</span>
-            <span className="font-display text-lg font-semibold italic text-ember-400">·swe</span>
-          </span>
+          <BrandMark size="sm" />
         </Link>
         <button
           aria-label="Close navigation"
@@ -325,7 +279,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           <Link
             aria-current={isStartWorkPath(pathname) ? 'page' : undefined}
             className={cn(
-              'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-gradient-to-br from-ember-500 to-ember-600 px-3 py-2 text-sm font-semibold text-white no-underline shadow-[0_8px_20px_-10px_var(--color-ember-500)] transition hover:brightness-110',
+              'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-accent-500 px-3 py-2 text-sm font-semibold text-white no-underline transition-colors hover:bg-accent-600',
               FOCUS_RING
             )}
             data-tour="nav:/start"
@@ -337,67 +291,22 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
         </div>
         {groups.map((group) => (
           <div key={group.label}>
-            <div className="px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600">
-              {group.label}
-            </div>
-            {navSections(group.items).map((section) => {
-              const links = (indent: boolean) =>
-                section.items.map((item) => (
-                  <NavLink
-                    active={activeHref === item.href}
-                    badge={item.href === '/govern/approvals' ? inboxCount : undefined}
-                    indent={indent}
-                    item={item}
-                    key={item.href}
-                  />
-                ));
-              if (section.label === null) {
-                return links(false);
-              }
-              const label = section.label;
-              const holdsActive = section.items.some((i) => i.href === activeHref);
-              const panelId = `nav-section-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-              const isOpen = holdsActive || (sections.open[label] ?? true);
-              return (
-                <div key={label}>
-                  <button
-                    aria-controls={panelId}
-                    // Not `disabled`: the section holding the current page cannot collapse, but
-                    // it stays focusable so a screen reader still finds and announces it.
-                    aria-disabled={holdsActive}
-                    aria-expanded={isOpen}
-                    className={cn(
-                      'mx-2.5 flex w-[calc(100%-1.25rem)] items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs font-medium text-paper-500 hover:text-paper-200',
-                      FOCUS_RING,
-                      holdsActive && 'cursor-default'
-                    )}
-                    onClick={() => {
-                      if (!holdsActive) {
-                        sections.toggle(label, isOpen);
-                      }
-                    }}
-                    type="button"
-                  >
-                    <svg
-                      aria-hidden="true"
-                      className={cn('shrink-0 transition-transform', isOpen && 'rotate-90')}
-                      fill="none"
-                      height={12}
-                      stroke="currentColor"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2.2}
-                      viewBox="0 0 24 24"
-                      width={12}
-                    >
-                      <path d="M9 6l6 6-6 6" />
-                    </svg>
-                    {label}
-                  </button>
-                  <div id={panelId}>{isOpen && links(true)}</div>
-                </div>
-              );
-            })}
+            {/* A group that is one entry of the same name (Admin) needs no heading over it. */}
+            {group.items.length === 1 && group.items[0].label === group.label ? (
+              <div className="pt-4" />
+            ) : (
+              <div className="px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600">
+                {group.label}
+              </div>
+            )}
+            {group.items.map((item) => (
+              <NavLink
+                active={activeHref === item.href}
+                badge={item.href === APPROVALS_HREF ? inboxCount : undefined}
+                item={item}
+                key={item.href}
+              />
+            ))}
           </div>
         ))}
       </nav>

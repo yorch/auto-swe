@@ -21,9 +21,9 @@ export interface AuditLogEntry {
 }
 
 const ACTION_TONES: Record<string, BadgeTone> = {
-  CREATE: 'moss',
-  DELETE: 'brick',
-  UPDATE: 'amber',
+  CREATE: 'success',
+  DELETE: 'danger',
+  UPDATE: 'warning',
 };
 
 const ENTITY_LABELS: Record<string, string> = {

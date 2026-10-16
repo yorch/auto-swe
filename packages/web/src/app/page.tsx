@@ -34,7 +34,7 @@ interface Bucket {
   icon: IconName;
   /** Tile colour when the bucket is non-empty. */
   tone: string;
-  empty: { title: string; hint: string; action?: boolean };
+  empty: { title: string; hint: string };
 }
 
 const BUCKETS: Bucket[] = [
@@ -47,19 +47,18 @@ const BUCKETS: Bucket[] = [
     id: 'attention',
     state: 'attention',
     title: 'Needs your attention',
-    tone: 'text-amber-400',
+    tone: 'text-warning-400',
   },
   {
     empty: {
-      action: true,
-      hint: 'Run a workflow or give an agent a task to get something going.',
+      hint: 'Use Start something new to run a workflow, an agent or an epic.',
       title: 'No work in progress',
     },
     icon: 'runs',
     id: 'in-progress',
     state: 'active',
     title: 'In progress',
-    tone: 'text-dust-400',
+    tone: 'text-info-400',
   },
   {
     empty: {
@@ -70,12 +69,12 @@ const BUCKETS: Bucket[] = [
     id: 'recent-results',
     state: 'success',
     title: 'Recent results',
-    tone: 'text-moss-400',
+    tone: 'text-success-400',
   },
 ];
 
 function listHref(scope: RequestScope, state: RequestState) {
-  return `/workflows?scope=${scope}&state=${state === 'success' ? 'finished' : state}`;
+  return `/requests?scope=${scope}&state=${state === 'success' ? 'finished' : state}`;
 }
 
 /** Same filters as the bucket's section, so the two share one cached query. */
@@ -83,10 +82,7 @@ function useBucket(scope: RequestScope, state: RequestState) {
   return useRequests({ limit: 5, scope, state });
 }
 
-const TILE = cn(
-  'group flex min-w-0 flex-col rounded-xl border border-ink-400/60 bg-gradient-to-b from-ink-700 to-ink-900/80 p-4 transition-colors hover:border-ink-300',
-  FOCUS_RING
-);
+const TILE = 'flex min-w-0 flex-col rounded-xl border border-ink-400/60 bg-ink-700 p-4';
 
 function TileBody({
   count,
@@ -130,7 +126,7 @@ function TileBody({
 function BucketTile({ bucket, scope }: { bucket: Bucket; scope: RequestScope }) {
   const query = useBucket(scope, bucket.state);
   return (
-    <a className={TILE} href={`#${bucket.id}`}>
+    <div className={TILE}>
       <TileBody
         count={query.data?.meta.total}
         icon={bucket.icon}
@@ -138,22 +134,7 @@ function BucketTile({ bucket, scope }: { bucket: Bucket; scope: RequestScope }) 
         loading={query.isLoading}
         tone={bucket.tone}
       />
-    </a>
-  );
-}
-
-function ApprovalsTile() {
-  const query = useApprovals('PENDING', 'timeoutAt:asc', false, undefined, true);
-  return (
-    <Link className={TILE} href="/govern/approvals">
-      <TileBody
-        count={query.data?.length}
-        icon="inbox"
-        label="Waiting on you"
-        loading={query.isLoading}
-        tone="text-ember-400"
-      />
-    </Link>
+    </div>
   );
 }
 
@@ -177,7 +158,7 @@ function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope })
         </h2>
         <Link
           className={cn(
-            'inline-flex items-center gap-1 rounded-sm text-sm text-ember-400 hover:underline',
+            'inline-flex items-center gap-1 rounded-sm text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
             FOCUS_RING
           )}
           href={listHref(scope, bucket.state)}
@@ -202,18 +183,12 @@ function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope })
       >
         {requests.length ? (
           <RequestList
-            hrefFor={(id) => `/workflows?${new URLSearchParams({ request: id, scope }).toString()}`}
+            density="compact"
+            hrefFor={(id) => `/requests?${new URLSearchParams({ request: id, scope }).toString()}`}
             requests={requests}
           />
         ) : (
           <EmptyState
-            action={
-              bucket.empty.action ? (
-                <ButtonLink href="/start" size="sm" variant="secondary">
-                  Start work
-                </ButtonLink>
-              ) : undefined
-            }
             bordered
             className="py-7"
             hint={bucket.empty.hint}
@@ -248,12 +223,12 @@ function WaitingOnYou() {
         </div>
         <Link
           className={cn(
-            'inline-flex items-center gap-1 rounded-sm text-sm text-ember-400 hover:underline',
+            'inline-flex items-center gap-1 rounded-sm text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
             FOCUS_RING
           )}
-          href="/govern/approvals"
+          href="/approvals"
         >
-          Open inbox
+          Open approvals
           <Icon name="arrowRight" size={13} />
         </Link>
       </div>
@@ -287,13 +262,6 @@ const START_OPTIONS: { href: string; icon: IconName; title: string; hint: string
   },
 ];
 
-const SHORTCUTS: { href: string; icon: IconName; label: string }[] = [
-  { href: '/pull-requests', icon: 'pullRequest', label: 'Pull requests' },
-  { href: '/tickets', icon: 'ticket', label: 'Tickets' },
-  { href: '/workflows/library', icon: 'layers', label: 'Workflow library' },
-  { href: '/connections', icon: 'connections', label: 'Connections' },
-];
-
 function QuickStart() {
   return (
     <Card className="p-5">
@@ -311,7 +279,7 @@ function QuickStart() {
               )}
               href={option.href}
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-ink-400 bg-ink-800 text-ember-400">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-ink-400 bg-ink-800 text-paper-300">
                 <Icon name={option.icon} size={16} />
               </span>
               <span className="min-w-0 flex-1">
@@ -323,30 +291,6 @@ function QuickStart() {
                 name="chevronRight"
                 size={16}
               />
-            </Link>
-          </li>
-        ))}
-      </ul>
-    </Card>
-  );
-}
-
-function Shortcuts() {
-  return (
-    <Card className="p-5">
-      <h2 className="text-base font-semibold text-paper-100">Jump to</h2>
-      <ul className="mt-3 grid grid-cols-2 gap-2 xl:grid-cols-1">
-        {SHORTCUTS.map((item) => (
-          <li key={item.href}>
-            <Link
-              className={cn(
-                'flex items-center gap-2 rounded-lg border border-ink-500/60 px-3 py-2 text-sm text-paper-300 transition-colors hover:border-ink-300 hover:text-paper-100',
-                FOCUS_RING
-              )}
-              href={item.href}
-            >
-              <Icon className="text-paper-500" name={item.icon} size={14} />
-              <span className="truncate">{item.label}</span>
             </Link>
           </li>
         ))}
@@ -384,24 +328,6 @@ function AccessDeniedNotice() {
   ) : null;
 }
 
-/**
- * Open for a user with no requests at all; the cached bucket queries tell us. The default is
- * decided once, on the first settled read, so switching Mine/Team never discards a toggle.
- */
-function HomeHowItWorks({ scope }: { scope: RequestScope }) {
-  const queries = [
-    useBucket(scope, 'attention'),
-    useBucket(scope, 'active'),
-    useBucket(scope, 'success'),
-  ];
-  const [openByDefault, setOpenByDefault] = useState<boolean | null>(null);
-  const settled = queries.every((query) => query.isSuccess);
-  if (openByDefault === null && settled) {
-    setOpenByDefault(queries.every((query) => query.data?.meta.total === 0));
-  }
-  return <HowItWorks defaultOpen={openByDefault === true} />;
-}
-
 export default function HomePage() {
   const [scope, setScope] = useState<RequestScope>('MINE');
   return (
@@ -411,21 +337,15 @@ export default function HomePage() {
       </Suspense>
       <PageHeader
         actions={
-          <>
-            <ButtonLink href="/workflows/library" variant="secondary">
-              Browse workflows
-            </ButtonLink>
-            <ButtonLink href="/start" variant="primary">
-              <Icon name="plus" size={14} />
-              Start work
-            </ButtonLink>
-          </>
+          <ButtonLink href="/library" variant="secondary">
+            Browse workflows
+          </ButtonLink>
         }
         learnMore={{ ...HELP_LINKS.concepts, label: 'Requests, runs and gates explained' }}
         subtitle="See what needs your attention, follow your work, and review the results."
         title="Home"
       />
-      <HomeHowItWorks scope={scope} />
+      <HowItWorks />
       <SetupReadiness />
       <GovernanceGuide />
       <FirstRunChecklist />
@@ -443,8 +363,7 @@ export default function HomePage() {
             value={scope}
           />
         </div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <ApprovalsTile />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {BUCKETS.map((bucket) => (
             <BucketTile bucket={bucket} key={bucket.id} scope={scope} />
           ))}
@@ -459,7 +378,6 @@ export default function HomePage() {
         </div>
         <aside aria-label="Get started" className="space-y-6">
           <QuickStart />
-          <Shortcuts />
         </aside>
       </div>
     </div>

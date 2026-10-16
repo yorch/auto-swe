@@ -51,7 +51,7 @@ beforeEach(() => {
   db.assistantMessage.findMany.mockResolvedValue([
     {
       content: 'How do I set up GitHub?',
-      pageContext: { route: '/studio/integrations' },
+      pageContext: { route: '/admin/integrations' },
       role: 'USER',
       status: 'COMPLETE',
     },

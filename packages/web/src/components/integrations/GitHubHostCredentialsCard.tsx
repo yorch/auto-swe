@@ -204,18 +204,18 @@ export function GitHubHostCredentialsCard() {
   return (
     <IntegrationCard
       description="The token and App above belong to the instance's own host and are never sent anywhere else. A repository on another approved host is reached with that host's credentials recorded here; a host with none is reachable only with a user's own saved token."
-      eyebrow="Other GitHub hosts"
       headerAction={credentials && credentials.length > 0 ? addButton : undefined}
       title="Per-host credentials"
     >
       <QueryBoundary
-        compact
         error={loadError}
         isError={isError}
         isFetching={isFetching}
         isLoading={isLoading}
         label="Host credentials"
         onRetry={() => void refetch()}
+        rows={2}
+        shape="form"
       >
         {!credentials || credentials.length === 0 ? (
           <EmptyState
@@ -253,7 +253,7 @@ export function GitHubHostCredentialsCard() {
                         size="sm"
                         variant="ghost"
                       >
-                        <Icon className="text-brick-400" name="trash" size={14} />
+                        <Icon className="text-danger-400" name="trash" size={14} />
                       </Button>
                     </div>
                   </Td>

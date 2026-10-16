@@ -45,18 +45,18 @@ interface Props {
 const ALWAYS_OPEN_STATUSES = new Set(['FAILED', 'RUNNING', 'PENDING']);
 
 const STATUS_DOT: Record<string, string> = {
-  FAILED: 'bg-brick-400',
-  PASSED: 'bg-moss-400',
-  PENDING: 'bg-amber-400',
-  RUNNING: 'bg-dust-400',
+  FAILED: 'bg-danger-400',
+  PASSED: 'bg-success-400',
+  PENDING: 'bg-warning-400',
+  RUNNING: 'bg-info-400',
   SKIPPED: 'bg-paper-500',
-  SUCCESS: 'bg-moss-400',
+  SUCCESS: 'bg-success-400',
 };
 
 const DIFF_TEXT: Record<DiffKind, string> = {
-  added: 'text-moss-400',
-  changed: 'text-amber-400',
-  removed: 'text-brick-400',
+  added: 'text-success-400',
+  changed: 'text-warning-400',
+  removed: 'text-danger-400',
 };
 
 const KEYS = new Set<string>(['ArrowDown', 'ArrowUp', 'Home', 'End']);
@@ -220,7 +220,7 @@ export function WorkflowOutline({
                               FOCUS_RING,
                               nodeTypeTone(node.type).border,
                               selected
-                                ? 'bg-ember-400/10 text-paper-50'
+                                ? 'bg-accent-400/10 text-paper-50'
                                 : 'text-paper-200 hover:bg-ink-700/60',
                               section.group !== null && 'pl-5'
                             )}

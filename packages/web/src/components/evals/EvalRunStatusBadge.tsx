@@ -1,11 +1,11 @@
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 
 const TONE: Record<string, BadgeTone> = {
-  FAILED: 'brick',
-  INCONCLUSIVE: 'amber',
-  REGRESSION: 'brick',
-  RUNNING: 'amber',
-  SUCCESS: 'moss',
+  FAILED: 'danger',
+  INCONCLUSIVE: 'warning',
+  REGRESSION: 'danger',
+  RUNNING: 'warning',
+  SUCCESS: 'success',
 };
 
 const LABEL: Record<string, string> = {
@@ -44,7 +44,7 @@ export function EvalRunStatusBadge({ status, partial }: { status: string; partia
     >
       <Badge
         dot={status === 'RUNNING' ? 'pulse' : true}
-        tone={isPartial ? 'amber' : (TONE[status] ?? 'dust')}
+        tone={isPartial ? 'warning' : (TONE[status] ?? 'info')}
         variant="outline"
       >
         {isPartial ? `${label} (partial)` : label}

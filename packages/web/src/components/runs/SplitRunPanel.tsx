@@ -64,7 +64,7 @@ export function SplitRunPanel({
                   className={cn(
                     'flex w-full items-start gap-2.5 border-l-2 px-4 py-2.5 text-left transition-colors hover:bg-ink-600/30',
                     FOCUS_RING,
-                    isSelected ? 'border-ember-400 bg-ink-700' : 'border-transparent'
+                    isSelected ? 'border-accent-400 bg-ink-700' : 'border-transparent'
                   )}
                   key={s.id}
                   onClick={() => handleSelect(s.nodeId)}
@@ -78,7 +78,7 @@ export function SplitRunPanel({
                       <span
                         className={cn(
                           'min-w-0 break-all font-mono text-xs font-medium',
-                          isSelected ? 'text-ember-300' : 'text-paper-100'
+                          isSelected ? 'text-accent-300' : 'text-paper-100'
                         )}
                       >
                         {branchPrefix && <span className="text-paper-500">{branchPrefix}</span>}
@@ -93,7 +93,7 @@ export function SplitRunPanel({
                     </div>
                     {s.error && (
                       <div
-                        className="mt-0.5 truncate font-mono text-xs text-brick-400"
+                        className="mt-0.5 truncate font-mono text-xs text-danger-400"
                         title={s.error}
                       >
                         {s.error}

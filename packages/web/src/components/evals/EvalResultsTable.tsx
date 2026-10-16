@@ -52,7 +52,7 @@ function ResultOrigin({ row, showEvalRun }: { row: EvalResultDto; showEvalRun: b
   if (row.runId) {
     return (
       <Link
-        className="font-mono text-ember-400 hover:underline"
+        className="font-mono text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
         href={`/runs/${row.runId}`}
         title={row.runId}
       >
@@ -63,8 +63,8 @@ function ResultOrigin({ row, showEvalRun }: { row: EvalResultDto; showEvalRun: b
   if (row.evalRunId && showEvalRun) {
     return (
       <Link
-        className="font-mono text-ember-400 hover:underline"
-        href={`/govern/evals/runs/${row.evalRunId}`}
+        className="font-mono text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
+        href={`/admin/evals/runs/${row.evalRunId}`}
         title={row.evalRunId}
       >
         eval run {row.evalRunId.slice(0, 8)}

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import {
   type DiffAddedSkill,
@@ -85,17 +85,17 @@ function AddedSkill({
         </div>
       )}
       {keyed(a.errors).map((e) => (
-        <div className="text-xs text-brick-400" key={e.key}>
+        <div className="text-xs text-danger-400" key={e.key}>
           error: {visibleText(e.text)}
         </div>
       ))}
       {a.conflicts.map((c) => (
-        <div className="text-xs text-brick-400" key={c.id}>
+        <div className="text-xs text-danger-400" key={c.id}>
           name already used by a {visibleText(c.scope)} skill
         </div>
       ))}
       {keyed(a.scanWarnings).map((w) => (
-        <div className="text-xs text-amber-400" key={w.key}>
+        <div className="text-xs text-warning-400" key={w.key}>
           scan: {visibleText(w.text)}
         </div>
       ))}
@@ -107,7 +107,7 @@ function AddedSkill({
             .join(', ')}
         </div>
       )}
-      {error && <div className="text-xs text-brick-400">{error}</div>}
+      {error && <div className="text-xs text-danger-400">{error}</div>}
     </li>
   );
 }
@@ -119,7 +119,7 @@ function InstallBody({ onClose, sourceId }: { onClose: () => void; sourceId: str
     return (
       <div className="space-y-4">
         {sources.isLoading ? (
-          <LoadingState message="Loading…" />
+          <SkeletonRows label="skill source" rows={2} />
         ) : (
           <Alert>This source no longer exists.</Alert>
         )}
@@ -228,7 +228,7 @@ function InstallList({
   }
 
   if (diffQuery.isLoading) {
-    return <LoadingState message="Reading the repository…" />;
+    return <SkeletonRows label="repository contents" rows={4} />;
   }
   if (!diff) {
     return (

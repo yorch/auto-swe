@@ -137,7 +137,7 @@ export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
                 ? [`No platform-wide agent for ${missingAgents.join(', ')}.`]
                 : []),
             ].join(' '),
-        href: '/studio/models?tab=credentials',
+        href: '/models?tab=credentials',
         id: 'credentials',
         label: 'Model provider credentials',
         ok: credentialsOk,
@@ -148,7 +148,7 @@ export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
           : embeddingGap?.problem === 'no-embedding-config'
             ? 'No embedding model is chosen. Memory and lesson search cannot work without one.'
             : (embeddingGap?.detail ?? ''),
-        href: '/studio/models?tab=embeddings',
+        href: '/models?tab=embeddings',
         id: 'embeddings',
         label: 'Embedding model',
         ok: embeddingOk,
@@ -157,7 +157,7 @@ export const readinessRoutes: FastifyPluginAsync = async (fastify) => {
         detail: githubOk
           ? 'GitHub access is configured.'
           : 'Add a personal access token or a GitHub App so runs can clone and open pull requests.',
-        href: '/studio/integrations?tab=github',
+        href: '/admin/integrations?tab=github',
         id: 'github',
         label: 'GitHub access',
         ok: githubOk,

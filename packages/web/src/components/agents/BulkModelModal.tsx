@@ -21,29 +21,34 @@ import {
 import { scopeLabel } from '@/lib/agentDisplay';
 import { errMsg } from '@/lib/errors';
 
-const TONE: Record<BulkModelStatus, 'moss' | 'neutral' | 'amber' | 'brick' | 'violet' | 'muted'> = {
-  BLOCKED: 'brick',
-  CONFLICT: 'violet',
-  ERROR: 'brick',
+const TONE: Record<
+  BulkModelStatus,
+  'success' | 'neutral' | 'warning' | 'danger' | 'accent2' | 'muted'
+> = {
+  BLOCKED: 'danger',
+  CONFLICT: 'accent2',
+  ERROR: 'danger',
   INHERITS: 'neutral',
   NOOP: 'muted',
-  OK: 'moss',
-  UNMATCHED: 'amber',
+  OK: 'success',
+  UNMATCHED: 'warning',
 };
 
 function PlanTable({ applied, plan }: { applied: boolean; plan: BulkModelPlan }) {
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-1.5" role="status">
-        <Badge tone="moss">{plan.summary.ok} to change</Badge>
+        <Badge tone="success">{plan.summary.ok} to change</Badge>
         <Badge tone="neutral">{plan.summary.inherits} follow a parent</Badge>
         {plan.summary.noop > 0 && <Badge tone="muted">{plan.summary.noop} already set</Badge>}
         {plan.summary.unmatched > 0 && (
-          <Badge tone="amber">{plan.summary.unmatched} unmatched</Badge>
+          <Badge tone="warning">{plan.summary.unmatched} unmatched</Badge>
         )}
-        {plan.summary.blocked > 0 && <Badge tone="brick">{plan.summary.blocked} blocked</Badge>}
-        {plan.summary.conflict > 0 && <Badge tone="violet">{plan.summary.conflict} conflict</Badge>}
-        {plan.summary.error > 0 && <Badge tone="brick">{plan.summary.error} errors</Badge>}
+        {plan.summary.blocked > 0 && <Badge tone="danger">{plan.summary.blocked} blocked</Badge>}
+        {plan.summary.conflict > 0 && (
+          <Badge tone="accent2">{plan.summary.conflict} conflict</Badge>
+        )}
+        {plan.summary.error > 0 && <Badge tone="danger">{plan.summary.error} errors</Badge>}
       </div>
       <Table stacked>
         <THead>
@@ -72,7 +77,7 @@ function PlanRow({ applied, change }: { applied: boolean; change: BulkModelChang
       </Td>
       <Td className="py-2 pr-3" label="Scope">
         {change.scope ? (
-          <Badge tone={change.scope === 'GLOBAL' ? 'neutral' : 'dust'}>
+          <Badge tone={change.scope === 'GLOBAL' ? 'neutral' : 'info'}>
             {scopeLabel(change.scope)}
           </Badge>
         ) : (
@@ -96,14 +101,14 @@ function PlanRow({ applied, change }: { applied: boolean; change: BulkModelChang
       <Td className="py-2 pr-3" label="Status and notes">
         <Badge tone={TONE[change.status]}>{change.status}</Badge>
         {change.blockers.length > 0 && (
-          <ul className="mt-1 list-disc pl-4 text-xs text-brick-400">
+          <ul className="mt-1 list-disc pl-4 text-xs text-danger-400">
             {change.blockers.map((x) => (
               <li key={x}>{x}</li>
             ))}
           </ul>
         )}
         {change.warnings.length > 0 && (
-          <ul className="mt-1 list-disc pl-4 text-xs text-amber-400">
+          <ul className="mt-1 list-disc pl-4 text-xs text-warning-400">
             {change.warnings.map((x) => (
               <li key={x}>{x}</li>
             ))}

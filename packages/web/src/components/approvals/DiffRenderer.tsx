@@ -13,10 +13,10 @@ import {
 } from './diffParse';
 
 const LINE_CLASS: Record<ParsedDiffLine['kind'], string> = {
-  add: 'bg-moss-400/10 text-moss-400',
+  add: 'bg-success-400/10 text-success-400',
   ctx: 'text-paper-300',
-  del: 'bg-brick-400/10 text-brick-400',
-  hunk: 'bg-dust-400/[0.07] text-dust-400',
+  del: 'bg-danger-400/10 text-danger-400',
+  hunk: 'bg-info-400/[0.07] text-info-400',
   meta: 'text-paper-500',
 };
 
@@ -67,8 +67,8 @@ function DiffBody({ files, maxHeight }: { files: ParsedDiffFile[]; maxHeight: st
                 size={13}
               />
               <span className="min-w-0 flex-1 break-all font-mono text-paper-100">{file.name}</span>
-              <span className="tabular shrink-0 font-mono text-moss-400">+{file.added}</span>
-              <span className="tabular shrink-0 font-mono text-brick-400">−{file.removed}</span>
+              <span className="tabular shrink-0 font-mono text-success-400">+{file.added}</span>
+              <span className="tabular shrink-0 font-mono text-danger-400">−{file.removed}</span>
             </button>
             {!isClosed && (
               <div className="overflow-x-auto border-t border-ink-600/60 font-mono text-xs leading-5">
@@ -94,8 +94,8 @@ function DiffStats({ files }: { files: ParsedDiffFile[] }) {
   return (
     <span className="flex flex-wrap items-center gap-x-2 text-xs text-paper-400">
       <span>{plural(files.length, 'file')} changed</span>
-      <span className="tabular font-mono text-moss-400">+{added}</span>
-      <span className="tabular font-mono text-brick-400">−{removed}</span>
+      <span className="tabular font-mono text-success-400">+{added}</span>
+      <span className="tabular font-mono text-danger-400">−{removed}</span>
     </span>
   );
 }

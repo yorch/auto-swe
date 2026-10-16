@@ -17,6 +17,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { ExpandablePre } from '@/components/ui/ExpandablePre';
 import { SparkleIcon } from '@/components/ui/icons';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import {
   useAssistantConversation,
   useAssistantConversations,
@@ -52,8 +53,8 @@ export function AssistantToggle() {
       aria-controls={ASSISTANT_PANEL_ID}
       aria-expanded={open}
       className={cn(
-        'inline-flex shrink-0 items-center gap-1.5 rounded-full border border-ink-400 px-2.5 py-1 text-xs font-semibold text-paper-300 transition-colors hover:border-ember-400/60 hover:text-paper-100',
-        open && 'border-ember-400/60 text-ember-300',
+        'inline-flex shrink-0 items-center gap-1.5 rounded-full border border-ink-400 px-2.5 py-1 text-xs font-semibold text-paper-300 transition-colors hover:border-accent-400/60 hover:text-paper-100',
+        open && 'border-accent-400/60 text-accent-300',
         FOCUS_RING
       )}
       onClick={toggle}
@@ -112,7 +113,7 @@ function PanelBody() {
   return (
     <>
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-ink-500/70 px-4">
-        <SparkleIcon className="text-ember-300" size={14} />
+        <SparkleIcon className="text-paper-300" size={14} />
         {current && renaming ? (
           <RenameForm
             conversationId={current.id}
@@ -145,7 +146,11 @@ function PanelBody() {
 
       {showingList ? (
         <ul className="flex-1 overflow-y-auto p-2">
-          {conversations.isLoading && <li className="p-3 text-sm text-paper-500">Loading…</li>}
+          {conversations.isLoading && (
+            <li className="p-3">
+              <SkeletonRows label="conversations" rows={3} />
+            </li>
+          )}
           {conversations.data?.length === 0 && (
             <li className="p-3 text-sm text-paper-500">No conversations yet.</li>
           )}
@@ -165,7 +170,7 @@ function PanelBody() {
               <button
                 aria-label={`Remove “${c.title}”`}
                 className={cn(
-                  'rounded-md px-2 py-1 text-xs text-paper-500 hover:text-brick-400',
+                  'rounded-md px-2 py-1 text-xs text-paper-500 hover:text-danger-400',
                   FOCUS_RING
                 )}
                 onClick={() => {
@@ -234,7 +239,7 @@ function RenameForm({
     <input
       aria-label="Conversation title"
       className={cn(
-        'min-w-0 flex-1 rounded-md border border-ink-400 bg-ink-900 px-2 py-1 text-sm font-semibold text-paper-100',
+        'min-w-0 flex-1 rounded-md border border-ink-200 bg-ink-900 px-2 py-1 text-sm font-semibold text-paper-100',
         FOCUS_RING
       )}
       maxLength={MAX_ASSISTANT_TITLE_CHARS}
@@ -297,7 +302,7 @@ function MessageList({
 
   return (
     <div aria-live="polite" className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
-      {error && <p className="text-sm text-brick-400">{error}</p>}
+      {error && <p className="text-sm text-danger-400">{error}</p>}
       {messages?.length === 0 && (
         <div className="space-y-2 pt-6 text-center text-sm text-paper-500">
           <p>Ask how the platform works, how to configure it, or about the page you are on.</p>
@@ -338,7 +343,7 @@ function Reply({ message }: { message: AssistantMessageView }) {
         </p>
       )}
       {message.status === 'FAILED' && (
-        <p className="text-sm text-brick-400">{message.error ?? 'The reply failed.'}</p>
+        <p className="text-sm text-danger-400">{message.error ?? 'The reply failed.'}</p>
       )}
     </div>
   );
@@ -366,9 +371,9 @@ function ToolStep({ step }: { step: AssistantToolStep }) {
             aria-hidden="true"
             className={cn(
               'inline-block h-1.5 w-1.5 shrink-0 rounded-full',
-              step.status === 'running' && 'animate-pulse bg-amber-400',
-              step.status === 'done' && 'bg-moss-400',
-              step.status === 'error' && 'bg-brick-400'
+              step.status === 'running' && 'animate-pulse bg-warning-400',
+              step.status === 'done' && 'bg-success-400',
+              step.status === 'error' && 'bg-danger-400'
             )}
           />
           <span className="font-medium text-paper-300">{TOOL_LABELS[step.tool] ?? step.tool}</span>
@@ -416,7 +421,7 @@ export function AssistantMarkdown({ children }: { children: string }) {
         'text-base leading-6 text-paper-200',
         '[&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5',
         '[&_li]:my-0.5 [&_strong]:font-semibold [&_strong]:text-paper-100',
-        '[&_a]:text-ember-300 [&_a]:underline [&_a]:decoration-ember-400/40 [&_a]:underline-offset-2',
+        '[&_a]:text-paper-50 [&_a]:underline [&_a]:decoration-paper-600 [&_a]:underline-offset-2 hover:[&_a]:decoration-current',
         '[&_code]:rounded [&_code]:bg-ink-800 [&_code]:px-1 [&_code]:font-mono [&_code]:text-xs',
         '[&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-ink-900 [&_pre]:p-2',
         '[&_h1]:text-lg [&_h2]:text-base [&_h3]:text-base [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold',
@@ -468,12 +473,12 @@ function Composer({ busy }: { busy: boolean | undefined }) {
         submit();
       }}
     >
-      {send.error && <p className="mb-2 text-xs text-brick-400">{errMsg(send.error)}</p>}
+      {send.error && <p className="mb-2 text-xs text-danger-400">{errMsg(send.error)}</p>}
       <label className="sr-only" htmlFor="assistant-input">
         Message the assistant
       </label>
       <textarea
-        className="max-h-40 min-h-[4.5rem] w-full resize-y rounded-md border border-ink-200 bg-ink-900 px-3 py-2 text-base text-paper-100 outline-none placeholder:text-paper-600 hover:border-paper-600 focus:border-ember-400 focus:ring-2 focus:ring-ember-400/20"
+        className="max-h-40 min-h-[4.5rem] w-full resize-y rounded-md border border-ink-200 bg-ink-900 px-3 py-2 text-base text-paper-100 outline-none placeholder:text-paper-600 hover:border-paper-600 focus:border-accent-400 focus:ring-2 focus:ring-accent-400/20"
         id="assistant-input"
         maxLength={MAX_ASSISTANT_MESSAGE_CHARS}
         onChange={(e) => setText(e.target.value)}
@@ -491,7 +496,7 @@ function Composer({ busy }: { busy: boolean | undefined }) {
         <span>Enter to send · Shift+Enter for a new line</span>
         <button
           className={cn(
-            'rounded-md bg-gradient-to-br from-ember-500 to-ember-600 px-3 py-1 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-50',
+            'rounded-md bg-accent-500 px-3 py-1 text-sm font-semibold text-white hover:bg-accent-600 disabled:opacity-50',
             FOCUS_RING
           )}
           disabled={disabled || text.trim() === ''}

@@ -37,7 +37,6 @@ export function ImportFromGitHubModal({
 
   return (
     <Modal
-      eyebrow="Connections"
       onClose={onClose}
       open={open}
       size="lg"
@@ -53,12 +52,12 @@ export function ImportFromGitHubModal({
           value={search}
         />
 
-        {isLoading && <SkeletonRows rows={5} />}
+        {isLoading && <SkeletonRows label="repositories" rows={5} />}
 
         {error && !isLoading && (
           <Alert
             action={
-              <ButtonLink href="/studio/integrations?tab=github" size="sm">
+              <ButtonLink href="/admin/integrations?tab=github" size="sm">
                 Check GitHub
               </ButtonLink>
             }
@@ -108,7 +107,7 @@ export function ImportFromGitHubModal({
                     <span className="flex shrink-0 items-center gap-2">
                       {r.language && <Badge tone="muted">{r.language}</Badge>}
                       {r.alreadyImported ? (
-                        <Badge dot tone="moss">
+                        <Badge dot tone="success">
                           Imported
                         </Badge>
                       ) : (

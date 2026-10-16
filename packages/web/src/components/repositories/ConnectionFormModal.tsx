@@ -234,7 +234,6 @@ export function ConnectionFormModal({
 
   return (
     <Modal
-      eyebrow={isEdit ? 'Edit connection' : 'New connection'}
       onClose={onClose}
       open={open}
       subtitle={

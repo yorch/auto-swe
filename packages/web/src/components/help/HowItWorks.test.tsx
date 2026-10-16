@@ -1,36 +1,36 @@
 // @vitest-environment jsdom
 
 import { cleanup, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HowItWorks } from './HowItWorks';
+
+vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 
 afterEach(cleanup);
 
 describe('HowItWorks', () => {
-  it('is a closed disclosure by default and open on request', () => {
-    const { container, rerender } = render(<HowItWorks />);
-    expect(screen.getByText('How auto-swe works')).toBeTruthy();
-    expect(container.querySelector('details')?.hasAttribute('open')).toBe(false);
-    rerender(<HowItWorks defaultOpen />);
-    expect(container.querySelector('details')?.hasAttribute('open')).toBe(true);
+  it('is help content, not a disclosure on the page', () => {
+    const { container } = render(<HowItWorks />);
+    expect(container.querySelector('details')).toBeNull();
+    expect(screen.getByTestId('page-help')).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'How auto-swe works' })).toBeTruthy();
   });
 
   it('lists the five lifecycle steps in order', () => {
-    render(<HowItWorks defaultOpen />);
+    render(<HowItWorks />);
     const steps = screen.getAllByRole('listitem').map((li) => li.querySelector('p')?.textContent);
     expect(steps).toEqual(['Request', 'Run', 'Gate', 'Pull request', 'You merge']);
-    expect(screen.queryAllByRole('heading')).toHaveLength(0);
   });
 
   it('says plainly that auto-swe never merges', () => {
-    render(<HowItWorks defaultOpen />);
+    render(<HowItWorks />);
     expect(screen.getAllByText(/merges a pull request/)).toHaveLength(1);
     expect(screen.getByText(/No built-in step or template merges a pull request/)).toBeTruthy();
     expect(screen.queryByText(/draft/i)).toBeNull();
   });
 
   it('links to the concepts doc and explains request, run and gate', () => {
-    render(<HowItWorks defaultOpen />);
+    render(<HowItWorks />);
     expect(screen.getByRole('link', { name: 'Read the concepts guide' }).getAttribute('href')).toBe(
       '/docs/concepts'
     );

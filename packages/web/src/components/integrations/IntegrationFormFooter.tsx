@@ -39,13 +39,13 @@ export function IntegrationFormFooter({
       {error && <Alert>{error}</Alert>}
       <div
         className={cn(
-          'sticky bottom-0 z-10 flex flex-nowrap items-center justify-between gap-3 rounded-lg border bg-ink-800/95 px-4 py-3 backdrop-blur',
-          dirty ? 'border-amber-400/50' : 'border-ink-400'
+          'sticky bottom-0 z-10 flex flex-nowrap items-center justify-between gap-3 rounded-lg border bg-ink-800 px-4 py-3',
+          dirty ? 'border-warning-400/50' : 'border-ink-400'
         )}
       >
         <p aria-live="polite" className="min-w-0 text-sm" role="status">
-          {saved && !dirty && <span className="mr-1 text-moss-400">Settings saved.</span>}
-          <span className={dirty ? 'text-amber-400' : 'text-paper-500'}>
+          {saved && !dirty && <span className="mr-1 text-success-400">Settings saved.</span>}
+          <span className={dirty ? 'text-warning-400' : 'text-paper-500'}>
             {dirty
               ? `${dirtyCount} unsaved ${dirtyCount === 1 ? 'change' : 'changes'}`
               : 'No unsaved changes'}

@@ -15,9 +15,9 @@ import type { RunLayoutProps } from './types';
 // ── Direction B — Transcript ───────────────────────────────────────────────────
 
 const STEP_DOT: Record<string, string> = {
-  FAILED: 'bg-brick-400',
-  PASSED: 'bg-moss-400',
-  RUNNING: 'bg-dust-400 pulse-dot',
+  FAILED: 'bg-danger-400',
+  PASSED: 'bg-success-400',
+  RUNNING: 'bg-info-400 pulse-dot',
   SKIPPED: 'bg-ink-400',
 };
 
@@ -40,7 +40,7 @@ function StepSpine({
             className={cn(
               'relative flex min-h-[44px] shrink-0 items-start gap-3 whitespace-nowrap border-b-2 px-4 py-2.5 text-left transition-colors hover:bg-ink-600/30 lg:w-full lg:whitespace-normal lg:border-b-0 lg:border-l-2',
               FOCUS_RING,
-              isSelected ? 'border-ember-400 bg-ink-700' : 'border-transparent'
+              isSelected ? 'border-accent-400 bg-ink-700' : 'border-transparent'
             )}
             key={s.id}
             onClick={() => onSelect(s.nodeId)}
@@ -62,7 +62,7 @@ function StepSpine({
               <div
                 className={cn(
                   'break-all font-mono text-xs font-medium',
-                  isSelected ? 'text-ember-300' : 'text-paper-200'
+                  isSelected ? 'text-accent-300' : 'text-paper-200'
                 )}
               >
                 {s.nodeId}
@@ -132,7 +132,6 @@ export function Transcript({
       <div className="flex-1 px-4 py-5 max-lg:min-w-0 lg:overflow-y-auto lg:px-8 lg:py-7">
         {/* Editorial intro */}
         <div className="mb-8 max-w-2xl">
-          <div className="kicker mb-2">Run narrative</div>
           <h2 className="mb-2 text-xl font-semibold tracking-[-0.01em] text-paper-50">
             {run.templateName}
           </h2>
@@ -193,7 +192,7 @@ export function Transcript({
               <p
                 className={cn(
                   'mb-4 break-words text-sm leading-relaxed',
-                  isFailedStep ? 'text-brick-400' : 'text-paper-400'
+                  isFailedStep ? 'text-danger-400' : 'text-paper-400'
                 )}
               >
                 {stepSummary(step)}

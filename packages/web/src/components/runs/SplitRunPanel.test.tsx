@@ -85,22 +85,22 @@ describe('SplitRunPanel', () => {
   it('highlights every branch of a node chosen on the graph, and only those', () => {
     renderPanel('impl');
     const [fan, b0, b1] = rows();
-    expect(fan?.className).not.toContain('border-ember-400');
-    expect(b0?.className).toContain('border-ember-400');
-    expect(b1?.className).toContain('border-ember-400');
+    expect(fan?.className).not.toContain('border-accent-400');
+    expect(b0?.className).toContain('border-accent-400');
+    expect(b1?.className).toContain('border-accent-400');
   });
 
   it('highlights a fan-out node together with its branch steps', () => {
     renderPanel('fan');
-    expect(rows().every((r) => r.className.includes('border-ember-400'))).toBe(true);
+    expect(rows().every((r) => r.className.includes('border-accent-400'))).toBe(true);
   });
 
   it('highlights only the chosen branch when a branch step is selected', () => {
     renderPanel('fan[1]/impl');
     const [fan, b0, b1] = rows();
-    expect(fan?.className).not.toContain('border-ember-400');
-    expect(b0?.className).not.toContain('border-ember-400');
-    expect(b1?.className).toContain('border-ember-400');
+    expect(fan?.className).not.toContain('border-accent-400');
+    expect(b0?.className).not.toContain('border-accent-400');
+    expect(b1?.className).toContain('border-accent-400');
     expect(screen.getAllByTestId('trace-branch').map((el) => el.textContent)).toEqual([
       'Branch fan[1]',
     ]);

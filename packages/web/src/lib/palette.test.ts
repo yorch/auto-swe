@@ -1,7 +1,15 @@
 import { globSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { TOKEN, TOKEN_CSS_VAR, TOKEN_LIGHT } from './palette.js';
+import {
+  TOKEN,
+  TOKEN_CSS_VAR,
+  TOKEN_GRAPHITE,
+  TOKEN_GRAPHITE_LIGHT,
+  TOKEN_LIGHT,
+  type Tokens,
+  tokensFor,
+} from './palette.js';
 
 /**
  * The reason `lib/palette.ts` is allowed to hold literals at all: this test
@@ -119,9 +127,11 @@ describe('design tokens are the only colour scale in use', () => {
     'pink',
     'rose',
   ];
-  // `amber` and `violet` are also project token names, so they are excluded:
-  // the project defines --color-amber-400 / --color-violet-400 itself.
-  const PROJECT_OWNED = new Set(['amber', 'violet']);
+  // The project's token families are named by role (accent, success, warning, …), none of
+  // which is a Tailwind default scale, so no default is shadowed: `amber` and `violet` are
+  // banned like the rest. A future token family that collides with a default would be listed
+  // here, with a reason, rather than silently exempting the whole scale.
+  const PROJECT_OWNED = new Set<string>();
   const scales = DEFAULT_SCALES.filter((s) => !PROJECT_OWNED.has(s));
 
   it('no component uses a default Tailwind colour scale', () => {
@@ -146,51 +156,114 @@ describe('design tokens are the only colour scale in use', () => {
 });
 
 /**
- * In the dark theme an ink step's lightness follows its role: 950 deepest, 900
- * recessed, 800 the page, 700 the card, then raised surfaces and borders. When
- * 900 sat above 800, a "recessed" block was lighter than the page around it.
+ * Every palette × theme combination, as the browser resolves it: a graphite block
+ * re-declares only the neutral ramps, so the accent and status colours fall through
+ * to the navy block of the same theme.
  */
-describe('dark ink ramp', () => {
-  const channel = (hex: string, offset: number) => {
-    const value = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
-    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  };
-  const luminance = (hex: string) =>
-    0.2126 * channel(hex, 1) + 0.7152 * channel(hex, 3) + 0.0722 * channel(hex, 5);
-  const css = readFileSync(path.resolve(__dirname, '../app/globals.css'), 'utf8');
-  const declared = declarations(blockAfter(css, '@theme {'));
+const CSS = readFileSync(path.resolve(__dirname, '../app/globals.css'), 'utf8');
+const NAVY_DARK = declarations(blockAfter(CSS, '@theme {'));
+const NAVY_LIGHT = new Map([
+  ...NAVY_DARK,
+  ...declarations(blockAfter(CSS, ":root[data-theme='light'] {")),
+]);
+const GRAPHITE_DARK_OWN = declarations(
+  blockAfter(CSS, ":root[data-palette='graphite']:not([data-theme='light']) {")
+);
+const GRAPHITE_LIGHT_OWN = declarations(
+  blockAfter(CSS, ":root[data-palette='graphite'][data-theme='light'] {")
+);
 
-  it('gets lighter from ink-950 to ink-200', () => {
-    const steps = ['950', '900', '800', '700', '600', '500', '400', '300', '200'];
-    const values = steps.map((s) => {
-      const hex = declared.get(`--color-ink-${s}`);
-      expect(hex, `--color-ink-${s} is not declared`).toBeDefined();
-      return luminance(hex as string);
-    });
-    for (let i = 1; i < values.length; i++) {
-      expect(
-        values[i],
-        `ink-${steps[i]} should be lighter than ink-${steps[i - 1]}`
-      ).toBeGreaterThan(values[i - 1]);
+interface Combo {
+  name: string;
+  theme: 'dark' | 'light';
+  palette: 'navy' | 'graphite';
+  declared: Map<string, string>;
+  mirror: Tokens;
+}
+
+const COMBOS: Combo[] = [
+  { declared: NAVY_DARK, mirror: TOKEN, name: 'navy dark', palette: 'navy', theme: 'dark' },
+  {
+    declared: NAVY_LIGHT,
+    mirror: TOKEN_LIGHT,
+    name: 'navy light',
+    palette: 'navy',
+    theme: 'light',
+  },
+  {
+    declared: new Map([...NAVY_DARK, ...GRAPHITE_DARK_OWN]),
+    mirror: TOKEN_GRAPHITE,
+    name: 'graphite dark',
+    palette: 'graphite',
+    theme: 'dark',
+  },
+  {
+    declared: new Map([...NAVY_LIGHT, ...GRAPHITE_LIGHT_OWN]),
+    mirror: TOKEN_GRAPHITE_LIGHT,
+    name: 'graphite light',
+    palette: 'graphite',
+    theme: 'light',
+  },
+];
+
+const INK_STEPS = ['950', '900', '800', '700', '600', '500', '400', '300', '200'];
+const PAPER_STEPS = ['50', '100', '200', '300', '400', '500', '600'];
+
+function channel(hex: string, offset: number) {
+  const value = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
+  return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+}
+function luminance(hex: string) {
+  return 0.2126 * channel(hex, 1) + 0.7152 * channel(hex, 3) + 0.0722 * channel(hex, 5);
+}
+function ratio(a: string, b: string) {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+describe('graphite palette blocks', () => {
+  const own = [
+    ['dark', GRAPHITE_DARK_OWN],
+    ['light', GRAPHITE_LIGHT_OWN],
+  ] as const;
+
+  it.each(own)('the %s block re-declares the whole ink and paper ramps', (_mode, block) => {
+    // A step left out would fall through to navy and bring its blue cast back.
+    for (const step of INK_STEPS) {
+      expect(block.get(`--color-ink-${step}`), `ink-${step}`).toBeDefined();
+    }
+    for (const step of PAPER_STEPS) {
+      expect(block.get(`--color-paper-${step}`), `paper-${step}`).toBeDefined();
+    }
+  });
+
+  it.each(own)('the %s ramps are unsaturated grey', (_mode, block) => {
+    for (const [name, hex] of block) {
+      const rgb = [1, 3, 5].map((o) => Number.parseInt(hex.slice(o, o + 2), 16));
+      expect(Math.max(...rgb) - Math.min(...rgb), name).toBeLessThanOrEqual(12);
     }
   });
 });
 
-/** The text ramp must stay readable (WCAG AA) on the surfaces it is documented for. */
-describe('paper text ramp contrast', () => {
-  const channel = (hex: string, offset: number) => {
-    const value = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
-    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+/** Each combination is mirrored exactly, and its text ramp stays readable (WCAG AA). */
+describe.each(COMBOS)('$name', ({ declared, mirror, palette, theme }) => {
+  const color = (name: string) => {
+    const hex = declared.get(`--color-${name}`);
+    expect(hex, `--color-${name} is not declared`).toBeDefined();
+    return hex as string;
   };
-  const luminance = (hex: string) =>
-    0.2126 * channel(hex, 1) + 0.7152 * channel(hex, 3) + 0.0722 * channel(hex, 5);
-  const ratio = (a: string, b: string) => {
-    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-    return (hi + 0.05) / (lo + 0.05);
-  };
-  const css = readFileSync(path.resolve(__dirname, '../app/globals.css'), 'utf8');
-  const color = (name: string) =>
-    css.match(new RegExp(`--color-${name}:\\s*(#[0-9a-fA-F]{6})`))?.[1] as string;
+
+  it('parses out of globals.css', () => {
+    expect(declared.size).toBeGreaterThan(20);
+  });
+
+  it('is the set tokensFor() returns', () => {
+    expect(tokensFor(theme, palette)).toBe(mirror);
+  });
+
+  it.each(Object.keys(TOKEN) as (keyof typeof TOKEN)[])('mirrors %s', (key) => {
+    expect(mirror[key].toLowerCase()).toBe(declared.get(TOKEN_CSS_VAR[key]));
+  });
 
   it.each(['950', '900', '800', '700', '600', '500'])(
     'paper-300..500 clear 4.5:1 on ink-%s',
@@ -205,11 +278,27 @@ describe('paper text ramp contrast', () => {
     expect(ratio(color('paper-600'), color(`ink-${ink}`))).toBeGreaterThanOrEqual(4.5);
   });
 
-  it('keeps visible steps between 300, 400, 500 and 600', () => {
+  it('keeps visible steps between paper 300, 400, 500 and 600', () => {
     const ink = color('ink-800');
     const steps = ['300', '400', '500', '600'].map((p) => ratio(color(`paper-${p}`), ink));
     for (let i = 1; i < steps.length; i++) {
       expect(steps[i - 1] - steps[i]).toBeGreaterThan(0.9);
+    }
+  });
+
+  /**
+   * In a dark theme an ink step's lightness follows its role: 950 deepest, 900
+   * recessed, 800 the page, 700 the card, then raised surfaces and borders. When
+   * 900 sat above 800, a "recessed" block was lighter than the page around it.
+   * The light themes keep roles rather than lightness order (the card is white).
+   */
+  it.runIf(theme === 'dark')('gets lighter from ink-950 to ink-200', () => {
+    const values = INK_STEPS.map((s) => luminance(color(`ink-${s}`)));
+    for (let i = 1; i < values.length; i++) {
+      expect(
+        values[i],
+        `ink-${INK_STEPS[i]} should be lighter than ink-${INK_STEPS[i - 1]}`
+      ).toBeGreaterThan(values[i - 1]);
     }
   });
 });

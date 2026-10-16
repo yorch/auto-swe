@@ -1,13 +1,12 @@
 'use client';
 
 import { Suspense } from 'react';
-import { RunListItem } from '@/components/runs/RunListItem';
+import { RunsTable } from '@/components/runs/RunsTable';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -46,7 +45,13 @@ function RunsList() {
   return (
     <div className="space-y-6">
       <PageHeader
-        subtitle="A run is one execution of a workflow template. This lists every run across your teams. The title opens the run's request; Diagnostics opens the full trace, graph and timeline."
+        help={
+          <p>
+            A run is one execution of a workflow template. The title opens the run's request;
+            Diagnostics opens the full trace, graph and timeline.
+          </p>
+        }
+        subtitle="Every run across your teams."
         title="All runs"
       />
 
@@ -97,7 +102,7 @@ function RunsList() {
         </Toolbar>
 
         {isLoading ? (
-          <SkeletonRows className="px-5 py-4" rows={6} />
+          <RunsTable isLoading runs={[]} />
         ) : (
           <div className={isError ? 'p-4 sm:p-5' : undefined}>
             <QueryBoundary
@@ -133,11 +138,7 @@ function RunsList() {
                   />
                 )
               ) : (
-                <ul className="divide-y divide-ink-600">
-                  {runs.map((run) => (
-                    <RunListItem key={run.id} run={run} />
-                  ))}
-                </ul>
+                <RunsTable runs={runs} />
               )}
             </QueryBoundary>
           </div>

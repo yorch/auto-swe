@@ -16,7 +16,6 @@ import { errMsg } from '@/lib/errors';
  */
 export function AllowlistEditor({
   description,
-  eyebrow = 'Sandbox',
   isLoading,
   items,
   onSave,
@@ -25,7 +24,6 @@ export function AllowlistEditor({
   title,
 }: {
   description: ReactNode;
-  eyebrow?: string;
   isLoading: boolean;
   /** Current server value; undefined while loading. */
   items: string[] | undefined;
@@ -67,7 +65,7 @@ export function AllowlistEditor({
   return (
     <Card className="flex flex-col">
       <CardHeader className="mb-1">
-        <CardTitle eyebrow={eyebrow}>{title}</CardTitle>
+        <CardTitle>{title}</CardTitle>
         {items && (
           <span className="text-xs text-paper-500 tabular-nums">
             {items.length === 0
@@ -78,7 +76,7 @@ export function AllowlistEditor({
       </CardHeader>
       <p className="mb-4 text-sm leading-relaxed text-paper-400">{description}</p>
       {isLoading ? (
-        <SkeletonRows rows={3} />
+        <SkeletonRows label="allowlist" rows={3} />
       ) : (
         <>
           <Textarea

@@ -86,9 +86,9 @@ function WorkModePicker({
               className={cn(
                 // Mobile: icon | text | check in one row. From sm: icon and check on top, text below.
                 'relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 rounded-xl border p-4 transition-colors sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-y-3',
-                'has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ember-400',
+                'has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent-400',
                 selected
-                  ? 'border-ember-400/70 bg-ember-400/[0.07]'
+                  ? 'border-accent-400/70 bg-accent-400/[0.07]'
                   : 'border-ink-400/60 bg-ink-800/60',
                 option.disabled
                   ? 'cursor-not-allowed opacity-60'
@@ -109,7 +109,7 @@ function WorkModePicker({
                 className={cn(
                   'flex h-8 w-8 items-center justify-center rounded-lg border',
                   selected
-                    ? 'border-ember-400/40 bg-ember-400/15 text-ember-300'
+                    ? 'border-accent-400/40 bg-accent-400/15 text-accent-300'
                     : 'border-ink-400 bg-ink-700 text-paper-400'
                 )}
               >
@@ -125,7 +125,7 @@ function WorkModePicker({
                 aria-hidden="true"
                 className={cn(
                   'mt-0.5 flex h-4 w-4 items-center justify-center rounded-full border sm:mt-0 sm:justify-self-end',
-                  selected ? 'border-ember-400 bg-ember-500 text-white' : 'border-ink-300'
+                  selected ? 'border-accent-400 bg-accent-500 text-white' : 'border-ink-300'
                 )}
               >
                 {selected && <Icon name="check" size={10} strokeWidth={3} />}
@@ -228,7 +228,7 @@ export function StartWork({
     <div className="space-y-6">
       <PageHeader
         actions={
-          <ButtonLink href="/workflows" variant="secondary">
+          <ButtonLink href="/requests" variant="secondary">
             View requests
           </ButtonLink>
         }
@@ -263,13 +263,12 @@ export function StartWork({
                   isFetching={templates.isFetching}
                   isLoading={templates.isLoading}
                   label="workflows"
-                  loadingMessage="Loading workflows…"
                   onRetry={() => void templates.refetch()}
                 >
                   {!runnable.length ? (
                     <EmptyState
                       action={
-                        <ButtonLink href="/workflows/library" size="sm">
+                        <ButtonLink href="/library" size="sm">
                           Open the library
                         </ButtonLink>
                       }
@@ -293,7 +292,7 @@ export function StartWork({
                       {template && (
                         <ButtonLink
                           className="sm:mb-px"
-                          href={`/workflows/library/${template.id}`}
+                          href={`/library/${template.id}`}
                           variant="ghost"
                         >
                           View process
@@ -336,12 +335,11 @@ export function StartWork({
         </div>
         <aside aria-label="What happens next" className="space-y-4">
           <Card className="p-5 xl:sticky xl:top-20" variant="inset">
-            <div className="kicker mb-1">What happens next</div>
             <h2 className="text-sm font-semibold text-paper-100">{guide.title}</h2>
             <ul className="mt-3 space-y-2.5">
               {guide.points.map((point) => (
                 <li className="flex gap-2 text-sm leading-relaxed text-paper-400" key={point}>
-                  <Icon className="mt-0.5 text-moss-400" name="check" size={14} />
+                  <Icon className="mt-0.5 text-success-400" name="check" size={14} />
                   {point}
                 </li>
               ))}

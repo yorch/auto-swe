@@ -152,4 +152,37 @@ describe('request workspace', () => {
     }
     await app.close();
   });
+
+  it('matches the description and ticket ID, ANDed with run visibility and the MINE scope', async () => {
+    const { app, prisma } = await build();
+    prisma.workflowRun.findMany.mockResolvedValue([]);
+    const response = await app.inject({ headers: auth, url: '/runs/requests?search=JIRA-4077' });
+    expect(response.statusCode).toBe(200);
+    const where = prisma.workflowRun.findMany.mock.calls[0][0].where;
+    expect(where.OR).toEqual([
+      { workRequest: { description: { contains: 'JIRA-4077', mode: 'insensitive' } } },
+      { workRequest: { externalTicketId: { contains: 'JIRA-4077', mode: 'insensitive' } } },
+    ]);
+    // Siblings of the search `OR`, so all of them must hold: the search only narrows.
+    expect(where.AND[0]).toHaveProperty('OR');
+    expect(where.workRequest).toEqual({ requestedById: USER });
+    expect(where.template).toBeDefined();
+    await app.close();
+  });
+
+  it('keeps team-scoped visibility when searching, and caps the query length', async () => {
+    const { app, prisma } = await build();
+    prisma.workflowRun.findMany.mockResolvedValue([]);
+    await app.inject({ headers: auth, url: '/runs/requests?scope=TEAM&search=auth' });
+    const where = prisma.workflowRun.findMany.mock.calls[0][0].where;
+    expect(where.AND[0]).toHaveProperty('OR');
+    expect(where.workRequest).toBeUndefined();
+    expect(where.OR).toHaveLength(2);
+    const long = await app.inject({
+      headers: auth,
+      url: `/runs/requests?search=${'a'.repeat(201)}`,
+    });
+    expect(long.statusCode).toBe(400);
+    await app.close();
+  });
 });

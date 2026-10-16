@@ -31,13 +31,13 @@ const SOURCE_LABELS: Record<SettingSource, string> = {
 /// Muted for the two "nobody set this" sources, so a scanned list makes the
 /// deliberately-configured values stand out from the inherited ones.
 const SOURCE_TONE: Record<SettingSource, BadgeTone> = {
-  CHANNEL: 'ember',
+  CHANNEL: 'accent',
   DEFAULT: 'muted',
   GLOBAL: 'neutral',
-  ORGANIZATION: 'ember',
-  PINNED: 'amber',
-  TEAM: 'ember',
-  WORKFLOW_TEMPLATE: 'ember',
+  ORGANIZATION: 'accent',
+  PINNED: 'warning',
+  TEAM: 'accent',
+  WORKFLOW_TEMPLATE: 'accent',
 };
 
 const SCOPE_NOUN: Record<SettingScope, string> = {
@@ -146,7 +146,7 @@ export function SettingRow({
     <div
       className={cn(
         'border-t border-ink-600 py-5 first:border-t-0 first:pt-1',
-        dirty && '-mx-3 rounded-lg border-t-transparent bg-amber-400/[0.04] px-3'
+        dirty && '-mx-3 rounded-lg border-t-transparent bg-warning-400/[0.04] px-3'
       )}
       data-dirty={dirty || undefined}
     >
@@ -155,7 +155,7 @@ export function SettingRow({
           <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
             <span className="text-sm font-medium text-paper-100">{setting.label}</span>
             {setting.restartRequired && (
-              <Badge tone="amber" variant="outline">
+              <Badge tone="warning" variant="outline">
                 Restart required
               </Badge>
             )}
@@ -303,7 +303,7 @@ export function SettingRow({
               )}
               {status?.phase === 'saved' && !dirty && (
                 <span
-                  className="inline-flex items-center gap-1 text-xs text-moss-400"
+                  className="inline-flex items-center gap-1 text-xs text-success-400"
                   role="status"
                 >
                   <Icon name="check" size={12} />
@@ -313,7 +313,7 @@ export function SettingRow({
             </div>
           )}
           {status?.phase === 'error' && (
-            <p className="text-xs text-brick-400" role="alert">
+            <p className="text-xs text-danger-400" role="alert">
               {status.message}
             </p>
           )}
@@ -334,7 +334,10 @@ export function SettingRow({
                     {grantsHref && (
                       <>
                         {' '}
-                        <Link className="text-ember-400 hover:underline" href={grantsHref}>
+                        <Link
+                          className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
+                          href={grantsHref}
+                        >
                           Delegate it with a config grant
                         </Link>
                         .

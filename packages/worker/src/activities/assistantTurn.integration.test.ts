@@ -70,7 +70,7 @@ function firstDocLink(prompt: unknown): string | undefined {
 function scriptedModel(): MockLanguageModelV4 {
   let step = 0;
   const answer = (prompt: unknown) =>
-    `Configure it under Studio → Integrations → GitHub. See [the docs](${firstDocLink(prompt) ?? '(no link)'}).`;
+    `Configure it under Admin → Integrations → GitHub. See [the docs](${firstDocLink(prompt) ?? '(no link)'}).`;
   return new MockLanguageModelV4({
     doGenerate: async ({ prompt }) => {
       step += 1;
@@ -149,7 +149,7 @@ beforeEach(() => {
   db.assistantMessage.findMany.mockResolvedValue([
     {
       content: 'How do I configure the GitHub integration?',
-      pageContext: { route: '/studio/integrations' },
+      pageContext: { route: '/admin/integrations' },
       role: 'USER',
       status: 'COMPLETE',
     },

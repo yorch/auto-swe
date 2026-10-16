@@ -1,7 +1,7 @@
 # Per-user GitHub credentials
 
 By default the platform reaches GitHub with one credential an admin configures — a PAT or a GitHub
-App, at `/studio/integrations`. A user can instead save **their own** GitHub token for a
+App, at `/admin/integrations`. A user can instead save **their own** GitHub token for a
 repository, and runs they launch against that repository clone, push and open pull requests as
 that token.
 
@@ -98,7 +98,7 @@ the requester would let anyone who can re-run someone's work act as them.
 
 ## 2. Configuration
 
-Two settings, both `ADMIN`-only and deployment-wide, at `/govern/platform-settings`:
+Two settings, both `ADMIN`-only and deployment-wide, at `/admin/platform-settings`:
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -200,7 +200,7 @@ family is a hosted GitHub's web and API names taken together (`github.com` with 
 hostname.
 
 For any other approved host (`github.repositoryHosts`, see [repositories.md](./repositories.md)) an
-admin can record that host's own credentials at `/studio/integrations` → GitHub → **Per-host
+admin can record that host's own credentials at `/admin/integrations` → GitHub → **Per-host
 credentials**: a PAT, a GitHub App (id and private key), or both. A repository on that host then
 resolves its platform credential exactly as an instance repository does — an installation token for
 the repository's own installation when it has one and the App is configured, otherwise the PAT —
@@ -263,7 +263,7 @@ the instance secret, so the per-host webhook secret table refuses them.
 - **Webhooks still use the platform's secret.** The `signal` CI wait strategy needs GitHub to
   deliver webhooks signed with the platform's webhook secret, which a user cannot configure on a
   repository they connected themselves. A deployment whose repositories are reached through user
-  tokens sets the CI wait strategy to `poll` at `/govern/workflow-defaults`; it is deployment-wide,
+  tokens sets the CI wait strategy to `poll` at `/admin/workflow-defaults`; it is deployment-wide,
   not per repository.
 - **A user outside the owning team and every shared team cannot save a token for it.** Getting
   access is a matter of the owning team sharing the repository with theirs — see

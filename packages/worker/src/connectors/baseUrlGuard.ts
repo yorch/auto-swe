@@ -3,7 +3,7 @@ import { ApplicationFailure } from '@temporalio/activity';
 
 /**
  * An ADMIN-configured connector origin on a platform-wide integration (the
- * tracker at /studio/integrations → Tracker, the knowledge base at → Knowledge
+ * tracker at /admin/integrations → Tracker, the knowledge base at → Knowledge
  * Base) and whether that integration opted in to private addresses.
  */
 export interface AdminConnectorOrigin {

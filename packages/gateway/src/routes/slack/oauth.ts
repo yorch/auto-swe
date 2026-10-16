@@ -396,7 +396,7 @@ export async function registerOauthRoutes(fastify: FastifyInstance): Promise<voi
     // Bounce back to the integrations page with a success flag; its Slack tab
     // reads `tab` and `slack_installed`.
     return reply.redirect(
-      `${resolveWebUrl()}/studio/integrations?tab=slack&slack_installed=${slackTeamId}`
+      `${resolveWebUrl()}/admin/integrations?tab=slack&slack_installed=${slackTeamId}`
     );
   });
 }

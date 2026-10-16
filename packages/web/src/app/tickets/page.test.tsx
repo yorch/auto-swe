@@ -4,6 +4,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const nav = vi.hoisted(() => ({ replace: vi.fn(), search: '' }));
+vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/tickets',
   useRouter: () => ({ replace: nav.replace }),

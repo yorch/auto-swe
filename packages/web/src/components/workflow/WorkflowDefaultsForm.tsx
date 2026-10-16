@@ -4,7 +4,7 @@ import type { ReactNode } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { SkeletonForm } from '@/components/ui/LoadingState';
 import { SaveBar } from '@/components/ui/SaveBar';
 import { Select } from '@/components/ui/Select';
 import { Textarea } from '@/components/ui/Textarea';
@@ -181,7 +181,7 @@ export function WorkflowDefaultsForm() {
   const num = (key: NumericKey) => (v: number) => setField(key, v);
 
   if (isLoading) {
-    return <LoadingState />;
+    return <SkeletonForm fields={6} label="workflow defaults" />;
   }
   // A failed load must not render the form: it would show the built-in
   // defaults as if they were the saved values, and saving would overwrite them.
@@ -195,7 +195,7 @@ export function WorkflowDefaultsForm() {
     <form className="space-y-6" onSubmit={submit}>
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Git &amp; pull request">Branch and pull request templates</CardTitle>
+          <CardTitle>Branch and pull request templates</CardTitle>
         </CardHeader>
         <div className="space-y-4">
           <Input
@@ -232,7 +232,7 @@ export function WorkflowDefaultsForm() {
 
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Teams">Default team</CardTitle>
+          <CardTitle>Default team</CardTitle>
         </CardHeader>
         <Input
           hint="Work requests without an explicit team are assigned to this team."
@@ -246,7 +246,7 @@ export function WorkflowDefaultsForm() {
 
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Resources &amp; tuning">Resource &amp; tuning defaults</CardTitle>
+          <CardTitle>Resource &amp; tuning defaults</CardTitle>
         </CardHeader>
         <div className="space-y-6">
           <FieldGroup

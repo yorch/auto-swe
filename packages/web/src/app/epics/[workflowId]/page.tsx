@@ -8,7 +8,7 @@ import { CopyButton } from '@/components/ui/CopyButton';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { SkeletonDetail } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -38,7 +38,7 @@ export default function EpicDetailPage({ params }: PageProps) {
   const mountedAtRef = useRef(Date.now());
   const { data: epic, isLoading, error } = useEpic(workflowId ?? '');
   // Every child run shares the epic's work request. The child's ActiveWorkflow
-  // row is self-registered without a repository, so /workflows/:id cannot show
+  // row is self-registered without a repository, so /requests/:id cannot show
   // it; its WorkflowRun (keyed by the same Temporal workflow ID) can.
   // 100 is the list endpoint's page cap — far above any realistic repo count.
   const { data: childRuns, isSuccess: childRunsSettled } = useRunsForWorkRequest(
@@ -52,14 +52,14 @@ export default function EpicDetailPage({ params }: PageProps) {
   }
 
   if (isLoading) {
-    return <LoadingState message="Loading epic…" />;
+    return <SkeletonDetail label="epic" />;
   }
 
   if (!epic) {
     // Right after creation the epic row may not exist yet — keep polling
     // quietly (the hook retries + refetches) instead of flashing an error.
     if (Date.now() - mountedAtRef.current < STARTUP_GRACE_MS) {
-      return <LoadingState message="The epic is starting…" />;
+      return <SkeletonDetail label="the epic as it starts" />;
     }
     // A load failure is not a missing epic: only an errorless miss reads as "not found".
     if (!error) {
@@ -85,12 +85,13 @@ export default function EpicDetailPage({ params }: PageProps) {
             </ButtonLink>
           )
         }
-        subtitle={
-          <>
+        help={
+          <p>
             An epic <HelpTip term="epic" /> is a multi-repository change. The planner splits it into
             the child runs listed below, one per repository.
-          </>
+          </p>
         }
+        subtitle="A multi-repository change, split into one child run per repository."
         title={epic.externalTicketId}
       />
 

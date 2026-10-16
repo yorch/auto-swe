@@ -768,15 +768,15 @@ for (const file of targets) {
 //
 // A doc that tells an operator to go to `/admin/integrations` is quoting a URL
 // the web app owns, and nothing else here notices when the app moves it. The
-// dashboard's navigation was reorganised into `/govern` and `/studio` and the
-// docs kept pointing at `/admin` for months: 89 references across 12 files, all
-// of them reading perfectly and none of them resolving.
+// dashboard's navigation has been regrouped more than once, and once the docs
+// kept pointing at pages that had moved for months: 89 references across 12
+// files, all of them reading perfectly and none of them resolving.
 //
-// The trap this has to avoid is that `/api/v1/admin/...` is still a live
-// gateway prefix, so `/admin/config` and `/admin/scanner-patterns` are correct
-// API paths. Only a reference that is unambiguously a *page* is checked: one
-// whose line does not mention an API, and whose first segment is a section the
-// dashboard actually has.
+// The trap this has to avoid is that `/api/v1/admin/...` is a live gateway
+// prefix beside the dashboard's own `/admin` pages, so `/admin/config` and
+// `/admin/scanner-patterns` are correct API paths. Only a reference that is
+// unambiguously a *page* is checked: one whose line does not mention an API,
+// and whose first segment is a section the dashboard actually has.
 // ---------------------------------------------------------------------------
 
 /** Every route the Next.js app renders, derived from its `page.tsx` files. */
@@ -803,7 +803,7 @@ const appRoutes = (() => {
   return out;
 })();
 
-/** Top-level sections the dashboard serves, e.g. `govern`, `studio`, `runs`. */
+/** Top-level sections the dashboard serves, e.g. `admin`, `library`, `runs`. */
 const appSections = new Set([...appRoutes].map((r) => r.split('/')[1]).filter(Boolean));
 
 /**
@@ -825,11 +825,7 @@ const routeExists = (path) => {
   });
 };
 
-/**
- * A path is a page reference when its first segment names a real dashboard
- * section, or when it names `admin` — which is what the stale references say
- * and which the app no longer serves at all.
- */
+/** A path is a page reference when its first segment names a real dashboard section. */
 const PAGE_LIKE = /`(\/(?:[a-z][a-z0-9-]*)(?:\/[a-z0-9[\]:-]+)*)`/g;
 
 /** Lines that are talking about the HTTP API, where `/admin/...` is correct. */
@@ -847,9 +843,7 @@ for (const file of targets) {
       for (const m of line.matchAll(PAGE_LIKE)) {
         const path = m[1];
         const section = path.split('/')[1];
-        const isKnownSection = appSections.has(section);
-        const claimsAdmin = section === 'admin';
-        if (!isKnownSection && !claimsAdmin) {
+        if (!appSections.has(section)) {
           continue;
         }
         if (routeExists(path)) {

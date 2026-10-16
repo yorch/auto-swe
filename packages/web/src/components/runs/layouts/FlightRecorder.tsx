@@ -72,14 +72,14 @@ function WaterfallBar({
         <div
           className={cn(
             'absolute h-full rounded',
-            isFailed ? 'hatch-fail' : isSkipped ? 'bg-paper-600 opacity-30' : 'bg-dust-400'
+            isFailed ? 'hatch-fail' : isSkipped ? 'bg-paper-600 opacity-30' : 'bg-info-400'
           )}
           style={{ left: `${leftPct}%`, width: `${Math.min(widthPct, 100 - leftPct)}%` }}
         />
         {/* Playhead indicator */}
         {currentMs > 0 && (
           <div
-            className="absolute top-0 bottom-0 w-0.5 bg-ember-400"
+            className="absolute top-0 bottom-0 w-0.5 bg-accent-400"
             style={{ left: `${Math.min((currentMs / totalMs) * 100, 100)}%` }}
           />
         )}
@@ -225,7 +225,7 @@ export function FlightRecorder({
       <div className={PANEL_BAR}>
         <h2 className={PANEL_TITLE}>Event feed</h2>
         {playing && (
-          <Badge dot="pulse" tone="moss" variant="text">
+          <Badge dot="pulse" tone="success" variant="text">
             Replaying
           </Badge>
         )}
@@ -275,7 +275,7 @@ export function FlightRecorder({
           <button
             aria-label={playing ? 'Pause replay' : 'Play replay'}
             className={cn(
-              'flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-ember-500 to-ember-600 text-white transition hover:brightness-110 lg:h-9 lg:w-9',
+              'flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full bg-accent-500 text-white transition-colors hover:bg-accent-600 lg:h-9 lg:w-9',
               FOCUS_RING
             )}
             onClick={() => {
@@ -302,7 +302,7 @@ export function FlightRecorder({
               </span>
               <span className="tabular text-xs text-paper-500">/ {formatClock(totalMs)}</span>
               {currentStepName && (
-                <Badge className="font-mono" tone="ember">
+                <Badge className="font-mono" tone="accent">
                   {currentStepName}
                 </Badge>
               )}
@@ -324,7 +324,7 @@ export function FlightRecorder({
         <div className="relative">
           <input
             aria-label="Replay position"
-            className="block h-[40px] w-full cursor-pointer appearance-none rounded-xs accent-ember-400 outline-none max-lg:bg-[length:100%_0.375rem] max-lg:bg-center max-lg:bg-no-repeat lg:inline-block lg:h-1.5"
+            className="block h-[40px] w-full cursor-pointer appearance-none rounded-xs accent-accent-400 outline-none max-lg:bg-[length:100%_0.375rem] max-lg:bg-center max-lg:bg-no-repeat lg:inline-block lg:h-1.5"
             max={1000}
             min={0}
             onChange={(e) => {
@@ -332,7 +332,7 @@ export function FlightRecorder({
               setPlayhead(Number(e.target.value) / 1000);
             }}
             style={{
-              backgroundImage: `linear-gradient(to right, var(--color-ember-400) ${playhead * 100}%, var(--color-ink-500) ${playhead * 100}%)`,
+              backgroundImage: `linear-gradient(to right, var(--color-accent-400) ${playhead * 100}%, var(--color-ink-500) ${playhead * 100}%)`,
             }}
             type="range"
             value={Math.round(playhead * 1000)}
@@ -358,7 +358,7 @@ export function FlightRecorder({
                   <div
                     className={cn(
                       'absolute top-[1.5px] h-[3px]',
-                      isFailed ? 'bg-brick-400' : 'bg-dust-400'
+                      isFailed ? 'bg-danger-400' : 'bg-info-400'
                     )}
                     key={s.id}
                     style={{

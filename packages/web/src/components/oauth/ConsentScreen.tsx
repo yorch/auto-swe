@@ -9,7 +9,7 @@ import { Button, ButtonLink } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { DocLink } from '@/components/ui/DocLink';
 import { Icon } from '@/components/ui/Icon';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { SkeletonDetail, SkeletonRows } from '@/components/ui/LoadingState';
 import { useMcpGrants } from '@/hooks/useMcpGrants';
 import { useConsentDecision, useOAuthClientName } from '@/hooks/useOAuthConsent';
 import { errMsg } from '@/lib/errors';
@@ -59,7 +59,7 @@ export function ConsentScreen({ search }: { search: string }) {
   if (session === 'checking') {
     return (
       <AuthLayout embedded>
-        <LoadingState message="Checking your session…" />
+        <SkeletonDetail label="your session" />
       </AuthLayout>
     );
   }
@@ -68,8 +68,8 @@ export function ConsentScreen({ search }: { search: string }) {
       <AuthLayout embedded>
         <AuthHeading
           icon={session === 'unknown' ? 'warning' : 'lock'}
-          kickerTone={session === 'unknown' ? 'amber' : 'ember'}
           title="Sign in to continue"
+          tone={session === 'unknown' ? 'warning' : 'neutral'}
         >
           {session === 'unknown'
             ? 'The gateway did not answer, so your session could not be checked.'
@@ -148,7 +148,7 @@ function ConsentDecision({ search }: { search: string }) {
 
   return (
     <AuthLayout embedded>
-      <AuthHeading icon="plug" kicker="Authorize access" title="Connect an app">
+      <AuthHeading icon="plug" title="Connect an app">
         <span className="font-semibold text-paper-100">{name ?? 'An app'}</span> wants to act on
         your behalf in auto-swe.
       </AuthHeading>
@@ -161,7 +161,7 @@ function ConsentDecision({ search }: { search: string }) {
         <div className="p-4">
           <div className="mb-1 flex items-center justify-between gap-2">
             <span className="label-mono">App</span>
-            <Badge dot tone="amber" variant="outline">
+            <Badge dot tone="warning" variant="outline">
               Unverified
             </Badge>
           </div>
@@ -190,7 +190,7 @@ function ConsentDecision({ search }: { search: string }) {
           <ul className="space-y-3 text-sm leading-relaxed text-paper-300">
             {wantsRead && (
               <li className="flex gap-2.5">
-                <Icon className="mt-0.5 text-moss-400" name="check" size={15} />
+                <Icon className="mt-0.5 text-success-400" name="check" size={15} />
                 <span>
                   <span className="font-semibold text-paper-100">Read</span>: see repositories, work
                   requests, runs and pending approvals.
@@ -241,14 +241,14 @@ function ConsentDecision({ search }: { search: string }) {
             the page to try again.
           </Alert>
         )}
-        {grants.isLoading && <LoadingState compact message="Loading permissions…" />}
+        {grants.isLoading && <SkeletonRows label="permissions" rows={2} />}
         {error && <Alert>{error}</Alert>}
       </div>
 
       <p className="mt-6 text-sm leading-relaxed text-paper-500">
         You can disconnect this at any time under{' '}
         <Link
-          className="text-ember-300 underline hover:text-ember-200"
+          className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
           href="/settings"
           rel="noopener noreferrer"
           target="_blank"

@@ -54,12 +54,12 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
   return (
     <div
       className={cn(
-        'relative rounded-lg border border-brick-400/35 bg-brick-400/[0.06]',
+        'relative rounded-lg border border-danger-400/35 bg-danger-400/[0.06]',
         size === 'full' ? 'p-4' : 'p-3'
       )}
     >
       <div className="flex items-start gap-3">
-        <Icon className="mt-0.5 text-brick-400" name="error" size={18} />
+        <Icon className="mt-0.5 text-danger-400" name="error" size={18} />
         <div className="min-w-0 flex-1">
           {/* Title, then where it failed and the error class */}
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -71,7 +71,7 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
             >
               {errorTitle}
             </h4>
-            <Badge className="font-mono" tone="brick" variant="outline">
+            <Badge className="font-mono" tone="danger" variant="outline">
               {errorCode}
             </Badge>
           </div>

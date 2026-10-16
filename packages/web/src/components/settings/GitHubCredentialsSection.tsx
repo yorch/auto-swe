@@ -5,7 +5,6 @@ import { Button, ButtonLink } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import {
   type MyCredential,
@@ -84,14 +83,13 @@ export function GitHubCredentialsSection() {
       title="GitHub credentials"
     >
       <QueryBoundary
-        compact
         error={mine.error}
         isError={mine.isError}
         isFetching={mine.isFetching}
         isLoading={mine.isLoading}
         label="your GitHub credentials"
-        loading={<SkeletonRows rows={2} />}
         onRetry={() => void mine.refetch()}
+        rows={2}
       >
         {credentials.length === 0 ? (
           <EmptyState

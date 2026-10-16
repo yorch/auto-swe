@@ -20,7 +20,7 @@ export const piHarness = defineHarness<PiAccess>({
     const { provider } = parseProviderModelSpec(model.spec);
     if (!BUILT_IN_PROVIDERS.has(provider) && !model.apiBase) {
       throw ApplicationFailure.nonRetryable(
-        `The pi runtime cannot reach agent '${agentKey}''s model '${model.spec}': provider '${provider}' is not built in and its credential has no apiBase. Set one via /studio/models.`,
+        `The pi runtime cannot reach agent '${agentKey}''s model '${model.spec}': provider '${provider}' is not built in and its credential has no apiBase. Set one via /models.`,
         'HARNESS_UNSUPPORTED_MODEL'
       );
     }

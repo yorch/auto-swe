@@ -2,7 +2,7 @@
 
 > How LLM model selection and provider credentials work in auto-swe.
 
-The DB is the sole source of truth for LLM config — no env vars for models or API keys. The worker calls `assertConfigReady()` at boot and refuses to start until the required rows exist. All edits go through `/studio/models` (admins) or `/teams/<id>` (team owners).
+The DB is the sole source of truth for LLM config — no env vars for models or API keys. The worker calls `assertConfigReady()` at boot and refuses to start until the required rows exist. All edits go through `/models` (admins) or `/teams/<id>` (team owners).
 
 ---
 
@@ -131,7 +131,7 @@ rate. The AI SDK's own usage shape carries no TTL split, and a response without 
 every write at the 5-minute rate. The span records the counts as `llm.cache_read_tokens`,
 `llm.cache_write_tokens` and `llm.cache_write_1h_tokens`.
 
-**In the dashboard**, `/studio/models` → **Catalog** lists every model with its price, status and
+**In the dashboard**, `/models` → **Catalog** lists every model with its price, status and
 source — *built-in*, *customized* (an admin's edit, which startup keeps), or *custom* — and, on a
 customized row whose shipped values have since changed, what code now ships beside a **Reset**.
 Above it, *Unpriced in use* lists the models configured or called in the last 30 days that nothing
@@ -412,7 +412,7 @@ failing it, because the worker starts without it.
 
 1. `yarn db:migrate && yarn db:generate && yarn db:seed` — schema + admin user.
 2. Start gateway + web only (not the worker yet).
-3. The DB seed already created the built-in `Agent` rows — 19 model-backed with default model specs, plus 13 sub-role personas that inherit a parent's model — along with the `EmbeddingConfig` singleton. Sign in as admin and add a `ProviderCredential` at `/studio/models` → Credentials.
+3. The DB seed already created the built-in `Agent` rows — 19 model-backed with default model specs, plus 13 sub-role personas that inherit a parent's model — along with the `EmbeddingConfig` singleton. Sign in as admin and add a `ProviderCredential` at `/models` → Credentials.
 4. Add at least one `ProviderCredential` on the Credentials tab. For the seeded defaults you need at minimum `anthropic` (for the agent roles) and `openai` (for embeddings).
 5. Start the worker. `assertConfigReady()` walks the DB; missing pieces are listed in a single rolled-up error pointing back to the dashboard.
 
@@ -472,11 +472,11 @@ Removes via the **Reset** button. Resetting causes the next activity call for th
 
 ### Overriding a model for one workflow template
 
-Admin-only, from the Agent library at `/studio/agents/library`. Create an Agent for the key with scope `WORKFLOW_TEMPLATE` and supply the template ID. The template editor itself carries no model section — template-scoped overrides are edited in the Agent library.
+Admin-only, from the Agent library at `/agents`. Create an Agent for the key with scope `WORKFLOW_TEMPLATE` and supply the template ID. The template editor itself carries no model section — template-scoped overrides are edited in the Agent library.
 
 ### Changing many agents' models at once
 
-In **Agent library** at `/studio/agents/library`, select the rows to change and choose **Change model**. **Set one model** assigns the same target to every selected agent with its own model. **Map each model** assigns a target per current model; this is useful when different providers or model families need different destinations. A mapping entry for a current model handles that model, and the optional catch-all entry handles every other current model — including one whose own row was left blank, which is why the preview is worth reading before applying. At most 200 agents can be changed in one action; narrow the list with the library's filters to work through more.
+In **Agent library** at `/agents`, select the rows to change and choose **Change model**. **Set one model** assigns the same target to every selected agent with its own model. **Map each model** assigns a target per current model; this is useful when different providers or model families need different destinations. A mapping entry for a current model handles that model, and the optional catch-all entry handles every other current model — including one whose own row was left blank, which is why the preview is worth reading before applying. At most 200 agents can be changed in one action; narrow the list with the library's filters to work through more.
 
 Review the preview before applying. It shows each agent's current and target model, any runtime or credential change, notes, and narrower scopes that shadow the row. The status explains what happens: `OK` will change, `NOOP` already has the target, `UNMATCHED` has no matching mapping entry, `INHERITS` has no model of its own and follows another agent, and `BLOCKED` fails a save rule — the target is a model the agent's harness cannot drive, the agent pins a credential for another provider, or the agent was deactivated after the selection was listed. Inherited sub-role personas are not edited: they take their model from the agent they inherit from, plus any runtime or reasoning level they do not set themselves. The preview names the parent each one follows; where that parent is in the selection as well, its own row is where the model it is moving to is shown. A persona on the `claude-code` harness that the target model cannot drive is reported as a warning against the agent it inherits from, and needs its own Anthropic model or the Mastra loop.
 
@@ -680,7 +680,7 @@ forced delete.
 | Embeddings | `packages/worker/src/lib/embeddings.ts` | Reads the singleton `EmbeddingConfig` via `resolveEmbeddingConfig` |
 | Gateway routes | `packages/gateway/src/routes/modelConfig.ts` | Admin + team-scoped credential CRUD, embedding-config CRUD, credential probe |
 | Gateway routes | `packages/gateway/src/routes/modelCatalog.ts` + `lib/modelCatalogService.ts` | Model catalog CRUD and reset, the unpriced report, and the `catalogWarnings` agent and embedding saves return |
-| Dashboard | `packages/web/src/app/studio/models/page.tsx`, `packages/web/src/components/modelConfig/*` | Tabbed admin UI (Roles / Credentials / Embeddings / Audit log) + team detail integration |
+| Dashboard | `packages/web/src/app/models/page.tsx`, `packages/web/src/components/modelConfig/*` | Tabbed admin UI (Roles / Credentials / Embeddings / Audit log) + team detail integration |
 
 ---
 
@@ -692,7 +692,7 @@ forced delete.
 
 **Worker logs `agent credential pin not usable`**: an agent's pinned credential was deleted, is for a different provider than its model spec (`reason: provider-mismatch`, typically after the model was changed), or sits at a team or organization the run does not belong to (`out-of-scope`). The call proceeds on the provider-name cascade. Re-pin a matching credential or clear the pin.
 
-**Test button returns `"apiBase rejected: host '…' is on a private network"`, or discovery and Test report `blocked address`**: the gateway's SSRF guard blocks loopback / RFC1918 / link-local / `.local` / `.internal` hosts, and refuses a name that resolves to one. For an internal provider (vLLM, Ollama, an internal gateway), an ADMIN lists its host in `models.privateNetworkHosts` at `/govern/platform-settings` (`internal.example.com`, or `10.0.0.5:8000` when it has a port), then saves or tests the credential again; the change applies within the settings cache's ~30 s. Loopback, `localhost` and link-local / cloud-metadata addresses stay refused whatever is listed, so a service on the gateway's own host needs a routable name (`host.docker.internal`, a Compose service name). `blocked address` also appears when the gateway container cannot resolve the name at all. The worker applies the same rules to every model and embedding call, so a credential whose host resolves to a private address it was not listed for fails the activity with an `SsrfBlockedError` naming the host — list the host, as above, and the next call (after the ~30 s settings cache) goes through. A provider that answers with a redirect fails the call too: point the `apiBase` at the final URL.
+**Test button returns `"apiBase rejected: host '…' is on a private network"`, or discovery and Test report `blocked address`**: the gateway's SSRF guard blocks loopback / RFC1918 / link-local / `.local` / `.internal` hosts, and refuses a name that resolves to one. For an internal provider (vLLM, Ollama, an internal gateway), an ADMIN lists its host in `models.privateNetworkHosts` at `/admin/platform-settings` (`internal.example.com`, or `10.0.0.5:8000` when it has a port), then saves or tests the credential again; the change applies within the settings cache's ~30 s. Loopback, `localhost` and link-local / cloud-metadata addresses stay refused whatever is listed, so a service on the gateway's own host needs a routable name (`host.docker.internal`, a Compose service name). `blocked address` also appears when the gateway container cannot resolve the name at all. The worker applies the same rules to every model and embedding call, so a credential whose host resolves to a private address it was not listed for fails the activity with an `SsrfBlockedError` naming the host — list the host, as above, and the next call (after the ~30 s settings cache) goes through. A provider that answers with a redirect fails the call too: point the `apiBase` at the final URL.
 
 **Model changes don't seem to apply mid-run**: confirm the activity is past the `await getModel(...)` call before you edited. Already-bound `LanguageModel` instances aren't swapped mid-`generate()`; the next call after the cache TTL (default 30s) picks up the new value.
 

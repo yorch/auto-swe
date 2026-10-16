@@ -319,7 +319,7 @@ describe('TraceOutput', () => {
 
     const banner = screen.getByRole('alert');
     expect(banner.textContent).toContain('activity blew up');
-    expect(banner.className).toContain('text-brick-400');
+    expect(banner.className).toContain('text-danger-400');
   });
 
   it('renders a tool_call error in the same error alert', () => {
@@ -333,7 +333,7 @@ describe('TraceOutput', () => {
 
     const banner = screen.getByRole('alert');
     expect(banner.textContent).toContain('tool blew up');
-    expect(banner.className).toContain('text-brick-400');
+    expect(banner.className).toContain('text-danger-400');
     expect((document.querySelector('pre') as HTMLPreElement).textContent).toBe('stderr');
   });
 

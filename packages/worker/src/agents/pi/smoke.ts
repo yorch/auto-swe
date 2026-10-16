@@ -43,7 +43,7 @@ const run = promisify(execFile);
  * one method it calls on the shared Prisma singleton — `scannerPattern.findMany`
  * — with a filter over `BUILTIN_SCANNER_PATTERNS`. The scanners, their regex
  * executor and their windowing are unchanged. What differs from a deployment is
- * the pattern SET: patterns an admin added or disabled at `/govern/scanner` are
+ * the pattern SET: patterns an admin added or disabled at `/admin/scanner` are
  * not seen. `DATABASE_URL` is given a placeholder when unset because constructing
  * the client needs one; nothing connects to it.
  *

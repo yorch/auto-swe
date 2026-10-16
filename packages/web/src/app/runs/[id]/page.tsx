@@ -14,6 +14,7 @@ import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useCallback, useMemo, useRef, useState } from 'react';
 import { HowItWorks } from '@/components/help/HowItWorks';
+import { PageHelp } from '@/components/help/PageHelp';
 import { LayoutToggle } from '@/components/LayoutToggle';
 import { FlightRecorder } from '@/components/runs/layouts/FlightRecorder';
 import { SplitConsole } from '@/components/runs/layouts/SplitConsole';
@@ -92,8 +93,13 @@ const CRUMB = cn(
 /** The page's shape while the run loads: a header band, then the layout area. */
 function RunDetailSkeleton() {
   return (
-    <div aria-live="polite" className="flex h-full flex-col bg-ink-800" role="status">
-      <span className="sr-only">Loading run…</span>
+    <div
+      aria-busy="true"
+      aria-live="polite"
+      className="flex h-full flex-col bg-ink-800"
+      role="status"
+    >
+      <span className="sr-only">Loading run</span>
       <div className="shrink-0 space-y-3 border-b border-ink-600/40 bg-ink-900 px-4 py-4 md:px-6">
         <Skeleton className="h-3 w-24" />
         <Skeleton className="h-6 w-80 max-w-full" />
@@ -339,7 +345,7 @@ export default function RunDetailPage({ params }: PageProps) {
                 </Badge>
               )}
               {securityEvents.length > 0 && (
-                <Badge dot tone="amber" variant="outline">
+                <Badge dot tone="warning" variant="outline">
                   {securityEvents.length} security event{securityEvents.length !== 1 ? 's' : ''}
                 </Badge>
               )}
@@ -351,8 +357,8 @@ export default function RunDetailPage({ params }: PageProps) {
                   <span className="text-paper-400">{run.templateName}</span>
                 ) : (
                   <Link
-                    className="rounded-sm text-paper-300 transition-colors hover:text-ember-400"
-                    href={`/workflows/library/${run.templateId}`}
+                    className="rounded-sm text-paper-300 transition-colors hover:text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
+                    href={`/library/${run.templateId}`}
                     title="Open the workflow template"
                   >
                     {run.templateName}
@@ -425,14 +431,15 @@ export default function RunDetailPage({ params }: PageProps) {
           </div>
         </div>
 
-        <p className="mt-3 flex flex-wrap items-center gap-x-1 text-sm text-paper-500">
-          Below: the run's trace
-          <HelpTip term="trace" />, every step and agent action, and any gate where it is waiting on
-          a person.
-        </p>
-
-        <HowItWorks className="mt-3" />
-        <RunReadingGuide className="mt-2" />
+        <PageHelp>
+          <p>
+            Below the header is the run's trace
+            <HelpTip term="trace" />: every step and agent action, and any gate where it is waiting
+            on a person.
+          </p>
+        </PageHelp>
+        <HowItWorks />
+        <RunReadingGuide />
 
         {(fullTracesFailed || retryRun.isSuccess || retryRun.errorView) && (
           <div className="mt-3 space-y-2">
@@ -445,11 +452,14 @@ export default function RunDetailPage({ params }: PageProps) {
               <Alert variant="success">
                 New run started —{' '}
                 {retried.runId ? (
-                  <Link className="underline hover:text-moss-600" href={`/runs/${retried.runId}`}>
+                  <Link
+                    className="underline hover:text-success-600"
+                    href={`/runs/${retried.runId}`}
+                  >
                     view run
                   </Link>
                 ) : retried.timedOut ? (
-                  <Link className="underline hover:text-moss-600" href="/runs">
+                  <Link className="underline hover:text-success-600" href="/runs">
                     view runs
                   </Link>
                 ) : (

@@ -111,11 +111,20 @@ through the **scope cascade**, so one platform can behave differently per team.
 
 ## Dashboard workspace
 
+The sidebar groups the dashboard into **Work** (Home, Approvals, Requests, All runs, Pull requests,
+Tickets), **Build** (the Workflow library, Connections, and for administrators Agents, Skills,
+Model configuration, MCP connections and Bundles) and **Admin**. Admin is one sidebar entry that
+opens an area at `/admin` with its own menu, grouped into Access, Security, Spend & insights,
+Configuration, Credentials and Knowledge; each role sees only the Admin pages it may open, and an
+engineer's Admin holds Teams, Analytics, Automations and Knowledge. Settings and Docs sit at the
+foot of the sidebar. Pages that moved keep their old addresses as permanent redirects, so a
+bookmark to `/workflows`, `/govern/…` or `/studio/…` still opens the page.
+
 **Home** presents the signed-in engineer's requests that need attention, work in progress, and
 recent successful results. The engineer can switch to team work; the team selector narrows the
 view. A successful execution is an output to review, not an acceptance of that output.
 
-**Requests** (`/workflows`) groups execution attempts by their work request. It defaults to the
+**Requests** (`/requests`) groups execution attempts by their work request. It defaults to the
 requester's own work, with team scope, task/ticket search, and status filters. Status filters apply
 to the latest visible attempt before pagination, so an earlier failure does not resurface after a
 successful retry. Pending human steps, failed or timed-out attempts, and engineering workflows
@@ -144,8 +153,8 @@ multi-repo epic** (a planner splits one brief into a child run per repository; t
 administrators only). Every mode collects inputs, shows a review screen, and opens the launched
 request. Workflow input drafts remain available when
 switching templates or paths within the page. **Approvals**, the **Workflow library**, and
-**Connections** remain directly available in the main navigation. `/runs` remains a linkable
-execution-history screen for diagnostics.
+**Connections** remain directly available in the main navigation. **All runs** (`/runs`) is the
+linkable execution-history screen for diagnostics.
 
 ### In-app help
 
@@ -154,10 +163,12 @@ appear. A **help tip** is a small question-mark button beside a label; hovering,
 clicking it opens a popover with the plain-language definition and a link to the doc that owns the
 term, named for it ("Learn more about <term>", for example "Learn more about gate"). It closes on Escape, an outside click, or when focus
 leaves. The popover is positioned against the button, so a table or scrolling panel does not clip it; inside a modal dialog it is placed within that dialog, and Escape there
-closes only the tip, leaving the dialog open. A page header can carry a **Learn more** link to the
-doc that explains the page, and a collapsible **How auto-swe works** overview walks through the
-request, run, gate, pull request, and merge lifecycle, stating that no built-in step or template
-merges a pull request. Definitions in the glossary agree with this document, and a test checks that every doc
+closes only the tip, leaving the dialog open. The **?** button in the top bar opens the page's
+**Help** panel: a dialog holding whatever explanation the current page declares, such as a link to
+the doc that explains the page or the **How auto-swe works** overview of the request, run, gate,
+pull request, and merge lifecycle, which states that no built-in step or template merges a pull
+request. A page that declares none shows a note and a link to the documentation, and the panel
+closes when the route changes. Definitions in the glossary agree with this document, and a test checks that every doc
 and heading they link to exists.
 
 Guided paths build on those pieces:
@@ -172,8 +183,9 @@ Guided paths build on those pieces:
   remembered in the viewer's browser only.
 - **Home** also offers a short, optional product tour. Take the tour starts it, and nothing starts
   it automatically. The tour is a card that walks through the sidebar pages the viewer's role can
-  open, from Start work and Requests to Approvals and Docs; leads and administrators also see the
-  Platform settings step, and administrators the Studio and Autonomy policies steps. Next and Back
+  open, from Start work, Approvals and Requests to the Workflow library, the Admin entry and Docs;
+  the Admin step names more for leads and more again for administrators, who also see the Agents
+  step. Next and Back
   move between steps, Skip tour, Done or Escape ends it, and Take the tour again replays it. The tour
   never blocks the page, and ending it returns focus to the button that started it.
 - **Start work** carries a "Not sure?" chooser that recommends a mode, and a "Try a sample task"

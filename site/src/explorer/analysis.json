@@ -2839,7 +2839,7 @@
     {
       "body": "Package agents, skills, scanner patterns and templates for export/install and SDK authoring.",
       "category": "Extensibility",
-      "detail": "Manifest v2 hashes identity and content; detached Ed25519 signatures are checked against deployment trust keys. Unverified install is denied unless allowed. Installing a skill over an existing one cuts a new revision when its text or description differs, always clears its verification, and scans it; a concurrent edit to that skill rolls back the whole install. Credentials and connection instances are not portable bundle content. An ADMIN installs a bundle inline (the CLI’s bundles install <path>, or a .json file picked or dropped in Studio) or from a URL (Studio or the CLI). The URL path text-checks every hop as public-only, resolves and pins it with no private-network opt-in, follows at most five redirects, times out after 15 s and caps the streamed body at BUNDLE_MAX_BYTES (5 MB by default); the inline preview and install routes accept a request body of that cap plus 64 KiB. Studio’s file flow parses the file in the browser (invalid JSON, a non-object or a file over the gateway’s cap — read from GET /platform/bundles/limits, 5 MB while that answer loads or is unavailable — is reported without sending anything), previews the parsed bundle and installs that same object; both install routes take an optional expectedContentHash and answer 409 BUNDLE_CHANGED when the bundle’s declared hash differs from it, and the install then re-derives the hash, so whatever the hash covers is what was previewed. Studio sends the hash on both paths; the CLI sends none and installs without a preview. Every template version an install writes gets the same WorkflowShellAudit rows a canvas save would for its authored code, with the installing ADMIN as author; a container node naming an image that is not a built-in shell image still installs, and the install and its preview each return a warning naming the template, node and image; the image is checked when the step runs, against the allowlist of the team that owns the run’s repository. Templates’ input schemas are checked as a save checks them, so a platform-filled text key cannot be typed as a connection.",
+      "detail": "Manifest v2 hashes identity and content; detached Ed25519 signatures are checked against deployment trust keys. Unverified install is denied unless allowed. Installing a skill over an existing one cuts a new revision when its text or description differs, always clears its verification, and scans it; a concurrent edit to that skill rolls back the whole install. Credentials and connection instances are not portable bundle content. An ADMIN installs a bundle inline (the CLI’s bundles install <path>, or a .json file picked or dropped in the dashboard) or from a URL (the dashboard or the CLI). The URL path text-checks every hop as public-only, resolves and pins it with no private-network opt-in, follows at most five redirects, times out after 15 s and caps the streamed body at BUNDLE_MAX_BYTES (5 MB by default); the inline preview and install routes accept a request body of that cap plus 64 KiB. The dashboard’s file flow parses the file in the browser (invalid JSON, a non-object or a file over the gateway’s cap — read from GET /platform/bundles/limits, 5 MB while that answer loads or is unavailable — is reported without sending anything), previews the parsed bundle and installs that same object; both install routes take an optional expectedContentHash and answer 409 BUNDLE_CHANGED when the bundle’s declared hash differs from it, and the install then re-derives the hash, so whatever the hash covers is what was previewed. The dashboard sends the hash on both paths; the CLI sends none and installs without a preview. Every template version an install writes gets the same WorkflowShellAudit rows a canvas save would for its authored code, with the installing ADMIN as author; a container node naming an image that is not a built-in shell image still installs, and the install and its preview each return a warning naming the template, node and image; the image is checked when the step runs, against the allowlist of the team that owns the run’s repository. Templates’ input schemas are checked as a save checks them, so a platform-filled text key cannot be typed as a connection.",
       "id": "distribution",
       "refs": [
         "bundles",
@@ -3213,9 +3213,9 @@
       "title": "Workspace containers get a configurable list of DNS resolvers"
     },
     {
-      "body": "Dashboard pages explain the product inline: help tips, page-header links, a lifecycle overview, a first-run checklist, an optional tour, node help and a run verdict, with a built-in docs reader and text search.",
+      "body": "Dashboard pages keep explanation out of the way: inline help tips, and a Help panel (the “?” in the top bar) holding a page’s longer help, its doc links and a lifecycle overview; plus a first-run checklist, an optional tour, node help and a run verdict, with a built-in docs reader and text search.",
       "category": "Collaboration",
-      "detail": "A help tip is a small button that opens a popover on hover, focus or click, showing either a glossary definition or the text its caller wrote, plus a link to the matching doc. The glossary and the table of doc links are constants compiled into the web app: opening a tip reads that local table and a doc link only builds an in-app URL, so neither calls the gateway or reads platform data (the link is a Next.js Link, which may prefetch the static doc page from the web server). A doc link is an ordinary in-app route into a docs reader, which serves only the top level of the repository’s docs directory; its pages are generated statically, so they show the docs as they were when the web app was built. The reader’s index also searches the doc text: once typing pauses, the browser asks a route of the web server (behind the web proxy’s sign-in redirect, which checks only that a session cookie is present, as for the docs pages themselves; the query is cut to a bounded length) for the best matching sections, which return as highlight segments rather than HTML, so only those few results are downloaded. The server builds the index once per process from the same files, begins it at start-up without delaying start-up, logs once when it is ready (or logs the failure), and does not keep a failed build; if the request fails, title and summary matching still works and the next edit retries. The Home page opens the overview by default when, on the first load (Mine scope unless already switched), the attention, active and succeeded request lists are all empty; switching scope does not re-decide it. Start work renders it collapsed; the node palette and governance pages carry tips of the same kind, and some forms carry static help text and doc links. The OAuth consent screen opens its docs link in a new tab so the reader does not navigate away from the grant. Home also shows people who are not admins a first-run checklist whose steps tick from data the person can already read (a visible repository, a request of theirs, a gate they answered, a merged pull request from their request), and shows admins a governance guide once the setup readiness check passes; each can be dismissed, and the dismissal is kept in that browser’s local storage only. A Take the tour button starts a short role-dependent tour that points at the sidebar and its links (one step points at nothing and is centred); it never starts by itself and is recorded as seen when it ends, in the same browser storage. In the workflow editor, selecting a node shows its type’s help, with an Output line and a link to the type’s section of the node reference; the library’s starter gallery offers specs built from node types only. Each run page opens with a verdict banner derived from the run record and the run’s visible open gates, with a collapsed guide to reading the page: it names a cause only for an error the dashboard classifies, otherwise says none is stated, and it cannot say who a gate waits on. Start work offers a chooser between modes and a sample-task button that only fills fields and never launches. Standing warnings on the platform settings, workflow defaults and autonomy policy pages, and the models page’s mid-run notice, are fixed text shown at page load as notes rather than live announcements; they do not read the settings they describe.",
+      "detail": "A help tip is a small button that opens a popover on hover, focus or click, showing either a glossary definition or the text its caller wrote, plus a link to the matching doc. The glossary and the table of doc links are constants compiled into the web app: opening a tip reads that local table and a doc link only builds an in-app URL, so neither calls the gateway or reads platform data (the link is a Next.js Link, which may prefetch the static doc page from the web server). A doc link is an ordinary in-app route into a docs reader, which serves only the top level of the repository’s docs directory; its pages are generated statically, so they show the docs as they were when the web app was built. The reader’s index also searches the doc text: once typing pauses, the browser asks a route of the web server (behind the web proxy’s sign-in redirect, which checks only that a session cookie is present, as for the docs pages themselves; the query is cut to a bounded length) for the best matching sections, which return as highlight segments rather than HTML, so only those few results are downloaded. The server builds the index once per process from the same files, begins it at start-up without delaying start-up, logs once when it is ready (or logs the failure), and does not keep a failed build; if the request fails, title and summary matching still works and the next edit retries. Longer explanations, a page header’s doc link and the request-to-merge lifecycle overview are not drawn on the page: the page declares them and they appear in the Help panel opened from the “?” in the top bar, for as long as that page is mounted, and a page that declares none shows a link to the docs. Home, Start work and the run page carry the lifecycle overview there. The node palette and admin pages carry tips of the same kind, and some forms carry static help text and doc links. The OAuth consent screen opens its docs link in a new tab so the reader does not navigate away from the grant. Home also shows people who are not admins a first-run checklist whose steps tick from data the person can already read (a visible repository, a request of theirs, a gate they answered, a merged pull request from their request), and shows admins a governance guide once the setup readiness check passes; each can be dismissed, and the dismissal is kept in that browser’s local storage only. A Take the tour button starts a short role-dependent tour that points at the sidebar and its links (one step points at nothing and is centred); it never starts by itself and is recorded as seen when it ends, in the same browser storage. In the workflow editor, selecting a node shows its type’s help, with an Output line and a link to the type’s section of the node reference; the library’s starter gallery offers specs built from node types only. Each run page opens with a verdict banner derived from the run record and the run’s visible open gates, (a guide to reading the page sits in its Help panel): it names a cause only for an error the dashboard classifies, otherwise says none is stated, and it cannot say who a gate waits on. Start work offers a chooser between modes and a sample-task button that only fills fields and never launches. Standing warnings on the platform settings, workflow defaults and autonomy policy pages, and the models page’s mid-run notice, are fixed text shown at page load as notes rather than live announcements; they do not read the settings they describe.",
       "id": "inAppGuidance",
       "refs": [
         "helpTip",
@@ -3242,7 +3242,9 @@
         "docSearchWarmup",
         "standingCallout",
         "nodeHelpDocLink",
-        "starterGallery"
+        "starterGallery",
+        "pageHelpPortal",
+        "pageHeaderHelp"
       ],
       "status": "Implemented",
       "title": "In-app guided help"
@@ -4003,7 +4005,7 @@
     {
       "body": "Glossary definitions, node help and inline help are static prose; tests check that their doc links resolve and that examples parse, not that the sentences are true.",
       "category": "Surfaces",
-      "detail": "The glossary says its definitions are written to agree with the concepts doc, and the link table says a test checks each entry against the docs files and headings. Neither derives a definition from the code, so a behaviour change can leave a tip stale while every link still resolves. Node help, the tour steps and the run verdict sentences are hand-written constants too; tests parse each node example with the real schema, check that every output path in a node’s Output line appears in its section of the node reference, hold the starter specs to zero validation warnings, assert a few of the node gotchas and check that every tour anchor exists in the sidebar, but most sentences are not checked against behaviour. The reader and its search show the docs shipped with the web app, so a running deployment can show docs older than its gateway, and both cover only the top-level docs, so a link to or a search for anything else would not resolve. The standing warnings on the governance pages are likewise fixed text that nothing keeps in step with the behaviour it describes. Tips, the checklist, the tour, node help and the verdict are shown in the dashboard only; the CLI and API have no equivalent.",
+      "detail": "The glossary says its definitions are written to agree with the concepts doc, and the link table says a test checks each entry against the docs files and headings. Neither derives a definition from the code, so a behaviour change can leave a tip stale while every link still resolves. Node help, the tour steps and the run verdict sentences are hand-written constants too; tests parse each node example with the real schema, check that every output path in a node’s Output line appears in its section of the node reference, hold the starter specs to zero validation warnings, assert a few of the node gotchas and check that every tour anchor exists in the sidebar, but most sentences are not checked against behaviour. The reader and its search show the docs shipped with the web app, so a running deployment can show docs older than its gateway, and both cover only the top-level docs, so a link to or a search for anything else would not resolve. The standing warnings on the admin pages are likewise fixed text that nothing keeps in step with the behaviour it describes. Tips, the checklist, the tour, node help and the verdict are shown in the dashboard only; the CLI and API have no equivalent.",
       "id": "guidanceStaticCopy",
       "refs": [
         "glossaryTable",
@@ -5010,7 +5012,7 @@
       "before": 0,
       "id": "web",
       "lines": 90,
-      "path": "packages/web/src/app/workflows/library/page.tsx",
+      "path": "packages/web/src/app/library/page.tsx",
       "title": "Workflow library UI"
     },
     {
@@ -5358,7 +5360,7 @@
       "title": "Stored-suggestions API"
     },
     {
-      "anchor": "eyebrow=\"New from providers\"",
+      "anchor": "<CardTitle>Models the catalog lacks</CardTitle>",
       "before": 2,
       "id": "catalogTab",
       "lines": 10,
@@ -5994,7 +5996,7 @@
       "before": 4,
       "id": "usageGate",
       "lines": 12,
-      "path": "packages/web/src/app/govern/usage/layout.tsx",
+      "path": "packages/web/src/app/admin/usage/layout.tsx",
       "title": "The usage page is gated on a held scope, not the platform role"
     },
     {
@@ -7170,7 +7172,7 @@
       "before": 4,
       "id": "bundleWebInstall",
       "lines": 16,
-      "path": "packages/web/src/app/studio/bundles/page.tsx",
+      "path": "packages/web/src/app/bundles/page.tsx",
       "title": "The install sends the same parsed file it previewed, with the previewed hash"
     },
     {
@@ -8418,7 +8420,7 @@
       "before": 3,
       "id": "auditExportNotice",
       "lines": 6,
-      "path": "packages/web/src/app/govern/audit/page.tsx",
+      "path": "packages/web/src/app/admin/audit/page.tsx",
       "title": "The dashboard states the export limit when the file was cut"
     },
     {
@@ -8478,12 +8480,12 @@
       "title": "Doc pages are generated statically from the docs on disk"
     },
     {
-      "anchor": "function HomeHowItWorks({ scope }: { scope: RequestScope }) {",
-      "before": 4,
+      "anchor": "<HowItWorks />",
+      "before": 2,
       "id": "homeHowItWorks",
-      "lines": 16,
+      "lines": 3,
       "path": "packages/web/src/app/page.tsx",
-      "title": "Home opens the lifecycle overview by default when its three request buckets are empty on first load"
+      "title": "Home renders the lifecycle overview as help, not on the page"
     },
     {
       "anchor": "export function glossaryEntry(term: GlossaryTerm): GlossaryEntry {",
@@ -8499,7 +8501,7 @@
       "id": "startWorkOverview",
       "lines": 3,
       "path": "packages/web/src/components/requests/StartWork.tsx",
-      "title": "Start work renders the overview at its collapsed default"
+      "title": "Start work also carries the overview in its Help panel"
     },
     {
       "anchor": "<DocLink label=\"Learn more about MCP\" newTab",
@@ -8518,12 +8520,12 @@
       "title": "The workflow node palette carries a help tip"
     },
     {
-      "anchor": "defaultOpen = false,",
-      "before": 3,
+      "anchor": "export function HowItWorks() {",
+      "before": 4,
       "id": "howItWorksDefault",
-      "lines": 12,
+      "lines": 8,
       "path": "packages/web/src/components/help/HowItWorks.tsx",
-      "title": "The overview is collapsed unless a caller passes defaultOpen"
+      "title": "The overview renders into the Help panel through PageHelp"
     },
     {
       "anchor": "'/validate',",
@@ -8658,7 +8660,7 @@
       "before": 8,
       "id": "standingCallout",
       "lines": 16,
-      "path": "packages/web/src/app/govern/policies/page.tsx",
+      "path": "packages/web/src/app/admin/policies/page.tsx",
       "title": "A governance page shows a fixed warning as a note, not a live announcement"
     },
     {
@@ -9462,7 +9464,7 @@
       "title": "A template launch with no connection records the organization it was gated against"
     },
     {
-      "anchor": " * Curated starter specs for the \"Start from…\" gallery on /workflows/library.",
+      "anchor": " * Curated starter specs for the \"Start from…\" gallery on /library.",
       "before": 1,
       "id": "starterGallery",
       "lines": 10,
@@ -9476,6 +9478,22 @@
       "lines": 5,
       "path": "packages/web/src/lib/nodeHelp.ts",
       "title": "Node help links to the type’s own section of the node reference"
+    },
+    {
+      "anchor": "export function PageHelp({ children }: { children: ReactNode }) {",
+      "before": 7,
+      "id": "pageHelpPortal",
+      "lines": 10,
+      "path": "packages/web/src/components/help/PageHelp.tsx",
+      "title": "A page's help portals into the top bar's Help panel while the page is mounted"
+    },
+    {
+      "anchor": "{(help || learnMore) && (",
+      "before": 1,
+      "id": "pageHeaderHelp",
+      "lines": 12,
+      "path": "packages/web/src/components/ui/PageHeader.tsx",
+      "title": "A page header's longer help and doc link go to the Help panel"
     }
   ],
   "usecases": [

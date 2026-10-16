@@ -95,7 +95,7 @@ export function ChannelSettingsTab({ channel }: { channel: SlackChannel }) {
 
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Status">Availability</CardTitle>
+          <CardTitle>Availability</CardTitle>
         </CardHeader>
         {statusError && <Alert className="mb-3">{statusError}</Alert>}
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -118,7 +118,7 @@ export function ChannelSettingsTab({ channel }: { channel: SlackChannel }) {
 
       <Card>
         <CardHeader>
-          <CardTitle eyebrow="Danger zone">Delete this channel</CardTitle>
+          <CardTitle>Delete this channel</CardTitle>
         </CardHeader>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="max-w-prose text-sm text-paper-400">
@@ -150,7 +150,7 @@ export function ChannelSettingsTab({ channel }: { channel: SlackChannel }) {
         onClose={() => setConfirmDelete(false)}
         onConfirm={async () => {
           await remove.mutateAsync(channel.id);
-          router.replace('/govern/slack-channels');
+          router.replace('/admin/slack-channels');
         }}
         open={confirmDelete}
         title="Delete Slack channel?"

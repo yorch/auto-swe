@@ -82,12 +82,12 @@ describe('login page', () => {
   });
 
   it('sends someone who is already signed in on to their destination', async () => {
-    h.search = 'redirect=%2Fworkflows';
+    h.search = 'redirect=%2Frequests';
     h.token = 'bearer';
     h.user = { isActive: true };
     h.hydrate.mockResolvedValue('authenticated');
     render(<LoginPage />);
-    await waitFor(() => expect(h.replace).toHaveBeenCalledWith('/workflows'));
+    await waitFor(() => expect(h.replace).toHaveBeenCalledWith('/requests'));
   });
 
   it('does not redirect a signed-in person who has no bearer cookie yet', async () => {

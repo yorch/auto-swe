@@ -71,10 +71,13 @@ const SOCIAL_BUTTONS: { id: SocialProviderId; label: string }[] = [
 
 type GatewayState = 'checking' | 'up' | 'down';
 
-const GATEWAY_STATUS: Record<GatewayState, { label: string; tone: 'moss' | 'brick' | 'muted' }> = {
+const GATEWAY_STATUS: Record<
+  GatewayState,
+  { label: string; tone: 'success' | 'danger' | 'muted' }
+> = {
   checking: { label: 'Checking gateway', tone: 'muted' },
-  down: { label: 'Gateway offline', tone: 'brick' },
-  up: { label: 'Gateway online', tone: 'moss' },
+  down: { label: 'Gateway offline', tone: 'danger' },
+  up: { label: 'Gateway online', tone: 'success' },
 };
 
 /** The reachability light: a dot plus words, so the state is not colour alone. */
@@ -392,12 +395,7 @@ function LoginPageInner() {
   if (pendingEmail) {
     return (
       <AuthLayout footer={versionLine}>
-        <AuthHeading
-          icon="clock"
-          kicker="Account pending"
-          kickerTone="amber"
-          title="Awaiting approval"
-        >
+        <AuthHeading icon="clock" title="Awaiting approval" tone="warning">
           <p>
             We received your sign-in for{' '}
             <span className="break-all font-mono text-sm text-paper-100">{pendingEmail}</span>. An
@@ -407,7 +405,7 @@ function LoginPageInner() {
         </AuthHeading>
         <div className="mb-6 flex items-center justify-between gap-3 rounded-lg border border-ink-400/60 bg-ink-900/60 px-3.5 py-3">
           <span className="text-sm text-paper-400">Account status</span>
-          <Badge dot tone="amber" variant="outline">
+          <Badge dot tone="warning" variant="outline">
             Pending approval
           </Badge>
         </div>
@@ -434,20 +432,6 @@ function LoginPageInner() {
     <div className="relative grid min-h-dvh bg-ink-800 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:grid-cols-[1.1fr_1fr]">
       {/* LEFT — brand panel, wide screens only */}
       <aside className="relative hidden flex-col justify-between overflow-hidden border-r border-ink-600 bg-ink-950 p-12 lg:flex">
-        <div aria-hidden className="pointer-events-none absolute inset-0">
-          <div className="absolute inset-0 bg-radial-[circle_at_20%_10%] from-ember-400/20 to-transparent to-55%" />
-          <div className="absolute inset-0 bg-radial-[circle_at_85%_85%] from-dust-400/10 to-transparent to-55%" />
-          <div
-            className="absolute inset-0 opacity-[0.06] [mask-image:linear-gradient(to_bottom,black,transparent_85%)]"
-            style={{
-              backgroundImage:
-                'linear-gradient(to right, var(--color-paper-500) 1px, transparent 1px),' +
-                'linear-gradient(to bottom, var(--color-paper-500) 1px, transparent 1px)',
-              backgroundSize: '56px 56px',
-            }}
-          />
-        </div>
-
         <header className="relative z-10 flex items-center justify-between gap-4">
           <BrandMark size="lg" />
           {/* Driven by the provider probe, which doubles as the reachability
@@ -457,7 +441,6 @@ function LoginPageInner() {
         </header>
 
         <div className="relative z-10 max-w-lg">
-          <p className="kicker mb-4">Autonomous workflows</p>
           <h2 className="text-4xl font-semibold leading-[1.1] tracking-[-0.03em] text-paper-50 xl:text-5xl">
             Ticket in, reviewed pull request out.
           </h2>
@@ -469,7 +452,7 @@ function LoginPageInner() {
               <li className="flex gap-4" key={h.title}>
                 <span
                   aria-hidden="true"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-ink-400/70 bg-ink-700/70 text-ember-300"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-ink-400/70 bg-ink-700/70 text-paper-300"
                 >
                   <Icon name={h.icon} size={17} />
                 </span>
@@ -656,7 +639,7 @@ function LoginPageInner() {
               />
               <div className="flex justify-end">
                 <Button
-                  className="h-auto px-1 py-0.5 text-ember-300 hover:bg-transparent hover:text-ember-200"
+                  className="h-auto px-1 py-0.5 text-paper-300 hover:bg-transparent hover:text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
                   disabled={loading}
                   onClick={handleForgotPassword}
                   size="sm"

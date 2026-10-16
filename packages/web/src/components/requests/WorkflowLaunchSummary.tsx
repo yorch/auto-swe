@@ -37,8 +37,8 @@ export function WorkflowLaunchSummary({ templateId }: { templateId: string }) {
       isFetching={query.isFetching}
       isLoading={query.isLoading}
       label="workflow process"
-      loadingMessage="Loading the workflow process…"
       onRetry={() => void query.refetch()}
+      shape="detail"
     >
       {summary ? (
         <ReviewList

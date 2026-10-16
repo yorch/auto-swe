@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 const nav = vi.hoisted(() => ({ replace: vi.fn(), search: 'a=1&offset=30' }));
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/workflows',
+  usePathname: () => '/requests',
   useRouter: () => ({ replace: nav.replace }),
   useSearchParams: () => new URLSearchParams(nav.search),
 }));
@@ -27,13 +27,13 @@ describe('useUrlFilters', () => {
   it('patches parameters, drops empty ones, and replaces rather than pushes', () => {
     const { result } = renderHook(() => useUrlFilters());
     result.current.update({ offset: null, state: 'failed' });
-    expect(nav.replace).toHaveBeenCalledWith('/workflows?a=1&state=failed', { scroll: false });
+    expect(nav.replace).toHaveBeenCalledWith('/requests?a=1&state=failed', { scroll: false });
   });
 
   it('leaves a bare path when every parameter is removed', () => {
     nav.search = 'offset=30';
     const { result } = renderHook(() => useUrlFilters());
     result.current.update({ offset: '' });
-    expect(nav.replace).toHaveBeenLastCalledWith('/workflows', { scroll: false });
+    expect(nav.replace).toHaveBeenLastCalledWith('/requests', { scroll: false });
   });
 });

@@ -13,7 +13,6 @@ import { Badge } from '@/components/ui/Badge';
 import { BUTTON_STYLE, Button, buttonClassName } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Icon } from '@/components/ui/Icon';
-import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useAuthProviders, useLinkedAccounts } from '@/hooks/useAccountSettings';
@@ -108,7 +107,8 @@ export default function SettingsPage() {
   return (
     <div className="max-w-4xl space-y-6">
       <PageHeader
-        subtitle="Your profile, how you sign in, and the tokens and apps that act as you. Changes apply to your account only."
+        help={<p>Changes apply to your account only.</p>}
+        subtitle="Your profile, how you sign in, and the tokens and apps that act as you."
         title="Account settings"
       />
 
@@ -129,7 +129,7 @@ export default function SettingsPage() {
         <div className="flex flex-wrap items-center gap-4 py-4">
           <span
             aria-hidden="true"
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-ember-400 to-violet-400 text-lg font-semibold text-paper-50"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-ink-300 bg-ink-600 text-lg font-semibold text-paper-100"
           >
             {(user?.email ?? '?').charAt(0).toUpperCase()}
           </span>
@@ -141,7 +141,7 @@ export default function SettingsPage() {
             <div>
               <dt className="label-mono">Role</dt>
               <dd className="mt-1">
-                <Badge tone="ember" variant="outline">
+                <Badge tone="accent" variant="outline">
                   {roleLabel}
                 </Badge>
               </dd>
@@ -157,17 +157,16 @@ export default function SettingsPage() {
         title="Sign-in methods"
       >
         <QueryBoundary
-          compact
           error={providersQuery.error ?? linkedQuery.error}
           isError={providersQuery.isError || linkedQuery.isError}
           isFetching={providersQuery.isFetching || linkedQuery.isFetching}
           isLoading={providersQuery.isLoading || linkedQuery.isLoading}
           label="your sign-in methods"
-          loading={<SkeletonRows rows={4} />}
           onRetry={() => {
             void providersQuery.refetch();
             void linkedQuery.refetch();
           }}
+          rows={4}
         >
           <ul className="divide-y divide-ink-600">
             <SettingsListRow
@@ -224,7 +223,7 @@ export default function SettingsPage() {
                   leading={<ProviderMark id={p.id} />}
                   status={
                     isLinked ? (
-                      <Badge dot tone="moss" variant="outline">
+                      <Badge dot tone="success" variant="outline">
                         Linked
                       </Badge>
                     ) : configured ? null : (
@@ -269,7 +268,7 @@ export default function SettingsPage() {
               leading={<ProviderMark id="slack" />}
               status={
                 user?.slackId ? (
-                  <Badge dot tone="moss" variant="outline">
+                  <Badge dot tone="success" variant="outline">
                     Connected
                   </Badge>
                 ) : null

@@ -163,29 +163,41 @@ packages/
 |------|---------|
 | `src/app/page.tsx` | Dashboard home — KPIs, "needs attention" queue, recent activity |
 | `src/app/runs/[id]/` | Live run viewer — React Flow DAG with per-node status; bottom panel toggles between three layouts (split console, transcript, flight recorder), persisted per user via `/api/v1/me/preferences`; traces link to graph nodes and fan-out branches through `src/lib/traceLinkage.ts` |
-| `src/app/workflows/library/[id]/` | React Flow canvas editor — drag-to-create, drag-to-connect, version sidebar, A/B experiment, analytics |
-| `src/app/govern/approvals/` | HITL approvals — pending human steps with respond forms |
-| `src/app/govern/analytics/` | Global analytics — success rate, p50/p95, $/run, per-step failure rates |
-| `src/app/studio/*` | Model config, integrations, workflow defaults, skills, agents + agent library, schedules, bundles, MCP connections, evals |
-| `src/app/govern/*` | Access tokens, sessions, memory, scanner patterns, security events, Slack channels, organizations, teams, budgets, users |
+| `src/app/requests/`, `src/app/approvals/`, `src/app/pull-requests/`, `src/app/tickets/` | Work — requests with their attempts, pending human steps with respond forms, and the pull-request and ticket views |
+| `src/app/library/[id]/` | React Flow canvas editor — drag-to-create, drag-to-connect, version sidebar, A/B experiment, analytics |
+| `src/app/{agents,skills,models,mcp,bundles,connections}/` | Build — agents and the agent library, skills, model configuration, MCP connections, bundles, repositories and other connections |
+| `src/app/admin/` | Admin — one area with its own sub-navigation (`layout.tsx` renders `components/layout/AdminNav.tsx`): users, teams, organizations, sessions, API tokens, scanner patterns, autonomy policies, security events, audit, analytics, LLM usage, platform settings, workflow defaults, config grants, automations and schedules, Slack channels, integrations, GitHub installations, lessons, knowledge, error baselines, evals |
+| `src/lib/navigation.ts` | The page map: sidebar groups, Admin sub-navigation, page titles and breadcrumbs. Old addresses redirect permanently through `LEGACY_REDIRECTS` in `next.config.ts` |
 | `src/hooks/` | TanStack Query hooks split by resource domain |
-| `src/stores/` | Zustand — `authStore` (identity), `teamStore` (active team), `themeStore` (theme preference), `assistantStore` (assistant panel) |
-| `src/components/ui/` | Design-system primitives — `Button`, `Input`, `Select`, `Textarea`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `PageHeader`, `LoadingState`, `FieldWrapper`, `Th`, `Stat`, `StatusBadge`, `ToggleSwitch`, `CopyButton` |
-| `src/lib/palette.ts` | The theme's colours as checked literals, for the SVG contexts that cannot resolve `var()` |
+| `src/stores/` | Zustand — `authStore` (identity), `teamStore` (active team), `themeStore` (theme and palette preference), `assistantStore` (assistant panel) |
+| `src/components/ui/` | Design-system primitives — `Button`, `Input`, `Select`, `Textarea`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `PageHeader`, `QueryBoundary`, shaped skeleton placeholders (`LoadingState.tsx`), `FieldWrapper`, `Th`, `Stat`, `StatusBadge`, `ToggleSwitch`, `CopyButton` |
+| `src/lib/palette.ts` | Each palette and theme's colours as checked literals, for the SVG contexts that cannot resolve `var()` |
 | `src/lib/api.ts` | `ApiClient` — all fetches; no direct `fetch` in components |
 
 **Design system.** Tokens are defined via Tailwind v4 `@theme` in `globals.css`: `ink-*`
-surfaces and borders, `paper-*` text, `ember-*` (violet) primary accent, and status colours `moss-*`
-(success), `brick-*` (failure), `amber-*` (waiting, warning), `dust-*` (running, info) and
-`violet-*` (teal; in review, secondary accent). The light theme is the same token names re-pointed
-under `:root[data-theme='light']`, set before first paint; users switch it from the top bar, the
-command palette or the user menu (`stores/themeStore.ts`). The root font size is 14px, and every type step
-is pinned to whole pixels — `text-2xs` 11px (uppercase eyebrow labels only), `text-xs` 12px,
+surfaces and borders, `paper-*` text, `accent-*` (violet, the primary accent), `accent2-*`
+(teal, the secondary accent; in review), and status colours named by role: `success-*`,
+`warning-*` (waiting), `danger-*` (failure), `info-*` (running). The accent is reserved for the primary action, the current selection
+and keyboard focus; links are body colour with an underline, and status colours only ever mean a
+status. The design is flat: solid fills and visible borders, no gradients or glows, and a three-step
+radius scale (4px small controls and badges, 8px inputs, buttons and menus, 12px cards and modals).
+Two palettes re-point the same token names: navy (the default) and graphite (neutral greys,
+`data-palette="graphite"`), each in dark and light (`:root[data-theme='light']`). Both attributes are
+set on `<html>` before first paint; users switch the theme from the top bar, the command palette or
+the user menu, and the palette from the command palette or the user menu (`stores/themeStore.ts`).
+The command palette (⌘K) also searches requests, runs and workflows the user can see, through the
+list endpoints' own text filters (`search` on requests, `q` on runs and templates), so the same
+visibility rules apply. Those filters match a request's description and ticket ID and a template's
+name and description; a template launch's label, which a list shows as the request's title, is not
+searched.
+The root font size is 14px, and every type step
+is pinned to whole pixels — `text-2xs` 11px (uppercase labels only), `text-xs` 12px,
 `text-sm` 13px, `text-base` 14px, then `text-lg` 16 through `text-5xl` 44px for titles and display
 — so components use those steps rather than arbitrary `text-[Npx]` values. Legacy `var(--muted-foreground)` style aliases are bridged for compatibility; new code uses
 tokens directly. SVG presentation attributes — Recharts axis ticks, React Flow edge strokes and markers —
-do not resolve `var()`, so those read hex literals from `lib/palette.ts`; `palette.test.ts` parses
-`globals.css` and fails if a literal drifts from its token, and a second guard fails the build if a
+do not resolve `var()`, so those read hex literals for the painted palette and theme from
+`lib/palette.ts`; `palette.test.ts` parses `globals.css` and fails if a literal drifts from its token
+or if any palette's text ramp drops below its contrast floors, and a second guard fails the build if a
 component reaches past the theme into a default Tailwind colour scale.
 
 **Data fetching.** All server state lives in TanStack Query (staleTime 30 s, retry 1). Running
@@ -654,7 +666,7 @@ in `AssistantMessage.errorDetail`: the error's name, failure type and message an
 it wraps, scrubbed of credential-shaped text and the turn's token. It is written by the turn activity
 when the turn throws, by `failAssistantReply` when the activity never reported back (a timeout or a
 dead worker, which says to look in Temporal), and by the gateway when the turn could not be handed to
-the workflow. Admins read it at `/govern/assistant` (`GET /api/v1/platform/assistant/failures`), across
+the workflow. Admins read it at `/admin/assistant` (`GET /api/v1/platform/assistant/failures`), across
 every user and newest first. Opening one failure lists the agent trace rows its turn wrote: kind,
 tool or model, tokens, duration, error, and the OpenTelemetry trace id to look up in Tempo. A turn
 tags every row it writes with its reply (`AgentTrace.assistantMessageId`), and the view reads them by
@@ -955,7 +967,7 @@ UI shows real overage, then throws a non-retryable `BUDGET_EXCEEDED` failure onc
 | `LARGE` | 8,000,000 | 2,000,000 |
 | `EPIC` | 20,000,000 | 5,000,000 |
 
-These are DB-backed defaults on the `WorkflowDefaults` singleton, editable at `/govern/workflow-defaults`,
+These are DB-backed defaults on the `WorkflowDefaults` singleton, editable at `/admin/workflow-defaults`,
 falling back to the built-in `BUDGET_LIMITS` when unconfigured.
 
 **Runless workflows.** Workflow authoring and explaining, scheduled evals, lesson consolidation and
@@ -1025,7 +1037,7 @@ run, and the ten runs that spent most inside the window. With no filter the repo
 platform-wide and ADMIN-only, since it includes spend no team owns; a team LEAD (by team
 membership) may read their team and an ORG_ADMIN their organization, and every query of a scoped
 report carries the `teamId`/`orgId` predicate the tenant guard checks. The dashboard renders it at
-`/govern/usage` with a scope picker. `GET /api/v1/platform/usage/scopes` returns what the caller may
+`/admin/usage` with a scope picker. `GET /api/v1/platform/usage/scopes` returns what the caller may
 read — `platform` (ADMIN), the teams they lead, the organizations they administer — by the same rules
 as the report. The page, its layout, and the sidebar entry all gate on that list being non-empty
 rather than on the platform role, so a team LEAD or ORG_ADMIN whose platform role is ENGINEER reaches
@@ -1082,7 +1094,7 @@ would defeat it.
 
 **Security scanners.** Six run during agent execution at distinct stages, five backed by DB regex
 patterns with a 60 s cache. Table and rules in
-[AGENTS.md §6](../AGENTS.md#runtime-security-scanners); the dashboards are `/govern/security` and the
+[AGENTS.md §6](../AGENTS.md#runtime-security-scanners); the dashboards are `/admin/security` and the
 per-run panel on `/runs/[id]`.
 
 ---
@@ -1491,7 +1503,7 @@ Current constraints of the system as built. Deliberate product boundaries are in
   by more than 10 s triggers one on every poll it writes during.
 - **Some assistant failures have no trace rows or no recorded cause.** A turn that failed before it
   wrote a trace row (the agent or its provider credential could not be resolved) shows none on
-  `/govern/assistant`, only its `errorDetail`; replies that failed before `errorDetail` existed show
+  `/admin/assistant`, only its `errorDetail`; replies that failed before `errorDetail` existed show
   no cause, and their untagged rows are matched by time rather than by reply. For those, the worker
   log line `[assistantTurn] turn failed` and the Temporal history of `assistant-<conversationId>`
   remain the sources.

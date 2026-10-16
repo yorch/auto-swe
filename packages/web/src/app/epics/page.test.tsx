@@ -3,6 +3,7 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('@/hooks/useEpics', () => ({
   useEpics: () => ({
     data: { data: [], meta: { total: 0 } },

@@ -117,7 +117,7 @@ The run goes through these nodes:
    nothing and is reported instead.
    The draft's own CI is then watched by the usual CI loop, which revises the draft up to
    `maxCiFixAttempts` times while it keeps failing and then ends the run `FAILED`. It can poll
-   instead of waiting for the webhook when the CI wait strategy at `/govern/workflow-defaults` says
+   instead of waiting for the webhook when the CI wait strategy at `/admin/workflow-defaults` says
    so, which matters here: a draft into a feature branch often runs no CI at all.
 5. When the failure came from a pull request, the diagnosis comment links the draft, and says why
    when a push was asked for and refused.

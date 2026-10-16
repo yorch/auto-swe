@@ -125,7 +125,7 @@ Rows are refreshed three ways.
 | Scheduled sweep | every reachable pair, plus login-ownership verification | one sweep interval |
 
 A detected takeover is recorded in the governance audit log against the affected user, with the
-account id the login was recorded for and the one it resolves to now. It appears at `/govern/audit`
+account id the login was recorded for and the one it resolves to now. It appears at `/admin/audit`
 with no actor, because the system cleared it rather than a person. A log line was the only signal
 before, and a log line is gone by the time anyone asks.
 
@@ -208,7 +208,7 @@ added later. Both sit at the beginning of new work, so neither can interrupt a r
 way. Unlike the GitHub gate, this check reads no user, so the exemptions for callers without an
 identity do not apply to it.
 
-Installations are managed at `/studio/github-installations` in the dashboard, or over the API at
+Installations are managed at `/admin/github-installations` in the dashboard, or over the API at
 `/api/v1/platform/github-installations` — which the dashboard itself calls, and which is also
 registered under `/api/v1/admin` like the other admin routes (list, create, update, delete),
 and a repository is pointed at one through `installationId` on the repository create and update

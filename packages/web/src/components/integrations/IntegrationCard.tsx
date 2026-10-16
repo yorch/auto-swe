@@ -10,7 +10,6 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 export function IntegrationCard({
   children,
   description,
-  eyebrow,
   footer,
   headerAction,
   status,
@@ -18,7 +17,6 @@ export function IntegrationCard({
 }: {
   children?: ReactNode;
   description?: ReactNode;
-  eyebrow?: string;
   /** Actions under a divider at the bottom of the card. */
   footer?: ReactNode;
   /** A control beside the status pill, such as "Add host". */
@@ -30,7 +28,7 @@ export function IntegrationCard({
   return (
     <Card className="p-5 sm:p-6">
       <CardHeader className="items-start">
-        <CardTitle eyebrow={eyebrow}>{title}</CardTitle>
+        <CardTitle>{title}</CardTitle>
         {(status || headerAction) && (
           <div className="flex flex-wrap items-center gap-2">
             {status}

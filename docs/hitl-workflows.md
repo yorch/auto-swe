@@ -9,7 +9,7 @@
 HITL nodes let you insert a human decision point anywhere in a workflow spec. When the interpreter reaches a HITL node it:
 
 1. Creates a `WorkflowHumanStep` row in the DB with status `PENDING`.
-2. (Optionally) sends a Slack notification to the team. The notification includes an "Open inbox" link built from the worker's `WEB_URL` env var (`{WEB_URL}/inbox`, default `http://localhost:3000`) — set it to your dashboard URL in production or the link points at localhost.
+2. (Optionally) sends a Slack notification to the team. The notification includes an "Open approvals" link built from the worker's `WEB_URL` env var (`{WEB_URL}/approvals`, default `http://localhost:3000`) — set it to your dashboard URL in production or the link points at localhost.
 3. Parks the Temporal workflow at the node — no polling, no timeout loops.
 4. Waits for a human to respond via the inbox UI or the REST API.
 5. On response, fires a Temporal signal (`hitl_<nodeId>`), which unblocks the workflow and routes to the configured next node.
@@ -156,7 +156,7 @@ The DB update is authoritative — even if the Temporal signal fails (e.g. a tra
 
 ## The inbox UI
 
-All pending steps are visible at `/inbox`. The page polls every 10 seconds.
+All pending steps are visible on the Approvals page (`/approvals`). The page polls every 10 seconds.
 
 - **Admins** see all pending steps across all teams.
 - **Leads and Engineers** see only steps from runs belonging to their teams.
@@ -172,7 +172,7 @@ Each card shows the step title, kind badge, description, and a link to the assoc
 
 When a run is open at `/runs/<id>` and it has pending steps, those steps also appear in a **Pending actions** card in the right column — no need to navigate to the inbox.
 
-The sidebar shows a count badge next to **Inbox** when there are pending steps. The top bar shows an inline amber indicator when `inboxCount > 0`.
+The sidebar shows a count badge next to **Approvals** when there are pending steps.
 
 ---
 
@@ -376,10 +376,10 @@ Returns `400` with `INVALID_ACTION` if the action is not valid for the step's ki
 Returns `409` with `ALREADY_RESOLVED` if the step was already resolved or the workflow is no longer running.
 Returns `200` with `{ "data": { "id": "...", "status": "RESOLVED" } }` on success.
 For multi-approver steps, the same user's repeated approval is idempotent and does not increase the
-approval count. The Govern inbox shows current/required progress and can sort or filter overdue
-steps. Platform administrators can search policy decisions from `/govern/policies/decisions`;
-lifecycle changes and delegated configuration grants are managed under `/govern/audit` and
-`/govern/config-grants`.
+approval count. The Approvals page shows current/required progress and can sort or filter overdue
+steps. Platform administrators can search policy decisions from `/admin/policies/decisions`;
+lifecycle changes and delegated configuration grants are managed under `/admin/audit` and
+`/admin/config-grants`.
 
 ---
 

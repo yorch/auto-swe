@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { LoadingState } from '@/components/ui/LoadingState';
+import { SkeletonRows } from '@/components/ui/LoadingState';
 import { repoRefLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 
@@ -105,7 +105,7 @@ export function RepoDependencySuggestions({
   const groups = useMemo(() => groupByToRef(suggestions ?? []), [suggestions]);
 
   if (isLoading) {
-    return <LoadingState compact message="Loading onboarding suggestions…" />;
+    return <SkeletonRows label="onboarding suggestions" rows={2} />;
   }
 
   if (isError) {
