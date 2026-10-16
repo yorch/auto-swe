@@ -9,7 +9,7 @@
 Agent identity is a **free-form string** — there is no enum, the DB columns are plain `TEXT`, and
 `AnySkillRole = string`. New agents are added as data, not code.
 
-`syncBuiltins` seeds 31 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
+`syncBuiltins` seeds 32 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
 are seed content for the flagship software-engineering use case, not a fixed roster. An agent a team
 adds resolves through exactly the same cascade as `implementer`, and nothing in the engine privileges
 the seeded set — `assertConfigReady` gates boot on what the deployment has *installed*, not on the
@@ -18,7 +18,7 @@ catalog (§2).
 They split by how they bind a model: an agent carries either its own `modelSpec`, or an
 `inheritsModelFrom` pointer that `resolveAgent` chases to a parent.
 
-### Model-backed agents (18)
+### Model-backed agents (19)
 
 Each has a GLOBAL `Agent` row with its own `modelSpec`. Model, prompt, skills, and tools are edited
 — and overridden at CHANNEL / TEAM / ORGANIZATION / WORKFLOW_TEMPLATE scope — through the Agent
@@ -44,6 +44,7 @@ library at `/studio/agents/library`.
 | `prdWriter` | Product pack — PRD drafting | `anthropic/claude-sonnet-5-5` |
 | `issueDrafter` | Product pack — drafts issue descriptions from a brief | `anthropic/claude-sonnet-5-5` |
 | `appAssistant` | The dashboard's in-app assistant panel (`runAssistantTurn`), acting as the signed-in user; its read-only tools (`searchDocs`, `workflowInventory`, `getPageContext`, `describeApi`, `callApi`) are bound in code — see [architecture.md §5](./architecture.md#5-authentication) | `anthropic/claude-sonnet-5-5` |
+| `assistantTitler` | `nameAssistantConversation` — names an in-app assistant conversation from the user's first messages, alongside its turn; no tools | `anthropic/claude-haiku-4-5-20251001` |
 
 `assertConfigReady()` gates worker boot on the agents the **installed templates** can reach:
 `requiredAgentKeysForDeployment()` walks the active (and experiment) version of every `ACTIVE`
@@ -68,7 +69,7 @@ runs on a cheaper, different model from the agents it scores, to avoid self-pref
 > It complements the review network rather than being replaced by it: the network gives three
 > personas an opinion and routes on their verdicts, this one fails the activity outright.
 
-### Sub-role personas (11)
+### Sub-role personas (13)
 
 No `modelSpec`; each carries `inheritsModelFrom` so it runs on its parent's model. The activity that
 runs a persona resolves its `systemPrompt`, skills, `toolKeys`, and MCP binding from the persona's

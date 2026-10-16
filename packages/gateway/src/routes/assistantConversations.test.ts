@@ -235,6 +235,86 @@ describe('assistant conversation routes', () => {
     });
   });
 
+  describe('PATCH /conversations/:id', () => {
+    it("renames the caller's conversation and marks the title as theirs", async () => {
+      prisma.assistantConversation.findFirst.mockResolvedValue({
+        ...conversation,
+        title: 'GitHub App setup',
+      });
+      const res = await app.inject({
+        headers: { authorization: personBearer(app) },
+        method: 'PATCH',
+        payload: { title: '  GitHub\n App   setup ' },
+        url: `${PREFIX}/conversations/${CONVERSATION_ID}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toMatchObject({ id: CONVERSATION_ID, title: 'GitHub App setup' });
+      expect(prisma.assistantConversation.updateMany).toHaveBeenCalledWith({
+        data: { title: 'GitHub App setup', titleSource: 'USER' },
+        where: { closedAt: null, id: CONVERSATION_ID, userId: USER_ID },
+      });
+    });
+
+    it('cuts a long title to the stored length', async () => {
+      prisma.assistantConversation.findFirst.mockResolvedValue(conversation);
+      await app.inject({
+        headers: { authorization: personBearer(app) },
+        method: 'PATCH',
+        payload: { title: 'x'.repeat(120) },
+        url: `${PREFIX}/conversations/${CONVERSATION_ID}`,
+      });
+      const { title } = prisma.assistantConversation.updateMany.mock.calls[0]?.[0].data ?? {};
+      expect(title).toHaveLength(80);
+      expect(title.endsWith('…')).toBe(true);
+    });
+
+    it('refuses a title with no text', async () => {
+      const res = await app.inject({
+        headers: { authorization: personBearer(app) },
+        method: 'PATCH',
+        payload: { title: ' \n ' },
+        url: `${PREFIX}/conversations/${CONVERSATION_ID}`,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(prisma.assistantConversation.updateMany).not.toHaveBeenCalled();
+    });
+
+    it("is not found for another user's or a closed conversation", async () => {
+      prisma.assistantConversation.updateMany.mockResolvedValue({ count: 0 });
+      const res = await app.inject({
+        headers: { authorization: personBearer(app) },
+        method: 'PATCH',
+        payload: { title: 'Mine now' },
+        url: `${PREFIX}/conversations/${CONVERSATION_ID}`,
+      });
+      expect(res.statusCode).toBe(404);
+    });
+
+    it('works while the assistant is off, like closing does', async () => {
+      settings.resolveSetting.mockResolvedValue(false);
+      prisma.assistantConversation.findFirst.mockResolvedValue(conversation);
+      const res = await app.inject({
+        headers: { authorization: personBearer(app) },
+        method: 'PATCH',
+        payload: { title: 'Renamed' },
+        url: `${PREFIX}/conversations/${CONVERSATION_ID}`,
+      });
+      expect(res.statusCode).toBe(200);
+    });
+
+    it('is refused to the assistant itself', async () => {
+      const res = await app.inject({
+        headers: { authorization: assistantBearer(app) },
+        method: 'PATCH',
+        payload: { title: 'Renamed by the model' },
+        url: `${PREFIX}/conversations/${CONVERSATION_ID}`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('ASSISTANT_NOT_ALLOWED');
+      expect(prisma.assistantConversation.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
   describe('GET /conversations/:id/messages/:messageId/stream', () => {
     it('sends the finished reply and ends', async () => {
       prisma.assistantMessage.findFirst.mockResolvedValue(

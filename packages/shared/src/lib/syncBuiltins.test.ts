@@ -642,6 +642,21 @@ describe('syncBuiltins — agents and skill refs', () => {
     expect(tables.agent).toHaveLength(count);
   });
 
+  it('seeds assistantTitler on its own cheap model, and keeps a model an admin chose', async () => {
+    const { prisma, tables } = makeFake();
+    await seedSweStarter(prisma);
+    const titler = tables.agent.find((a) => a.key === 'assistantTitler') as Row;
+    expect(titler).toMatchObject({
+      inheritsModelFrom: null,
+      modelSpec: 'anthropic/claude-haiku-4-5-20251001',
+    });
+    titler.modelSpec = 'openai/gpt-6-luna';
+    await seedSweStarter(prisma);
+    const after = tables.agent.filter((a) => a.key === 'assistantTitler');
+    expect(after).toHaveLength(1);
+    expect(after[0]?.modelSpec).toBe('openai/gpt-6-luna');
+  });
+
   it('selects the agent version deterministically (newest first)', async () => {
     const { orderBys, prisma } = makeFake();
     await seedSweStarter(prisma);

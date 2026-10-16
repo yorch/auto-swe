@@ -9,6 +9,7 @@ import {
   isAssistantReplyOpen,
   MAX_ASSISTANT_MESSAGE_CHARS,
   MAX_ASSISTANT_TITLE_CHARS,
+  normalizeAssistantTitle,
 } from '@auto-swe/shared/lib/assistantConversation';
 import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -37,6 +38,14 @@ const MessageParams = z.object({ id: z.uuid(), messageId: z.uuid() });
 const PostBody = z.object({
   message: z.string().trim().min(1).max(MAX_ASSISTANT_MESSAGE_CHARS),
   pageContext: assistantPageContextSchema.optional(),
+});
+
+const RenameBody = z.object({
+  title: z
+    .string()
+    .max(MAX_ASSISTANT_TITLE_CHARS * 2)
+    .transform(normalizeAssistantTitle)
+    .pipe(z.string().min(1, 'A title needs some text').max(MAX_ASSISTANT_TITLE_CHARS)),
 });
 
 const ListQuery = z.object({ limit: z.coerce.number().int().min(1).max(100).default(30) });
@@ -101,13 +110,6 @@ function conversationView(row: { id: string; title: string; createdAt: Date; upd
     title: row.title,
     updatedAt: row.updatedAt.toISOString(),
   };
-}
-
-function titleOf(message: string): string {
-  const line = message.replace(/\s+/g, ' ').trim();
-  return line.length <= MAX_ASSISTANT_TITLE_CHARS
-    ? line
-    : `${line.slice(0, MAX_ASSISTANT_TITLE_CHARS - 1).trimEnd()}…`;
 }
 
 export const assistantConversationRoutes: FastifyPluginAsync<{ catalog: ApiCatalog }> = async (
@@ -240,7 +242,7 @@ export const assistantConversationRoutes: FastifyPluginAsync<{ catalog: ApiCatal
       }
       const { message, pageContext } = request.body;
       const conversation = await fastify.prisma.assistantConversation.create({
-        data: { title: titleOf(message), userId: user.sub },
+        data: { title: normalizeAssistantTitle(message), userId: user.sub },
         select: { createdAt: true, id: true, title: true, updatedAt: true },
       });
       const turn = await startTurn(request, reply, user.sub, conversation.id, message, pageContext);
@@ -319,6 +321,32 @@ export const assistantConversationRoutes: FastifyPluginAsync<{ catalog: ApiCatal
         return reply;
       }
       return reply.code(201).send({ data: turn });
+    }
+  );
+
+  // PATCH /api/v1/assistant/conversations/:id — rename a conversation. The user's title is final:
+  // the assistantTitler agent never replaces it.
+  app.patch(
+    '/conversations/:id',
+    { onRequest: requireAuth(), schema: { body: RenameBody, params: ConversationParams } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const where = { closedAt: null, id: request.params.id, userId: user.sub };
+      const { count } = await fastify.prisma.assistantConversation.updateMany({
+        data: { title: request.body.title, titleSource: 'USER' },
+        where,
+      });
+      const conversation =
+        count === 0
+          ? null
+          : await fastify.prisma.assistantConversation.findFirst({
+              select: { createdAt: true, id: true, title: true, updatedAt: true },
+              where,
+            });
+      if (!conversation) {
+        return sendError(reply, 404, 'NOT_FOUND', 'Conversation not found');
+      }
+      return { data: conversationView(conversation) };
     }
   );
 

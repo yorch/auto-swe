@@ -40,8 +40,25 @@ export interface AssistantTurnRequest {
 /** Longest message a user may send. */
 export const MAX_ASSISTANT_MESSAGE_CHARS = 8000;
 
-/** Longest conversation title, taken from the start of its first message. */
+/** Longest conversation title, whoever wrote it. */
 export const MAX_ASSISTANT_TITLE_CHARS = 80;
+
+/**
+ * Where a conversation's title came from: the start of its first message, the `assistantTitler`
+ * agent, or the user. A USER title is never replaced by a model's.
+ */
+export type AssistantTitleSource = 'FIRST_MESSAGE' | 'MODEL' | 'USER';
+
+/**
+ * A title as stored: one line, every run of whitespace collapsed, at most
+ * {@link MAX_ASSISTANT_TITLE_CHARS} with an ellipsis when cut. Empty when the text has none.
+ */
+export function normalizeAssistantTitle(text: string): string {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length <= MAX_ASSISTANT_TITLE_CHARS
+    ? line
+    : `${line.slice(0, MAX_ASSISTANT_TITLE_CHARS - 1).trimEnd()}…`;
+}
 
 /** Longest admin-only failure detail kept on a FAILED reply (`AssistantMessage.errorDetail`). */
 export const MAX_ASSISTANT_ERROR_DETAIL_CHARS = 2000;

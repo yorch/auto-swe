@@ -162,6 +162,13 @@ browser sends it, and the assistant reads the entity through the gateway, whose 
 the user may see it. The panel recognises the dashboard's detail routes (run, workflow, template,
 epic, team, organization, eval run and dataset, doc). One reply is written at a time per conversation;
 a message sent while one is being written is refused with `409 TURN_IN_PROGRESS`.
+**Update (2026-10-16, titles)**: A conversation was titled by the start of its first message, which
+names a conversation that opens with "hi" poorly and for good. The `assistantTitler` agent now names
+it from the user's first messages alongside each turn, behind `assistant.generateTitles`, and the
+user can rename it from the panel header. A user's title is final: the model only replaces a title
+still taken from the first message. The titler reads the user's messages and not the replies, so it
+runs in parallel with the turn instead of after it. It has its own model, Haiku by default since a
+title is a few words, which admins change in the agent library.
 
 ## D9 — 2026-10-14 — Cost and limits
 
