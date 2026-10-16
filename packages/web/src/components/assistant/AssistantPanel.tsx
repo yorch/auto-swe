@@ -1,6 +1,7 @@
 'use client';
 
 import type {
+  AssistantConversationSummary,
   AssistantMessageView,
   AssistantToolStep,
 } from '@auto-swe/shared/lib/assistantConversation';
@@ -25,6 +26,7 @@ import {
   useAssistantStatus,
   useCloseAssistantConversation,
   useRenameAssistantConversation,
+  useResetAssistantTitle,
   useSendAssistantMessage,
 } from '@/hooks/useAssistant';
 import { pageContextFor } from '@/lib/assistantPageContext';
@@ -109,17 +111,15 @@ function PanelBody() {
   // Keyed by conversation, so opening another one (or the list) leaves a rename in progress behind.
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const renaming = current !== undefined && renamingId === current.id;
+  // The list's own, so a rename left open in the header does not reappear on a row.
+  const [listRenamingId, setListRenamingId] = useState<string | null>(null);
 
   return (
     <>
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-ink-500/70 px-4">
         <SparkleIcon className="text-paper-300" size={14} />
         {current && renaming ? (
-          <RenameForm
-            conversationId={current.id}
-            onDone={() => setRenamingId(null)}
-            title={current.title}
-          />
+          <RenameForm conversation={current} onDone={() => setRenamingId(null)} />
         ) : (
           <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-paper-100">
             {showingList ? 'Conversations' : (current?.title ?? 'Assistant')}
@@ -156,17 +156,34 @@ function PanelBody() {
           )}
           {conversations.data?.map((c) => (
             <li className="group flex items-center gap-1" key={c.id}>
-              <button
-                className={cn(
-                  'min-w-0 flex-1 truncate rounded-md px-3 py-2 text-left text-sm text-paper-300 hover:bg-ink-700 hover:text-paper-100',
-                  c.id === conversationId && 'bg-ink-700 text-paper-100',
-                  FOCUS_RING
-                )}
-                onClick={() => select(c.id)}
-                type="button"
-              >
-                {c.title}
-              </button>
+              {listRenamingId === c.id ? (
+                <RenameForm conversation={c} onDone={() => setListRenamingId(null)} />
+              ) : (
+                <>
+                  <button
+                    className={cn(
+                      'min-w-0 flex-1 truncate rounded-md px-3 py-2 text-left text-sm text-paper-300 hover:bg-ink-700 hover:text-paper-100',
+                      c.id === conversationId && 'bg-ink-700 text-paper-100',
+                      FOCUS_RING
+                    )}
+                    onClick={() => select(c.id)}
+                    type="button"
+                  >
+                    {c.title}
+                  </button>
+                  <button
+                    aria-label={`Rename “${c.title}”`}
+                    className={cn(
+                      'rounded-md px-2 py-1 text-xs text-paper-500 hover:text-paper-100',
+                      FOCUS_RING
+                    )}
+                    onClick={() => setListRenamingId(c.id)}
+                    type="button"
+                  >
+                    Rename
+                  </button>
+                </>
+              )}
               <button
                 aria-label={`Remove “${c.title}”`}
                 className={cn(
@@ -202,20 +219,24 @@ function PanelBody() {
   );
 }
 
-/** The header's title as an input: Enter or leaving the field saves, Escape cancels. */
+/**
+ * A conversation's title as an input: Enter or leaving the field saves, Escape cancels. "Auto"
+ * hands the title back to the model, which names the conversation from its messages.
+ */
 function RenameForm({
-  conversationId,
+  conversation,
   onDone,
-  title,
 }: {
-  conversationId: string;
+  conversation: AssistantConversationSummary;
   onDone: () => void;
-  title: string;
 }) {
+  const { id: conversationId, title } = conversation;
   const rename = useRenameAssistantConversation();
+  const reset = useResetAssistantTitle();
   const [value, setValue] = useState(title);
   const done = useRef(false);
   const field = useRef<HTMLInputElement | null>(null);
+  const form = useRef<HTMLDivElement | null>(null);
 
   // The field appears because the user asked to rename, so it takes the focus with its text selected.
   useEffect(() => {
@@ -235,29 +256,68 @@ function RenameForm({
     onDone();
   };
 
+  // Leaving the form saves; moving between the field and "Auto" does not.
+  const onBlur = (e: React.FocusEvent) => {
+    if (!form.current?.contains(e.relatedTarget as Node | null)) {
+      finish(true);
+    }
+  };
+
+  const nameAutomatically = () => {
+    if (done.current) {
+      return;
+    }
+    done.current = true;
+    reset.mutate(conversationId);
+    onDone();
+  };
+
   return (
-    <input
-      aria-label="Conversation title"
-      className={cn(
-        'min-w-0 flex-1 rounded-md border border-ink-200 bg-ink-900 px-2 py-1 text-sm font-semibold text-paper-100',
-        FOCUS_RING
-      )}
-      maxLength={MAX_ASSISTANT_TITLE_CHARS}
-      onBlur={() => finish(true)}
-      onChange={(e) => setValue(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          finish(true);
-        } else if (e.key === 'Escape') {
-          // Cancel the rename, not close the panel.
-          e.stopPropagation();
-          finish(false);
-        }
-      }}
-      ref={field}
-      value={value}
-    />
+    <div className="flex min-w-0 flex-1 items-center gap-1" ref={form}>
+      <input
+        aria-label="Conversation title"
+        className={cn(
+          'min-w-0 flex-1 rounded-md border border-ink-200 bg-ink-900 px-2 py-1 text-sm font-semibold text-paper-100',
+          FOCUS_RING
+        )}
+        maxLength={MAX_ASSISTANT_TITLE_CHARS}
+        onBlur={onBlur}
+        onChange={(e) => setValue(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            finish(true);
+          } else if (e.key === 'Escape') {
+            // Cancel the rename, not close the panel.
+            e.stopPropagation();
+            finish(false);
+          }
+        }}
+        ref={field}
+        value={value}
+      />
+      <button
+        aria-label="Name the conversation automatically"
+        className={cn(
+          'shrink-0 rounded-md px-2 py-1 text-xs font-medium text-paper-400 hover:bg-ink-700 hover:text-paper-100',
+          FOCUS_RING
+        )}
+        onBlur={onBlur}
+        onClick={nameAutomatically}
+        onKeyDown={(e) => {
+          if (e.key === 'Escape') {
+            e.stopPropagation();
+            finish(false);
+          }
+        }}
+        // Keep the field's focus, so its blur does not save the typed title first.
+        onMouseDown={(e) => e.preventDefault()}
+        title="Let the assistant name this conversation"
+        type="button"
+      >
+        Auto
+      </button>
+    </div>
   );
 }
 

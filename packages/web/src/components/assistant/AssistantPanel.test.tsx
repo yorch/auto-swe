@@ -8,8 +8,10 @@ import { AssistantMarkdown, AssistantPanel, AssistantToggle } from './AssistantP
 
 const state = vi.hoisted(() => ({
   enabled: true,
+  list: [] as unknown[],
   messages: [] as unknown[],
   rename: vi.fn(),
+  reset: vi.fn(),
   send: vi.fn(),
 }));
 
@@ -17,15 +19,19 @@ vi.mock('next/navigation', () => ({ usePathname: () => '/runs/run-42' }));
 vi.mock('@/hooks/useAssistant', () => ({
   useAssistantConversation: (id: string | null) => ({
     data: id
-      ? { conversation: { id, title: 'Why did it fail' }, messages: state.messages }
+      ? {
+          conversation: { id, title: 'Why did it fail', titleSource: 'USER' },
+          messages: state.messages,
+        }
       : undefined,
     error: null,
   }),
-  useAssistantConversations: () => ({ data: [], isLoading: false }),
+  useAssistantConversations: () => ({ data: state.list, isLoading: false }),
   useAssistantReplyStream: () => undefined,
   useAssistantStatus: () => ({ data: { enabled: state.enabled } }),
   useCloseAssistantConversation: () => ({ mutate: vi.fn() }),
   useRenameAssistantConversation: () => ({ mutate: state.rename }),
+  useResetAssistantTitle: () => ({ mutate: state.reset }),
   useSendAssistantMessage: () => ({ error: null, isPending: false, mutate: state.send }),
 }));
 
@@ -44,7 +50,9 @@ const msg = (overrides: Partial<AssistantMessageView>): AssistantMessageView => 
 beforeEach(() => {
   state.enabled = true;
   state.messages = [];
+  state.list = [];
   state.rename.mockReset();
+  state.reset.mockReset();
   state.send.mockReset();
   useAssistantStore.setState({ conversationId: null, open: true, showingList: false });
 });
@@ -138,6 +146,50 @@ describe('AssistantPanel', () => {
     expect(state.rename).not.toHaveBeenCalled();
     expect(useAssistantStore.getState().open).toBe(true);
     expect(screen.getByRole('heading', { name: 'Why did it fail' })).toBeTruthy();
+  });
+
+  it('names the conversation automatically from the rename field, without saving the typed text', () => {
+    useAssistantStore.setState({ conversationId: 'conv-1' });
+    render(<AssistantPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Rename the conversation' }));
+    fireEvent.change(screen.getByLabelText('Conversation title'), {
+      target: { value: 'Half-typed' },
+    });
+    const auto = screen.getByRole('button', { name: 'Name the conversation automatically' });
+    // Tabbing to the button moves focus within the form, which must not save.
+    fireEvent.blur(screen.getByLabelText('Conversation title'), { relatedTarget: auto });
+    fireEvent.click(auto);
+    expect(state.reset).toHaveBeenCalledWith('conv-1');
+    expect(state.rename).not.toHaveBeenCalled();
+    expect(screen.queryByLabelText('Conversation title')).toBeNull();
+  });
+
+  it('saves when focus leaves the rename form', () => {
+    useAssistantStore.setState({ conversationId: 'conv-1' });
+    render(<AssistantPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Rename the conversation' }));
+    const field = screen.getByLabelText('Conversation title');
+    fireEvent.change(field, { target: { value: 'Run 42' } });
+    fireEvent.blur(field, { relatedTarget: null });
+    expect(state.rename).toHaveBeenCalledWith({ id: 'conv-1', title: 'Run 42' });
+  });
+
+  it('renames a conversation from the history list', () => {
+    useAssistantStore.setState({ showingList: true });
+    state.list = [
+      { id: 'conv-1', title: 'hi', titleSource: 'FIRST_MESSAGE' },
+      { id: 'conv-2', title: 'Slack setup', titleSource: 'MODEL' },
+    ];
+    render(<AssistantPanel />);
+    fireEvent.click(screen.getByRole('button', { name: 'Rename “hi”' }));
+    const field = screen.getByLabelText('Conversation title');
+    expect((field as HTMLInputElement).value).toBe('hi');
+    fireEvent.change(field, { target: { value: 'Run 42 failure' } });
+    fireEvent.keyDown(field, { key: 'Enter' });
+    expect(state.rename).toHaveBeenCalledWith({ id: 'conv-1', title: 'Run 42 failure' });
+    // The other row was never in rename mode, and the list stays open.
+    expect(screen.getByRole('button', { name: 'Slack setup' })).toBeTruthy();
+    expect(useAssistantStore.getState().showingList).toBe(true);
   });
 
   it('offers no rename before a conversation exists', () => {
