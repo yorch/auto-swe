@@ -169,23 +169,30 @@ packages/
 | `src/app/studio/*` | Model config, integrations, workflow defaults, skills, agents + agent library, schedules, bundles, MCP connections, evals |
 | `src/app/govern/*` | Access tokens, sessions, memory, scanner patterns, security events, Slack channels, organizations, teams, budgets, users |
 | `src/hooks/` | TanStack Query hooks split by resource domain |
-| `src/stores/` | Zustand — `authStore` (identity), `teamStore` (active team), `themeStore` (theme preference), `assistantStore` (assistant panel) |
+| `src/stores/` | Zustand — `authStore` (identity), `teamStore` (active team), `themeStore` (theme and palette preference), `assistantStore` (assistant panel) |
 | `src/components/ui/` | Design-system primitives — `Button`, `Input`, `Select`, `Textarea`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `PageHeader`, `LoadingState`, `FieldWrapper`, `Th`, `Stat`, `StatusBadge`, `ToggleSwitch`, `CopyButton` |
-| `src/lib/palette.ts` | The theme's colours as checked literals, for the SVG contexts that cannot resolve `var()` |
+| `src/lib/palette.ts` | Each palette and theme's colours as checked literals, for the SVG contexts that cannot resolve `var()` |
 | `src/lib/api.ts` | `ApiClient` — all fetches; no direct `fetch` in components |
 
 **Design system.** Tokens are defined via Tailwind v4 `@theme` in `globals.css`: `ink-*`
-surfaces and borders, `paper-*` text, `ember-*` (violet) primary accent, and status colours `moss-*`
+surfaces and borders, `paper-*` text, `ember-*` (violet) accent, and status colours `moss-*`
 (success), `brick-*` (failure), `amber-*` (waiting, warning), `dust-*` (running, info) and
-`violet-*` (teal; in review, secondary accent). The light theme is the same token names re-pointed
-under `:root[data-theme='light']`, set before first paint; users switch it from the top bar, the
-command palette or the user menu (`stores/themeStore.ts`). The root font size is 14px, and every type step
-is pinned to whole pixels — `text-2xs` 11px (uppercase eyebrow labels only), `text-xs` 12px,
+`violet-*` (teal; in review). The accent is reserved for the primary action, the current selection
+and keyboard focus; links are body colour with an underline, and status colours only ever mean a
+status. The design is flat: solid fills and visible borders, no gradients or glows, and a three-step
+radius scale (4px small controls and badges, 8px inputs, buttons and menus, 12px cards and modals).
+Two palettes re-point the same token names: navy (the default) and graphite (neutral greys,
+`data-palette="graphite"`), each in dark and light (`:root[data-theme='light']`). Both attributes are
+set on `<html>` before first paint; users switch the theme from the top bar, the command palette or
+the user menu, and the palette from the command palette or the user menu (`stores/themeStore.ts`).
+The root font size is 14px, and every type step
+is pinned to whole pixels — `text-2xs` 11px (uppercase labels only), `text-xs` 12px,
 `text-sm` 13px, `text-base` 14px, then `text-lg` 16 through `text-5xl` 44px for titles and display
 — so components use those steps rather than arbitrary `text-[Npx]` values. Legacy `var(--muted-foreground)` style aliases are bridged for compatibility; new code uses
 tokens directly. SVG presentation attributes — Recharts axis ticks, React Flow edge strokes and markers —
-do not resolve `var()`, so those read hex literals from `lib/palette.ts`; `palette.test.ts` parses
-`globals.css` and fails if a literal drifts from its token, and a second guard fails the build if a
+do not resolve `var()`, so those read hex literals for the painted palette and theme from
+`lib/palette.ts`; `palette.test.ts` parses `globals.css` and fails if a literal drifts from its token
+or if any palette's text ramp drops below its contrast floors, and a second guard fails the build if a
 component reaches past the theme into a default Tailwind colour scale.
 
 **Data fetching.** All server state lives in TanStack Query (staleTime 30 s, retry 1). Running
