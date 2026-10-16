@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { Icon } from '@/components/ui/Icon';
 import { Modal } from '@/components/ui/Modal';
 import { pageTitle } from '@/lib/navigation';
@@ -25,6 +25,15 @@ export function HelpButton() {
   const setTarget = useHelpStore((s) => s.setTarget);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const targetRef = useCallback((node: HTMLDivElement | null) => setTarget(node), [setTarget]);
+  // A link followed from inside the panel (the docs, a page's "Learn more") changes the route
+  // under it; close it so the reader lands on the page, not on the new page's help.
+  const shownFor = useRef(pathname);
+  useEffect(() => {
+    if (shownFor.current !== pathname) {
+      shownFor.current = pathname;
+      setOpen(false);
+    }
+  }, [pathname, setOpen]);
   return (
     <>
       <button
@@ -63,7 +72,7 @@ export function HelpButton() {
           <p className="mt-6 border-t border-ink-600 pt-4">
             <Link
               className={cn(
-                'inline-flex items-center gap-1.5 rounded-sm text-sm text-accent-300 transition-colors hover:text-accent-200',
+                'inline-flex items-center gap-1.5 rounded-sm text-sm text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current',
                 FOCUS_RING
               )}
               href="/docs"

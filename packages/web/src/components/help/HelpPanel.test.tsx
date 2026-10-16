@@ -85,6 +85,17 @@ describe('Help panel', () => {
     nav.pathname = '/runs';
   });
 
+  it('closes when the route changes under it, such as after following a link inside it', () => {
+    const { rerender } = render(<HelpButton />);
+    fireEvent.click(button());
+    expect(dialog().hasAttribute('open')).toBe(true);
+    nav.pathname = '/docs';
+    rerender(<HelpButton />);
+    expect(dialog().hasAttribute('open')).toBe(false);
+    expect(button().getAttribute('aria-expanded')).toBe('false');
+    nav.pathname = '/runs';
+  });
+
   it('falls back to a note and the docs link on a page with no help', () => {
     render(<HelpButton />);
     fireEvent.click(button());
