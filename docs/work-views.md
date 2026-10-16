@@ -146,7 +146,8 @@ A request flagged `ticketIsSynthetic` names no tracker issue, so none of the tra
 workflow started, CI verdict, merge, workflow finished) is attempted for it, and neither is the
 knowledge-base PR link write-back, which would otherwise search the knowledge base for a page
 matching the generated id. The write-back also requires the flag to have been read and found false,
-so an unreadable flag skips it while the tracker sync is still attempted. A Channel Assistant
+so an unreadable flag skips it while the tracker sync is still attempted. A `postTicketComment`
+step in such a run posts nothing and returns `posted: false` with a reason. A Channel Assistant
 turn files no request of its own, so there is nothing to flag. The Slack merge note and
 the merge evaluation row do not depend on the tracker and still run.
 

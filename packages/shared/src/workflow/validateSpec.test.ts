@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BUILTIN_SHELL_IMAGES } from './shellImageAllowlist.js';
 import { parseWorkflowSpec } from './spec.js';
 import { BUILTIN_TEMPLATES } from './templates/index.js';
-import { validateSpec } from './validateSpec.js';
+import { findInternalSteps, validateSpec } from './validateSpec.js';
 
 function spec(nodes: Record<string, unknown>, entry = 'a') {
   return parseWorkflowSpec({ entry, name: 'test', nodes, schemaVersion: 1 });
@@ -642,5 +642,32 @@ describe('validateSpec: the publishOutcome risk class is declared, not bound', (
         'do'
       )
     ).toHaveLength(0);
+  });
+});
+
+describe('validateSpec: postTicketComment in an authored template', () => {
+  const commentSpec = (node: Record<string, unknown>) =>
+    spec(
+      {
+        comment: { next: 'done', step: 'postTicketComment', type: 'step', ...node },
+        done: { status: 'SUCCESS', type: 'terminate' },
+      },
+      'comment'
+    );
+
+  it('is a known, author-facing step with its body bound from an earlier node', () => {
+    const parsed = commentSpec({
+      inputs: { body: { from: 'nodes.triage.output.text' }, heading: { literal: 'Triage' } },
+    });
+    const result = validateSpec(parsed);
+    const codes = result.warnings.map((w) => w.code);
+    expect(codes).not.toContain('UNKNOWN_STEP');
+    expect(codes).not.toContain('MISSING_CONFIG');
+    expect(findInternalSteps(parsed)).toEqual([]);
+  });
+
+  it('warns when the body is neither configured nor bound', () => {
+    const codes = validateSpec(commentSpec({})).warnings.map((w) => w.code);
+    expect(codes).toContain('MISSING_CONFIG');
   });
 });

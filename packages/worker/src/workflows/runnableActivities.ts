@@ -190,6 +190,16 @@ export const contextActivities = proxyActivities<
   startToCloseTimeout: T_5M,
 });
 
+// A tracker comment is not idempotent, so a retry could post it twice. The activity reports every
+// failure as `posted: false` rather than throwing, so only a timeout or a lost worker ends here,
+// and the step's executor reports that as `posted: false` too.
+export const trackerCommentActivities = proxyActivities<
+  Pick<typeof activitiesType, 'postTicketComment'>
+>({
+  retry: RETRY_SINGLE_ATTEMPT,
+  startToCloseTimeout: T_2M,
+});
+
 // Governed knowledge capture/retrieval. Activity-backed and workspace-free.
 export const knowledgeActivities = proxyActivities<
   Pick<typeof activitiesType, 'retrieveKnowledge' | 'captureLearning'>

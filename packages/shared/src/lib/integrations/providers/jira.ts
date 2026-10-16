@@ -229,13 +229,15 @@ export class JiraProvider implements IssueTrackerProvider {
     }
   }
 
-  async addComment(issueId: string, bodyText: string): Promise<void> {
+  async addComment(issueId: string, bodyText: string): Promise<boolean> {
     try {
       await this.client.post(`/rest/api/3/issue/${encodeURIComponent(issueId)}/comment`, {
         body: adfFromText(bodyText),
       });
+      return true;
     } catch (err) {
       this.log?.warn({ err, issueId }, 'Jira addComment failed');
+      return false;
     }
   }
 

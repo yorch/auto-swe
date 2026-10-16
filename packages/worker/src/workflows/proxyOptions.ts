@@ -138,7 +138,7 @@ export const RETRY_SCHEDULED = {
  * repair/poll loop or perform a non-idempotent write, where a Temporal retry
  * would re-burn tokens or duplicate rows.
  * `{ maximumAttempts: 1 }`
- * Used by: waitForCiByPolling (runnable); createChannelWorkflowDraft /
+ * Used by: waitForCiByPolling, postTicketComment (runnable); createChannelWorkflowDraft /
  * refineChannelWorkflowDraft (channelAssistant); generateWorkflowSpec +
  * persistDraftTemplate (workflowAuthor / workflowAuthorJob).
  */

@@ -16,7 +16,7 @@
 import type { WorkspaceProviderType } from '@auto-swe/shared/lib/workspaceProviders';
 import type { CodeResult, RepoWorkRequest, Subtask } from '@auto-swe/shared/types/workflow';
 import type { Context } from '@auto-swe/shared/workflow/expr';
-import { workflowInfo } from '@temporalio/workflow';
+import { isCancellation, workflowInfo } from '@temporalio/workflow';
 import type * as activitiesType from '../activities/index.js';
 import { buildLessonEvidence } from '../lib/lessonEvidence.js';
 import { lookupPath } from '../lib/workflowEngine.js';
@@ -44,6 +44,7 @@ import {
   mergeActivities,
   prdActivities,
   stateActivities,
+  trackerCommentActivities,
 } from './runnableActivities.js';
 
 interface StepExecutorArgs {
@@ -240,6 +241,35 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     'gatherTicketContext',
     ({ request, config }) =>
       contextActivities.gatherTicketContext(request, config.systemPrompt as string | undefined),
+  ],
+  [
+    'postTicketComment',
+    async ({ request, config, inputs }) => {
+      const body = inputs.body ?? config.body;
+      const heading = inputs.heading ?? config.heading;
+      if (body !== undefined && typeof body !== 'string') {
+        const kind = Array.isArray(body) ? 'array' : body === null ? 'null' : typeof body;
+        return { posted: false, reason: `the comment body is not text (got ${kind})` };
+      }
+      try {
+        return await trackerCommentActivities.postTicketComment({
+          body: body ?? '',
+          ...(typeof heading === 'string' ? { heading } : {}),
+          workRequestId: request.workRequestId,
+        });
+      } catch (err) {
+        // The activity reports its own failures as `posted: false`; what reaches here is a
+        // timeout or a lost worker, and the single attempt means it is not retried.
+        if (isCancellation(err)) {
+          throw err;
+        }
+        return {
+          posted: false,
+          reason:
+            'the comment step did not finish (timed out or lost its worker); the comment may or may not have been posted',
+        };
+      }
+    },
   ],
   [
     // P2 declarative agent node: run a library Agent by reference.
