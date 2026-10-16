@@ -961,23 +961,6 @@ async function syncAgents(prisma: PrismaClient, newSkillNames: ReadonlySet<strin
 }
 
 /**
- * Built-in templates seeded under an earlier name, `old → new`.
- *
- * Sync matches a GLOBAL template by name, so renaming one in code alone would
- * create a second row and strand the first — along with its run history, its
- * versions, and every team override pointing at it. This renames the existing
- * row in place first. Entries stay until no deployment can still hold the old
- * name; removing one early re-creates the duplicate.
- */
-export const RENAMED_TEMPLATES: Readonly<Record<string, string>> = {
-  // "default" is a flag an admin can move, and "engineering" did not tell it from its siblings;
-  // the run goes from a ticket to a person merging the pull request.
-  'default-engineering': 'ticket-to-merge',
-  // It opens a PR and stops at green CI; the old name said it merged.
-  'review-and-merge': 'agent-reviewed-pr',
-};
-
-/**
  * Earlier built-in descriptions, by current template name.
  *
  * Sync never overwrites a template's description, because an admin may have
@@ -1162,28 +1145,7 @@ export const PREVIOUS_BUILTIN_INPUT_SCHEMAS: Readonly<Record<string, readonly In
   ],
 };
 
-async function renameTemplates(prisma: PrismaClient): Promise<void> {
-  for (const [from, to] of Object.entries(RENAMED_TEMPLATES)) {
-    const legacy = await prisma.workflowTemplate.findFirst({ where: { name: from, teamId: null } });
-    if (!legacy) {
-      continue;
-    }
-    const current = await prisma.workflowTemplate.findFirst({ where: { name: to, teamId: null } });
-    if (current) {
-      // Both exist — the new one was created before this rename ran. Leave the
-      // legacy row for an admin rather than guess which history to keep.
-      console.warn(
-        `[syncBuiltins] template "${from}" was renamed to "${to}", but both exist; ` +
-          `leaving "${from}" (${legacy.id}) for an admin to archive`
-      );
-      continue;
-    }
-    await prisma.workflowTemplate.update({ data: { name: to }, where: { id: legacy.id } });
-  }
-}
-
 async function syncTemplates(prisma: PrismaClient): Promise<void> {
-  await renameTemplates(prisma);
   for (const tmpl of BUILTIN_TEMPLATES) {
     // Legacy SWE templates predate the column and expect a git workspace.
     await syncBuiltinTemplate(prisma, {
