@@ -66,7 +66,7 @@ export function FailureCard({ step, onJumpToFailure, onReRun, size = 'full' }: F
             <h4
               className={cn(
                 'font-semibold tracking-[-0.01em] text-paper-50',
-                size === 'full' ? 'text-[15px]' : 'text-sm'
+                size === 'full' ? 'text-lg' : 'text-sm'
               )}
             >
               {errorTitle}

@@ -288,10 +288,8 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
             </svg>
           </span>
           <span className="flex items-baseline gap-[3px]">
-            <span className="text-[15px] font-bold tracking-[-0.02em] text-paper-100">auto</span>
-            <span className="font-display text-[15px] font-semibold italic text-ember-400">
-              ·swe
-            </span>
+            <span className="text-lg font-bold tracking-[-0.02em] text-paper-100">auto</span>
+            <span className="font-display text-lg font-semibold italic text-ember-400">·swe</span>
           </span>
         </Link>
         <button

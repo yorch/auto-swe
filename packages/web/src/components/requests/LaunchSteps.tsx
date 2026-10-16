@@ -22,7 +22,7 @@ export function LaunchCardHeader({
   return (
     <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 border-b border-ink-600 pb-4">
       <div className="min-w-0">
-        <h2 className="text-[17px] font-semibold tracking-tight text-paper-50">{title}</h2>
+        <h2 className="text-lg font-semibold tracking-tight text-paper-50">{title}</h2>
         {description && <p className="mt-1 text-sm text-paper-400">{description}</p>}
       </div>
       <ol aria-label="Launch progress" className="flex shrink-0 items-center gap-2 text-xs">

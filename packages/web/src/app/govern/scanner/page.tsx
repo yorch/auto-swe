@@ -498,7 +498,7 @@ function PatternSection({
     <Card className="scroll-mt-4 p-4 sm:p-6" id={`scanner-${type}`}>
       <CardHeader className="mb-1">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <h2 className="text-[17px] font-semibold tracking-tight text-paper-50">{info.title}</h2>
+          <h2 className="text-lg font-semibold tracking-tight text-paper-50">{info.title}</h2>
           <EnforcementBadge type={type} />
         </div>
         <span className="text-xs text-paper-500 tabular-nums">

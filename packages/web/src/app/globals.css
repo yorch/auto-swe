@@ -73,11 +73,15 @@
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
 
   /* Type scale. The root is 14px (the html rule below), and Tailwind's defaults are rem,
-     so left alone `text-xs` was 10.5px and `text-sm` 12.25px — the metadata, table and
-     form text that most of the app is made of. These pin the two small steps to whole
-     pixels a dense UI can still read; the larger steps keep their rem defaults. Text
-     below the heading sizes uses these steps, never an arbitrary `text-[Npx]` between
+     so left alone every step lands on a fraction (`text-xs` 10.5px, `text-lg` 15.75px,
+     `text-3xl` 26.25px). Each step is pinned to whole pixels here instead; `text-base`
+     is the 14px root itself. Use these steps, never an arbitrary `text-[Npx]` between
      them — half-pixel neighbours read as "slightly off", not as hierarchy.
+       2xs 11  uppercase eyebrows      lg  16  card, section and panel titles; doc prose
+       xs  12  metadata, hints         xl  18  modal and detail-page titles
+       sm  13  dense UI, tables, forms 2xl 22  page titles (small screens), doc h2
+       base 14 body, chat              3xl 28  page titles, KPI figures
+                                       4xl 34  doc h1, display    5xl 44  login headline
      `text-2xs` is for UPPERCASE eyebrow labels only (`.kicker`, nav group names,
      uppercase badges): capitals read about a step larger, so 11px caps sit beside 12px
      sentence-case text. Never use it for sentence-case text. */
@@ -87,6 +91,18 @@
   --text-xs--line-height: 16px;
   --text-sm: 13px;
   --text-sm--line-height: 18px;
+  --text-lg: 16px;
+  --text-lg--line-height: 24px;
+  --text-xl: 18px;
+  --text-xl--line-height: 26px;
+  --text-2xl: 22px;
+  --text-2xl--line-height: 28px;
+  --text-3xl: 28px;
+  --text-3xl--line-height: 34px;
+  --text-4xl: 34px;
+  --text-4xl--line-height: 40px;
+  --text-5xl: 44px;
+  --text-5xl--line-height: 48px;
 
   /* Border radius — the scale the primitives use (inputs/alerts 9, buttons 10,
      cards/modals 14), so a `rounded-*` class and a primitive agree. */

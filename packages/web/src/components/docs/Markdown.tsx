@@ -125,12 +125,12 @@ export function Markdown({
   return (
     <div
       className={cn(
-        'max-w-none text-[15px] leading-7 text-paper-300',
+        'max-w-none text-lg leading-7 text-paper-300',
         // Headings
-        '[&_h1]:mt-0 [&_h1]:mb-6 [&_h1]:text-3xl [&_h1]:font-semibold [&_h1]:leading-tight [&_h1]:tracking-[-0.02em] [&_h1]:text-paper-50 md:[&_h1]:text-[34px]',
-        '[&_h2]:scroll-mt-20 [&_h2]:mt-12 [&_h2]:mb-4 [&_h2]:border-b [&_h2]:border-ink-600 [&_h2]:pb-2.5 [&_h2]:text-[22px] [&_h2]:font-semibold [&_h2]:leading-snug [&_h2]:tracking-tight [&_h2]:text-paper-50',
-        '[&_h3]:scroll-mt-20 [&_h3]:mt-9 [&_h3]:mb-3 [&_h3]:text-lg [&_h3]:font-semibold [&_h3]:tracking-tight [&_h3]:text-paper-100',
-        '[&_h4]:mt-7 [&_h4]:mb-2 [&_h4]:text-base [&_h4]:font-semibold [&_h4]:text-paper-100',
+        '[&_h1]:mt-0 [&_h1]:mb-6 [&_h1]:text-3xl [&_h1]:font-semibold [&_h1]:leading-tight [&_h1]:tracking-[-0.02em] [&_h1]:text-paper-50 md:[&_h1]:text-4xl',
+        '[&_h2]:scroll-mt-20 [&_h2]:mt-12 [&_h2]:mb-4 [&_h2]:border-b [&_h2]:border-ink-600 [&_h2]:pb-2.5 [&_h2]:text-2xl [&_h2]:font-semibold [&_h2]:leading-snug [&_h2]:tracking-tight [&_h2]:text-paper-50',
+        '[&_h3]:scroll-mt-20 [&_h3]:mt-9 [&_h3]:mb-3 [&_h3]:text-xl [&_h3]:font-semibold [&_h3]:tracking-tight [&_h3]:text-paper-100',
+        '[&_h4]:mt-7 [&_h4]:mb-2 [&_h4]:text-lg [&_h4]:font-semibold [&_h4]:text-paper-100',
         '[&_h2+*]:mt-0 [&_h3+*]:mt-0',
         // Body
         '[&_p]:my-4',

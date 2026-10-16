@@ -52,7 +52,7 @@ export function CardTitle({ children, eyebrow }: { children: React.ReactNode; ey
   return (
     <div>
       {eyebrow && <div className="kicker mb-1">{eyebrow}</div>}
-      <h3 className="text-[17px] font-semibold tracking-tight text-paper-50">{children}</h3>
+      <h3 className="text-lg font-semibold tracking-tight text-paper-50">{children}</h3>
     </div>
   );
 }

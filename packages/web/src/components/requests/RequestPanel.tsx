@@ -49,7 +49,7 @@ export function RequestPanel({ requestId, onClose }: { requestId: string; onClos
     >
       <div className="flex h-full flex-col">
         <header className="flex shrink-0 items-center justify-between border-b border-ink-500 px-6 py-3.5">
-          <h2 className="text-[15px] font-semibold text-paper-100">Request details</h2>
+          <h2 className="text-lg font-semibold text-paper-100">Request details</h2>
           <Button
             aria-label="Close request details"
             className="h-8 w-8 px-0"
@@ -171,7 +171,7 @@ function RequestDetail({ requestId }: { requestId: string }) {
       </QueryBoundary>
       {latestId && (
         <section className="space-y-3 border-t border-ink-600 pt-6">
-          <h3 className="flex items-center gap-2 text-[15px] font-semibold text-paper-100">
+          <h3 className="flex items-center gap-2 text-lg font-semibold text-paper-100">
             {isCrossRepo ? 'Repository executions' : 'Attempts'}
             {total > 0 && (
               <span className="tabular rounded-full bg-ink-600 px-2 text-xs font-medium text-paper-300">
@@ -331,7 +331,7 @@ function AttemptContent({
       )}
       {retryOpen && (
         <Card className="space-y-4 p-5">
-          <h3 className="text-[15px] font-semibold text-paper-100">Start another attempt</h3>
+          <h3 className="text-lg font-semibold text-paper-100">Start another attempt</h3>
           <p className="text-sm text-paper-400">
             {consequence ??
               'This starts another agent attempt without publishing a branch or pull request.'}
@@ -368,7 +368,7 @@ function AttemptContent({
         </Card>
       )}
       <section className="space-y-2">
-        <h3 className="text-[15px] font-semibold text-paper-100">Progress</h3>
+        <h3 className="text-lg font-semibold text-paper-100">Progress</h3>
         {run.status === 'RUNNING' && (
           <p className="text-sm text-paper-300">
             {pending.length
