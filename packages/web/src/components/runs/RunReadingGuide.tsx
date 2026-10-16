@@ -1,17 +1,17 @@
-import { cn } from '@/lib/utils';
+import { PageHelp } from '@/components/help/PageHelp';
 
 /**
- * A collapsed guide to the run page's panels. It names the controls as the page labels them
+ * The run page's panels, explained in the Help panel. It names the controls as the page labels them
  * (the layout switcher reads Split, Transcript and Timeline), and says which panels only some
  * layouts carry. The request-to-merge lifecycle is `HowItWorks`; this is about reading this page.
  */
-export function RunReadingGuide({ className }: { className?: string }) {
+export function RunReadingGuide() {
   return (
-    <details className={cn('group rounded-lg border border-ink-500/70 bg-ink-800/60', className)}>
-      <summary className="cursor-pointer select-none rounded-lg px-4 py-3 text-sm font-medium text-paper-100 outline-none focus-visible:ring-2 focus-visible:ring-ember-400">
-        How to read this page
-      </summary>
-      <div className="space-y-3 border-t border-ink-600 px-4 py-4 text-sm leading-relaxed text-paper-400">
+    <PageHelp>
+      <section aria-labelledby="run-reading-guide-title" className="space-y-3">
+        <h3 className="text-sm font-semibold text-paper-100" id="run-reading-guide-title">
+          How to read this page
+        </h3>
         <p>
           <span className="font-semibold text-paper-100">Status and summary.</span> The badge by the
           title and the notice under the header give the run's state in plain words. The cards
@@ -52,7 +52,7 @@ export function RunReadingGuide({ className }: { className?: string }) {
           decisions recorded for this run), each only when the run has some. Timeline has no rail.
           On a narrow screen the rail sits behind a Run details toggle.
         </p>
-      </div>
-    </details>
+      </section>
+    </PageHelp>
   );
 }

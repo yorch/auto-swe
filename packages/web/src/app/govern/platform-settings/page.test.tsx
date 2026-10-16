@@ -10,6 +10,7 @@ const { state } = vi.hoisted(() => ({
   },
 }));
 
+vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('@/hooks/useUrlFilters', () => ({
   useUrlFilters: () => ({ params: state.params, update: vi.fn() }),
 }));
@@ -61,9 +62,8 @@ describe('platform settings page', () => {
     expect(screen.getByText('How settings resolve')).toBeTruthy();
     expect(screen.getByText(/about 30 seconds/)).toBeTruthy();
     expect(screen.getByText(/does not reach runs already in flight/)).toBeTruthy();
-    expect(
-      screen.getByText('How settings resolve').closest('summary')?.querySelector('button')
-    ).toBeNull();
+    // The explainer lives in the Help panel, not in a disclosure on the page.
+    expect(screen.getByText('How settings resolve').closest('details')).toBeNull();
     expect(
       screen.getAllByRole('link', { name: /About the settings cascade/ })[0]?.getAttribute('href')
     ).toBe('/docs/configuration#2-resolution-order');

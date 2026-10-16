@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace: vi.fn() }),
   useSearchParams: () => new URLSearchParams(''),
@@ -11,8 +12,12 @@ const useRequests = vi.fn();
 vi.mock('@/hooks/useRequests', () => ({
   useRequests: (...args: unknown[]) => useRequests(...args),
 }));
+const approvals = vi.fn(() => ({ data: [] as { id: string }[], isLoading: false }));
 vi.mock('@/hooks/useApprovals', () => ({
-  useApprovals: () => ({ data: [], isLoading: false }),
+  useApprovals: () => approvals(),
+}));
+vi.mock('@/components/approvals/HumanStepCard', () => ({
+  HumanStepCard: () => <div>step card</div>,
 }));
 vi.mock('@/components/setup/SetupReadiness', () => ({ SetupReadiness: () => null }));
 vi.mock('@/components/setup/GovernanceGuide', () => ({ GovernanceGuide: () => null }));
@@ -22,7 +27,6 @@ import HomePage from './page';
 
 const ready = { error: null, isError: false, isFetching: false, isLoading: false, isSuccess: true };
 const bucket = (total: number) => ({ ...ready, data: { data: [], meta: { total } } });
-const details = () => document.querySelector('details') as HTMLDetailsElement;
 
 afterEach(() => {
   cleanup();
@@ -38,49 +42,52 @@ describe('Home product tour', () => {
   });
 });
 
-describe('Home "How auto-swe works"', () => {
-  it('is open for a user with no requests in any bucket', () => {
+describe('Home layout', () => {
+  it('moves the lifecycle explainer into the Help panel instead of the page', () => {
     useRequests.mockReturnValue(bucket(0));
     render(<HomePage />);
-    expect(details().hasAttribute('open')).toBe(true);
+    expect(document.querySelector('details')).toBeNull();
+    expect(
+      screen
+        .getAllByTestId('page-help')
+        .some((help) => help.textContent?.includes('How auto-swe works'))
+    ).toBe(true);
   });
 
-  it('is closed once the user has requests', () => {
-    useRequests.mockReturnValue(bucket(3));
+  it('shows each approval surface once: no tile, no top-bar pill, one section when waiting', () => {
+    useRequests.mockReturnValue(bucket(2));
     render(<HomePage />);
-    expect(details().hasAttribute('open')).toBe(false);
+    // Three overview tiles for the request buckets; no "Waiting on you" tile.
+    expect(screen.queryByRole('link', { name: /Waiting on you/ })).toBeNull();
+    expect(screen.queryByText('Waiting on you')).toBeNull();
+    const overview = within(screen.getByRole('region', { name: 'Overview' }));
+    expect(overview.getByText('Needs your attention')).toBeTruthy();
+    expect(overview.getByText('In progress')).toBeTruthy();
+    expect(overview.getByText('Recent results')).toBeTruthy();
   });
 
-  it('stays closed while the buckets are still loading', () => {
-    useRequests.mockReturnValue({ ...ready, data: undefined, isLoading: true, isSuccess: false });
+  it('makes the overview figures plain text, not links that scroll the page', () => {
+    useRequests.mockReturnValue(bucket(2));
     render(<HomePage />);
-    expect(details().hasAttribute('open')).toBe(false);
+    const overview = within(screen.getByRole('region', { name: 'Overview' }));
+    expect(overview.queryAllByRole('link')).toHaveLength(0);
   });
 
-  it('stays closed when one bucket query errors, even if the others are empty', () => {
-    useRequests.mockImplementation((params: { state: string }) =>
-      params.state === 'success'
-        ? {
-            ...ready,
-            data: undefined,
-            error: new Error('boom'),
-            isError: true,
-            isSuccess: false,
-          }
-        : bucket(0)
-    );
-    render(<HomePage />);
-    expect(details().hasAttribute('open')).toBe(false);
-  });
-
-  it('keeps a manual toggle when switching between My work and Team work', () => {
+  it('offers one Start work entry, the quick-start card, and no duplicate shortcuts', () => {
     useRequests.mockReturnValue(bucket(0));
     render(<HomePage />);
-    expect(details().open).toBe(true);
-    details().open = false; // the user collapses it
-    fireEvent.click(screen.getByRole('button', { name: 'Team work' }));
-    expect(details().open).toBe(false);
-    fireEvent.click(screen.getByRole('button', { name: 'My work' }));
-    expect(details().open).toBe(false);
+    expect(screen.queryByRole('link', { name: 'Start work' })).toBeNull();
+    expect(screen.getByRole('link', { name: /Run a workflow/ })).toBeTruthy();
+    expect(screen.queryByText('Jump to')).toBeNull();
+    expect(screen.queryByRole('link', { name: 'Tickets' })).toBeNull();
+  });
+});
+
+describe('Home waiting on you', () => {
+  it('lists pending approvals in a single section', () => {
+    useRequests.mockReturnValue(bucket(0));
+    approvals.mockReturnValue({ data: [{ id: 's1' }], isLoading: false });
+    render(<HomePage />);
+    expect(screen.getAllByRole('heading', { name: 'Waiting on you' })).toHaveLength(1);
   });
 });

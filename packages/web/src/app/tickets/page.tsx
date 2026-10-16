@@ -43,13 +43,13 @@ function Tickets() {
   return (
     <div className="space-y-6">
       <PageHeader
-        subtitle={
-          <>
-            Everything filed under one ticket <HelpTip term="ticket" />: its requests, runs, pull
-            requests and cost. A ticket id is the label work is filed under: usually your tracker’s
-            issue key, or a generated id when none was given.
-          </>
+        help={
+          <p>
+            A ticket <HelpTip term="ticket" /> id is the label work is filed under: usually your
+            tracker’s issue key, or a generated id when none was given.
+          </p>
         }
+        subtitle="Everything filed under one ticket: its requests, runs, pull requests and cost."
         title="Tickets"
       />
       <div className="space-y-4">

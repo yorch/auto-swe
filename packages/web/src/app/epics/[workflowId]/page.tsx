@@ -85,12 +85,13 @@ export default function EpicDetailPage({ params }: PageProps) {
             </ButtonLink>
           )
         }
-        subtitle={
-          <>
+        help={
+          <p>
             An epic <HelpTip term="epic" /> is a multi-repository change. The planner splits it into
             the child runs listed below, one per repository.
-          </>
+          </p>
         }
+        subtitle="A multi-repository change, split into one child run per repository."
         title={epic.externalTicketId}
       />
 

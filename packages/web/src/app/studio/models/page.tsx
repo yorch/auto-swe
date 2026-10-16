@@ -45,24 +45,26 @@ function StudioModelConfigPageInner() {
   return (
     <div className="space-y-6">
       <PageHeader
-        learnMore={{ ...HELP_LINKS.modelConfiguration, label: 'About model configuration' }}
-        subtitle={
+        help={
           <>
-            Encrypted provider credentials, the embedding model, and the audit trail. Each agent's
-            model, prompt, skills, and tools are set in the{' '}
-            <Link className="text-ember-400 hover:text-ember-600" href="/studio/agents/library">
-              Agent library
-            </Link>
-            .
+            <p>
+              <strong className="text-paper-100">Start here:</strong> add a provider credential
+              first. Without one, no agent can call a model, and the worker will not start until the
+              required credentials exist, so no run can begin.
+            </p>
+            <p>
+              Each agent's model, prompt, skills, and tools are set in the{' '}
+              <Link className="text-ember-400 hover:text-ember-600" href="/studio/agents/library">
+                Agent library
+              </Link>
+              .
+            </p>
           </>
         }
+        learnMore={{ ...HELP_LINKS.modelConfiguration, label: 'About model configuration' }}
+        subtitle="Encrypted provider credentials, the embedding model, and the audit trail."
         title="Model configuration"
       />
-      <p className="max-w-3xl rounded-lg border border-ink-500/70 bg-ink-900/30 px-4 py-3 text-sm leading-relaxed text-paper-300">
-        <strong className="text-paper-100">Start here:</strong> add a provider credential first.
-        Without one, no agent can call a model, and the worker will not start until the required
-        credentials exist, so no run can begin.
-      </p>
       <SetupBanner here={`/studio/models?tab=${active}`} items={['credentials', 'embeddings']} />
       <MidRunWarning />
       <TabBar

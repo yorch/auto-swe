@@ -680,11 +680,16 @@ export default function TemplatesPage() {
 
       <PageHeader
         actions={newWorkflowButton}
+        help={
+          <p>
+            A workflow template <HelpTip term="workflowTemplate" /> is reusable: pick one, run it
+            with your inputs, and follow the request.
+          </p>
+        }
         learnMore={{ ...HELP_LINKS.conceptsWorkflows, label: 'About workflows' }}
         subtitle={
           <>
-            Your reusable workflow templates <HelpTip term="workflowTemplate" />. Pick one, run it
-            with your inputs, and follow the request.
+            Your reusable workflow templates.
             {manageTitle && (
               <span className="mt-1 block text-xs text-paper-500" id="manage-reason">
                 {manageTitle}.

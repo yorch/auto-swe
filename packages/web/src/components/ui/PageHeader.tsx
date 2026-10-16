@@ -1,3 +1,4 @@
+import { PageHelp } from '@/components/help/PageHelp';
 import { cn } from '@/lib/utils';
 import { DocLink } from './DocLink';
 
@@ -5,13 +6,19 @@ export function PageHeader({
   title,
   subtitle,
   actions,
+  help,
   learnMore,
   className,
 }: {
   title: string;
   subtitle?: React.ReactNode;
   actions?: React.ReactNode;
-  /** A link under the subtitle to the doc that explains this page. */
+  /**
+   * Explanation that does not belong on the page itself. It shows in the Help panel (the "?" in
+   * the top bar), so the subtitle can stay one short sentence.
+   */
+  help?: React.ReactNode;
+  /** A link, in the Help panel, to the doc that explains this page. */
   learnMore?: { slug: string; anchor?: string; label?: string };
   className?: string;
 }) {
@@ -29,10 +36,15 @@ export function PageHeader({
         {subtitle && (
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-paper-400">{subtitle}</p>
         )}
-        {learnMore && (
-          <p className="mt-2">
-            <DocLink anchor={learnMore.anchor} label={learnMore.label} slug={learnMore.slug} />
-          </p>
+        {(help || learnMore) && (
+          <PageHelp>
+            {help}
+            {learnMore && (
+              <p>
+                <DocLink anchor={learnMore.anchor} label={learnMore.label} slug={learnMore.slug} />
+              </p>
+            )}
+          </PageHelp>
         )}
       </div>
       {actions && (

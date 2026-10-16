@@ -65,7 +65,13 @@ export default function SlackChannelDetailPage({ params }: { params: Promise<{ i
                 </Badge>
               }
               className="mb-4"
-              subtitle={`${channel.workspace.name ? `${channel.workspace.name} · ` : ''}Each channel belongs to a team and can set its own agent, schedules and monthly spend cap.`}
+              help={
+                <p>
+                  Each channel belongs to a team and can set its own agent, schedules and monthly
+                  spend cap.
+                </p>
+              }
+              subtitle={channel.workspace.name || undefined}
               title={channel.name ? `#${channel.name}` : 'Unnamed channel'}
             />
             <TabBar

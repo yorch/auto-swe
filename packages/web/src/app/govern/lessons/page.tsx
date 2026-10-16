@@ -163,7 +163,8 @@ export default function GovernLessonsPage() {
             Consolidate all now
           </Button>
         }
-        subtitle="Agent lessons captured from completed workflows. Consolidation merges semantically similar lessons to reduce redundancy."
+        help={<p>Consolidation merges semantically similar lessons to reduce redundancy.</p>}
+        subtitle="Agent lessons captured from completed workflows."
         title="Lessons"
       />
 

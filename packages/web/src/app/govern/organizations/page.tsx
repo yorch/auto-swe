@@ -49,7 +49,8 @@ export default function GovernOrganizationsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        subtitle="Every organization on the platform for admins, otherwise the ones you belong to. Alerts fire when this month's spend crosses the configured threshold."
+        help={<p>Alerts fire when this month's spend crosses the configured threshold.</p>}
+        subtitle="Every organization on the platform for admins, otherwise the ones you belong to."
         title={navLabel('/govern/organizations')}
       />
 

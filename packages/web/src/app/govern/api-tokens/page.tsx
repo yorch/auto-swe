@@ -95,7 +95,8 @@ export default function GovernAccessTokensPage() {
 
   const header = (
     <PageHeader
-      subtitle="Platform admins can view and revoke any API token: people's personal access tokens and teams' service principal tokens. Token values are never stored — only the non-secret prefix is shown."
+      help={<p>Token values are never stored — only the non-secret prefix is shown.</p>}
+      subtitle="Platform admins can view and revoke any API token: people's personal access tokens and teams' service principal tokens."
       title={navLabel('/govern/api-tokens')}
     />
   );

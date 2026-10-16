@@ -2,6 +2,7 @@
 
 import { KNOWN_RISK_CLASSES } from '@auto-swe/shared/lib/autonomyPolicy';
 import { useEffect, useMemo, useState } from 'react';
+import { PageHelp } from '@/components/help/PageHelp';
 import { ActionMenu } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
@@ -407,20 +408,29 @@ function PolicyModal({
 }
 
 /** What each known risk class means, from the same list the editor offers. */
+function RiskClassList() {
+  return (
+    <dl className="space-y-1.5 text-sm">
+      {KNOWN_RISK_CLASSES.map((c) => (
+        <div key={c.key}>
+          <dt className="inline font-medium text-paper-200">{c.label}: </dt>
+          <dd className="inline text-paper-400">{c.description}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** The same list as a disclosure, beside the field it explains in the policy editor. */
 function RiskClassGuide() {
   return (
     <details className="text-sm">
       <summary className="cursor-pointer select-none text-paper-200">
         What the risk classes mean
       </summary>
-      <dl className="mt-2 space-y-1.5">
-        {KNOWN_RISK_CLASSES.map((c) => (
-          <div key={c.key}>
-            <dt className="inline font-medium text-paper-200">{c.label}: </dt>
-            <dd className="inline text-paper-400">{c.description}</dd>
-          </div>
-        ))}
-      </dl>
+      <div className="mt-2">
+        <RiskClassList />
+      </div>
     </details>
   );
 }
@@ -486,20 +496,24 @@ export default function AutonomyPoliciesPage() {
         a global policy covers every run that no team or template policy matches.
       </Alert>
 
-      <Card className="space-y-3 p-4 text-sm leading-relaxed text-paper-300">
-        <p>
-          An autonomy policy <HelpTip term="autonomyPolicy" /> sets, for each risk class{' '}
-          <HelpTip term="riskClass" />, whether a run may act on its own or must wait for approval.
-        </p>
-        <p>
-          When policies exist at several scopes, the most specific one applies: template override,
-          then team default, then global default. Policies are not merged. With no policy at all,
-          built-in rules apply: internal reads and writes run automatically, external communication
-          needs approval, and mass communication needs 2 approvers. A risk class with no rule, such
-          as external write, requires approval, so the system fails closed.
-        </p>
-        <RiskClassGuide />
-      </Card>
+      <PageHelp>
+        <div className="space-y-3 text-paper-300">
+          <p>
+            An autonomy policy <HelpTip term="autonomyPolicy" /> sets, for each risk class{' '}
+            <HelpTip term="riskClass" />, whether a run may act on its own or must wait for
+            approval.
+          </p>
+          <p>
+            When policies exist at several scopes, the most specific one applies: template override,
+            then team default, then global default. Policies are not merged. With no policy at all,
+            built-in rules apply: internal reads and writes run automatically, external
+            communication needs approval, and mass communication needs 2 approvers. A risk class
+            with no rule, such as external write, requires approval, so the system fails closed.
+          </p>
+          <h3 className="font-semibold text-paper-100">What the risk classes mean</h3>
+          <RiskClassList />
+        </div>
+      </PageHelp>
 
       <QueryBoundary
         error={error}

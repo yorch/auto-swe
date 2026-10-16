@@ -28,6 +28,7 @@ const { state, verify } = vi.hoisted(() => ({
   state: { admin: true, skills: [] as unknown[] },
   verify: vi.fn(),
 }));
+vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => state.admin }));
 vi.mock('@/hooks/useSkills', () => ({

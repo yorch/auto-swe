@@ -14,6 +14,7 @@ import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { use, useCallback, useMemo, useRef, useState } from 'react';
 import { HowItWorks } from '@/components/help/HowItWorks';
+import { PageHelp } from '@/components/help/PageHelp';
 import { LayoutToggle } from '@/components/LayoutToggle';
 import { FlightRecorder } from '@/components/runs/layouts/FlightRecorder';
 import { SplitConsole } from '@/components/runs/layouts/SplitConsole';
@@ -425,14 +426,15 @@ export default function RunDetailPage({ params }: PageProps) {
           </div>
         </div>
 
-        <p className="mt-3 flex flex-wrap items-center gap-x-1 text-sm text-paper-500">
-          Below: the run's trace
-          <HelpTip term="trace" />, every step and agent action, and any gate where it is waiting on
-          a person.
-        </p>
-
-        <HowItWorks className="mt-3" />
-        <RunReadingGuide className="mt-2" />
+        <PageHelp>
+          <p>
+            Below the header is the run's trace
+            <HelpTip term="trace" />: every step and agent action, and any gate where it is waiting
+            on a person.
+          </p>
+        </PageHelp>
+        <HowItWorks />
+        <RunReadingGuide />
 
         {(fullTracesFailed || retryRun.isSuccess || retryRun.errorView) && (
           <div className="mt-3 space-y-2">

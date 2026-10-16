@@ -94,12 +94,13 @@ function RequestsWorkspace() {
             </ButtonLink>
           </>
         }
-        subtitle={
-          <>
-            Every request <HelpTip term="request" /> you made, with retries kept together. “Needs
-            attention” means a person is needed (a gate or a merge), or a run failed or timed out.
-          </>
+        help={
+          <p>
+            A request <HelpTip term="request" /> keeps its retries together. “Needs attention” means
+            a person is needed (a gate or a merge), or a run failed or timed out.
+          </p>
         }
+        subtitle="Every request you made, with retries kept together."
         title="Requests"
       />
       <div>

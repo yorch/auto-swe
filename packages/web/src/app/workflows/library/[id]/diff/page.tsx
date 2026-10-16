@@ -250,9 +250,10 @@ function TemplateDiffContent({ params }: PageProps) {
               ) : undefined
             }
             className="mt-3 mb-0"
+            help={<p>Changed nodes are marked on both diagrams and listed field by field.</p>}
             subtitle={
               before !== null && after !== null && before !== after
-                ? `What changed from v${before} to v${after}. Changed nodes are marked on both diagrams and listed field by field.`
+                ? `What changed from v${before} to v${after}.`
                 : 'Compare two versions of this workflow side by side.'
             }
             title="Compare versions"

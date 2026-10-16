@@ -193,7 +193,8 @@ function AssistantFailuresWorkspace() {
             value={range}
           />
         }
-        subtitle="Replies the in-app assistant could not finish, across every user, newest first, with the cause the platform recorded. Expand one to see what its turn called. Conversation text is never shown here."
+        help={<p>Expand one to see what its turn called. Conversation text is never shown here.</p>}
+        subtitle="Replies the in-app assistant could not finish, across every user, newest first, with the cause the platform recorded."
         title="Assistant failures"
       />
 

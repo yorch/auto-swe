@@ -65,15 +65,15 @@ function StudioIntegrationsPageInner() {
   return (
     <div className="space-y-6">
       <PageHeader
-        learnMore={{ ...HELP_LINKS.configuration, label: 'About integration settings' }}
-        subtitle={
-          <>
-            Credentials for GitHub, Slack, your issue tracker, knowledge base and Figma. Stored
-            secrets show only their last four characters; enter a new value to rotate one. A{' '}
+        help={
+          <p>
+            Stored secrets show only their last four characters; enter a new value to rotate one. A{' '}
             <SourceBadge source="env" /> badge means the value is read from an environment variable.
             Sign-in providers and artifact storage are configured in the environment only.
-          </>
+          </p>
         }
+        learnMore={{ ...HELP_LINKS.configuration, label: 'About integration settings' }}
+        subtitle="Credentials for GitHub, Slack, your issue tracker, knowledge base and Figma."
         title="Integrations"
       />
       <SetupBanner

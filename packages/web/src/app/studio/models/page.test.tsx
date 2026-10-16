@@ -3,6 +3,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
+vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('next/navigation', () => ({
   usePathname: () => '/studio/models',
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),

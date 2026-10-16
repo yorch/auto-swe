@@ -179,15 +179,16 @@ export default function StudioGithubInstallationsPage() {
             Add installation
           </Button>
         }
-        learnMore={{ ...HELP_LINKS.githubAppSetup, label: 'GitHub App setup guide' }}
-        subtitle={
-          <>
-            Where the GitHub App is installed. The app&apos;s own credentials are instance-wide and
-            live on the GitHub integration page; this is one row per GitHub organization the
-            deployment reaches, on the instance&apos;s own host or on another host that has its own
-            credentials. A repository with no installation uses the one configured there.
-          </>
+        help={
+          <p>
+            The app&apos;s own credentials are instance-wide and live on the GitHub integration
+            page; this is one row per GitHub organization the deployment reaches, on the
+            instance&apos;s own host or on another host that has its own credentials. A repository
+            with no installation uses the one configured there.
+          </p>
         }
+        learnMore={{ ...HELP_LINKS.githubAppSetup, label: 'GitHub App setup guide' }}
+        subtitle="Where the GitHub App is installed."
         title="GitHub installations"
       />
 

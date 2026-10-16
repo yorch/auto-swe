@@ -96,7 +96,8 @@ function TemplateRuns({ id: rawId }: { id: string }) {
             ) : undefined
           }
           className="mt-3 mb-0"
-          subtitle="Every run of this workflow, newest first. Open one to see its request; use Diagnostics for the full trace."
+          help={<p>Open one to see its request; use Diagnostics for the full trace.</p>}
+          subtitle="Every run of this workflow, newest first."
           title="Run history"
         />
       </div>

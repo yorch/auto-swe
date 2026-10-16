@@ -108,7 +108,8 @@ export default function SettingsPage() {
   return (
     <div className="max-w-4xl space-y-6">
       <PageHeader
-        subtitle="Your profile, how you sign in, and the tokens and apps that act as you. Changes apply to your account only."
+        help={<p>Changes apply to your account only.</p>}
+        subtitle="Your profile, how you sign in, and the tokens and apps that act as you."
         title="Account settings"
       />
 

@@ -117,8 +117,14 @@ export default function GovernConfigGrantsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
+        help={
+          <p>
+            Grants are bounded to known keys or groups — they never grant generic IAM or the ability
+            to mint further grants.
+          </p>
+        }
         learnMore={{ ...HELP_LINKS.configGrants, label: 'About config grants' }}
-        subtitle="Delegate fine-grained permission to change platform settings. Grants are bounded to known keys or groups — they never grant generic IAM or the ability to mint further grants."
+        subtitle="Delegate fine-grained permission to change platform settings."
         title={navLabel('/govern/config-grants')}
       />
 

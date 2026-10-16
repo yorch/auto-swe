@@ -256,8 +256,9 @@ function EvalsWorkspace() {
             value={range}
           />
         }
+        help={<p>Days are UTC.</p>}
         learnMore={{ ...HELP_LINKS.evals, label: 'About evals' }}
-        subtitle="Per-scorer quality signals over time, every captured result with a link to the run it scored, and the datasets offline runs score against. Days are UTC."
+        subtitle="Per-scorer quality signals over time, every captured result with a link to the run it scored, and the datasets offline runs score against."
         title="Evals"
       />
 

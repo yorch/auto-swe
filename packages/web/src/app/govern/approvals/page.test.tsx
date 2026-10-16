@@ -4,6 +4,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 const steps = vi.hoisted(() => ({ rows: [] as unknown[] }));
+vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('@/hooks/useApprovals', () => ({
   useApprovals: () => ({
     data: steps.rows,
@@ -41,9 +42,7 @@ describe('approvals page cap label', () => {
     }
     expect(screen.getByText(/If nobody answers in time/)).toBeTruthy();
     expect(screen.getByText(/marked timed out and the run follows/)).toBeTruthy();
-    // No interactive control may sit inside the <summary>.
-    expect(
-      screen.getByText('What these steps are').closest('summary')?.querySelector('button')
-    ).toBeNull();
+    // The explainer lives in the Help panel, not in a disclosure on the page.
+    expect(screen.getByText('What these steps are').closest('details')).toBeNull();
   });
 });

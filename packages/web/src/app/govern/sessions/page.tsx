@@ -43,7 +43,8 @@ export default function GovernSessionsPage() {
 
   const header = (
     <PageHeader
-      subtitle="Every signed-in browser session. Revoking one signs that person out immediately; they sign in again to continue."
+      help={<p>Revoking one signs that person out immediately; they sign in again to continue.</p>}
+      subtitle="Every signed-in browser session."
       title={navLabel('/govern/sessions')}
     />
   );

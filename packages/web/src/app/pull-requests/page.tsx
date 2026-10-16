@@ -5,7 +5,6 @@ import { Suspense } from 'react';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
-import { DocLink } from '@/components/ui/DocLink';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { SkeletonRows } from '@/components/ui/LoadingState';
@@ -76,18 +75,15 @@ function PullRequests() {
   return (
     <div className="space-y-6">
       <PageHeader
+        help={
+          <p data-testid="never-merges-note">
+            No built-in step or template merges a pull request; you review and merge it on the host.
+          </p>
+        }
+        learnMore={HELP_LINKS.concepts}
         subtitle="Pull requests the platform opened, with their state on the host, CI and the run behind them."
         title="Pull requests"
       />
-      <p
-        className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-ink-500/70 bg-ink-800/60 px-4 py-3 text-sm text-paper-300"
-        data-testid="never-merges-note"
-      >
-        <span>
-          No built-in step or template merges a pull request; you review and merge it on the host.
-        </span>
-        <DocLink {...HELP_LINKS.concepts} />
-      </p>
       <div className="space-y-4">
         <Card className="overflow-hidden p-0">
           <Toolbar

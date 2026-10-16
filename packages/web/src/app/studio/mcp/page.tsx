@@ -586,16 +586,20 @@ export default function StudioMcpConnectionsPage() {
             </Button>
           ) : undefined
         }
+        help={
+          <p>
+            Choose one in an agent&apos;s MCP connection field in the Agent library. A bearer token
+            and custom headers, if the server needs them, are stored encrypted and never shown
+            again.
+          </p>
+        }
         learnMore={{ ...HELP_LINKS.agentToolAccess, label: 'About agent tool access' }}
         subtitle={
           <>
             MCP servers whose tools an agent can call.{' '}
             <HelpTip label="MCP">
               Model Context Protocol: a standard for exposing tools to agents.
-            </HelpTip>{' '}
-            Choose one in an agent&apos;s MCP connection field in the Agent library. A bearer token
-            and custom headers, if the server needs them, are stored encrypted and never shown
-            again.
+            </HelpTip>
           </>
         }
         title="MCP connections"

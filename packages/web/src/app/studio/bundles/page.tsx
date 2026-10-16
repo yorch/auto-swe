@@ -127,16 +127,15 @@ export default function StudioBundlesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        learnMore={{ ...HELP_LINKS.bundles, label: 'About bundles' }}
-        subtitle={
-          <>
-            Distribute library content (Agents, Skills, scanner patterns, Templates) across
-            deployments. Install seeds a <strong>managed base layer</strong>; your team/template
-            overrides sit on top. A bundle whose detached signature matches a deployment-trusted key
-            installs as <strong>Verified</strong>, otherwise as <strong>Unverified</strong>{' '}
-            (community).
-          </>
+        help={
+          <p>
+            Install seeds a <strong>managed base layer</strong>; your team/template overrides sit on
+            top. A bundle whose detached signature matches a deployment-trusted key installs as{' '}
+            <strong>Verified</strong>, otherwise as <strong>Unverified</strong> (community).
+          </p>
         }
+        learnMore={{ ...HELP_LINKS.bundles, label: 'About bundles' }}
+        subtitle="Distribute library content (Agents, Skills, scanner patterns, Templates) across deployments."
         title={navLabel('/studio/bundles')}
       />
 

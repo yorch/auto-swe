@@ -604,11 +604,18 @@ export default function GovernScannerPage() {
             New pattern
           </Button>
         }
+        help={
+          <p>
+            The patterns cover skill-content and LLM-output injection/exfiltration checks, shell
+            command and sensitive-file blocking, advisory code security findings, and the PII eval
+            scorer. Built-in patterns can be toggled but not deleted.
+          </p>
+        }
         learnMore={{
           ...HELP_LINKS.scannerWriteToolChain,
           label: 'About the write-tool security chain',
         }}
-        subtitle="Regex patterns behind the runtime scanners: skill-content and LLM-output injection/exfiltration checks, shell command and sensitive-file blocking, advisory code security findings, and the PII eval scorer. Built-in patterns can be toggled but not deleted."
+        subtitle="Regex patterns behind the runtime scanners."
         title="Scanner patterns"
       />
 

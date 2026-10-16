@@ -58,6 +58,7 @@ const answered = {
 };
 const idle = { isPending: false, isSuccess: false, mutate: vi.fn(), reset: vi.fn() };
 
+vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('@auto-swe/shared/workflow', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   parseWorkflowSpec: () => ({ edges: [], nodes: [] }),
@@ -192,14 +193,20 @@ describe('run page summary band', () => {
     expect(document.getElementById('cancel-run-hint')?.textContent).toMatch(/aborted/);
   });
 
-  it('explains gates once on the page and offers the collapsed explainer', async () => {
+  it('explains gates once on the page and keeps the lifecycle explainer in the Help panel', async () => {
     state.layout = 'A';
     await renderPage();
     expect(screen.getAllByRole('button', { name: /What is a gate/ })).toHaveLength(1);
-    const summary = screen.getByText('How auto-swe works');
-    const details = summary.closest('details');
-    expect(details).not.toBeNull();
-    expect(details?.hasAttribute('open')).toBe(false);
+    const help = screen.getByText('How auto-swe works').closest('[data-testid="page-help"]');
+    expect(help).not.toBeNull();
+    expect(screen.getByText('How auto-swe works').closest('details')).toBeNull();
+  });
+
+  it('puts the trace hint sentence in the Help panel, not under the title', async () => {
+    state.layout = 'A';
+    await renderPage();
+    const hint = screen.getByText(/Below the header is the run's trace/);
+    expect(hint.closest('[data-testid="page-help"]')).not.toBeNull();
   });
 });
 
@@ -245,15 +252,15 @@ describe('run page verdict and reading guide', () => {
     expect(document.getElementById('run-needs-response')).not.toBeNull();
   });
 
-  it('offers the reading guide collapsed, distinct from the lifecycle explainer', async () => {
+  it('offers the reading guide in the Help panel, distinct from the lifecycle explainer', async () => {
     state.layout = 'A';
     await renderPage();
-    const details = screen.getByText('How to read this page').closest('details');
-    expect(details).not.toBeNull();
-    expect(details?.hasAttribute('open')).toBe(false);
+    const guide = screen.getByText('How to read this page').closest('section');
+    expect(guide).not.toBeNull();
+    expect(guide?.closest('[data-testid="page-help"]')).not.toBeNull();
     for (const name of ['Split', 'Transcript', 'Timeline']) {
-      expect(details?.textContent).toContain(name);
+      expect(guide?.textContent).toContain(name);
     }
-    expect(details).not.toBe(screen.getByText('How auto-swe works').closest('details'));
+    expect(guide).not.toBe(screen.getByText('How auto-swe works').closest('section'));
   });
 });

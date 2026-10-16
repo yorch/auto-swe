@@ -151,10 +151,10 @@ export default function ConnectionsPage() {
             </>
           ) : undefined
         }
-        subtitle={
-          <>
+        help={
+          <p>
             A connection <HelpTip term="connection" /> is a configured link to an outside system: a
-            git repository, an issue tracker, a REST API, an MCP server, Notion, Slack and so on.
+            source repository, an issue tracker, a REST API, an MCP server, Notion, Slack and so on.
             Workflows use connections to read and change things.
             {isAdmin && (
               <>
@@ -163,8 +163,9 @@ export default function ConnectionsPage() {
                 <DocLink label="GitHub App setup" {...HELP_LINKS.githubAppSetup} />.
               </>
             )}
-          </>
+          </p>
         }
+        subtitle="Configured links to outside systems that workflows read and change."
         title="Connections"
       />
       <SetupBanner

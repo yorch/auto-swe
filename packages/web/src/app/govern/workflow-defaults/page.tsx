@@ -32,17 +32,17 @@ export default function GovernWorkflowPage() {
   return (
     <div>
       <PageHeader
-        learnMore={{ ...HELP_LINKS.configuration, label: 'About workflow defaults' }}
-        subtitle={
-          <>
-            System-wide defaults applied to every team and template. Each section saves on its own.
-            For the settings a team or channel can override, see{' '}
+        help={
+          <p>
+            Each section saves on its own. For the settings a team or channel can override, see{' '}
             <Link className="text-ember-400 hover:underline" href="/govern/platform-settings">
               Platform settings
             </Link>
             .
-          </>
+          </p>
         }
+        learnMore={{ ...HELP_LINKS.configuration, label: 'About workflow defaults' }}
+        subtitle="System-wide defaults applied to every team and template."
         title={navLabel('/govern/workflow-defaults')}
       />
       <Alert

@@ -89,7 +89,13 @@ export default function GovernSlackChannelsPage() {
             Register channel
           </Button>
         }
-        subtitle="Slack channels the assistant responds in. Open a channel to change its settings, review what it remembers, and handle its open items."
+        help={
+          <p>
+            Open a channel to change its settings, review what it remembers, and handle its open
+            items.
+          </p>
+        }
+        subtitle="Slack channels the assistant responds in."
         title={navLabel('/govern/slack-channels')}
       />
 

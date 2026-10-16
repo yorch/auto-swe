@@ -92,7 +92,8 @@ export default function GovernKnowledgePage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        subtitle="Review and manage governed knowledge. Published summaries do not expose private source evidence."
+        help={<p>Published summaries do not expose private source evidence.</p>}
+        subtitle="Review and manage governed knowledge."
         title="Knowledge"
       />
       <Card>

@@ -597,12 +597,16 @@ export default function StudioSkillsPage() {
             Create skill
           </Button>
         }
+        help={
+          <p>
+            Attach skills to agents in the Agent library. Every text change is saved as a revision
+            you can compare and restore.
+          </p>
+        }
         learnMore={{ ...HELP_LINKS.skills, label: 'About skills' }}
         subtitle={
           <>
             Reusable instructions added to an agent&apos;s system prompt <HelpTip term="skill" />.
-            Attach skills to agents in the Agent library. Every text change is saved as a revision
-            you can compare and restore.
           </>
         }
         title="Skill library"

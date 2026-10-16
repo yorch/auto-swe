@@ -94,7 +94,13 @@ export default function UsersPage() {
           Create user directly
         </Button>
       }
-      subtitle="Manage who can sign in to the control plane. People who sign up with GitHub, Google or an email link wait in the pending queue until an admin approves them."
+      help={
+        <p>
+          People who sign up with GitHub, Google or an email link wait in the pending queue until an
+          admin approves them.
+        </p>
+      }
+      subtitle="Manage who can sign in to the control plane."
       title={navLabel('/govern/users')}
     />
   );

@@ -311,7 +311,13 @@ function UsageWorkspace() {
             />
           </div>
         }
-        subtitle="Every LLM and embedding call, including workflows that keep no run record, attributed to the team and organization whose spend it is. Days are UTC."
+        help={
+          <p>
+            Calls from workflows that keep no run record are included, attributed to the team and
+            organization whose spend it is. Days are UTC.
+          </p>
+        }
+        subtitle="Every LLM and embedding call, by team and organization."
         title="LLM usage"
       />
 

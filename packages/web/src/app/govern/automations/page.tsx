@@ -190,8 +190,15 @@ export default function GovernAutomationsPage() {
             </Link>
           </div>
         }
+        help={
+          <p>
+            That covers rules that react to events on a repository, such as a failed CI run, cron
+            schedules, template webhook URLs and the issue-tracker hook. Each says when it fires,
+            what it starts and what it last did.
+          </p>
+        }
         learnMore={{ ...HELP_LINKS.automations, label: 'About automations' }}
-        subtitle="Everything that starts a run without a person pressing run: rules that react to events on a repository, such as a failed CI run, cron schedules, template webhook URLs and the issue-tracker hook. Each says when it fires, what it starts and what it last did."
+        subtitle="Everything that starts a run without a person pressing run."
         title="Automations"
       />
       <p className="max-w-3xl text-sm leading-relaxed text-paper-400">

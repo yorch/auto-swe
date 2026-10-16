@@ -419,8 +419,14 @@ export default function AgentLibraryPage() {
             New agent
           </Button>
         }
+        help={
+          <p>
+            Saving an edit creates a new version; runs already in progress keep the version they
+            started with, and History lets you compare or restore any version.
+          </p>
+        }
         learnMore={{ ...HELP_LINKS.agentLibrary, label: 'About the agent library' }}
-        subtitle="Versioned agents. Saving an edit creates a new version; runs already in progress keep the version they started with, and History lets you compare or restore any version."
+        subtitle="Versioned agents."
         title="Agent library"
       />
       <SetupBanner items={['credentials']} />

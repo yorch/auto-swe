@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { PageHelp } from '@/components/help/PageHelp';
 import { SettingRow, type SettingRowStatus } from '@/components/settings/SettingRow';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -178,8 +179,13 @@ export default function GovernSettingsPage() {
   return (
     <div>
       <PageHeader
+        help={
+          <p>
+            Values shown are what this scope resolves to; each row says where its value came from.
+          </p>
+        }
         learnMore={{ ...HELP_LINKS.platformSettingsCascade, label: 'About the settings cascade' }}
-        subtitle="Operator policy for agents, channels and workflows. Values shown are what this scope resolves to; each row says where its value came from."
+        subtitle="Operator policy for agents, channels and workflows."
         title={navLabel('/govern/platform-settings')}
       />
 
@@ -201,11 +207,9 @@ export default function GovernSettingsPage() {
         organization reaches every team in it that has no override of its own.
       </Alert>
 
-      <details className="mb-6 rounded-lg border border-ink-500/70 bg-ink-800/60">
-        <summary className="cursor-pointer select-none rounded-lg px-4 py-3 text-sm font-medium text-paper-100 outline-none focus-visible:ring-2 focus-visible:ring-ember-400">
-          How settings resolve
-        </summary>
-        <div className="space-y-3 border-t border-ink-600 px-4 py-4 text-sm leading-relaxed text-paper-300">
+      <PageHelp>
+        <section className="space-y-3">
+          <h3 className="text-sm font-semibold text-paper-100">How settings resolve</h3>
           <p>
             Each setting resolves through a cascade of scopes <HelpTip term="scopeCascade" />.
           </p>
@@ -224,8 +228,8 @@ export default function GovernSettingsPage() {
               reach runs already in flight.
             </li>
           </ul>
-        </div>
-      </details>
+        </section>
+      </PageHelp>
 
       <div
         className={cn(

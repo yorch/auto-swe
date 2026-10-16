@@ -34,12 +34,13 @@ export default function EpicsPage() {
             </ButtonLink>
           )
         }
-        subtitle={
-          <>
+        help={
+          <p>
             An epic <HelpTip term="epic" /> is a change that spans several repositories, split by
             the planner into ordered per-repository work.
-          </>
+          </p>
         }
+        subtitle="Changes that span several repositories, split into per-repository work."
         title="Epics"
       />
 

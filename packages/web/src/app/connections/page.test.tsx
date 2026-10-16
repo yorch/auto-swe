@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withQuery } from '@/test/rtl-helpers';
 
 const auth = vi.hoisted(() => ({ role: 'ENGINEER' }));
+vi.mock('@/components/help/PageHelp', () => import('@/components/help/inlinePageHelp'));
 vi.mock('@/stores/authStore', () => ({
   useAuthStore: (select: (state: { user: { role: string } }) => unknown) =>
     select({ user: { role: auth.role } }),

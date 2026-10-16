@@ -46,7 +46,13 @@ function RunsList() {
   return (
     <div className="space-y-6">
       <PageHeader
-        subtitle="A run is one execution of a workflow template. This lists every run across your teams. The title opens the run's request; Diagnostics opens the full trace, graph and timeline."
+        help={
+          <p>
+            A run is one execution of a workflow template. The title opens the run's request;
+            Diagnostics opens the full trace, graph and timeline.
+          </p>
+        }
+        subtitle="Every run across your teams."
         title="All runs"
       />
 

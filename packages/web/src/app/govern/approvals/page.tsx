@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { HumanStepCard } from '@/components/approvals/HumanStepCard';
+import { PageHelp } from '@/components/help/PageHelp';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -84,11 +85,9 @@ export default function GovernApprovalsPage() {
         title={navLabel('/govern/approvals')}
       />
 
-      <details className="rounded-lg border border-ink-500/70 bg-ink-800/60">
-        <summary className="cursor-pointer select-none rounded-lg px-4 py-3 text-sm font-medium text-paper-100 outline-none focus-visible:ring-2 focus-visible:ring-ember-400">
-          What these steps are
-        </summary>
-        <div className="space-y-3 border-t border-ink-600 px-4 py-4 text-sm leading-relaxed text-paper-300">
+      <PageHelp>
+        <section className="space-y-3">
+          <h3 className="text-sm font-semibold text-paper-100">What these steps are</h3>
           <p>
             Each is a gate <HelpTip term="gate" /> that waits for a person.
           </p>
@@ -115,8 +114,8 @@ export default function GovernApprovalsPage() {
             timed out and the run follows the node's timeout route, such as ending as timed out or
             opening the pull request. The run itself does not end unless that route ends it.
           </p>
-        </div>
-      </details>
+        </section>
+      </PageHelp>
 
       <div>
         <TabBar

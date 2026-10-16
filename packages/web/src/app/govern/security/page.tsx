@@ -177,7 +177,8 @@ function SecurityWorkspace() {
             value={range}
           />
         }
-        subtitle="What the scanners stopped or flagged across all runs, newest first. Expand an event to see its detail. Events refresh every 30 seconds."
+        help={<p>Expand an event to see its detail. Events refresh every 30 seconds.</p>}
+        subtitle="What the scanners stopped or flagged across all runs, newest first."
         title="Security events"
       />
 
