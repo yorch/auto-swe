@@ -170,7 +170,7 @@ packages/
 | `src/app/govern/*` | Access tokens, sessions, memory, scanner patterns, security events, Slack channels, organizations, teams, budgets, users |
 | `src/hooks/` | TanStack Query hooks split by resource domain |
 | `src/stores/` | Zustand — `authStore` (identity), `teamStore` (active team), `themeStore` (theme and palette preference), `assistantStore` (assistant panel) |
-| `src/components/ui/` | Design-system primitives — `Button`, `Input`, `Select`, `Textarea`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `PageHeader`, `LoadingState`, `FieldWrapper`, `Th`, `Stat`, `StatusBadge`, `ToggleSwitch`, `CopyButton` |
+| `src/components/ui/` | Design-system primitives — `Button`, `Input`, `Select`, `Textarea`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `PageHeader`, `QueryBoundary`, shaped skeleton placeholders (`LoadingState.tsx`), `FieldWrapper`, `Th`, `Stat`, `StatusBadge`, `ToggleSwitch`, `CopyButton` |
 | `src/lib/palette.ts` | Each palette and theme's colours as checked literals, for the SVG contexts that cannot resolve `var()` |
 | `src/lib/api.ts` | `ApiClient` — all fetches; no direct `fetch` in components |
 
