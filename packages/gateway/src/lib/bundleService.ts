@@ -11,6 +11,7 @@ import {
   type BundleTemplate,
   buildBundleManifest,
   bundleAgentRuntimeWarnings,
+  bundleContainerImageWarnings,
   type InstalledBundleRow,
   parseBundle,
   type TrustedKey,
@@ -23,6 +24,7 @@ import {
 } from '@auto-swe/shared/bundle';
 import { isReservedTemplateOrigin } from '@auto-swe/shared/lib/agentRun';
 import { normalizeModelSpec } from '@auto-swe/shared/lib/modelSpec';
+import { recordShellAudit } from '@auto-swe/shared/lib/shellAudit';
 import {
   initialRevision,
   isRevisionConflict,
@@ -31,10 +33,9 @@ import {
 } from '@auto-swe/shared/lib/skillRevision';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { toImplementerRuntime, toReasoningLevel } from '@auto-swe/shared/types/api';
-import type { WorkflowSpec } from '@auto-swe/shared/workflow';
+import { collectAuthoredCode, type WorkflowSpec } from '@auto-swe/shared/workflow';
 
 import { scanSkillAdvisory } from './skillScan.js';
-import { collectAuthoredCode, recordShellAudit } from './specCheck.js';
 
 /**
  * Bundle export/install service (P4/WS1+WS2). A bundle is a versioned, secret-free
@@ -631,6 +632,7 @@ export async function installBundle(
     warnings.push(...found.map((w) => `skill '${s.name}': ${w}`));
   }
   warnings.push(...bundleAgentRuntimeWarnings(manifest));
+  warnings.push(...bundleContainerImageWarnings(manifest));
   let replacedProtected = emptyConflicts();
   let installedBundleId = '';
 
@@ -833,7 +835,7 @@ export interface BundlePreview {
   source: string | null;
   trustState: 'VERIFIED' | 'UNVERIFIED';
   version: string;
-  /** Advisory scanner findings on the bundle's skills. */
+  /** Advisory findings: scanned skill text, harness runtimes, container images. */
   warnings: string[];
 }
 
@@ -921,6 +923,7 @@ export async function previewBundle(
     warnings.push(...found.map((w) => `skill '${s.name}': ${w}`));
   }
   warnings.push(...bundleAgentRuntimeWarnings(manifest));
+  warnings.push(...bundleContainerImageWarnings(manifest));
 
   return {
     blockedReason:

@@ -5,8 +5,7 @@ import { Suspense, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
-import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { Card } from '@/components/ui/Card';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
@@ -23,7 +22,6 @@ import {
   type AuditLogFilters,
   type AuditLogRow,
   exportAuditLog,
-  useAdminPruneShellAudit,
   useAuditLog,
 } from '@/hooks/useAdmin';
 import { useDebouncedUrlSearch } from '@/hooks/useDebouncedUrlSearch';
@@ -44,8 +42,6 @@ const LIMIT = 50;
 // The gateway rejects a malformed actor id with a 400 that would replace the whole page
 // with an error; a hand-edited or stale link instead just drops the filter.
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const SHELL_AUDIT_KEEP_DAYS = 90;
 
 const ACTION_OPTIONS = [
   { label: 'All actions', value: '' },
@@ -93,10 +89,6 @@ function AuditWorkspace() {
     search: search || undefined,
     ...rangeDays(range),
   };
-  const pruneShellAudit = useAdminPruneShellAudit(SHELL_AUDIT_KEEP_DAYS);
-  const [pruneOpen, setPruneOpen] = useState(false);
-  const [pruned, setPruned] = useState<number | null>(null);
-  const [pruneError, setPruneError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
@@ -318,53 +310,6 @@ function AuditWorkspace() {
           </div>
         )}
       </Card>
-
-      <section className="fade-up stagger-2">
-        <Card variant="inset">
-          <CardHeader className="mb-1">
-            <CardTitle eyebrow="Housekeeping">Shell command history</CardTitle>
-          </CardHeader>
-          <p className="mb-4 max-w-prose text-sm text-paper-400">
-            Every command an agent runs in a workspace is recorded separately from this log. Delete
-            entries older than {SHELL_AUDIT_KEEP_DAYS} days to keep that history small.
-          </p>
-          {pruneError && <Alert className="mb-3">{pruneError}</Alert>}
-          {pruned !== null && !pruneError && (
-            <Alert className="mb-3" variant="success">
-              Deleted {pruned} shell command {pruned === 1 ? 'entry' : 'entries'}.
-            </Alert>
-          )}
-          <Button
-            disabled={pruneShellAudit.isPending}
-            onClick={() => setPruneOpen(true)}
-            size="sm"
-            variant="danger"
-          >
-            {pruneShellAudit.isPending
-              ? 'Deleting…'
-              : `Delete entries older than ${SHELL_AUDIT_KEEP_DAYS} days`}
-          </Button>
-        </Card>
-      </section>
-
-      <ConfirmModal
-        confirmLabel="Delete entries"
-        dangerous
-        message={`Delete shell command history older than ${SHELL_AUDIT_KEEP_DAYS} days? This cannot be undone.`}
-        onClose={() => setPruneOpen(false)}
-        onConfirm={async () => {
-          setPruneError(null);
-          setPruned(null);
-          try {
-            const res = (await pruneShellAudit.mutateAsync()) as { data: { deleted: number } };
-            setPruned(res.data.deleted);
-          } catch (err) {
-            setPruneError(errMsg(err, 'Could not delete the history'));
-          }
-        }}
-        open={pruneOpen}
-        title="Delete old shell command history?"
-      />
     </div>
   );
 }

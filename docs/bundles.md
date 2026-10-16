@@ -193,13 +193,14 @@ separately.
   "the version the previous install wrote" is the newest authorless version. After a forced install
   over a built-in template, the next built-in sync and the next bundle install each see the other's
   version as the previous one.
-- **An install records authored code but does not check container images.** Every template
-  version an install writes — a new template's v1, or the version an upgrade appends and may make
-  active — gets the `WorkflowShellAudit` rows a canvas save would write for its container code and
-  authored gate commands, with the installing platform admin as author and no team. The image
-  allowlist is not applied at install: `validateBundleTemplates` checks the graph and the lint errors,
-  so a bundle can persist a `shell` or `containerStep` node naming an image no allowlist admits. The
-  image is still checked when the step runs, so such a node fails then rather than at install.
+- **An install warns about container images; it does not refuse them.** Every template version an
+  install writes — a new template's v1, or the version an upgrade appends and may make active — gets
+  the `WorkflowShellAudit` rows a canvas save would write for its container code and authored gate
+  commands, with the installing platform admin as author and no team. A `shell` or `containerStep`
+  node (or `runContainerStep` step) naming an image that is not a built-in shell image is installed,
+  and the install and its preview each return a warning naming the template, node and image. A
+  container step is checked when it runs against the allowlist of the team that owns the run's
+  repository, so the step fails on every repository whose team has not added that image.
 - **Bundles do not export connection instances.** A template that needs a repository, an issue
   tracker, a document store or an MCP server only declares `dependencies[].connectionType` — one of
   the types a generic step can actually reach (`git_repo`, `mcp`, `issue_tracker`, `notion`,

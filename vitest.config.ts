@@ -72,6 +72,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/crypto.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/shellAudit',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/shellAudit.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/tenantGuard',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/tenantGuard.ts'),
       },

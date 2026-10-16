@@ -154,7 +154,11 @@ function makeStore(
       ),
     },
     workflowTemplate: nullFinder,
-    workflowTemplateVersion: { upsert: vi.fn(async () => ({})) },
+    workflowTemplateVersion: {
+      // The seed looks up the v1 it just created to record its authored code; none here.
+      findFirst: vi.fn(async () => null),
+      upsert: vi.fn(async () => ({})),
+    },
   };
   const prisma = {
     ...client,

@@ -36,6 +36,10 @@ export {
 export type { Codemod } from './codemod.js';
 export { migrateSpec, registerCodemod } from './codemod.js';
 export {
+  AGENT_WORKSPACE_AUDIT_IMAGE,
+  collectAuthoredCode,
+  collectAuthoredCommandNodes,
+  collectShellNodes,
   findAuthoredCommandNodes,
   findContainerCodeNodes,
   hasAuthoredCode,
@@ -45,6 +49,7 @@ export {
   isCommandGateStep,
   isContainerCodeNode,
   isShellCategoryStep,
+  type ShellNodeWithId,
 } from './containerCode.js';
 export type { CostEstimate, CostRole, UnpricedReason } from './costEstimator.js';
 export {

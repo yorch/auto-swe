@@ -515,7 +515,7 @@ open https://app.example.com
 | Rotating OAuth app creds   | Update `GITHUB_CLIENT_SECRET` / `GOOGLE_CLIENT_SECRET` / `OKTA_CLIENT_SECRET` in `.env` → restart the gateway. |
 | Rotating secrets           | `BETTER_AUTH_SECRET` / `JWT_SECRET` invalidate all existing sessions/tokens. Communicate before rotating.        |
 | Sessions admin             | `/govern/sessions` (revoke any session); `/govern/api-tokens` (revoke PATs across all users).                   |
-| Shell-step audit           | `/govern/api-tokens` page exposes the prune control for `workflow_shell_audit` rows older than N days.         |
+| Shell-step audit           | `workflow_shell_audit` rows are kept as long as their template version; deleting a template removes its rows. |
 | Lesson retention           | `memory_items` grows over time; no automatic pruning. Manual `DELETE` is fine — drops the row from the HNSW index. |
 | pgvector index rebuild     | `REINDEX INDEX idx_memory_items_embedding;` — only needed after a bulk import or if recall degrades.            |
 

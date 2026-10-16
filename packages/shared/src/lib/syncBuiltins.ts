@@ -3,6 +3,8 @@ import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SCANNER_PATTERNS, scannerPatternOrigin } from '../scannerPatterns/index.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
+import { collectAuthoredCode } from '../workflow/containerCode.js';
+import type { WorkflowSpec } from '../workflow/spec.js';
 import { activeLineageHead, lockAgentLineage } from './agentLineageLock.js';
 import {
   APP_ASSISTANT_PROMPT,
@@ -41,6 +43,7 @@ import {
   CHANNEL_TASK_TEMPLATE_NAME,
 } from './channelTask.js';
 import type { InputSchema } from './inputSchema.js';
+import { findUnauditedNodes, recordShellAudit } from './shellAudit.js';
 import {
   initialRevision,
   isRevisionConflict,
@@ -1232,6 +1235,24 @@ function isUniqueViolation(err: unknown): boolean {
  * Safe under concurrent gateway boots: a version-number clash means another
  * replica appended the same spec first.
  */
+/**
+ * Put the authored code of a built-in version on record: the `WorkflowShellAudit` rows a canvas
+ * save would write, with no author — the platform shipped it — and no team. Only rows the version
+ * is missing are written, so a restart writes nothing and a deployment that predates the rows
+ * gets them for the built-in version it is on. Without them, promoting or re-activating a
+ * built-in version that runs a gate command or a container step would ask for the shell
+ * authoring role as if nobody had ever vouched for it.
+ */
+async function auditBuiltinVersion(
+  prisma: PrismaClient,
+  templateVersionId: string,
+  spec: unknown
+): Promise<void> {
+  const { authoredNodes } = collectAuthoredCode(spec as WorkflowSpec);
+  const missing = await findUnauditedNodes(prisma, templateVersionId, authoredNodes);
+  await recordShellAudit(prisma, templateVersionId, null, null, missing, []);
+}
+
 async function syncBuiltinTemplate(
   prisma: PrismaClient,
   tmpl: {
@@ -1260,7 +1281,7 @@ async function syncBuiltinTemplate(
         })
       : null;
     try {
-      await prisma.workflowTemplate.create({
+      const created = await prisma.workflowTemplate.create({
         data: {
           activeVersion: 1,
           description: tmpl.description,
@@ -1273,6 +1294,13 @@ async function syncBuiltinTemplate(
           versions: { create: { spec, version: 1 } },
         },
       });
+      const initial = await prisma.workflowTemplateVersion.findFirst({
+        select: { id: true },
+        where: { templateId: created.id, version: 1 },
+      });
+      if (initial) {
+        await auditBuiltinVersion(prisma, initial.id, spec);
+      }
     } catch (err) {
       if (!isUniqueViolation(err)) {
         throw err;
@@ -1293,7 +1321,7 @@ async function syncBuiltinTemplate(
 
   const versions = await prisma.workflowTemplateVersion.findMany({
     orderBy: { version: 'asc' },
-    select: { createdBy: true, generatedBy: true, spec: true, version: true },
+    select: { createdBy: true, generatedBy: true, id: true, spec: true, version: true },
     where: { templateId: existing.id },
   });
   const builtins = versions.filter((v) => v.createdBy == null && v.generatedBy == null);
@@ -1311,6 +1339,7 @@ async function syncBuiltinTemplate(
       ? shippedInputSchemaUpdate(tmpl.name, existing.inputSchema, templateFields.inputSchema)
       : {};
   if (latestBuiltin && canonicalJson(latestBuiltin.spec) === canonicalJson(spec)) {
+    await auditBuiltinVersion(prisma, latestBuiltin.id, spec);
     if ('inputSchema' in schemaMove) {
       // Conditional on the row still holding what we read, so an admin's
       // concurrent edit or activation is not overwritten.
@@ -1330,9 +1359,10 @@ async function syncBuiltinTemplate(
 
   const next = (versions.at(-1)?.version ?? 0) + 1;
   try {
-    await prisma.workflowTemplateVersion.create({
+    const appended = await prisma.workflowTemplateVersion.create({
       data: { spec, templateId: existing.id, version: next },
     });
+    await auditBuiltinVersion(prisma, appended.id, spec);
   } catch (err) {
     if (isUniqueViolation(err)) {
       return;

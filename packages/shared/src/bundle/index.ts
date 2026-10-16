@@ -19,7 +19,9 @@ import {
 import { SCANNER_PATTERN_TYPES } from '../lib/scannerPatternTypes.js';
 import { stableStringify } from '../lib/stableJson.js';
 import { IMPLEMENTER_RUNTIMES, REASONING_LEVELS, runtimeModelError } from '../types/api.js';
-import { WorkflowSpecSchema } from '../workflow/spec.js';
+import { collectShellNodes } from '../workflow/containerCode.js';
+import { isShellImageAllowed } from '../workflow/shellImageAllowlist.js';
+import { type WorkflowSpec, WorkflowSpecSchema } from '../workflow/spec.js';
 import { formatValidationIssue, validateSpec } from '../workflow/validateSpec.js';
 
 /**
@@ -453,6 +455,29 @@ export function bundleAgentRuntimeWarnings(manifest: BundleManifest): string[] {
       (a) =>
         `agent '${a.key}': runs on the ${a.runtime} runtime, ${HARNESS_RUNTIME_NOTES[a.runtime ?? ''] ?? 'a harness'} (docs/agents.md §3.7)`
     );
+}
+
+/**
+ * One warning per container node (`shell`, `containerStep`, or a `runContainerStep` step) in the
+ * bundle's templates whose image is not a built-in shell image. Bundle templates are global, and
+ * a container step is checked when it runs against the allowlist of the team that owns the run's
+ * repository — the built-in images plus that team's additions — so such a step fails on every
+ * repository whose team has not added its image. Advisory, like the runtime warnings above: the
+ * install proceeds, and an admin can extend a team's allowlist before the step is needed.
+ */
+export function bundleContainerImageWarnings(manifest: BundleManifest): string[] {
+  return manifest.entities.templates.flatMap((t) => {
+    const parsed = WorkflowSpecSchema.safeParse(t.spec);
+    if (!parsed.success) {
+      return []; // validateBundleTemplates reports it
+    }
+    return collectShellNodes(parsed.data as WorkflowSpec)
+      .filter(({ node }) => !isShellImageAllowed(node.image, []))
+      .map(
+        ({ id, node }) =>
+          `template '${t.name}' node '${id}': image '${node.image}' is not a built-in shell image, so the step fails on any repository whose team has not added it to its shell-image allowlist`
+      );
+  });
 }
 
 /**

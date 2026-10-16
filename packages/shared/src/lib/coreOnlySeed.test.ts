@@ -107,7 +107,11 @@ function makeMockPrisma() {
       findFirst: vi.fn(async () => null),
       update: vi.fn(async () => ({ id: 'tmpl-id' })),
     },
-    workflowTemplateVersion: { upsert: vi.fn(async () => ({})) },
+    workflowTemplateVersion: {
+      // The seed looks up the v1 it just created to record its authored code; none here.
+      findFirst: vi.fn(async () => null),
+      upsert: vi.fn(async () => ({})),
+    },
   };
   return { cap, prisma: prisma as unknown as PrismaClient };
 }
