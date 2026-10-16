@@ -66,7 +66,7 @@ const reasons = [
     claim: 'You decide what it may do',
   },
   {
-    body: 'Six scanners run during execution. Sensitive-file paths and shell commands are checked before a write lands, the diff is scanned after the commit, and skill text and model output are checked as advisory. The blocking scanners fail closed: a scan that cannot finish cannot call the input clean.',
+    body: 'Seven scanners run during execution. Sensitive-file paths, file content and shell commands are checked before a write lands, the diff is scanned after the commit, skill text and model output are checked as advisory, and anything written to or recalled from memory is refused if it carries a prompt injection. The blocking scanners fail closed: a scan that cannot finish cannot call the input clean.',
     claim: 'It watches what the agent writes',
   },
   {
