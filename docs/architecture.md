@@ -185,6 +185,11 @@ Two palettes re-point the same token names: navy (the default) and graphite (neu
 `data-palette="graphite"`), each in dark and light (`:root[data-theme='light']`). Both attributes are
 set on `<html>` before first paint; users switch the theme from the top bar, the command palette or
 the user menu, and the palette from the command palette or the user menu (`stores/themeStore.ts`).
+The command palette (⌘K) also searches requests, runs and workflows the user can see, through the
+list endpoints' own text filters (`search` on requests, `q` on runs and templates), so the same
+visibility rules apply. Those filters match a request's description and ticket ID and a template's
+name and description; a template launch's label, which a list shows as the request's title, is not
+searched.
 The root font size is 14px, and every type step
 is pinned to whole pixels — `text-2xs` 11px (uppercase labels only), `text-xs` 12px,
 `text-sm` 13px, `text-base` 14px, then `text-lg` 16 through `text-5xl` 44px for titles and display

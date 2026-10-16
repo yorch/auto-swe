@@ -163,10 +163,12 @@ appear. A **help tip** is a small question-mark button beside a label; hovering,
 clicking it opens a popover with the plain-language definition and a link to the doc that owns the
 term, named for it ("Learn more about <term>", for example "Learn more about gate"). It closes on Escape, an outside click, or when focus
 leaves. The popover is positioned against the button, so a table or scrolling panel does not clip it; inside a modal dialog it is placed within that dialog, and Escape there
-closes only the tip, leaving the dialog open. A page header can carry a **Learn more** link to the
-doc that explains the page, and a collapsible **How auto-swe works** overview walks through the
-request, run, gate, pull request, and merge lifecycle, stating that no built-in step or template
-merges a pull request. Definitions in the glossary agree with this document, and a test checks that every doc
+closes only the tip, leaving the dialog open. The **?** button in the top bar opens the page's
+**Help** panel: a dialog holding whatever explanation the current page declares, such as a link to
+the doc that explains the page or the **How auto-swe works** overview of the request, run, gate,
+pull request, and merge lifecycle, which states that no built-in step or template merges a pull
+request. A page that declares none shows a note and a link to the documentation, and the panel
+closes when the route changes. Definitions in the glossary agree with this document, and a test checks that every doc
 and heading they link to exists.
 
 Guided paths build on those pieces:

@@ -9,7 +9,7 @@
 HITL nodes let you insert a human decision point anywhere in a workflow spec. When the interpreter reaches a HITL node it:
 
 1. Creates a `WorkflowHumanStep` row in the DB with status `PENDING`.
-2. (Optionally) sends a Slack notification to the team. The notification includes an "Open inbox" link built from the worker's `WEB_URL` env var (`{WEB_URL}/approvals`, default `http://localhost:3000`) — set it to your dashboard URL in production or the link points at localhost.
+2. (Optionally) sends a Slack notification to the team. The notification includes an "Open approvals" link built from the worker's `WEB_URL` env var (`{WEB_URL}/approvals`, default `http://localhost:3000`) — set it to your dashboard URL in production or the link points at localhost.
 3. Parks the Temporal workflow at the node — no polling, no timeout loops.
 4. Waits for a human to respond via the inbox UI or the REST API.
 5. On response, fires a Temporal signal (`hitl_<nodeId>`), which unblocks the workflow and routes to the configured next node.
@@ -172,7 +172,7 @@ Each card shows the step title, kind badge, description, and a link to the assoc
 
 When a run is open at `/runs/<id>` and it has pending steps, those steps also appear in a **Pending actions** card in the right column — no need to navigate to the inbox.
 
-The sidebar shows a count badge next to **Inbox** when there are pending steps. The top bar shows an inline amber indicator when `inboxCount > 0`.
+The sidebar shows a count badge next to **Approvals** when there are pending steps.
 
 ---
 

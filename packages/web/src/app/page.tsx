@@ -228,7 +228,7 @@ function WaitingOnYou() {
           )}
           href="/approvals"
         >
-          Open inbox
+          Open approvals
           <Icon name="arrowRight" size={13} />
         </Link>
       </div>

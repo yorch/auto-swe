@@ -187,7 +187,7 @@ AUTH_FROM_EMAIL=auth@example.com
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
 
 # Worker (optional tuning)
-WEB_URL=https://app.example.com      # base URL for the "Open inbox" link (to /approvals) in Slack HITL
+WEB_URL=https://app.example.com      # base URL for the "Open approvals" link (to /approvals) in Slack HITL
                                      # notifications (defaults to http://localhost:3000 —
                                      # set it or Slack links point at localhost)
 # WORKER_MAX_CONCURRENT_ACTIVITIES=10  # cap on concurrent activity executions per worker

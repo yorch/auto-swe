@@ -15,7 +15,7 @@ export default function GlobalError({ reset }: { error: Error; reset: () => void
   const button = {
     alignItems: 'center',
     border: '1px solid transparent',
-    borderRadius: 10,
+    borderRadius: 8,
     cursor: 'pointer',
     display: 'inline-flex',
     font: 'inherit',
@@ -44,7 +44,7 @@ export default function GlobalError({ reset }: { error: Error; reset: () => void
           style={{
             background: INK_900,
             border: `1px solid ${INK_400}`,
-            borderRadius: 16,
+            borderRadius: 12,
             boxSizing: 'border-box',
             margin: 16,
             maxWidth: 420,
@@ -57,7 +57,7 @@ export default function GlobalError({ reset }: { error: Error; reset: () => void
             style={{
               alignItems: 'center',
               border: `1px solid ${DANGER_400}55`,
-              borderRadius: 14,
+              borderRadius: 8,
               color: DANGER_400,
               display: 'flex',
               fontSize: 24,
