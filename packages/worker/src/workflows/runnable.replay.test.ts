@@ -29,6 +29,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { SIGNAL_REWAIT_PATCH } from '@auto-swe/shared/workflow/signalSlots';
 import proto from '@temporalio/proto';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -207,6 +208,57 @@ describe('RunnableWorkflow — history replay', () => {
       .filter(Boolean);
     expect(signals).toEqual(['hitl_fan[0]/gate', 'hitl_fan[1]/gate']);
   });
+
+  // TO BE REMOVED WHEN RECORDED: the two shared-signal fixtures do not exist yet
+  // (see the recorder's header), so these guards skip; the shared-signal tests
+  // in `runnable.workflow.test.ts` replay the shape within one run until then.
+  // Once recorded, add both names to the fixture list above and drop the skipIf.
+  const hasFixture = (name: string) => fixtures.some((f) => f.name === name);
+  const patchIdsOf = (name: string) =>
+    eventsOf(name)
+      .filter((e) => e.eventType === EventType.EVENT_TYPE_MARKER_RECORDED)
+      .map((e) => {
+        const payload = e.markerRecordedEventAttributes?.details?.['patch-data']?.payloads?.[0];
+        return payload?.data ? (JSON.parse(Buffer.from(payload.data).toString()).id as string) : '';
+      });
+  const indexesOf = (name: string, type: proto.temporal.api.enums.v1.EventType) =>
+    eventsOf(name).flatMap((e, i) => (e.eventType === type ? [i] : []));
+  /** The index of the re-wait's TIMER_STARTED, after both branches parked on theirs. */
+  const rewaitTimerOf = (name: string) => {
+    // The re-wait is patched; without its marker the fixture guards the old path.
+    expect(patchIdsOf(name)).toContain(SIGNAL_REWAIT_PATCH);
+    const signalled = indexesOf(name, EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED);
+    const timers = indexesOf(name, EventType.EVENT_TYPE_TIMER_STARTED);
+    // Both branches were parked on their own timer when the first delivery came,
+    // so it woke both of them rather than one.
+    expect(timers.filter((i) => i < (signalled[0] as number))).toHaveLength(2);
+    const rewait = timers.filter((i) => i > (signalled[0] as number));
+    expect(rewait).toHaveLength(1);
+    return { rewait: rewait[0] as number, signalled };
+  };
+
+  it.skipIf(!hasFixture('fan-out-shared-signal'))(
+    'the fan-out-shared-signal fixture resumed the re-waiting branch on a second delivery',
+    () => {
+      const { rewait, signalled } = rewaitTimerOf('fan-out-shared-signal');
+      // Two deliveries in separate workflow tasks, the re-wait's timer between them.
+      expect(signalled).toHaveLength(2);
+      expect(rewait).toBeLessThan(signalled[1] as number);
+      expect(indexesOf('fan-out-shared-signal', EventType.EVENT_TYPE_TIMER_FIRED)).toHaveLength(0);
+    }
+  );
+
+  it.skipIf(!hasFixture('fan-out-shared-signal-timeout'))(
+    'the fan-out-shared-signal-timeout fixture timed the re-waiting branch out',
+    () => {
+      const name = 'fan-out-shared-signal-timeout';
+      const { rewait, signalled } = rewaitTimerOf(name);
+      expect(signalled).toHaveLength(1);
+      const fired = indexesOf(name, EventType.EVENT_TYPE_TIMER_FIRED);
+      expect(fired).toHaveLength(1);
+      expect(fired[0]).toBeGreaterThan(rewait);
+    }
+  );
 
   it('the fan-out-cancel fixture was cancelled while its branches were parked', () => {
     const events = eventsOf('fan-out-cancel');

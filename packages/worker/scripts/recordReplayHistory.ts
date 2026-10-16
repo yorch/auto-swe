@@ -17,6 +17,24 @@
  *
  * With no arguments every scenario is re-recorded; name scenarios to record only
  * those (a new shape should never rewrite the fixtures that already pass).
+ *
+ * TO BE REMOVED WHEN RECORDED — two scenarios have no fixture yet:
+ * `fan-out-shared-signal` and `fan-out-shared-signal-timeout` (a `signal` node
+ * shared by concurrent fan-out branches; the branch that misses a delivery
+ * re-waits, then resumes on a second delivery or times out). Recording needs the
+ * Temporal test-server binary, so do it where temporal.download is reachable,
+ * after building shared, naming only these two:
+ *
+ *   yarn workspace @auto-swe/worker exec tsx scripts/recordReplayHistory.ts \
+ *     fan-out-shared-signal fan-out-shared-signal-timeout
+ *
+ * Then, in `runnable.replay.test.ts`, add both names to the fixture list in its
+ * sorted position — after `'fan-out-human-gate'` and before `'fan-out'`, as
+ * `'fan-out-shared-signal-timeout'` then `'fan-out-shared-signal'` (the list is
+ * filename order, and `-` sorts before `.`) — and delete the matching
+ * "not yet recorded" notes there and here; the fixture-gated guards for both
+ * apply as soon as the files exist. Until then the shared-signal tests in
+ * `runnable.workflow.test.ts` replay the histories they produce within one run.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -141,6 +159,25 @@ async function waitForEvent(
   throw new Error(`timed out waiting for history event ${EventType[type]}`);
 }
 
+/** Like {@link waitForEvent}, until the history holds at least `count` events of `type`. */
+async function waitForEventCount(
+  handle: Pick<DriveHandle, 'fetchHistory'>,
+  type: proto.temporal.api.enums.v1.EventType,
+  count: number
+): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  let seen = 0;
+  while (Date.now() < deadline) {
+    const history = await handle.fetchHistory();
+    seen = (history.events ?? []).filter((e) => e.eventType === type).length;
+    if (seen >= count) {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  throw new Error(`timed out waiting for ${count}× history event ${EventType[type]} (saw ${seen})`);
+}
+
 /** A RunnableWorkflow request, for scenarios that start one as a child. */
 const childRequest = (description: string) => ({
   budgetTier: 'STANDARD',
@@ -200,6 +237,45 @@ const channelActivities = (turn: () => Promise<unknown>) => ({
   touchChannelThreadSession: async () => {},
   updateChannelReply: async () => {},
 });
+
+/** Two concurrent fan-out branches, each waiting on the same `signal` name. */
+const SHARED_SIGNAL_FAN_OUT = spec(
+  {
+    branchDone: { status: 'SUCCESS', type: 'terminate' },
+    branchTimedOut: { status: 'FAILED', type: 'terminate' },
+    done: {
+      result: { failed: { from: 'nodes.fan.output.failed' } },
+      status: 'SUCCESS',
+      type: 'terminate',
+    },
+    fan: {
+      concurrency: 2,
+      join: 'done',
+      onBranchFail: 'continue',
+      over: { literal: ['a', 'b'] },
+      subgraph: 'mark',
+      type: 'fanOut',
+    },
+    mark: marker('BRANCH_AWAITING_SIGNAL', 'wait'),
+    wait: {
+      name: 'sharedSignal',
+      onReceive: 'branchDone',
+      onTimeout: 'branchTimedOut',
+      timeout: '1h',
+      type: 'signal',
+    },
+  },
+  'fan'
+);
+
+/**
+ * Both branches of {@link SHARED_SIGNAL_FAN_OUT} reached the wait and started
+ * its timer — only then does one delivery wake both of them.
+ */
+async function parkSharedSignalBranches(handle: DriveHandle, states: string[]): Promise<void> {
+  await waitForStateCount(states, 'BRANCH_AWAITING_SIGNAL', 2);
+  await waitForEventCount(handle, EventType.EVENT_TYPE_TIMER_STARTED, 2);
+}
 
 const SCENARIOS: Scenario[] = [
   {
@@ -706,6 +782,35 @@ const SCENARIOS: Scenario[] = [
       },
       'fan'
     ),
+  },
+  {
+    drive: async (handle, states) => {
+      await parkSharedSignalBranches(handle, states);
+      await handle.signal('sharedSignal', { n: 1 });
+      // Both branches' original timers, then the re-wait's: the second delivery
+      // must land in a later workflow task, or the two coalesce in the slot.
+      await waitForEventCount(handle, EventType.EVENT_TYPE_TIMER_STARTED, 3);
+      await handle.signal('sharedSignal', { n: 2 });
+    },
+    // A `signal` node inside concurrent fan-out branches keeps its spec name, so
+    // both branches wait on one slot. The first delivery wakes both; one takes
+    // it and the other re-waits for the rest of its own timeout — a new timer,
+    // behind `patched('shared-signal-wait-rewaits-on-empty-slot')` — until the
+    // second delivery resumes it.
+    name: 'fan-out-shared-signal',
+    spec: SHARED_SIGNAL_FAN_OUT,
+  },
+  {
+    drive: async (handle, states) => {
+      await parkSharedSignalBranches(handle, states);
+      await handle.signal('sharedSignal', { n: 1 });
+      // The re-wait's timer is running; `result()` then skips time until it fires.
+      await waitForEventCount(handle, EventType.EVENT_TYPE_TIMER_STARTED, 3);
+    },
+    // As `fan-out-shared-signal`, with no second delivery: the re-waiting branch
+    // times out at its own deadline and takes `onTimeout`.
+    name: 'fan-out-shared-signal-timeout',
+    spec: SHARED_SIGNAL_FAN_OUT,
   },
   {
     // Event-driven DAG scheduling (`epic-event-driven-scheduling`): a and b

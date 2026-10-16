@@ -16,7 +16,9 @@ import {
   DEFAULT_ENGINEERING_SPEC,
   SPEC_SCHEMA_VERSION,
 } from '@auto-swe/shared/workflow';
+import { SIGNAL_REWAIT_PATCH } from '@auto-swe/shared/workflow/signalSlots';
 import { ApplicationFailure } from '@temporalio/activity';
+import proto from '@temporalio/proto';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, type TestContext } from 'vitest';
@@ -944,6 +946,73 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     const waitRecords = () =>
       calls.recordedSteps.filter((r) => r.nodeId.endsWith('/wait')).map((r) => r.status);
 
+    // No committed replay fixture records this shape yet (the recorder's
+    // `fan-out-shared-signal*` scenarios will), so each test below also replays
+    // the history it just produced against the same workflow bundle, under the
+    // same workflow id. That catches a run whose commands differ between live
+    // execution and replay on the re-wait path — not a change between builds,
+    // which only a committed fixture can.
+    const EventType = proto.temporal.api.enums.v1.EventType;
+    type HistoryEvent = proto.temporal.api.history.v1.IHistoryEvent;
+    const indexesOf = (events: HistoryEvent[], type: proto.temporal.api.enums.v1.EventType) =>
+      events.flatMap((e, i) => (e.eventType === type ? [i] : []));
+    const patchIds = (events: HistoryEvent[]) =>
+      events
+        .filter((e) => e.eventType === EventType.EVENT_TYPE_MARKER_RECORDED)
+        .map((e) => {
+          const payload = e.markerRecordedEventAttributes?.details?.['patch-data']?.payloads?.[0];
+          return payload?.data
+            ? (JSON.parse(Buffer.from(payload.data).toString()).id as string)
+            : '';
+        });
+    /** Both branches parked: each wait's condition has started its timer. */
+    const bothTimersStarted = async (handle: {
+      fetchHistory(): Promise<proto.temporal.api.history.v1.IHistory>;
+    }) => {
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        const events = (await handle.fetchHistory()).events ?? [];
+        if (indexesOf(events, EventType.EVENT_TYPE_TIMER_STARTED).length >= 2) {
+          return true;
+        }
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return false;
+    };
+    /**
+     * The re-wait ran behind its patch: the marker is recorded, and exactly one
+     * timer starts after the first delivery — for what is left of the hour.
+     */
+    const expectRewait = (events: HistoryEvent[]) => {
+      expect(patchIds(events)).toContain(SIGNAL_REWAIT_PATCH);
+      const firstSignal = indexesOf(events, EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)[0];
+      expect(firstSignal).toBeDefined();
+      const timers = indexesOf(events, EventType.EVENT_TYPE_TIMER_STARTED);
+      expect(timers.filter((i) => i < (firstSignal as number))).toHaveLength(2);
+      const rewait = timers.filter((i) => i > (firstSignal as number));
+      expect(rewait).toHaveLength(1);
+      const seconds = Number(
+        String(
+          events[rewait[0] as number]?.timerStartedEventAttributes?.startToFireTimeout?.seconds ?? 0
+        )
+      );
+      expect(seconds).toBeGreaterThan(0);
+      expect(seconds).toBeLessThan(60 * 60);
+      return rewait[0] as number;
+    };
+    const expectReplays = async (
+      history: proto.temporal.api.history.v1.IHistory,
+      workflowId: string
+    ) => {
+      await expect(
+        Worker.runReplayHistory(
+          { workflowsPath: path.resolve(__dirname, './index.ts') },
+          history,
+          workflowId
+        )
+      ).resolves.toBeUndefined();
+    };
+
     it('keeps the branch that missed a delivery waiting instead of timing it out', async () => {
       calls.domainStates.length = 0;
       calls.recordedSteps.length = 0;
@@ -953,7 +1022,7 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
         startArgs('wf-signal-fan-shared')
       );
       expect(await until(parked)).toBe(true);
-      await env.sleep('1 second');
+      expect(await bothTimersStarted(handle)).toBe(true);
 
       await handle.signal('sharedSignal', { n: 1 });
       expect(await until(() => waitRecords().length >= 1)).toBe(true);
@@ -968,7 +1037,15 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
       expect(result.status).toBe('SUCCESS');
       expect(result.failed).toBe(0);
       expect(waitRecords()).toEqual(['PASSED', 'PASSED']);
-    }, 120_000);
+
+      const history = await handle.fetchHistory();
+      const events = history.events ?? [];
+      expect(indexesOf(events, EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)).toHaveLength(2);
+      expectRewait(events);
+      // The re-wait ended on the second delivery, not on its timer.
+      expect(indexesOf(events, EventType.EVENT_TYPE_TIMER_FIRED)).toHaveLength(0);
+      await expectReplays(history, 'wf-signal-fan-shared');
+    }, 240_000);
 
     it('times the waiting branch out at its own deadline when no second delivery comes', async () => {
       calls.domainStates.length = 0;
@@ -979,7 +1056,7 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
         startArgs('wf-signal-fan-single')
       );
       expect(await until(parked)).toBe(true);
-      await env.sleep('1 second');
+      expect(await bothTimersStarted(handle)).toBe(true);
       await handle.signal('sharedSignal', { n: 1 });
       expect(await until(() => waitRecords().length >= 1)).toBe(true);
       // Before the fix the empty-handed branch recorded SKIPPED and ended in
@@ -996,13 +1073,22 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
 
       // The branch ended at its own 1h deadline, not when the delivery came: a
       // timer fired, and about an hour of workflow time passed.
-      const events = (await handle.fetchHistory()).events ?? [];
+      const history = await handle.fetchHistory();
+      const events = history.events ?? [];
       expect(events.some((e) => e.timerFiredEventAttributes)).toBe(true);
       const seconds = (t?: { seconds?: unknown } | null) => Number(String(t?.seconds ?? 0));
       const elapsed = seconds(events.at(-1)?.eventTime) - seconds(events[0]?.eventTime);
       expect(elapsed).toBeGreaterThanOrEqual(59 * 60);
       expect(elapsed).toBeLessThan(2 * 60 * 60);
-    }, 120_000);
+
+      expect(indexesOf(events, EventType.EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED)).toHaveLength(1);
+      const rewait = expectRewait(events);
+      // The timer that fired is the re-wait's, after it started.
+      const fired = indexesOf(events, EventType.EVENT_TYPE_TIMER_FIRED);
+      expect(fired).toHaveLength(1);
+      expect(fired[0]).toBeGreaterThan(rewait);
+      await expectReplays(history, 'wf-signal-fan-single');
+    }, 240_000);
   });
 
   it('finalizes a cancelled run as CANCELLED and clears its pending human steps', async () => {
