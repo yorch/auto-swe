@@ -8,8 +8,8 @@ import { Icon, isIconName } from '@/components/ui/Icon';
 import { usePaletteSearch } from '@/hooks/usePaletteSearch';
 import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
 import { runHref, templateHref } from '@/lib/entityLinks';
-import { requestHref } from '@/lib/requestDisplay';
 import { flattenNavItems } from '@/lib/navigation';
+import { requestHref } from '@/lib/requestDisplay';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { useThemeStore } from '@/stores/themeStore';
 

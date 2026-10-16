@@ -35,7 +35,10 @@ export default function GovernWorkflowPage() {
         help={
           <p>
             Each section saves on its own. For the settings a team or channel can override, see{' '}
-            <Link className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current" href="/admin/platform-settings">
+            <Link
+              className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
+              href="/admin/platform-settings"
+            >
               Platform settings
             </Link>
             .
