@@ -145,7 +145,7 @@ export function WorkflowOutline({
   if (sections.length === 0) {
     return (
       <div
-        className={cn('p-4 text-[13px] text-paper-500', className)}
+        className={cn('p-4 text-sm text-paper-500', className)}
         style={{ height: height ?? 'auto' }}
       >
         This workflow has no steps.
@@ -229,14 +229,14 @@ export function WorkflowOutline({
                             tabIndex={id === tabStopId ? 0 : -1}
                             type="button"
                           >
-                            <span className="w-6 shrink-0 text-right text-[11px] text-paper-500 tabular-nums">
+                            <span className="w-6 shrink-0 text-right text-xs text-paper-500 tabular-nums">
                               {numbering.get(id)}
                             </span>
                             <span className="min-w-0 flex-1">
-                              <span className="block truncate text-[13px] font-medium leading-tight">
+                              <span className="block truncate text-sm font-medium leading-tight">
                                 {nodeDisplayName(node, id)}
                               </span>
-                              <span className="mt-0.5 block truncate text-[11px] text-paper-500">
+                              <span className="mt-0.5 block truncate text-xs text-paper-500">
                                 {nodeTypeLabel(node.type)}
                                 {node.type === 'step' && (
                                   <span className="font-mono"> · {node.step}</span>
@@ -247,7 +247,7 @@ export function WorkflowOutline({
                             {diff && (
                               <span
                                 className={cn(
-                                  'inline-block text-[11px] font-medium first-letter:uppercase',
+                                  'inline-block text-xs font-medium first-letter:uppercase',
                                   DIFF_TEXT[diff]
                                 )}
                               >
@@ -255,7 +255,7 @@ export function WorkflowOutline({
                               </span>
                             )}
                             {status && (
-                              <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-paper-300">
+                              <span className="flex shrink-0 items-center gap-1.5 text-xs text-paper-300">
                                 <span
                                   aria-hidden="true"
                                   className={cn(

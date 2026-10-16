@@ -309,7 +309,7 @@ function TemplateDiffContent({ params }: PageProps) {
               Swap
             </Button>
             {before !== null && after !== null && before !== after && (
-              <p className="flex items-center gap-1.5 pb-1.5 text-[13px] text-paper-400 tabular-nums">
+              <p className="flex items-center gap-1.5 pb-1.5 text-sm text-paper-400 tabular-nums">
                 Showing
                 <Badge tone="neutral" variant="outline">
                   v{before}
@@ -413,11 +413,11 @@ function DiffBody({
             </Badge>
           </div>
         </CardHeader>
-        <p className="mb-3 text-[13px] text-paper-400">
+        <p className="mb-3 text-sm text-paper-400">
           Added nodes exist only in v{after}, removed nodes only in v{before}, and changed nodes
           exist in both but differ in at least one field.
         </p>
-        <dl className="divide-y divide-ink-600 text-[13px]">
+        <dl className="divide-y divide-ink-600 text-sm">
           <DiffStat ids={diff.addedNodes} label="Added" tone="moss" />
           <DiffStat ids={diff.removedNodes} label="Removed" tone="brick" />
           <DiffStat ids={diff.changedNodes} label="Changed" tone="amber" />
@@ -427,7 +427,7 @@ function DiffBody({
         </dl>
         {diff.metaChanges.length > 0 && (
           <div className="mt-4 border-t border-ink-600 pt-4">
-            <h4 className="mb-2 text-[13px] font-semibold text-paper-200">Workflow settings</h4>
+            <h4 className="mb-2 text-sm font-semibold text-paper-200">Workflow settings</h4>
             <ul className="space-y-1 font-mono text-xs">
               {diff.metaChanges.map((m) => (
                 <li className="break-all" key={m.field}>
@@ -446,7 +446,7 @@ function DiffBody({
         <section className="space-y-3">
           <h2 className="text-base font-semibold text-paper-100">
             Changed nodes
-            <span className="ml-2 text-[13px] font-normal text-paper-500">
+            <span className="ml-2 text-sm font-normal text-paper-500">
               Only the fields that differ
             </span>
           </h2>
@@ -467,7 +467,7 @@ function DiffBody({
       <section className="space-y-3">
         <h2 className="text-base font-semibold text-paper-100">
           Diagrams
-          <span className="ml-2 text-[13px] font-normal text-paper-500">Before and after</span>
+          <span className="ml-2 text-sm font-normal text-paper-500">Before and after</span>
         </h2>
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
           <Card className="p-4">

@@ -39,7 +39,7 @@ export function IntegrationCard({
         )}
       </CardHeader>
       {description && (
-        <div className="-mt-1 mb-5 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+        <div className="-mt-1 mb-5 max-w-3xl text-sm leading-relaxed text-paper-400">
           {description}
         </div>
       )}

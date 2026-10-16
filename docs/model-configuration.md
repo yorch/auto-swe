@@ -147,9 +147,35 @@ prices (*new*), and priced models a provider no longer lists (*possibly retired*
 *New from providers* shows the new ones with a last-checked time, each provider's error if its
 listing failed, an **Add** prefilled with the id, kind and display name, and a **Dismiss**;
 **Check providers now** runs the same pass on demand. *Possibly retired* lists the other kind with an
-**Edit** that opens the row; nothing retires a model for you. Discovery only suggests, so a
+**Edit** that opens the row; nothing retires a model for you. Each new model shows its suggested
+price — the first price hint described below — or *No published price*, from one batch call for the
+whole list. Ticking models that have one and choosing **Add *N* at suggested prices** adds them all
+at those prices once a dialog listing each spec, price and source is confirmed; each row's notes say
+where its price came from. The selection is added in one transaction through
+`POST /model-catalog/batch`: all of it, or none. A model already in the catalog refuses the whole
+batch, and the dialog names each such model. Discovery only suggests, so a
 discovered model is not "known" until an admin adds it with a price, and the pricing path never reads
 a suggestion.
+
+**Published prices prefill the Add form.** When the form opens for a spec — from a discovered model,
+an unpriced one, or one typed in — it asks `POST /model-catalog/price-hints` what that model is
+published to cost, and fills the price and cache fields from the first answer, naming its source.
+Two sources answer, in this order:
+
+1. **The provider's own listing**, for an OpenAI-compatible provider whose list-models response states
+   prices (OpenRouter's per-token `pricing.prompt` / `pricing.completion`), read through its GLOBAL
+   credential exactly as discovery reads it and kept for five minutes. Anthropic, OpenAI and Google
+   state no price in their listings, so they are not asked.
+2. **A community price list** in LiteLLM's `model_prices_and_context_window.json` format, at
+   `models.priceListUrl` (LiteLLM's file on GitHub by default; empty turns it off). An entry counts
+   only when its `litellm_provider` is the provider asked about, under `<provider>/<model-id>` or the
+   bare id, with `google` read as LiteLLM's `gemini`. Cache read and write rates become multiples of
+   the input price. The gateway fetches the list behind the same address guard as a credential, with
+   redirects refused and a 32 MB cap, and keeps it for six hours (five minutes after a failure).
+
+A second answer is shown with a **Use** to switch to it, and a source that could not be read is named
+with a fixed reason. A hint fills only fields nobody has typed in, and is never a price: nothing is
+written until the admin saves, and the pricing path never reads a hint.
 
 The run's cadence is environment-only, like the other gateway sweeps: `MODEL_DISCOVERY_ENABLED`
 (default `true`) and `MODEL_DISCOVERY_CRON` (five-field cron, UTC, default `17 3 * * *`). The gateway
@@ -203,6 +229,9 @@ as a `ModelCatalogEntry`.
 | `GET /model-catalog/unpriced` | Specs in use that nothing prices, each with where it is used and the spec it most likely meant |
 | `GET /model-catalog/suggestions` | ADMIN. The stored suggestions (`type` `NEW` or `RETIREMENT_CANDIDATE`) and, per provider, when it was last checked and its last error. Dismissed ones only with `?includeDismissed=true`, with `hiddenDismissed` counting those hidden, per type (`NEW`, `RETIREMENT_CANDIDATE`). A `NEW` one the catalog now prices, and a `RETIREMENT_CANDIDATE` whose model is now retired or gone from the catalog, are omitted |
 | `POST /model-catalog/suggestions/:id/dismiss`, `…/undismiss` | ADMIN. Hides or restores one suggestion. Dismissal is kept across runs |
+| `POST /model-catalog/price-hints` | ADMIN. `{ provider, modelId }` → `hints` (each with its `source`, `provider` or `priceList`, the id it matched, per-MTok prices and any cache multipliers) and `unavailable` (a source that could not be read, with a fixed reason). Writes nothing |
+| `POST /model-catalog/batch` | ADMIN. `{ entries }`: 1 to 100 entries in the shape `POST /model-catalog` takes, each spec once. Adds all of them in one transaction, auditing each row, or none: a spec already in the catalog is a `409 MODEL_EXISTS` with `details.specs` naming every such spec, and a row added by someone else between that check and the write rolls the whole batch back with the same code |
+| `POST /model-catalog/price-hints/batch` | ADMIN. `{ specs: [{ provider, modelId }] }`, 1–200 of them → the same answer per spec, in order, each tagged with its `provider` and `modelId`. Each provider is listed and the price list fetched once per batch. Writes nothing |
 | `POST /model-catalog/discover` | ADMIN. Runs a discovery pass now and returns, per provider, the unpriced models it lists, the priced ones it no longer lists, or why it could not be listed. Writes no catalog row, but refreshes the stored suggestions exactly as the scheduled run does |
 
 **Unpriced models are reported on save, and refused at run time only under a USD cap.** Saving an agent version or the embedding config
@@ -266,7 +295,10 @@ The run, in order:
    is not retired while the provider still serves it. Ids containing `:` (fine-tuned and
    organization-owned models) are left out of both. A provider that cannot be listed appears as a
    fixed sentence, never with the provider's error text. No key reaches the agent's workspace, the
-   step output, the logs or the Temporal history.
+   step output, the logs or the Temporal history. When `models.priceListUrl` is set, each provider
+   section also ends with the community price list's figures for the ids it lists and the rows the
+   file already has, as a cross-check. Only those ids and numbers formatted by the worker reach the
+   output, never the list's own text; a list that cannot be read is one fixed sentence.
 4. **Update the table.** The implementer, running with the template's own system prompt and that
    list as guidance, fetches each provider's official pricing page from its workspace (`node -e
    "fetch(…)"`; the default image has no `curl`), and edits `BUILTIN_MODELS`: new rows, corrected
@@ -274,7 +306,9 @@ The run, in order:
    text fetched from a page is data, never instructions. A figure that is not literally on the
    fetched page leaves its row unchanged, marked `UNVERIFIED` in a comment on that row. The guidance
    reaches the agent under the heading *Guidance from the requester*, which every guidance input
-   shares; the prompt says what it really is.
+   shares; the prompt says what it really is. The price-list figures are never a source: where a
+   page's figure differs from the list's, the agent re-reads the page, keeps only what the page
+   shows, and marks the row with a `// price list says …` comment for the reviewer.
 5. **Confine the change.** The implementer step and the review fix carry `allowedPaths`, listing
    only the catalog file. Before the agent runs, the worker reads the commit the session starts
    from and keeps it in its own memory: the default branch's tip for a fresh branch, the work
@@ -308,7 +342,14 @@ The run, in order:
    the `runTests` gate runs `builtinModels.test.ts`, the review network judges the change against the
    success criterion *every changed price cites an official URL; no invented figures*, the review
    fix follows the same rules as the first pass, and the run opens a **draft** pull request and ends.
-   There is no CI loop and no approval inside the run.
+   There is no CI loop and no approval inside the run. Between the review's approval and the pull
+   request, the `checkPriceListNotes` step reads the catalog file at the commit the change started
+   from and at the pushed commit, and finds every added or repriced row whose figure differs from the
+   community price list without a `// price list says …` comment on the row, after its closing
+   brace, or on a comment line just above it. Any such row goes back to the review fixer with a fixed
+   finding naming each spec and both figures, and counts against the same three attempts as a
+   rejected review; a run out of attempts fails without a pull request. With the list turned off or
+   unreadable the step passes and says why.
 
 **The `runTests` gate is advisory.** The gate runs in warn mode: a failing `builtinModels.test.ts`,
 or an install that fails, is recorded and the run goes on to review and a draft pull request. CI on
@@ -692,8 +733,13 @@ forced delete.
 - **The editor's cost estimate prices GLOBAL defaults.** It uses the model each role's GLOBAL agent
   runs, so a team, organization or template override of that agent's model is not reflected, and
   token counts come from each step's static `costHint`, not from measured runs.
-- **Discovery finds ids, not prices.** It reads no price from a listing, even where one carries
-  prices (OpenRouter's does), so an admin still enters every number that feeds USD budgets. It reaches only models listed through a GLOBAL
+- **Discovery finds ids; prices are only suggested.** The Add form's price hints come from a listing
+  that states prices (OpenRouter's) or a community price list, and either can be stale or wrong: a
+  provider's price changes before the list does, a long-context or batch rate is not shown, and a
+  model the list keys under another provider name finds no hint. An admin still checks and saves every
+  number that feeds USD budgets; bulk add asks once for the whole selection rather than per model, so
+  the confirmation dialog is the only review a bulk-added price gets. A hint is per-process cached, so a gateway replica can answer from a
+  list up to six hours older than another's. Discovery reaches only models listed through a GLOBAL
   credential; one reachable only through a team or organization credential is not found. It suggests
   by name, not by capability: speech, transcription, image, video and moderation models are dropped
   by a name filter that can miss one or drop one it should not, and outside Google — which says which
@@ -736,6 +782,12 @@ forced delete.
   check beyond that (such as OpenAI's `owned_by`) is not made, so another organization-visible id
   without a colon would still be listed. Anyone who can launch the template against a repository
   holding the catalog file gives the agent that listing, which is otherwise an admin-only view.
+- **The refresh's price-list check proves a comment, not a price.** The list can lag a page or be
+  wrong, so a differing figure is allowed: the check requires only that it carries a
+  `// price list says …` comment, and the comment's own figures are not compared with the list. It
+  sees only rows it can parse (an object literal with a provider, an id and both prices as plain
+  numbers), and a row the list does not price is never flagged. The figures are LiteLLM's base rates
+  only, and a model the list keys under another provider name has none.
 - **`UNVERIFIED` is a comment on the row.** The pull request body is generated from fixed text and
   carries none of the agent's own notes. A run whose only change is `UNVERIFIED` comments still
   opens a draft each time the previous one is closed, because those comments are not merged and are

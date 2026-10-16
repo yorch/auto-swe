@@ -34,14 +34,14 @@ export function Stat({
 }) {
   return (
     <div className={cn('min-w-0 break-words border-l-2 border-ink-500 py-1 pl-4', className)}>
-      <div className="text-[13px] font-medium text-paper-400">{label}</div>
+      <div className="text-sm font-medium text-paper-400">{label}</div>
       <div className="mt-2 flex items-baseline gap-1.5">
         <span
           className={cn('text-[30px] leading-none font-semibold tracking-[-0.02em]', TONE[tone])}
         >
           {value}
         </span>
-        {unit && <span className="text-[13px] text-paper-500">{unit}</span>}
+        {unit && <span className="text-sm text-paper-500">{unit}</span>}
       </div>
       {delta && (
         <div

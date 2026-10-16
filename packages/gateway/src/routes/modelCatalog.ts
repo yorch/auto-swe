@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { builtinModelFor, findUnpricedSpecs, rolePricing } from '../lib/modelCatalogService.js';
+import { findPriceHints } from '../lib/modelPriceHints.js';
 import { isRecordNotFoundError, isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
@@ -41,15 +42,32 @@ const CatalogFields = {
   status: StatusSchema.optional(),
 };
 
-const CreateBody = z.object({
-  ...CatalogFields,
+const SpecFields = {
   modelId: z.string().min(1).max(200).regex(/^\S+$/, 'modelId must not contain whitespace'),
   provider: z
     .string()
     .min(1)
     .max(64)
     .regex(/^[a-z0-9][a-z0-9-]*$/, 'provider must be lowercase-kebab-case'),
+};
+
+const CreateBody = z.object({ ...CatalogFields, ...SpecFields });
+
+const PriceHintBody = z.object(SpecFields);
+
+const specOf = (e: { provider: string; modelId: string }) => `${e.provider}/${e.modelId}`;
+
+/** Bulk add from the discovery list: all of the models, or none of them. */
+const BatchCreateBody = z.object({
+  entries: z
+    .array(CreateBody)
+    .min(1)
+    .max(100)
+    .refine((es) => new Set(es.map(specOf)).size === es.length, 'each model may appear only once'),
 });
+
+/** The discovery list's page: one call prices every new model it shows. */
+const PriceHintBatchBody = z.object({ specs: z.array(PriceHintBody).min(1).max(200) });
 
 // Provider and modelId are the row's identity, and pinned agent versions bill
 // against it, so an edit never changes them — delete and re-create instead.
@@ -236,6 +254,99 @@ export const modelCatalogRoutes: FastifyPluginAsync = async (fastify) => {
     });
     return { data: results };
   });
+
+  // What a model is published to cost, for the Add form to prefill: the
+  // provider's own listing where it states a price, then the community price
+  // list. POST for the same reason as discover — it can call a provider with a
+  // decrypted key. Writes nothing: an admin still saves every price.
+  app.post(
+    '/model-catalog/price-hints',
+    { onRequest: adminOnly, schema: { body: PriceHintBody } },
+    async (request) => {
+      const { provider, modelId } = request.body;
+      return { data: await findPriceHints(fastify.prisma, provider, modelId) };
+    }
+  );
+
+  // The same hints for many specs at once. Each provider is listed once and the
+  // price list fetched once, whatever the batch size: both are cached and shared.
+  app.post(
+    '/model-catalog/price-hints/batch',
+    { onRequest: adminOnly, schema: { body: PriceHintBatchBody } },
+    async (request) => ({
+      data: await Promise.all(
+        request.body.specs.map(async ({ provider, modelId }) => ({
+          modelId,
+          provider,
+          ...(await findPriceHints(fastify.prisma, provider, modelId)),
+        }))
+      ),
+    })
+  );
+
+  // Adds many models in one transaction, so a refused one leaves the catalog as it
+  // was: a spec already there is a 409 naming every such spec, before anything is
+  // written. Each row is audited as a single add would be.
+  app.post(
+    '/model-catalog/batch',
+    { onRequest: adminOnly, schema: { body: BatchCreateBody } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const { entries } = request.body;
+      const wanted = new Set(entries.map(specOf));
+      const existing = (
+        await fastify.prisma.modelCatalogEntry.findMany({
+          select: { modelId: true, provider: true },
+          where: { OR: entries.map(({ modelId, provider }) => ({ modelId, provider })) },
+        })
+      )
+        .map(specOf)
+        .filter((spec) => wanted.has(spec))
+        .sort();
+      const conflict = (specs: string[]) =>
+        sendError(
+          reply,
+          409,
+          'MODEL_EXISTS',
+          specs.length
+            ? `Already in the catalog: ${specs.join(', ')}. Nothing was added.`
+            : 'A model in the batch was added meanwhile. Nothing was added.',
+          { specs }
+        );
+      if (existing.length > 0) {
+        return conflict(existing);
+      }
+      let rows: CatalogRow[];
+      try {
+        rows = await fastify.prisma.$transaction(async (tx) => {
+          const created: CatalogRow[] = [];
+          for (const entry of entries) {
+            created.push(
+              await tx.modelCatalogEntry.create({
+                data: { ...entry, isBuiltIn: false, isCustomized: false },
+              })
+            );
+          }
+          return created;
+        });
+      } catch (err) {
+        if (isUniqueConstraintError(err)) {
+          return conflict([]);
+        }
+        throw err;
+      }
+      for (const row of rows) {
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor,
+          after: row,
+          entityId: row.id,
+          entityType: 'ModelCatalogEntry',
+        });
+      }
+      return reply.status(201).send({ data: rows.map(toDto) });
+    }
+  );
 
   app.post(
     '/model-catalog',

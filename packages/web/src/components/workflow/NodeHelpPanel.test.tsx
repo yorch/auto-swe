@@ -19,16 +19,18 @@ describe('NodeHelpPanel', () => {
     expect(summary.querySelector('a, button, input, select, textarea, [tabindex]')).toBeNull();
   });
 
-  it('shows what / when / watch out, the example and a docs link in its body', () => {
+  it('shows what / when / watch out / output, the example and a docs link in its body', () => {
     const { container } = render(<NodeHelpPanel type="signal" />);
     const help = nodeHelp('signal');
     const text = container.textContent ?? '';
     expect(text).toContain(help.what);
     expect(text).toContain(help.when);
     expect(text).toContain(help.gotcha);
+    expect(text).toContain(`Output: ${help.output}`);
+    expect(text.indexOf('Watch out: ')).toBeLessThan(text.indexOf('Output: '));
     expect(container.querySelector('pre')?.textContent).toContain('"type": "signal"');
     const link = screen.getByText(/Read more about signal nodes/i).closest('a');
-    expect(link?.getAttribute('href')).toBe('/docs/architecture#node-types');
+    expect(link?.getAttribute('href')).toBe('/docs/workflow-nodes#signal');
     expect(link?.closest('summary')).toBeNull();
   });
 

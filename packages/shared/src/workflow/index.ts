@@ -35,6 +35,17 @@ export {
 } from './authoring.js';
 export type { Codemod } from './codemod.js';
 export { migrateSpec, registerCodemod } from './codemod.js';
+export {
+  findAuthoredCommandNodes,
+  findContainerCodeNodes,
+  hasAuthoredCode,
+  hasAuthoredCommand,
+  hasContainerCodeNode,
+  isAuthoredCommandNode,
+  isCommandGateStep,
+  isContainerCodeNode,
+  isShellCategoryStep,
+} from './containerCode.js';
 export type { CostEstimate, CostRole, UnpricedReason } from './costEstimator.js';
 export {
   DEFAULT_FANOUT_WIDTH,
@@ -43,6 +54,7 @@ export {
   estimateSpecCost,
 } from './costEstimator.js';
 export { DEFAULT_ENGINEERING_SPEC } from './defaultEngineeringSpec.js';
+export { EVAL_SCORER_ERROR_PREFIX } from './evalResultMarker.js';
 export type { Context } from './expr.js';
 export {
   evalBoolean,

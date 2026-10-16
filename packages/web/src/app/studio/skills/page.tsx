@@ -448,7 +448,7 @@ function EffectivenessCard() {
       <CardHeader>
         <CardTitle eyebrow={`Last ${data?.windowDays ?? 30} days`}>Skill effectiveness</CardTitle>
       </CardHeader>
-      <p className="-mt-2 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+      <p className="-mt-2 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
         Run outcomes for runs where each skill was active, against the all-runs baseline of{' '}
         <span className="text-paper-200 tabular-nums">
           {formatPercent(data?.baselineSuccessRate ?? null)}
@@ -649,7 +649,7 @@ export default function StudioSkillsPage() {
               />
               <Select
                 aria-label="Filter skills"
-                className="h-8 w-full text-[13px] sm:w-44"
+                className="h-8 w-full text-sm sm:w-44"
                 onChange={(v) => setFilter(v as SkillFilter)}
                 options={SKILL_FILTERS}
                 value={filter}

@@ -63,7 +63,7 @@ function WaterfallBar({
   return (
     <div className="flex items-center gap-3 py-1.5">
       <span
-        className="w-[132px] shrink-0 truncate font-mono text-[11px] text-paper-300 max-lg:sticky max-lg:left-0 max-lg:z-[1] max-lg:bg-ink-800 max-lg:shadow-[0.75rem_0_0_0_var(--color-ink-800)]"
+        className="w-[132px] shrink-0 truncate font-mono text-xs text-paper-300 max-lg:sticky max-lg:left-0 max-lg:z-[1] max-lg:bg-ink-800 max-lg:shadow-[0.75rem_0_0_0_var(--color-ink-800)]"
         title={step.nodeId}
       >
         {step.nodeId}
@@ -84,7 +84,7 @@ function WaterfallBar({
           />
         )}
       </div>
-      <span className="tabular w-12 shrink-0 text-right text-[11px] text-paper-500">
+      <span className="tabular w-12 shrink-0 text-right text-xs text-paper-500">
         {formatDuration(stepDurationMs)}
       </span>
     </div>

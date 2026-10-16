@@ -14,6 +14,7 @@
  */
 
 import { z } from 'zod';
+import { isShellCategoryStep } from './containerCode.js';
 import type { WorkflowSpec } from './spec.js';
 import { listSteps } from './stepRegistry.js';
 
@@ -74,8 +75,15 @@ function truncate(text: string, max: number): string {
 export function renderAuthoringCatalog(catalog: AuthoringCatalog): string {
   const lines: string[] = [];
 
+  // A shell-category step (`runContainerStep`) runs container code exactly like a
+  // `shell`/`containerStep` node, so it is offered only when those are usable: shell is
+  // allowed AND at least one image is allowlisted (it needs an `image` like they do).
+  const offerShellSteps = catalog.allowShell && (catalog.shellImages ?? []).length > 0;
   lines.push('## Registered steps (use as `step` node "step" value)');
   for (const s of listSteps()) {
+    if (!offerShellSteps && isShellCategoryStep(s.name)) {
+      continue;
+    }
     lines.push(`- ${s.name} [${s.category}] — ${truncate(s.description, 160)}`);
   }
 
@@ -99,6 +107,11 @@ export function renderAuthoringCatalog(catalog: AuthoringCatalog): string {
       const desc = c.description ? ` — ${truncate(c.description, 140)}` : '';
       lines.push(`- ${c.id} (${c.name})${desc}`);
     }
+    // Tool lists are not stored on the Connection (only a live probe yields them), so the
+    // catalog cannot name them. Say so rather than let the model present a guess as fact.
+    lines.push(
+      'Tool names are not listed here: pick the likeliest `tool` and flag it in the summary.'
+    );
   }
 
   lines.push('');
@@ -128,10 +141,23 @@ export function renderAuthoringCatalog(catalog: AuthoringCatalog): string {
           'you have picked an image you know carries the other.'
       );
     } else {
-      lines.push('No images are allowlisted for this team — avoid shell/containerStep nodes.');
+      lines.push(
+        'No images are allowlisted for this team — avoid shell/containerStep nodes and ' +
+          '`runContainerStep`.'
+      );
     }
   } else {
-    lines.push('## Shell: NOT allowed — do not emit `shell` or `containerStep` nodes.');
+    lines.push(
+      '## Shell: NOT allowed — do not emit `shell` or `containerStep` nodes, or a `step` ' +
+        'node that runs a container (`runContainerStep`).'
+    );
+    // Authored gate commands run in the agent workspace, and a requester who may not author
+    // shell is refused them too; without one a gate runs the repository's own command.
+    lines.push(
+      'Do not set a `command` on gate steps (`config.command`, `inputs.command`, ' +
+        '`runQualityGates` `gates[].command`) or on eval `gate` scorers: omit it and the ' +
+        "repository's configured command runs."
+    );
   }
 
   return lines.join('\n');

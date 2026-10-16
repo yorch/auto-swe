@@ -107,7 +107,7 @@ function DocCard({ doc, featured = false }: { doc: DocMeta; featured?: boolean }
         />
       </span>
       {doc.description ? (
-        <span className="mt-1.5 line-clamp-2 text-[13px] leading-relaxed text-paper-500">
+        <span className="mt-1.5 line-clamp-2 text-sm leading-relaxed text-paper-500">
           {doc.description}
         </span>
       ) : null}
@@ -217,7 +217,7 @@ export function DocsIndex({
           end={
             // The live region speaks only once the search settles: while typing it is empty and
             // busy, and the visible "searching" text beside it is hidden from assistive tech.
-            <span className="text-[13px] text-paper-500 tabular">
+            <span className="text-sm text-paper-500 tabular">
               <span aria-busy={searching} aria-live="polite" role="status">
                 {searching ? '' : status}
               </span>
@@ -263,7 +263,7 @@ export function DocsIndex({
                     >
                       <Link
                         className={cn(
-                          'rounded-sm text-[14px] font-medium text-paper-100 hover:text-ember-300',
+                          'rounded-sm text-base font-medium text-paper-100 hover:text-ember-300',
                           FOCUS_RING
                         )}
                         href={docHref(r.slug, r.anchor ?? undefined)}
@@ -280,7 +280,7 @@ export function DocsIndex({
                         )}
                       </Link>
                       {r.snippet.length > 0 && (
-                        <p className="mt-1 text-[13px] leading-relaxed text-paper-500">
+                        <p className="mt-1 text-sm leading-relaxed text-paper-500">
                           <Highlighted segments={r.snippet} />
                         </p>
                       )}

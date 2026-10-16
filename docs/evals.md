@@ -39,27 +39,57 @@ the result:
   "scorers": [
     { "kind": "gate",  "gate": "runTests" },
     { "kind": "assert", "expr": "$.linesChanged < 500" },
-    { "kind": "trajectory", "from": "nodes.implement.traceRef",
-      "metrics": ["toolCorrectness", "stepCount", "guardrailHits"] },
-    { "kind": "judge", "agentRef": "evalJudge", "rubric": "code-review-quality@3" }
+    { "kind": "pii" },
+    { "kind": "trajectory" },
+    { "kind": "judge", "rubricRef": "code-review-quality" }
   ],
+  "judgeAdvisory": true,
   "onFail": "warn",
   "next": "review"
 }
 ```
 
-It dispatches to the `runEvalNode` activity, writes one `EvalResult` row per scorer, and exposes an
-aggregate at `nodes.<id>.output.score` for downstream `cond` branching. `onFail` takes the same
-`warn` / `block` / `{ retry: N }` policy as every other node.
+It dispatches to the `runEvalNode` activity, writes one `EvalResult` row per scorer, and binds its
+result at `nodes.<id>.output`:
+
+| Field | Meaning |
+|---|---|
+| `score` | Aggregate in [0, 1] for `cond` branching: 0 when a floor scorer failed, else the mean of the soft scorers that scored (1 when none did) |
+| `floorPassed` | Every floor scorer passed |
+| `perAxis` | Each scorer's value, keyed by scorer identity (`gate:runTests`, `judge:code-review-quality`); a scorer that could not score is absent |
+| `errors` | Scorers that could not score, keyed by identity, mapped to the reason; `{}` when all scored |
+| `decision` | `{ blocked, reason }` — the gate decision below |
+| `passed` | `!decision.blocked` |
+| `summary` | `eval blocked: <reason>` when blocked, else the reason |
+
+A blocked eval is a failed node. `passed: false` sends it through `onFail` exactly like a failed
+gate step: `block` (the default) records the step `FAILED` and fails the run with the summary as the
+error, `warn` records it `FAILED` and carries on to `next`, and `{ retry: N }` re-runs the whole node
+up to N more times before blocking. Each attempt runs every scorer again — gates re-execute and the
+judge makes a new, separately paid call — so a retry only helps a scorer that can flake (a gate
+with a flaky test, a judge on a bad day); a deterministic `assert`, `policy` or `pii` failure fails
+every attempt. The output is bound in every case, so a `cond` after a `warn`
+eval can still branch on `nodes.<id>.output.decision.blocked` or `score`. A spec that routes a
+blocked eval with a `cond` sets `onFail: "warn"`; under the default it never reaches the `cond`.
+
+The decision blocks when a floor scorer failed, or — only with `judgeAdvisory: false` — when a
+judge scored below `evalJudgeThreshold` (Tier-2 defaults) or could not score at all. Otherwise the
+eval passes, and the reason says whether a blocking judge cleared its threshold or the soft axes
+were advisory.
 
 ### Scorer kinds
 
-| Kind | Family | What it does |
-|---|---|---|
-| `gate` | floor | Executes a real quality gate against the candidate's pushed branch on the repo's executor image |
-| `assert` | floor | Evaluates a programmatic expression against the target |
-| `trajectory` | soft | Reads `AgentTrace` rows and scores *process* — tool correctness, step count, guardrail hits |
-| `judge` | soft | An LLM judge (`evalJudge`, bound to its own model) scoring against a versioned `EvalRubric` |
+| Kind | Family | Fields | What it does |
+|---|---|---|---|
+| `gate` | floor | `gate`, optional `command` | Executes a real quality gate against the candidate's pushed branch on the repo's executor image. A `command` is code the author wrote: saving it takes the shell authoring role and writes a `WorkflowShellAudit` row ([nl-workflow-authoring.md](./nl-workflow-authoring.md#5-design-notes)); without one the repository's configured command runs |
+| `assert` | floor | `expr` | Evaluates a programmatic expression against the target (`$.`-prefixed paths, the `cond` grammar) |
+| `policy` | floor | `riskClass` | Passes when the run's resolved autonomy policy sets that risk class to `auto`; fails on any other action (`require_approval`, which is also what a class the policy does not name resolves to) or when the eval runs outside a run. It never waits for an approval |
+| `pii` | floor | — | Runs every active `PII` scanner pattern over the target (JSON-encoded when not a string); passes on no match, fails on a match, an incomplete scan, or a scan that skipped a quarantined pattern |
+| `trajectory` | soft | — | Reads the current run's `AgentTrace` rows and scores tool correctness |
+| `judge` | soft | `rubricRef` | An LLM judge (`evalJudge`, bound to its own model) scoring against the newest version of the `EvalRubric` whose slug is `rubricRef` |
+
+`rubricRef` is a bare slug; the judge always uses that slug's newest version, so `slug@version` does
+not resolve. Saving a spec warns (`RUBRIC_REF_UNRESOLVED`) when no rubric has the slug.
 
 Floor scorers run first and short-circuit the judge when they fail, so a broken diff never costs a
 judge call. When a `judge` scorer is present the activity is an LLM activity and is wrapped in
@@ -67,6 +97,21 @@ judge call. When a `judge` scorer is present the activity is an LLM activity and
 model the call was priced at (`judgeModel`) and its cost (`costUsd`) — the same attribution
 `recordLlmUsage` debited to the run, including a call that was paid for and then failed. A judge
 that never reached a model (no rubric, an unresolvable agent) records neither.
+
+**A judge that cannot score fails closed only when it is blocking.** A missing rubric, a failed
+call, a spent budget, or output with no score leaves the judge with an error instead of a score.
+The node output lists it under `errors` and leaves it out of `score` and `perAxis`. Its
+`EvalResult` row keeps a neutral placeholder `value` of 0.5 and says so: `rationale` reads
+`scorer error: <reason>` and `metadata.error` holds the reason (`rubric not found`,
+`judge call failed`, `judge budget exhausted`, `judge returned no score`). The trends endpoint
+(`GET /api/v1/platform/evals/trends`) leaves those rows out of its means. With
+`judgeAdvisory: false` the error blocks the eval (`judge could not score (...)`) whatever the
+threshold; an advisory judge's error does not.
+
+Every `EvalResult` row an `eval` node writes carries the node's recording id in `nodeId`.
+
+The cost estimator prices one `evalJudge` call per `judge` scorer and nothing for an eval without
+one: the other scorers call no model.
 
 **The `gate` scorer fails safe.** `runGateStandalone` resolves the SCM clone URL from the run's
 connection, checks out the candidate's already-pushed branch (not a fresh branch off the default) on
@@ -378,6 +423,21 @@ verdicts into trends per template, model, and prompt version.
   at the end of the dataset, not a sample. The run's status is still `SUCCESS` or `REGRESSION`, so
   a gate of its own that reads the status alone must check `summary.partial` as well;
   `auto-swe evals run` already does.
+- **Some eval-node fields are accepted but not read.** A judge's `baselineFrom`, a trajectory
+  scorer's `from`, and the node's `inputs` parse but change nothing: the judge scores the target
+  against its rubric with no baseline, the trajectory scorer always reads the current run's own
+  traces and reports only tool correctness, and scorers read only `target`. `validateSpec` warns
+  (`IGNORED_FIELD`) on each.
+- **A retried eval writes a full set of rows per attempt.** `{ retry: N }` re-runs every scorer, so
+  each attempt records its own `EvalResult` rows and, with a judge, pays for its own judge call. The
+  rows carry the node id but not the attempt, so the attempts of one node are told apart only by
+  `createdAt`, and trend means count every attempt.
+- **The results list still shows placeholder rows.** Only the trends endpoint excludes a scorer
+  that could not score; `GET /api/v1/platform/evals/results` returns those rows with their 0.5
+  placeholder and the `scorer error:` rationale.
+- **The `policy` scorer reads the run's template, not its target.** It resolves the autonomy policy
+  for the run's template and team, so it scores what the run is allowed to do, not the value under
+  evaluation.
 - **A judge is only as good as its rubric.** Suite health (flake rate, stale rate, judge/human
   kappa) is tracked precisely because an uncalibrated judge produces confident, wrong verdicts —
   check it before trusting a gate.

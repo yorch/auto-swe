@@ -30,7 +30,7 @@ function TicketRow({ group }: { group: TicketGroup }) {
     <>
       <TRow hover>
         <Td className="px-4 py-3" primary>
-          <div className="break-all font-mono text-[13px] font-medium text-paper-100">
+          <div className="break-all font-mono text-sm font-medium text-paper-100">
             {url ? (
               <a className={LINK} href={url} rel="noopener noreferrer" target="_blank">
                 {group.ticketId}

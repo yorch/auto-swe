@@ -83,9 +83,7 @@ function OutcomeText({ value }: { value: unknown }) {
     return null;
   }
   return (
-    <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-paper-300">
-      {text}
-    </p>
+    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-paper-300">{text}</p>
   );
 }
 
@@ -134,7 +132,7 @@ export function RunOutcomeCard({ result, templateName, isAgentRun }: RunOutcomeC
     return (
       <OutcomeShell icon="ticket">
         {ticketId ? (
-          <div className="text-[13px] text-paper-400">
+          <div className="text-sm text-paper-400">
             Ticket <span className="font-mono text-paper-200">{ticketId}</span>
           </div>
         ) : null}
@@ -148,7 +146,7 @@ export function RunOutcomeCard({ result, templateName, isAgentRun }: RunOutcomeC
     const posted = result.posted === true;
     return (
       <OutcomeShell icon="chat">
-        <div className="flex flex-wrap items-center gap-2 text-[13px]">
+        <div className="flex flex-wrap items-center gap-2 text-sm">
           {channelId ? <span className="font-mono text-paper-200">#{channelId}</span> : null}
           <Badge dot tone={posted ? 'moss' : 'amber'}>
             {posted ? 'Posted' : 'Not posted'}

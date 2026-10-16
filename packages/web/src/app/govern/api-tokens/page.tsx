@@ -158,7 +158,7 @@ export default function GovernAccessTokensPage() {
           />
           <Select
             aria-label="Filter by status"
-            className="h-8 w-full text-[13px] sm:w-40"
+            className="h-8 w-full text-sm sm:w-40"
             onChange={(v) => {
               setStatusFilter(v as '' | TokenStatus);
               setPage(0);
@@ -174,7 +174,7 @@ export default function GovernAccessTokensPage() {
           />
           <Select
             aria-label="Filter by owner"
-            className="h-8 w-full text-[13px] sm:w-56"
+            className="h-8 w-full text-sm sm:w-56"
             onChange={(v) => {
               setUserFilter(v);
               setPage(0);
@@ -224,7 +224,7 @@ export default function GovernAccessTokensPage() {
                       {t.prefix}…
                     </div>
                   </Td>
-                  <Td className="px-4 py-3 text-[13px] text-paper-300" label="Owner">
+                  <Td className="px-4 py-3 text-sm text-paper-300" label="Owner">
                     {t.user ? (
                       t.user.email
                     ) : t.servicePrincipal ? (
@@ -242,17 +242,17 @@ export default function GovernAccessTokensPage() {
                   <Td className="px-4 py-3" label="Status">
                     <StatusChip status={status} />
                   </Td>
-                  <Td className="px-4 py-3 text-[13px] text-paper-300" label="Last used">
+                  <Td className="px-4 py-3 text-sm text-paper-300" label="Last used">
                     {t.lastUsedAt ? (
                       <RelativeTime value={t.lastUsedAt} />
                     ) : (
                       <span className="text-paper-500">Never</span>
                     )}
                   </Td>
-                  <Td className="px-4 py-3 text-[13px] text-paper-400" label="Created">
+                  <Td className="px-4 py-3 text-sm text-paper-400" label="Created">
                     <RelativeTime value={t.createdAt} />
                   </Td>
-                  <Td className="px-4 py-3 text-[13px] text-paper-400" label="Expires">
+                  <Td className="px-4 py-3 text-sm text-paper-400" label="Expires">
                     {t.expiresAt ? (
                       <span className="whitespace-nowrap" title={formatDate(t.expiresAt)}>
                         {formatDate(t.expiresAt)}

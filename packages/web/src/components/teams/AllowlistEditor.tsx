@@ -76,14 +76,14 @@ export function AllowlistEditor({
           </span>
         )}
       </CardHeader>
-      <p className="mb-4 text-[13px] leading-relaxed text-paper-400">{description}</p>
+      <p className="mb-4 text-sm leading-relaxed text-paper-400">{description}</p>
       {isLoading ? (
         <SkeletonRows rows={3} />
       ) : (
         <>
           <Textarea
             aria-label={title}
-            className="min-h-[140px] font-mono text-[13px]"
+            className="min-h-[140px] font-mono text-sm"
             onChange={(e) => {
               isDirtyRef.current = true;
               setText(e.target.value);

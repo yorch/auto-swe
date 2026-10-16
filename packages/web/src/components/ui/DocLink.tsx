@@ -27,7 +27,7 @@ export function DocLink({
   return (
     <Link
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-sm text-[13px] text-ember-300 transition-colors hover:text-ember-200',
+        'inline-flex items-center gap-1.5 rounded-sm text-sm text-ember-300 transition-colors hover:text-ember-200',
         FOCUS_RING,
         className
       )}

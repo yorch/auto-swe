@@ -54,7 +54,7 @@ function RepoLine({ name, trailing }: { name: string; trailing: React.ReactNode 
     <li className="flex items-center justify-between gap-3 py-2.5">
       <span className="flex min-w-0 items-center gap-2">
         <Icon className="shrink-0 text-paper-500" name="repositories" size={14} />
-        <span className="truncate font-mono text-[13px] text-paper-200" title={name}>
+        <span className="truncate font-mono text-sm text-paper-200" title={name}>
           {name}
         </span>
       </span>
@@ -360,7 +360,7 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
               </Badge>
             )}
           </CardHeader>
-          <p className="mb-4 text-[13px] text-paper-400">
+          <p className="mb-4 text-sm text-paper-400">
             Team-wide default persona for every channel assistant. A channel can override it.
           </p>
           <div className="space-y-4">

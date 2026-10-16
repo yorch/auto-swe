@@ -43,7 +43,7 @@ library at `/studio/agents/library`.
 | `productAnalyst` | Product pack — problem analysis | `anthropic/claude-sonnet-5-5` |
 | `prdWriter` | Product pack — PRD drafting | `anthropic/claude-sonnet-5-5` |
 | `issueDrafter` | Product pack — drafts issue descriptions from a brief | `anthropic/claude-sonnet-5-5` |
-| `appAssistant` | The dashboard's in-app assistant panel (`runAssistantTurn`), acting as the signed-in user | `anthropic/claude-sonnet-5-5` |
+| `appAssistant` | The dashboard's in-app assistant panel (`runAssistantTurn`), acting as the signed-in user; its read-only tools (`searchDocs`, `workflowInventory`, `getPageContext`, `describeApi`, `callApi`) are bound in code — see [architecture.md §5](./architecture.md#5-authentication) | `anthropic/claude-sonnet-5-5` |
 
 `assertConfigReady()` gates worker boot on the agents the **installed templates** can reach:
 `requiredAgentKeysForDeployment()` walks the active (and experiment) version of every `ACTIVE`
@@ -149,7 +149,8 @@ CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active v
   `userMessage` / `systemPrompt`; the interpreter dispatches it to `runAgentNode`, which resolves
   and calls `runAgent`. With `workspace: true` the node runs in a throwaway checkout of the run's
   repository instead, on the Agent's own runtime ([§3.7](#37-runtimes-mastra-and-the-harnesses),
-  *Agent nodes in a checkout*).
+  *Agent nodes in a checkout*). The node's fields and output are in
+  [workflow-nodes.md](./workflow-nodes.md#agent).
 
 ---
 

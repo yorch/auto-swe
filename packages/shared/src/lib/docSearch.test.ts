@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildSearchIndex,
+  countMatchingTerms,
   highlight,
   indexDoc,
   MAX_QUERY_CHARS,
@@ -65,6 +66,15 @@ describe('indexDoc', () => {
 
   it('keeps inline code words, which readers search for', () => {
     expect(sections[2]?.text).toBe('Tools are executable. Use readFile to read.');
+  });
+
+  it('keeps a section with a table as blocks, so a reader can cut it by rows', () => {
+    expect(sections[1]?.blocks).toEqual([
+      'A skill is a prompt fragment. See the guide.',
+      { header: ['Name', 'Role'], rows: [['implementer', 'writes code']] },
+    ]);
+    expect(sections[0]?.blocks).toBeUndefined();
+    expect(sections[2]).not.toHaveProperty('blocks');
   });
 
   it('stays in step when a heading is nested in a blockquote', () => {
@@ -540,5 +550,12 @@ describe('highlight ranges with characters that change length when lower-cased',
       { match: true, text: 'budget' },
       { match: false, text: ' here' },
     ]);
+  });
+});
+
+describe('countMatchingTerms', () => {
+  it('counts the query terms a text holds, by substring or stem', () => {
+    expect(countMatchingTerms('Opens the pull request', 'pull requests zebra')).toBe(2);
+    expect(countMatchingTerms('nothing here', 'pull')).toBe(0);
   });
 });

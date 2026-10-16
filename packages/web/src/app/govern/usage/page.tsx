@@ -206,7 +206,7 @@ function BreakdownTable({ dimension, data }: { dimension: Dimension; data: Platf
                   'px-4 py-2.5 font-medium text-paper-100',
                   // A model spec (`anthropic/…`) is an identifier; the other dimensions are names.
                   dimension === 'model' && r.label !== 'Model not resolved'
-                    ? 'font-mono text-[13px]'
+                    ? 'font-mono text-sm'
                     : 'text-sm'
                 )}
                 primary
@@ -215,21 +215,21 @@ function BreakdownTable({ dimension, data }: { dimension: Dimension; data: Platf
               </Td>
               <Td
                 align="right"
-                className="px-4 py-2 text-[13px] text-paper-300 tabular-nums"
+                className="px-4 py-2 text-sm text-paper-300 tabular-nums"
                 label="Calls"
               >
                 {formatCount(r.calls)}
               </Td>
               <Td
                 align="right"
-                className="px-4 py-2 text-[13px] text-paper-300 tabular-nums"
+                className="px-4 py-2 text-sm text-paper-300 tabular-nums"
                 label="Tokens in / out"
               >
                 {formatTokens(r.inputTokens)} / {formatTokens(r.outputTokens)}
               </Td>
               <Td
                 align="right"
-                className="px-4 py-2 text-[13px] text-paper-300 tabular-nums"
+                className="px-4 py-2 text-sm text-paper-300 tabular-nums"
                 label="Avg latency"
               >
                 {formatDuration(r.avgDurationMs === null ? null : Math.round(r.avgDurationMs))}
@@ -237,7 +237,7 @@ function BreakdownTable({ dimension, data }: { dimension: Dimension; data: Platf
               <Td
                 align="right"
                 className={cn(
-                  'px-4 py-2 text-[13px] tabular-nums',
+                  'px-4 py-2 text-sm tabular-nums',
                   r.errors > 0 ? 'text-brick-400' : 'text-paper-300'
                 )}
                 label="Error rate"
@@ -246,7 +246,7 @@ function BreakdownTable({ dimension, data }: { dimension: Dimension; data: Platf
               </Td>
               <Td
                 align="right"
-                className="px-4 py-2 text-[13px] font-medium text-paper-100 tabular-nums"
+                className="px-4 py-2 text-sm font-medium text-paper-100 tabular-nums"
                 label="Cost"
               >
                 {formatTotalCost(r.costUsd)}
@@ -462,7 +462,7 @@ function UsageWorkspace() {
                             <Td className="px-4 py-2.5" primary>
                               <Link
                                 className={cn(
-                                  'rounded-sm font-mono text-[13px] font-medium text-paper-100 hover:text-ember-300',
+                                  'rounded-sm font-mono text-sm font-medium text-paper-100 hover:text-ember-300',
                                   FOCUS_RING
                                 )}
                                 href={`/runs/${r.runId}`}
@@ -478,14 +478,14 @@ function UsageWorkspace() {
                             </Td>
                             <Td
                               align="right"
-                              className="px-4 py-2 text-[13px] text-paper-300 tabular-nums"
+                              className="px-4 py-2 text-sm text-paper-300 tabular-nums"
                               label="Tokens in / out"
                             >
                               {formatTokens(r.inputTokens)} / {formatTokens(r.outputTokens)}
                             </Td>
                             <Td
                               align="right"
-                              className="px-4 py-2 text-[13px] font-medium text-paper-100 tabular-nums"
+                              className="px-4 py-2 text-sm font-medium text-paper-100 tabular-nums"
                               label="Cost"
                             >
                               {formatTotalCost(r.costUsd)}

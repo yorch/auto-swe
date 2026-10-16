@@ -1893,21 +1893,39 @@ model AutonomyDecision {
 /// performed it. A retry of the same attempt (or a duplicate scheduling of the
 /// same workflow step) reads this row back instead of re-issuing the external
 /// call. The row is cascaded when the parent `WorkflowRun` is deleted.
+/// One external effect a step performed, or was about to perform.
+///
+/// The row is written **before** the provider is contacted (`state = PENDING`) and completed with
+/// the result afterwards (`DONE`). That is what makes a retry safe in the two cases that differ: a
+/// retry that finds a completed row returns what the first attempt produced, and a retry that finds
+/// a *pending* one must not call the provider again — the effect may or may not have happened, and
+/// nothing in this row can tell. A failure the connector reports before it sends anything clears the
+/// row instead, so a retry of a refused call is not mistaken for an ambiguous one.
+///
+/// The key is deliberately not per attempt: a retry IS a new attempt, so an attempt-keyed row could
+/// never find the row its predecessor wrote. `attempt` is stored for audit.
 model WorkflowOutcomeReference {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  runId        String   @map("run_id") @db.Uuid
-  nodeId       String   @map("node_id")
-  connectionId String   @map("connection_id") @db.Uuid
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId        String       @map("run_id") @db.Uuid
+  nodeId       String       @map("node_id")
+  connectionId String       @map("connection_id") @db.Uuid
   attempt      Int
-  /// The serialized `WriteOutcomeResult` returned by the external provider.
-  result       Json
-  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  state        OutcomeState @default(DONE)
+  /// The serialized `WriteOutcomeResult` returned by the external provider. Null while pending.
+  result       Json?
+  createdAt    DateTime     @default(now()) @map("created_at") @db.Timestamptz
 
   run WorkflowRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
-  @@unique([runId, nodeId, connectionId, attempt])
+  @@unique([runId, nodeId, connectionId])
   @@index([runId])
   @@map("workflow_outcome_references")
+}
+
+/// Whether a recorded effect is known to have happened, or is only believed to have been attempted.
+enum OutcomeState {
+  PENDING
+  DONE
 }
 
 /// A single captured quality signal, normalized to a 0..1 score. P0 of the
@@ -2140,6 +2158,11 @@ model AgentTrace {
   /// is known (an ORGANIZATION-scoped eval dataset).
   orgId         String?       @map("org_id") @db.Uuid
   org           Organization? @relation("OrgAgentTraces", fields: [orgId], references: [id], onDelete: SetNull)
+  /// The in-app assistant reply whose turn wrote this row, so the admin failure view reads exactly
+  /// that turn's rows. Null for every other activity and on rows that predate the column; set null
+  /// when the conversation is deleted, so the row's spend survives it.
+  assistantMessageId String?           @map("assistant_message_id") @db.Uuid
+  assistantMessage   AssistantMessage? @relation(fields: [assistantMessageId], references: [id], onDelete: SetNull)
   createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([runId, nodeId])
@@ -2148,6 +2171,7 @@ model AgentTrace {
   @@index([workflowId, temporalRunId])
   @@index([teamId, createdAt])
   @@index([orgId, createdAt])
+  @@index([assistantMessageId])
   @@map("agent_traces")
 }
 
@@ -2338,6 +2362,15 @@ model WorkflowTemplateVersion {
   template   WorkflowTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
   version    Int
   spec       Json
+  /// The template's declared inputs **as of this version**, snapshotted beside the spec. The
+  /// schema is what says which connections a payload may name, so a run pins its authorized set
+  /// from the version it executes: retyping an input on the template cannot then widen the pin of
+  /// a run already under way, nor refuse a connection to an experiment arm or a rollback that
+  /// runs an older version.
+  ///
+  /// Nullable: a version written before this column existed falls back to the template's current
+  /// schema, which is the behaviour that predates it.
+  inputSchema Json? @map("input_schema")
   createdBy  String?          @map("created_by") @db.Uuid
   createdAt  DateTime         @default(now()) @map("created_at") @db.Timestamptz
 
@@ -3622,10 +3655,17 @@ model AssistantMessage {
   pageContext    Json?                  @map("page_context")
   /// Why a FAILED reply failed, in words fit for the user.
   error          String?
+  /// Why a FAILED reply failed, as the platform saw it: the underlying error, for admins diagnosing
+  /// the assistant (`GET /api/v1/platform/assistant/failures`). Never shown to the user.
+  errorDetail    String?                @map("error_detail")
   createdAt      DateTime               @default(now()) @map("created_at") @db.Timestamptz
   updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz
+  /// The agent trace rows this reply's turn wrote.
+  traces         AgentTrace[]
 
   @@index([conversationId, createdAt])
+  // The admin failure feed: FAILED replies, newest first.
+  @@index([status, createdAt])
   @@map("assistant_messages")
 }
 

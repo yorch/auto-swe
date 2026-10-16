@@ -11,7 +11,7 @@ export function RunReadingGuide({ className }: { className?: string }) {
       <summary className="cursor-pointer select-none rounded-lg px-4 py-3 text-sm font-medium text-paper-100 outline-none focus-visible:ring-2 focus-visible:ring-ember-400">
         How to read this page
       </summary>
-      <div className="space-y-3 border-t border-ink-600 px-4 py-4 text-[13px] leading-relaxed text-paper-400">
+      <div className="space-y-3 border-t border-ink-600 px-4 py-4 text-sm leading-relaxed text-paper-400">
         <p>
           <span className="font-semibold text-paper-100">Status and summary.</span> The badge by the
           title and the notice under the header give the run's state in plain words. The cards

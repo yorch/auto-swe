@@ -5,138 +5,168 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ModelCatalogEntry } from '@/lib/modelCatalog';
 
 // vi.mock is hoisted above the file's declarations, so its fixtures are too.
-const { DEFAULT_DATA, ENTRIES, discoverMutate, dismissMutate, mutation, suggestionState } =
-  vi.hoisted(() => {
-    const BUILTIN = {
-      inputUsdPerMTok: 4,
-      kind: 'CHAT' as const,
-      outputUsdPerMTok: 20,
-      status: 'ACTIVE' as const,
-    };
+const {
+  batchAsync,
+  createAsync,
+  DEFAULT_DATA,
+  ENTRIES,
+  discoverMutate,
+  dismissMutate,
+  hintState,
+  mutation,
+  suggestionState,
+} = vi.hoisted(() => {
+  const BUILTIN = {
+    inputUsdPerMTok: 4,
+    kind: 'CHAT' as const,
+    outputUsdPerMTok: 20,
+    status: 'ACTIVE' as const,
+  };
 
-    function entry(over: Partial<ModelCatalogEntry>): ModelCatalogEntry {
-      return {
-        builtin: null,
-        displayName: null,
-        id: 'id',
-        inputUsdPerMTok: 4,
-        isBuiltIn: false,
-        isCustomized: false,
-        kind: 'CHAT',
-        modelId: 'm',
-        notes: null,
-        outputUsdPerMTok: 20,
-        provider: 'p',
-        status: 'ACTIVE',
-        ...over,
-      };
-    }
-
-    const ENTRIES = [
-      entry({
-        builtin: BUILTIN,
-        id: 'a',
-        isBuiltIn: true,
-        modelId: 'claude-opus-5-5',
-        provider: 'anthropic',
-      }),
-      entry({
-        builtin: BUILTIN,
-        cacheDefaults: {
-          cacheReadMultiplier: 0.1,
-          cacheWrite1hMultiplier: 2,
-          cacheWrite5mMultiplier: 1.25,
-        },
-        cacheWrite1hMultiplier: 3,
-        id: 'b',
-        inputUsdPerMTok: 3.5,
-        isBuiltIn: true,
-        isCustomized: true,
-        modelId: 'claude-sonnet-5-5',
-        outputUsdPerMTok: 17,
-        provider: 'anthropic',
-      }),
-      entry({
-        id: 'c',
-        inputUsdPerMTok: 0,
-        modelId: 'llama-4',
-        outputUsdPerMTok: 0,
-        provider: 'ollama',
-      }),
-    ];
-
-    const mutation = () => ({ isPending: false, mutate: vi.fn(), mutateAsync: vi.fn() });
-
-    function suggestion(over: Record<string, unknown>) {
-      return {
-        dismissedAt: null,
-        displayName: null,
-        firstSeenAt: '2026-10-01T04:00:00Z',
-        kind: 'CHAT',
-        lastSeenAt: '2026-10-02T04:00:00Z',
-        type: 'NEW',
-        ...over,
-        spec: `${over.provider}/${over.modelId}`,
-      };
-    }
-
-    function DEFAULT_DATA(): Record<string, unknown> {
-      return {
-        hiddenDismissed: { NEW: 0, RETIREMENT_CANDIDATE: 0 },
-        providers: [
-          {
-            checkedAt: '2026-10-02T04:00:00Z',
-            error: 'HTTP 401',
-            lastSuccessAt: '2026-10-01T04:00:00Z',
-            provider: 'anthropic',
-          },
-          {
-            checkedAt: '2026-10-02T04:00:00Z',
-            error: null,
-            lastSuccessAt: '2026-10-02T04:00:00Z',
-            provider: 'ollama',
-          },
-        ],
-        suggestions: [
-          // Already in the catalog: added since the last run, so it is hidden.
-          suggestion({ id: 's0', modelId: 'llama-4', provider: 'ollama' }),
-          suggestion({
-            displayName: 'Nomic Embed',
-            id: 's1',
-            kind: 'EMBEDDING',
-            modelId: 'nomic-embed-2',
-            provider: 'ollama',
-          }),
-          suggestion({
-            id: 's2',
-            modelId: 'claude-sonnet-5-5',
-            provider: 'anthropic',
-            type: 'RETIREMENT_CANDIDATE',
-          }),
-        ],
-      };
-    }
-
-    const suggestionState: { data: Record<string, unknown> } = { data: {} };
-    suggestionState.data = DEFAULT_DATA();
+  function entry(over: Partial<ModelCatalogEntry>): ModelCatalogEntry {
     return {
-      DEFAULT_DATA,
-      discoverMutate: vi.fn(),
-      dismissMutate: vi.fn(),
-      ENTRIES,
-      mutation,
-
-      suggestionState,
+      builtin: null,
+      displayName: null,
+      id: 'id',
+      inputUsdPerMTok: 4,
+      isBuiltIn: false,
+      isCustomized: false,
+      kind: 'CHAT',
+      modelId: 'm',
+      notes: null,
+      outputUsdPerMTok: 20,
+      provider: 'p',
+      status: 'ACTIVE',
+      ...over,
     };
-  });
+  }
+
+  const ENTRIES = [
+    entry({
+      builtin: BUILTIN,
+      id: 'a',
+      isBuiltIn: true,
+      modelId: 'claude-opus-5-5',
+      provider: 'anthropic',
+    }),
+    entry({
+      builtin: BUILTIN,
+      cacheDefaults: {
+        cacheReadMultiplier: 0.1,
+        cacheWrite1hMultiplier: 2,
+        cacheWrite5mMultiplier: 1.25,
+      },
+      cacheWrite1hMultiplier: 3,
+      id: 'b',
+      inputUsdPerMTok: 3.5,
+      isBuiltIn: true,
+      isCustomized: true,
+      modelId: 'claude-sonnet-5-5',
+      outputUsdPerMTok: 17,
+      provider: 'anthropic',
+    }),
+    entry({
+      id: 'c',
+      inputUsdPerMTok: 0,
+      modelId: 'llama-4',
+      outputUsdPerMTok: 0,
+      provider: 'ollama',
+    }),
+  ];
+
+  const mutation = () => ({ isPending: false, mutate: vi.fn(), mutateAsync: vi.fn() });
+
+  function suggestion(over: Record<string, unknown>) {
+    return {
+      dismissedAt: null,
+      displayName: null,
+      firstSeenAt: '2026-10-01T04:00:00Z',
+      kind: 'CHAT',
+      lastSeenAt: '2026-10-02T04:00:00Z',
+      type: 'NEW',
+      ...over,
+      spec: `${over.provider}/${over.modelId}`,
+    };
+  }
+
+  function DEFAULT_DATA(): Record<string, unknown> {
+    return {
+      hiddenDismissed: { NEW: 0, RETIREMENT_CANDIDATE: 0 },
+      providers: [
+        {
+          checkedAt: '2026-10-02T04:00:00Z',
+          error: 'HTTP 401',
+          lastSuccessAt: '2026-10-01T04:00:00Z',
+          provider: 'anthropic',
+        },
+        {
+          checkedAt: '2026-10-02T04:00:00Z',
+          error: null,
+          lastSuccessAt: '2026-10-02T04:00:00Z',
+          provider: 'ollama',
+        },
+      ],
+      suggestions: [
+        // Already in the catalog: added since the last run, so it is hidden.
+        suggestion({ id: 's0', modelId: 'llama-4', provider: 'ollama' }),
+        suggestion({
+          displayName: 'Nomic Embed',
+          id: 's1',
+          kind: 'EMBEDDING',
+          modelId: 'nomic-embed-2',
+          provider: 'ollama',
+        }),
+        suggestion({
+          id: 's2',
+          modelId: 'claude-sonnet-5-5',
+          provider: 'anthropic',
+          type: 'RETIREMENT_CANDIDATE',
+        }),
+      ],
+    };
+  }
+
+  const suggestionState: { data: Record<string, unknown> } = { data: {} };
+  suggestionState.data = DEFAULT_DATA();
+  // One object per answer: the form tells a new answer from a re-render by identity.
+  const hintState: {
+    data: Record<string, unknown> | undefined;
+    asked: string[];
+    batch: Array<Record<string, unknown>> | undefined;
+  } = {
+    asked: [],
+    batch: undefined,
+    data: undefined,
+  };
+  return {
+    batchAsync: vi.fn(async (_entries: unknown) => ({})),
+    createAsync: vi.fn(async (_body: unknown) => ({})),
+    DEFAULT_DATA,
+    discoverMutate: vi.fn(),
+    dismissMutate: vi.fn(),
+    ENTRIES,
+    hintState,
+    mutation,
+
+    suggestionState,
+  };
+});
 
 vi.mock('@/hooks/useModelCatalog', () => ({
-  useCreateCatalogEntry: mutation,
+  useBatchCreateCatalogEntries: () => ({ isPending: false, mutateAsync: batchAsync }),
+  useCreateCatalogEntry: () => ({ isPending: false, mutate: vi.fn(), mutateAsync: createAsync }),
   useDeleteCatalogEntry: mutation,
   useDiscoverModels: () => ({ error: null, isPending: false, mutate: discoverMutate }),
   useDismissSuggestion: () => ({ isPending: false, mutate: dismissMutate }),
   useModelCatalog: () => ({ data: ENTRIES, error: null, isError: false, isLoading: false }),
   useModelSuggestions: () => ({ data: suggestionState.data, error: null }),
+  usePriceHints: (provider: string, modelId: string, enabled: boolean) => {
+    if (enabled) {
+      hintState.asked.push(`${provider}/${modelId}`);
+    }
+    return { data: enabled ? hintState.data : undefined, isFetching: false };
+  },
+  usePriceHintsBatch: () => ({ data: hintState.batch, isFetching: false }),
   useResetCatalogEntry: mutation,
   useUnpricedModels: () => ({
     data: [{ spec: 'openai/gpt-5-5', suggestion: 'openai/gpt-5.5', usedBy: ['agent:reviewer'] }],
@@ -257,6 +287,177 @@ describe('CatalogTab', () => {
     expect(screen.getByLabelText(/^Model id/)).toHaveProperty('value', 'nomic-embed-2');
     expect(screen.getByLabelText(/^Display name/)).toHaveProperty('value', 'Nomic Embed');
     expect(screen.getByText('Embedding models bill input only — use 0.')).toBeTruthy();
+  });
+});
+
+describe('CatalogTab price hints', () => {
+  const HINTS = {
+    hints: [
+      {
+        cacheReadMultiplier: 0.1,
+        inputUsdPerMTok: 3,
+        matchedId: 'nomic-embed-2',
+        outputUsdPerMTok: 15,
+        source: 'provider',
+      },
+      {
+        inputUsdPerMTok: 2.9,
+        matchedId: 'ollama/nomic-embed-2',
+        outputUsdPerMTok: 14,
+        source: 'priceList',
+        url: 'https://prices.example.com/list.json',
+      },
+    ],
+    unavailable: [],
+  };
+
+  afterEach(() => {
+    hintState.data = undefined;
+    hintState.asked = [];
+    hintState.batch = undefined;
+  });
+
+  it("shows each discovered model's suggested price, and says when none is published", () => {
+    suggestionState.data = {
+      ...DEFAULT_DATA(),
+      suggestions: [
+        ...(DEFAULT_DATA().suggestions as unknown[]),
+        {
+          dismissedAt: null,
+          displayName: null,
+          firstSeenAt: '2026-10-01T04:00:00Z',
+          id: 's3',
+          kind: 'CHAT',
+          lastSeenAt: '2026-10-02T04:00:00Z',
+          modelId: 'qwen-9',
+          provider: 'ollama',
+          spec: 'ollama/qwen-9',
+          type: 'NEW',
+        },
+      ],
+    };
+    hintState.batch = [
+      { ...HINTS, modelId: 'nomic-embed-2', provider: 'ollama' },
+      { hints: [], modelId: 'qwen-9', provider: 'ollama', unavailable: [] },
+    ];
+    render(<CatalogTab />);
+    const priced = rowFor('ollama/nomic-embed-2');
+    expect(within(priced).getByText('$3 / $15')).toBeTruthy();
+    expect(within(priced).getByText(/listing/)).toBeTruthy();
+    expect(within(rowFor('ollama/qwen-9')).getByText('No published price')).toBeTruthy();
+    suggestionState.data = DEFAULT_DATA();
+  });
+
+  const openAdd = () => {
+    render(<CatalogTab />);
+    fireEvent.click(within(rowFor('ollama/nomic-embed-2')).getByRole('button', { name: 'Add' }));
+  };
+
+  it('prefills the first published price, and offers the other source', () => {
+    hintState.data = HINTS;
+    openAdd();
+    expect(hintState.asked).toContain('ollama/nomic-embed-2');
+    expect(screen.getByLabelText(/^Input price/)).toHaveProperty('value', '3');
+    expect(screen.getByLabelText(/^Output price/)).toHaveProperty('value', '15');
+    expect(screen.getByLabelText(/^Cache read/)).toHaveProperty('value', '0.1');
+    expect(screen.getByText(/Prices prefilled from ollama's model listing/)).toBeTruthy();
+
+    const other = screen.getByText(/the price list at prices\.example\.com: \$2\.9 \/ \$14/);
+    fireEvent.click(
+      within(other.closest('div') as HTMLElement).getByRole('button', { name: 'Use' })
+    );
+    expect(screen.getByLabelText(/^Input price/)).toHaveProperty('value', '2.9');
+    expect(screen.getByLabelText(/^Cache read/)).toHaveProperty('value', '');
+    expect(
+      screen.getByText(/Prices prefilled from the price list at prices\.example\.com/)
+    ).toBeTruthy();
+  });
+
+  it('never overwrites a price the admin typed, and drops the prefilled note once edited', () => {
+    openAdd();
+    fireEvent.change(screen.getByLabelText(/^Input price/), { target: { value: '7' } });
+    fireEvent.change(screen.getByLabelText(/^Output price/), { target: { value: '9' } });
+    hintState.data = HINTS;
+    // Any re-render picks up the answer, as the query arriving would.
+    fireEvent.change(screen.getByLabelText(/^Notes/), { target: { value: 'x' } });
+    expect(screen.getByLabelText(/^Input price/)).toHaveProperty('value', '7');
+    expect(screen.queryByText(/Prices prefilled/)).toBeNull();
+    expect(screen.getAllByRole('button', { name: 'Use' })).toHaveLength(2);
+  });
+
+  it('adds the ticked models at their suggested prices, only after a confirmation', async () => {
+    hintState.batch = [{ ...HINTS, modelId: 'nomic-embed-2', provider: 'ollama' }];
+    render(<CatalogTab />);
+    expect(screen.queryByRole('button', { name: /at suggested prices/ })).toBeNull();
+    fireEvent.click(screen.getByLabelText('Select ollama/nomic-embed-2'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add 1 at suggested prices' }));
+    expect(batchAsync).not.toHaveBeenCalled();
+    const dialog = screen.getByRole('dialog', { name: /Add 1 model to the catalog/ });
+    expect(
+      within(dialog).getByText(/\$3 \/ \$15 per MTok, from ollama's model listing/)
+    ).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add 1' }));
+    await vi.waitFor(() => expect(batchAsync).toHaveBeenCalledTimes(1));
+    // One request for the whole selection, so the gateway adds all of it or none.
+    expect(batchAsync).toHaveBeenCalledWith([
+      {
+        cacheReadMultiplier: 0.1,
+        cacheWrite1hMultiplier: null,
+        cacheWrite5mMultiplier: null,
+        displayName: 'Nomic Embed',
+        inputUsdPerMTok: 3,
+        kind: 'EMBEDDING',
+        modelId: 'nomic-embed-2',
+        notes:
+          "Price suggested by ollama's model listing (nomic-embed-2); added in bulk from discovery.",
+        outputUsdPerMTok: 15,
+        provider: 'ollama',
+      },
+    ]);
+    expect(createAsync).not.toHaveBeenCalled();
+    batchAsync.mockClear();
+  });
+
+  it('keeps the dialog open with the reason when the batch is refused', async () => {
+    hintState.batch = [{ ...HINTS, modelId: 'nomic-embed-2', provider: 'ollama' }];
+    batchAsync.mockRejectedValueOnce(
+      new Error('Already in the catalog: ollama/nomic-embed-2. Nothing was added.')
+    );
+    render(<CatalogTab />);
+    fireEvent.click(screen.getByLabelText('Select ollama/nomic-embed-2'));
+    fireEvent.click(screen.getByRole('button', { name: 'Add 1 at suggested prices' }));
+    const dialog = screen.getByRole('dialog', { name: /Add 1 model/ });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Add 1' }));
+    expect(
+      await within(dialog).findByText(
+        'Already in the catalog: ollama/nomic-embed-2. Nothing was added.'
+      )
+    ).toBeTruthy();
+    batchAsync.mockClear();
+  });
+
+  it('offers no tick for a model with no suggested price', () => {
+    hintState.batch = [
+      { hints: [], modelId: 'nomic-embed-2', provider: 'ollama', unavailable: [] },
+    ];
+    render(<CatalogTab />);
+    expect(screen.queryByLabelText('Select ollama/nomic-embed-2')).toBeNull();
+  });
+
+  it('says when nothing is published, and why a source could not be read', () => {
+    hintState.data = { hints: [], unavailable: [{ reason: 'HTTP 401', source: 'provider' }] };
+    openAdd();
+    expect(screen.getByLabelText(/^Input price/)).toHaveProperty('value', '');
+    expect(screen.getByText('No published price found for this model.')).toBeTruthy();
+    expect(screen.getByText(/Could not read ollama's model listing: HTTP 401/)).toBeTruthy();
+  });
+
+  it('does not look prices up when editing an existing row', () => {
+    hintState.data = HINTS;
+    render(<CatalogTab />);
+    fireEvent.click(within(rowFor('ollama/llama-4')).getByRole('button', { name: 'Edit' }));
+    expect(hintState.asked).toEqual([]);
+    expect(screen.queryByText(/Prices prefilled/)).toBeNull();
   });
 });
 

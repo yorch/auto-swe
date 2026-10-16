@@ -5,7 +5,7 @@ Vision-pitch HTML mockups for the platform pivot described in
 no build step — open `index.html` in a browser.
 
 > Frozen alongside the RFC they illustrate: these are point-in-time artefacts, not a description of
-> the shipped UI. For the current dashboard see [`docs/redesign/`](../../redesign/README.md).
+> the shipped UI. For the current dashboard see the design-system section of [`docs/architecture.md`](../../architecture.md).
 
 > **Working name "Conductor" is a placeholder** for the generic platform identity. The
 > mocks use a fresh design system (not the current dashboard's look) to explore the

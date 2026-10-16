@@ -1,6 +1,6 @@
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { validateSpecRefs } from './specRefValidation.js';
+import { findSpecRefProblems, validateSpecRefs } from './specRefValidation.js';
 
 const UUID_A = '11111111-1111-4111-8111-111111111111';
 const UUID_B = '22222222-2222-4222-8222-222222222222';
@@ -15,7 +15,12 @@ interface McpRow {
 }
 
 function mockPrisma(
-  opts: { agentKeys?: string[]; mcpConnections?: McpRow[]; mcpIds?: string[] } = {}
+  opts: {
+    agentKeys?: string[];
+    mcpConnections?: McpRow[];
+    mcpIds?: string[];
+    rubricSlugs?: string[];
+  } = {}
 ) {
   // `mcpIds` is the older shorthand: a connection owned by the template's own team, so
   // the existing cases keep testing what they name.
@@ -25,6 +30,9 @@ function mockPrisma(
     agent: { findMany: vi.fn().mockResolvedValue((opts.agentKeys ?? []).map((key) => ({ key }))) },
     connection: {
       findMany: vi.fn().mockResolvedValue(connections.map((c) => ({ shares: [], ...c }))),
+    },
+    evalRubric: {
+      findMany: vi.fn().mockResolvedValue((opts.rubricSlugs ?? []).map((slug) => ({ slug }))),
     },
   } as unknown as Parameters<typeof validateSpecRefs>[0];
 }
@@ -134,5 +142,56 @@ describe('validateSpecRefs', () => {
       null
     );
     expect(w).toEqual([]);
+  });
+});
+
+describe('findSpecRefProblems (eval rubric refs)', () => {
+  const evalNode = (scorers: unknown[]) => ({
+    scorers,
+    target: { from: 'input.diff' },
+    type: 'eval',
+  });
+
+  it('warns on a judge whose rubric slug does not exist, located on the scorer', async () => {
+    const problems = await findSpecRefProblems(
+      mockPrisma({ rubricSlugs: [] }),
+      spec({ e: evalNode([{ kind: 'pii' }, { kind: 'judge', rubricRef: 'missing' }]) }),
+      TEMPLATE_TEAM
+    );
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toMatchObject({
+      code: 'RUBRIC_REF_UNRESOLVED',
+      field: 'scorers[1].rubricRef',
+      nodeId: 'e',
+    });
+    expect(problems[0]?.message).toMatch(/rubric 'missing' is not an eval rubric slug/);
+  });
+
+  it('does not warn when the rubric slug exists', async () => {
+    const prisma = mockPrisma({ rubricSlugs: ['code-review-quality'] });
+    const problems = await findSpecRefProblems(
+      prisma,
+      spec({ e: evalNode([{ kind: 'judge', rubricRef: 'code-review-quality' }]) }),
+      TEMPLATE_TEAM
+    );
+    expect(problems).toEqual([]);
+  });
+
+  it('warns on a slug@version spelling, which the run-time lookup never matches', async () => {
+    const problems = await findSpecRefProblems(
+      mockPrisma({ rubricSlugs: ['code-review-quality'] }),
+      spec({ e: evalNode([{ kind: 'judge', rubricRef: 'code-review-quality@3' }]) }),
+      TEMPLATE_TEAM
+    );
+    expect(problems.map((p) => p.code)).toEqual(['RUBRIC_REF_UNRESOLVED']);
+  });
+
+  it('does not query rubrics for an eval node with no judge scorer', async () => {
+    const prisma = mockPrisma();
+    await findSpecRefProblems(prisma, spec({ e: evalNode([{ kind: 'pii' }]) }), TEMPLATE_TEAM);
+    expect(
+      (prisma as unknown as { evalRubric: { findMany: ReturnType<typeof vi.fn> } }).evalRubric
+        .findMany
+    ).not.toHaveBeenCalled();
   });
 });

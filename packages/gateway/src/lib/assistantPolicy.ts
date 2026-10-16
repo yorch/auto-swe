@@ -32,8 +32,10 @@ export type NeverReason =
   /** Starts a browser OAuth redirect, which only a person in a browser can complete. */
   | 'oauthFlow'
   /**
-   * The assistant panel's own conversations. The assistant reads its conversation through its turn;
-   * one that could post here would start turns of its own.
+   * The assistant panel's own conversations, and the admin view of why other users' replies failed.
+   * The assistant reads its conversation through its turn; one that could post here would start
+   * turns of its own, and one that read another user's failures would carry their error text into
+   * this conversation.
    */
   | 'assistantPanel';
 
@@ -77,6 +79,8 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/platform/agent-library': 'read',
   'GET /api/v1/platform/agent-library/:id': 'read',
   'GET /api/v1/platform/agent-library/:id/versions': 'read',
+  'GET /api/v1/platform/assistant/failures': { never: 'assistantPanel' },
+  'GET /api/v1/platform/assistant/failures/:messageId': { never: 'assistantPanel' },
   'GET /api/v1/platform/audit-log': 'read',
   'GET /api/v1/platform/audit-log/export': 'read',
   'GET /api/v1/platform/autonomy-decisions': 'read',
@@ -272,7 +276,10 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/platform/mcp-connections/:id/test': 'confirm',
   'POST /api/v1/platform/model-catalog': 'confirm',
   'POST /api/v1/platform/model-catalog/:id/reset': 'confirm',
+  'POST /api/v1/platform/model-catalog/batch': 'confirm',
   'POST /api/v1/platform/model-catalog/discover': 'confirm',
+  'POST /api/v1/platform/model-catalog/price-hints': 'confirm',
+  'POST /api/v1/platform/model-catalog/price-hints/batch': 'confirm',
   'POST /api/v1/platform/model-catalog/suggestions/:id/dismiss': 'confirm',
   'POST /api/v1/platform/model-catalog/suggestions/:id/undismiss': 'confirm',
   'POST /api/v1/platform/organizations/:orgId/members': { never: 'identity' },

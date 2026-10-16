@@ -32,7 +32,7 @@ export function AutonomyDecisionsPanel({ runId }: { runId: string }) {
   if (isError) {
     return (
       <RailSection title="Autonomy decisions">
-        <Alert className="text-[13px]" variant="error">
+        <Alert className="text-sm" variant="error">
           Could not load autonomy decisions: {errMsg(error, 'request failed')}
         </Alert>
       </RailSection>

@@ -116,7 +116,7 @@ function TemplateRuns({ id: rawId }: { id: string }) {
         >
           <Select
             aria-label="Filter by status"
-            className="h-8 w-full text-[13px] sm:w-44"
+            className="h-8 w-full text-sm sm:w-44"
             compact
             id="run-status-filter"
             onChange={(v) => update({ offset: null, status: v })}
@@ -126,7 +126,7 @@ function TemplateRuns({ id: rawId }: { id: string }) {
           {versions.length > 1 && (
             <Select
               aria-label="Filter by version"
-              className="h-8 w-full text-[13px] sm:w-36"
+              className="h-8 w-full text-sm sm:w-36"
               compact
               id="run-version-filter"
               onChange={(v) => update({ offset: null, version: v })}
@@ -138,7 +138,7 @@ function TemplateRuns({ id: rawId }: { id: string }) {
             />
           )}
           {failedNodeId && (
-            <span className="inline-flex h-8 items-center gap-2 rounded-md border border-brick-400/30 bg-brick-400/5 pr-1 pl-2.5 text-[13px] text-paper-200">
+            <span className="inline-flex h-8 items-center gap-2 rounded-md border border-brick-400/30 bg-brick-400/5 pr-1 pl-2.5 text-sm text-paper-200">
               <Icon className="text-brick-400" name="filter" size={13} />
               <span className="max-w-[16rem] truncate">
                 Failed at “{nodeTitles.get(failedNodeId) ?? failedNodeId}”

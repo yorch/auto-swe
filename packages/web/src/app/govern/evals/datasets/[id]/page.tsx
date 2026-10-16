@@ -53,7 +53,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
             <dl className="flex flex-wrap gap-x-8 gap-y-3 text-sm">
               <div>
                 <dt className="text-xs text-paper-500">Slug</dt>
-                <dd className="mt-0.5 font-mono text-[13px] text-paper-200">{ds.slug}</dd>
+                <dd className="mt-0.5 font-mono text-sm text-paper-200">{ds.slug}</dd>
               </div>
               <div>
                 <dt className="text-xs text-paper-500">Cases</dt>

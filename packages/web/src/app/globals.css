@@ -15,32 +15,34 @@
   --color-ink-900: #0e111a; /* bg-2, recessed rails, code blocks */
   --color-ink-800: #0c0f17; /* bg, page ground */
   --color-ink-700: #141926; /* panel-2, slightly cooler than bg */
-  --color-ink-600: #1a2030; /* surface, raised / selected rows */
-  --color-ink-500: #212940; /* surface-2 */
-  --color-ink-400: #232b40; /* line-2, stronger borders */
-  --color-ink-300: #33405e; /* strong dividers */
+  --color-ink-600: #232a3d; /* surface, raised / selected rows, dividers */
+  --color-ink-500: #2a3349; /* surface-2 */
+  --color-ink-400: #2f3850; /* line-2, card and control-group borders */
+  --color-ink-300: #3f4b6a; /* strong dividers */
+  --color-ink-200: #5b6788; /* text-entry field borders */
 
   /* Text scale — cool blue-grey neutral.
      Contrast ratios are WCAG 2.x against the ink surfaces text sits on
      (ink-950 / 900 / 800 / 700). Every step is used for real text — nav group labels,
      placeholders, hints, muted badges — so all clear AA (4.5:1), and the ramp keeps
      visible steps between them:
-       paper-300 #c4cad9  11.9 / 11.5 / 11.7 / 10.7   (9.9 on ink-600, 8.8 on ink-500)
-       paper-400 #aeb6c9   9.6 /  9.3 /  9.4 /  8.6   (8.0 on ink-600, 7.1 on ink-500)
-       paper-500 #9aa3b8   7.7 /  7.5 /  7.6 /  6.9   (6.4 on ink-600, 5.7 on ink-500)
-       paper-600 #7f8aa3   5.7 /  5.5 /  5.5 /  5.1   (4.7 on ink-600)
-     paper-600 stays the dimmest text tone and must not be dimmed further; use it
-     on ink-700 or darker, never on ink-500 or lighter (4.2:1 there) — use paper-500.
+       paper-300 #c7cdda  12.3 / 11.8 / 12.0 / 11.0   (9.0 on ink-600, 7.9 on ink-500)
+       paper-400 #bac1d1  10.8 / 10.5 / 10.6 /  9.7   (7.9 on ink-600, 7.0 on ink-500)
+       paper-500 #a9b2c6   9.2 /  8.9 /  9.0 /  8.3   (6.7 on ink-600, 5.9 on ink-500)
+       paper-600 #909cb5   7.1 /  6.8 /  6.9 /  6.4   (5.2 on ink-600, 4.6 on ink-500)
+     These sit well above the AA floor on purpose: paper-500 is the most used text tone
+     and most of it is 12px metadata, where a grey that merely passes reads as fuzz.
+     Do not dim the muted steps back toward the floor.
      Ink ramp: ink-800 (#0c0f17, the page ground) is slightly darker than ink-900
      (#0e111a, recessed rails); swapping them would shift every surface, so the
      ordering is left as is. */
-  --color-paper-50: #eef1f7; /* primary ink */
-  --color-paper-100: #eef1f7;
-  --color-paper-200: #eef1f7; /* main body text */
-  --color-paper-300: #c4cad9; /* secondary */
-  --color-paper-400: #aeb6c9; /* secondary / body */
-  --color-paper-500: #9aa3b8; /* labels / muted */
-  --color-paper-600: #7f8aa3; /* faint / numerals / captions */
+  --color-paper-50: #f7f8fb; /* primary ink, headings */
+  --color-paper-100: #eef1f7; /* titles, field values */
+  --color-paper-200: #e4e8f0; /* main body text */
+  --color-paper-300: #c7cdda; /* secondary */
+  --color-paper-400: #bac1d1; /* secondary / body */
+  --color-paper-500: #a9b2c6; /* labels / muted */
+  --color-paper-600: #909cb5; /* faint / numerals / captions */
 
   /* Accent — violet, primary accent */
   --color-ember-50: #f0eeff; /* violet tint near-white */
@@ -68,6 +70,22 @@
   --font-display: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+
+  /* Type scale. The root is 14px (the html rule below), and Tailwind's defaults are rem,
+     so left alone `text-xs` was 10.5px and `text-sm` 12.25px — the metadata, table and
+     form text that most of the app is made of. These pin the two small steps to whole
+     pixels a dense UI can still read; the larger steps keep their rem defaults. Text
+     below the heading sizes uses these steps, never an arbitrary `text-[Npx]` between
+     them — half-pixel neighbours read as "slightly off", not as hierarchy.
+     `text-2xs` is for UPPERCASE eyebrow labels only (`.kicker`, nav group names,
+     uppercase badges): capitals read about a step larger, so 11px caps sit beside 12px
+     sentence-case text. Never use it for sentence-case text. */
+  --text-2xs: 11px;
+  --text-2xs--line-height: 14px;
+  --text-xs: 12px;
+  --text-xs--line-height: 16px;
+  --text-sm: 13px;
+  --text-sm--line-height: 18px;
 
   /* Border radius — the scale the primitives use (inputs/alerts 9, buttons 10,
      cards/modals 14), so a `rounded-*` class and a primitive agree. */
@@ -99,10 +117,11 @@
   --color-ink-900: #f3f5f9; /* recessed rails, code blocks */
   --color-ink-800: #f6f7fb; /* page ground */
   --color-ink-700: #ffffff; /* card */
-  --color-ink-600: #eceef4; /* raised / selected rows, hover */
+  --color-ink-600: #e4e7ef; /* raised / selected rows, hover, dividers */
   --color-ink-500: #e1e5ee; /* surface-2, the selected segment */
-  --color-ink-400: #d3d8e3; /* borders */
+  --color-ink-400: #c9cfdc; /* borders */
   --color-ink-300: #b5bccc; /* strong dividers, hovered borders */
+  --color-ink-200: #858ea4; /* text-entry field borders */
 
   --color-paper-50: #0f1320;
   --color-paper-100: #151a28;
@@ -256,7 +275,7 @@
   /* Eyebrow above a card or section title — the ember-coloured section marker. */
   .kicker {
     font-family: var(--font-sans);
-    font-size: 11px;
+    font-size: var(--text-2xs);
     font-weight: 600;
     color: var(--color-ember-300);
     text-transform: uppercase;
@@ -268,7 +287,7 @@
      small-caps label), kept so every call site picks up the one treatment. */
   .label-mono {
     font-family: var(--font-sans);
-    font-size: 12.5px;
+    font-size: var(--text-sm);
     font-weight: 500;
     color: var(--color-paper-400);
     letter-spacing: 0;

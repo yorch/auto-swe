@@ -85,8 +85,14 @@ let codeTaskRefusal: string | null = null;
 let taskRunThrows = false;
 // Refinement: optional refine intent returned by the turn + the activity verdict.
 let turnRefine: { instruction: string } | undefined;
+// Generation: optional generate intent returned by the turn + the activity verdict.
+let turnGenerate: { description: string; name?: string } | undefined;
+let draftResult:
+  | { name: string; summary: string; templateId: string }
+  | { status: 'shell_refused' }
+  | null = { name: 'Drafted Flow', summary: 'does a thing', templateId: 'tpl-1' };
 let refineResult: {
-  status: 'refined' | 'no_target' | 'failed';
+  status: 'refined' | 'no_target' | 'shell_refused' | 'failed';
   name?: string;
   version?: number;
   summary?: string;
@@ -97,9 +103,6 @@ const fakeActivities = {
   // these to start + finalize cleanly. Returning an error from createWorkflowRun
   // makes the child fail fast (it's abandoned, so the parent is unaffected).
   cancelPendingHumanSteps: async () => {},
-  // Phase B: code-route launch preparation. Returns null when codeRepoResolves is
-  // false (no repo) so the workflow falls back to the general route; otherwise a
-  // collision-free workflowId (the abandoned child's activities are faked).
   createChannelCodeTaskRun: async (input: { channelId: string; threadTs: string }) => {
     calls.codeTaskRuns.push(input);
     if (codeTaskRefusal) {
@@ -143,6 +146,10 @@ const fakeActivities = {
       workflowId: `chantask-${input.channelId}-${input.threadTs}-${Math.random().toString(36).slice(2)}`,
     };
   },
+  // Phase B: code-route launch preparation. Returns null when codeRepoResolves is
+  // false (no repo) so the workflow falls back to the general route; otherwise a
+  // collision-free workflowId (the abandoned child's activities are faked).
+  createChannelWorkflowDraft: async () => draftResult,
   createWorkflowRun: async () => ({ error: 'test child not run' }),
   finalizeChannelRun: async (args: FinalizeRunCall) => {
     calls.finalizeRuns.push(args);
@@ -170,7 +177,12 @@ const fakeActivities = {
     if (turnThrows) {
       throw new Error('turn failed');
     }
-    return { delegate: turnDelegate, refine: turnRefine, reply: turnReply };
+    return {
+      delegate: turnDelegate,
+      generate: turnGenerate,
+      refine: turnRefine,
+      reply: turnReply,
+    };
   },
   startChannelRun: async (args: StartRunCall) => {
     calls.startRuns.push(args);
@@ -223,6 +235,8 @@ beforeEach((ctx: TestContext) => {
   turnReply = 'here is the answer';
   turnDelegate = undefined;
   turnRefine = undefined;
+  turnGenerate = undefined;
+  draftResult = { name: 'Drafted Flow', summary: 'does a thing', templateId: 'tpl-1' };
   refineResult = { name: 'My Flow', status: 'refined', summary: 'added a step', version: 2 };
   calls.refines = [];
   overBudget = false;
@@ -407,6 +421,45 @@ describe('ChannelAssistantWorkflow (TestWorkflowEnvironment)', () => {
 
     expect(calls.refines).toHaveLength(1);
     expect(calls.updates[0]?.text).toContain("don't have a workflow drafted in this thread");
+  }, 60_000);
+
+  it('points at the canvas when a refinement runs authored code', async () => {
+    turnRefine = { instruction: 'add a lint step that runs my script' };
+    refineResult = { status: 'shell_refused' };
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-refine-shell'));
+
+    expect(calls.updates[0]?.text).toContain('canvas');
+    expect(calls.updates[0]?.text).not.toContain('more detail');
+  }, 60_000);
+
+  // ── Generation (generateWorkflow tool) ──────────────────────────────────────
+
+  it('posts the drafted workflow name', async () => {
+    turnGenerate = { description: 'build me a flow' };
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-gen'));
+
+    expect(calls.updates[0]?.text).toContain('Drafted Flow');
+  }, 60_000);
+
+  it('points at the canvas when the generated workflow runs authored code', async () => {
+    turnGenerate = { description: 'run my shell script' };
+    draftResult = { status: 'shell_refused' };
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-gen-shell'));
+
+    expect(calls.updates[0]?.text).toContain('canvas');
+    expect(calls.updates[0]?.text).not.toContain('more detail');
+  }, 60_000);
+
+  it('asks for more detail when generation fails', async () => {
+    turnGenerate = { description: 'something' };
+    draftResult = null;
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-gen-fail'));
+
+    expect(calls.updates[0]?.text).toContain('more detail');
   }, 60_000);
 
   it('does NOT refine when the channel is over budget', async () => {

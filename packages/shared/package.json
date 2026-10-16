@@ -68,6 +68,7 @@
     "./lib/guardedDispatcher": "./dist/lib/guardedDispatcher.js",
     "./lib/mcpHeaders": "./dist/lib/mcpHeaders.js",
     "./lib/modelDiscovery": "./dist/lib/modelDiscovery.js",
+    "./lib/modelPriceList": "./dist/lib/modelPriceList.js",
     "./lib/modelSuggestions": "./dist/lib/modelSuggestions.js",
     "./lib/inputSchema": "./dist/lib/inputSchema.js",
     "./lib/triggerMapping": "./dist/lib/triggerMapping.js",
@@ -98,6 +99,7 @@
     "./workflow/stepRegistry": "./dist/workflow/stepRegistry.js",
     "./workflow/costEstimator": "./dist/workflow/costEstimator.js",
     "./workflow/testHelpers": "./dist/workflow/testHelpers.js",
+    "./workflow/inventory": "./dist/workflow/inventory.js",
     "./lib/tenantGuard": "./dist/lib/tenantGuard.js",
     "./lib/githubInstallation": "./dist/lib/githubInstallation.js",
     "./lib/githubHostScope": "./dist/lib/githubHostScope.js",
@@ -137,7 +139,8 @@
     "dev": "tsc --watch --preserveWatchOutput",
     "typecheck": "tsc --noEmit",
     "prisma": "prisma",
-    "keys:rotate": "tsx src/scripts/rotateEncryptionKey.ts"
+    "keys:rotate": "tsx src/scripts/rotateEncryptionKey.ts",
+    "docs:inventory": "tsx src/scripts/generateWorkflowInventory.ts"
   },
   "dependencies": {
     "@opentelemetry/api": "1.9.1",

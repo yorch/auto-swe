@@ -125,7 +125,7 @@ export function SkillSourcesTab() {
             </Button>
           )}
         </CardHeader>
-        <p className="-mt-2 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+        <p className="-mt-2 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
           Skills imported from a GitHub repository, each pinned to a commit. A newer commit is only
           flagged; you review the per-skill diff and accept it. Imported skills start unverified.
         </p>
@@ -174,7 +174,7 @@ export function SkillSourcesTab() {
                   return (
                     <TRow key={s.id}>
                       <Td className="py-2.5 pr-4" primary>
-                        <div className="font-mono text-[13px] font-medium break-all text-paper-100">
+                        <div className="font-mono text-sm font-medium break-all text-paper-100">
                           {label}
                         </div>
                         <div className="mt-0.5 text-xs text-paper-500">

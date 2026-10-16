@@ -36,9 +36,7 @@ export function RequestList({
                         request.templateName ||
                         'Untitled request'}
                     </div>
-                    <div className="mt-1 text-[13px] text-paper-400">
-                      {requestProgress(request)}
-                    </div>
+                    <div className="mt-1 text-sm text-paper-400">{requestProgress(request)}</div>
                   </div>
                   <StatusBadge status={request.status} />
                 </div>
@@ -73,7 +71,7 @@ export function RequestList({
               {request.reviewUrl && (
                 <a
                   className={cn(
-                    'mx-5 mb-4 inline-flex items-center gap-1.5 rounded-sm text-[13px] font-medium text-ember-400 hover:underline',
+                    'mx-5 mb-4 inline-flex items-center gap-1.5 rounded-sm text-sm font-medium text-ember-400 hover:underline',
                     FOCUS_RING
                   )}
                   href={request.reviewUrl}

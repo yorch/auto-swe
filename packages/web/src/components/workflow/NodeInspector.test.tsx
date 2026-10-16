@@ -51,17 +51,20 @@ function pick(label: string, option: string) {
 
 function renderInspector(node: SpecNode, nodeId: string, onChangeNode = vi.fn()) {
   render(
-    <NodeInspector
-      allNodeIds={[nodeId, 'a', 'b']}
-      isEntry={false}
-      node={node}
-      nodeId={nodeId}
-      onChangeNode={onChangeNode}
-      onDelete={vi.fn()}
-      onRename={vi.fn()}
-      stepMeta={null}
-      stepRegistry={[]}
-    />
+    // The mcp section lists connections through react-query.
+    <QueryClientProvider client={new QueryClient()}>
+      <NodeInspector
+        allNodeIds={[nodeId, 'a', 'b']}
+        isEntry={false}
+        node={node}
+        nodeId={nodeId}
+        onChangeNode={onChangeNode}
+        onDelete={vi.fn()}
+        onRename={vi.fn()}
+        stepMeta={null}
+        stepRegistry={[]}
+      />
+    </QueryClientProvider>
   );
   return onChangeNode;
 }
@@ -293,7 +296,6 @@ describe('NodeInspector human node forms', () => {
           />
         </QueryClientProvider>
       );
-      expect(screen.queryByText(/no form for this node type/i), `${type} has no form`).toBeNull();
       // A section beyond Details and the edges: the eval form's Target is the
       // clearest positive marker; the others are checked by their own tests.
       if (type === 'eval') {
@@ -370,5 +372,252 @@ describe('NodeInspector binding shapes', () => {
     fireEvent.blur(screen.getByLabelText('Binding key'), { target: { value: 'pullRequest' } });
     const result = (changed() as Extract<SpecNode, { type: 'terminate' }>).result;
     expect(result?.pullRequest).toEqual({ from: 'context.currentCodeResult' });
+  });
+});
+
+describe('NodeInspector set node', () => {
+  const VALUES = {
+    a: { default: 1, from: 'ctx.x' },
+    b: { literal: '5' },
+    c: { expr: 'ctx.n + 1' },
+    d: { literal: 'hello' },
+    e: { from: 'ctx.plain' },
+  };
+  const SET: SpecNode = { type: 'set', values: VALUES } as SpecNode;
+  const valuesOf = (node: SpecNode) => (node as Extract<SpecNode, { type: 'set' }>).values;
+
+  it('lists one row per value, with unrepresentable bindings as JSON', () => {
+    renderNode('set', SET);
+
+    const inputValue = (el: HTMLElement) => (el as HTMLInputElement).value;
+    expect(screen.getAllByLabelText('Context path').map(inputValue)).toEqual([
+      'a',
+      'b',
+      'c',
+      'd',
+      'e',
+    ]);
+    // `a` carries a default and `b` is the string "5", which the literal field
+    // would turn into a number: neither survives the form unchanged, so both are
+    // shown verbatim as JSON.
+    expect(JSON.parse(inputValue(screen.getByLabelText('Value for a (JSON)')))).toEqual(VALUES.a);
+    expect(JSON.parse(inputValue(screen.getByLabelText('Value for b (JSON)')))).toEqual(VALUES.b);
+    expect(screen.getAllByLabelText('Binding value').map(inputValue)).toEqual([
+      'ctx.n + 1',
+      'hello',
+      'ctx.plain',
+    ]);
+  });
+
+  it('edits one row and leaves every other value exactly as stored', () => {
+    const { changed } = renderNode('set', SET);
+
+    fireEvent.change(screen.getByDisplayValue('ctx.plain'), { target: { value: 'ctx.other' } });
+
+    expect(valuesOf(changed())).toEqual({ ...VALUES, e: { from: 'ctx.other' } });
+  });
+
+  it('applies edited JSON for a row on blur, keeping row order', () => {
+    const { changed } = renderNode('set', SET);
+    const raw = screen.getByLabelText('Value for b (JSON)');
+
+    fireEvent.change(raw, { target: { value: '{"literal":[1,2]}' } });
+    fireEvent.blur(raw);
+
+    expect(valuesOf(changed()).b).toEqual({ literal: [1, 2] });
+    expect(Object.keys(valuesOf(changed()))).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+
+  it('does not apply invalid JSON', () => {
+    const { onChangeNode } = renderNode('set', SET);
+    const raw = screen.getByLabelText('Value for b (JSON)');
+
+    fireEvent.change(raw, { target: { value: '{oops' } });
+    fireEvent.blur(raw);
+
+    expect(onChangeNode).not.toHaveBeenCalled();
+  });
+
+  it('adds an empty path row and removes a row', () => {
+    const { changed } = renderNode('set', SET);
+
+    fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
+    expect(valuesOf(changed()).value).toEqual({ from: '' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove c' }));
+    expect(Object.keys(valuesOf(changed()))).toEqual(['a', 'b', 'd', 'e']);
+  });
+
+  it('renames a row in place and refuses a duplicate key', () => {
+    const { changed, onChangeNode } = renderNode('set', SET);
+    const key = screen.getAllByLabelText('Context path')[1] as HTMLElement;
+
+    fireEvent.change(key, { target: { value: 'a' } });
+    fireEvent.blur(key);
+    expect(onChangeNode).not.toHaveBeenCalled();
+
+    fireEvent.change(key, { target: { value: 'renamed' } });
+    fireEvent.blur(key);
+    expect(Object.entries(valuesOf(changed()))[1]).toEqual(['renamed', { literal: '5' }]);
+  });
+
+  it('switches a row to an expression', () => {
+    const { changed } = renderNode('set', {
+      type: 'set',
+      values: { x: { from: 'ctx.a' } },
+    } as SpecNode);
+
+    pick('Binding type', 'Expression');
+
+    expect(valuesOf(changed()).x).toEqual({ expr: 'ctx.a' });
+  });
+});
+
+describe('NodeInspector onError and spanName', () => {
+  const NODES: [string, SpecNode][] = [
+    ['step', STEP],
+    ['agent', { agentRef: 'implementer', type: 'agent' } as SpecNode],
+    ['mcp', { connectionRef: 'c', tool: 't', type: 'mcp' } as SpecNode],
+    ['shell', { command: 'echo', image: 'node:24-alpine', type: 'shell' } as SpecNode],
+    ['containerStep', { image: 'x:1', type: 'containerStep' } as SpecNode],
+    [
+      'eval',
+      {
+        scorers: [{ kind: 'pii' }],
+        target: { from: 'ctx.diff' },
+        type: 'eval',
+      } as SpecNode,
+    ],
+  ];
+  const onErrorOf = (node: SpecNode) => (node as { onError?: string }).onError;
+
+  it.each(NODES)('sets onError on a %s node', (_name, node) => {
+    const { changed } = renderNode(node.type, node);
+
+    pick('When this node throws', 'Continue past the error');
+
+    expect(onErrorOf(changed())).toBe('continue');
+  });
+
+  it.each(NODES)('clears onError back to the default on a %s node', (_name, node) => {
+    const { changed } = renderNode(node.type, { ...node, onError: 'continue' } as SpecNode);
+
+    openSelect('When this node throws');
+    fireEvent.click(screen.getByRole('option', { name: /Fail the node/ }));
+
+    expect(onErrorOf(changed())).toBeUndefined();
+  });
+
+  it('says what onError covers and that it wins over onFail', () => {
+    renderNode('step', STEP);
+    expect(screen.getByText(/errors thrown by the node.s activity.*wins over/)).toBeTruthy();
+  });
+
+  it('edits spanName on an agent node', () => {
+    const node = NODES.find(([name]) => name === 'agent')?.[1] as SpecNode;
+    const { changed } = renderNode('agent', node);
+
+    fireEvent.change(screen.getByLabelText('Span name'), { target: { value: 'my-span' } });
+
+    expect((changed() as { spanName?: string }).spanName).toBe('my-span');
+  });
+
+  it.each(['mcp', 'eval'])('offers no spanName on a %s node, which ignores it', (type) => {
+    const node = NODES.find(([name]) => name === type)?.[1] as SpecNode;
+    renderNode(node.type, node);
+
+    expect(screen.queryByLabelText('Span name')).toBeNull();
+  });
+});
+
+describe('NodeInspector fanOut items binding', () => {
+  const FAN = { over: { from: 'ctx.items' }, type: 'fanOut' } as SpecNode;
+  const overOf = (node: SpecNode) => (node as { over: unknown }).over;
+
+  it('writes an expression binding for over, carrying the text across', () => {
+    const { changed } = renderNode('fanOut', FAN);
+
+    pick('Path', 'Expression');
+
+    expect(overOf(changed())).toEqual({ expr: 'ctx.items' });
+  });
+
+  it('keeps editing a path, and preserves its default', () => {
+    const { changed } = renderNode('fanOut', {
+      over: { default: [], from: 'ctx.items' },
+      type: 'fanOut',
+    } as SpecNode);
+
+    fireEvent.change(screen.getByLabelText('Items'), { target: { value: 'ctx.other' } });
+
+    expect(overOf(changed())).toEqual({ default: [], from: 'ctx.other' });
+  });
+});
+
+describe('NodeInspector set node row edge cases', () => {
+  const SET: SpecNode = {
+    type: 'set',
+    values: { a: { literal: '5' }, b: { from: 'ctx.b' } },
+  } as SpecNode;
+  const valuesOf = (node: SpecNode) => (node as Extract<SpecNode, { type: 'set' }>).values;
+
+  it('refuses a JSON edit that is not a binding, and names the shapes', () => {
+    const { onChangeNode } = renderNode('set', SET);
+    const raw = screen.getByLabelText('Value for a (JSON)');
+
+    fireEvent.change(raw, { target: { value: '{"nope":1}' } });
+    fireEvent.blur(raw);
+
+    expect(onChangeNode).not.toHaveBeenCalled();
+    expect(screen.getByText(/Must be \{ "from"/)).toBeTruthy();
+  });
+
+  it('does nothing when a JSON row is left unchanged', () => {
+    const { onChangeNode } = renderNode('set', SET);
+
+    fireEvent.blur(screen.getByLabelText('Value for a (JSON)'));
+
+    expect(onChangeNode).not.toHaveBeenCalled();
+  });
+
+  it('allows a key that only exists on Object.prototype', () => {
+    const { changed } = renderNode('set', SET);
+    const key = screen.getAllByLabelText('Context path')[1] as HTMLElement;
+
+    fireEvent.change(key, { target: { value: 'constructor' } });
+    fireEvent.blur(key);
+
+    expect(Object.keys(valuesOf(changed()))).toEqual(['a', 'constructor']);
+  });
+
+  it('keeps the rows on screen in step with the data after a removal', () => {
+    const { onChangeNode } = renderNode('set', SET);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove a' }));
+
+    expect(valuesOf(onChangeNode.mock.calls.at(-1)?.[0] as SpecNode)).toEqual({
+      b: { from: 'ctx.b' },
+    });
+  });
+});
+
+describe('NodeInspector eval node', () => {
+  const EVAL = {
+    scorers: [{ kind: 'judge', rubricRef: 'quality' }],
+    target: { from: 'ctx.diff' },
+    type: 'eval',
+  } as SpecNode;
+
+  it('names the rubric by bare slug and offers no baseline input', () => {
+    renderNode('eval', EVAL);
+
+    expect(screen.getByPlaceholderText('code-review-quality')).toBeTruthy();
+    expect(screen.queryByLabelText(/baseline/i)).toBeNull();
+  });
+
+  it('has no input-bindings section, since the executor reads only the target', () => {
+    renderNode('eval', EVAL);
+
+    expect(screen.queryByText('Input bindings')).toBeNull();
   });
 });

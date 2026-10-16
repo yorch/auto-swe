@@ -43,7 +43,7 @@ export default async function DocPage({ params }: { params: Promise<Params> }) {
   return (
     <div className="space-y-6">
       <nav aria-label="Breadcrumb">
-        <ol className="flex min-w-0 items-center gap-1.5 text-[13px] text-paper-500">
+        <ol className="flex min-w-0 items-center gap-1.5 text-sm text-paper-500">
           <li>
             <Link
               className={cn('rounded-sm transition-colors hover:text-paper-100', FOCUS_RING)}

@@ -172,7 +172,7 @@ export function AgentRunForm({
               All runs
             </ButtonLink>
           ) : (
-            <span aria-live="polite" className="text-[13px] text-paper-500" role="status">
+            <span aria-live="polite" className="text-sm text-paper-500" role="status">
               Locating the run…
             </span>
           )}

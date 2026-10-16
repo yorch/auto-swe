@@ -206,7 +206,7 @@ export function HelpTip(props: HelpTipProps) {
           <div
             {...overlayProps}
             aria-label={label}
-            className="z-50 w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-ink-400 bg-ink-800 p-3 text-left text-[13px] font-normal normal-case leading-relaxed tracking-normal text-paper-200 shadow-2xl shadow-black/40"
+            className="z-50 w-72 max-w-[calc(100vw-1rem)] rounded-lg border border-ink-400 bg-ink-800 p-3 text-left text-sm font-normal normal-case leading-relaxed tracking-normal text-paper-200 shadow-2xl shadow-black/40"
             id={popoverId}
             onBlur={(event) => {
               if (leftTipFocus(event.relatedTarget)) {

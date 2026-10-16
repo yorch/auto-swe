@@ -17,6 +17,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
 
 import { scanSkillContent } from '@auto-swe/shared/lib/skillScanner';
+import { EVAL_SCORER_ERROR_PREFIX } from '@auto-swe/shared/workflow';
 import { evalRoutes } from './evals.js';
 
 function newMockPrisma() {
@@ -548,6 +549,11 @@ describe('evalRoutes', () => {
             gte: new Date('2026-09-04T00:00:00Z'),
             lt: new Date('2026-09-05T00:00:00Z'),
           },
+          // Placeholder rows of a scorer that could not score stay out of every mean.
+          OR: [
+            { rationale: null },
+            { NOT: { rationale: { startsWith: EVAL_SCORER_ERROR_PREFIX } } },
+          ],
           source: 'GATE',
         });
         expect(data.windowDays).toBe(7);

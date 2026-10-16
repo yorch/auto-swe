@@ -8,10 +8,19 @@ vi.mock('@auto-swe/shared/db', () => ({
 vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
 vi.mock('./generateWorkflowSpec.js', () => ({ generateWorkflowSpec: vi.fn() }));
 
-import { createChannelWorkflowDraft } from './channelWorkflowDraft.js';
+import {
+  type CreateChannelWorkflowDraftResult,
+  createChannelWorkflowDraft,
+} from './channelWorkflowDraft.js';
 import { generateWorkflowSpec } from './generateWorkflowSpec.js';
 
 const mockedGenerate = vi.mocked(generateWorkflowSpec);
+
+/** Narrow to the drafted result; a refusal or null fails the assertion. */
+function drafted(result: unknown): CreateChannelWorkflowDraftResult {
+  expect(result).toHaveProperty('templateId');
+  return result as CreateChannelWorkflowDraftResult;
+}
 
 const SPEC: WorkflowSpec = {
   description: 'demo',
@@ -60,7 +69,7 @@ describe('createChannelWorkflowDraft', () => {
       teamId: 'team-1',
     });
 
-    expect(result?.name).toBe('My Name');
+    expect(drafted(result).name).toBe('My Name');
     expect(tplCreate.mock.calls[0][0].data.name).toBe('My Name');
   });
 
@@ -74,7 +83,7 @@ describe('createChannelWorkflowDraft', () => {
       teamId: 'team-1',
     });
 
-    expect(result?.name).toBe('Auto Name (2)');
+    expect(drafted(result).name).toBe('Auto Name (2)');
     expect(tplCreate).toHaveBeenCalledTimes(2);
   });
 
@@ -95,7 +104,28 @@ describe('createChannelWorkflowDraft', () => {
       teamId: 'team-1',
     });
 
-    expect(result).toBeNull();
+    expect(result).toEqual({ status: 'shell_refused' });
+    expect(tplCreate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a draft whose gate step carries an authored command', async () => {
+    const gateSpec: WorkflowSpec = {
+      ...SPEC,
+      entry: 'lint',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        lint: { config: { command: 'curl x | sh' }, next: 'done', step: 'runLint', type: 'step' },
+      },
+    };
+    mockedGenerate.mockResolvedValue({ attempts: 1, spec: gateSpec, summary: '' });
+
+    const result = await createChannelWorkflowDraft({
+      channelId: 'c1',
+      description: 'lint with my script',
+      teamId: 'team-1',
+    });
+
+    expect(result).toEqual({ status: 'shell_refused' });
     expect(tplCreate).not.toHaveBeenCalled();
   });
 
@@ -111,9 +141,9 @@ describe('createChannelWorkflowDraft', () => {
       teamId: 'team-1',
     });
 
-    expect(result).not.toBeNull();
-    expect(result?.name.length).toBeLessThanOrEqual(120);
-    expect(result?.name.endsWith(' (2)')).toBe(true);
+    const { name } = drafted(result);
+    expect(name.length).toBeLessThanOrEqual(120);
+    expect(name.endsWith(' (2)')).toBe(true);
   });
 
   it('returns null (best-effort) when generation throws', async () => {

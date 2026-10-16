@@ -263,7 +263,7 @@ function PatternDetailModal({
             <EnforcementBadge type={pattern.type} />
           </EntityMetaBadges>
 
-          <p className="text-[13px] leading-relaxed text-paper-400">
+          <p className="text-sm leading-relaxed text-paper-400">
             {SCANNER_PATTERN_TYPE_INFO[pattern.type].description}
           </p>
 
@@ -272,7 +272,7 @@ function PatternDetailModal({
               <span className="text-xs font-medium text-paper-400">Regex pattern</span>
               <CopyButton value={pattern.pattern} />
             </div>
-            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-ink-500 bg-ink-900/70 p-3 font-mono text-[13px] leading-relaxed text-paper-100">
+            <pre className="overflow-x-auto whitespace-pre-wrap break-all rounded-md border border-ink-500 bg-ink-900/70 p-3 font-mono text-sm leading-relaxed text-paper-100">
               <span className="text-paper-500">/</span>
               {pattern.pattern}
               <span className="text-paper-500">/</span>
@@ -505,9 +505,7 @@ function PatternSection({
           {filtered ? `${patterns.length} of ${total}` : `${activeCount} of ${total} active`}
         </span>
       </CardHeader>
-      <p className="mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
-        {info.description}
-      </p>
+      <p className="mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">{info.description}</p>
       {patterns.length === 0 ? (
         <EmptyState
           className="py-6"
@@ -614,7 +612,7 @@ export default function GovernScannerPage() {
         title="Scanner patterns"
       />
 
-      <p className="max-w-3xl text-[13px] leading-relaxed text-paper-400">
+      <p className="max-w-3xl text-sm leading-relaxed text-paper-400">
         A scanner pattern <HelpTip term="scannerPattern" /> is checked against what agents write and
         run. Turning a built-in pattern off stops scanners from checking for it, so whatever it
         would have blocked or flagged is no longer caught. A change can take up to a minute to reach
@@ -652,7 +650,7 @@ export default function GovernScannerPage() {
           />
           <Select
             aria-label="Filter by category"
-            className="h-8 w-full text-[13px] sm:w-60"
+            className="h-8 w-full text-sm sm:w-60"
             onChange={(v) => setCategory(v as '' | PatternType)}
             options={[
               { label: 'All categories', value: '' },

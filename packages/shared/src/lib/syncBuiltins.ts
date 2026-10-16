@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SCANNER_PATTERNS, scannerPatternOrigin } from '../scannerPatterns/index.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
@@ -768,27 +769,53 @@ export const PREVIOUS_DEFAULT_MODEL_SPECS: Readonly<Record<string, string>> = {
   'anthropic/claude-sonnet-4-6': 'anthropic/claude-sonnet-5-5',
 };
 
+/**
+ * sha256 (hex) of each system prompt a built-in agent used to ship, by agent key. A GLOBAL
+ * built-in Agent whose latest version still stores one of these verbatim is an untouched seed, so
+ * {@link syncAgents} moves it onto the current prompt as a new version. A prompt an admin edited
+ * hashes to none of them and is never rewritten. Hashes, not text: the outgoing prompts are large
+ * and nothing else needs them. When a release changes a built-in prompt, add the sha256 of the
+ * outgoing text here (`createHash('sha256').update(promptText).digest('hex')`); otherwise a
+ * seeded deployment keeps the old prompt, because the stored prompt wins over the shipped one.
+ */
+export const PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES: Readonly<Record<string, readonly string[]>> = {
+  appAssistant: ['d5a52c2596f39753b18d3bd46d4ba06da99208eb846d7b6bb76cf71111ddef29'],
+  workflowAuthor: ['c3c88e3157e74a9ffc9be506d7317b6ed68a3cf9c61b2c6bf5c29f7e1a94c16a'],
+  workflowExplainer: ['4ca25fbd0ca975380190be914a35bf813dedf4238418a4c39d0239e7fe156065'],
+};
+
+function promptHash(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
+
 type AgentRow = NonNullable<Awaited<ReturnType<PrismaClient['agent']['findFirst']>>>;
 
 /**
- * Move an untouched seeded Agent onto its key's current default model. Cuts a
+ * Move an untouched seeded Agent onto its key's current default model and system prompt. Cuts a
  * new version rather than editing in place, exactly as the agent library does
  * for an admin's model change: a run pins the GLOBAL version it started on
  * (`WorkflowRun.agentVersions`), so rewriting that version would swap the model
  * under an in-flight run. Returns the row later syncing should target.
  */
-async function migrateSeededModelDefault(
+async function migrateSeededDefaults(
   prisma: PrismaClient,
   def: SweAgentDef,
   current: AgentRow
 ): Promise<AgentRow> {
-  if (
-    !def.modelSpec ||
-    !current.isActive ||
-    !current.isBuiltIn ||
-    current.modelSpec === null ||
-    PREVIOUS_DEFAULT_MODEL_SPECS[current.modelSpec] !== def.modelSpec
-  ) {
+  if (!current.isActive || !current.isBuiltIn) {
+    return current;
+  }
+  const modelStale =
+    !!def.modelSpec &&
+    current.modelSpec !== null &&
+    PREVIOUS_DEFAULT_MODEL_SPECS[current.modelSpec] === def.modelSpec;
+  // Only a stored prompt that is exactly a previous built-in one: an admin's edit matches none.
+  const previousHashes = PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES[def.key] ?? [];
+  const promptStale =
+    !!current.systemPrompt &&
+    current.systemPrompt !== def.systemPrompt &&
+    previousHashes.includes(promptHash(current.systemPrompt));
+  if (!modelStale && !promptStale) {
     return current;
   }
   return prisma.$transaction(async (tx) => {
@@ -811,7 +838,7 @@ async function migrateSeededModelDefault(
         isVerified: current.isVerified,
         key: current.key,
         mcpConnectionId: current.mcpConnectionId,
-        modelSpec: def.modelSpec,
+        modelSpec: modelStale && def.modelSpec ? def.modelSpec : current.modelSpec,
         name: current.name,
         orgId: current.orgId,
         origin: current.origin,
@@ -820,7 +847,7 @@ async function migrateSeededModelDefault(
         reasoning: current.reasoning,
         runtime: current.runtime,
         scope: current.scope,
-        systemPrompt: current.systemPrompt,
+        systemPrompt: promptStale ? def.systemPrompt : current.systemPrompt,
         teamId: current.teamId,
         toolKeys: current.toolKeys ?? undefined,
         version: current.version + 1,
@@ -845,7 +872,7 @@ async function migrateSeededModelDefault(
  * Create-if-missing for the built-in GLOBAL agents. An existing agent is the
  * admin's: its versions, activation and skill refs are never rewritten here.
  * The one exception is an untouched seed — a latest version still carrying a
- * model this file used to ship — which {@link migrateSeededModelDefault} moves
+ * model or prompt this file used to ship — which {@link migrateSeededDefaults} moves
  * onto the new default as a NEW version, leaving the old one for run pins.
  *
  * Skill refs are attached when the agent is created, and — for an existing
@@ -892,7 +919,7 @@ async function syncAgents(prisma: PrismaClient, newSkillNames: ReadonlySet<strin
           where: { id: agent.id },
         });
       }
-      agent = await migrateSeededModelDefault(prisma, def, agent);
+      agent = await migrateSeededDefaults(prisma, def, agent);
     }
 
     for (const want of skillMap.get(def.key) ?? []) {

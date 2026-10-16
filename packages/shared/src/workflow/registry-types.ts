@@ -69,6 +69,7 @@ export const BUILTIN_STEPS = [
   'verifyCiFix',
   // Live provider model ids for the catalog-refresh template (keys stay in the worker)
   'listProviderModels',
+  'checkPriceListNotes',
   // CI wait strategy: resolve signal-vs-poll config, then poll when configured
   'resolveCiWaitConfig',
   'waitForCiByPolling',

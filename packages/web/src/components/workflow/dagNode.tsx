@@ -181,7 +181,7 @@ const HANDLE_LABEL: Record<HandleKind, string> = {
 function GroupBadge({ group }: { group: string }) {
   return (
     <div className="flex">
-      <span className="max-w-full truncate rounded border border-ink-500 px-1.5 text-[11px] leading-4 text-paper-400">
+      <span className="max-w-full truncate rounded border border-ink-500 px-1.5 text-xs leading-4 text-paper-400">
         {group}
       </span>
     </div>
@@ -248,7 +248,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
           <span className="truncate font-display text-[15px] font-medium leading-none text-paper-50">
             {name}
           </span>
-          <span className="flex shrink-0 items-center gap-1 text-[11px] text-paper-500">
+          <span className="flex shrink-0 items-center gap-1 text-xs text-paper-500">
             {!folded && ELEVATED.has(d.node.type) && (
               <span className="text-brick-400" title="Elevated: runs code in a container">
                 <Icon name="lock" size={11} />
@@ -258,28 +258,28 @@ export function DagNode({ id, data, selected }: NodeProps) {
           </span>
         </div>
         {folded && (
-          <div className="truncate text-[11px] text-paper-400">
+          <div className="truncate text-xs text-paper-400">
             {folded.memberIds.length} steps
             {folded.ran !== undefined && ` · ${folded.ran} ran`}
           </div>
         )}
         {unknown && (
-          <div className="truncate text-[11px] font-medium text-brick-400">
+          <div className="truncate text-xs font-medium text-brick-400">
             {nodeTypeLabel(d.node.type)}
           </div>
         )}
         {d.subLabel && (
-          <div className="truncate font-mono text-[11px] text-paper-400">{d.subLabel}</div>
+          <div className="truncate font-mono text-xs text-paper-400">{d.subLabel}</div>
         )}
         {folded && (
-          <div className="flex items-center gap-0.5 text-[11px] text-paper-500">
+          <div className="flex items-center gap-0.5 text-xs text-paper-500">
             <Icon name="chevronRight" size={11} />
             Expand
           </div>
         )}
         {group && !d.status && <GroupBadge group={group} />}
         {d.status && (
-          <div className="text-[11px] font-medium text-ember-300">
+          <div className="text-xs font-medium text-ember-300">
             <span className="inline-block first-letter:uppercase">
               {d.status.status.replace(/_/g, ' ').toLowerCase()}
             </span>
@@ -323,7 +323,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
       {selected && handles.length > 1 && (
         <div className="pointer-events-none absolute -right-1 top-0 bottom-0 flex flex-col justify-evenly pr-3 text-right">
           {handles.map((h) => (
-            <span className="translate-x-full pl-2 text-[11px] text-paper-400" key={h.id}>
+            <span className="translate-x-full pl-2 text-xs text-paper-400" key={h.id}>
               {h.label}
             </span>
           ))}

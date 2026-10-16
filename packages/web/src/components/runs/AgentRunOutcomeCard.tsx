@@ -4,6 +4,7 @@ import { AGENT_RUN_MAX_OUTPUT_DIFF_CHARS } from '@auto-swe/shared/lib/agentRun';
 import type { ReactNode } from 'react';
 import { Badge } from '@/components/ui/Badge';
 import { Card } from '@/components/ui/Card';
+import { ExpandablePre } from '@/components/ui/ExpandablePre';
 import { Icon } from '@/components/ui/Icon';
 import {
   type AgentRunFailureView,
@@ -78,15 +79,15 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
       </div>
 
       {o.text ? (
-        <p className="whitespace-pre-wrap break-words text-[13px] leading-relaxed text-paper-300">
+        <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-paper-300">
           {o.text}
         </p>
       ) : (
-        <p className="text-[13px] text-paper-500">The agent returned no text.</p>
+        <p className="text-sm text-paper-500">The agent returned no text.</p>
       )}
 
       {published && (
-        <dl className="text-[13px]">
+        <dl className="text-sm">
           {o.branch && (
             <OutcomeRow label="Branch">
               <span className="break-all font-mono text-xs text-paper-200">{o.branch}</span>
@@ -140,7 +141,7 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
         <details className="group">
           <summary
             className={cn(
-              'inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-[13px] text-ember-400 transition-colors hover:text-ember-300 [&::-webkit-details-marker]:hidden',
+              'inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-sm text-ember-400 transition-colors hover:text-ember-300 [&::-webkit-details-marker]:hidden',
               FOCUS_RING
             )}
           >
@@ -156,9 +157,12 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
               This is the agent’s own view of its container. It is for reading, not for trust.
             </p>
           )}
-          <pre className="mt-2 max-h-80 overflow-auto rounded-md border border-ink-500/50 bg-ink-950/60 p-3 font-mono text-xs leading-relaxed text-paper-300">
+          <ExpandablePre
+            className="mt-2 rounded-md border border-ink-500/50 bg-ink-950/60 p-3 font-mono text-xs leading-relaxed text-paper-300"
+            collapsedHeight="20rem"
+          >
             {o.diff}
-          </pre>
+          </ExpandablePre>
           {o.diffTruncated && (
             <p className="mt-1.5 text-xs text-paper-500">
               The diff is cut at {AGENT_RUN_MAX_OUTPUT_DIFF_CHARS.toLocaleString('en-US')}{' '}
@@ -175,16 +179,14 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
 export function AgentRunFailureNote({ failure }: { failure: AgentRunFailureView }) {
   return (
     <div
-      className="flex items-start gap-3 rounded-lg border border-amber-400/35 bg-amber-400/[0.07] px-3.5 py-3 text-[13px]"
+      className="flex items-start gap-3 rounded-lg border border-amber-400/35 bg-amber-400/[0.07] px-3.5 py-3 text-sm"
       role="note"
     >
       <Icon className="mt-0.5 text-amber-400" name="warning" />
       <div className="min-w-0 flex-1">
         <div className="mb-1 flex flex-wrap items-center gap-2">
           <span className="font-semibold text-amber-400">{failure.title}</span>
-          {failure.code && (
-            <span className="font-mono text-[11px] text-paper-500">{failure.code}</span>
-          )}
+          {failure.code && <span className="font-mono text-xs text-paper-500">{failure.code}</span>}
         </div>
         <p className="leading-relaxed text-paper-300">{failure.explanation}</p>
       </div>

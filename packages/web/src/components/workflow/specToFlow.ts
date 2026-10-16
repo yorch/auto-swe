@@ -23,7 +23,7 @@ import { isKnownNodeType } from './nodeTypeTone';
  * graph's labels are unreadable. Passing this to both keeps the button from
  * undoing the readable view the canvas opened with.
  */
-export const FIT_VIEW_OPTIONS = { maxZoom: 1.2, minZoom: 0.55, padding: 0.18 };
+export const FIT_VIEW_OPTIONS = { maxZoom: 1.2, minZoom: 0.8, padding: 0.18 };
 
 const EDGE_LABEL: Partial<Record<EdgeKind, string>> = {
   onApprove: 'approve',

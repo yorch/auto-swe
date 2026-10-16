@@ -145,7 +145,7 @@ export default function StudioBundlesPage() {
           <CardHeader>
             <CardTitle eyebrow="Install">Add a bundle</CardTitle>
           </CardHeader>
-          <p className="-mt-1 mb-5 text-[13px] leading-relaxed text-paper-400">
+          <p className="-mt-1 mb-5 text-sm leading-relaxed text-paper-400">
             Load a bundle from a URL or a file. You review what it contains and what it replaces
             before anything is installed.
           </p>
@@ -208,7 +208,7 @@ export default function StudioBundlesPage() {
             </label>
             <input
               accept=".json,application/json"
-              className="block max-w-full text-[13px] text-paper-400 file:mr-3 file:h-8 file:cursor-pointer file:rounded-lg file:border file:border-ink-400 file:bg-ink-600 file:px-4 file:text-[13px] file:text-paper-200 hover:file:bg-ink-500"
+              className="block max-w-full text-sm text-paper-400 file:mr-3 file:h-8 file:cursor-pointer file:rounded-lg file:border file:border-ink-400 file:bg-ink-600 file:px-4 file:text-sm file:text-paper-200 hover:file:bg-ink-500"
               disabled={previewBundle.isPending}
               id="bundle-file"
               onChange={(e) => {
@@ -238,7 +238,7 @@ export default function StudioBundlesPage() {
           <CardHeader>
             <CardTitle eyebrow="Export">Download a bundle</CardTitle>
           </CardHeader>
-          <p className="-mt-1 mb-5 text-[13px] leading-relaxed text-paper-400">
+          <p className="-mt-1 mb-5 text-sm leading-relaxed text-paper-400">
             Package this deployment&apos;s library content as a bundle file to install elsewhere.
           </p>
           <div className="space-y-4">
@@ -327,7 +327,7 @@ export default function StudioBundlesPage() {
                 {bundles.map((b) => (
                   <TRow key={b.name}>
                     <Td
-                      className="py-2.5 pr-4 font-mono text-[13px] font-medium text-paper-100"
+                      className="py-2.5 pr-4 font-mono text-sm font-medium text-paper-100"
                       primary
                     >
                       {b.name}

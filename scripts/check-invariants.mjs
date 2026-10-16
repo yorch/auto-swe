@@ -440,6 +440,7 @@ const GUARDED_FETCH_MODULES = [
   'packages/gateway/src/lib/credentialService.ts',
   'packages/gateway/src/lib/mcpProbe.ts',
   'packages/shared/src/lib/modelDiscovery.ts',
+  'packages/shared/src/lib/modelPriceList.ts',
   'packages/shared/src/lib/integrations/atlassianClient.ts',
   'packages/shared/src/lib/integrations/providers/githubIssues.ts',
   'packages/shared/src/lib/skillSource/github.ts',

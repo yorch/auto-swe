@@ -43,7 +43,7 @@ export function IntegrationFormFooter({
           dirty ? 'border-amber-400/50' : 'border-ink-400'
         )}
       >
-        <p aria-live="polite" className="min-w-0 text-[13px]" role="status">
+        <p aria-live="polite" className="min-w-0 text-sm" role="status">
           {saved && !dirty && <span className="mr-1 text-moss-400">Settings saved.</span>}
           <span className={dirty ? 'text-amber-400' : 'text-paper-500'}>
             {dirty

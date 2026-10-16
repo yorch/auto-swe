@@ -17,6 +17,8 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | **[concepts.md](./concepts.md)** | The vocabulary — runs, templates, versions, nodes, gates, agents, skills, scopes, connections |
 | **[product-overview.md](./product-overview.md)** | What auto-swe is and who it is for — thesis, target users, capability map, primary use cases, differentiators, and what is deliberately out of scope |
 | **[architecture.md](./architecture.md)** | How it is put together — system context, package map, run lifecycle, the workflow engine and its node types, the config cascade, auth, data model, infrastructure |
+| **[workflow-nodes.md](./workflow-nodes.md)** | Writing a workflow spec by hand — every node type's fields, edges, output, failure handling and pitfalls, with a complete example of each, plus the run context, bindings and the expression language |
+| **[workflow-inventory.md](./workflow-inventory.md)** | Generated from the code — every node type with its family, edges and executor step, every registered step with its config fields, and which built-in templates use each |
 | **[agents.md](./agents.md)** | The agent layer — seeded agents and how they bind models, the review network, skills, implementer tools, MCP, and the `AgentTracer` pattern |
 
 ## Capabilities
@@ -57,8 +59,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [slack-app-setup.md](./slack-app-setup.md) | Slack app manifest import and admin configuration |
 | [packages/cli/README.md](../packages/cli/README.md) | `auto-swe` CLI — work requests, runs, workflow templates, tokens, bundles |
 
-Also here: [`slack-app-manifest.json`](./slack-app-manifest.json) and [`redesign/`](./redesign/)
-(dashboard design screenshots).
+Also here: [`slack-app-manifest.json`](./slack-app-manifest.json).
 
 ## These files ship
 
@@ -74,8 +75,8 @@ Neither owns these files. The dashboard reads them at build time; the site copie
 own content collection, gitignored and rebuilt from scratch on every run. Write markdown for a
 checkout, as normal, and keep three things in mind:
 
-- **Only the top level is published**, by both. `history/` and `redesign/` are deliberately left
-  out — frozen docs presented as current behaviour are worse than no docs.
+- **Only the top level is published**, by both. `history/` is deliberately left out — frozen docs
+  presented as current behaviour are worse than no docs.
 - **Cross-doc links are rewritten**, so `[agents.md](./agents.md)` works as a file path, as
   `/docs/agents`, and as a page on the site. Write them relative and let each surface translate.
 - **A link the surface cannot serve is handled differently by each, on purpose.** The dashboard

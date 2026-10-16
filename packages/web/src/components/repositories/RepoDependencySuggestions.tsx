@@ -74,9 +74,7 @@ function SuggestionRow({ group }: { group: SuggestionGroup }) {
   return (
     <li className="px-4 py-3">
       <div className="flex items-center justify-between gap-3">
-        <span className="truncate font-mono text-[13px] font-medium text-paper-100">
-          {group.toRef}
-        </span>
+        <span className="truncate font-mono text-sm font-medium text-paper-100">{group.toRef}</span>
         <Badge className="tabular shrink-0" tone="neutral" variant="outline">
           {group.repos.length} {group.repos.length === 1 ? 'repo' : 'repos'}
         </Badge>
@@ -120,7 +118,7 @@ export function RepoDependencySuggestions({
 
   return (
     <section className="space-y-3">
-      <p className="text-paper-400 text-[13px]">
+      <p className="text-paper-400 text-sm">
         Dependencies detected in manifests or git signals that don't resolve to an onboarded
         repository yet, grouped by the unresolved reference and ranked by how many repos declare it.
       </p>

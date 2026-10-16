@@ -65,6 +65,17 @@ export function useCreateCatalogEntry() {
   });
 }
 
+/// Bulk add: every entry is added in one transaction, or none is (a 409 names
+/// the specs already in the catalog).
+export function useBatchCreateCatalogEntries() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (entries: Array<CatalogEntryInput & { provider: string; modelId: string }>) =>
+      api.post<{ data: ModelCatalogEntry[] }>(`${BASE}/batch`, { entries }),
+    onSuccess: () => invalidateCatalog(qc),
+  });
+}
+
 export function useUpdateCatalogEntry() {
   const qc = useQueryClient();
   return useMutation({
@@ -158,5 +169,66 @@ export function useRolePricing() {
     queryFn: () =>
       api.get<{ data: Record<string, RolePrice> }>(`${BASE}/role-pricing`).then((r) => r.data),
     queryKey: ['model-catalog', 'role-pricing'],
+  });
+}
+
+/** A published price for a model the catalog lacks. Never a price until an admin saves it. */
+export interface PriceHint {
+  /** `provider`: the provider's own model listing. `priceList`: the community price list. */
+  source: 'provider' | 'priceList';
+  matchedId: string;
+  url?: string;
+  inputUsdPerMTok: number;
+  outputUsdPerMTok: number;
+  cacheReadMultiplier?: number;
+  cacheWrite5mMultiplier?: number;
+  cacheWrite1hMultiplier?: number;
+  kind?: ModelKind;
+}
+
+export interface PriceHintResult {
+  hints: PriceHint[];
+  unavailable: Array<{ source: PriceHint['source']; reason: string }>;
+}
+
+/// Prices the Add form can prefill for `provider/modelId`. ADMIN-only on the
+/// gateway, which may ask the provider through its GLOBAL credential, so a
+/// result is kept for the session and never retried on its own.
+export function usePriceHints(provider: string, modelId: string, enabled: boolean) {
+  return useQuery({
+    enabled: enabled && provider !== '' && modelId !== '',
+    queryFn: () =>
+      api
+        .post<{ data: PriceHintResult }>(`${BASE}/price-hints`, { modelId, provider })
+        .then((r) => r.data),
+    queryKey: ['model-catalog', 'price-hints', provider, modelId],
+    retry: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
+/** One spec's answer from the batch hint call. */
+export type SpecPriceHints = PriceHintResult & { provider: string; modelId: string };
+
+/** The most specs one batch call answers; the gateway refuses more. */
+export const PRICE_HINT_BATCH_MAX = 200;
+
+/// Hints for every spec the discovery list shows, in one call. Like
+/// {@link usePriceHints}, kept for the session and never retried on its own.
+export function usePriceHintsBatch(specs: Array<{ provider: string; modelId: string }>) {
+  const batch = specs.slice(0, PRICE_HINT_BATCH_MAX);
+  return useQuery({
+    enabled: batch.length > 0,
+    queryFn: () =>
+      api
+        .post<{ data: SpecPriceHints[] }>(`${BASE}/price-hints/batch`, { specs: batch })
+        .then((r) => r.data),
+    queryKey: [
+      'model-catalog',
+      'price-hints-batch',
+      batch.map((s) => `${s.provider}/${s.modelId}`).join('\n'),
+    ],
+    retry: false,
+    staleTime: Number.POSITIVE_INFINITY,
   });
 }

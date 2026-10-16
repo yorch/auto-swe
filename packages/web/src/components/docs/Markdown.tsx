@@ -145,10 +145,10 @@ export function Markdown({
         '[&_hr]:my-10 [&_hr]:border-ink-600',
         // Code
         '[&_code]:rounded-md [&_code]:border [&_code]:border-ink-500/70 [&_code]:bg-ink-700 [&_code]:px-1.5 [&_code]:py-px [&_code]:font-mono [&_code]:text-[0.85em] [&_code]:text-paper-100',
-        '[&_pre]:my-6 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-ink-500/70 [&_pre]:bg-ink-950 [&_pre]:p-4 [&_pre]:text-[13px] [&_pre]:leading-6 [&_pre]:text-paper-200',
+        '[&_pre]:my-6 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:border [&_pre]:border-ink-500/70 [&_pre]:bg-ink-950 [&_pre]:p-4 [&_pre]:text-sm [&_pre]:leading-6 [&_pre]:text-paper-200',
         '[&_pre_code]:border-0 [&_pre_code]:bg-transparent [&_pre_code]:p-0 [&_pre_code]:text-inherit',
         // Tables — the wrapper (see `docTable`) scrolls a wide one sideways
-        '[&_table]:w-full [&_table]:border-collapse [&_table]:text-[13.5px] [&_table]:leading-6',
+        '[&_table]:w-full [&_table]:border-collapse [&_table]:text-sm [&_table]:leading-6',
         '[&_thead]:bg-ink-700/70',
         '[&_th]:border-b [&_th]:border-ink-500 [&_th]:px-3.5 [&_th]:py-2.5 [&_th]:text-left [&_th]:font-semibold [&_th]:whitespace-nowrap [&_th]:text-paper-100',
         '[&_td]:border-t [&_td]:border-ink-600 [&_td]:px-3.5 [&_td]:py-2.5 [&_td]:align-top [&_td_code]:whitespace-nowrap',

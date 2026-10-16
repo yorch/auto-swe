@@ -151,7 +151,11 @@ describe('assistant conversation routes', () => {
       });
       expect(res.statusCode).toBe(503);
       expect(prisma.assistantMessage.update).toHaveBeenCalledWith({
-        data: expect.objectContaining({ status: 'FAILED' }),
+        data: expect.objectContaining({
+          errorDetail:
+            'The turn could not be handed to the conversation workflow: Error: temporal down',
+          status: 'FAILED',
+        }),
         where: { id: REPLY_ID },
       });
     });

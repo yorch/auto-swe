@@ -188,14 +188,26 @@ describe('model-catalog-refresh template', () => {
       expect(reachable('doneNoChange').has('openPR')).toBe(false);
     });
 
-    function dispatcher(filesChanged: unknown[], previousRefreshOpen = false) {
-      const steps: Array<{ step: string; config: Record<string, unknown> }> = [];
+    function dispatcher(
+      filesChanged: unknown[],
+      previousRefreshOpen = false,
+      priceNotes: Array<{ ok: boolean; summary: string }> = []
+    ) {
+      const steps: Array<{
+        step: string;
+        config: Record<string, unknown>;
+        inputs: Record<string, unknown>;
+      }> = [];
       const d: Dispatcher = {
-        async dispatchStep({ step, config }) {
-          steps.push({ config, step });
+        async dispatchStep({ step, config, inputs }) {
+          steps.push({ config, inputs, step });
+          if (step === 'checkPriceListNotes') {
+            return priceNotes.shift() ?? { ok: true, summary: 'fine' };
+          }
           const out: Record<string, unknown> = {
             createOrUpdatePullRequest: { prNumber: 9, prUrl: 'https://example.test/pull/9' },
             executeImplementation: { filesChanged },
+            executeReviewFixImplementation: { filesChanged },
             listProviderModels: {
               guidance: '## Live model ids',
               note: 'A previous catalog refresh is still open',
@@ -232,9 +244,42 @@ describe('model-catalog-refresh template', () => {
         'runTests',
         'updateDomainState',
         'runReviewNetwork',
+        'checkPriceListNotes',
         'createOrUpdatePullRequest',
       ]);
       expect(steps.at(-1)?.config).toEqual({ draft: true });
+    });
+
+    it('sends an unexplained price-list difference back to the fixer, then opens the PR', async () => {
+      const { d, steps } = dispatcher([{ path: BUILTIN_MODELS_PATH }], false, [
+        { ok: false, summary: 'openai/x differs from the price list' },
+      ]);
+      const result = await runSpec(spec, base(), d);
+      expect(result.status).toBe('SUCCESS');
+      expect(steps.map((s) => s.step).slice(5)).toEqual([
+        'runReviewNetwork',
+        'checkPriceListNotes',
+        'executeReviewFixImplementation',
+        'updateDomainState',
+        'runReviewNetwork',
+        'checkPriceListNotes',
+        'createOrUpdatePullRequest',
+      ]);
+      const fix = steps.find((s) => s.step === 'executeReviewFixImplementation');
+      expect(fix?.inputs.rejectionSummary).toBe('openai/x differs from the price list');
+    });
+
+    it('fails without a PR when the differences stay unexplained past the attempt limit', async () => {
+      const unexplained = { ok: false, summary: 'still differs' };
+      const { d, steps } = dispatcher([{ path: BUILTIN_MODELS_PATH }], false, [
+        unexplained,
+        unexplained,
+        unexplained,
+      ]);
+      const result = await runSpec(spec, base(), d);
+      expect(result.status).toBe('FAILED');
+      expect(steps.map((s) => s.step)).not.toContain('createOrUpdatePullRequest');
+      expect(steps.filter((s) => s.step === 'checkPriceListNotes')).toHaveLength(3);
     });
 
     it('ends SUCCESS at once, with the note, when the last refresh is still open', async () => {

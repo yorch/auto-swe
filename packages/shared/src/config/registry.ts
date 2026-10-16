@@ -48,6 +48,11 @@ const githubOrgLogin = z
   .max(39);
 const ratio = z.number().min(0).max(1);
 
+/// LiteLLM's community-maintained price table: per-token prices for the major
+/// providers and most OpenAI-compatible hosts, keyed by model id.
+export const DEFAULT_MODEL_PRICE_LIST_URL =
+  'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
+
 export const SETTING_DEFINITIONS = {
   // ── In-app assistant ───────────────────────────────────────────────────────
   // The kill switch for the dashboard assistant. Read by `requireAuth` on every
@@ -413,6 +418,21 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: ratio,
     unit: '0–1',
+  }),
+
+  'models.priceListUrl': defineSetting({
+    defaultValue: DEFAULT_MODEL_PRICE_LIST_URL,
+    description:
+      "A community price list in LiteLLM's model_prices_and_context_window.json format, which suggests a new model's prices to the catalog's Add form and bulk add, and gives the scheduled catalog refresh figures to cross-check. Suggestions only: an admin still saves each price, and nothing costs a call from the list. Empty turns the lookup off. The gateway and the worker each fetch it behind the same address guard as provider credentials (a private-network mirror needs its host in models.privateNetworkHosts), refuse redirects, and cache it for six hours.",
+    group: 'models',
+    label: 'Model price list URL',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.union([z.literal(''), z.string().url().max(2000)]),
+    // A mirror's URL can name a server on a private network.
+    sensitive: true,
   }),
 
   // ── Models ─────────────────────────────────────────────────────────────────

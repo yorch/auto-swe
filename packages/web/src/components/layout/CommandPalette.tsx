@@ -3,12 +3,17 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { THEME_CHOICES } from '@/components/layout/ThemeToggle';
 import { Icon, isIconName } from '@/components/ui/Icon';
 import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
 import { cn, FOCUS_RING } from '@/lib/utils';
+import { useThemeStore } from '@/stores/themeStore';
 
+/** A page to open (`href`) or an action to run in place (`run`), such as switching theme. */
 interface Entry {
-  href: string;
+  id: string;
+  href?: string;
+  run?: () => void;
   label: string;
   group: string;
   icon: string;
@@ -85,20 +90,29 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const restoreRef = useRef<HTMLElement | null>(null);
   const listId = useId();
+  const setThemePreference = useThemeStore((s) => s.setPreference);
 
   const entries = useMemo<Entry[]>(
     () => [
-      { group: 'Actions', href: '/start', icon: 'plus', label: 'Start work' },
+      { group: 'Actions', href: '/start', icon: 'plus', id: 'href:/start', label: 'Start work' },
       ...groups.flatMap((g) =>
         g.items.map((item) => ({
           group: item.section ? `${g.label} · ${item.section}` : g.label,
           href: item.href,
           icon: item.icon,
+          id: `href:${item.href}`,
           label: item.label,
         }))
       ),
+      ...THEME_CHOICES.map((c) => ({
+        group: 'Appearance',
+        icon: c.icon,
+        id: `theme:${c.value}`,
+        label: c.value === 'system' ? 'Theme: follow system' : `Theme: ${c.label.toLowerCase()}`,
+        run: () => setThemePreference(c.value),
+      })),
     ],
-    [groups]
+    [groups, setThemePreference]
   );
 
   const results = useMemo(
@@ -126,7 +140,11 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
       return;
     }
     onClose();
-    router.push(entry.href);
+    if (entry.run) {
+      entry.run();
+    } else if (entry.href) {
+      router.push(entry.href);
+    }
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLElement>) => {
@@ -174,21 +192,21 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
             type="search"
             value={query}
           />
-          <kbd className="hidden rounded border border-ink-400 px-1.5 py-0.5 text-[11px] text-paper-500 sm:block">
+          <kbd className="hidden rounded border border-ink-400 px-1.5 py-0.5 text-xs text-paper-500 sm:block">
             Esc
           </kbd>
         </div>
         <span aria-live="polite" className="sr-only">
-          {results.length === 0 ? 'No matching pages' : `${results.length} pages`}
+          {results.length === 0 ? 'No matches' : `${results.length} results`}
         </span>
         <ul className="max-h-[50vh] overflow-y-auto p-1.5" id={listId}>
           {results.length === 0 && (
             <li className="px-3 py-8 text-center text-sm text-paper-500">
-              No page matches “{query}”.
+              Nothing matches “{query}”.
             </li>
           )}
           {results.map((entry, i) => (
-            <li key={`${entry.group}-${entry.href}`}>
+            <li key={entry.id}>
               <button
                 className={cn(
                   'flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm outline-none',
@@ -216,7 +234,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
             </li>
           ))}
         </ul>
-        <div className="flex items-center gap-4 border-t border-ink-500 px-4 py-2 text-[11.5px] text-paper-600">
+        <div className="flex items-center gap-4 border-t border-ink-500 px-4 py-2 text-xs text-paper-600">
           <span>
             <kbd className="font-sans">↑↓</kbd> to move
           </span>
@@ -239,7 +257,7 @@ export function CommandPaletteButton({ onClick }: { onClick: () => void }) {
     <button
       aria-keyshortcuts="Meta+K Control+K"
       className={cn(
-        'inline-flex h-8 items-center gap-2 rounded-lg border border-ink-400/80 bg-ink-900/60 px-2.5 text-[13px] text-paper-500 transition-colors hover:border-ink-300 hover:text-paper-200 lg:w-60',
+        'inline-flex h-8 items-center gap-2 rounded-lg border border-ink-400/80 bg-ink-900/60 px-2.5 text-sm text-paper-500 transition-colors hover:border-ink-300 hover:text-paper-200 lg:w-60',
         FOCUS_RING
       )}
       onClick={onClick}
@@ -247,7 +265,7 @@ export function CommandPaletteButton({ onClick }: { onClick: () => void }) {
     >
       <Icon name="search" size={14} />
       <span className="max-lg:sr-only">Search…</span>
-      <kbd className="ml-auto hidden rounded border border-ink-400 px-1.5 text-[11px] text-paper-500 lg:block">
+      <kbd className="ml-auto hidden rounded border border-ink-400 px-1.5 text-xs text-paper-500 lg:block">
         {isMac ? '⌘K' : 'Ctrl K'}
       </kbd>
     </button>

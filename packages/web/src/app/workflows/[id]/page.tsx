@@ -107,7 +107,7 @@ export default function WorkflowDetailPage({ params }: { params: Promise<{ id: s
           </div>
           <div className="min-w-0">
             <dt className="label-mono">Branch</dt>
-            <dd className="mt-1.5 break-all font-mono text-[13px] text-paper-200">
+            <dd className="mt-1.5 break-all font-mono text-sm text-paper-200">
               {workflow.assignedBranch}
             </dd>
           </div>

@@ -318,7 +318,7 @@ function ScheduleRow({
           </div>
         </Td>
         <Td className="px-4 py-3" label="Repository">
-          <div className="whitespace-nowrap font-mono text-[13px] text-paper-200">
+          <div className="whitespace-nowrap font-mono text-sm text-paper-200">
             {schedule.repository.organizationName}/{schedule.repository.repoName}
           </div>
           <div className="mt-0.5 text-xs text-paper-500">
@@ -326,7 +326,7 @@ function ScheduleRow({
           </div>
         </Td>
         <Td className="px-4 py-3" label="Schedule">
-          <code className="whitespace-nowrap font-mono text-[13px] text-paper-200">
+          <code className="whitespace-nowrap font-mono text-sm text-paper-200">
             {schedule.cronExpression}
           </code>
           <div className="mt-0.5 text-xs text-paper-500">
@@ -369,10 +369,10 @@ function ScheduleRow({
             )}
           </div>
         </Td>
-        <Td className="px-4 py-3 text-[13px] text-paper-300" label="Next fire">
+        <Td className="px-4 py-3 text-sm text-paper-300" label="Next fire">
           <When iso={schedule.schedule.nextRunAt} />
         </Td>
-        <Td className="px-4 py-3 text-[13px] text-paper-400" label="Last fire">
+        <Td className="px-4 py-3 text-sm text-paper-400" label="Last fire">
           <When iso={schedule.schedule.lastRunAt ?? schedule.lastFiredAt} />
         </Td>
         <Td align="right" className="px-4 py-3">

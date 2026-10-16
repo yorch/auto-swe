@@ -80,7 +80,7 @@ export function ChannelOpenItemsTab({ channel }: { channel: SlackChannel }) {
           value={statusFilter}
         />
       </Toolbar>
-      <p className="text-[13px] text-paper-400">
+      <p className="text-sm text-paper-400">
         Follow-ups the assistant is tracking here. Resolve an item once it is done, or dismiss it if
         it never needed doing; either way the assistant stops reminding the channel.
       </p>

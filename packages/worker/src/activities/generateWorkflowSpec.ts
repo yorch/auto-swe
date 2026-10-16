@@ -13,6 +13,7 @@
  * the gateway starts {@link WorkflowAuthorWorkflow} and awaits this activity's result.
  */
 
+import { isDeepStrictEqual } from 'node:util';
 import { prisma } from '@auto-swe/shared/db';
 import {
   type AuthoringCatalog,
@@ -20,6 +21,8 @@ import {
   buildAuthorRequestMessage,
   buildRefineRequestMessage,
   buildRepairRequestMessage,
+  findAuthoredCommandNodes,
+  findContainerCodeNodes,
   formatValidationIssue,
   parseWorkflowSpec,
   validateSpec,
@@ -74,6 +77,36 @@ function formatErrors(err: unknown): string[] {
     });
   }
   return [err instanceof Error ? err.message : String(err)];
+}
+
+/**
+ * Repair issues for code an author wrote that this requester may not author: container
+ * code (`shell`, `containerStep`, a `runContainerStep` step) and authored gate commands.
+ * Every path that persists a generated spec without shell authorization refuses these,
+ * so asking the model to remove them here turns a refusal at persist time into a
+ * workflow that can be saved. On a refinement, a node carried over unchanged from the
+ * base spec is not the model's doing and is left for the caller's own check — asking the
+ * model to drop it would silently delete what a person put there.
+ */
+function authoredCodeIssues(spec: WorkflowSpec, baseSpec: WorkflowSpec | undefined): string[] {
+  const introduced = ([id, node]: [string, unknown]) =>
+    !baseSpec || !isDeepStrictEqual(baseSpec.nodes[id], node);
+  const container = findContainerCodeNodes(spec)
+    .filter(introduced)
+    .map(
+      ([id]) =>
+        `node "${id}": runs a container (a \`shell\` or \`containerStep\` node, or the ` +
+        `\`runContainerStep\` step), which this requester may not author — remove it.`
+    );
+  const commands = findAuthoredCommandNodes(spec)
+    .filter(introduced)
+    .map(
+      ([id]) =>
+        `node "${id}": sets a \`command\` (on a gate step, a \`runQualityGates\` gate or an ` +
+        `eval \`gate\` scorer), which this requester may not author — remove the \`command\` ` +
+        `so the repository's configured command runs.`
+    );
+  return [...container, ...commands];
 }
 
 /**
@@ -234,10 +267,13 @@ async function generateWorkflowSpecImpl(
     // unreachable nodes, no terminal path, …). Feed errors back so the author
     // self-corrects an unrunnable graph rather than us persisting one.
     const report = validateSpec(validated);
-    if (report.errors.length === 0) {
+    // A requester who may not author shell gets authored code repaired away here rather
+    // than refused when the draft is persisted.
+    const refusals = input.allowShell ? [] : authoredCodeIssues(validated, input.baseSpec);
+    if (report.errors.length === 0 && refusals.length === 0) {
       return { attempts: attempt, spec: validated, summary };
     }
-    lastErrors = report.errors.map(formatValidationIssue);
+    lastErrors = [...report.errors.map(formatValidationIssue), ...refusals];
     message = buildRepairRequestMessage({
       catalog,
       errors: lastErrors,

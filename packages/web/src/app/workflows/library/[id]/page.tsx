@@ -163,7 +163,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       <TemplateSubNav active="editor" templateId={id} />
 
-      <p className="max-w-3xl text-[13px] leading-relaxed text-paper-400" id="versioning-note">
+      <p className="max-w-3xl text-sm leading-relaxed text-paper-400" id="versioning-note">
         Saving creates a new immutable version; it never edits an old one, and runs already in
         flight stay on the version they started with.{' '}
         <strong className="text-paper-200">Draft</strong> means the template cannot be launched yet.{' '}
@@ -222,7 +222,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
                   </h2>
                 )}
                 {effectiveVersion !== null && (
-                  <span className="text-[13px] text-paper-500 tabular-nums">
+                  <span className="text-sm text-paper-500 tabular-nums">
                     v{effectiveVersion}
                     {isActiveVersion ? ' · active' : ' · not active'}
                     {mode === 'view' || !canManage ? ' · read only' : ''}

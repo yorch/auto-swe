@@ -86,7 +86,7 @@ function WorkModePicker({
               className={cn(
                 // Mobile: icon | text | check in one row. From sm: icon and check on top, text below.
                 'relative grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 gap-y-1 rounded-xl border p-4 transition-colors sm:grid-cols-[minmax(0,1fr)_auto] sm:gap-y-3',
-                'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ember-400 has-[:focus-visible]:ring-offset-2 has-[:focus-visible]:ring-offset-ink-950',
+                'has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-solid has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ember-400',
                 selected
                   ? 'border-ember-400/70 bg-ember-400/[0.07]'
                   : 'border-ink-400/60 bg-ink-800/60',
@@ -164,7 +164,7 @@ function Step({
             <span className="sr-only">Step {number}: </span>
             {title}
           </h2>
-          {hint && <p className="mt-0.5 text-[13px] text-paper-400">{hint}</p>}
+          {hint && <p className="mt-0.5 text-sm text-paper-400">{hint}</p>}
         </div>
       </div>
       {children}
@@ -303,7 +303,7 @@ export function StartWork({
                     </div>
                   )}
                   {template?.description && (
-                    <p className="mt-3 text-[13px] leading-relaxed text-paper-400">
+                    <p className="mt-3 text-sm leading-relaxed text-paper-400">
                       {template.description}
                     </p>
                   )}
@@ -340,7 +340,7 @@ export function StartWork({
             <h2 className="text-sm font-semibold text-paper-100">{guide.title}</h2>
             <ul className="mt-3 space-y-2.5">
               {guide.points.map((point) => (
-                <li className="flex gap-2 text-[13px] leading-relaxed text-paper-400" key={point}>
+                <li className="flex gap-2 text-sm leading-relaxed text-paper-400" key={point}>
                   <Icon className="mt-0.5 text-moss-400" name="check" size={14} />
                   {point}
                 </li>

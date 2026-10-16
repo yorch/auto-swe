@@ -800,6 +800,61 @@ describe('createWorkflowRun', () => {
     expect(args.update).toEqual({ authorizedConnectionIds: ['conn-the-run'] });
   });
 
+  it('pins the connections the version declares, not the template’s current schema', async () => {
+    // The version snapshots its schema, so a template retyped afterwards cannot widen the pin of a
+    // run that executes this version, nor refuse it the connection its own version declares.
+    findVersion.mockResolvedValue({
+      inputSchema: {
+        properties: { docConnectionId: { type: 'connection' } },
+        type: 'object',
+      },
+      spec: validSpec,
+      template: { inputSchema: { properties: {}, type: 'object' } },
+    } as never);
+
+    await createWorkflowRun({
+      payload: { docConnectionId: 'dddddddd-0000-4000-8000-000000000009' },
+      runConnectionId: 'conn-the-run',
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'wf-1',
+    });
+
+    const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
+    // The declared field, then the run's own connection — and nothing from the template's schema.
+    expect(args.create.authorizedConnectionIds).toEqual([
+      'dddddddd-0000-4000-8000-000000000009',
+      'conn-the-run',
+    ]);
+  });
+
+  it('does not pin a connection only the template’s current schema declares', async () => {
+    // The other direction of the same rule: the payload names a connection this version does not
+    // declare, so it is not authorized — the check at use refuses it rather than the run spending
+    // a credential the version never asked for.
+    findVersion.mockResolvedValue({
+      inputSchema: { properties: {}, type: 'object' },
+      spec: validSpec,
+      template: {
+        inputSchema: {
+          properties: { docConnectionId: { type: 'connection' } },
+          type: 'object',
+        },
+      },
+    } as never);
+
+    await createWorkflowRun({
+      payload: { docConnectionId: 'dddddddd-0000-4000-8000-000000000009' },
+      runConnectionId: 'conn-the-run',
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'wf-1',
+    });
+
+    const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
+    expect(args.create.authorizedConnectionIds).toEqual(['conn-the-run']);
+  });
+
   it('records who launched this execution, and which execution, on create only', async () => {
     findVersion.mockResolvedValue({ spec: validSpec } as never);
     await createWorkflowRun({

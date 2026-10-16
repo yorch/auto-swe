@@ -78,6 +78,7 @@ document for everything else.
 |---|---|---|
 | `searchDocs` | read | Search the living docs (D7) |
 | `getPageContext` | read | What the user is looking at (D8) |
+| `workflowInventory` | read | Node types, registered steps and built-in templates, and which templates use each, from code (D7) |
 | `findRuns`, `getRunDiagnosis` | read | Locate runs; return status, failed steps, step errors and trace excerpts as fenced untrusted data |
 | `checkConfigHealth` | read | Readiness: integrations, models, credentials present (never their values), worker health |
 | `listTemplates`, `explainTemplate` | read | Find and describe workflow templates |
@@ -140,6 +141,13 @@ lifecycle that platform docs do not need).
 `/app/docs`. The search matches a section only when it holds every term, which a model's full sentence
 rarely does, so when that finds nothing the tool ranks sections by how many of the query's longer
 words they hold.
+**Update (2026-10-15, implementation)**: A section is capped at 1,500 characters, which would cut the
+generated catalog tables to their first rows. A section over the cap because of a table is cut
+by rows — the rows matching the most query terms with the table's header, the prose before it, the
+other rows in table order, then the prose after it — and the result counts the rows left out.
+Catalog questions ("which steps exist", "which templates use X") have a tool of their own,
+`workflowInventory`, which reads `collectWorkflowInventory()`, the data `docs/workflow-inventory.md`
+is rendered from, so it is complete and cannot drift from the page.
 
 ## D8 — 2026-10-14 — Surface and conversation model
 

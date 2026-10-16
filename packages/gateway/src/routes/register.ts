@@ -6,6 +6,7 @@ import { agentRunRoutes } from './agentRuns.js';
 import { agentVersionRoutes } from './agentVersions.js';
 import { assistantActionRoutes } from './assistantActions.js';
 import { assistantConversationRoutes } from './assistantConversations.js';
+import { assistantDiagnosticsRoutes } from './assistantDiagnostics.js';
 import { automationRoutes } from './automations.js';
 import { autonomyPolicyRoutes } from './autonomyPolicies.js';
 import { bundleRoutes } from './bundles.js';
@@ -138,6 +139,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   // Deprecated alias — kept for one release.
   await app.register(securityEventRoutes, { prefix: '/api/v1/admin' });
   await app.register(usageRoutes, { prefix: '/api/v1/platform' });
+  await app.register(assistantDiagnosticsRoutes, { prefix: '/api/v1/platform' });
   await app.register(readinessRoutes, { prefix: '/api/v1/platform' });
   await app.register(orgMembersRoutes, { prefix: '/api/v1/platform/organizations' });
   // Deprecated alias — kept for one release.

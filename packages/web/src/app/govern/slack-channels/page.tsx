@@ -186,7 +186,7 @@ export default function GovernSlackChannelsPage() {
                           </Td>
                           <Td
                             align="right"
-                            className="px-4 py-3 text-[13px] text-paper-300 tabular-nums"
+                            className="px-4 py-3 text-sm text-paper-300 tabular-nums"
                           >
                             {spendLabel(ch)}
                             <SpendMeter channel={ch} />

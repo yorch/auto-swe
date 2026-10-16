@@ -58,7 +58,7 @@ function StudioModelConfigPageInner() {
         }
         title="Model configuration"
       />
-      <p className="max-w-3xl rounded-lg border border-ink-500/70 bg-ink-900/30 px-4 py-3 text-[13px] leading-relaxed text-paper-300">
+      <p className="max-w-3xl rounded-lg border border-ink-500/70 bg-ink-900/30 px-4 py-3 text-sm leading-relaxed text-paper-300">
         <strong className="text-paper-100">Start here:</strong> add a provider credential first.
         Without one, no agent can call a model, and the worker will not start until the required
         credentials exist, so no run can begin.

@@ -123,7 +123,7 @@ export function AuthLayout({
         )}
         <Card className="rounded-2xl p-6 sm:p-8">{children}</Card>
         {footer && (
-          <div className="mt-6 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-[13px] text-paper-500">
+          <div className="mt-6 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-sm text-paper-500">
             {footer}
           </div>
         )}

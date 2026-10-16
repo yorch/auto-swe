@@ -164,7 +164,7 @@ function FirstRunChecklistBody() {
             {!step.done && (
               <Link
                 className={cn(
-                  'inline-flex shrink-0 items-center gap-1 rounded-sm text-[13px] hover:underline',
+                  'inline-flex shrink-0 items-center gap-1 rounded-sm text-sm hover:underline',
                   step.id === nextId ? 'font-medium text-ember-400' : 'text-paper-300',
                   FOCUS_RING
                 )}

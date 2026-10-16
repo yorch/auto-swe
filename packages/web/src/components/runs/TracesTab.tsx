@@ -6,6 +6,7 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { ExpandablePre } from '@/components/ui/ExpandablePre';
 import { Icon } from '@/components/ui/Icon';
 import { attributeTrace, type TraceLinker, traceMatchesSelection } from '@/lib/traceLinkage';
 import { FILTER_BAR_HEIGHT_VAR, groupHeaderTop } from '@/lib/traceSticky';
@@ -43,7 +44,7 @@ const TEXT_ACTION = cn(
 );
 
 /** The caption above a trace body block ("Input", "System prompt"). */
-const BLOCK_CAPTION = 'mb-1 text-[11px] font-medium text-paper-500';
+const BLOCK_CAPTION = 'mb-1 text-xs font-medium text-paper-500';
 
 /** Strip provider prefix from a model spec: `anthropic/claude-opus-5-5` → `claude-opus-5-5` */
 function modelShortName(model: string): string {
@@ -147,12 +148,34 @@ function CollapsibleSection({
 
 const BODY_LIMIT = 3000;
 
-/** The mono block every trace body renders into. */
-function TracePre({ children }: { children: ReactNode }) {
+/**
+ * The mono block every trace body renders into. It expands in place rather than
+ * scrolling: the trace stream is itself a scrolling pane, and a scroll box inside
+ * it takes the wheel away from the stream.
+ */
+function TracePre({
+  children,
+  expanded,
+  hasMore,
+  moreLabel,
+  onExpandedChange,
+}: {
+  children: ReactNode;
+  expanded: boolean;
+  hasMore: boolean;
+  moreLabel: string;
+  onExpandedChange: (expanded: boolean) => void;
+}) {
   return (
-    <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-all rounded-md border border-ink-500/70 bg-ink-900 px-3 py-2.5 font-mono text-[11.5px] leading-relaxed text-paper-300">
+    <ExpandablePre
+      className="whitespace-pre-wrap break-all rounded-md border border-ink-500/70 bg-ink-900 px-3 py-2.5 font-mono text-xs leading-relaxed text-paper-300"
+      expanded={expanded}
+      hasMore={hasMore}
+      labels={{ less: 'show less', more: moreLabel }}
+      onExpandedChange={onExpandedChange}
+    >
       {children}
-    </pre>
+    </ExpandablePre>
   );
 }
 
@@ -177,24 +200,21 @@ function capped(text: string): string {
 /**
  * A trace body capped by `capped()`, with a toggle to render all of it. The cap
  * keeps a long page responsive; it should not be the reason a payload the
- * browser already holds cannot be read.
+ * browser already holds cannot be read. One toggle lifts both the character cap
+ * and the height cut.
  */
 function CappedPre({ text }: { text: string }) {
   const [expanded, setExpanded] = useState(false);
   const isCapped = text.length > BODY_LIMIT;
   return (
-    <>
-      <TracePre>{expanded ? text : capped(text)}</TracePre>
-      {isCapped && (
-        <button
-          className={cn(TEXT_ACTION, 'mt-1')}
-          onClick={() => setExpanded((v) => !v)}
-          type="button"
-        >
-          {expanded ? 'show less' : `show all (${formatCount(text.length)} chars)`}
-        </button>
-      )}
-    </>
+    <TracePre
+      expanded={expanded}
+      hasMore={isCapped}
+      moreLabel={isCapped ? `show all (${formatCount(text.length)} chars)` : 'show all'}
+      onExpandedChange={setExpanded}
+    >
+      {expanded ? text : capped(text)}
+    </TracePre>
   );
 }
 
@@ -217,25 +237,17 @@ function TruncatedText({ text }: { text: string }) {
   const displayed = isTruncated && !expanded ? text.slice(0, TRUNCATE_LIMIT) : text;
 
   return (
-    <>
-      <TracePre>
-        {displayed}
-        {isTruncated && !expanded ? '…' : ''}
-      </TracePre>
-      {isTruncated && (
-        <button
-          className={cn(TEXT_ACTION, 'mt-1')}
-          onClick={(e) => {
-            e.stopPropagation();
-            setExpanded((v) => !v);
-          }}
-          onKeyDown={(e) => e.stopPropagation()}
-          type="button"
-        >
-          {expanded ? 'show less' : `show more (${text.length - TRUNCATE_LIMIT} more chars)`}
-        </button>
-      )}
-    </>
+    <TracePre
+      expanded={expanded}
+      hasMore={isTruncated}
+      moreLabel={
+        isTruncated ? `show more (${text.length - TRUNCATE_LIMIT} more chars)` : 'show all'
+      }
+      onExpandedChange={setExpanded}
+    >
+      {displayed}
+      {isTruncated && !expanded ? '…' : ''}
+    </TracePre>
   );
 }
 
@@ -385,7 +397,7 @@ function TokenCostChip({ trace }: { trace: AgentTraceRecord }) {
 
   return (
     <span
-      className="tabular shrink-0 text-[11px] text-paper-500"
+      className="tabular shrink-0 text-xs text-paper-500"
       title={
         hasTokens
           ? `${formatCount(trace.inputTokens ?? 0)} input / ${formatCount(trace.outputTokens ?? 0)} output tokens`
@@ -417,7 +429,7 @@ function OtelLink({ trace }: { trace: AgentTraceRecord }) {
     ? `${GRAFANA_URL}/explore?left=${encodeURIComponent(JSON.stringify({ queries: [{ datasource: { type: 'tempo' }, query: trace.otelTraceId, queryType: 'traceId', refId: 'A' }] }))}`
     : null;
 
-  const inner = 'shrink-0 rounded-sm font-mono text-[11px] text-paper-500';
+  const inner = 'shrink-0 rounded-sm font-mono text-xs text-paper-500';
 
   return href ? (
     <a
@@ -485,7 +497,7 @@ function EventRow({
 
             {/* Event kind */}
             <Badge
-              className="w-10 shrink-0 justify-center text-[11px]"
+              className="w-10 shrink-0 justify-center text-xs"
               title={glyph.title}
               tone={glyph.tone}
             >
@@ -504,7 +516,7 @@ function EventRow({
 
             {/* Detail / model */}
             {detail && (
-              <span className="flex-1 truncate font-mono text-[11px] text-paper-500">{detail}</span>
+              <span className="flex-1 truncate font-mono text-xs text-paper-500">{detail}</span>
             )}
           </button>
 
@@ -513,7 +525,7 @@ function EventRow({
             <TokenCostChip trace={trace} />
             <OtelLink trace={trace} />
             {durationLabel && (
-              <span className="tabular text-[11px] text-paper-500">{durationLabel}</span>
+              <span className="tabular text-xs text-paper-500">{durationLabel}</span>
             )}
             {hasError && (
               <Badge dot tone="brick">
@@ -694,7 +706,7 @@ export function TracesTab({
         >
           <span className="text-xs text-paper-500">
             Filtered to{' '}
-            <span className="rounded-sm bg-ink-600 px-1.5 py-px font-mono text-[11px] text-paper-200 max-lg:break-all">
+            <span className="rounded-sm bg-ink-600 px-1.5 py-px font-mono text-xs text-paper-200 max-lg:break-all">
               {filterNodeId}
             </span>
           </span>
@@ -763,27 +775,27 @@ export function TracesTab({
                       </span>
                       {group.nodeLabels.length > 0 &&
                         !group.nodeLabels.includes(group.activityName) && (
-                          <span className="font-mono text-[11px] text-paper-500">
+                          <span className="font-mono text-xs text-paper-500">
                             ({group.activityName})
                           </span>
                         )}
                       {group.ambiguous && (
                         <span
                           aria-describedby={noteId}
-                          className="rounded-md bg-amber-400/15 px-1.5 py-px text-[11px] font-medium text-amber-400"
+                          className="rounded-md bg-amber-400/15 px-1.5 py-px text-xs font-medium text-amber-400"
                         >
                           Ambiguous
                         </span>
                       )}
-                      <span className="tabular text-[11px] text-paper-500">
+                      <span className="tabular text-xs text-paper-500">
                         Attempt {group.attempt}
                       </span>
                       {group.stepAttempt !== null && group.stepAttempt > 1 && (
-                        <span className="tabular text-[11px] text-paper-500">
+                        <span className="tabular text-xs text-paper-500">
                           · node attempt {group.stepAttempt}
                         </span>
                       )}
-                      <span className="tabular ml-auto text-[11px] text-paper-500">
+                      <span className="tabular ml-auto text-xs text-paper-500">
                         {group.traces.length} event{group.traces.length !== 1 ? 's' : ''}
                       </span>
                     </div>

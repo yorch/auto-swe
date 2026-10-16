@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Checkbox } from '@/components/ui/Checkbox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
@@ -18,12 +19,17 @@ import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
   type CatalogEntryInput,
   type ModelSuggestion,
+  type PriceHint,
+  type PriceHintResult,
+  useBatchCreateCatalogEntries,
   useCreateCatalogEntry,
   useDeleteCatalogEntry,
   useDiscoverModels,
   useDismissSuggestion,
   useModelCatalog,
   useModelSuggestions,
+  usePriceHints,
+  usePriceHintsBatch,
   useResetCatalogEntry,
   useUnpricedModels,
   useUpdateCatalogEntry,
@@ -52,6 +58,7 @@ const STATUS_TONE = { ACTIVE: 'moss', DEPRECATED: 'amber', RETIRED: 'muted' } as
 /** `DEPRECATED` → `Deprecated`, for an enum value shown as a label. */
 const sentence = (v: string) => v.charAt(0) + v.slice(1).toLowerCase();
 const kindLabel = (kind: ModelKind) => (kind === 'EMBEDDING' ? 'Embedding' : sentence(kind));
+const usd = (n: number) => `$${n}`;
 
 /// The model catalog: the per-MTok prices every LLM and embedding call is
 /// costed at. A model with no entry is recorded at $0, which USD budgets never
@@ -97,7 +104,7 @@ export function CatalogTab() {
             </Button>
           </div>
         </CardHeader>
-        <p className="-mt-1 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+        <p className="-mt-1 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
           Built-in models follow the prices code ships until edited; an edit marks the row
           customized and keeps it. Edits reach the worker within the config cache window, and never
           reprice calls already recorded.
@@ -252,7 +259,7 @@ function UnpricedPanel({ onAdd }: { onAdd: (spec: string) => void }) {
       <CardHeader>
         <CardTitle eyebrow="Unpriced in use">Recorded at $0</CardTitle>
       </CardHeader>
-      <p className="-mt-1 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+      <p className="-mt-1 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
         These models are configured or were called in the last 30 days, but nothing prices them, so
         their spend never reaches a USD budget. Add each one, or fix a misspelled spec.
       </p>
@@ -281,6 +288,26 @@ function UnpricedPanel({ onAdd }: { onAdd: (spec: string) => void }) {
         </tbody>
       </Table>
     </Card>
+  );
+}
+
+/// A discovered model's published price, from the batch hint call: what the
+/// Add form would prefill. Only a suggestion; the catalog has no row yet.
+function SuggestedPrice({ hint, loading }: { hint: PriceHint | undefined; loading: boolean }) {
+  if (!hint) {
+    return <span className="text-paper-500">{loading ? '…' : 'No published price'}</span>;
+  }
+  return (
+    <span
+      title={`Suggested by ${hint.source === 'provider' ? 'the provider listing' : 'the price list'} (${hint.matchedId})`}
+    >
+      <span className="text-paper-300">
+        {usd(hint.inputUsdPerMTok)} / {usd(hint.outputUsdPerMTok)}
+      </span>{' '}
+      <span className="text-paper-500">
+        per MTok · {hint.source === 'provider' ? 'listing' : 'price list'}
+      </span>
+    </span>
   );
 }
 
@@ -327,6 +354,54 @@ function DiscoveryPanel({
             ? 'Nothing new from the providers that could be listed.'
             : 'Nothing new — every listed model is priced.';
 
+  const hintBatch = usePriceHintsBatch(
+    fresh.map((m) => ({ modelId: m.modelId, provider: m.provider }))
+  );
+  const hintsBySpec = new Map(
+    (hintBatch.data ?? []).map((h) => [`${h.provider}/${h.modelId}`, h.hints[0]])
+  );
+
+  // Bulk add: only a model with a suggested price can be ticked, and nothing is
+  // written until the admin confirms the list of specs and prices.
+  const batchCreate = useBatchCreateCatalogEntries();
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirmingBulk, setConfirmingBulk] = useState(false);
+  const selectable = fresh.filter((m) => m.dismissedAt === null && hintsBySpec.get(m.spec));
+  const chosen = selectable.filter((m) => selected.has(m.spec));
+  const toggle = (spec: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(spec)) {
+        next.add(spec);
+      }
+      return next;
+    });
+  // One request for the whole selection: the gateway adds all of it or none.
+  const addChosen = async () => {
+    await batchCreate.mutateAsync(
+      chosen.flatMap((m) => {
+        const hint = hintsBySpec.get(m.spec);
+        return hint
+          ? [
+              {
+                cacheReadMultiplier: hint.cacheReadMultiplier ?? null,
+                cacheWrite1hMultiplier: hint.cacheWrite1hMultiplier ?? null,
+                cacheWrite5mMultiplier: hint.cacheWrite5mMultiplier ?? null,
+                displayName: m.displayName,
+                inputUsdPerMTok: hint.inputUsdPerMTok,
+                kind: m.kind,
+                modelId: m.modelId,
+                notes: `Price suggested by ${hintSourceName(hint, m.provider)} (${hint.matchedId}); added in bulk from discovery.`,
+                outputUsdPerMTok: hint.outputUsdPerMTok,
+                provider: m.provider,
+              },
+            ]
+          : [];
+      })
+    );
+    setSelected(new Set());
+  };
+
   const dismissButton = (s: ModelSuggestion) => (
     <Button
       disabled={dismiss.isPending}
@@ -349,12 +424,17 @@ function DiscoveryPanel({
               label="Show dismissed"
               onChange={() => setShowDismissed((v) => !v)}
             />
+            {chosen.length > 0 && (
+              <Button onClick={() => setConfirmingBulk(true)} size="sm" variant="secondary">
+                Add {chosen.length} at suggested prices
+              </Button>
+            )}
             <Button disabled={discover.isPending} onClick={() => discover.mutate()} size="sm">
               {discover.isPending ? 'Checking…' : 'Check providers now'}
             </Button>
           </div>
         </CardHeader>
-        <p className="-mt-1 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+        <p className="-mt-1 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
           Providers are asked on a schedule, through each global provider credential. Nothing is
           added to the catalog until you add it — with its price.{' '}
           {lastChecked
@@ -372,7 +452,7 @@ function DiscoveryPanel({
           </p>
         ))}
         {data && fresh.length === 0 ? (
-          <p className="rounded-lg border border-dashed border-ink-400 px-4 py-3 text-[13px] text-paper-400">
+          <p className="rounded-lg border border-dashed border-ink-400 px-4 py-3 text-sm text-paper-400">
             {emptyMessage}
           </p>
         ) : (
@@ -380,6 +460,15 @@ function DiscoveryPanel({
             <tbody>
               {fresh.map((m) => (
                 <TRow key={m.id}>
+                  <Td className="w-8 py-1.5">
+                    {selectable.includes(m) && (
+                      <Checkbox
+                        checked={selected.has(m.spec)}
+                        label={<span className="sr-only">Select {m.spec}</span>}
+                        onChange={() => toggle(m.spec)}
+                      />
+                    )}
+                  </Td>
                   <Td className="py-1.5">
                     <div className={`font-mono text-xs ${m.dismissedAt ? 'text-paper-500' : ''}`}>
                       {m.spec}
@@ -387,6 +476,9 @@ function DiscoveryPanel({
                     {m.displayName && <div className="text-xs text-paper-500">{m.displayName}</div>}
                   </Td>
                   <Td className="py-1.5 text-xs text-paper-300">{kindLabel(m.kind)}</Td>
+                  <Td className="py-1.5 text-xs">
+                    <SuggestedPrice hint={hintsBySpec.get(m.spec)} loading={hintBatch.isFetching} />
+                  </Td>
                   <Td className="py-1.5 text-xs text-paper-500">
                     First seen {formatDate(m.firstSeenAt)}
                   </Td>
@@ -414,12 +506,43 @@ function DiscoveryPanel({
         )}
       </Card>
 
+      <ConfirmModal
+        closeOnConfirm
+        confirmLabel={`Add ${chosen.length}`}
+        message={
+          <div className="space-y-3">
+            <p>
+              Each model is added at its suggested price, and its notes say where the price came
+              from. All of them are added, or none is. Check the figures against each provider's
+              pricing page: they decide what USD budgets see.
+            </p>
+            <ul className="space-y-1 text-xs">
+              {chosen.map((m) => {
+                const hint = hintsBySpec.get(m.spec);
+                return (
+                  <li key={m.spec}>
+                    <span className="font-mono">{m.spec}</span>
+                    {hint &&
+                      ` — ${usd(hint.inputUsdPerMTok)} / ${usd(hint.outputUsdPerMTok)} per MTok, from ${hintSourceName(hint, m.provider)}`}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        }
+        onClose={() => setConfirmingBulk(false)}
+        onConfirm={addChosen}
+        open={confirmingBulk && chosen.length > 0}
+        pendingLabel="Adding…"
+        title={`Add ${chosen.length} model${chosen.length === 1 ? '' : 's'} to the catalog`}
+      />
+
       {retired.length > 0 && (
         <Card className="p-5 sm:p-6">
           <CardHeader>
             <CardTitle eyebrow="Possibly retired">Priced, but no longer listed</CardTitle>
           </CardHeader>
-          <p className="-mt-1 mb-4 max-w-3xl text-[13px] leading-relaxed text-paper-400">
+          <p className="-mt-1 mb-4 max-w-3xl text-sm leading-relaxed text-paper-400">
             A provider whose listing succeeded no longer lists these. Nothing is retired for you: a
             pinned agent version may still bill against one, and a provider may serve an alias it
             does not list. Edit the row to mark it deprecated or retired, or dismiss the flag.
@@ -462,6 +585,71 @@ function cacheHint(builtinRate: number | undefined): string {
   return builtinRate === undefined ? 'Blank: built-in rate' : `Blank: ${builtinRate}×`;
 }
 
+/** Where a hint came from, as the form names it. */
+function hintSourceName(hint: Pick<PriceHint, 'source' | 'url'>, provider: string): string {
+  if (hint.source === 'provider') {
+    return `${provider}'s model listing`;
+  }
+  try {
+    return hint.url ? `the price list at ${new URL(hint.url).host}` : 'the price list';
+  } catch {
+    return 'the price list';
+  }
+}
+
+/// What the Add form found published for the spec being added: the hint it
+/// prefilled from, any other source's price with a "Use", and a source that
+/// could not be read. A prefilled price is still the admin's to check.
+function PriceHintPanel({
+  applied,
+  loading,
+  onUse,
+  provider,
+  result,
+}: {
+  applied: PriceHint | null;
+  loading: boolean;
+  onUse: (hint: PriceHint) => void;
+  provider: string;
+  result: PriceHintResult | undefined;
+}) {
+  if (loading) {
+    return <p className="text-xs text-paper-500">Looking up published prices…</p>;
+  }
+  if (!result) {
+    return null;
+  }
+  const others = result.hints.filter((h) => h !== applied);
+  return (
+    <div className="space-y-1 text-xs text-paper-500">
+      {applied && (
+        <Alert announce={false} variant="info">
+          Prices prefilled from {hintSourceName(applied, provider)} (
+          <span className="font-mono">{applied.matchedId}</span>). Check them against the provider's
+          pricing page before saving.
+        </Alert>
+      )}
+      {others.map((h) => (
+        <div className="flex items-center justify-between gap-2" key={h.source}>
+          <span>
+            {hintSourceName(h, provider)}: {usd(h.inputUsdPerMTok)} / {usd(h.outputUsdPerMTok)} per
+            MTok
+          </span>
+          <Button onClick={() => onUse(h)} size="sm" variant="ghost">
+            Use
+          </Button>
+        </div>
+      ))}
+      {result.hints.length === 0 && <p>No published price found for this model.</p>}
+      {result.unavailable.map((u) => (
+        <p key={u.source}>
+          Could not read {hintSourceName(u, provider)}: {u.reason}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function EntryModal({
   existing,
   initial,
@@ -487,6 +675,55 @@ function EntryModal({
   const { error, saving, submit } = useIntegrationConfigForm();
   const create = useCreateCatalogEntry();
   const update = useUpdateCatalogEntry();
+
+  // Published prices for the spec being added, looked up once typing settles.
+  const [hintSpec, setHintSpec] = useState({
+    modelId: initial?.modelId ?? '',
+    provider: initial?.provider ?? '',
+  });
+  useEffect(() => {
+    if (existing) {
+      return;
+    }
+    const timer = setTimeout(
+      () => setHintSpec({ modelId: modelId.trim(), provider: provider.trim() }),
+      500
+    );
+    return () => clearTimeout(timer);
+  }, [existing, modelId, provider]);
+  const hints = usePriceHints(hintSpec.provider, hintSpec.modelId, !existing);
+  const [applied, setApplied] = useState<PriceHint | null>(null);
+  const [seenHints, setSeenHints] = useState<PriceHintResult | undefined>(undefined);
+
+  const fill = (hint: PriceHint | null) => {
+    const text = (n: number | undefined) => (n === undefined ? '' : String(n));
+    setInput(text(hint?.inputUsdPerMTok));
+    setOutput(text(hint?.outputUsdPerMTok));
+    setCacheRead(text(hint?.cacheReadMultiplier));
+    setCacheWrite5m(text(hint?.cacheWrite5mMultiplier));
+    setCacheWrite1h(text(hint?.cacheWrite1hMultiplier));
+    setApplied(hint);
+  };
+  // A new answer prefills only prices nobody has typed: blank ones, or the ones
+  // the previous answer filled and the admin left alone.
+  if (hints.data && hints.data !== seenHints) {
+    setSeenHints(hints.data);
+    const untouched =
+      (input === '' && output === '') ||
+      (applied !== null &&
+        input === String(applied.inputUsdPerMTok) &&
+        output === String(applied.outputUsdPerMTok));
+    if (untouched) {
+      fill(hints.data.hints[0] ?? null);
+    }
+  }
+  // Once the admin types over a prefilled price, it is no longer the hint's.
+  const prefilled =
+    applied &&
+    input === String(applied.inputUsdPerMTok) &&
+    output === String(applied.outputUsdPerMTok)
+      ? applied
+      : null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -571,6 +808,15 @@ function EntryModal({
             value={output}
           />
         </div>
+        {!existing && (
+          <PriceHintPanel
+            applied={prefilled}
+            loading={hints.isFetching}
+            onUse={fill}
+            provider={hintSpec.provider}
+            result={hints.data}
+          />
+        )}
         <div className="grid grid-cols-3 gap-4">
           <Input
             hint={cacheHint(existing?.cacheDefaults?.cacheReadMultiplier)}

@@ -190,9 +190,7 @@ export function Modal({
             <h2 className="text-xl font-semibold tracking-[-0.01em] text-paper-50" id={titleId}>
               {title}
             </h2>
-            {subtitle && (
-              <div className="text-[13px] leading-relaxed text-paper-400">{subtitle}</div>
-            )}
+            {subtitle && <div className="text-sm leading-relaxed text-paper-400">{subtitle}</div>}
           </div>
           {/* close() fires the dialog's close event, which calls onClose once. */}
           <button

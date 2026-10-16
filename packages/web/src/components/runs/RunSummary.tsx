@@ -6,6 +6,7 @@ import { HumanStepCard } from '@/components/approvals/HumanStepCard';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
+import { ExpandablePre } from '@/components/ui/ExpandablePre';
 import { Icon } from '@/components/ui/Icon';
 import type { useApprovals } from '@/hooks/useApprovals';
 import { classifyAgentRunFailure } from '@/lib/agentRun';
@@ -160,9 +161,12 @@ export function RunSummary({
             />
             Recorded output
           </summary>
-          <pre className="mt-3 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-md border border-ink-500/50 bg-ink-950/50 p-3 font-mono text-xs leading-relaxed text-paper-300">
+          <ExpandablePre
+            className="mt-3 whitespace-pre-wrap break-words rounded-md border border-ink-500/50 bg-ink-950/50 p-3 font-mono text-xs leading-relaxed text-paper-300"
+            collapsedHeight="24rem"
+          >
             {typeof run.result === 'string' ? run.result : JSON.stringify(run.result, null, 2)}
-          </pre>
+          </ExpandablePre>
         </details>
       )}
       {!full && run.status === 'SUCCESS' && run.result == null && (

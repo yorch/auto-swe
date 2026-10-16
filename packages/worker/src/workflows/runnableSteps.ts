@@ -283,10 +283,11 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
   [
     // Evals P2 declarative eval node: score a target value with a list of scorers.
     'runEvalNode',
-    ({ config }) =>
+    ({ config, dispatchKey }) =>
       evalNodeActivities.runEvalNode({
         candidateRef: config.candidateRef as string | undefined,
         judgeAdvisory: config.judgeAdvisory as boolean | undefined,
+        nodeId: dispatchKey,
         scorers: config.scorers as Parameters<typeof evalNodeActivities.runEvalNode>[0]['scorers'],
         spanName: config.spanName as string | undefined,
         targetValue: config.targetValue,
@@ -472,6 +473,14 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     },
   ],
   ['listProviderModels', ({ request }) => catalogActivities.listProviderModels({ request })],
+  [
+    'checkPriceListNotes',
+    ({ ctx, request, inputs }) =>
+      catalogActivities.checkPriceListNotes({
+        codeResult: pickCodeResult(inputs.codeResult, ctx),
+        request,
+      }),
+  ],
   [
     'triageCiFailure',
     ({ request, config }) => {
@@ -873,10 +882,12 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
     'publishOutcome',
     ({ config, ctx, inputs }) =>
       genericActivities.publishOutcome({
-        action:
-          (inputs.action as string | undefined) ??
-          (config.action as string | undefined) ??
-          'external_communication',
+        // `config.action` only, with the step registry's default. A class a payload can bind is a
+        // class its *launcher* chooses, and the standing contract is that a requirement from any
+        // class holds every mutation — so a launcher binding a class the policy auto-approves
+        // would walk a write through a gate it set itself. `specCheck` refuses a template that
+        // binds this at all, so a spec that does is refused rather than silently reinterpreted.
+        action: (config.action as string | undefined) ?? 'external_communication',
         description: inputs.description as string | undefined,
         workflowId: (ctx.workflow as { id: string }).id,
       }),

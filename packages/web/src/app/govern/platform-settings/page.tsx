@@ -205,7 +205,7 @@ export default function GovernSettingsPage() {
         <summary className="cursor-pointer select-none rounded-lg px-4 py-3 text-sm font-medium text-paper-100 outline-none focus-visible:ring-2 focus-visible:ring-ember-400">
           How settings resolve
         </summary>
-        <div className="space-y-3 border-t border-ink-600 px-4 py-4 text-[13px] leading-relaxed text-paper-300">
+        <div className="space-y-3 border-t border-ink-600 px-4 py-4 text-sm leading-relaxed text-paper-300">
           <p>
             Each setting resolves through a cascade of scopes <HelpTip term="scopeCascade" />.
           </p>
@@ -366,7 +366,7 @@ export default function GovernSettingsPage() {
                 </span>
               </CardHeader>
               {GROUP_BLURBS[group] && (
-                <p className="mb-4 max-w-prose text-[13px] leading-relaxed text-paper-400">
+                <p className="mb-4 max-w-prose text-sm leading-relaxed text-paper-400">
                   {GROUP_BLURBS[group]}
                 </p>
               )}
@@ -414,7 +414,7 @@ export default function GovernSettingsPage() {
                   <li key={group}>
                     <a
                       className={cn(
-                        '-ml-px flex items-baseline justify-between gap-2 border-l border-transparent py-1.5 pl-3 text-[13px] text-paper-300 hover:border-ember-400 hover:text-paper-100',
+                        '-ml-px flex items-baseline justify-between gap-2 border-l border-transparent py-1.5 pl-3 text-sm text-paper-300 hover:border-ember-400 hover:text-paper-100',
                         FOCUS_RING
                       )}
                       href={`#group-${group}`}

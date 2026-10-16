@@ -97,31 +97,46 @@ action.
 A `require_approval` decision does not fail the run. It converts the step into a wait, which the
 inbox and the Slack teammate both surface the same way any other human gate is surfaced.
 
+The `policy` scorer is the exception: it never waits. It passes only when the class resolves to
+`auto`; any other action — `require_approval`, or a class the policy does not name — fails that
+floor scorer, which blocks the eval, and the `eval` node's `onFail` decides what happens next
+(`block` fails the run, `warn` carries on). See [evals.md §2](./evals.md#2-the-eval-node).
+
 ### 4.1 The mutation boundary
 
 A recorded decision is only a gate if the step that performs the action checks it. That check lives
 in `packages/worker/src/lib/externalWrite.ts` and covers the three workflow steps that change
 something outside the platform — `writeOutcome`, `runTool` and `mcpCallTool`:
 
-- Before a mutation, the latest `publish` decision for the run is read. If it is `require_approval`
-  and no `approve` was recorded after it, the step is refused with a non-retryable
-  `APPROVAL_REQUIRED`. A run that recorded no `publish` decision is not gated — the policy exists
-  where something asked for it.
+- Before a mutation, the latest `publish` decision for the run **that required approval** is read. If
+  no `approve` was recorded after it, the step is refused with a non-retryable `APPROVAL_REQUIRED`.
+  A run that recorded no such decision is not gated — the policy exists where something asked for it.
 - The decision is matched to the **run**, not to the action: a run-wide requirement, from any risk
   class, holds every mutation until it is satisfied, and the guard cannot tell an approval for one
   human step from an approval for another. A template that gates one action and then performs an
   unrelated write is therefore held by the first gate. That is the conservative direction, and it is
-  the same rule `writeOutcome` has always used.
+  the same rule `writeOutcome` has always used. It also means a later decision that would have
+  allowed something else cannot clear an earlier requirement: the guard reads the latest
+  *requirement*, not the latest decision.
+- The risk class is the template's to declare, not the run's: `publishOutcome` reads `config.action`
+  and ignores an `action` input, and `validateSpec` refuses a spec that supplies one
+  (`ACTION_CLASS_BOUND`). A payload-fillable class would let whoever supplies the payload choose the
+  class it is judged by — and since a requirement from any class holds every mutation, that is a gate
+  the claimant sets for itself.
 - Connector tools that only read (`fetchTicket`, `fetchIssue`) are exempt: they change nothing, so
   they are neither gated nor recorded. So is an MCP tool its server declares read-only with the
   protocol's `readOnlyHint` annotation. Every other call — including an MCP tool with no annotation,
   whose `readOnlyHint` defaults to false — is treated as a mutation.
-- A mutation is also recorded against the outcome ledger (see
-  [architecture.md §4](./architecture.md#4-workflow-engine)). A retry that arrives after the row is
-  written returns the recorded result rather than repeating the effect. This is *completed-result
-  caching, not exactly-once delivery*: the remote call and the row are not one transaction, so a
-  mutation that succeeds and then crashes before its row is written is repeated by the retry, and two
-  concurrent attempts can both observe no row.
+- A mutation is also claimed against the outcome ledger (see
+  [architecture.md §4](./architecture.md#4-workflow-engine)): the claim is written **before** the
+  provider is called and completed with what it returned. A retry that finds a completed row returns
+  that result instead of repeating the effect, and one that finds a bare claim is refused with a
+  non-retryable `OUTCOME_AMBIGUOUS` — the provider may have acted and the attempt that called it
+  recorded nothing, so repeating it is how one effort becomes two. A connector that refused before
+  sending anything (`notSent`) releases the claim instead, so a refused call stays retryable. Two
+  limits remain, stated because they are what this is not: a **new run** for the same work starts with
+  an empty ledger, since a restart is a new workflow id, and a claim whose outcome was never learned
+  has to be resolved by a person — nothing here clears it on its own.
 
 Outside this boundary:
 

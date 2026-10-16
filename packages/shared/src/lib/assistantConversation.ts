@@ -43,6 +43,52 @@ export const MAX_ASSISTANT_MESSAGE_CHARS = 8000;
 /** Longest conversation title, taken from the start of its first message. */
 export const MAX_ASSISTANT_TITLE_CHARS = 80;
 
+/** Longest admin-only failure detail kept on a FAILED reply (`AssistantMessage.errorDetail`). */
+export const MAX_ASSISTANT_ERROR_DETAIL_CHARS = 2000;
+
+/** Causes followed when describing an error; deeper ones are dropped. */
+const ERROR_DETAIL_CAUSE_DEPTH = 3;
+
+/**
+ * The failure detail for a reply whose turn never reported back: the activity timed out or its
+ * worker stopped, so there is no error to describe. Temporal's history for the conversation
+ * workflow has the rest.
+ */
+export const ASSISTANT_TURN_LOST_DETAIL =
+  'The turn did not complete: the activity timed out or its worker stopped. See the conversation ' +
+  "workflow's history in Temporal.";
+
+/** The failure detail for a reply whose turn could not be handed to the conversation workflow. */
+export const ASSISTANT_TURN_NOT_STARTED_DETAIL =
+  'The turn could not be handed to the conversation workflow: ';
+
+function describeOne(err: unknown): string {
+  if (!(err instanceof Error)) {
+    return String(err);
+  }
+  const type = (err as { type?: unknown }).type;
+  const head = typeof type === 'string' && type ? `${err.name} [${type}]` : err.name;
+  return err.message ? `${head}: ${err.message}` : head;
+}
+
+/**
+ * Describe why an assistant turn failed, for an admin: the error's name, its failure type when it
+ * carries one (`BUDGET_EXCEEDED`), its message, and the first few causes it wraps. Cut to
+ * {@link MAX_ASSISTANT_ERROR_DETAIL_CHARS}.
+ */
+export function assistantErrorDetail(err: unknown, prefix = ''): string {
+  const parts = [describeOne(err)];
+  let cause = err instanceof Error ? err.cause : undefined;
+  for (let depth = 0; cause !== undefined && depth < ERROR_DETAIL_CAUSE_DEPTH; depth += 1) {
+    parts.push(`caused by ${describeOne(cause)}`);
+    cause = cause instanceof Error ? cause.cause : undefined;
+  }
+  const text = prefix + parts.join(' — ');
+  return text.length <= MAX_ASSISTANT_ERROR_DETAIL_CHARS
+    ? text
+    : `${text.slice(0, MAX_ASSISTANT_ERROR_DETAIL_CHARS - 1)}…`;
+}
+
 /** The kinds of entity a dashboard page can be about. */
 export const ASSISTANT_PAGE_ENTITY_TYPES = [
   'run',

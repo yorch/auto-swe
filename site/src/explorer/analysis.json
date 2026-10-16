@@ -6723,8 +6723,8 @@
       "anchor": "const DURATION_RE =",
       "before": 8,
       "id": "waitDuration",
-      "lines": 40,
-      "path": "packages/shared/src/workflow/spec.ts",
+      "lines": 34,
+      "path": "packages/shared/src/workflow/waitDuration.ts",
       "title": "Wait and human-step timeouts must be positive durations"
     },
     {

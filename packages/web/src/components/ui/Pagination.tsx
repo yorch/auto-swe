@@ -23,7 +23,7 @@ export function Pagination({
   }
   return (
     <nav aria-label="Pagination" className="flex items-center justify-between">
-      <span className="tabular text-[13px] text-paper-400">
+      <span className="tabular text-sm text-paper-400">
         {rangeStart}–{rangeEnd} of {total}
       </span>
       <div className="flex gap-2">

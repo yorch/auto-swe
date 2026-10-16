@@ -169,16 +169,21 @@ packages/
 | `src/app/studio/*` | Model config, integrations, workflow defaults, skills, agents + agent library, schedules, bundles, MCP connections, evals |
 | `src/app/govern/*` | Access tokens, sessions, memory, scanner patterns, security events, Slack channels, organizations, teams, budgets, users |
 | `src/hooks/` | TanStack Query hooks split by resource domain |
-| `src/stores/` | Zustand — `authStore` (identity), `teamStore` (active team) |
+| `src/stores/` | Zustand — `authStore` (identity), `teamStore` (active team), `themeStore` (theme preference), `assistantStore` (assistant panel) |
 | `src/components/ui/` | Design-system primitives — `Button`, `Input`, `Select`, `Textarea`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `PageHeader`, `LoadingState`, `FieldWrapper`, `Th`, `Stat`, `StatusBadge`, `ToggleSwitch`, `CopyButton` |
 | `src/lib/palette.ts` | The theme's colours as checked literals, for the SVG contexts that cannot resolve `var()` |
 | `src/lib/api.ts` | `ApiClient` — all fetches; no direct `fetch` in components |
 
-**Design system.** A custom "Workshop Telemetry" theme defined via Tailwind v4 `@theme` in
-`globals.css`: `ink-*` surfaces, `paper-*` foregrounds, `ember-*` primary accent, with `moss-*`
-(success), `brick-*` (danger), `amber-*` (warning), `dust-*` (neutral), `violet-*` (secondary).
-Legacy `var(--muted-foreground)` style aliases are bridged for compatibility; new code uses tokens
-directly. SVG presentation attributes — Recharts axis ticks, React Flow edge strokes and markers —
+**Design system.** Tokens are defined via Tailwind v4 `@theme` in `globals.css`: `ink-*`
+surfaces and borders, `paper-*` text, `ember-*` (violet) primary accent, and status colours `moss-*`
+(success), `brick-*` (failure), `amber-*` (waiting, warning), `dust-*` (running, info) and
+`violet-*` (teal; in review, secondary accent). The light theme is the same token names re-pointed
+under `:root[data-theme='light']`, set before first paint; users switch it from the top bar, the
+command palette or the user menu (`stores/themeStore.ts`). The root font size is 14px, and the small
+type steps are pinned in pixels — `text-2xs` 11px (uppercase eyebrow labels only), `text-xs` 12px,
+`text-sm` 13px — so text below heading size uses those steps rather than arbitrary `text-[Npx]`
+values. Legacy `var(--muted-foreground)` style aliases are bridged for compatibility; new code uses
+tokens directly. SVG presentation attributes — Recharts axis ticks, React Flow edge strokes and markers —
 do not resolve `var()`, so those read hex literals from `lib/palette.ts`; `palette.test.ts` parses
 `globals.css` and fails if a literal drifts from its token, and a second guard fails the build if a
 component reaches past the theme into a default Tailwind colour scale.
@@ -320,20 +325,23 @@ The spec supports 15 node types.
 | Node type | Purpose | Key fields |
 |-----------|---------|-----------|
 | `step` | Dispatch a registered activity | `step`, `inputs`, `next`, `onFail`, `config` |
-| `agent` | Run a library Agent by reference | `agentRef` (`<key>` or `<key>@<version>`), `userMessage`, `systemPrompt`, `inputs`, `workspace` (run in a throwaway checkout of the run's repository) |
-| `mcp` | Call one tool on an `mcp` Connection | `connectionRef` (a literal id, checked against the run's team at run time), `tool`, `inputs` |
-| `eval` | Score a value with floor/judge/trajectory scorers, then gate or branch | `target`, `scorers[]`, `judgeAdvisory` |
+| `agent` | Run a library Agent by reference | `agentRef` (`<key>` or `<key>@<version>`), `userMessage`, `systemPrompt`, `inputs`, `workspace` (run in a throwaway checkout of the run's repository), `onFail` |
+| `mcp` | Call one tool on an `mcp` Connection | `connectionRef` (a literal id, checked against the run's team at run time), `tool`, `inputs`, `onFail` |
+| `eval` | Score a value with floor/judge/trajectory scorers, then gate or branch | `target`, `candidateRef`, `scorers[]`, `judgeAdvisory`, `onFail` |
 | `set` | Write values into the run context | `values` (path → binding) |
 | `cond` | Branch on a boolean expression | `expr`, `onTrue`, `onFalse` |
 | `signal` | Await a named Temporal signal with a timeout | `name`, `timeout`, `onReceive`, `onTimeout`, `storeAs` |
 | `terminate` | End the run with a status | `status`, `result` |
 | `fanOut` | Run a subgraph once per item in an array | `over`, `subgraph`, `join`, `itemKey`, `concurrency`, `onBranchFail`, `exports`, `pluck` |
-| `shell` | Run a user-authored command in an ephemeral container | `image`, `command`, `network`, `timeoutMs`, `memory`, `cpus` |
-| `containerStep` | Coded capability — an image with a JSON in/out contract | `image`, `command`, `inputs`, `transport` (`stdout`/`ndjson`/`sidecar`), `sidecar` |
-| `humanApproval` | Pause for a binary approve/reject | `title`, `contextFrom`, `onApprove`, `onReject`, `onTimeout`, `timeout` |
-| `humanDecision` | Pause for a 2–10 option branch | `options`, `timeout`, `onTimeout` |
-| `humanInput` | Pause for a typed form, written back into context | `fields`, `timeout`, `onTimeout`, `storeAs` |
-| `humanReview` | Pause for an annotated review of displayed content | `contentFrom`, `timeout`, `onTimeout`, `storeAs` |
+| `shell` | Run a user-authored command in an ephemeral container | `image`, `command`, `network`, `timeoutMs`, `memory`, `cpus`, `onFail` |
+| `containerStep` | Coded capability — an image with a JSON in/out contract | `image`, `command`, `inputs`, `transport` (`stdout`/`ndjson`/`sidecar`), `sidecar`, `onFail` |
+| `humanApproval` | Pause for a binary approve/reject | `title`, `description`, `approverCount`, `contextFrom`, `onApprove`, `onReject`, `onTimeout`, `timeout` |
+| `humanDecision` | Pause for a 2–10 option branch | `options`, `description`, `contextFrom`, `storeAs`, `timeout`, `onTimeout` |
+| `humanInput` | Pause for a typed form, written back into context | `fields`, `description`, `onSubmit`, `timeout`, `onTimeout`, `storeAs` |
+| `humanReview` | Pause for an annotated review of displayed content | `contentFrom`, `description`, `onSubmit`, `timeout`, `onTimeout`, `storeAs` |
+
+Each node type's full field list, output paths, failure behaviour and a complete example are in
+[workflow-nodes.md](./workflow-nodes.md).
 
 The four human nodes are handled inside the interpreter: each creates a `WorkflowHumanStep` row,
 optionally notifies Slack, then parks on the `hitl_<nodeId>` signal until an inbox or Slack response
@@ -497,7 +505,13 @@ run recorded before them replays as it ran.
 A block-mode cancel stops the interpreter waiting on a branch's signal or human wait but leaves the
 Temporal condition itself to run out, so the workflow's commands do not change; the wait is told it
 was `abandoned`, and a payload that arrives afterwards stays for the next wait on that name instead
-of being consumed. Step records carry each string input, output and error cut to 8,000 characters
+of being consumed. A `signal` node keeps its spec `name` inside a fan-out branch, because external
+senders address it by that name, so concurrent branches all wait on one slot, and each delivery is
+consumed by exactly one waiting branch. The others keep waiting for the rest of their own timeout
+rather than taking `onTimeout` (behind `patched('shared-signal-wait-rewaits-on-empty-slot')`, so a
+run recorded earlier still takes `onTimeout` at once), and `validateSpec` raises an advisory
+`SIGNAL_SHARED_ACROSS_BRANCHES` warning for a `signal` node reachable inside a fan-out whose
+`concurrency` is not 1. Step records carry each string input, output and error cut to 8,000 characters
 (activity inputs are written to the workflow history); the full values remain in the run context,
 which the final snapshot spills to artifacts.
 
@@ -604,11 +618,36 @@ The assistant itself runs in the worker. Each conversation is one `AssistantConv
 (id `assistant-<conversationId>`) that the gateway starts or signals with `signalWithStart` when the
 user posts to `/api/v1/assistant/conversations`; it runs one turn at a time and completes after 30
 minutes idle. A turn is the `runAssistantTurn` activity: the `appAssistant` agent with read-only tools
-— `searchDocs` over the docs the worker image ships, `getPageContext`, `describeApi` (the registered
-routes the policy admits, with their schemas) and `callApi` (GET only) — each calling the gateway over
-HTTP at `API_INTERNAL_URL` with the turn's assistant token. The reply is written into its
+— `searchDocs` over the docs the worker image ships, `workflowInventory`, `getPageContext`,
+`describeApi` (the registered routes the policy admits, with their schemas) and `callApi` (GET only).
+`describeApi` and `callApi` call the gateway over HTTP at `API_INTERNAL_URL` with the turn's
+assistant token; `getPageContext` returns the page context the user's message carried; `searchDocs`
+and `workflowInventory` read only what ships with the worker. `searchDocs` returns each section cut
+to 1,500 characters with its `/docs` link. A section over the cap because of a table is cut by
+rows rather than at a character offset — the rows matching the most query terms with the table's
+header, the prose before the table, the other rows in table order, then the prose after it, while
+they fit — and says how many rows it left out. `workflowInventory`
+answers "which node types, registered steps and built-in templates exist, and which templates use
+each" from `collectWorkflowInventory()` (`shared/workflow/inventory.ts`), the same data
+[workflow-inventory.md](./workflow-inventory.md) is rendered from, so the two cannot disagree. Each
+answer carries a `doc` link to cite (node-type and lookup rows also carry their own), and internal
+steps are flagged. The reply is written into its
 `AssistantMessage` row as the model streams it, and the gateway streams that row to the panel as
 server-sent events.
+
+A reply that fails shows the user a fixed sentence (`error`), and also records the underlying cause
+in `AssistantMessage.errorDetail`: the error's name, failure type and message and the first few causes
+it wraps, scrubbed of credential-shaped text and the turn's token. It is written by the turn activity
+when the turn throws, by `failAssistantReply` when the activity never reported back (a timeout or a
+dead worker, which says to look in Temporal), and by the gateway when the turn could not be handed to
+the workflow. Admins read it at `/govern/assistant` (`GET /api/v1/platform/assistant/failures`), across
+every user and newest first. Opening one failure lists the agent trace rows its turn wrote: kind,
+tool or model, tokens, duration, error, and the OpenTelemetry trace id to look up in Tempo. A turn
+tags every row it writes with its reply (`AgentTrace.assistantMessageId`), and the view reads them by
+that tag; rows written before the tag existed are found instead by the conversation's workflow id,
+between the end of the turn before and the failure. The view
+never shows what was said: no message text, conversation title, or trace `inputJson`/`outputJson`. The
+assistant itself may not call these routes.
 
 A JWT's role claim is not trusted on its own: after verifying the signature, the gateway re-reads
 the user's current role and `isActive` flag (behind a 30 s in-process cache), so a demotion or
@@ -1281,6 +1320,16 @@ Current constraints of the system as built. Deliberate product boundaries are in
   list explicitly so losing one fails loudly rather than quietly narrowing the guard. An epic's or
   channel task's own children are guarded only as `RunnableWorkflow` histories, not as part of the
   parent's.
+- **One signal delivery wakes one fan-out branch.** A `signal` node inside concurrent fan-out
+  branches waits on the same name in every branch, and a delivery cannot be addressed to a branch:
+  the first branch to resume takes it, and a sender must signal once per waiting branch for all of
+  them to go on. Even that is reliable only when the deliveries reach the workflow in separate
+  workflow tasks: a slot holds one payload, so deliveries that land in the same activation
+  coalesce and the last one wins. A branch that wakes to an already-taken delivery waits out the
+  rest of its own timeout; a run recorded before that re-wait (it sits behind
+  `patched('shared-signal-wait-rewaits-on-empty-slot')`) replays as it ran, sending that branch to
+  `onTimeout` at once. The per-branch names that human nodes get are not applied to `signal` nodes,
+  because external senders such as the CI and merge webhooks signal by the spec name.
 - **Generic workspace and outcome dispatch is wired end-to-end, with a write usable again by the same
   node.** `Connection.type`, `RunRequest`, `MemoryItem.entityType`/
   `entityId`, `workspaceProvider` on `WorkflowTemplate`, and outcome publishers are typed and
@@ -1318,13 +1367,17 @@ Current constraints of the system as built. Deliberate product boundaries are in
   connection outside it where the connection is loaded — before its credential is decrypted. The
   declared schema is therefore a boundary rather than a hint: a connection named through a field
   the template does not declare is never in the set, whichever node resolved it, including one
-  whose value came from another node's output. The set is pinned rather than derived because a
-  template's `inputSchema` is mutable while its spec is snapshotted, so deriving at check time
-  would let one schema edit widen a run already in flight; a run with **no** pin (created before
-  the column existed) is let through with a warning rather than stranded, and every new
-  execution writes one. One gap remains: a **literal** reference — an `mcp` node's `connectionRef` —
-  is in no pin and is checked against the template's team instead (`assertRunMayUseConnection`), so
-  reassigning a template mid-run moves that authority.
+  whose value came from another node's output. The schema it reads is the one **the version it
+  executes** was created under: a version snapshots `inputSchema` beside its `spec`
+  (`WorkflowTemplateVersion.inputSchema`), which a trigger fills on insert so no writer can forget
+  it and a backfill gave to the versions that predate the column. Retyping an input on the
+  template therefore cannot widen the pin of a run already under way, nor refuse an experiment arm
+  or a rollback the connection its own version declares; a version that declared no schema
+  declares no connection. A run with **no** pin (created before that column existed) is let
+  through with a warning rather than stranded, and every new execution writes one. One gap
+  remains: a **literal** reference — an `mcp` node's `connectionRef` — is in no pin and is checked
+  against the template's team instead (`assertRunMayUseConnection`), so reassigning a template
+  mid-run moves that authority.
 - **The connections a payload declares are authorized before a run is created.** The pin is derived
   from the payload, so it cannot answer "may this identity reach them" — it authorizes whatever the
   payload names. The launches that call `validateRunConnection` decide it up front; two paths that
@@ -1384,17 +1437,20 @@ Current constraints of the system as built. Deliberate product boundaries are in
   allowed, so a plain-HTTP internal deployment configures the address or moves to HTTPS. The
   HTTPS rule applies to the tracker connector too, so a self-hosted Jira reached over plain HTTP on
   a public address fails non-retryably and has to move to HTTPS.
-- **An external write is not exactly-once.** The outcome ledger records a result *after* the
-  mutation, so a committed write whose response or ledger insert is lost is retried by the next
-  activity attempt. A create can therefore be sent twice, and an update that did not receive a
-  caller-supplied `version` re-reads the page and can replace an edit a person made in between. A
-  supplied `version` is honoured rather than refreshed, so that retry is refused as stale instead,
-  which is the safer half of the problem. Neither an intent record nor a ledger closes this on its
-  own: an ambiguous remote commit needs the provider's own idempotency support or a reconciliation
-  protocol. What a connection *tool* writes has no ledger at all. The connector treats a 2xx whose
-  body is not JSON, is `null`, or describes a different page as a **non-retryable** failure, so an
-  ambiguous commit receives neither an automatic retry nor a reconciliation — the run stops and
-  says so, rather than reporting a write that may or may not have landed as a success.
+- **An external write is claimed before it is sent, and an unrecorded outcome stops the run.** The
+  ledger's row is written *before* the provider is called and completed with what it returned
+  (`WorkflowOutcomeReference.state`, `PENDING` → `DONE`, one row per `(run, node, connection)`), so a
+  retry returns what a completed attempt produced and refuses with a non-retryable
+  `OUTCOME_AMBIGUOUS` when an attempt may have reached the provider without recording anything. What
+  that buys is a stop rather than a second effect — and a claim is resolved by a person, because
+  nothing here can tell whether the provider acted. Two things stay outside it. A **new run** for the
+  same work starts with an empty ledger, since a restart is a new workflow id, so the claim governs
+  retries within one execution. And an update that received no caller-supplied `version` still
+  re-reads the page, so one that replaces an edit a person made in between is not detectable here; a
+  supplied `version` is honoured rather than refreshed, which refuses that retry as stale instead.
+  What a connection *tool* writes has no ledger at all. The connector treats a 2xx whose body is not
+  JSON, is `null`, or describes a different page as a **non-retryable** failure, so an ambiguous
+  commit receives neither an automatic retry nor a reconciliation.
 - **A refused outbound request is retried like a transport failure.** `SsrfBlockedError` is thrown
   both for an address the guard refuses and for a host that could not be resolved, so the connector
   does not classify it and a refused request spends the activity's retries before failing. A host
@@ -1416,3 +1472,14 @@ Current constraints of the system as built. Deliberate product boundaries are in
   poll for up to 10 s after the read that first returned it. A trace that commits behind the cursor is not lost, but it costs a full
   re-read of every trimmed trace on the poll that notices it; a worker whose clock lags the others
   by more than 10 s triggers one on every poll it writes during.
+- **Some assistant failures have no trace rows or no recorded cause.** A turn that failed before it
+  wrote a trace row (the agent or its provider credential could not be resolved) shows none on
+  `/govern/assistant`, only its `errorDetail`; replies that failed before `errorDetail` existed show
+  no cause, and their untagged rows are matched by time rather than by reply. For those, the worker
+  log line `[assistantTurn] turn failed` and the Temporal history of `assistant-<conversationId>`
+  remain the sources.
+- **The assistant's workflow inventory covers built-ins only.** `workflowInventory` lists the node
+  types, registered steps and built-in templates the code defines. Teams' own templates and
+  bundle-installed ones are not in it, so "which templates use this step" counts built-in templates
+  only; the assistant reads a team's templates through `callApi`. A `searchDocs` section is
+  capped, so a long table answered from the docs shows only some of its rows.

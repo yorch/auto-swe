@@ -132,6 +132,17 @@ describe('runContainerStep', () => {
       expect(mockedRun).not.toHaveBeenCalled();
     });
 
+    it('passes the node timeoutMs through to the sidecar request', async () => {
+      mockedSidecar.mockResolvedValue({ result: {}, status: 200 } as never);
+      await runContainerStep({
+        ...base,
+        sidecar: { port: 8080 },
+        timeoutMs: 1_800_000,
+        transport: 'sidecar',
+      });
+      expect(mockedSidecar).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: 1_800_000 }));
+    });
+
     it('throws when transport is sidecar but no sidecar config is given', async () => {
       await expect(runContainerStep({ ...base, transport: 'sidecar' })).rejects.toThrow(
         /requires a sidecar config/

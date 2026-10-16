@@ -68,12 +68,10 @@ export function HowItWorks({
           {STEPS.map((step, index) => (
             <li className="min-w-0" key={step.title}>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[11px] text-ember-300 tabular-nums">
-                  {index + 1}
-                </span>
+                <span className="font-mono text-xs text-ember-300 tabular-nums">{index + 1}</span>
                 <p className="text-sm font-semibold text-paper-100">{step.title}</p>
               </div>
-              <p className="mt-1.5 text-[13px] leading-relaxed text-paper-400">{step.body}</p>
+              <p className="mt-1.5 text-sm leading-relaxed text-paper-400">{step.body}</p>
             </li>
           ))}
         </ol>

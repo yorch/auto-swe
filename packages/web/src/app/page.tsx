@@ -103,7 +103,7 @@ function TileBody({
 }) {
   return (
     <>
-      <span className="flex items-center justify-between gap-2 text-[13px] text-paper-400">
+      <span className="flex items-center justify-between gap-2 text-sm text-paper-400">
         {label}
         <Icon
           className={cn(count ? tone : 'text-paper-600', 'transition-colors')}
@@ -177,7 +177,7 @@ function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope })
         </h2>
         <Link
           className={cn(
-            'inline-flex items-center gap-1 rounded-sm text-[13px] text-ember-400 hover:underline',
+            'inline-flex items-center gap-1 rounded-sm text-sm text-ember-400 hover:underline',
             FOCUS_RING
           )}
           href={listHref(scope, bucket.state)}
@@ -243,12 +243,12 @@ function WaitingOnYou() {
             they continue. Answer them in the approvals inbox.
           </HelpTip>
           {steps.length > 5 && (
-            <span className="text-[12.5px] text-paper-500">Showing 5 of {steps.length}</span>
+            <span className="text-sm text-paper-500">Showing 5 of {steps.length}</span>
           )}
         </div>
         <Link
           className={cn(
-            'inline-flex items-center gap-1 rounded-sm text-[13px] text-ember-400 hover:underline',
+            'inline-flex items-center gap-1 rounded-sm text-sm text-ember-400 hover:underline',
             FOCUS_RING
           )}
           href="/govern/approvals"
@@ -298,7 +298,7 @@ function QuickStart() {
   return (
     <Card className="p-5">
       <h2 className="text-base font-semibold text-paper-100">Start something new</h2>
-      <p className="mt-1 text-[13px] text-paper-400">
+      <p className="mt-1 text-sm text-paper-400">
         Pick how you want to work. You review everything before it launches.
       </p>
       <ul className="mt-4 space-y-1">
@@ -340,7 +340,7 @@ function Shortcuts() {
           <li key={item.href}>
             <Link
               className={cn(
-                'flex items-center gap-2 rounded-lg border border-ink-500/60 px-3 py-2 text-[13px] text-paper-300 transition-colors hover:border-ink-300 hover:text-paper-100',
+                'flex items-center gap-2 rounded-lg border border-ink-500/60 px-3 py-2 text-sm text-paper-300 transition-colors hover:border-ink-300 hover:text-paper-100',
                 FOCUS_RING
               )}
               href={item.href}

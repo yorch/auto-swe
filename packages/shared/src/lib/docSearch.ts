@@ -40,7 +40,22 @@ export interface SearchSection {
   anchor: string | null;
   /** The section's prose as plain text: no code blocks, link targets, table syntax or markup. */
   text: string;
+  /**
+   * The same text as blocks, set only when the section holds a table: a run of prose as one
+   * string, and each table as its plain-text cells. Lets a reader cut a long table by rows
+   * instead of at a character offset.
+   */
+  blocks?: SectionBlock[];
 }
+
+/** A table's cells as plain text: the header row, then the body rows. */
+export interface SectionTable {
+  header: string[];
+  rows: string[][];
+}
+
+/** Prose (plain text) or a table, in the order the section holds them. */
+export type SectionBlock = string | SectionTable;
 
 /** A run of text, flagged when it matched a search term. Render `match` runs as `<mark>`. */
 export interface Segment {
@@ -101,6 +116,40 @@ function tidy(text: string): string {
     .trim();
 }
 
+/** A GFM table node's cells as plain text: the first row is the header. */
+function tableOf(node: MdNode): SectionTable {
+  const [head, ...body] = (node.children ?? []).map((row) =>
+    (row.children ?? []).map((cell) => tidy(plain(cell)))
+  );
+  return { header: head ?? [], rows: body };
+}
+
+/** Group a section's nodes into prose runs and tables; tables only when it holds one. */
+function blocksOf(nodes: MdNode[]): SectionBlock[] | undefined {
+  if (!nodes.some((n) => n.type === 'table')) {
+    return undefined;
+  }
+  const blocks: SectionBlock[] = [];
+  let prose: string[] = [];
+  const flushProse = () => {
+    const text = tidy(prose.join(' '));
+    if (text) {
+      blocks.push(text);
+    }
+    prose = [];
+  };
+  for (const node of nodes) {
+    if (node.type === 'table') {
+      flushProse();
+      blocks.push(tableOf(node));
+    } else {
+      prose.push(plain(node));
+    }
+  }
+  flushProse();
+  return blocks;
+}
+
 /** Cut one doc's Markdown into heading-anchored plain-text sections. */
 export function indexDoc(markdown: string): Omit<SearchSection, 'doc'>[] {
   const root = unified().use(remarkParse).use(remarkGfm).parse(markdown) as unknown as MdNode;
@@ -109,14 +158,17 @@ export function indexDoc(markdown: string): Omit<SearchSection, 'doc'>[] {
   let heading: string | null = null;
   let anchor: string | null = null;
   let parts: string[] = [];
+  let nodes: MdNode[] = [];
   let next = 0;
 
   const flush = () => {
     const text = tidy(parts.join(' '));
     if (text || heading) {
-      sections.push({ anchor, heading, text });
+      const blocks = blocksOf(nodes);
+      sections.push(blocks ? { anchor, blocks, heading, text } : { anchor, heading, text });
     }
     parts = [];
+    nodes = [];
   };
 
   for (const node of root.children ?? []) {
@@ -133,6 +185,7 @@ export function indexDoc(markdown: string): Omit<SearchSection, 'doc'>[] {
     // A heading nested in a blockquote still consumes an id; stay in step with the renderer.
     next += countHeadings(node);
     parts.push(plain(node));
+    nodes.push(node);
   }
   flush();
   return sections;
@@ -344,6 +397,15 @@ function fold(text: string): string {
 
 function field(text: string): Field {
   return { lower: fold(text), stems: new Set(words(text).flatMap((w) => stemForms(w.word))) };
+}
+
+/**
+ * How many of a query's terms a text matches, by the same rule a section matches them: as a
+ * substring or as a word with the same stem.
+ */
+export function countMatchingTerms(text: string, query: string): number {
+  const f = field(text);
+  return tokenize(query).filter((term) => fieldHas(f, term, stemForms(term))).length;
 }
 
 /** A term matches a field as a substring (identifiers, partial words) or as a word with the same stem. */

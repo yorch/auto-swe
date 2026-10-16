@@ -26,6 +26,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { NODE_TYPE_LABEL } from '@/components/workflow/nodeTypeTone';
 import { STARTER_TEMPLATES, type StarterTemplate } from '@/components/workflow/starterTemplates';
 import { VersionTags } from '@/components/workflow/VersionTags';
 import { useHasRole } from '@/hooks/useHasRole';
@@ -521,20 +522,20 @@ function TemplateRow({
         </div>
         {t.description && (
           <p
-            className="mt-0.5 line-clamp-1 max-w-xl text-[13px] font-normal text-paper-500 max-sm:line-clamp-2"
+            className="mt-0.5 line-clamp-1 max-w-xl text-sm font-normal text-paper-500 max-sm:line-clamp-2"
             title={t.description}
           >
             {t.description}
           </p>
         )}
       </Td>
-      <Td className="px-4 py-3 whitespace-nowrap text-[13px] text-paper-300" label="Team">
+      <Td className="px-4 py-3 whitespace-nowrap text-sm text-paper-300" label="Team">
         {t.team?.name ?? <span className="text-paper-500">Platform-wide</span>}
       </Td>
       <Td className="px-4 py-3" label="Status">
         <StatusBadge status={t.status} />
       </Td>
-      <Td className="px-4 py-3 text-[13px] text-paper-300" label="Version">
+      <Td className="px-4 py-3 text-sm text-paper-300" label="Version">
         {t.activeVersion !== null ? (
           <span className="tabular-nums">v{t.activeVersion}</span>
         ) : (
@@ -558,11 +559,11 @@ function TemplateRow({
             </span>
           </Link>
         ) : (
-          <span className="text-[13px] text-paper-500">Never</span>
+          <span className="text-sm text-paper-500">Never</span>
         )}
       </Td>
       <Td
-        className="px-4 py-3 whitespace-nowrap text-[13px] text-paper-500 tabular-nums"
+        className="px-4 py-3 whitespace-nowrap text-sm text-paper-500 tabular-nums"
         label="Updated"
         title={formatDate(t.updatedAt)}
       >
@@ -825,7 +826,7 @@ export default function TemplatesPage() {
           />
           <span className="min-w-0">
             <span className="block text-sm font-semibold text-paper-100">Start from a starter</span>
-            <span className="block text-[13px] text-paper-500">
+            <span className="block text-sm text-paper-500">
               Fork a ready-made workflow and edit it as your own
             </span>
           </span>
@@ -839,8 +840,11 @@ export default function TemplatesPage() {
                 <Card className="flex flex-col p-5 hover:border-ink-300" key={s.id} variant="inset">
                   <div className="mb-1 text-xs font-medium text-paper-500">{s.tagline}</div>
                   <h3 className="mb-2 text-base font-semibold text-paper-100">{s.name}</h3>
-                  <p className="mb-5 flex-1 text-[13px] leading-relaxed text-paper-400">
+                  <p className="mb-3 flex-1 text-sm leading-relaxed text-paper-400">
                     {s.description}
+                  </p>
+                  <p className="mb-5 text-xs text-paper-500">
+                    Teaches: {s.teaches.map((t) => NODE_TYPE_LABEL[t]).join(', ')}
                   </p>
                   <span className="self-start" title={manageTitle}>
                     <Button

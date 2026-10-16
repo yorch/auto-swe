@@ -6,7 +6,8 @@ const VARIANT_CLASSES: Record<CardVariant, string> = {
   ghost: 'border border-transparent bg-transparent',
   inset: 'border border-ink-400/40 bg-ink-900/50',
   panel:
-    'border border-ink-400/60 bg-gradient-to-b from-ink-700 to-ink-900/80 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_32px_-20px_rgba(0,0,0,0.6)]',
+    // Solid, not a gradient: a card that fades toward the page loses its bottom edge.
+    'border border-ink-400 bg-ink-700 shadow-[0_1px_0_0_rgba(255,255,255,0.03)_inset,0_12px_32px_-20px_rgba(0,0,0,0.6)]',
 };
 
 type CardProps = React.HTMLAttributes<HTMLDivElement> & {

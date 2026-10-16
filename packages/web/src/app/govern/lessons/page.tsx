@@ -52,7 +52,7 @@ function RepoStatsRow({
 }) {
   return (
     <TRow hover>
-      <Td className="px-4 py-3 font-mono text-[13px] text-paper-100" primary>
+      <Td className="px-4 py-3 font-mono text-sm text-paper-100" primary>
         {repo.organizationName}/{repo.repoName}
       </Td>
       <Td align="right" className="px-4 py-3 text-paper-200 tabular-nums" label="Active">
@@ -61,7 +61,7 @@ function RepoStatsRow({
       <Td align="right" className="px-4 py-3 text-paper-400 tabular-nums" label="Consolidated">
         {repo.consolidatedCount}
       </Td>
-      <Td className="px-4 py-3 text-[13px] text-paper-400" label="Last consolidated">
+      <Td className="px-4 py-3 text-sm text-paper-400" label="Last consolidated">
         {repo.lastConsolidatedAt ? (
           <Ago iso={repo.lastConsolidatedAt} />
         ) : (
@@ -336,7 +336,7 @@ export default function GovernLessonsPage() {
                   <div className="min-w-0 flex-1">
                     <p className="text-sm leading-relaxed text-paper-100">{lesson.lessonSummary}</p>
                     {lesson.rationale && (
-                      <p className="mt-1 text-[13px] leading-relaxed text-paper-400">
+                      <p className="mt-1 text-sm leading-relaxed text-paper-400">
                         {lesson.rationale}
                       </p>
                     )}

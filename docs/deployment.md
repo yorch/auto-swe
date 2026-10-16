@@ -243,20 +243,18 @@ Integration credentials that an operator rotates during normal use are stored en
 
 ## 3. Database setup
 
-The shipped schema lives in `packages/shared/src/prisma/migrations/` — a consolidated baseline and
-the hand-written DDL migration beside it:
+The shipped schema lives in `packages/shared/src/prisma/migrations/` — a consolidated baseline, the
+hand-written DDL migration beside it, and one migration per schema change made since the schema was
+first deployed, each named for the change it makes:
 
 | Migration | What it adds |
 | --------- | ------------ |
 | `20260618000000_init` | The consolidated baseline, generated from `schema.prisma` via `prisma migrate diff --from-empty --to-schema --script` — the `vector` extension, every enum, table, column, FK and Prisma-expressible index (including the `repo_dependencies` edge table and `connections.package_names`) |
 | `20260618000001_custom_constraints_and_indexes` | Everything the DSL can't express: the HNSW vector indexes on `memory_items.embedding` and `knowledge_items.embedding`, the partial and expression indexes the scope cascade and the automation ledger rely on, the singleton / scope-discriminator / per-source-filter CHECK constraints, `api_tokens`' exactly-one-owner CHECK, array-column `NOT NULL`s, the governed-knowledge scope-guard triggers, and the embedding-config seed |
 
-The split between the two is by *kind* of DDL, not by when it was written. While the schema is
-undeployed the pair is regenerated as a whole — the baseline from `schema.prisma` via
-`prisma migrate diff --from-empty --to-schema --script`, then the hand-written file beside it — so a
-schema change never leaves a third migration behind. Once the schema is deployed anywhere this
-inverts: both are applied in the wild and only new migrations are appended, and
-`prisma migrate deploy` applies whatever is pending. See the
+The split between the two is by *kind* of DDL, not by when it was written. The schema is deployed,
+so the pair is applied in the wild and is never edited or regenerated: a schema change appends its
+own migration after them, and `prisma migrate deploy` applies whatever is pending. See the
 [`prisma-pgvector-hnsw`](../.claude/skills/prisma-pgvector-hnsw/SKILL.md) skill.
 
 Directory names follow Prisma's `<timestamp>_<name>` convention: `20260618000000_init` for the
@@ -509,7 +507,7 @@ open https://app.example.com
 | Cost tracking              | `/govern/usage` (every LLM and embedding call, runs or not), `WorkflowRun.costUsdAccrued`, `/govern/analytics`, the `llm_cost_usd_total` metric. Unknown models log `llm.cost_pricing_known=false`. |
 | Metrics & traces           | Grafana (`:3001` with the bundled `otel-lgtm`) → **auto-swe — LLM & workflow overview**, provisioned from `infra/grafana/`. With your own collector, import `infra/grafana/dashboards/auto-swe-overview.json`; it expects Prometheus and Tempo datasources with UIDs `prometheus` and `tempo`. A run's activities are in the trace of the request that started it; search Tempo by `span.temporal.workflow_id`. Gateway and worker both export metrics. |
 | Logs                       | stdout/stderr on both services. Both services also export their logs over OTLP to Loki — the gateway's request logs, the worker's Temporal and activity lines (audit lines included) — each carrying its trace id. A custom `CMD` must keep `--import ./packages/<service>/dist/instrument.js`, or HTTP spans go missing (see [`architecture.md` §8](./architecture.md#8-observability--cost)). |
-| Per-team A/B experiments   | `/templates/:id` → set `experimentVersion` + `experimentSplit`.                                                  |
+| Per-team A/B experiments   | `/workflows/library/[id]` → set `experimentVersion` + `experimentSplit`.                                                  |
 | Rotating LLM models        | Change model spec at `/studio/models` (takes effect on next activity call). A model with no price is recorded at $0 — price it on its `model_catalog_entries` row (see [model configuration](./model-configuration.md#model-catalog)). |
 | Rotating GitHub PAT        | `/studio/integrations → GitHub` → enter new token → Save. No restart required. |
 | Rotating Slack bot token   | `/studio/integrations → Slack` → enter new bot token → Save. No restart required. |

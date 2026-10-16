@@ -1,8 +1,10 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import {
+  ASSISTANT_TURN_NOT_STARTED_DETAIL,
   type AssistantMessageView,
   type AssistantPageContext,
   type AssistantToolStep,
+  assistantErrorDetail,
   assistantPageContextSchema,
   isAssistantReplyOpen,
   MAX_ASSISTANT_MESSAGE_CHARS,
@@ -170,16 +172,23 @@ export const assistantConversationRoutes: FastifyPluginAsync<{ catalog: ApiCatal
         where: { id: conversationId },
       }),
     ]);
+    let token: string | undefined;
     try {
-      const token = fastify.auth.signAssistantToken({ conversationId, userId });
+      token = fastify.auth.signAssistantToken({ conversationId, userId });
       await fastify.temporal.sendAssistantTurn(
         { conversationId, userId },
         { replyId: replyRow.id, token }
       );
     } catch (err) {
       request.log.error({ conversationId, err }, 'assistant turn could not be started');
+      const detail = assistantErrorDetail(err, ASSISTANT_TURN_NOT_STARTED_DETAIL);
       await fastify.prisma.assistantMessage.update({
-        data: { error: START_FAILED_TEXT, status: 'FAILED' },
+        data: {
+          error: START_FAILED_TEXT,
+          // For admins only; the turn's token never belongs in a stored row.
+          errorDetail: token ? detail.split(token).join('***') : detail,
+          status: 'FAILED',
+        },
         where: { id: replyRow.id },
       });
       sendError(reply, 503, 'ASSISTANT_UNAVAILABLE', START_FAILED_TEXT);

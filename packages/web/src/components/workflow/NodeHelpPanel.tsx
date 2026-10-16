@@ -23,7 +23,7 @@ export function NodeHelpPanel({ type }: { type: SpecNode['type'] }) {
     <details className="group px-4 pt-3" key={type}>
       <summary
         className={cn(
-          'flex cursor-pointer list-none items-center gap-1.5 rounded-sm text-[13px] font-semibold text-paper-100 [&::-webkit-details-marker]:hidden',
+          'flex cursor-pointer list-none items-center gap-1.5 rounded-sm text-sm font-semibold text-paper-100 [&::-webkit-details-marker]:hidden',
           FOCUS_RING
         )}
       >
@@ -34,7 +34,7 @@ export function NodeHelpPanel({ type }: { type: SpecNode['type'] }) {
         />
         About {label} nodes
       </summary>
-      <div className="mt-2 space-y-2 text-[13px] leading-relaxed text-paper-300">
+      <div className="mt-2 space-y-2 text-sm leading-relaxed text-paper-300">
         <p>{help.what}</p>
         <p>
           <span className="font-semibold text-paper-100">Use it when: </span>
@@ -44,9 +44,13 @@ export function NodeHelpPanel({ type }: { type: SpecNode['type'] }) {
           <span className="font-semibold text-paper-100">Watch out: </span>
           {help.gotcha}
         </p>
+        <p>
+          <span className="font-semibold text-paper-100">Output: </span>
+          {help.output}
+        </p>
         <div>
           <div className="mb-1 font-semibold text-paper-100">Example</div>
-          <pre className="max-h-48 overflow-auto rounded-md border border-ink-600 bg-ink-900 p-2.5 font-mono text-[11px] leading-relaxed text-paper-300">
+          <pre className="max-h-48 overflow-auto rounded-md border border-ink-600 bg-ink-900 p-2.5 font-mono text-xs leading-relaxed text-paper-300">
             {JSON.stringify(help.example, null, 2)}
           </pre>
         </div>

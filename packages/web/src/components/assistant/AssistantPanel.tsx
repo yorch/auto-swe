@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Components } from 'react-markdown';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { ExpandablePre } from '@/components/ui/ExpandablePre';
 import { SparkleIcon } from '@/components/ui/icons';
 import {
   useAssistantConversation,
@@ -49,7 +50,7 @@ export function AssistantToggle() {
       aria-controls={ASSISTANT_PANEL_ID}
       aria-expanded={open}
       className={cn(
-        'inline-flex shrink-0 items-center gap-1.5 rounded-full border border-ink-400 px-2.5 py-1 text-[12px] font-semibold text-paper-300 transition-colors hover:border-ember-400/60 hover:text-paper-100',
+        'inline-flex shrink-0 items-center gap-1.5 rounded-full border border-ink-400 px-2.5 py-1 text-xs font-semibold text-paper-300 transition-colors hover:border-ember-400/60 hover:text-paper-100',
         open && 'border-ember-400/60 text-ember-300',
         FOCUS_RING
       )}
@@ -106,7 +107,7 @@ function PanelBody() {
     <>
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-ink-500/70 px-4">
         <SparkleIcon className="text-ember-300" size={14} />
-        <h2 className="min-w-0 flex-1 truncate text-[14px] font-semibold text-paper-100">
+        <h2 className="min-w-0 flex-1 truncate text-base font-semibold text-paper-100">
           {showingList ? 'Conversations' : (conversation.data?.conversation.title ?? 'Assistant')}
         </h2>
         <HeaderButton label="New conversation" onClick={() => select(null)}>
@@ -133,7 +134,7 @@ function PanelBody() {
             <li className="group flex items-center gap-1" key={c.id}>
               <button
                 className={cn(
-                  'min-w-0 flex-1 truncate rounded-md px-3 py-2 text-left text-[13px] text-paper-300 hover:bg-ink-700 hover:text-paper-100',
+                  'min-w-0 flex-1 truncate rounded-md px-3 py-2 text-left text-sm text-paper-300 hover:bg-ink-700 hover:text-paper-100',
                   c.id === conversationId && 'bg-ink-700 text-paper-100',
                   FOCUS_RING
                 )}
@@ -145,7 +146,7 @@ function PanelBody() {
               <button
                 aria-label={`Remove “${c.title}”`}
                 className={cn(
-                  'rounded-md px-2 py-1 text-[12px] text-paper-500 hover:text-brick-400',
+                  'rounded-md px-2 py-1 text-xs text-paper-500 hover:text-brick-400',
                   FOCUS_RING
                 )}
                 onClick={() => {
@@ -190,7 +191,7 @@ function HeaderButton({
     <button
       aria-label={label}
       className={cn(
-        'rounded-md px-2 py-1 text-[12px] font-medium text-paper-400 hover:bg-ink-700 hover:text-paper-100',
+        'rounded-md px-2 py-1 text-xs font-medium text-paper-400 hover:bg-ink-700 hover:text-paper-100',
         FOCUS_RING
       )}
       onClick={onClick}
@@ -220,7 +221,7 @@ function MessageList({
     <div aria-live="polite" className="flex-1 space-y-4 overflow-y-auto px-4 py-4">
       {error && <p className="text-sm text-brick-400">{error}</p>}
       {messages?.length === 0 && (
-        <div className="space-y-2 pt-6 text-center text-[13px] text-paper-500">
+        <div className="space-y-2 pt-6 text-center text-sm text-paper-500">
           <p>Ask how the platform works, how to configure it, or about the page you are on.</p>
           <p>The assistant acts as you and can only read for now.</p>
         </div>
@@ -228,7 +229,7 @@ function MessageList({
       {messages?.map((m) =>
         m.role === 'USER' ? (
           <div className="flex justify-end" key={m.id}>
-            <p className="max-w-[85%] whitespace-pre-wrap rounded-xl bg-ink-700 px-3 py-2 text-[13.5px] text-paper-100">
+            <p className="max-w-[85%] whitespace-pre-wrap rounded-xl bg-ink-700 px-3 py-2 text-base text-paper-100">
               {m.content}
             </p>
           </div>
@@ -254,12 +255,12 @@ function Reply({ message }: { message: AssistantMessageView }) {
       )}
       {message.content && <AssistantMarkdown>{message.content}</AssistantMarkdown>}
       {writing && !message.content && (
-        <p className="text-[13px] text-paper-500">
+        <p className="text-sm text-paper-500">
           {message.steps.length > 0 ? 'Working…' : 'Thinking…'}
         </p>
       )}
       {message.status === 'FAILED' && (
-        <p className="text-[13px] text-brick-400">{message.error ?? 'The reply failed.'}</p>
+        <p className="text-sm text-brick-400">{message.error ?? 'The reply failed.'}</p>
       )}
     </div>
   );
@@ -270,12 +271,13 @@ const TOOL_LABELS: Record<string, string> = {
   describeApi: 'Looked up API routes',
   getPageContext: 'Checked this page',
   searchDocs: 'Searched the docs',
+  workflowInventory: 'Looked up the workflow inventory',
 };
 
 function ToolStep({ step }: { step: AssistantToolStep }) {
   return (
     <li>
-      <details className="group rounded-md border border-ink-600 bg-ink-900/60 text-[12px]">
+      <details className="group rounded-md border border-ink-600 bg-ink-900/60 text-xs">
         <summary
           className={cn(
             'flex cursor-pointer list-none items-center gap-2 px-2.5 py-1.5 text-paper-400',
@@ -294,9 +296,13 @@ function ToolStep({ step }: { step: AssistantToolStep }) {
           <span className="font-medium text-paper-300">{TOOL_LABELS[step.tool] ?? step.tool}</span>
           {step.summary && <span className="truncate text-paper-500">· {step.summary}</span>}
         </summary>
-        <pre className="max-h-48 overflow-auto border-t border-ink-600 px-2.5 py-2 font-mono text-[11.5px] text-paper-400">
+        <ExpandablePre
+          className="border-t border-ink-600 px-2.5 py-2 font-mono text-xs text-paper-400"
+          collapsedHeight="12rem"
+          toggleClassName="mx-2.5 mb-2"
+        >
           {JSON.stringify(step.input, null, 2)}
-        </pre>
+        </ExpandablePre>
       </details>
     </li>
   );
@@ -329,13 +335,13 @@ export function AssistantMarkdown({ children }: { children: string }) {
   return (
     <div
       className={cn(
-        'text-[13.5px] leading-6 text-paper-200',
+        'text-base leading-6 text-paper-200',
         '[&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5',
         '[&_li]:my-0.5 [&_strong]:font-semibold [&_strong]:text-paper-100',
         '[&_a]:text-ember-300 [&_a]:underline [&_a]:decoration-ember-400/40 [&_a]:underline-offset-2',
-        '[&_code]:rounded [&_code]:bg-ink-800 [&_code]:px-1 [&_code]:font-mono [&_code]:text-[12px]',
+        '[&_code]:rounded [&_code]:bg-ink-800 [&_code]:px-1 [&_code]:font-mono [&_code]:text-xs',
         '[&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-ink-900 [&_pre]:p-2',
-        '[&_h1]:text-[15px] [&_h2]:text-[14px] [&_h3]:text-[13.5px] [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold',
+        '[&_h1]:text-lg [&_h2]:text-base [&_h3]:text-base [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold',
         '[&_table]:my-2 [&_table]:block [&_table]:overflow-x-auto [&_td]:border [&_td]:border-ink-600 [&_td]:px-2 [&_th]:border [&_th]:border-ink-600 [&_th]:px-2'
       )}
     >
@@ -384,12 +390,12 @@ function Composer({ busy }: { busy: boolean | undefined }) {
         submit();
       }}
     >
-      {send.error && <p className="mb-2 text-[12px] text-brick-400">{errMsg(send.error)}</p>}
+      {send.error && <p className="mb-2 text-xs text-brick-400">{errMsg(send.error)}</p>}
       <label className="sr-only" htmlFor="assistant-input">
         Message the assistant
       </label>
       <textarea
-        className="max-h-40 min-h-[4.5rem] w-full resize-y rounded-md border border-ink-400 bg-ink-900/60 px-3 py-2 text-[13.5px] text-paper-100 outline-none placeholder:text-paper-600 hover:border-ink-300 focus:border-ember-400 focus:ring-2 focus:ring-ember-400/20"
+        className="max-h-40 min-h-[4.5rem] w-full resize-y rounded-md border border-ink-200 bg-ink-900 px-3 py-2 text-base text-paper-100 outline-none placeholder:text-paper-600 hover:border-paper-600 focus:border-ember-400 focus:ring-2 focus:ring-ember-400/20"
         id="assistant-input"
         maxLength={MAX_ASSISTANT_MESSAGE_CHARS}
         onChange={(e) => setText(e.target.value)}
@@ -403,11 +409,11 @@ function Composer({ busy }: { busy: boolean | undefined }) {
         ref={input}
         value={text}
       />
-      <div className="mt-2 flex items-center justify-between text-[11.5px] text-paper-500">
+      <div className="mt-2 flex items-center justify-between text-xs text-paper-500">
         <span>Enter to send · Shift+Enter for a new line</span>
         <button
           className={cn(
-            'rounded-md bg-gradient-to-br from-ember-500 to-ember-600 px-3 py-1 text-[12.5px] font-semibold text-white hover:brightness-110 disabled:opacity-50',
+            'rounded-md bg-gradient-to-br from-ember-500 to-ember-600 px-3 py-1 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-50',
             FOCUS_RING
           )}
           disabled={disabled || text.trim() === ''}
