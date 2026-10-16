@@ -106,10 +106,7 @@
           }
         }
       },
-      "includes": [
-        "packages/shared/src/workflow/templates/*.ts",
-        "packages/shared/src/workflow/defaultEngineeringSpec.ts"
-      ]
+      "includes": ["packages/shared/src/workflow/templates/*.ts"]
     },
     {
       "includes": ["packages/worker/src/workflows/**"],

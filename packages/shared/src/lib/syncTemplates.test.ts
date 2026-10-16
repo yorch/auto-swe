@@ -14,6 +14,7 @@ interface Row {
   name: string;
   teamId: string | null;
   description: string;
+  isDefault?: boolean;
 }
 
 /**
@@ -102,6 +103,28 @@ describe('template renames', () => {
     warn.mockRestore();
   });
 
+  it('carries the global default across the default-engineering rename', async () => {
+    const [old] = SUPERSEDED_TEMPLATE_DESCRIPTIONS['ticket-to-merge'];
+    const { prisma, rows } = makePrisma([
+      {
+        description: old,
+        id: 'legacy',
+        isDefault: true,
+        name: 'default-engineering',
+        teamId: null,
+      },
+    ]);
+    await seedSweStarter(prisma);
+
+    expect(global(rows, 'default-engineering')).toHaveLength(0);
+    const renamed = global(rows, 'ticket-to-merge');
+    expect(renamed).toHaveLength(1);
+    expect(renamed[0].id).toBe('legacy');
+    expect(renamed[0].isDefault).toBe(true);
+    const current = BUILTIN_TEMPLATES.find((t) => t.name === 'ticket-to-merge');
+    expect(renamed[0].description).toBe(current?.description);
+  });
+
   it('only maps to names that are built-in templates', () => {
     const names = new Set(BUILTIN_TEMPLATES.map((t) => t.name));
     for (const [from, to] of Object.entries(RENAMED_TEMPLATES)) {
@@ -113,19 +136,19 @@ describe('template renames', () => {
 
 describe('superseded descriptions', () => {
   it('replaces a description still carrying the old built-in text', async () => {
-    const [old] = SUPERSEDED_TEMPLATE_DESCRIPTIONS['default-engineering'];
+    const [old] = SUPERSEDED_TEMPLATE_DESCRIPTIONS['ticket-to-merge'];
     const { prisma, rows } = makePrisma([
-      { description: old, id: 'de', name: 'default-engineering', teamId: null },
+      { description: old, id: 'de', name: 'ticket-to-merge', teamId: null },
     ]);
     await seedSweStarter(prisma);
 
-    const current = BUILTIN_TEMPLATES.find((t) => t.name === 'default-engineering');
+    const current = BUILTIN_TEMPLATES.find((t) => t.name === 'ticket-to-merge');
     expect(rows.find((r) => r.id === 'de')?.description).toBe(current?.description);
   });
 
   it('keeps a description an admin has edited', async () => {
     const { prisma, rows } = makePrisma([
-      { description: 'Our team flow', id: 'de', name: 'default-engineering', teamId: null },
+      { description: 'Our team flow', id: 'de', name: 'ticket-to-merge', teamId: null },
     ]);
     await seedSweStarter(prisma);
 

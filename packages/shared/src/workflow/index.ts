@@ -58,7 +58,6 @@ export {
   describeCostExclusions,
   estimateSpecCost,
 } from './costEstimator.js';
-export { DEFAULT_ENGINEERING_SPEC } from './defaultEngineeringSpec.js';
 export { EVAL_SCORER_ERROR_PREFIX } from './evalResultMarker.js';
 export type { Context } from './expr.js';
 export {
@@ -139,13 +138,14 @@ export {
   MCP_TOOL_KEY,
 } from './stepRegistry.js';
 // Exported only so the worker's workflow test can run the real specs: the package has no
-// export path for `templates/`, and (like DEFAULT_ENGINEERING_SPEC) they are pure data.
+// export path for `templates/`, and (like TICKET_TO_MERGE_SPEC) they are pure data.
 export { AGENT_REVIEWED_PR_SPEC } from './templates/agentReviewedPr.js';
 export { CI_TRIAGE_AND_FIX_SPEC } from './templates/ciTriageAndFix.js';
 export { CODE_AND_CI_SPEC } from './templates/codeAndCi.js';
 export { CONSENSUS_REVIEW_SPEC } from './templates/consensusReview.js';
 export { DEPENDENCY_UPDATE_SPEC } from './templates/dependencyUpdate.js';
 export { FOUR_EYES_SPEC } from './templates/fourEyes.js';
+export { TICKET_TO_MERGE_SPEC } from './templates/ticketToMerge.js';
 export type {
   ValidateSpecOptions,
   ValidationIssue,

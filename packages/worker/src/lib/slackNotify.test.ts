@@ -77,7 +77,7 @@ describe('notifySlackStepFailure', () => {
 
   it('posts to the originating Slack channel when set on WorkRequest', async () => {
     findRun.mockResolvedValue({
-      template: { name: 'default-engineering' },
+      template: { name: 'ticket-to-merge' },
       workflowId: 'eng-acme-x-JIRA-7',
       workRequest: {
         activeWorkflows: [],
@@ -98,12 +98,12 @@ describe('notifySlackStepFailure', () => {
     expect(body.thread_ts).toBe('1700.5');
     expect(body.text).toContain('JIRA-7');
     expect(body.text).toContain('runLint');
-    expect(body.text).toContain('default-engineering');
+    expect(body.text).toContain('ticket-to-merge');
   });
 
   it('falls back to team.slackNotifyChannel when no originating channel', async () => {
     findRun.mockResolvedValue({
-      template: { name: 'default-engineering' },
+      template: { name: 'ticket-to-merge' },
       workflowId: 'eng-acme-x-JIRA-8',
       workRequest: {
         activeWorkflows: [
@@ -127,7 +127,7 @@ describe('notifySlackStepFailure', () => {
     // notifier must match the run's workflowId to pick the right team — not
     // arbitrary first row.
     findRun.mockResolvedValue({
-      template: { name: 'default-engineering' },
+      template: { name: 'ticket-to-merge' },
       workflowId: 'eng-acme-y-JIRA-9',
       workRequest: {
         activeWorkflows: [
@@ -456,7 +456,7 @@ describe('notifySlackHumanStep (Block Kit resolve buttons)', () => {
 
   function mockChannelResolution() {
     findRun.mockResolvedValue({
-      template: { name: 'default-engineering' },
+      template: { name: 'ticket-to-merge' },
       workflowId: 'eng-acme-x-JIRA-1',
       workRequest: {
         activeWorkflows: [],

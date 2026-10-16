@@ -370,7 +370,7 @@ describe('public explorer interactions', () => {
 
   it('keeps keyboard focus on the activated graph node and edge control after a re-render', () => {
     const { dom } = browser();
-    const document = visit(dom, '#workflows/default-engineering');
+    const document = visit(dom, '#workflows/ticket-to-merge');
     const node = document.querySelectorAll('.graphnode')[1];
     node.focus();
     node.dispatchEvent(new dom.window.KeyboardEvent('keydown', { bubbles: true, key: 'Enter' }));
@@ -392,8 +392,8 @@ describe('public explorer interactions', () => {
     expect(document.querySelector('.listing').textContent).toContain('WorkflowRun');
     expect(document.querySelectorAll('.listing .listitem').length).toBeLessThan(data.models.length);
     expect(document.querySelector('.detail a[href^="#models/"]')).not.toBeNull();
-    document = visit(dom, '#workflows/default-engineering');
-    const template = data.templates.find((item) => item.name === 'default-engineering');
+    document = visit(dom, '#workflows/ticket-to-merge');
+    const template = data.templates.find((item) => item.name === 'ticket-to-merge');
     expect(document.querySelectorAll('.graphnode')).toHaveLength(
       Object.keys(template.spec.nodes).length
     );
@@ -433,7 +433,7 @@ describe('public explorer interactions', () => {
 
   it('restores focus after a walk into a terminal node, and not across templates', () => {
     const { dom } = browser();
-    const document = visit(dom, '#workflows/default-engineering');
+    const document = visit(dom, '#workflows/ticket-to-merge');
     for (let i = 0; i < 200 && document.querySelector('[data-edge]'); i += 1) {
       document.querySelector('[data-edge]').focus();
       document.querySelector('[data-edge]').click();

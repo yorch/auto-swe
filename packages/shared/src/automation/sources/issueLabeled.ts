@@ -5,8 +5,8 @@ import type { EventSource } from '../types.js';
 /** The source key stored on an automation that reacts to a label added to an issue. */
 export const ISSUE_LABELED = 'github.issues.labeled';
 
-/** The built-in template an issue automation starts by default (`DEFAULT_ENGINEERING_SPEC`). */
-const DEFAULT_ENGINEERING = 'default-engineering';
+/** The built-in template an issue automation starts by default (`TICKET_TO_MERGE_SPEC`). */
+const TICKET_TO_MERGE = 'ticket-to-merge';
 /** Issue text carried into the run's description, and kept in the ledger for a retry. */
 const MAX_BODY_CHARS = 4_000;
 const MAX_TITLE_CHARS = 256;
@@ -63,7 +63,7 @@ function occurrence(x: IssueLabeledFacts): string {
 }
 
 /**
- * A label added to an open issue: start a template on it — by default the engineering template,
+ * A label added to an open issue: start a template on it — by default `ticket-to-merge`,
  * which implements the issue and opens a pull request. Only for a person who is an active
  * platform user and a member of the repository (`actor`): issue forms add labels on behalf of
  * whoever opens the issue, so the label alone says nothing about who asked.
@@ -73,7 +73,7 @@ export const issueLabeledSource: EventSource<IssueLabeledFilters, IssueLabeledFa
   dedupeKey: (ownerKey, x) =>
     `${ownerKey}#issue-${x.issueNumber}/${x.label}/${x.updatedAt}`.toLowerCase(),
   defaultFilters: { labels: ['auto-swe'] },
-  defaultTemplate: { name: DEFAULT_ENGINEERING },
+  defaultTemplate: { name: TICKET_TO_MERGE },
   describe: (f) => `labelled ${f.labels.join(' or ')}`,
   describeOccurrence(f) {
     const text = (k: string) =>

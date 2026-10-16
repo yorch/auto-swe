@@ -1,7 +1,7 @@
 import {
-  DEFAULT_ENGINEERING_SPEC,
   nodeEdges,
   parseWorkflowSpec,
+  TICKET_TO_MERGE_SPEC,
   type WorkflowSpec,
 } from '@auto-swe/shared/workflow';
 import { describe, expect, it } from 'vitest';
@@ -187,13 +187,13 @@ describe('foldGroups', () => {
   });
 });
 
-describe('foldGroups on the seeded default-engineering template', () => {
+describe('foldGroups on the seeded ticket-to-merge template', () => {
   const all = (s: WorkflowSpec) => new Set(collapsibleGroups(s));
 
   it('collapses every group to a card and stays a closed graph', () => {
-    const groups = all(DEFAULT_ENGINEERING_SPEC);
+    const groups = all(TICKET_TO_MERGE_SPEC);
     expect(groups.size).toBeGreaterThan(4);
-    const fold = foldGroups(DEFAULT_ENGINEERING_SPEC, groups);
+    const fold = foldGroups(TICKET_TO_MERGE_SPEC, groups);
     expect(Object.keys(fold.folded)).toHaveLength(groups.size);
     expect(Object.keys(fold.spec.nodes).length).toBeLessThan(15);
     expectClosed(fold);
@@ -204,8 +204,8 @@ describe('foldGroups on the seeded default-engineering template', () => {
   });
 
   it('opens just the group that holds a failed node', () => {
-    const groups = all(DEFAULT_ENGINEERING_SPEC);
-    const fold = foldGroups(DEFAULT_ENGINEERING_SPEC, groups, new Set(['ciFix']));
+    const groups = all(TICKET_TO_MERGE_SPEC);
+    const fold = foldGroups(TICKET_TO_MERGE_SPEC, groups, new Set(['ciFix']));
     expect(Object.keys(fold.folded)).not.toContain(foldedGroupId('CI loop'));
     expect(Object.keys(fold.spec.nodes)).toContain('ciFix');
     expect(Object.keys(fold.folded)).toContain(foldedGroupId('review loop'));
@@ -213,8 +213,8 @@ describe('foldGroups on the seeded default-engineering template', () => {
   });
 
   it('composes with the bookkeeping fold, in either order of use', () => {
-    const groups = all(DEFAULT_ENGINEERING_SPEC);
-    const bookkept = foldBookkeeping(DEFAULT_ENGINEERING_SPEC).spec;
+    const groups = all(TICKET_TO_MERGE_SPEC);
+    const bookkept = foldBookkeeping(TICKET_TO_MERGE_SPEC).spec;
     const fold = foldGroups(bookkept, new Set(collapsibleGroups(bookkept)));
     expectClosed(fold);
     expect(groups.size).toBeGreaterThan(0);
@@ -222,8 +222,8 @@ describe('foldGroups on the seeded default-engineering template', () => {
 
   it('keeps the selected node on screen', () => {
     const fold = foldGroups(
-      DEFAULT_ENGINEERING_SPEC,
-      all(DEFAULT_ENGINEERING_SPEC),
+      TICKET_TO_MERGE_SPEC,
+      all(TICKET_TO_MERGE_SPEC),
       new Set(['checkApproval'])
     );
     expect(fold.spec.nodes.checkApproval).toBeDefined();

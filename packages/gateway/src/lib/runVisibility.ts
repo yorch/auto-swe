@@ -39,7 +39,7 @@ export interface VisibilityActor {
  * What a run's *template* is shared with is deliberately not a term. GLOBAL
  * templates — every built-in, and the default any team falls back to — are
  * readable by everyone, so "the template is global" would make every run of the
- * default engineering workflow visible, cancellable and approvable by every
+ * default `ticket-to-merge` workflow visible, cancellable and approvable by every
  * user on the platform.
  *
  * Multi-repository runs are decided per run, never through the shared work

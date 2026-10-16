@@ -399,13 +399,6 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/codemod.ts'),
       },
       {
-        find: '@auto-swe/shared/workflow/defaultEngineeringSpec',
-        replacement: path.resolve(
-          __dirname,
-          'packages/shared/src/workflow/defaultEngineeringSpec.ts'
-        ),
-      },
-      {
         find: '@auto-swe/shared/workflow/interpreter',
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/interpreter.ts'),
       },

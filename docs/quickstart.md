@@ -102,7 +102,7 @@ the dashboard to add it.
 
 ## 9. Start a run
 
-In the dashboard, choose **+ New request**, pick the `default-engineering` template, choose the
+In the dashboard, choose **+ New request**, pick the `ticket-to-merge` template, choose the
 repository, and describe a small change — "add a `GET /health` endpoint that returns
 `{ status: 'ok' }`" is a good first one.
 

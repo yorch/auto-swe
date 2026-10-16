@@ -125,7 +125,7 @@ flowchart TB
 
 ### 5.1 Standard single-repo work request (the flagship flow)
 
-The canonical end-to-end journey, and what the default `default-engineering` template encodes. It is
+The canonical end-to-end journey, and what the default `ticket-to-merge` template encodes. It is
 a composition of ordinary node types, not a hard-coded pipeline. (Sequence diagram in
 [architecture.md §3](./architecture.md#3-run-lifecycle).)
 

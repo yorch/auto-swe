@@ -373,10 +373,10 @@ describe('syncBuiltins — rolling the helper-built templates out', () => {
       'agent-reviewed-pr',
       'code-and-ci',
       'consensus-review',
-      'default-engineering',
       'dependency-update',
       'four-eyes',
       'pr-approval-gate',
+      'ticket-to-merge',
     ]);
     for (const t of hadIt) {
       const [v1, v2] = versionsOf(tables, template(tables, t.name).id) as [Row, Row];
@@ -482,7 +482,7 @@ describe('syncBuiltins — rolling the helper-built templates out', () => {
 
   it('does not overwrite an inputSchema or workspaceProvider an admin changed, but fills ones that are unset', async () => {
     const { prisma, tables } = await seedFromPreviousRelease();
-    const edited = template(tables, 'default-engineering');
+    const edited = template(tables, 'ticket-to-merge');
     edited.inputSchema = { admin: 'edited' };
     edited.workspaceProvider = 'document';
     const unset = template(tables, 'hotfix');

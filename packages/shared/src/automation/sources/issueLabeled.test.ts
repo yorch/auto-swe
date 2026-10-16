@@ -40,8 +40,8 @@ describe('issueLabeledSource', () => {
     expect(src.actor?.(facts)).toEqual({ id: '1', login: 'octocat' });
   });
 
-  it('starts the engineering template, and no template that takes no description', () => {
-    expect(src.defaultTemplate?.name).toBe('default-engineering');
+  it('starts ticket-to-merge, and no template that takes no description', () => {
+    expect(src.defaultTemplate?.name).toBe('ticket-to-merge');
     expect(src.templateCompatible(SWE_INPUT_SCHEMA)).toBe(true);
     const { description: _d, ...rest } = SWE_INPUT_SCHEMA.properties;
     expect(src.templateCompatible({ ...SWE_INPUT_SCHEMA, properties: rest })).toBe(false);

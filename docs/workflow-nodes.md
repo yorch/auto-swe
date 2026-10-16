@@ -250,7 +250,7 @@ own shape; `updateDomainState` returns `{ "status": … }`, so the example's val
 **Failure.** `onFail` and `onError` as in §4. Steps that run a quality gate return
 `{ "passed": false, … }` on a failing check, which is a gate failure.
 
-**Built-in examples.** `default-engineering`, `hotfix`, `code-and-ci`
+**Built-in examples.** `ticket-to-merge`, `hotfix`, `code-and-ci`
 
 **Example.**
 
@@ -701,7 +701,7 @@ compute a value with an expression.
 **Failure.** A binding that raises fails the run; so does a write path through a reserved segment
 (which `validateSpec` reports as an error first).
 
-**Built-in examples.** `default-engineering`, `ci-triage-and-fix`, `parallel-fan-out`
+**Built-in examples.** `ticket-to-merge`, `ci-triage-and-fix`, `parallel-fan-out`
 
 **Example.**
 
@@ -918,7 +918,7 @@ returned to whatever started the run; inside a fan-out branch it becomes that br
 
 **Failure.** A `result` binding that raises fails the run.
 
-**Built-in examples.** `hotfix`, `default-engineering`, `parallel-fan-out`
+**Built-in examples.** `hotfix`, `ticket-to-merge`, `parallel-fan-out`
 
 **Example.**
 
@@ -967,7 +967,7 @@ timeout writes nothing.
 
 **Failure.** None: a timeout takes `onTimeout`.
 
-**Built-in examples.** `default-engineering`, `signal-gated-rollout`, `code-and-ci`
+**Built-in examples.** `ticket-to-merge`, `signal-gated-rollout`, `code-and-ci`
 
 **Example.**
 

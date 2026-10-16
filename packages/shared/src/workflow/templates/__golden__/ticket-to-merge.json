@@ -1,7 +1,7 @@
 {
   "description": "Implement a ticket in an isolated sandbox until the tests pass, run the security, domain-logic, and performance reviewers, open a pull request, fix CI failures from the logs, then wait for a person to merge. The lesson is stored for the next run.",
   "entry": "setValidating",
-  "name": "default-engineering",
+  "name": "ticket-to-merge",
   "nodes": {
     "checkApproval": {
       "expr": "nodes.review.output.approved == true",

@@ -1,4 +1,4 @@
-import { DEFAULT_ENGINEERING_SPEC, parseWorkflowSpec } from '@auto-swe/shared/workflow';
+import { parseWorkflowSpec, TICKET_TO_MERGE_SPEC } from '@auto-swe/shared/workflow';
 import { describe, expect, it } from 'vitest';
 import { buildOutline, flowOrder, nextOutlineId, outlineIds } from './outline';
 
@@ -72,14 +72,14 @@ describe('buildOutline', () => {
     expect(outlineIds(buildOutline(plain))).toEqual(['a', 'b', 'end']);
   });
 
-  it('outlines the seeded default-engineering template by phase, every node once', () => {
-    const sections = buildOutline(DEFAULT_ENGINEERING_SPEC);
+  it('outlines the seeded ticket-to-merge template by phase, every node once', () => {
+    const sections = buildOutline(TICKET_TO_MERGE_SPEC);
     const labels = sections.map((s) => s.group);
     // The first phases, in the order a run meets them.
     expect(labels.slice(0, 4)).toEqual(['validate', 'implement', 'review loop', 'pull request']);
     expect(labels).toContain('CI loop');
     expect(labels).toContain('human merge');
-    expect(outlineIds(sections).sort()).toEqual(Object.keys(DEFAULT_ENGINEERING_SPEC.nodes).sort());
+    expect(outlineIds(sections).sort()).toEqual(Object.keys(TICKET_TO_MERGE_SPEC.nodes).sort());
   });
 });
 

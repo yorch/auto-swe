@@ -16,7 +16,7 @@ import {
 /**
  * Automated agent review loop → PR → CI. No HITL, and the run ends when CI is
  * green rather than waiting for a human merge. A faster alternative to
- * default-engineering when human sign-off inside the run is not required.
+ * ticket-to-merge when human sign-off inside the run is not required.
  *
  * Seeded as `review-and-merge` before it was renamed, a name that suggested it
  * merges — nothing the platform ships does. `syncBuiltins` renames that row in

@@ -83,7 +83,7 @@ The hero is the one bold element, and it is interactive on purpose. A run advanc
 of a real template and halts at its signal, and then **the visitor clears it** — merges the pull
 request, approves the reply, signs off. Clearing the signal is the one thing on the page only a
 person can do, which is also the one thing the product never does for you. The three routes are the
-built-in `default-engineering`, `zendesk-ticket-reply`, and `four-eyes` templates, simplified for a
+built-in `ticket-to-merge`, `zendesk-ticket-reply`, and `four-eyes` templates, simplified for a
 panel: bookkeeping is folded into the station it serves, but no step or gate is invented. They live
 in [`scripts/heroRoutes.mjs`](./scripts/heroRoutes.mjs), and its test fails if a route's gates stop
 matching the places its template has a person act, if a gate's timeout is not the spec's own, or if

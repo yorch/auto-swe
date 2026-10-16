@@ -57,7 +57,7 @@ Fastify Gateway ──────────────────▶ Tempor
        POST /api/v1/webhooks/ci     (CI check_run webhook → ciPipelineSignal)
 ```
 
-For multi-repo epics, `EpicOrchestratorWorkflow` decomposes the request into per-repo child `RunnableWorkflow`s using the Planner agent and runs them with dependency-graph scheduling. Each child runs the team's configured workflow spec (default: `default-engineering@v1`). See [`docs/architecture.md`](./docs/architecture.md) for the spec schema, node types, and step catalog.
+For multi-repo epics, `EpicOrchestratorWorkflow` decomposes the request into per-repo child `RunnableWorkflow`s using the Planner agent and runs them with dependency-graph scheduling. Each child runs the team's configured workflow spec (default: `ticket-to-merge@v1`). See [`docs/architecture.md`](./docs/architecture.md) for the spec schema, node types, and step catalog.
 
 ## Tech stack
 
@@ -132,7 +132,7 @@ For production deployment, see [`docs/deployment.md`](./docs/deployment.md) — 
 
 Four equivalent entry points — pick the one that fits the workflow:
 
-1. **Web dashboard** (recommended) — open `http://localhost:3000`, sign in, and click **+ New request**. Pick a workflow template (for example the default engineering template), fill the inputs it asks for, and run it. The run appears in **Active runs** immediately.
+1. **Web dashboard** (recommended) — open `http://localhost:3000`, sign in, and click **+ New request**. Pick a workflow template (for example the default, `ticket-to-merge`), fill the inputs it asks for, and run it. The run appears in **Active runs** immediately.
 2. **Slack** — ask the channel teammate in a channel it is installed in, or use the slash command. It also posts run progress and HITL prompts back into the channel. See [`docs/slack-app-setup.md`](./docs/slack-app-setup.md).
 3. **CLI** (`auto-swe`) — export `AUTO_SWE_TOKEN` (mint one at Settings → API tokens) and run the CLI's `workflows` subcommands. See `packages/cli/README.md`.
 4. **Raw HTTP** — useful for scripting / CI. Use a PAT (mint one at Settings → API tokens) as the bearer:

@@ -1,7 +1,6 @@
 import type { InputSchema } from '../../lib/inputSchema.js';
 import type { WorkspaceProviderType } from '../../lib/workspaceProviders.js';
 import { BUDGET_TIERS } from '../../types/workflow.js';
-import { DEFAULT_ENGINEERING_SPEC } from '../defaultEngineeringSpec.js';
 import type { WorkflowSpec } from '../spec.js';
 import { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
 import { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
@@ -28,6 +27,7 @@ import { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 import { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
 import { SEND_SLACK_UPDATE_SPEC } from './sendSlackUpdate.js';
 import { SIGNAL_GATED_ROLLOUT_SPEC } from './signalGatedRollout.js';
+import { TICKET_TO_MERGE_SPEC } from './ticketToMerge.js';
 import { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';
 import { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';
 
@@ -46,7 +46,7 @@ export interface BuiltinTemplate {
 /**
  * The SWE run-input contract: a ticket id, the target git_repo Connection, a
  * free-text description, and an optional budget tier. Declared on the default
- * engineering template so the gateway validates SWE submissions against it
+ * `ticket-to-merge` template so the gateway validates SWE submissions against it
  * (and non-SWE templates can declare their own instead).
  */
 export const SWE_INPUT_SCHEMA: InputSchema = {
@@ -66,11 +66,11 @@ export const SWE_INPUT_SCHEMA: InputSchema = {
 export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
   // ── Core (always seeded, first is the global default) ────────────────────
   {
-    description: DEFAULT_ENGINEERING_SPEC.description,
+    description: TICKET_TO_MERGE_SPEC.description,
     inputSchema: SWE_INPUT_SCHEMA,
     isDefault: true,
-    name: DEFAULT_ENGINEERING_SPEC.name,
-    spec: DEFAULT_ENGINEERING_SPEC,
+    name: TICKET_TO_MERGE_SPEC.name,
+    spec: TICKET_TO_MERGE_SPEC,
   },
 
   // ── Automated (no HITL) ──────────────────────────────────────────────────
@@ -330,8 +330,6 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
   },
 ];
 
-// Re-export individual specs so callers can import from this module directly.
-export { DEFAULT_ENGINEERING_SPEC } from '../defaultEngineeringSpec.js';
 export { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
 export { CANARY_ROLLOUT_SPEC } from './canaryRollout.js';
 export { CI_TRIAGE_AND_FIX_SPEC, CI_TRIAGE_INPUT_SCHEMA } from './ciTriageAndFix.js';
@@ -357,5 +355,7 @@ export { SCOPE_CLARIFICATION_SPEC } from './scopeClarification.js';
 export { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
 export { SEND_SLACK_UPDATE_SPEC } from './sendSlackUpdate.js';
 export { SIGNAL_GATED_ROLLOUT_SPEC } from './signalGatedRollout.js';
+// Re-export individual specs so callers can import from this module directly.
+export { TICKET_TO_MERGE_SPEC } from './ticketToMerge.js';
 export { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';
 export { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';
