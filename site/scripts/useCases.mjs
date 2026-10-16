@@ -97,10 +97,10 @@ export const USE_CASE_GROUPS = [
  */
 // biome-ignore assist/source/useSortedKeys: the order is the sidebar's reading order.
 export const USE_CASES = {
-  'default-engineering': {
+  'ticket-to-merge': {
     group: 'engineering',
     maturity: 'flagship',
-    source: 'packages/shared/src/workflow/defaultEngineeringSpec.ts',
+    source: 'packages/shared/src/workflow/templates/ticketToMerge.ts',
     summary:
       'Implements a ticket in an isolated sandbox until the tests pass, has three ' +
       'reviewer agents inspect the change, opens a pull request, fixes CI failures from ' +

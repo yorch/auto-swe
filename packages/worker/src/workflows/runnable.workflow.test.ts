@@ -13,8 +13,8 @@ import { classifyAgentRunFailure } from '@auto-swe/shared/lib/agentRunFailure';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import {
   CI_TRIAGE_AND_FIX_SPEC,
-  DEFAULT_ENGINEERING_SPEC,
   SPEC_SCHEMA_VERSION,
+  TICKET_TO_MERGE_SPEC,
 } from '@auto-swe/shared/workflow';
 import { SIGNAL_REWAIT_PATCH } from '@auto-swe/shared/workflow/signalSlots';
 import { ApplicationFailure } from '@temporalio/activity';
@@ -128,7 +128,7 @@ const fakeActivities = {
   cancelPendingHumanSteps: async (runId: string) => {
     calls.cancelledHumanSteps.push(runId);
   },
-  // The activities the seeded default-engineering template needs on its happy path.
+  // The activities the seeded ticket-to-merge template needs on its happy path.
   commitToMemory: async (...args: unknown[]) => {
     lessonEvidence.push(args[3]);
     return 'lesson-1';
@@ -365,13 +365,13 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
   }, 120_000);
 
-  it('runs the seeded default-engineering template to SUCCESS with no COMPLETED stamp of its own', async () => {
+  it('runs the seeded ticket-to-merge template to SUCCESS with no COMPLETED stamp of its own', async () => {
     // The template used to end `commitLesson -> setCompleted -> done`, where `setCompleted`
     // stamped COMPLETED just before the run ended SUCCESS. `finalizeWorkflowRun` already
     // writes COMPLETED on SUCCESS (templates.test.ts: 'writes the terminal status back to the
     // ActiveWorkflow row'), so the node is gone. This runs the real spec through the real
     // workflow: the stamps stop at AWAITING_HUMAN_MERGE and the run still finalizes SUCCESS.
-    currentSpec = DEFAULT_ENGINEERING_SPEC as unknown as Record<string, unknown>;
+    currentSpec = TICKET_TO_MERGE_SPEC as unknown as Record<string, unknown>;
     calls.domainStates.length = 0;
     const handle = await env.client.workflow.start('RunnableWorkflow', startArgs('wf-default-eng'));
     const waitFor = async (status: string) => {
@@ -399,9 +399,9 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
   }, 120_000);
 
-  it('stores a MERGE_TIMED_OUT lesson when nobody merges the default-engineering PR', async () => {
+  it('stores a MERGE_TIMED_OUT lesson when nobody merges the ticket-to-merge PR', async () => {
     // The seeded seven-day wait, shortened to fit inside the test's execution timeout.
-    const spec = structuredClone(DEFAULT_ENGINEERING_SPEC) as unknown as {
+    const spec = structuredClone(TICKET_TO_MERGE_SPEC) as unknown as {
       nodes: Record<string, Record<string, unknown>>;
     };
     spec.nodes.waitForHumanMerge = { ...spec.nodes.waitForHumanMerge, timeout: '1h' };

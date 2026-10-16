@@ -31,7 +31,7 @@ export function ActionMenu({
 }: {
   className?: string;
   items: ActionMenuItem[];
-  /** Accessible name for the trigger, e.g. "Actions for default-engineering". */
+  /** Accessible name for the trigger, e.g. "Actions for ticket-to-merge". */
   label: string;
 }) {
   const router = useRouter();

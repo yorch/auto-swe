@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_ENGINEERING_SPEC } from './defaultEngineeringSpec.js';
-import type { Context } from './expr.js';
-import { type Dispatcher, runSpec } from './interpreter.js';
-import { parseWorkflowSpec, SPEC_SCHEMA_VERSION } from './spec.js';
+import type { Context } from '../expr.js';
+import { type Dispatcher, runSpec } from '../interpreter.js';
+import { parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '../spec.js';
+import { TICKET_TO_MERGE_SPEC } from './ticketToMerge.js';
 
-describe('DEFAULT_ENGINEERING_SPEC CI-wait wiring', () => {
+describe('TICKET_TO_MERGE_SPEC CI-wait wiring', () => {
   it('still parses with the CI-wait routing nodes', () => {
-    expect(() => parseWorkflowSpec(DEFAULT_ENGINEERING_SPEC)).not.toThrow();
+    expect(() => parseWorkflowSpec(TICKET_TO_MERGE_SPEC)).not.toThrow();
   });
 
   it('routes savePrInfo → loadCiWaitConfig → routeCiWait', () => {
-    const nodes = DEFAULT_ENGINEERING_SPEC.nodes;
+    const nodes = TICKET_TO_MERGE_SPEC.nodes;
     expect((nodes.savePrInfo as { next: string }).next).toBe('loadCiWaitConfig');
     expect((nodes.loadCiWaitConfig as { step: string; next: string }).step).toBe(
       'resolveCiWaitConfig'

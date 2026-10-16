@@ -1,4 +1,4 @@
-import { DEFAULT_ENGINEERING_SPEC, parseWorkflowSpec } from '@auto-swe/shared/workflow';
+import { parseWorkflowSpec, TICKET_TO_MERGE_SPEC } from '@auto-swe/shared/workflow';
 import { describe, expect, it } from 'vitest';
 import { foldBookkeeping } from './foldBookkeeping';
 
@@ -75,16 +75,16 @@ describe('foldBookkeeping', () => {
     expect(foldBookkeeping(s).hidden).toEqual([]);
   });
 
-  it('shrinks the default engineering template and keeps every non-bookkeeping node', () => {
-    const { spec: folded, hidden } = foldBookkeeping(DEFAULT_ENGINEERING_SPEC);
+  it('shrinks the ticket-to-merge template and keeps every non-bookkeeping node', () => {
+    const { spec: folded, hidden } = foldBookkeeping(TICKET_TO_MERGE_SPEC);
     expect(hidden.length).toBeGreaterThan(10);
-    for (const [id, node] of Object.entries(DEFAULT_ENGINEERING_SPEC.nodes)) {
+    for (const [id, node] of Object.entries(TICKET_TO_MERGE_SPEC.nodes)) {
       if (!hidden.includes(id)) {
         expect(folded.nodes[id]?.type).toBe(node.type);
       }
     }
     // Every edge in the folded spec still lands on a node that exists.
     const parsed = parseWorkflowSpec(JSON.parse(JSON.stringify(folded)));
-    expect(parsed.entry).toBe(DEFAULT_ENGINEERING_SPEC.entry);
+    expect(parsed.entry).toBe(TICKET_TO_MERGE_SPEC.entry);
   });
 });

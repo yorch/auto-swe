@@ -337,13 +337,13 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
  * listed here must match exactly.
  */
 /**
- * default-engineering stores a lesson when its review or CI loop runs out of attempts or its
+ * ticket-to-merge stores a lesson when its review or CI loop runs out of attempts or its
  * merge wait times out, and tags each `commitToMemory` step with the outcome it records. The
  * three lesson steps sit on the loops' exhausted edges and the merge wait's timeout edge, and
  * continue to the same terminals on error.
  */
 /**
- * `default-engineering` gathers the run's tracker ticket before validating it: `gatherTicket`
+ * `ticket-to-merge` gathers the run's tracker ticket before validating it: `gatherTicket`
  * (non-blocking) digests the ticket, its parent and its newest comments, `setTicket` keeps the text
  * in `context.ticket`, and `validate` and `implement` take it as their `ticket` input.
  */
@@ -367,7 +367,7 @@ function withTicketGatherer(g: WorkflowSpec): WorkflowSpec {
   return { ...g, nodes } as WorkflowSpec;
 }
 
-function defaultEngineeringFailureLessons(g: WorkflowSpec): WorkflowSpec {
+function ticketToMergeFailureLessons(g: WorkflowSpec): WorkflowSpec {
   const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
   const lesson = (outcome: string, next: string) => ({
     inputs: { outcome: { literal: outcome } },
@@ -678,7 +678,7 @@ const INTENDED_CHANGES: Record<
     [
       'agent-reviewed-pr',
       'code-and-ci',
-      'default-engineering',
+      'ticket-to-merge',
       'dependency-update',
       'pr-approval-gate',
     ].map((name) => [
@@ -702,9 +702,9 @@ const INTENDED_CHANGES: Record<
     apply: (g: WorkflowSpec) => failureLessons(removePassThrough(g, 'setCompleted'), ['ci']),
     reason: `the finalizer already writes COMPLETED on SUCCESS; ${FAILURE_LESSONS_REASON}`,
   },
-  'default-engineering': {
+  'ticket-to-merge': {
     apply: (g: WorkflowSpec) =>
-      withTicketGatherer(defaultEngineeringFailureLessons(removePassThrough(g, 'setCompleted'))),
+      withTicketGatherer(ticketToMergeFailureLessons(removePassThrough(g, 'setCompleted'))),
     reason:
       'the finalizer already writes COMPLETED on SUCCESS; a review or CI loop that runs out ' +
       'of attempts, or a merge wait that times out, stores a lesson about what happened ' +

@@ -95,7 +95,7 @@ packages/
 | `src/workflow/interpreter.ts` | **Pure DAG interpreter** (`runSpec`) — no Temporal imports; side effects go through `Dispatcher` |
 | `src/workflow/expr.ts` | Expression evaluator for `cond` predicates (jsonpath + comparison, no JS sandbox) |
 | `src/workflow/stepRegistry.ts` | Step catalog — importable by gateway and web without a worker dependency |
-| `src/workflow/defaultEngineeringSpec.ts` | The seeded `default-engineering` spec |
+| `src/workflow/templates/ticketToMerge.ts` | The seeded `ticket-to-merge` spec — the global default template |
 | `src/workflow/shellImageAllowlist.ts` | Built-in image allowlist + per-team extension |
 | `src/workflow/signalSlots.ts` | Maps spec signal names → Temporal signal names |
 | `src/workflow/specDiff.ts` | Version diff used by the editor |
@@ -208,7 +208,7 @@ copy over; the flag defaults to true for other callers. Nothing streams: updates
 ## 3. Run Lifecycle
 
 The engine walks whatever DAG the run's `WorkflowSpec` declares — the sequence below is the shape of
-the seeded `default-engineering` template, not a fixed pipeline. It is worth reading in full because
+the seeded `ticket-to-merge` template, not a fixed pipeline. It is worth reading in full because
 it exercises nearly every mechanism (agent activities, sandboxes, gates, signals, memory); a
 template that omits half of it is equally valid.
 
@@ -408,7 +408,7 @@ attempts). The implementer's fix session pushes its own commit to the branch; th
 `createOrUpdatePullRequest` step that follows only re-arms the pull request's CI wait for the new
 head, which is what lets the CI webhook match a verdict to it. `agent-reviewed-pr`, `code-and-ci`,
 `dependency-update`, `canary-rollout`, `signal-gated-rollout`, `consensus-review` and `four-eyes`
-go straight from the fix back to the CI wait. `default-engineering` instead sends the fixed code
+go straight from the fix back to the CI wait. `ticket-to-merge` instead sends the fixed code
 back through its review loop first. `pr-approval-gate` only observes CI: both outcomes end the run.
 A CI failure therefore spends agent time and tokens before the run can fail. In the engineering
 templates, but not in `canary-rollout` or `signal-gated-rollout`, a CI or review loop that runs out
@@ -444,7 +444,7 @@ event can follow. These two templates never wait for one:
 
 - A CI fix is pushed by the fix session before the step that re-arms the pull request's CI wait runs.
   A verdict that completes in that gap, a few seconds, has no matching head and is dropped by the CI
-  webhook, and a signal-mode wait then runs to its 4 h timeout. `default-engineering` can route to
+  webhook, and a signal-mode wait then runs to its 4 h timeout. `ticket-to-merge` can route to
   polling to avoid it; `four-eyes` and `consensus-review` wait on the signal only.
 - The pull request in `four-eyes` and `consensus-review` is opened ready for review before any person
   (`four-eyes`) or any reviewer (`consensus-review`) has judged the change. Opening it posts the Slack

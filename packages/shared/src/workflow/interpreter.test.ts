@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_ENGINEERING_SPEC } from './defaultEngineeringSpec.js';
 import type { Context } from './expr.js';
 import { BranchCancelledError, type Dispatcher, runSpec } from './interpreter.js';
 import { parseWorkflowSpec, SPEC_SCHEMA_VERSION } from './spec.js';
+import { TICKET_TO_MERGE_SPEC } from './templates/ticketToMerge.js';
 
 interface Call {
   step: string;
@@ -52,7 +52,7 @@ function makeDispatcher(opts: {
       // The engineering spec resolves CI-wait config before the CI gate. Parity
       // tests exercise the default webhook (signal) path, so default this config
       // step to signal mode unless a test overrides it (poll-mode routing is
-      // covered in defaultEngineeringSpec.ciwait.test.ts).
+      // covered in templates/ticketToMerge.ciwait.test.ts).
       const out =
         opts.stepOutputs[step] ??
         (step === 'resolveCiWaitConfig'
@@ -1635,11 +1635,11 @@ describe('runSpec', () => {
   });
 });
 
-// ── Parity tests against DEFAULT_ENGINEERING_SPEC ──
+// ── Parity tests against TICKET_TO_MERGE_SPEC ──
 
-describe('DEFAULT_ENGINEERING_SPEC', () => {
+describe('TICKET_TO_MERGE_SPEC', () => {
   it('parses and validates', () => {
-    expect(() => parseWorkflowSpec(DEFAULT_ENGINEERING_SPEC)).not.toThrow();
+    expect(() => parseWorkflowSpec(TICKET_TO_MERGE_SPEC)).not.toThrow();
   });
 
   it('happy path: validate → implement → approve → CI pass → human merge → done', async () => {
@@ -1658,7 +1658,7 @@ describe('DEFAULT_ENGINEERING_SPEC', () => {
         validateContext: { contextSnapshotId: 'cs1', successCriteria: ['build passes'] },
       },
     });
-    const result = await runSpec(DEFAULT_ENGINEERING_SPEC, baseCtx(), dispatcher);
+    const result = await runSpec(TICKET_TO_MERGE_SPEC, baseCtx(), dispatcher);
     expect(result.status).toBe('SUCCESS');
     expect(result.result.prNumber).toBe(42);
     expect(result.result.prUrl).toBe('https://x/pr/42');
@@ -1693,7 +1693,7 @@ describe('DEFAULT_ENGINEERING_SPEC', () => {
         validateContext: { contextSnapshotId: 'cs1', successCriteria: [] },
       },
     });
-    const result = await runSpec(DEFAULT_ENGINEERING_SPEC, baseCtx(), dispatcher);
+    const result = await runSpec(TICKET_TO_MERGE_SPEC, baseCtx(), dispatcher);
     expect(result.status).toBe('FAILED');
     // Engineering workflow: review runs once on initial code, then after each
     // of the first two retries → 3 total review calls before FAIL.
@@ -1724,7 +1724,7 @@ describe('DEFAULT_ENGINEERING_SPEC', () => {
         validateContext: { contextSnapshotId: 'cs1', successCriteria: [] },
       },
     });
-    const result = await runSpec(DEFAULT_ENGINEERING_SPEC, baseCtx(), dispatcher);
+    const result = await runSpec(TICKET_TO_MERGE_SPEC, baseCtx(), dispatcher);
     expect(result.status).toBe('FAILED');
     expect(ciFixCalls).toBe(2); // 1st + 2nd retries; 3rd failure terminates
     expect(result.result.prNumber).toBe(1);
@@ -1742,7 +1742,7 @@ describe('DEFAULT_ENGINEERING_SPEC', () => {
         validateContext: { contextSnapshotId: 'cs1', successCriteria: [] },
       },
     });
-    const result = await runSpec(DEFAULT_ENGINEERING_SPEC, baseCtx(), dispatcher);
+    const result = await runSpec(TICKET_TO_MERGE_SPEC, baseCtx(), dispatcher);
     expect(result.status).toBe('TIMED_OUT');
     expect(result.result.prNumber).toBe(7);
   });
@@ -1765,7 +1765,7 @@ describe('DEFAULT_ENGINEERING_SPEC', () => {
         },
       },
     });
-    const result = await runSpec(DEFAULT_ENGINEERING_SPEC, baseCtx(), dispatcher);
+    const result = await runSpec(TICKET_TO_MERGE_SPEC, baseCtx(), dispatcher);
     expect(result.status).toBe('SUCCESS');
     expect(records).toContainEqual(
       expect.objectContaining({ nodeId: 'validate', nodeType: 'step', status: 'SKIPPED' })
@@ -1790,7 +1790,7 @@ describe('DEFAULT_ENGINEERING_SPEC', () => {
         validateContext: { contextSnapshotId: 'cs1', successCriteria: [] },
       },
     });
-    const result = await runSpec(DEFAULT_ENGINEERING_SPEC, baseCtx(), dispatcher);
+    const result = await runSpec(TICKET_TO_MERGE_SPEC, baseCtx(), dispatcher);
     expect(result.status).toBe('SUCCESS');
   });
 
@@ -1809,7 +1809,7 @@ describe('DEFAULT_ENGINEERING_SPEC', () => {
         validateContext: { contextSnapshotId: 'cs1', successCriteria: [] },
       },
     });
-    const result = await runSpec(DEFAULT_ENGINEERING_SPEC, baseCtx(), dispatcher);
+    const result = await runSpec(TICKET_TO_MERGE_SPEC, baseCtx(), dispatcher);
     expect(result.status).toBe('TIMED_OUT');
   });
 });

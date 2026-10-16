@@ -500,7 +500,7 @@ beforeEach(async () => {
         description: 'Default engineering workflow',
         id: 't1',
         isDefault: true,
-        name: 'default-engineering',
+        name: 'ticket-to-merge',
         status: 'ACTIVE',
         team: null,
         teamId: null,
@@ -601,7 +601,7 @@ describe('POST /api/v1/auth/slack/commands', () => {
     expect(res.statusCode).toBe(200);
     const json = res.json() as { text: string };
     expect(json.text).toMatch(/not linked/i);
-    expect(json.text).not.toContain('default-engineering');
+    expect(json.text).not.toContain('ticket-to-merge');
   });
 
   it('lists workflow templates for a linked user', async () => {
@@ -619,7 +619,7 @@ describe('POST /api/v1/auth/slack/commands', () => {
     });
     expect(res.statusCode).toBe(200);
     const json = res.json() as { text: string };
-    expect(json.text).toContain('default-engineering');
+    expect(json.text).toContain('ticket-to-merge');
     expect(json.text).toContain('backend-gates');
     expect(json.text).toContain('(default)');
   });
@@ -644,7 +644,7 @@ describe('POST /api/v1/auth/slack/commands', () => {
   });
 
   it('shows the active spec for a named template', async () => {
-    const body = `user_id=U1&text=${encodeURIComponent('workflows show default-engineering')}`;
+    const body = `user_id=U1&text=${encodeURIComponent('workflows show ticket-to-merge')}`;
     const { ts, sig } = signRequest(body);
     const res = await app.inject({
       headers: {
@@ -658,7 +658,7 @@ describe('POST /api/v1/auth/slack/commands', () => {
     });
     expect(res.statusCode).toBe(200);
     const json = res.json() as { text: string };
-    expect(json.text).toContain('default-engineering');
+    expect(json.text).toContain('ticket-to-merge');
     expect(json.text).toContain('terminate');
   });
 

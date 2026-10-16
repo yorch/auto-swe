@@ -1,4 +1,4 @@
-import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from './spec.js';
+import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
 import {
   ciLoop,
   ciWaitEntry,
@@ -10,12 +10,13 @@ import {
   statusStamp,
   terminate,
   validatePhase,
-} from './templates/authoring/index.js';
+} from './authoring/index.js';
 
 /**
- * The seeded default-engineering template. Mirrors the hardcoded
- * EngineeringWorkflow shape exactly so the interpreter can run in parity
- * mode before any teams customize their workflows.
+ * The seeded ticket-to-merge template, and the global default: a ticket in, a
+ * reviewed pull request out, and the run ends when a person merges it. Unlike
+ * `agent-reviewed-pr`, which stops at green CI, it waits for that merge and
+ * stores a lesson about the run.
  *
  * Sequence:
  *   start → gather ticket (non-blocking) → validate (non-blocking) → implement →
@@ -33,13 +34,13 @@ import {
  * Written with the authoring helpers, which expand at module load into the same
  * flat nodes (and the same node ids) this template has always had.
  */
-export const DEFAULT_ENGINEERING_SPEC: WorkflowSpec = {
+export const TICKET_TO_MERGE_SPEC: WorkflowSpec = {
   description:
     'Implement a ticket in an isolated sandbox until the tests pass, run the security, ' +
     'domain-logic, and performance reviewers, open a pull request, fix CI failures from ' +
     'the logs, then wait for a person to merge. The lesson is stored for the next run.',
   entry: 'setValidating',
-  name: 'default-engineering',
+  name: 'ticket-to-merge',
   nodes: mergeNodes(
     validatePhase({ next: 'setImplementing', ticketContext: true }),
     {

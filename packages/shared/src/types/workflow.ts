@@ -192,7 +192,7 @@ export interface LessonSummary {
 }
 
 /**
- * How the run a lesson is written about ended. `MERGED` is the default engineering
+ * How the run a lesson is written about ended. `MERGED` is the `ticket-to-merge`
  * template's success; the two failures are its loops running out of attempts.
  * `COMPLETED` is any other template's `commitToMemory` step.
  */

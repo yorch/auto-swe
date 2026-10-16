@@ -109,7 +109,7 @@ export const SWE_TRIGGER_MAPPINGS: TriggerMapping[] = [
       { const: 'STANDARD', to: 'budget' },
     ],
     source: 'github',
-    templateName: 'default-engineering',
+    templateName: 'ticket-to-merge',
   },
   {
     event: 'jira:issue_updated',
@@ -119,6 +119,6 @@ export const SWE_TRIGGER_MAPPINGS: TriggerMapping[] = [
       { const: 'STANDARD', to: 'budget' },
     ],
     source: 'jira',
-    templateName: 'default-engineering',
+    templateName: 'ticket-to-merge',
   },
 ];

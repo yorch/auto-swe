@@ -48,7 +48,7 @@ export const HERO_ROUTES = [
       { detail: 'Embedded for the next run', label: 'Lesson stored' },
     ],
     tab: 'Ticket to pull request',
-    template: 'default-engineering',
+    template: 'ticket-to-merge',
   },
   {
     done: 'Run complete. The reply is on the ticket, and the approval is in the audit log.',

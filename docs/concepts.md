@@ -35,7 +35,7 @@ through the **scope cascade**, so one platform can behave differently per team.
 
 ## Workflows
 
-- **Workflow template** — A named, versioned workflow — `default-engineering`, `four-eyes`,
+- **Workflow template** — A named, versioned workflow — `ticket-to-merge`, `four-eyes`,
   `zendesk-ticket-reply`. The built-in ones are seeded; teams clone and edit them, or author their
   own on the canvas or in plain language ([nl-workflow-authoring.md](./nl-workflow-authoring.md)).
 

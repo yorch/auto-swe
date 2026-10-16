@@ -489,7 +489,7 @@ open https://app.example.com
 # In the dashboard:
 #  1. Settings → API tokens → "+ New token"  → save the PAT to your secret manager
 #  2. Connections → "+ Add connection"       → connect a real git repo (use a test one first)
-#  3. Dashboard "+ New request" → select the default-engineering template → smallest possible task; verify the run starts
+#  3. Dashboard "+ New request" → select the ticket-to-merge template → smallest possible task; verify the run starts
 #  4. Watch the request in /workflows (open it from the list) and the run in the Temporal UI
 
 # Then verify webhooks both directions

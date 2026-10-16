@@ -33,7 +33,7 @@ by the same model, so vectors from different models are never compared.
 
 | Writer | When | Model call |
 |---|---|---|
-| `commitToMemory` step | When a review loop or a CI loop runs out of attempts (`REVIEW_FAILED`, `CI_FAILED`), before the run fails, in the engineering templates that have one: `default-engineering`, `agent-reviewed-pr`, `code-and-ci`, `consensus-review`, `dependency-update` and `four-eyes`. In `default-engineering` also after the pull request is merged (`MERGED`), and when nobody merges it before the merge wait times out (`MERGE_TIMED_OUT`, only if the review or CI rejected an attempt on the way) | Yes — the `commitToMemory` agent writes the lesson from the run's evidence |
+| `commitToMemory` step | When a review loop or a CI loop runs out of attempts (`REVIEW_FAILED`, `CI_FAILED`), before the run fails, in the engineering templates that have one: `ticket-to-merge`, `agent-reviewed-pr`, `code-and-ci`, `consensus-review`, `dependency-update` and `four-eyes`. In `ticket-to-merge` also after the pull request is merged (`MERGED`), and when nobody merges it before the merge wait times out (`MERGE_TIMED_OUT`, only if the review or CI rejected an attempt on the way) | Yes — the `commitToMemory` agent writes the lesson from the run's evidence |
 | Merge-conflict resolver | After it resolves a conflict | No (`recordLessonBackground`) |
 | Shell step | After a step that changed files and pushed them | No; the command is stored with credentials masked |
 
@@ -214,7 +214,7 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
   `signal-gated-rollout` have the same review and CI loops and write none. Nor does the sign-off
   loop of `four-eyes`, when people reject the change three times: those rejections are people's,
   often without a written reason, and a `REVIEW_FAILED` lesson is written as the review network's.
-  A run whose CI wait times out writes no lesson, and only `default-engineering` writes one when the
+  A run whose CI wait times out writes no lesson, and only `ticket-to-merge` writes one when the
   merge wait times out.
 - **A step that throws writes no lesson.** The security gate (`SECURITY_GATE_FAILURE`, on the
   implementation and on every fix path), any other implementation error, and every other failing

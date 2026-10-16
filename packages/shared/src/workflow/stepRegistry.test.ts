@@ -95,7 +95,7 @@ describe('stepRegistry', () => {
     }
   });
 
-  it('registers the CI-wait steps the default engineering spec dispatches', () => {
+  it('registers the CI-wait steps the ticket-to-merge spec dispatches', () => {
     expect(getStepMetadata('resolveCiWaitConfig').category).toBe('control');
     expect(getStepMetadata('waitForCiByPolling').category).toBe('gate');
   });

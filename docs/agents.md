@@ -999,7 +999,7 @@ omits `provisioning` and acts on the container through `turn.exec`.
 ### 3.8 Tracker ticket context (`gatherTicketContext`)
 
 The submitter's description is often a line or two; the ticket holds the requirements.
-`default-engineering` therefore opens with a **gather ticket** step (`gatherTicketContext`,
+`ticket-to-merge` therefore opens with a **gather ticket** step (`gatherTicketContext`,
 `packages/worker/src/activities/gatherTicketContext.ts`):
 
 1. It reads the run's input. A ticket id the platform generated (`RunInput.ticketIsSynthetic`) is

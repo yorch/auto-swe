@@ -970,6 +970,9 @@ async function syncAgents(prisma: PrismaClient, newSkillNames: ReadonlySet<strin
  * name; removing one early re-creates the duplicate.
  */
 export const RENAMED_TEMPLATES: Readonly<Record<string, string>> = {
+  // "default" is a flag an admin can move, and "engineering" did not tell it from its siblings;
+  // the run goes from a ticket to a person merging the pull request.
+  'default-engineering': 'ticket-to-merge',
   // It opens a PR and stops at green CI; the old name said it merged.
   'review-and-merge': 'agent-reviewed-pr',
 };
@@ -1004,9 +1007,6 @@ export const SUPERSEDED_TEMPLATE_DESCRIPTIONS: Readonly<Record<string, readonly 
     'Implement, open the PR and wait for CI (a failing CI is fixed by the agent: 2 fix attempts, and a third failure fails the run), then run two independent agent review-network calls in parallel (fanOut with concurrency=2) on the code that passed CI. Both reviewers must approve; if either rejects the agent addresses the combined feedback, CI runs again, and both reviewers run again (up to 3 rounds). Demonstrates fanOut for parallel quality gates rather than parallel work.',
     'Run two independent agent review-network calls in parallel (fanOut with concurrency=2). Both reviewers must approve before the PR opens; if either rejects the agent addresses the combined feedback and tries again (up to 3 rounds). Demonstrates fanOut for parallel quality gates rather than parallel work.',
   ],
-  'default-engineering': [
-    'Default engineering workflow (parity with hardcoded EngineeringWorkflow).',
-  ],
   'dependency-update': [
     'Implement the dependency update, run the full test suite, open a PR, then loop on CI failures (fetch logs → fix → push) up to 3 times. Skips the review network — tests and CI are the quality gate for mechanical dep bumps.',
   ],
@@ -1040,6 +1040,7 @@ export const SUPERSEDED_TEMPLATE_DESCRIPTIONS: Readonly<Record<string, readonly 
   'signal-gated-rollout': [
     'Implement, run the agent review loop, open a PR, wait for CI, then pause for a deployment-gate signal from an external system (CD pipeline, change-management board). The gate signal carries an approval flag; rejection or timeout terminates the run.',
   ],
+  'ticket-to-merge': ['Default engineering workflow (parity with hardcoded EngineeringWorkflow).'],
   'tiered-escalation': [
     'After implementation, a human categorises the change risk (low / medium / high). Low-risk changes go straight to PR; medium require senior sign-off; high-risk changes require team-lead approval with a 48-hour window.',
   ],
@@ -1083,19 +1084,6 @@ export const PREVIOUS_BUILTIN_INPUT_SCHEMAS: Readonly<Record<string, readonly In
         title: { type: 'string' },
       },
       required: ['connectionId', 'title', 'brief'],
-      type: 'object',
-    },
-  ],
-  'default-engineering': [
-    {
-      properties: {
-        // A frozen record of what a past release shipped: never derived from a live constant.
-        budget: { enum: ['STANDARD', 'LARGE', 'EPIC'], type: 'string' },
-        connectionId: UUID_CONNECTION_ID,
-        description: { type: 'string' },
-        ticketId: { type: 'string' },
-      },
-      required: ['ticketId', 'connectionId', 'description'],
       type: 'object',
     },
   ],
@@ -1144,6 +1132,19 @@ export const PREVIOUS_BUILTIN_INPUT_SCHEMAS: Readonly<Record<string, readonly In
         message: { type: 'string' },
       },
       required: ['channelId', 'connectionId', 'message'],
+      type: 'object',
+    },
+  ],
+  'ticket-to-merge': [
+    {
+      properties: {
+        // A frozen record of what a past release shipped: never derived from a live constant.
+        budget: { enum: ['STANDARD', 'LARGE', 'EPIC'], type: 'string' },
+        connectionId: UUID_CONNECTION_ID,
+        description: { type: 'string' },
+        ticketId: { type: 'string' },
+      },
+      required: ['ticketId', 'connectionId', 'description'],
       type: 'object',
     },
   ],

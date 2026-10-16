@@ -5,7 +5,7 @@ export interface ReviewLoopOptions {
   approved: string;
   /**
    * Where the fixed code goes after `reviewFix` has revised it. Default
-   * `setReviewing`, i.e. straight back into the review; default-engineering
+   * `setReviewing`, i.e. straight back into the review; ticket-to-merge
    * routes through `clearCiResult` first.
    */
   afterFix?: string;
