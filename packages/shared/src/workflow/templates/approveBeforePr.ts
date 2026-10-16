@@ -17,13 +17,13 @@ import {
  * Useful when a human must sign off on every change before it becomes
  * visible to reviewers.
  */
-export const PR_APPROVAL_GATE_SPEC: WorkflowSpec = {
+export const APPROVE_BEFORE_PR_SPEC: WorkflowSpec = {
   description:
     'Implement, run tests, then require explicit human approval before the pull request is ' +
     'opened. Useful when a person must sign off on every change before reviewers can see ' +
     'it.',
   entry: 'setValidating',
-  name: 'pr-approval-gate',
+  name: 'approve-before-pr',
   nodes: mergeNodes(
     validatePhase({ next: 'setImplementing', successCriteria: false }),
     {

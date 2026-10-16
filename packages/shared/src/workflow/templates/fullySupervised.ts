@@ -12,14 +12,14 @@ import {
  * Kitchen-sink supervised flow: all four HITL node types chained.
  * input → implement → review → decision → approve → PR.
  */
-export const FULL_SUPERVISED_SPEC: WorkflowSpec = {
+export const FULLY_SUPERVISED_SPEC: WorkflowSpec = {
   description:
     'The most hands-on workflow: collect requirements up front, implement, show the diff ' +
     'for review, let the reviewer decide whether to apply their notes, then require final ' +
     'approval before the pull request is opened. Every kind of human step appears in ' +
     'sequence, so it doubles as a tour of what a person can be asked to do.',
   entry: 'gatherContext',
-  name: 'full-supervised',
+  name: 'fully-supervised',
   nodes: mergeNodes(
     {
       gatherContext: {

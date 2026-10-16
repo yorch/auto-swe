@@ -426,7 +426,7 @@ describe('validateSpec', () => {
     // ones — a built-in template ships to every team, so the only allowlist it
     // can rely on is the built-in set, and that IS decidable here.
     //
-    // Nothing checked it before, and MIGRATION_SPEC shipped pinned to
+    // Nothing checked it before, and DB_MIGRATION_DRY_RUN_SPEC shipped pinned to
     // `node:24-slim`. The allowlist is enforced when the container launches,
     // so the seeded template was rejected mid-run, every run — while the
     // "every built-in template passes validation" test above stayed green.

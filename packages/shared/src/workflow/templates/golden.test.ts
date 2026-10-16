@@ -680,7 +680,7 @@ const INTENDED_CHANGES: Record<
       'code-and-ci',
       'ticket-to-merge',
       'dependency-update',
-      'pr-approval-gate',
+      'approve-before-pr',
     ].map((name) => [
       name,
       {

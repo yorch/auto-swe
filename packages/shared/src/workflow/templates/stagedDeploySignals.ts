@@ -16,13 +16,14 @@ import {
 /**
  * Standard review + CI, then two additional signal gates: staging deploy result
  * and production monitoring result. Models a release-train / canary pipeline
- * where external systems send go/no-go signals at each stage.
+ * where external systems send go/no-go signals at each stage. The run deploys
+ * nothing itself: it waits for the systems that do.
  *
  * Expected signals:
  *   stagingDeploySignal   — payload: { deployed: boolean }
  *   productionMonitorSignal — payload: { healthy: boolean }
  */
-export const CANARY_ROLLOUT_SPEC: WorkflowSpec = {
+export const STAGED_DEPLOY_SIGNALS_SPEC: WorkflowSpec = {
   description:
     'Implement, have the review agents check it (up to 3 attempts), open a pull request and ' +
     'wait for CI. Then pause until an external system confirms the staging deploy, and ' +
@@ -30,7 +31,7 @@ export const CANARY_ROLLOUT_SPEC: WorkflowSpec = {
     'release-train pipeline where each promotion stage must be confirmed before the next ' +
     'one starts.',
   entry: 'setValidating',
-  name: 'canary-rollout',
+  name: 'staged-deploy-signals',
   nodes: mergeNodes(
     validatePhase({ next: 'setImplementing' }),
     {

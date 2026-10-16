@@ -192,10 +192,10 @@ export const USE_CASES = {
       'three in parallel sandboxes, and joins them into a single pull request.',
     title: 'Parallel implementation',
   },
-  'pr-approval-gate': {
+  'approve-before-pr': {
     group: 'people',
     maturity: 'composed',
-    source: 'packages/shared/src/workflow/templates/prApprovalGate.ts',
+    source: 'packages/shared/src/workflow/templates/approveBeforePr.ts',
     summary:
       'Implements and tests the change, then holds it until a person approves. Nothing ' +
       'becomes visible to reviewers on GitHub until someone has signed off inside the run.',
@@ -248,41 +248,41 @@ export const USE_CASES = {
       'both people sign off again.',
     title: 'Four-eyes change',
   },
-  migration: {
+  'db-migration-dry-run': {
     group: 'people',
     maturity: 'composed',
-    source: 'packages/shared/src/workflow/templates/migration.ts',
+    source: 'packages/shared/src/workflow/templates/dbMigrationDryRun.ts',
     summary:
       'Writes the migration, dry-runs it in an ephemeral container, and puts the output in ' +
       'front of a person. The pull request opens only if they approve what it would do.',
     title: 'Database migration with a dry run',
   },
-  'full-supervised': {
+  'fully-supervised': {
     group: 'people',
     maturity: 'composed',
-    source: 'packages/shared/src/workflow/templates/fullSupervised.ts',
+    source: 'packages/shared/src/workflow/templates/fullySupervised.ts',
     summary:
       'Every kind of human step in one run: requirements up front, a diff review, a ' +
       'decision on the review notes, and a final approval before the pull request.',
     title: 'Fully supervised',
   },
-  'signal-gated-rollout': {
+  'external-approval-gate': {
     group: 'release',
     maturity: 'composed',
-    source: 'packages/shared/src/workflow/templates/signalGatedRollout.ts',
+    source: 'packages/shared/src/workflow/templates/externalApprovalGate.ts',
     summary:
       'After review and CI, waits for a go/no-go from an external system such as a CD ' +
       'pipeline or a change board. A rejection or a timeout ends the run.',
-    title: 'Deployment-gated change',
+    title: 'External approval gate',
   },
-  'canary-rollout': {
+  'staged-deploy-signals': {
     group: 'release',
     maturity: 'composed',
-    source: 'packages/shared/src/workflow/templates/canaryRollout.ts',
+    source: 'packages/shared/src/workflow/templates/stagedDeploySignals.ts',
     summary:
       'After review and CI, waits for a staging deploy result and then a production ' +
       'monitoring result. Each promotion is confirmed by the system that can see it.',
-    title: 'Canary rollout',
+    title: 'Staged deploy confirmation',
   },
   'prd-decomposition': {
     group: 'product',

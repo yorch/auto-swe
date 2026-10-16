@@ -455,7 +455,7 @@ carries `persisted`, `filesChanged` and, when it committed, `committedSha`.
 The activity throws only when the run has no repository connection, the clone fails, or the
 workspace volume cannot be created.
 
-**Built-in examples.** `migration`
+**Built-in examples.** `db-migration-dry-run`
 
 **Example.**
 
@@ -760,7 +760,7 @@ earlier node is how a spec loops.
 
 **Failure.** An expression that raises a type error fails the run; there is no `onFail`.
 
-**Built-in examples.** `pr-approval-gate`, `model-catalog-refresh`, `ci-triage-and-fix`
+**Built-in examples.** `approve-before-pr`, `model-catalog-refresh`, `ci-triage-and-fix`
 
 **Example.**
 
@@ -967,7 +967,7 @@ timeout writes nothing.
 
 **Failure.** None: a timeout takes `onTimeout`.
 
-**Built-in examples.** `ticket-to-merge`, `signal-gated-rollout`, `code-and-ci`
+**Built-in examples.** `ticket-to-merge`, `external-approval-gate`, `code-and-ci`
 
 **Example.**
 
@@ -1037,7 +1037,7 @@ There is no `storeAs`.
 
 **Failure.** None: a timeout takes `onTimeout` and marks the inbox item timed out.
 
-**Built-in examples.** `pr-approval-gate`, `four-eyes`, `migration`
+**Built-in examples.** `approve-before-pr`, `four-eyes`, `db-migration-dry-run`
 
 **Example.**
 
@@ -1164,7 +1164,7 @@ different.
 **Failure.** None: the form is validated against `fields` before the run is resumed, and a timeout
 takes `onTimeout`.
 
-**Built-in examples.** `scope-clarification`, `full-supervised`
+**Built-in examples.** `scope-clarification`, `fully-supervised`
 
 **Example.**
 
@@ -1235,7 +1235,7 @@ characters, absent when they left none) at `nodes.<id>.output.value` (and the wh
 
 **Failure.** None: a timeout takes `onTimeout`.
 
-**Built-in examples.** `human-code-review`, `prd-decomposition`, `full-supervised`
+**Built-in examples.** `human-code-review`, `prd-decomposition`, `fully-supervised`
 
 **Example.**
 
