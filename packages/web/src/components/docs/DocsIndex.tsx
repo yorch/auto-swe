@@ -77,7 +77,7 @@ function DocCard({ doc, featured = false }: { doc: DocMeta; featured?: boolean }
       className={cn(
         'group flex h-full flex-col rounded-xl border transition-colors',
         featured
-          ? 'border-ink-400/70 bg-gradient-to-b from-ink-700 to-ink-900/80 p-5 hover:border-ember-400/60'
+          ? 'border-ink-400/70 bg-ink-700 p-5 hover:border-ember-400/60'
           : 'border-ink-400/50 bg-ink-900/40 p-4 hover:border-ember-400/50 hover:bg-ink-700/40',
         FOCUS_RING
       )}

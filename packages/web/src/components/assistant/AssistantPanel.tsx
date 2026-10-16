@@ -491,7 +491,7 @@ function Composer({ busy }: { busy: boolean | undefined }) {
         <span>Enter to send · Shift+Enter for a new line</span>
         <button
           className={cn(
-            'rounded-md bg-gradient-to-br from-ember-500 to-ember-600 px-3 py-1 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-50',
+            'rounded-md bg-ember-500 px-3 py-1 text-sm font-semibold text-white hover:bg-ember-600 disabled:opacity-50',
             FOCUS_RING
           )}
           disabled={disabled || text.trim() === ''}

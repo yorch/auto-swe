@@ -82,8 +82,7 @@ function useBucket(scope: RequestScope, state: RequestState) {
   return useRequests({ limit: 5, scope, state });
 }
 
-const TILE =
-  'flex min-w-0 flex-col rounded-xl border border-ink-400/60 bg-gradient-to-b from-ink-700 to-ink-900/80 p-4';
+const TILE = 'flex min-w-0 flex-col rounded-xl border border-ink-400/60 bg-ink-700 p-4';
 
 function TileBody({
   count,

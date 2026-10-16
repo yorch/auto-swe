@@ -275,7 +275,7 @@ export function FlightRecorder({
           <button
             aria-label={playing ? 'Pause replay' : 'Play replay'}
             className={cn(
-              'flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-ember-500 to-ember-600 text-white transition hover:brightness-110 lg:h-9 lg:w-9',
+              'flex h-[44px] w-[44px] shrink-0 items-center justify-center rounded-full bg-ember-500 text-white transition-colors hover:bg-ember-600 lg:h-9 lg:w-9',
               FOCUS_RING
             )}
             onClick={() => {

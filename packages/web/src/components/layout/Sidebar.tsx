@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
+import { BrandMark } from '@/components/layout/AuthLayout';
 import { PALETTE_CHOICES } from '@/components/layout/ThemeToggle';
 import { Icon, isIconName } from '@/components/ui/Icon';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
@@ -285,30 +286,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           className={cn('flex items-center gap-3 px-[18px] py-[18px] no-underline', FOCUS_RING)}
           href="/"
         >
-          {/* Gradient logo mark */}
-          <span className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-sm bg-gradient-to-br from-ember-400 to-violet-400 shadow-[0_6px_18px_-6px_color-mix(in_oklab,var(--color-ember-400)_70%,transparent)]">
-            <svg
-              aria-hidden="true"
-              className="text-paper-50"
-              fill="none"
-              height={15}
-              viewBox="0 0 24 24"
-              width={15}
-            >
-              <path
-                d="M4 7h7M4 12h16M13 17h7"
-                stroke="currentColor"
-                strokeLinecap="round"
-                strokeWidth={2.2}
-              />
-              <circle cx={17} cy={7} fill="currentColor" r={2.4} />
-              <circle cx={7} cy={17} fill="currentColor" r={2.4} />
-            </svg>
-          </span>
-          <span className="flex items-baseline gap-[3px]">
-            <span className="text-lg font-bold tracking-[-0.02em] text-paper-100">auto</span>
-            <span className="font-display text-lg font-semibold italic text-ember-400">·swe</span>
-          </span>
+          <BrandMark size="sm" />
         </Link>
         <button
           aria-label="Close navigation"
@@ -343,7 +321,7 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           <Link
             aria-current={isStartWorkPath(pathname) ? 'page' : undefined}
             className={cn(
-              'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-gradient-to-br from-ember-500 to-ember-600 px-3 py-2 text-sm font-semibold text-white no-underline shadow-[0_8px_20px_-10px_var(--color-ember-500)] transition hover:brightness-110',
+              'flex items-center justify-center gap-2 rounded-lg border border-transparent bg-ember-500 px-3 py-2 text-sm font-semibold text-white no-underline transition-colors hover:bg-ember-600',
               FOCUS_RING
             )}
             data-tour="nav:/start"

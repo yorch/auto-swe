@@ -434,20 +434,6 @@ function LoginPageInner() {
     <div className="relative grid min-h-dvh bg-ink-800 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] xl:grid-cols-[1.1fr_1fr]">
       {/* LEFT — brand panel, wide screens only */}
       <aside className="relative hidden flex-col justify-between overflow-hidden border-r border-ink-600 bg-ink-950 p-12 lg:flex">
-        <div aria-hidden className="pointer-events-none absolute inset-0">
-          <div className="absolute inset-0 bg-radial-[circle_at_20%_10%] from-ember-400/20 to-transparent to-55%" />
-          <div className="absolute inset-0 bg-radial-[circle_at_85%_85%] from-dust-400/10 to-transparent to-55%" />
-          <div
-            className="absolute inset-0 opacity-[0.06] [mask-image:linear-gradient(to_bottom,black,transparent_85%)]"
-            style={{
-              backgroundImage:
-                'linear-gradient(to right, var(--color-paper-500) 1px, transparent 1px),' +
-                'linear-gradient(to bottom, var(--color-paper-500) 1px, transparent 1px)',
-              backgroundSize: '56px 56px',
-            }}
-          />
-        </div>
-
         <header className="relative z-10 flex items-center justify-between gap-4">
           <BrandMark size="lg" />
           {/* Driven by the provider probe, which doubles as the reachability

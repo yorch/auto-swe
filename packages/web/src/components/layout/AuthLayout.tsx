@@ -4,29 +4,34 @@ import { Icon, type IconName } from '@/components/ui/Icon';
 import { cn } from '@/lib/utils';
 
 /**
- * The product mark: the gradient tile plus the "auto·swe" wordmark, drawn the
- * same way the sidebar draws it. The tile is a bespoke logo, not an icon, so it
- * stays an inline SVG rather than an `Icon`.
+ * The product mark: a flat violet tile plus the "auto·swe" wordmark, shared by
+ * the sidebar and the sign-in screens. The tile is a bespoke logo, not an icon,
+ * so it stays an inline SVG rather than an `Icon`. Flat on purpose — no gradient,
+ * no glow — and the wordmark is upright type in the UI face.
  */
-export function BrandMark({ className, size = 'md' }: { className?: string; size?: 'md' | 'lg' }) {
-  const lg = size === 'lg';
+export function BrandMark({
+  className,
+  size = 'md',
+}: {
+  className?: string;
+  size?: 'sm' | 'md' | 'lg';
+}) {
+  const tile = {
+    lg: 'h-10 w-10 rounded-lg',
+    md: 'h-8 w-8 rounded-lg',
+    sm: 'h-[26px] w-[26px] rounded-sm',
+  }[size];
+  const glyph = { lg: 22, md: 18, sm: 15 }[size];
+  const text = { lg: 'text-2xl', md: 'text-xl', sm: 'text-lg' }[size];
   return (
-    <span className={cn('inline-flex items-center gap-2.5', className)}>
+    <span
+      className={cn('inline-flex items-center', size === 'sm' ? 'gap-3' : 'gap-2.5', className)}
+    >
       <span
         aria-hidden="true"
-        className={cn(
-          'flex shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-ember-400 to-violet-400 shadow-[0_8px_24px_-8px_color-mix(in_oklab,var(--color-ember-400)_70%,transparent)]',
-          lg ? 'h-10 w-10' : 'h-8 w-8'
-        )}
+        className={cn('flex shrink-0 items-center justify-center bg-ember-500 text-white', tile)}
       >
-        <svg
-          aria-hidden="true"
-          className="text-paper-50"
-          fill="none"
-          height={lg ? 22 : 18}
-          viewBox="0 0 24 24"
-          width={lg ? 22 : 18}
-        >
+        <svg aria-hidden="true" fill="none" height={glyph} viewBox="0 0 24 24" width={glyph}>
           <path
             d="M4 7h7M4 12h16M13 17h7"
             stroke="currentColor"
@@ -37,50 +42,17 @@ export function BrandMark({ className, size = 'md' }: { className?: string; size
           <circle cx={7} cy={17} fill="currentColor" r={2.4} />
         </svg>
       </span>
-      <span className="flex items-baseline gap-[3px]">
-        <span
-          className={cn('font-bold tracking-[-0.02em] text-paper-50', lg ? 'text-2xl' : 'text-xl')}
-        >
-          auto
-        </span>
-        <span
-          className={cn(
-            'font-display font-semibold italic text-ember-400',
-            lg ? 'text-2xl' : 'text-xl'
-          )}
-        >
-          ·swe
-        </span>
+      <span className={cn('tracking-[-0.02em]', text)}>
+        <span className="font-bold text-paper-50">auto</span>
+        <span className="font-medium text-paper-400">·swe</span>
       </span>
     </span>
   );
 }
 
 /**
- * The soft glow and faint grid behind the auth screens. Decorative only, and
- * positioned against the nearest `relative` ancestor.
- */
-export function AuthBackdrop({ className }: { className?: string }) {
-  return (
-    <div aria-hidden className={cn('pointer-events-none absolute inset-0', className)}>
-      <div className="absolute inset-0 bg-radial-[circle_at_50%_0%] from-ember-400/14 to-transparent to-60%" />
-      <div className="absolute inset-0 bg-radial-[circle_at_100%_100%] from-dust-400/8 to-transparent to-50%" />
-      <div
-        className="absolute inset-0 opacity-[0.05] [mask-image:radial-gradient(ellipse_at_center,black_30%,transparent_75%)]"
-        style={{
-          backgroundImage:
-            'linear-gradient(to right, var(--color-paper-500) 1px, transparent 1px),' +
-            'linear-gradient(to bottom, var(--color-paper-500) 1px, transparent 1px)',
-          backgroundSize: '48px 48px',
-        }}
-      />
-    </div>
-  );
-}
-
-/**
  * The chromeless ground the sign-in screens share: the brand mark above a
- * centred card on a softly lit page. `login` places it in the right half of its
+ * centred card on the plain page ground. `login` places it in the right half of its
  * split layout and shows the mark on narrow screens only (`brand="mobile"`),
  * since its left panel carries the mark on wide ones; the single-panel screens
  * (reset password, awaiting approval) fill the viewport with it. `embedded`
@@ -111,7 +83,6 @@ export function AuthLayout({
         className
       )}
     >
-      {!embedded && <AuthBackdrop />}
       <div className={cn('relative w-full', embedded ? 'max-w-[460px]' : 'max-w-[420px]')}>
         {!embedded && (
           <div className={cn('mb-8 flex justify-center', brand === 'mobile' && 'lg:hidden')}>

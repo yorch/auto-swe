@@ -130,7 +130,7 @@ export default function SettingsPage() {
         <div className="flex flex-wrap items-center gap-4 py-4">
           <span
             aria-hidden="true"
-            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-ember-400 to-violet-400 text-lg font-semibold text-paper-50"
+            className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-ink-300 bg-ink-600 text-lg font-semibold text-paper-100"
           >
             {(user?.email ?? '?').charAt(0).toUpperCase()}
           </span>

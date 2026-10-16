@@ -70,7 +70,7 @@ export function SetupReadiness() {
         role="progressbar"
       >
         <div
-          className="h-full rounded-full bg-gradient-to-r from-ember-500 to-ember-400 transition-[width]"
+          className="h-full rounded-full bg-ember-500 transition-[width]"
           style={{ width: `${percent}%` }}
         />
       </div>

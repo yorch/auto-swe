@@ -379,22 +379,6 @@
     letter-spacing: 0.12em;
   }
 
-  .display-italic {
-    font-family: var(--font-display);
-    font-style: italic;
-  }
-
-  /* Hairline rule using gradient fade */
-  .ink-rule {
-    background-image: linear-gradient(
-      to right,
-      transparent,
-      var(--color-ink-400) 18%,
-      var(--color-ink-400) 82%,
-      transparent
-    );
-  }
-
   /* ── Animations ── */
 
   @keyframes fade-up {

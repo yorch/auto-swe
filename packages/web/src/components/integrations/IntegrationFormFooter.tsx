@@ -39,7 +39,7 @@ export function IntegrationFormFooter({
       {error && <Alert>{error}</Alert>}
       <div
         className={cn(
-          'sticky bottom-0 z-10 flex flex-nowrap items-center justify-between gap-3 rounded-lg border bg-ink-800/95 px-4 py-3 backdrop-blur',
+          'sticky bottom-0 z-10 flex flex-nowrap items-center justify-between gap-3 rounded-lg border bg-ink-800 px-4 py-3',
           dirty ? 'border-amber-400/50' : 'border-ink-400'
         )}
       >

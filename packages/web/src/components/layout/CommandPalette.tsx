@@ -223,11 +223,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center px-4 pt-[12vh]">
-      <div
-        aria-hidden="true"
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-        onClick={onClose}
-      />
+      <div aria-hidden="true" className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
         aria-label="Go to page"
         aria-modal="true"
