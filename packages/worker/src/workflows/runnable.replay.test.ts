@@ -83,6 +83,8 @@ describe('RunnableWorkflow — history replay', () => {
       'fan-out-block-cancel',
       'fan-out-cancel',
       'fan-out-human-gate',
+      'fan-out-shared-signal-timeout',
+      'fan-out-shared-signal',
       'fan-out',
       'human-approval',
       'human-decision',
@@ -209,11 +211,6 @@ describe('RunnableWorkflow — history replay', () => {
     expect(signals).toEqual(['hitl_fan[0]/gate', 'hitl_fan[1]/gate']);
   });
 
-  // TO BE REMOVED WHEN RECORDED: the two shared-signal fixtures do not exist yet
-  // (see the recorder's header), so these guards skip; the shared-signal tests
-  // in `runnable.workflow.test.ts` replay the shape within one run until then.
-  // Once recorded, add both names to the fixture list above and drop the skipIf.
-  const hasFixture = (name: string) => fixtures.some((f) => f.name === name);
   const patchIdsOf = (name: string) =>
     eventsOf(name)
       .filter((e) => e.eventType === EventType.EVENT_TYPE_MARKER_RECORDED)
@@ -237,28 +234,22 @@ describe('RunnableWorkflow — history replay', () => {
     return { rewait: rewait[0] as number, signalled };
   };
 
-  it.skipIf(!hasFixture('fan-out-shared-signal'))(
-    'the fan-out-shared-signal fixture resumed the re-waiting branch on a second delivery',
-    () => {
-      const { rewait, signalled } = rewaitTimerOf('fan-out-shared-signal');
-      // Two deliveries in separate workflow tasks, the re-wait's timer between them.
-      expect(signalled).toHaveLength(2);
-      expect(rewait).toBeLessThan(signalled[1] as number);
-      expect(indexesOf('fan-out-shared-signal', EventType.EVENT_TYPE_TIMER_FIRED)).toHaveLength(0);
-    }
-  );
+  it('the fan-out-shared-signal fixture resumed the re-waiting branch on a second delivery', () => {
+    const { rewait, signalled } = rewaitTimerOf('fan-out-shared-signal');
+    // Two deliveries in separate workflow tasks, the re-wait's timer between them.
+    expect(signalled).toHaveLength(2);
+    expect(rewait).toBeLessThan(signalled[1] as number);
+    expect(indexesOf('fan-out-shared-signal', EventType.EVENT_TYPE_TIMER_FIRED)).toHaveLength(0);
+  });
 
-  it.skipIf(!hasFixture('fan-out-shared-signal-timeout'))(
-    'the fan-out-shared-signal-timeout fixture timed the re-waiting branch out',
-    () => {
-      const name = 'fan-out-shared-signal-timeout';
-      const { rewait, signalled } = rewaitTimerOf(name);
-      expect(signalled).toHaveLength(1);
-      const fired = indexesOf(name, EventType.EVENT_TYPE_TIMER_FIRED);
-      expect(fired).toHaveLength(1);
-      expect(fired[0]).toBeGreaterThan(rewait);
-    }
-  );
+  it('the fan-out-shared-signal-timeout fixture timed the re-waiting branch out', () => {
+    const name = 'fan-out-shared-signal-timeout';
+    const { rewait, signalled } = rewaitTimerOf(name);
+    expect(signalled).toHaveLength(1);
+    const fired = indexesOf(name, EventType.EVENT_TYPE_TIMER_FIRED);
+    expect(fired).toHaveLength(1);
+    expect(fired[0]).toBeGreaterThan(rewait);
+  });
 
   it('the fan-out-cancel fixture was cancelled while its branches were parked', () => {
     const events = eventsOf('fan-out-cancel');
