@@ -32,7 +32,7 @@ export const TOKEN = {
   violet400: '#34d8c0',
 } as const;
 
-/** Shape shared by both themes' literal palettes. */
+/** Shape shared by every theme × palette literal set. */
 export type Tokens = { readonly [K in keyof typeof TOKEN]: string };
 
 /**
@@ -55,9 +55,49 @@ export const TOKEN_LIGHT: Tokens = {
   paper200: '#1d2333',
   paper300: '#353d51',
   paper400: '#475066',
-  paper500: '#586176',
+  paper500: '#545d72',
   violet400: '#0b7a6b',
 };
+
+/**
+ * The graphite palette's dark values — the `:root[data-palette='graphite']:not([data-theme='light'])`
+ * block in `globals.css`. Graphite re-points only the neutral ramps (ink, paper); the accent and
+ * status colours are shared with navy, so those entries repeat `TOKEN`'s.
+ */
+export const TOKEN_GRAPHITE: Tokens = {
+  ...TOKEN,
+  ink500: '#2a2a30',
+  ink600: '#232328',
+  ink700: '#161619',
+  ink900: '#0c0c0e',
+  ink950: '#09090b',
+  paper200: '#e5e5e8',
+  paper300: '#cbcbd1',
+  paper400: '#bdbdc4',
+  paper500: '#acacb4',
+};
+
+/** The graphite palette's light values — `:root[data-palette='graphite'][data-theme='light']`. */
+export const TOKEN_GRAPHITE_LIGHT: Tokens = {
+  ...TOKEN_LIGHT,
+  ink500: '#e3e3e7',
+  ink600: '#e6e6e9',
+  ink700: '#ffffff',
+  ink900: '#f4f4f5',
+  ink950: '#ffffff',
+  paper200: '#1f1f23',
+  paper300: '#38383f',
+  paper400: '#4a4a52',
+  paper500: '#5b5b64',
+};
+
+/** The literal palette for a painted theme and palette choice. */
+export function tokensFor(theme: 'dark' | 'light', palette: 'navy' | 'graphite'): Tokens {
+  if (palette === 'graphite') {
+    return theme === 'light' ? TOKEN_GRAPHITE_LIGHT : TOKEN_GRAPHITE;
+  }
+  return theme === 'light' ? TOKEN_LIGHT : TOKEN;
+}
 
 /** `TOKEN` key → the custom-property name it mirrors in `globals.css`. */
 export const TOKEN_CSS_VAR: Record<keyof typeof TOKEN, string> = {

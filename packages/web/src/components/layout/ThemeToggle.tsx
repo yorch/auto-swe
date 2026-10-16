@@ -2,7 +2,7 @@
 
 import { Icon, type IconName } from '@/components/ui/Icon';
 import { cn, FOCUS_RING } from '@/lib/utils';
-import { type ThemePreference, useThemeStore } from '@/stores/themeStore';
+import { type PalettePreference, type ThemePreference, useThemeStore } from '@/stores/themeStore';
 
 /**
  * The three theme choices, in the order the TopBar toggle cycles through them.
@@ -12,6 +12,19 @@ export const THEME_CHOICES: readonly { value: ThemePreference; label: string; ic
   { icon: 'moon', label: 'Dark', value: 'dark' },
   { icon: 'sun', label: 'Light', value: 'light' },
   { icon: 'monitor', label: 'System', value: 'system' },
+];
+
+/**
+ * The two palettes, shared by the user menu and the command palette. Navy is the
+ * default; graphite swaps the blue-tinted surfaces and text for neutral greys.
+ */
+export const PALETTE_CHOICES: readonly {
+  value: PalettePreference;
+  label: string;
+  title: string;
+}[] = [
+  { label: 'Navy', title: 'Blue-tinted surfaces', value: 'navy' },
+  { label: 'Graphite', title: 'Neutral grey surfaces', value: 'graphite' },
 ];
 
 function choiceFor(preference: ThemePreference) {

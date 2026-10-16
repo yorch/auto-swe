@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
+import { PALETTE_CHOICES } from '@/components/layout/ThemeToggle';
 import { Icon, isIconName } from '@/components/ui/Icon';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { useApprovalsCount } from '@/hooks/useApprovals';
@@ -10,7 +11,7 @@ import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
 import { activeNavHref, isStartWorkPath, type NavItem, navSections } from '@/lib/navigation';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
-import { type ThemePreference, useThemeStore } from '@/stores/themeStore';
+import { type PalettePreference, type ThemePreference, useThemeStore } from '@/stores/themeStore';
 
 const SECTIONS_KEY = 'auto-swe.nav.sections';
 
@@ -120,6 +121,8 @@ function UserMenu() {
 
   const themePreference = useThemeStore((s) => s.preference);
   const setThemePreference = useThemeStore((s) => s.setPreference);
+  const palette = useThemeStore((s) => s.palette);
+  const setPalette = useThemeStore((s) => s.setPalette);
   const name = user?.email?.split('@')[0] ?? 'user';
   const handleLogout = async () => {
     // logout() clears the gateway session and local cookies; navigating before
@@ -143,7 +146,7 @@ function UserMenu() {
       >
         <span
           aria-hidden="true"
-          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-dust-400 to-ember-400 text-xs font-bold text-ink-950"
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-ink-300 bg-ink-600 text-xs font-semibold text-paper-100"
         >
           {name[0].toUpperCase()}
         </span>
@@ -179,6 +182,15 @@ function UserMenu() {
               options={THEME_OPTIONS}
               value={themePreference}
             />
+            <div className="mt-2.5 mb-1.5 text-xs text-paper-500">Palette</div>
+            <SegmentedControl
+              ariaLabel="Palette"
+              className="w-full"
+              onChange={setPalette}
+              optionClassName="flex-1"
+              options={PALETTE_OPTIONS}
+              value={palette}
+            />
           </div>
           <Link
             className={cn(
@@ -211,6 +223,12 @@ const THEME_OPTIONS: SegmentedOption<ThemePreference>[] = [
   { label: 'Light', value: 'light' },
   { label: 'Dark', value: 'dark' },
 ];
+
+const PALETTE_OPTIONS: SegmentedOption<PalettePreference>[] = PALETTE_CHOICES.map((c) => ({
+  label: c.label,
+  title: c.title,
+  value: c.value,
+}));
 
 /** The user menu is a plain disclosure (links and a button), not an ARIA menu. */
 const MENU_ID = 'user-menu';

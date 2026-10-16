@@ -9,6 +9,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { useTokens } from '@/hooks/useTokens';
 import { useThemeStore } from '@/stores/themeStore';
 import {
   ACTIVE_DOT_PROPS,
@@ -102,6 +103,7 @@ export function ScorerBreakdownChart({
   title?: string;
 }) {
   const theme = useThemeStore((s) => s.resolved);
+  const tokens = useTokens();
   const words = granularityWords(granularity);
   const series = collapseSeries(allSeries);
   if (series.every((s) => s.daily.every((d) => d.n === 0))) {
@@ -164,7 +166,7 @@ export function ScorerBreakdownChart({
               isAnimationActive={false}
               key={seriesKey(i)}
               name={s.label}
-              stroke={seriesColor(i, s.label, theme)}
+              stroke={seriesColor(i, s.label, theme, tokens)}
               strokeDasharray={seriesDash(i, s.label)}
               strokeWidth={LINE_WIDTH}
               type="monotone"

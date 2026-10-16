@@ -51,6 +51,7 @@ const request = (id: string, ticket: string, description: string) => ({
 beforeEach(() => {
   push.mockClear();
   useThemeStore.getState().setPreference('dark');
+  useThemeStore.getState().setPalette('navy');
   stubApi({});
 });
 afterEach(() => {
@@ -86,6 +87,18 @@ describe('CommandPalette', () => {
     for (const name of [/Theme: dark/, /Theme: light/, /Theme: follow system/]) {
       expect(screen.getByRole('button', { name })).toBeTruthy();
     }
+  });
+
+  it('offers both palettes and switches in place', async () => {
+    const onOpenChange = await openPalette();
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'palette' } });
+    expect(screen.getByRole('button', { name: /Palette: navy/ })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /Palette: graphite/ }));
+
+    expect(useThemeStore.getState().palette).toBe('graphite');
+    expect(document.documentElement.dataset.palette).toBe('graphite');
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+    expect(push).not.toHaveBeenCalled();
   });
 
   it('still opens a page on Enter', async () => {

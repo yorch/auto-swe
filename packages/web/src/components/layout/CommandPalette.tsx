@@ -3,7 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { Fragment, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { THEME_CHOICES } from '@/components/layout/ThemeToggle';
+import { PALETTE_CHOICES, THEME_CHOICES } from '@/components/layout/ThemeToggle';
 import { Icon, isIconName } from '@/components/ui/Icon';
 import { usePaletteSearch } from '@/hooks/usePaletteSearch';
 import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
@@ -102,6 +102,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
   const restoreRef = useRef<HTMLElement | null>(null);
   const listId = useId();
   const setThemePreference = useThemeStore((s) => s.setPreference);
+  const setPalette = useThemeStore((s) => s.setPalette);
 
   const entries = useMemo<Entry[]>(
     () => [
@@ -122,8 +123,15 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
         label: c.value === 'system' ? 'Theme: follow system' : `Theme: ${c.label.toLowerCase()}`,
         run: () => setThemePreference(c.value),
       })),
+      ...PALETTE_CHOICES.map((c) => ({
+        group: 'Appearance',
+        icon: 'layers',
+        id: `palette:${c.value}`,
+        label: `Palette: ${c.label.toLowerCase()}`,
+        run: () => setPalette(c.value),
+      })),
     ],
-    [groups, setThemePreference]
+    [groups, setThemePreference, setPalette]
   );
 
   const results = useMemo(
