@@ -17,24 +17,6 @@
  *
  * With no arguments every scenario is re-recorded; name scenarios to record only
  * those (a new shape should never rewrite the fixtures that already pass).
- *
- * TO BE REMOVED WHEN RECORDED — two scenarios have no fixture yet:
- * `fan-out-shared-signal` and `fan-out-shared-signal-timeout` (a `signal` node
- * shared by concurrent fan-out branches; the branch that misses a delivery
- * re-waits, then resumes on a second delivery or times out). Recording needs the
- * Temporal test-server binary, so do it where temporal.download is reachable,
- * after building shared, naming only these two:
- *
- *   yarn workspace @auto-swe/worker exec tsx scripts/recordReplayHistory.ts \
- *     fan-out-shared-signal fan-out-shared-signal-timeout
- *
- * Then, in `runnable.replay.test.ts`, add both names to the fixture list in its
- * sorted position — after `'fan-out-human-gate'` and before `'fan-out'`, as
- * `'fan-out-shared-signal-timeout'` then `'fan-out-shared-signal'` (the list is
- * filename order, and `-` sorts before `.`) — and delete the matching
- * "not yet recorded" notes there and here; the fixture-gated guards for both
- * apply as soon as the files exist. Until then the shared-signal tests in
- * `runnable.workflow.test.ts` replay the histories they produce within one run.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
