@@ -86,7 +86,7 @@ flowchart TB
 
     subgraph Governance["Governance & Safety"]
         HITL[Human-in-the-loop\napproval / decision / input / review]
-        SCAN[6 runtime security scanners]
+        SCAN[7 runtime security scanners]
         RBAC[RBAC + team multi-tenancy]
         COST[Cost tracking + budget tiers]
     end
@@ -111,7 +111,7 @@ flowchart TB
 | **Workflow engine** | 15 node types (incl. the declarative `agent` node and the `eval` node); versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
 | **Orchestration** | Temporal durable execution; budget tiers (STANDARD / LARGE / EPIC) with hard token caps and `BUDGET_EXCEEDED` enforcement |
 | **Memory** | pgvector (HNSW) semantic lessons; per-repo cosine retrieval at run start; weekly consolidation ("dreaming") of similar lessons |
-| **Security** | 6 runtime scanners (shell, sensitive-file, pre-write content, code-security, skill-content, LLM-output); 63 built-in admin-extensible regex patterns (13 INJECTION, 11 EXFILTRATION, 18 SHELL_COMMAND, 10 CODE_SECURITY, 7 SENSITIVE_FILE, 4 PII); locked-down ephemeral shell containers |
+| **Security** | 7 runtime scanners (shell, sensitive-file, pre-write content, code-security, skill-content, LLM-output, memory-content); 63 built-in admin-extensible regex patterns (13 INJECTION, 11 EXFILTRATION, 18 SHELL_COMMAND, 10 CODE_SECURITY, 7 SENSITIVE_FILE, 4 PII); locked-down ephemeral shell containers |
 | **HITL** | 4 node types (approval / decision / input / review); sortable inbox with overdue and multi-approver progress; Slack buttons; idempotent atomic resolution, timeout routing, and cancellation cleanup. See [hitl-workflows.md](./hitl-workflows.md). |
 | **Governance** | Global/team/template autonomy policies with fail-closed runtime validation; searchable autonomy-decision and lifecycle audit logs (filters live in the URL; the lifecycle log exports its current filter as CSV); analytics and security events over a UTC date range with a comparison to the window before; completed-vs-running analytics with truncation and sample-size disclosure; bounded configuration grants with effective-permission preview |
 | **Auth / RBAC** | 3 auth paths (JWT, PAT, better-auth sessions); 3 platform roles + team-scoped roles; per-page server guards; OAuth (GitHub/Google), Okta OIDC SSO, magic-link, account linking, new-user approval |
@@ -191,7 +191,7 @@ What sets auto-swe apart from simpler "AI coding" tools:
 - **CI self-healing:** the loop from CI failure → log analysis → automated fix → re-submit is fully automated.
 - **Semantic institutional memory:** pgvector retrieval surfaces relevant past failures and decisions into agent context on relevant future runs; the system's effective quality improves per-repo over time.
 - **First-class configurable workflow engine:** the workflow DAG is a versioned JSON spec interpreted by a pure functional interpreter — editable, A/B-testable, and analyzable from the UI, not a YAML pipeline bolted onto an agent.
-- **Operational security stack:** six independent runtime scanners at distinct stages, all DB-backed and admin-extensible, plus locked-down ephemeral shell containers.
+- **Operational security stack:** seven independent runtime scanners at distinct stages, six of them backed by admin-extensible DB patterns, plus locked-down ephemeral shell containers.
 - **The automation lives where the team does:** the channel teammate is not a notification webhook — it is an agent with channel memory and a persona that also starts, watches, and gates the workflows, so the control surface and the conversation are the same place.
 
 ---

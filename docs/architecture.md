@@ -1092,8 +1092,9 @@ would defeat it.
 > `pull`, or `push` against a private repo — it holds no credential. Leave changes in the working
 > tree instead; the step commits and pushes them to the run's branch after the command exits.
 
-**Security scanners.** Six run during agent execution at distinct stages, five backed by DB regex
-patterns with a 60 s cache. Table and rules in
+**Security scanners.** Seven run during agent execution at distinct stages: sensitive file, pre-write content, shell
+command, code security, skill content, LLM output, and memory content. All but the pre-write content
+check match DB regex patterns. Table and rules in
 [AGENTS.md §6](../AGENTS.md#runtime-security-scanners); the dashboards are `/admin/security` and the
 per-run panel on `/runs/[id]`.
 
