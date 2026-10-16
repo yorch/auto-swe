@@ -12,22 +12,24 @@ import { publicApiUrl, temporalUiUrl } from '@/lib/env';
 import { THEME_INIT_SCRIPT } from '@/lib/theme';
 
 // Served from the repository, not fetched from Google Fonts at build time: a
-// failed download there fails `next build`. Latin subset, from Fontsource;
-// licences beside the files.
+// failed download there fails `next build`. Latin subsets of the variable builds;
+// licences beside the files (SIL Open Font License 1.1).
+// Inter 4.1: weight and optical-size axes, with stylistic alternates.
 const inter = localFont({
   display: 'swap',
-  src: [{ path: './fonts/inter-latin-wght-normal.woff2', style: 'normal', weight: '400 700' }],
+  src: [
+    { path: './fonts/inter-4-latin-variable.woff2', style: 'normal', weight: '100 900' },
+    { path: './fonts/inter-4-latin-variable-italic.woff2', style: 'italic', weight: '100 900' },
+  ],
   variable: '--font-inter',
 });
 
-const ibmPlexMono = localFont({
+const jetbrainsMono = localFont({
   display: 'swap',
   src: [
-    { path: './fonts/ibm-plex-mono-latin-400-normal.woff2', style: 'normal', weight: '400' },
-    { path: './fonts/ibm-plex-mono-latin-500-normal.woff2', style: 'normal', weight: '500' },
-    { path: './fonts/ibm-plex-mono-latin-600-normal.woff2', style: 'normal', weight: '600' },
+    { path: './fonts/jetbrains-mono-latin-variable.woff2', style: 'normal', weight: '100 800' },
   ],
-  variable: '--font-ibm-plex-mono',
+  variable: '--font-jetbrains-mono',
 });
 
 // The tab title comes from here, per route, rather than from an effect in the browser:
@@ -60,7 +62,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
 
   return (
     <html
-      className={`${inter.variable} ${ibmPlexMono.variable}`}
+      className={`${inter.variable} ${jetbrainsMono.variable}`}
       lang="en"
       suppressHydrationWarning
     >
@@ -71,7 +73,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <style>{`
           :root {
             --font-display: var(--font-inter), 'Inter', -apple-system, sans-serif;
-            --font-mono: var(--font-ibm-plex-mono), 'IBM Plex Mono', ui-monospace, monospace;
+            --font-sans: var(--font-inter), 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            --font-mono: var(--font-jetbrains-mono), 'JetBrains Mono', ui-monospace, monospace;
           }
         `}</style>
       </head>
