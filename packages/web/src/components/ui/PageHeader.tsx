@@ -23,7 +23,7 @@ export function PageHeader({
       )}
     >
       <div className="min-w-0">
-        <h1 className="break-words text-2xl font-semibold leading-tight tracking-[-0.02em] text-paper-50 md:text-[28px]">
+        <h1 className="break-words text-2xl font-semibold leading-tight tracking-[-0.02em] text-paper-50 md:text-3xl">
           {title}
         </h1>
         {subtitle && (

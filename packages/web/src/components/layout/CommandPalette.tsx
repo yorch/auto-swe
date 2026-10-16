@@ -181,7 +181,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
           <input
             aria-controls={listId}
             aria-label="Search pages"
-            className="h-12 w-full bg-transparent text-[15px] text-paper-50 outline-none placeholder:text-paper-600"
+            className="h-12 w-full bg-transparent text-lg text-paper-50 outline-none placeholder:text-paper-600"
             onChange={(e) => {
               setQuery(e.target.value);
               setActive(0);

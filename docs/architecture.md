@@ -179,10 +179,10 @@ surfaces and borders, `paper-*` text, `ember-*` (violet) primary accent, and sta
 (success), `brick-*` (failure), `amber-*` (waiting, warning), `dust-*` (running, info) and
 `violet-*` (teal; in review, secondary accent). The light theme is the same token names re-pointed
 under `:root[data-theme='light']`, set before first paint; users switch it from the top bar, the
-command palette or the user menu (`stores/themeStore.ts`). The root font size is 14px, and the small
-type steps are pinned in pixels — `text-2xs` 11px (uppercase eyebrow labels only), `text-xs` 12px,
-`text-sm` 13px — so text below heading size uses those steps rather than arbitrary `text-[Npx]`
-values. Legacy `var(--muted-foreground)` style aliases are bridged for compatibility; new code uses
+command palette or the user menu (`stores/themeStore.ts`). The root font size is 14px, and every type step
+is pinned to whole pixels — `text-2xs` 11px (uppercase eyebrow labels only), `text-xs` 12px,
+`text-sm` 13px, `text-base` 14px, then `text-lg` 16 through `text-5xl` 44px for titles and display
+— so components use those steps rather than arbitrary `text-[Npx]` values. Legacy `var(--muted-foreground)` style aliases are bridged for compatibility; new code uses
 tokens directly. SVG presentation attributes — Recharts axis ticks, React Flow edge strokes and markers —
 do not resolve `var()`, so those read hex literals from `lib/palette.ts`; `palette.test.ts` parses
 `globals.css` and fails if a literal drifts from its token, and a second guard fails the build if a

@@ -175,7 +175,7 @@ function ConsentDecision({ search }: { search: string }) {
           <div className="label-mono mb-1.5">After you decide, you are sent to</div>
           <div className="flex items-center gap-2">
             <Icon className="text-paper-500" name="external" size={14} />
-            <span className="break-all font-mono text-[15px] text-paper-50">{redirect.host}</span>
+            <span className="break-all font-mono text-lg text-paper-50">{redirect.host}</span>
           </div>
           {redirect.local && (
             <Alert className="mt-3" title="This app runs on your own computer" variant="warning">

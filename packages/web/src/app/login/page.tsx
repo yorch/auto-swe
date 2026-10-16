@@ -458,7 +458,7 @@ function LoginPageInner() {
 
         <div className="relative z-10 max-w-lg">
           <p className="kicker mb-4">Autonomous workflows</p>
-          <h2 className="text-4xl font-semibold leading-[1.1] tracking-[-0.03em] text-paper-50 xl:text-[44px]">
+          <h2 className="text-4xl font-semibold leading-[1.1] tracking-[-0.03em] text-paper-50 xl:text-5xl">
             Ticket in, reviewed pull request out.
           </h2>
           <p className="mt-4 text-base leading-relaxed text-paper-400">

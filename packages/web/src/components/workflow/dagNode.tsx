@@ -245,7 +245,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
       {/* Body */}
       <div className="flex h-full flex-col justify-center gap-1 px-3 py-1.5">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="truncate font-display text-[15px] font-medium leading-none text-paper-50">
+          <span className="truncate font-display text-lg font-medium leading-none text-paper-50">
             {name}
           </span>
           <span className="flex shrink-0 items-center gap-1 text-xs text-paper-500">

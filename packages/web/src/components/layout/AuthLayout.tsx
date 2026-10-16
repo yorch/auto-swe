@@ -39,17 +39,14 @@ export function BrandMark({ className, size = 'md' }: { className?: string; size
       </span>
       <span className="flex items-baseline gap-[3px]">
         <span
-          className={cn(
-            'font-bold tracking-[-0.02em] text-paper-50',
-            lg ? 'text-2xl' : 'text-[19px]'
-          )}
+          className={cn('font-bold tracking-[-0.02em] text-paper-50', lg ? 'text-2xl' : 'text-xl')}
         >
           auto
         </span>
         <span
           className={cn(
             'font-display font-semibold italic text-ember-400',
-            lg ? 'text-2xl' : 'text-[19px]'
+            lg ? 'text-2xl' : 'text-xl'
           )}
         >
           ·swe

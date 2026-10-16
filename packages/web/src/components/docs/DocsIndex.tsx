@@ -95,7 +95,7 @@ function DocCard({ doc, featured = false }: { doc: DocMeta; featured?: boolean }
         <span
           className={cn(
             'font-semibold tracking-tight text-paper-100 transition-colors group-hover:text-ember-300',
-            featured ? 'text-base' : 'text-[15px]'
+            featured ? 'text-lg' : 'text-base'
           )}
         >
           {doc.title}

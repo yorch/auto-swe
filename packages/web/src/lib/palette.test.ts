@@ -46,6 +46,31 @@ describe('TOKEN', () => {
   );
 });
 
+/**
+ * `app/global-error.tsx` replaces the root layout when it throws, so it cannot
+ * load the stylesheet and inlines its colours as `const INK_800 = '#…'`. Those
+ * fell a palette behind once already; hold them to the dark tokens they name.
+ */
+describe('global-error.tsx colours', () => {
+  const css = readFileSync(path.resolve(__dirname, '../app/globals.css'), 'utf8');
+  const declared = declarations(blockAfter(css, '@theme {'));
+  const source = readFileSync(path.resolve(__dirname, '../app/global-error.tsx'), 'utf8');
+  const inlined = [...source.matchAll(/const ([A-Z]+)_(\d+) = '(#[0-9a-fA-F]{6})'/g)];
+
+  it('inlines at least the page and text colours', () => {
+    expect(inlined.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it.each(inlined.map(([, family, step, hex]) => [`${family}_${step}`, family, step, hex]))(
+    '%s matches its token',
+    (_name, family, step, hex) => {
+      const cssVar = `--color-${(family as string).toLowerCase()}-${step}`;
+      expect(declared.get(cssVar), `${cssVar} is not declared in globals.css`).toBeDefined();
+      expect((hex as string).toLowerCase()).toBe(declared.get(cssVar));
+    }
+  );
+});
+
 describe('TOKEN_LIGHT', () => {
   const css = readFileSync(path.resolve(__dirname, '../app/globals.css'), 'utf8');
   const declared = declarations(blockAfter(css, ":root[data-theme='light'] {"));
@@ -117,6 +142,37 @@ describe('design tokens are the only colour scale in use', () => {
       .map((f) => `${f.rel}: ${[...new Set(f.hits ?? [])].join(', ')}`);
 
     expect(offenders).toEqual([]);
+  });
+});
+
+/**
+ * In the dark theme an ink step's lightness follows its role: 950 deepest, 900
+ * recessed, 800 the page, 700 the card, then raised surfaces and borders. When
+ * 900 sat above 800, a "recessed" block was lighter than the page around it.
+ */
+describe('dark ink ramp', () => {
+  const channel = (hex: string, offset: number) => {
+    const value = Number.parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = (hex: string) =>
+    0.2126 * channel(hex, 1) + 0.7152 * channel(hex, 3) + 0.0722 * channel(hex, 5);
+  const css = readFileSync(path.resolve(__dirname, '../app/globals.css'), 'utf8');
+  const declared = declarations(blockAfter(css, '@theme {'));
+
+  it('gets lighter from ink-950 to ink-200', () => {
+    const steps = ['950', '900', '800', '700', '600', '500', '400', '300', '200'];
+    const values = steps.map((s) => {
+      const hex = declared.get(`--color-ink-${s}`);
+      expect(hex, `--color-ink-${s} is not declared`).toBeDefined();
+      return luminance(hex as string);
+    });
+    for (let i = 1; i < values.length; i++) {
+      expect(
+        values[i],
+        `ink-${steps[i]} should be lighter than ink-${steps[i - 1]}`
+      ).toBeGreaterThan(values[i - 1]);
+    }
   });
 });
 
