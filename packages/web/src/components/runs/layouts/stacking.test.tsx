@@ -132,7 +132,9 @@ describe('Transcript layout', () => {
   it('keeps the spine, narrative, rail order at desktop width', () => {
     mockViewport(1280);
     render(<Transcript {...props} />);
-    expect(before(screen.getByRole('heading', { name: 'T' }), screen.getByTestId('rail'))).toBe(true);
+    expect(before(screen.getByRole('heading', { name: 'T' }), screen.getByTestId('rail'))).toBe(
+      true
+    );
   });
 
   it('lays the step spine out as a horizontal strip below the breakpoint only', () => {

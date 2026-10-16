@@ -123,7 +123,7 @@ export default function TeamsPage() {
                     >
                       <Card className="flex h-full flex-col p-5 group-hover:border-ink-300">
                         <div className="flex items-start gap-3">
-                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-ink-400 bg-ink-700 text-paper-400 group-hover:text-ember-300">
+                          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-ink-400 bg-ink-700 text-paper-400 group-hover:text-paper-200">
                             <Icon name="teams" size={16} />
                           </span>
                           <div className="min-w-0 flex-1">

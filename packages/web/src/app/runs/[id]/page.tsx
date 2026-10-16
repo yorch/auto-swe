@@ -352,7 +352,7 @@ export default function RunDetailPage({ params }: PageProps) {
                   <span className="text-paper-400">{run.templateName}</span>
                 ) : (
                   <Link
-                    className="rounded-sm text-paper-300 transition-colors hover:text-ember-400"
+                    className="rounded-sm text-paper-300 transition-colors hover:text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
                     href={`/workflows/library/${run.templateId}`}
                     title="Open the workflow template"
                   >

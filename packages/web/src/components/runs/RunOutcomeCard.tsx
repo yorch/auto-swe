@@ -40,7 +40,7 @@ function OutcomeLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
       className={cn(
-        'inline-flex max-w-full items-center gap-1.5 rounded-sm text-sm font-medium text-ember-400 transition-colors hover:text-ember-300',
+        'inline-flex max-w-full items-center gap-1.5 rounded-sm text-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
         FOCUS_RING
       )}
       href={href}

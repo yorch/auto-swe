@@ -27,7 +27,7 @@ export function EpicList({ epics }: { epics: EpicSummary[] }) {
               <Td className="max-w-xl px-4 py-3" primary>
                 <Link
                   className={cn(
-                    'rounded-sm font-mono text-sm font-medium text-paper-100 hover:text-ember-300 hover:underline',
+                    'rounded-sm font-mono text-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
                     FOCUS_RING
                   )}
                   href={`/epics/${encodeURIComponent(epic.epicWorkflowId)}`}

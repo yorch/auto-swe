@@ -196,7 +196,7 @@ function EvalsWorkspace() {
                           <button
                             aria-pressed={selected}
                             className={cn(
-                              'inline-flex items-center gap-2 rounded-sm font-mono text-sm hover:text-ember-300',
+                              'inline-flex items-center gap-2 rounded-sm font-mono text-sm underline-offset-2 hover:underline focus-visible:underline',
                               FOCUS_RING,
                               selected ? 'text-ember-300' : 'text-paper-200'
                             )}

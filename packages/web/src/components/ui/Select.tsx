@@ -108,7 +108,7 @@ export function Select({
       {pill ? (
         <Button className={PILL_TRIGGER}>
           {prefix && <span className="max-sm:hidden">{prefix}</span>}
-          <SelectValue className="max-w-[9rem] truncate font-semibold text-ember-400">
+          <SelectValue className="max-w-[9rem] truncate font-semibold text-paper-100">
             {renderSelected}
           </SelectValue>
           <Chevron />

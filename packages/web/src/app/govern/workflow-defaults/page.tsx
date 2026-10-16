@@ -35,7 +35,7 @@ export default function GovernWorkflowPage() {
         help={
           <p>
             Each section saves on its own. For the settings a team or channel can override, see{' '}
-            <Link className="text-ember-400 hover:underline" href="/govern/platform-settings">
+            <Link className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current" href="/govern/platform-settings">
               Platform settings
             </Link>
             .
@@ -76,7 +76,7 @@ export default function GovernWorkflowPage() {
               {SECTIONS.map((s) => (
                 <li key={s.id}>
                   <a
-                    className={`-ml-px block border-l border-transparent py-1.5 pl-3 hover:border-ember-400 ${FOCUS_RING}`}
+                    className={`-ml-px block border-l border-transparent py-1.5 pl-3 hover:border-paper-500 ${FOCUS_RING}`}
                     href={`#${s.id}`}
                   >
                     <span className="block text-sm text-paper-200">{s.label}</span>

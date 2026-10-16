@@ -99,7 +99,7 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                           <Td className="px-4 py-2.5" primary>
                             <Link
                               className={cn(
-                                'rounded-sm font-medium text-paper-100 hover:text-ember-300',
+                                'rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
                                 FOCUS_RING
                               )}
                               href={`/govern/evals/runs/${r.id}`}

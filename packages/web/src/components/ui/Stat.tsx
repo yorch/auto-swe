@@ -2,14 +2,13 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/utils';
 import { Icon } from './Icon';
 
-type StatTone = 'default' | 'muted' | 'ember' | 'moss' | 'amber' | 'brick' | 'dust';
+type StatTone = 'default' | 'muted' | 'moss' | 'amber' | 'brick' | 'dust';
 
 const TONE: Record<StatTone, string> = {
   amber: 'text-amber-400',
   brick: 'text-brick-400',
   default: 'text-paper-100',
   dust: 'text-dust-400',
-  ember: 'text-ember-400',
   moss: 'text-moss-400',
   muted: 'text-paper-500',
 };

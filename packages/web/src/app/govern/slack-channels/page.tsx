@@ -48,7 +48,7 @@ function SpendMeter({ channel }: { channel: SlackChannel }) {
       <div
         className={cn(
           'h-full rounded-full',
-          share >= 1 ? 'bg-brick-400' : share >= 0.8 ? 'bg-amber-400' : 'bg-ember-400'
+          share >= 1 ? 'bg-brick-400' : share >= 0.8 ? 'bg-amber-400' : 'bg-paper-600'
         )}
         style={{ width: `${Math.min(100, Math.max(share * 100, share > 0 ? 4 : 0))}%` }}
       />
@@ -165,7 +165,7 @@ export default function GovernSlackChannelsPage() {
                             <div className="flex flex-wrap items-center gap-2">
                               <Link
                                 className={cn(
-                                  'rounded-sm font-medium text-paper-100 hover:text-ember-300',
+                                  'rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
                                   FOCUS_RING
                                 )}
                                 href={`/govern/slack-channels/${ch.id}`}

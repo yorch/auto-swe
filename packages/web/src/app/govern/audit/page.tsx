@@ -335,7 +335,7 @@ function AuditActor({ row, onFilter }: { row: AuditLogRow; onFilter: (id: string
   return (
     <button
       className={cn(
-        'rounded-sm text-left text-sm text-paper-200 hover:text-ember-400 hover:underline',
+        'rounded-sm text-left text-sm text-paper-200 underline-offset-2 hover:underline focus-visible:underline',
         FOCUS_RING
       )}
       onClick={() => onFilter(actorId)}
@@ -449,7 +449,7 @@ function AuditRow({
           </div>
           {href ? (
             <Link
-              className="font-mono text-xs font-normal text-ember-400 hover:underline"
+              className="font-mono text-xs font-normal text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
               href={href}
               title={row.entityId}
             >
@@ -480,7 +480,7 @@ function AuditRow({
             <span className={open ? 'block break-words' : 'line-clamp-2 block break-all'}>
               <AuditDetail after={row.afterJson} before={row.beforeJson} />
             </span>
-            <span className="mt-1 inline-flex items-center gap-1 font-sans text-ember-400">
+            <span className="mt-1 inline-flex items-center gap-1 font-sans text-paper-400">
               <Icon
                 className={cn('transition-transform', open && 'rotate-90')}
                 name="chevronRight"

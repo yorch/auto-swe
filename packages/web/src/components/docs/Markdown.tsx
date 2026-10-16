@@ -135,13 +135,13 @@ export function Markdown({
         // Body
         '[&_p]:my-4',
         '[&_strong]:font-semibold [&_strong]:text-paper-100',
-        '[&_a]:font-medium [&_a]:text-ember-300 [&_a]:underline [&_a]:decoration-ember-400/40 [&_a]:underline-offset-[3px] [&_a]:transition-colors hover:[&_a]:text-ember-200 hover:[&_a]:decoration-ember-300',
+        '[&_a]:font-medium [&_a]:text-paper-50 [&_a]:underline [&_a]:decoration-paper-600 [&_a]:underline-offset-[3px] [&_a]:transition-colors hover:[&_a]:decoration-current',
         // Lists
         '[&_ul]:my-4 [&_ul]:list-disc [&_ul]:space-y-1.5 [&_ul]:pl-6',
         '[&_ol]:my-4 [&_ol]:list-decimal [&_ol]:space-y-1.5 [&_ol]:pl-6',
         '[&_li]:pl-1 [&_li]:marker:text-paper-600 [&_li>ul]:my-1.5 [&_li>ol]:my-1.5',
         // Quotes and rules
-        '[&_blockquote]:my-6 [&_blockquote]:rounded-r-lg [&_blockquote]:border-l-[3px] [&_blockquote]:border-ember-400/60 [&_blockquote]:bg-ink-700/50 [&_blockquote]:px-4 [&_blockquote]:py-1 [&_blockquote]:text-paper-400',
+        '[&_blockquote]:my-6 [&_blockquote]:rounded-r-lg [&_blockquote]:border-l-[3px] [&_blockquote]:border-ink-300 [&_blockquote]:bg-ink-700/50 [&_blockquote]:px-4 [&_blockquote]:py-1 [&_blockquote]:text-paper-400',
         '[&_hr]:my-10 [&_hr]:border-ink-600',
         // Code
         '[&_code]:rounded-md [&_code]:border [&_code]:border-ink-500/70 [&_code]:bg-ink-700 [&_code]:px-1.5 [&_code]:py-px [&_code]:font-mono [&_code]:text-[0.85em] [&_code]:text-paper-100',

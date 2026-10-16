@@ -285,7 +285,7 @@ export function DagNode({ id, data, selected }: NodeProps) {
         )}
         {group && !d.status && <GroupBadge group={group} />}
         {d.status && (
-          <div className="text-xs font-medium text-ember-300">
+          <div className="text-xs font-medium text-paper-300">
             <span className="inline-block first-letter:uppercase">
               {d.status.status.replace(/_/g, ' ').toLowerCase()}
             </span>

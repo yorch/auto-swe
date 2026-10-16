@@ -334,7 +334,10 @@ export function SettingRow({
                     {grantsHref && (
                       <>
                         {' '}
-                        <Link className="text-ember-400 hover:underline" href={grantsHref}>
+                        <Link
+                          className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
+                          href={grantsHref}
+                        >
                           Delegate it with a config grant
                         </Link>
                         .

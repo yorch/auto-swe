@@ -112,7 +112,7 @@ function PanelBody() {
   return (
     <>
       <header className="flex h-14 shrink-0 items-center gap-2 border-b border-ink-500/70 px-4">
-        <SparkleIcon className="text-ember-300" size={14} />
+        <SparkleIcon className="text-paper-300" size={14} />
         {current && renaming ? (
           <RenameForm
             conversationId={current.id}
@@ -416,7 +416,7 @@ export function AssistantMarkdown({ children }: { children: string }) {
         'text-base leading-6 text-paper-200',
         '[&_p]:my-2 [&_ul]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:pl-5',
         '[&_li]:my-0.5 [&_strong]:font-semibold [&_strong]:text-paper-100',
-        '[&_a]:text-ember-300 [&_a]:underline [&_a]:decoration-ember-400/40 [&_a]:underline-offset-2',
+        '[&_a]:text-paper-50 [&_a]:underline [&_a]:decoration-paper-600 [&_a]:underline-offset-2 hover:[&_a]:decoration-current',
         '[&_code]:rounded [&_code]:bg-ink-800 [&_code]:px-1 [&_code]:font-mono [&_code]:text-xs',
         '[&_pre]:my-2 [&_pre]:overflow-x-auto [&_pre]:rounded-md [&_pre]:bg-ink-900 [&_pre]:p-2',
         '[&_h1]:text-lg [&_h2]:text-base [&_h3]:text-base [&_h1]:font-semibold [&_h2]:font-semibold [&_h3]:font-semibold',

@@ -271,7 +271,10 @@ function SecurityEventRow({ event, showRunLink }: { event: SecurityEvent; showRu
       {showRunLink && (
         <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 pr-2 pl-8 text-xs">
           {event.runId ? (
-            <Link className="text-ember-400 hover:underline" href={`/runs/${event.runId}`}>
+            <Link
+              className="text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
+              href={`/runs/${event.runId}`}
+            >
               {event.externalTicketId ?? 'view run'}
             </Link>
           ) : (

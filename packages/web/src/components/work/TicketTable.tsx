@@ -11,7 +11,10 @@ import { safeHttpUrl } from '@/lib/safeUrl';
 import { cn, FOCUS_RING, formatCost } from '@/lib/utils';
 import { PullRequestStateBadge } from './PullRequestBadges';
 
-const LINK = cn('rounded-sm text-ember-400 hover:underline', FOCUS_RING);
+const LINK = cn(
+  'rounded-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
+  FOCUS_RING
+);
 
 /** "2 succeeded, 1 failed": counts in words, in the order a reader cares about. */
 export function runSummary(counts: TicketGroup['runCounts']): string {

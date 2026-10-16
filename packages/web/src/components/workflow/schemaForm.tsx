@@ -54,7 +54,10 @@ export function ConnectionPicker({
         </span>
         <Alert className="text-xs">
           No {typeLabel ? `${typeLabel} ` : ''}connections configured.{' '}
-          <Link className="text-ember-400 hover:underline" href="/connections">
+          <Link
+            className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
+            href="/connections"
+          >
             Add one in Connections.
           </Link>
         </Alert>

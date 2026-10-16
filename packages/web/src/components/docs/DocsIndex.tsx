@@ -77,8 +77,8 @@ function DocCard({ doc, featured = false }: { doc: DocMeta; featured?: boolean }
       className={cn(
         'group flex h-full flex-col rounded-xl border transition-colors',
         featured
-          ? 'border-ink-400/70 bg-ink-700 p-5 hover:border-ember-400/60'
-          : 'border-ink-400/50 bg-ink-900/40 p-4 hover:border-ember-400/50 hover:bg-ink-700/40',
+          ? 'border-ink-400/70 bg-ink-700 p-5 hover:border-ink-300'
+          : 'border-ink-400/50 bg-ink-900/40 p-4 hover:border-ink-300 hover:bg-ink-700/40',
         FOCUS_RING
       )}
       href={`/docs/${doc.slug}`}
@@ -86,7 +86,7 @@ function DocCard({ doc, featured = false }: { doc: DocMeta; featured?: boolean }
       {featured && (
         <span
           aria-hidden="true"
-          className="mb-4 flex h-9 w-9 items-center justify-center rounded-lg border border-ember-400/30 bg-ember-400/10 text-ember-300"
+          className="mb-4 flex h-9 w-9 items-center justify-center rounded-lg border border-ink-400 bg-ink-600 text-paper-300"
         >
           <Icon name={FEATURED[doc.slug] ?? 'docs'} size={17} />
         </span>
@@ -94,14 +94,14 @@ function DocCard({ doc, featured = false }: { doc: DocMeta; featured?: boolean }
       <span className="flex items-start justify-between gap-3">
         <span
           className={cn(
-            'font-semibold tracking-tight text-paper-100 transition-colors group-hover:text-ember-300',
+            'font-semibold tracking-tight text-paper-100 underline-offset-2 group-hover:underline',
             featured ? 'text-lg' : 'text-base'
           )}
         >
           {doc.title}
         </span>
         <Icon
-          className="mt-1 text-paper-600 transition-transform group-hover:translate-x-0.5 group-hover:text-ember-300"
+          className="mt-1 text-paper-600 transition-transform group-hover:translate-x-0.5 group-hover:text-paper-300"
           name="arrowRight"
           size={14}
         />
@@ -263,7 +263,7 @@ export function DocsIndex({
                     >
                       <Link
                         className={cn(
-                          'rounded-sm text-base font-medium text-paper-100 hover:text-ember-300',
+                          'rounded-sm text-base font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
                           FOCUS_RING
                         )}
                         href={docHref(r.slug, r.anchor ?? undefined)}

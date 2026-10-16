@@ -144,7 +144,7 @@ export function SetupBanner({
     return null;
   }
   const linkClass = cn(
-    'inline-flex items-center gap-1 rounded-sm font-medium text-ember-400 hover:underline',
+    'inline-flex items-center gap-1 rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
     FOCUS_RING
   );
   return (

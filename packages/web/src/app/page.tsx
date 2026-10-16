@@ -158,7 +158,7 @@ function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope })
         </h2>
         <Link
           className={cn(
-            'inline-flex items-center gap-1 rounded-sm text-sm text-ember-400 hover:underline',
+            'inline-flex items-center gap-1 rounded-sm text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
             FOCUS_RING
           )}
           href={listHref(scope, bucket.state)}
@@ -222,7 +222,7 @@ function WaitingOnYou() {
         </div>
         <Link
           className={cn(
-            'inline-flex items-center gap-1 rounded-sm text-sm text-ember-400 hover:underline',
+            'inline-flex items-center gap-1 rounded-sm text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
             FOCUS_RING
           )}
           href="/govern/approvals"
@@ -278,7 +278,7 @@ function QuickStart() {
               )}
               href={option.href}
             >
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-ink-400 bg-ink-800 text-ember-400">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-ink-400 bg-ink-800 text-paper-300">
                 <Icon name={option.icon} size={16} />
               </span>
               <span className="min-w-0 flex-1">

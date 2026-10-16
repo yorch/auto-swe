@@ -54,7 +54,7 @@ function StudioModelConfigPageInner() {
             </p>
             <p>
               Each agent's model, prompt, skills, and tools are set in the{' '}
-              <Link className="text-ember-400 hover:text-ember-600" href="/studio/agents/library">
+              <Link className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current" href="/studio/agents/library">
                 Agent library
               </Link>
               .

@@ -501,7 +501,10 @@ function TemplateRow({
       <Td className="py-3 pr-4 pl-4 sm:pl-5" primary>
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <Link
-            className={cn('rounded-sm font-medium text-paper-100 hover:text-ember-400', FOCUS_RING)}
+            className={cn(
+              'rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
+              FOCUS_RING
+            )}
             href={href}
           >
             {t.name}

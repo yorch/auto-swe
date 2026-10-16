@@ -126,14 +126,14 @@ export function RefineChatPanel({
                 <div
                   className={
                     m.role === 'user'
-                      ? 'max-w-[80%] rounded-lg rounded-br-sm bg-ember-600/20 px-3 py-2 text-sm text-paper-100'
+                      ? 'max-w-[80%] rounded-lg rounded-br-sm bg-ink-600 px-3 py-2 text-sm text-paper-100'
                       : `max-w-[80%] rounded-lg rounded-bl-sm px-3 py-2 text-sm ${
                           m.isError ? 'bg-brick-400/10 text-brick-400' : 'bg-ink-700 text-paper-200'
                         }`
                   }
                 >
                   {m.role === 'assistant' && !m.isError && (
-                    <SparkleIcon className="mr-1 inline-block align-[-2px] text-ember-400" />
+                    <SparkleIcon className="mr-1 inline-block align-[-2px] text-paper-300" />
                   )}
                   {m.text}
                   {m.warnings && m.warnings.length > 0 && (

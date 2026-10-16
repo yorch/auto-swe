@@ -97,7 +97,7 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
             <OutcomeRow label="Draft PR">
               <a
                 className={cn(
-                  'inline-flex items-center gap-1 rounded-sm font-medium text-ember-400 transition-colors hover:text-ember-300',
+                  'inline-flex items-center gap-1 rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
                   FOCUS_RING
                 )}
                 href={o.prUrl}
@@ -141,7 +141,7 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
         <details className="group">
           <summary
             className={cn(
-              'inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-sm text-ember-400 transition-colors hover:text-ember-300 [&::-webkit-details-marker]:hidden',
+              'inline-flex cursor-pointer list-none items-center gap-1 rounded-sm text-sm text-paper-300 transition-colors hover:text-paper-100 underline-offset-2 hover:underline focus-visible:underline [&::-webkit-details-marker]:hidden',
               FOCUS_RING
             )}
           >

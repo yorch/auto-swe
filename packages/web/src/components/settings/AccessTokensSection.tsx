@@ -256,12 +256,12 @@ export function AccessTokensSection() {
               auto-swe stores only a hash. Copy the token now and keep it in your secret manager; if
               you lose it, revoke it and create another.
             </Alert>
-            <div className="rounded-lg border border-ember-400/40 bg-ink-950/70 p-3">
+            <div className="rounded-lg border border-amber-400/40 bg-ink-950/70 p-3">
               <div className="mb-2 flex items-center justify-between gap-3">
                 <span className="label-mono">Token</span>
                 <CopyButton value={revealed.token} />
               </div>
-              <code className="block break-all font-mono text-sm leading-relaxed text-ember-100 select-all">
+              <code className="block break-all font-mono text-sm leading-relaxed text-paper-50 select-all">
                 {revealed.token}
               </code>
             </div>

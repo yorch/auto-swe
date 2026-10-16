@@ -53,7 +53,11 @@
   --color-paper-500: #a9b2c6; /* labels / muted */
   --color-paper-600: #909cb5; /* faint / numerals / captions */
 
-  /* Accent — violet, primary accent */
+  /* Accent — violet ("ember"). Reserved for three jobs: the primary action, the current
+     selection (active nav item, selected tab / row / node) and keyboard focus. Links are
+     body colour with an underline (on hover/focus when standalone, always inside a
+     sentence); eyebrows, icons and figures are neutral. Status colours below mean a
+     status and nothing else. */
   --color-ember-50: #f0eeff; /* violet tint near-white */
   --color-ember-100: #d8d4ff; /* violet light */
   --color-ember-200: #b5afff; /* violet mid */

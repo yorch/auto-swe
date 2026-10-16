@@ -276,7 +276,7 @@ function PatternDetailModal({
               <span className="text-paper-500">/</span>
               {pattern.pattern}
               <span className="text-paper-500">/</span>
-              <span className="text-ember-300">{pattern.flags}</span>
+              <span className="text-paper-300">{pattern.flags}</span>
             </pre>
           </div>
 
@@ -382,7 +382,7 @@ function PatternRow({
         <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <button
             className={cn(
-              'truncate rounded-sm text-left font-medium hover:text-ember-300 hover:underline',
+              'truncate rounded-sm text-left font-medium underline-offset-2 hover:underline focus-visible:underline',
               pattern.isActive ? 'text-paper-100' : 'text-paper-400',
               FOCUS_RING
             )}

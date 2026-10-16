@@ -128,7 +128,7 @@ function PagerLink({ direction, doc }: { direction: 'prev' | 'next'; doc: DocMet
   return (
     <Link
       className={cn(
-        'group flex flex-col gap-1 rounded-xl border border-ink-400/50 bg-ink-900/40 px-4 py-3 transition-colors hover:border-ember-400/50',
+        'group flex flex-col gap-1 rounded-xl border border-ink-400/50 bg-ink-900/40 px-4 py-3 transition-colors hover:border-ink-300',
         isNext && 'sm:items-end sm:text-right',
         FOCUS_RING
       )}
@@ -139,7 +139,7 @@ function PagerLink({ direction, doc }: { direction: 'prev' | 'next'; doc: DocMet
         {isNext ? 'Next' : 'Previous'}
         {isNext && <Icon name="arrowRight" size={12} />}
       </span>
-      <span className="text-sm font-medium text-paper-100 group-hover:text-ember-300">
+      <span className="text-sm font-medium text-paper-100 underline-offset-2 group-hover:underline">
         {doc.title}
       </span>
     </Link>

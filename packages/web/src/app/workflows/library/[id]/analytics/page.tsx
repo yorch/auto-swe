@@ -153,7 +153,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                 <CardTitle hint={`Last ${windowDays} days`}>Overview</CardTitle>
               </CardHeader>
               <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 lg:grid-cols-4">
-                <Stat label="Total runs" tone="ember" unit="runs" value={stats.totalRuns} />
+                <Stat label="Total runs" unit="runs" value={stats.totalRuns} />
                 <Stat
                   hint={
                     <HelpTip label="Success rate">
@@ -189,7 +189,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                   label="p95 duration"
                   value={formatDuration(stats.p95DurationMs)}
                 />
-                <Stat label="Avg cost / run" tone="amber" value={formatCost(stats.avgCostPerRun)} />
+                <Stat label="Avg cost / run" value={formatCost(stats.avgCostPerRun)} />
                 <Stat label="Total cost" value={formatCost(stats.totalCost)} />
                 <Stat
                   hint={
@@ -410,7 +410,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                         <Td className="py-2.5 pr-4 text-sm text-paper-200">
                           {row.failed > 0 ? (
                             <Link
-                              className="rounded-sm text-paper-100 hover:text-ember-400 hover:underline"
+                              className="rounded-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
                               href={`/workflows/library/${id}/runs?failedStep=${encodeURIComponent(row.nodeId)}`}
                               title="See the runs where this step failed"
                             >

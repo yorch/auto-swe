@@ -360,7 +360,7 @@ export default function GovernAutomationsPage() {
                                 </Button>
                               ) : href ? (
                                 <Link
-                                  className="text-ember-400 text-sm hover:underline"
+                                  className="text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
                                   href={href}
                                 >
                                   {r.canManage ? 'Manage' : 'View'}

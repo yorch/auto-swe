@@ -71,7 +71,7 @@ export function RequestList({
               {request.reviewUrl && (
                 <a
                   className={cn(
-                    'mx-5 mb-4 inline-flex items-center gap-1.5 rounded-sm text-sm font-medium text-ember-400 hover:underline',
+                    'mx-5 mb-4 inline-flex items-center gap-1.5 rounded-sm text-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
                     FOCUS_RING
                   )}
                   href={request.reviewUrl}

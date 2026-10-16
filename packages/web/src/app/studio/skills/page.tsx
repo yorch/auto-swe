@@ -723,7 +723,7 @@ export default function StudioSkillsPage() {
                         <Td className="py-2.5 pr-4 sm:max-w-md" primary>
                           <button
                             className={cn(
-                              'max-w-full truncate rounded-sm text-left font-medium text-paper-100 hover:text-ember-300',
+                              'max-w-full truncate rounded-sm text-left font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
                               FOCUS_RING
                             )}
                             onClick={() => setViewTarget(skill)}

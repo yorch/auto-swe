@@ -39,7 +39,7 @@ const TYPE_GLYPH: Record<string, { label: string; tone: BadgeTone; title: string
 
 /** A small inline text action inside a trace: "show all", "show less", "Show all". */
 const TEXT_ACTION = cn(
-  'rounded-sm text-xs text-ember-400 transition-colors hover:text-ember-300',
+  'rounded-sm text-xs text-paper-300 transition-colors hover:text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
   FOCUS_RING
 );
 
@@ -433,7 +433,11 @@ function OtelLink({ trace }: { trace: AgentTraceRecord }) {
 
   return href ? (
     <a
-      className={cn(inner, 'transition-colors hover:text-ember-400', FOCUS_RING)}
+      className={cn(
+        inner,
+        'transition-colors hover:text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
+        FOCUS_RING
+      )}
       href={href}
       onClick={(e) => e.stopPropagation()}
       onKeyDown={(e) => e.stopPropagation()}
@@ -753,7 +757,7 @@ export function TracesTab({
                   className="border-ink-600/40 border-y bg-ink-900 px-4 py-1.5 text-xs font-medium text-paper-300"
                   data-testid="trace-branch"
                 >
-                  Branch <span className="font-mono text-ember-300">{section.branch}</span>
+                  Branch <span className="font-mono text-paper-200">{section.branch}</span>
                 </div>
               )}
               <div className="divide-y divide-ink-600/30">

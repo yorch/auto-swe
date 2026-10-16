@@ -31,7 +31,10 @@ export function EligibleUserSelect({
         hint={
           <>
             Invite one from{' '}
-            <Link className="text-ember-400 hover:underline" href="/govern/users">
+            <Link
+              className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
+              href="/govern/users"
+            >
               Users
             </Link>{' '}
             first.

@@ -304,7 +304,10 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                 hint={
                   <>
                     Add one from{' '}
-                    <Link className="text-ember-400 hover:underline" href="/connections">
+                    <Link
+                      className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
+                      href="/connections"
+                    >
                       Connections
                     </Link>
                     .

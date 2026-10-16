@@ -261,7 +261,10 @@ function TemplateDiffContent({ params }: PageProps) {
           {canPromote && afterNeedsReview && (
             <Alert className="mt-4" variant="info">
               v{after} is AI-generated and needs review before it can be promoted. Review it on the{' '}
-              <Link className="text-ember-400 hover:underline" href={`/workflows/library/${id}`}>
+              <Link
+                className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
+                href={`/workflows/library/${id}`}
+              >
                 workflow page
               </Link>
               .

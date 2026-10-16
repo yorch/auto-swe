@@ -449,7 +449,7 @@ function LoginPageInner() {
               <li className="flex gap-4" key={h.title}>
                 <span
                   aria-hidden="true"
-                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-ink-400/70 bg-ink-700/70 text-ember-300"
+                  className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-ink-400/70 bg-ink-700/70 text-paper-300"
                 >
                   <Icon name={h.icon} size={17} />
                 </span>
@@ -636,7 +636,7 @@ function LoginPageInner() {
               />
               <div className="flex justify-end">
                 <Button
-                  className="h-auto px-1 py-0.5 text-ember-300 hover:bg-transparent hover:text-ember-200"
+                  className="h-auto px-1 py-0.5 text-paper-300 hover:bg-transparent hover:text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
                   disabled={loading}
                   onClick={handleForgotPassword}
                   size="sm"

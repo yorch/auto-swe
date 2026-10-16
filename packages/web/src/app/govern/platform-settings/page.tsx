@@ -418,7 +418,7 @@ export default function GovernSettingsPage() {
                   <li key={group}>
                     <a
                       className={cn(
-                        '-ml-px flex items-baseline justify-between gap-2 border-l border-transparent py-1.5 pl-3 text-sm text-paper-300 hover:border-ember-400 hover:text-paper-100',
+                        '-ml-px flex items-baseline justify-between gap-2 border-l border-transparent py-1.5 pl-3 text-sm text-paper-300 hover:border-paper-500 hover:text-paper-100',
                         FOCUS_RING
                       )}
                       href={`#group-${group}`}

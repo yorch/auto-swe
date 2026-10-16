@@ -248,7 +248,7 @@ function ConsentDecision({ search }: { search: string }) {
       <p className="mt-6 text-sm leading-relaxed text-paper-500">
         You can disconnect this at any time under{' '}
         <Link
-          className="text-ember-300 underline hover:text-ember-200"
+          className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
           href="/settings"
           rel="noopener noreferrer"
           target="_blank"

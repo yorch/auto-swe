@@ -193,7 +193,7 @@ export default function AutonomyDecisionsPage() {
                     </Td>
                     <Td className="px-4 py-3" label="Run">
                       <Link
-                        className="font-mono text-xs text-ember-400 hover:underline"
+                        className="font-mono text-xs text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
                         href={`/runs/${row.runId}`}
                         title={row.runId}
                       >

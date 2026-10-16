@@ -183,7 +183,7 @@ export default function GovernLessonsPage() {
                   <>Next run {formatDate(consolidation.schedule.nextRunAt)} · </>
                 )}
                 <Link
-                  className="text-ember-400 hover:underline"
+                  className="text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
                   href="/govern/workflow-defaults#consolidation"
                 >
                   Configure

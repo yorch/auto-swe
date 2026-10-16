@@ -35,7 +35,7 @@ export function SettingsSection({
           <div className="flex min-w-0 items-start gap-3.5">
             <span
               aria-hidden="true"
-              className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-ink-400/70 bg-ink-800/80 text-ember-300"
+              className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-ink-400/70 bg-ink-800/80 text-paper-400"
             >
               <Icon name={icon} size={17} />
             </span>

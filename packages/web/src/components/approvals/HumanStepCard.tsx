@@ -180,7 +180,10 @@ const RESPONSE_ICON: Record<string, { icon: IconName; tone: string }> = {
   submit: { icon: 'chat', tone: 'text-dust-400' },
 };
 
-const LINK = cn('rounded-sm transition-colors hover:text-ember-300 hover:underline', FOCUS_RING);
+const LINK = cn(
+  'rounded-sm underline-offset-2 hover:underline focus-visible:underline',
+  FOCUS_RING
+);
 
 /** The server caps an approver's note; the counter keeps the limit visible. */
 const MAX_COMMENT_LENGTH = 2000;
@@ -361,7 +364,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                 </>
               )}
               <Link
-                className={cn(LINK, 'text-ember-400')}
+                className={cn(LINK, 'text-paper-100')}
                 href={requestId ? requestHref(requestId) : `/runs/${step.run.id}`}
               >
                 View request

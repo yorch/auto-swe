@@ -217,7 +217,10 @@ function AnalyticsWorkspace() {
                   hint={
                     <>
                       Workflow-run spend only.{' '}
-                      <Link className="text-ember-400 hover:underline" href="/govern/usage">
+                      <Link
+                        className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
+                        href="/govern/usage"
+                      >
                         See all spend
                       </Link>
                     </>
@@ -375,7 +378,7 @@ function AnalyticsWorkspace() {
                             <TRow hover key={row.templateId}>
                               <Td className="px-4 py-2.5">
                                 <Link
-                                  className={`rounded-sm font-medium text-paper-100 hover:text-ember-300 ${FOCUS_RING}`}
+                                  className={`rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline ${FOCUS_RING}`}
                                   href={`/workflows/library/${row.templateId}`}
                                 >
                                   {row.templateName}

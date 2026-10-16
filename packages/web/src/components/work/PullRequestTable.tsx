@@ -9,7 +9,10 @@ import { safeHttpUrl } from '@/lib/safeUrl';
 import { cn, FOCUS_RING, formatCost } from '@/lib/utils';
 import { CiBadge, PullRequestStateBadge } from './PullRequestBadges';
 
-const LINK = cn('rounded-sm text-ember-400 hover:underline', FOCUS_RING);
+const LINK = cn(
+  'rounded-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
+  FOCUS_RING
+);
 
 /** Title and ticket are host and tracker text: rendered as plain text, never as markup. */
 export function PullRequestTable({ pullRequests }: { pullRequests: PullRequestListItem[] }) {
