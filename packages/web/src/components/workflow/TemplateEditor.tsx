@@ -27,6 +27,7 @@ import { CheckStatus } from './templateEditor/CheckStatus';
 import { EditorActionBar } from './templateEditor/EditorActionBar';
 import { EditorInspectorPanel } from './templateEditor/EditorInspectorPanel';
 import { OutlineRail, PaletteRail } from './templateEditor/EditorSideRails';
+import { EditorStatusBar } from './templateEditor/EditorStatusBar';
 import { IssuesPanel } from './templateEditor/IssuesPanel';
 import type { TemplateEditorProps as Props } from './templateEditor/types';
 import { useTemplateEditorState } from './templateEditor/useTemplateEditorState';
@@ -103,19 +104,15 @@ function EditorInner({
   });
 
   return (
-    <div className="flex h-[calc(100vh-180px)] min-h-[560px] flex-col overflow-hidden border-y border-ink-600 bg-ink-900">
+    <div className="flex flex-1 min-h-[560px] flex-col overflow-hidden md:min-h-0 border-y border-ink-600 bg-ink-900">
       <EditorActionBar
         actions={actions}
         checkPending={checkResult?.server.state === 'pending'}
-        costEstimateExclusions={costEstimateExclusions}
-        costEstimateUsd={costEstimateUsd}
-        observedCostUsd={observedCostUsd}
         onCheck={runCheck}
         paletteOpen={paletteOpen}
         setPaletteOpen={setPaletteOpen}
         setShowOutline={setOutlineVisible}
         showOutline={outlineVisible}
-        spec={spec}
       />
 
       <CheckStatus
@@ -209,6 +206,13 @@ function EditorInner({
           stepRegistry={stepRegistry}
         />
       </div>
+
+      <EditorStatusBar
+        costEstimateExclusions={costEstimateExclusions}
+        costEstimateUsd={costEstimateUsd}
+        observedCostUsd={observedCostUsd}
+        spec={spec}
+      />
     </div>
   );
 }

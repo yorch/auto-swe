@@ -17,6 +17,7 @@ import { RefineChatPanel } from '@/components/workflow/RefineChatPanel';
 import { TemplateEditor } from '@/components/workflow/TemplateEditor';
 import { TemplateNotFound, TemplateSubNav } from '@/components/workflow/templateNav';
 import { WorkflowDag } from '@/components/workflow/WorkflowDag';
+import { cn } from '@/lib/utils';
 import { EditMetadataModal } from './_components/EditMetadataModal';
 import { EditorActions } from './_components/EditorActions';
 import { EditSchemaModal } from './_components/EditSchemaModal';
@@ -32,6 +33,15 @@ import { WebhookCard } from './_components/WebhookCard';
 
 interface PageProps {
   params: Promise<{ id: string }>;
+}
+
+/** The shell gives a full-screen route no padding or scroll; the states without an editor want both. */
+function PagePad({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="h-full overflow-y-auto">
+      <div className="mx-auto max-w-[1280px] px-4 pt-6 pb-16 md:px-10 md:pt-10">{children}</div>
+    </div>
+  );
 }
 
 export default function TemplateDetailPage({ params }: PageProps) {
@@ -99,24 +109,34 @@ export default function TemplateDetailPage({ params }: PageProps) {
   } = useWorkflowDetailState(params);
 
   if (!id) {
-    return <TemplateNotFound />;
+    return (
+      <PagePad>
+        <TemplateNotFound />
+      </PagePad>
+    );
   }
   // Before the not-found branch, so a 403 or 500 is not reported as "not found".
   if (isLoading || isError) {
     return (
-      <QueryBoundary
-        error={error}
-        isError={isError}
-        isFetching={isFetching}
-        isLoading={isLoading}
-        label="workflow"
-        loadingMessage="loading workflow…"
-        onRetry={() => void refetch()}
-      />
+      <PagePad>
+        <QueryBoundary
+          error={error}
+          isError={isError}
+          isFetching={isFetching}
+          isLoading={isLoading}
+          label="workflow"
+          loadingMessage="loading workflow…"
+          onRetry={() => void refetch()}
+        />
+      </PagePad>
     );
   }
   if (!template) {
-    return <TemplateNotFound />;
+    return (
+      <PagePad>
+        <TemplateNotFound />
+      </PagePad>
+    );
   }
 
   const editorActions = (
@@ -142,48 +162,63 @@ export default function TemplateDetailPage({ params }: PageProps) {
   );
 
   return (
-    <div className="space-y-6">
-      <ExplainModal
-        activeVersion={template.activeVersion}
-        onClose={() => setExplainOpen(false)}
-        open={explainOpen}
-        templateId={id}
-      />
-
-      <RefineChatPanel onClose={() => setRefineOpen(false)} open={refineOpen} templateId={id} />
-
-      <TemplateHeader
-        canManage={canManage}
-        onEditDetails={() => setEditMetaOpen(true)}
-        onEditInputs={() => setEditSchemaOpen(true)}
-        onExplain={() => setExplainOpen(true)}
-        onRefine={() => setRefineOpen(true)}
-        template={template}
-      />
-
-      <TemplateSubNav active="editor" templateId={id} />
-
-      <p className="max-w-3xl text-sm leading-relaxed text-paper-400" id="versioning-note">
-        Saving creates a new immutable version; it never edits an old one, and runs already in
-        flight stay on the version they started with.{' '}
-        <strong className="text-paper-200">Draft</strong> means the template cannot be launched yet.{' '}
-        <strong className="text-paper-200">Active</strong> means it can be launched, using its
-        active version. <strong className="text-paper-200">Promote</strong> makes a version the
-        active one, so new runs use it.
-      </p>
-
-      {saveError && mode !== 'edit' && (
-        <Alert className="whitespace-pre-line" title="Could not save">
-          {saveError}
-        </Alert>
+    // Full-screen route (see `isFullscreenRoute`): this root owns the scrolling. In edit mode the
+    // editor takes the height left under the header from `md` up; below `md` the whole page scrolls
+    // and the editor keeps a 560px canvas, because a phone cannot fit canvas, rails and header at once.
+    <div
+      className={cn(
+        'flex h-full flex-col overflow-y-auto overflow-x-hidden',
+        mode === 'edit' && 'md:overflow-hidden'
       )}
+    >
+      <div
+        className={cn(
+          'mx-auto w-full max-w-[1280px] shrink-0 space-y-6 px-4 pt-6 md:px-10 md:pt-10',
+          mode === 'edit' ? 'pb-4' : 'pb-6'
+        )}
+      >
+        <ExplainModal
+          activeVersion={template.activeVersion}
+          onClose={() => setExplainOpen(false)}
+          open={explainOpen}
+          templateId={id}
+        />
 
-      {/* The visual editor lists its own lint; every other mode shows it here. */}
-      {mode !== 'edit' && lintErrors.length > 0 && <LintErrorsAlert lintErrors={lintErrors} />}
+        <RefineChatPanel onClose={() => setRefineOpen(false)} open={refineOpen} templateId={id} />
+
+        <TemplateHeader
+          canManage={canManage}
+          onEditDetails={() => setEditMetaOpen(true)}
+          onEditInputs={() => setEditSchemaOpen(true)}
+          onExplain={() => setExplainOpen(true)}
+          onRefine={() => setRefineOpen(true)}
+          template={template}
+        />
+
+        <TemplateSubNav active="editor" templateId={id} />
+
+        <p className="max-w-3xl text-sm leading-relaxed text-paper-400" id="versioning-note">
+          Saving creates a new immutable version; it never edits an old one, and runs already in
+          flight stay on the version they started with.{' '}
+          <strong className="text-paper-200">Draft</strong> means the template cannot be launched
+          yet. <strong className="text-paper-200">Active</strong> means it can be launched, using
+          its active version. <strong className="text-paper-200">Promote</strong> makes a version
+          the active one, so new runs use it.
+        </p>
+
+        {saveError && mode !== 'edit' && (
+          <Alert className="whitespace-pre-line" title="Could not save">
+            {saveError}
+          </Alert>
+        )}
+
+        {/* The visual editor lists its own lint; every other mode shows it here. */}
+        {mode !== 'edit' && lintErrors.length > 0 && <LintErrorsAlert lintErrors={lintErrors} />}
+      </div>
 
       {/* Edit mode: full-bleed canvas */}
       {mode === 'edit' && editorSpec && stepRegistry && (
-        <div className="-mx-4 md:-mx-10">
+        <div className="flex min-h-0 flex-col md:flex-1">
           <TemplateEditor
             actions={editorActions}
             costEstimateExclusions={costExclusions}
@@ -204,7 +239,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
 
       {/* View / JSON mode with versions + analytics rail */}
       {mode !== 'edit' && (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <div className="mx-auto grid w-full max-w-[1280px] grid-cols-1 gap-6 px-4 pb-16 md:px-10 lg:grid-cols-[minmax(0,1fr)_300px]">
           <section className="min-w-0 space-y-3">
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
               <div className="flex min-w-0 items-baseline gap-2">

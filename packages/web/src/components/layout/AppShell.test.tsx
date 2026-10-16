@@ -28,7 +28,7 @@ vi.mock('@/components/layout/TopBar', () => ({
   ),
 }));
 
-import { AppShell } from './AppShell';
+import { AppShell, isFullscreenRoute } from './AppShell';
 
 afterEach(cleanup);
 
@@ -73,5 +73,25 @@ describe('AppShell mobile drawer focus trap', () => {
     const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape' });
     document.body.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(true);
+  });
+});
+
+describe('isFullscreenRoute', () => {
+  it.each([
+    '/runs/abc',
+    '/workflows/library/t1/diff',
+    '/workflows/library/t1',
+    '/workflows/library/t1/',
+  ])('gives %s the whole main area', (path) => {
+    expect(isFullscreenRoute(path)).toBe(true);
+  });
+
+  it.each([
+    '/workflows/library',
+    '/workflows/library/t1/analytics',
+    '/workflows/library/t1/runs',
+    '/runs',
+  ])('leaves %s as an ordinary scrolling page', (path) => {
+    expect(isFullscreenRoute(path)).toBe(false);
   });
 });

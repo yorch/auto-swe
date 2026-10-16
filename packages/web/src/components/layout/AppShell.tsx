@@ -12,9 +12,19 @@ import { useApprovalsStream } from '@/hooks/useApprovals';
 // without the app chrome, whose queries would 401 for a signed-out visitor.
 const CHROMELESS_ROUTES = ['/login', '/reset-password'];
 
-// Run detail and template diff pages manage their own full-height layout.
-function isFullscreenRoute(pathname: string): boolean {
-  return /^\/runs\/[^/]+$/.test(pathname) || /^\/workflows\/library\/[^/]+\/diff/.test(pathname);
+// Routes that manage their own full-height layout: the shell gives them the whole main area (no
+// padding, no page scroll) and the page decides what scrolls. Each pattern is one named entry, so
+// a URL change is a one-line edit here (and in AppShell.test.tsx).
+const FULLSCREEN_ROUTES: Record<string, RegExp> = {
+  runDetail: /^\/runs\/[^/]+$/,
+  templateDiff: /^\/workflows\/library\/[^/]+\/diff/,
+  // The template detail page hosts the visual editor, which fills the viewport height. Exactly one
+  // segment after the library: its analytics/runs/diff sub-pages are ordinary scrolling pages.
+  templateEditor: /^\/workflows\/library\/[^/]+\/?$/,
+};
+
+export function isFullscreenRoute(pathname: string): boolean {
+  return Object.values(FULLSCREEN_ROUTES).some((re) => re.test(pathname));
 }
 
 export function AppShell({ children }: { children: React.ReactNode }) {
