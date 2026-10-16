@@ -23,6 +23,9 @@ const model = vi.hoisted(() => ({ current: undefined as unknown }));
 vi.mock('@auto-swe/shared/db', () => ({ prisma: db }));
 vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: vi.fn().mockResolvedValue(6) }));
 vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
+vi.mock('./assistantTitle.js', () => ({
+  nameAssistantConversation: vi.fn().mockResolvedValue('named'),
+}));
 vi.mock('../lib/activityLog.js', () => ({ logError: vi.fn() }));
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: () => 'assistant-conv-1',

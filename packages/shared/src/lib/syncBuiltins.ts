@@ -8,6 +8,7 @@ import type { WorkflowSpec } from '../workflow/spec.js';
 import { activeLineageHead, lockAgentLineage } from './agentLineageLock.js';
 import {
   APP_ASSISTANT_PROMPT,
+  ASSISTANT_TITLER_PROMPT,
   BRAND_REVIEWER_PROMPT,
   CHANNEL_ASSISTANT_PROMPT,
   CI_FIX_SYSTEM_PROMPT,
@@ -733,6 +734,17 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     key: 'prdDecomposer',
     name: 'PRD Decomposer',
     systemPrompt: PRD_DECOMPOSER_PROMPT,
+  },
+  // ── In-app assistant ───────────────────────────────────────────────────────
+  {
+    // Names an assistant conversation from the person's first messages, alongside the turn
+    // (`nameAssistantConversation`). On the assistant's model so it works with whatever provider
+    // the operator gave the assistant. No tools.
+    description: 'Names an in-app assistant conversation from its first messages. No tools.',
+    inheritsModelFrom: 'appAssistant',
+    key: 'assistantTitler',
+    name: 'Assistant Titler',
+    systemPrompt: ASSISTANT_TITLER_PROMPT,
   },
   // ── CI failure triage ──────────────────────────────────────────────────────
   {

@@ -16,6 +16,7 @@ import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { redactToken } from '../lib/redactToken.js';
 import { ownerOfUser, withSpendOwner } from '../lib/spendOwner.js';
+import { nameAssistantConversation } from './assistantTitle.js';
 import { runAgent } from './runAgent.js';
 
 /**
@@ -47,6 +48,12 @@ const HISTORY_MESSAGES = 20;
 const HISTORY_MESSAGE_CHARS = 4000;
 /** How often the growing reply is written back while the model streams. */
 const FLUSH_INTERVAL_MS = 250;
+/**
+ * How long a finished reply waits for the conversation's title before it is marked COMPLETE. The
+ * panel re-reads the title when the reply completes, so waiting a little shows it at once; a title
+ * that takes longer still lands, and shows on the panel's next read.
+ */
+const TITLE_WAIT_MS = 10_000;
 
 const AGENT_KEY = 'appAssistant';
 
@@ -151,6 +158,18 @@ function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max)}…`;
 }
 
+/** Wait for `promise`, but no longer than `ms`. */
+async function settleWithin(promise: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    promise,
+    new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, ms);
+    }),
+  ]);
+  clearTimeout(timer);
+}
+
 function failureText(err: unknown): string {
   const type = (err as { type?: string } | null)?.type;
   const message = err instanceof Error ? err.message : '';
@@ -202,6 +221,15 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
     data: { content: '', error: null, status: 'STREAMING', steps: [] },
     where: { id: reply.id },
   });
+  // Named alongside the reply, from the person's messages alone, so the title is usually written
+  // before the reply finishes. Never throws.
+  const titling = withSpendOwner(ownerOfUser(input.userId), () =>
+    nameAssistantConversation({
+      conversationId: input.conversationId,
+      replyId: reply.id,
+      userId: input.userId,
+    })
+  ).catch(() => undefined);
   const writer = new ReplyWriter(async (content, steps) => {
     await prisma.assistantMessage.updateMany({
       data: { content, steps: steps as object[] },
@@ -241,6 +269,7 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
     if (result.stoppedReason === 'max_steps') {
       content += MAX_STEPS_NOTE;
     }
+    await settleWithin(titling, TITLE_WAIT_MS);
     await prisma.assistantMessage.update({
       data: { content, status: 'COMPLETE', steps: writer.toolSteps as object[] },
       where: { id: reply.id },
@@ -265,6 +294,7 @@ export async function runAssistantTurn(input: AssistantTurnInput): Promise<Assis
     });
     return { status: 'FAILED' };
   } finally {
+    await titling;
     await prisma.assistantConversation
       .update({ data: { updatedAt: new Date() }, where: { id: input.conversationId } })
       .catch(() => undefined);

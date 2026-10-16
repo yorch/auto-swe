@@ -635,6 +635,19 @@ steps are flagged. The reply is written into its
 `AssistantMessage` row as the model streams it, and the gateway streams that row to the panel as
 server-sent events.
 
+A conversation starts with the first line of its first message as its title
+(`AssistantConversation.titleSource` `FIRST_MESSAGE`). Each turn also runs
+`nameAssistantConversation` alongside the reply: while the title is still the first message's and
+`assistant.generateTitles` is on, the `assistantTitler` agent (a persona on `appAssistant`'s model,
+no tools) reads the user's messages so far — never the replies — and returns a short title, written
+as `MODEL`. It may decline when the messages do not yet say what the conversation is about; the next
+turn tries again, up to three user messages in. The reply waits up to 10 s for the title before it is
+marked COMPLETE, so the panel, which re-reads the conversation when a reply finishes, usually shows
+the title at once. The user renames a conversation from the panel header
+(`PATCH /api/v1/assistant/conversations/:id`), which writes `USER`; the model's write is conditional
+on `FIRST_MESSAGE`, so a rename made while it works is never overwritten. The titler's calls are
+priced like the turn's, to the same user, and its trace rows carry the turn's reply id.
+
 A reply that fails shows the user a fixed sentence (`error`), and also records the underlying cause
 in `AssistantMessage.errorDetail`: the error's name, failure type and message and the first few causes
 it wraps, scrubbed of credential-shaped text and the turn's token. It is written by the turn activity

@@ -71,6 +71,19 @@ export const SETTING_DEFINITIONS = {
     schema: z.boolean(),
   }),
   // Read by the conversation workflow's turn activity at the start of every turn.
+  'assistant.generateTitles': defineSetting({
+    defaultValue: true,
+    description:
+      "Whether the assistantTitler agent names each conversation from the person's first messages, on the assistant's model. Off, a conversation keeps the start of its first message as its title until the person renames it.",
+    group: 'assistant',
+    label: 'Name conversations with the model',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  // Read by the conversation workflow's turn activity at the start of every turn.
   'assistant.maxStepsPerTurn': defineSetting({
     defaultValue: 12,
     description:

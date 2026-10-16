@@ -12,6 +12,9 @@ const db = vi.hoisted(() => ({
 vi.mock('@auto-swe/shared/db', () => ({ prisma: db }));
 vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: vi.fn().mockResolvedValue(7) }));
 vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
+vi.mock('./assistantTitle.js', () => ({
+  nameAssistantConversation: vi.fn().mockResolvedValue('named'),
+}));
 vi.mock('../lib/activityLog.js', () => ({ logError: vi.fn() }));
 vi.mock('../lib/activityContext.js', () => ({
   persistActivityTrace: vi.fn().mockResolvedValue(true),
@@ -30,6 +33,7 @@ vi.mock('./runAgent.js', () => ({ runAgent: vi.fn() }));
 
 import { persistActivityTrace } from '../lib/activityContext.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
+import { nameAssistantConversation } from './assistantTitle.js';
 import { failAssistantReply, ReplyWriter, runAssistantTurn } from './assistantTurn.js';
 import { runAgent } from './runAgent.js';
 
@@ -95,6 +99,38 @@ describe('runAssistantTurn', () => {
       },
       where: { id: 'reply-1' },
     });
+  });
+
+  it('names the conversation alongside the reply, and completes the reply once it is named', async () => {
+    const order: string[] = [];
+    vi.mocked(nameAssistantConversation).mockImplementationOnce(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      order.push('named');
+      return 'named';
+    });
+    mockedRunAgent.mockImplementationOnce(async () => {
+      order.push('answered');
+      return { text: 'Done' };
+    });
+    db.assistantMessage.update.mockImplementation(async ({ data }) => {
+      if (data.status === 'COMPLETE') {
+        order.push('completed');
+      }
+      return {};
+    });
+    await runAssistantTurn(INPUT);
+    expect(nameAssistantConversation).toHaveBeenCalledWith({
+      conversationId: 'conv-1',
+      replyId: 'reply-1',
+      userId: 'user-1',
+    });
+    expect(order).toEqual(['answered', 'named', 'completed']);
+  });
+
+  it('still answers when naming the conversation fails', async () => {
+    vi.mocked(nameAssistantConversation).mockRejectedValueOnce(new Error('no owner'));
+    mockedRunAgent.mockResolvedValueOnce({ text: 'Done' });
+    expect(await runAssistantTurn(INPUT)).toEqual({ status: 'COMPLETE' });
   });
 
   it('says so when the reply ran out of steps', async () => {

@@ -508,10 +508,11 @@ are added as data, not code. Seeded built-ins split by how they bind a model:
   dashboard's assistant panel, acting as the signed-in user. The rest exist because the
   platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
   `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product).
-- **Sub-role personas** (`inheritsModelFrom`), 13 of them: `securityReviewer` /
+- **Sub-role personas** (`inheritsModelFrom`), 14 of them: `securityReviewer` /
   `domainLogicReviewer` / `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` /
   `prdDecomposer` / `ciTriager` / `ticketContextGatherer` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
-  `mergeConflictResolver` (← `implementer`); `lessonConsolidator` (← `commitToMemory`).
+  `mergeConflictResolver` (← `implementer`); `lessonConsolidator` (← `commitToMemory`);
+  `assistantTitler` (← `appAssistant`).
 
 Both lists are complete as written, and `yarn docs:check` fails if one stops being — see
 [`docs/agents.md`](./docs/agents.md) for what calls each agent and its default model.
