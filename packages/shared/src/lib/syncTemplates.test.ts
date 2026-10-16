@@ -4,7 +4,6 @@ import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 import {
   CHANNEL_ASSISTANT_SPEC,
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
-  RENAMED_TEMPLATES,
   SUPERSEDED_TEMPLATE_DESCRIPTIONS,
   seedSweStarter,
 } from './syncBuiltins.js';
@@ -14,13 +13,12 @@ interface Row {
   name: string;
   teamId: string | null;
   description: string;
-  isDefault?: boolean;
 }
 
 /**
  * An in-memory `workflowTemplate` table whose `findFirst` honours its `where`.
  * A fake that ignored the clause would return a row for any name, and the
- * rename and description rules below would pass without ever being exercised.
+ * description rules below would pass without ever being exercised.
  */
 function makePrisma(seed: Row[]) {
   const rows = seed.map((r) => ({ ...r }));
@@ -67,72 +65,6 @@ function makePrisma(seed: Row[]) {
 }
 
 const global = (rows: Row[], name: string) => rows.filter((r) => r.name === name && !r.teamId);
-
-describe('template renames', () => {
-  it('renames the legacy row in place instead of creating a second one', async () => {
-    const { prisma, rows } = makePrisma([
-      { description: 'kept', id: 'legacy', name: 'review-and-merge', teamId: null },
-    ]);
-    await seedSweStarter(prisma);
-
-    expect(global(rows, 'review-and-merge')).toHaveLength(0);
-    const renamed = global(rows, 'agent-reviewed-pr');
-    expect(renamed).toHaveLength(1);
-    expect(renamed[0].id).toBe('legacy');
-  });
-
-  it('leaves a team template with the old name alone', async () => {
-    const { prisma, rows } = makePrisma([
-      { description: '', id: 'team', name: 'review-and-merge', teamId: 'team-1' },
-    ]);
-    await seedSweStarter(prisma);
-
-    expect(rows.find((r) => r.id === 'team')?.name).toBe('review-and-merge');
-  });
-
-  it('does not rename when the new name already exists', async () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const { prisma, rows } = makePrisma([
-      { description: '', id: 'legacy', name: 'review-and-merge', teamId: null },
-      { description: '', id: 'current', name: 'agent-reviewed-pr', teamId: null },
-    ]);
-    await seedSweStarter(prisma);
-
-    expect(rows.find((r) => r.id === 'legacy')?.name).toBe('review-and-merge');
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
-  });
-
-  it('carries the global default across the default-engineering rename', async () => {
-    const [old] = SUPERSEDED_TEMPLATE_DESCRIPTIONS['ticket-to-merge'];
-    const { prisma, rows } = makePrisma([
-      {
-        description: old,
-        id: 'legacy',
-        isDefault: true,
-        name: 'default-engineering',
-        teamId: null,
-      },
-    ]);
-    await seedSweStarter(prisma);
-
-    expect(global(rows, 'default-engineering')).toHaveLength(0);
-    const renamed = global(rows, 'ticket-to-merge');
-    expect(renamed).toHaveLength(1);
-    expect(renamed[0].id).toBe('legacy');
-    expect(renamed[0].isDefault).toBe(true);
-    const current = BUILTIN_TEMPLATES.find((t) => t.name === 'ticket-to-merge');
-    expect(renamed[0].description).toBe(current?.description);
-  });
-
-  it('only maps to names that are built-in templates', () => {
-    const names = new Set(BUILTIN_TEMPLATES.map((t) => t.name));
-    for (const [from, to] of Object.entries(RENAMED_TEMPLATES)) {
-      expect(names.has(to), to).toBe(true);
-      expect(names.has(from), from).toBe(false);
-    }
-  });
-});
 
 describe('superseded descriptions', () => {
   it('replaces a description still carrying the old built-in text', async () => {
