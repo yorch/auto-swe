@@ -31,8 +31,10 @@ import {
 } from '@auto-swe/shared/lib/skillRevision';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { toImplementerRuntime, toReasoningLevel } from '@auto-swe/shared/types/api';
+import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 
 import { scanSkillAdvisory } from './skillScan.js';
+import { collectAuthoredCode, recordShellAudit } from './specCheck.js';
 
 /**
  * Bundle export/install service (P4/WS1+WS2). A bundle is a versioned, secret-free
@@ -198,16 +200,24 @@ function canonicalJson(value: unknown): string {
 async function installBundleTemplate(
   tx: InstallTx,
   t: BundleManifest['entities']['templates'][number],
-  origin: string
+  origin: string,
+  installedById: string | null
 ): Promise<void> {
   const spec = t.spec as object;
+  // The install may make this version active, so its authored code is put on record with the
+  // installer — a platform admin, the only role the install routes admit — as its author, the
+  // same `WorkflowShellAudit` rows a canvas save writes. A bundle template is global, so there
+  // is no team and no team egress allowlist to snapshot.
+  const { authoredNodes } = collectAuthoredCode(t.spec as WorkflowSpec);
+  const audit = (templateVersionId: string) =>
+    recordShellAudit(tx, templateVersionId, null, installedById, authoredNodes, []);
   const inputSchema = t.inputSchema ? { inputSchema: t.inputSchema as object } : {};
   const existing = await tx.workflowTemplate.findFirst({
     select: { activeVersion: true, id: true, status: true },
     where: { name: t.name, teamId: null },
   });
   if (!existing) {
-    await tx.workflowTemplate.create({
+    const created = await tx.workflowTemplate.create({
       data: {
         activeVersion: 1,
         description: t.description ?? '',
@@ -218,7 +228,12 @@ async function installBundleTemplate(
         teamId: null,
         versions: { create: { spec, version: 1 } },
       },
+      select: { versions: { select: { id: true } } },
     });
+    const [initial] = created.versions;
+    if (initial) {
+      await audit(initial.id);
+    }
     return;
   }
 
@@ -233,9 +248,11 @@ async function installBundleTemplate(
   }
 
   const next = (versions.at(-1)?.version ?? 0) + 1;
-  await tx.workflowTemplateVersion.create({
+  const appended = await tx.workflowTemplateVersion.create({
     data: { spec, templateId: existing.id, version: next },
+    select: { id: true },
   });
+  await audit(appended.id);
 
   const onPrevious =
     previous !== undefined &&
@@ -746,7 +763,7 @@ export async function installBundle(
       }
 
       for (const t of manifest.entities.templates) {
-        await installBundleTemplate(tx, t, origin);
+        await installBundleTemplate(tx, t, origin, opts.installedById ?? null);
         counts.templates++;
       }
 

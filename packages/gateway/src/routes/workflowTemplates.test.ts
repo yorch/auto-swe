@@ -239,7 +239,7 @@ function buildApp(state: {
         findMany: async ({ where }: { where: Mutable }) =>
           shellAudits
             .filter((a) => a.templateVersionId === where.templateVersionId)
-            .map((a) => ({ nodeId: a.nodeId })),
+            .map((a) => ({ command: a.command, image: a.image, nodeId: a.nodeId })),
       },
       workflowStep: {
         // The per-step rollup reads every step in the window and folds a
@@ -1809,6 +1809,61 @@ describe('workflow-templates authored commands and serving unaudited code', () =
         });
         expect(res.statusCode).toBe(200);
         expect(state.shellAudits).toHaveLength(1);
+      } finally {
+        await app.close();
+      }
+    });
+
+    it.each([
+      ['one of its gates', 'npm test'],
+      ['a different command on the same node', 'npm run something-else'],
+    ])('treats a node as unaudited when a row covers only %s', async (_label, audited) => {
+      const state = seeded('LEAD', QUALITY_GATES_SPEC);
+      const app = buildApp(state);
+      await app.ready();
+      try {
+        state.shellAudits?.push({
+          authorUserId: 'team-admin',
+          command: audited,
+          image: '(agent workspace)',
+          network: 'egress',
+          nodeId: 'gates',
+          templateVersionId: `v-${TPL_ID}-2`,
+        });
+        const res = await app.inject({
+          headers: { authorization: 'Bearer x' },
+          method: 'POST',
+          payload: { version: 2 },
+          url: `/api/v1/workflow-templates/${TPL_ID}/promote`,
+        });
+        expect(res.statusCode).toBe(403);
+        expect(res.json().error?.code).toBe('SHELL_AUTHOR_FORBIDDEN');
+      } finally {
+        await app.close();
+      }
+    });
+
+    it('records only the commands no row covers when a team ADMIN promotes', async () => {
+      const state = seeded('ADMIN', QUALITY_GATES_SPEC);
+      const app = buildApp(state);
+      await app.ready();
+      try {
+        state.shellAudits?.push({
+          authorUserId: 'team-admin',
+          command: 'npm test',
+          image: '(agent workspace)',
+          network: 'egress',
+          nodeId: 'gates',
+          templateVersionId: `v-${TPL_ID}-2`,
+        });
+        const res = await app.inject({
+          headers: { authorization: 'Bearer x' },
+          method: 'POST',
+          payload: { version: 2 },
+          url: `/api/v1/workflow-templates/${TPL_ID}/promote`,
+        });
+        expect(res.statusCode).toBe(200);
+        expect(state.shellAudits?.map((a) => a.command)).toEqual(['npm test', 'npm run build']);
       } finally {
         await app.close();
       }

@@ -27,7 +27,7 @@ import {
  *   DELETE /api/v1/platform/sessions/:id           — revoke a session
  *   POST   /api/v1/platform/sessions/revoke-user   — revoke every session of one user (not the caller's own)
  *   GET    /api/v1/platform/audit-log               — config-audit rows, filtered + paginated
- *   POST   /api/v1/platform/shell-audit/prune      — delete old WorkflowShellAudit rows
+ *   POST   /api/v1/platform/shell-audit/prune      — delete old WorkflowShellAudit rows, except a serving version's
  */
 
 const TokenIdParam = z.object({ id: z.string().uuid() });
@@ -529,8 +529,34 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       // other teams' audit rows growing forever.
       const { count } = await runUnscoped(
         'audit retention sweep is table-wide',
-        ['WorkflowShellAudit'],
-        () => fastify.prisma.workflowShellAudit.deleteMany({ where: { createdAt: { lt: cutoff } } })
+        ['WorkflowShellAudit', 'WorkflowTemplate'],
+        async () => {
+          // A version serving runs — any template's active version or experiment arm — keeps
+          // its rows whatever their age: they are the record of who let its code run, and
+          // without them re-activating it would ask for the shell authoring role again.
+          const serving = await fastify.prisma.workflowTemplate.findMany({
+            select: { activeVersion: true, experimentVersion: true, id: true },
+            where: { OR: [{ activeVersion: { not: null } }, { experimentVersion: { not: null } }] },
+          });
+          const pairs = serving.flatMap((t) =>
+            [t.activeVersion, t.experimentVersion]
+              .filter((v): v is number => v !== null)
+              .map((version) => ({ templateId: t.id, version }))
+          );
+          const kept =
+            pairs.length === 0
+              ? []
+              : await fastify.prisma.workflowTemplateVersion.findMany({
+                  select: { id: true },
+                  where: { OR: pairs },
+                });
+          return fastify.prisma.workflowShellAudit.deleteMany({
+            where: {
+              createdAt: { lt: cutoff },
+              ...(kept.length > 0 ? { templateVersionId: { notIn: kept.map((v) => v.id) } } : {}),
+            },
+          });
+        }
       );
       return { data: { deleted: count, olderThanDays: request.query.days } };
     }

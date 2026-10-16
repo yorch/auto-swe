@@ -202,6 +202,23 @@ under the same host rules as every other lookup. The refusals:
 The access check runs before the duplicate check, so a refused caller does not learn whether the
 repository is already onboarded.
 
+### Gate commands
+
+A repository can give each gate step its own command (`Connection.gateCommands`): `runLint`,
+`runTypecheck`, `runTests`, `runBuild`, `runVulnScan` and `runPerfBench`. A gate step that sets no
+`command` of its own runs the repository's, else the worker's built-in default; the implementer's
+test loop reads `runTests` the same way. They are edited in the connection form's **Gate commands**
+section, or with `PATCH /repositories/:id` `{ gateCommands }`, which replaces the stored set — a gate
+left out, null or blank falls back to the default, and `null` clears them all.
+
+A gate command runs in the agent workspace of every run on the repository, so changing the set takes
+the same role as writing a command into a template: a platform admin, or an admin of the team that
+will own the repository (`403 GATE_COMMANDS_FORBIDDEN` otherwise; see
+[`nl-workflow-authoring.md`](./nl-workflow-authoring.md#5-design-notes)). Re-sending the stored set
+is not a change, so a lead can still edit the rest of the repository. Each change writes a
+`Connection` entry to the config audit log with the set before and after. Only a `git_repo`
+connection has gate commands.
+
 ---
 
 ## 3. Sharing with other teams
@@ -302,6 +319,10 @@ longer fit.
 - **Onboarding access is checked once.** Losing access on GitHub afterwards does not remove the
   repository; only [`repoAccess.mode`](./repo-access-gating.md) gates later use. A platform ADMIN is
   never asked.
+- **Gate commands are checked when they are saved, not when a run starts.** The worker runs
+  whatever set the row holds, so a stored command stays in use until an admin changes it, whoever
+  stored it. Moving a repository to another team keeps its commands without asking the
+  destination's admins; only a change to the set asks for the role.
 - **An executor image is checked when it is saved, not when a run starts.** Only a platform admin
   may set one (see [`deployment.md`](./deployment.md)), but the worker runs whatever image the row
   holds, so an image already stored stays in use until an admin changes or clears it.
