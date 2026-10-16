@@ -1,5 +1,5 @@
 /**
- * Curated starter specs for the "Start from…" gallery on /workflows/library.
+ * Curated starter specs for the "Start from…" gallery on /library.
  *
  * Each entry is a complete, valid WorkflowSpec the user can fork with one click, and each one is
  * built from node types only (no registered steps), so it runs on any deployment with the seeded

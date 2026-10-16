@@ -150,7 +150,7 @@ export function ChannelSettingsTab({ channel }: { channel: SlackChannel }) {
         onClose={() => setConfirmDelete(false)}
         onConfirm={async () => {
           await remove.mutateAsync(channel.id);
-          router.replace('/govern/slack-channels');
+          router.replace('/admin/slack-channels');
         }}
         open={confirmDelete}
         title="Delete Slack channel?"

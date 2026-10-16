@@ -711,7 +711,7 @@ export async function notifySlackHumanStep(input: {
       REVIEW: 'Review required',
     };
     const descriptionLine = input.description ? `\n${truncate(input.description, 400)}` : '';
-    const inboxUrl = `${resolveWebUrl()}/inbox`;
+    const inboxUrl = `${resolveWebUrl()}/approvals`;
     const header = `*[${resolved.ticket}]* *${kindLabel[input.kind] ?? input.kind}:* ${input.title}${descriptionLine}`;
     const text = `:hourglass_flowing_sand: ${header}\n<${inboxUrl}|Open inbox →>`;
     const blocks = buildHumanStepBlocks({

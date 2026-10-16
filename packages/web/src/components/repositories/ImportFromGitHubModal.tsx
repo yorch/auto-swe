@@ -57,7 +57,7 @@ export function ImportFromGitHubModal({
         {error && !isLoading && (
           <Alert
             action={
-              <ButtonLink href="/studio/integrations?tab=github" size="sm">
+              <ButtonLink href="/admin/integrations?tab=github" size="sm">
                 Check GitHub
               </ButtonLink>
             }

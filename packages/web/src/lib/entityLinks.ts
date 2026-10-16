@@ -5,5 +5,5 @@ export function runHref(runId: string): string {
 
 /** Where a single workflow template opens. */
 export function templateHref(templateId: string): string {
-  return `/workflows/${encodeURIComponent(templateId)}`;
+  return `/library/${encodeURIComponent(templateId)}`;
 }

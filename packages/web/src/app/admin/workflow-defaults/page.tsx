@@ -1,0 +1,93 @@
+'use client';
+
+import Link from 'next/link';
+import type { ReactNode } from 'react';
+import { Alert } from '@/components/ui/Alert';
+import { PageHeader } from '@/components/ui/PageHeader';
+import { CanaryForm } from '@/components/workflow/CanaryForm';
+import { ConsolidationForm } from '@/components/workflow/ConsolidationForm';
+import { RevalidationForm } from '@/components/workflow/RevalidationForm';
+import { WorkflowDefaultsForm } from '@/components/workflow/WorkflowDefaultsForm';
+import { HELP_LINKS } from '@/lib/helpLinks';
+import { navLabel } from '@/lib/navigation';
+import { FOCUS_RING } from '@/lib/utils';
+
+/** The forms on this page, in order, for the "On this page" index. */
+const SECTIONS: { id: string; label: string; hint: string }[] = [
+  { hint: 'Branch prefix, PR templates, team, budgets', id: 'defaults', label: 'Run defaults' },
+  { hint: 'When lessons are merged', id: 'consolidation', label: 'Consolidation' },
+  { hint: 'When eval datasets re-run', id: 'revalidation', label: 'Re-validation' },
+  { hint: 'A/B traffic split', id: 'canary', label: 'Canary' },
+];
+
+function Section({ children, id }: { children: ReactNode; id: string }) {
+  return (
+    <section className="scroll-mt-6" id={id}>
+      {children}
+    </section>
+  );
+}
+
+export default function GovernWorkflowPage() {
+  return (
+    <div>
+      <PageHeader
+        help={
+          <p>
+            Each section saves on its own. For the settings a team or channel can override, see{' '}
+            <Link className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current" href="/admin/platform-settings">
+              Platform settings
+            </Link>
+            .
+          </p>
+        }
+        learnMore={{ ...HELP_LINKS.configuration, label: 'About workflow defaults' }}
+        subtitle="System-wide defaults applied to every team and template."
+        title={navLabel('/admin/workflow-defaults')}
+      />
+      <Alert
+        announce={false}
+        title="Only admins edit these, and the changes are platform-wide"
+        variant="warning"
+      >
+        Run defaults apply to every team and workflow template, with no per-team override, and a
+        change reaches runs already in progress: a budget ceiling within about 30 seconds (settings
+        are cached), and the CI wait settings from the run's CI step onward.
+      </Alert>
+      <div className="grid gap-10 xl:grid-cols-[minmax(0,56rem)_200px]">
+        <div className="min-w-0 space-y-6">
+          <Section id="defaults">
+            <WorkflowDefaultsForm />
+          </Section>
+          <Section id="consolidation">
+            <ConsolidationForm />
+          </Section>
+          <Section id="revalidation">
+            <RevalidationForm />
+          </Section>
+          <Section id="canary">
+            <CanaryForm />
+          </Section>
+        </div>
+        <nav aria-label="On this page" className="hidden xl:block">
+          <div className="sticky top-6">
+            <p className="mb-3 text-xs font-medium text-paper-500">On this page</p>
+            <ul className="space-y-0.5 border-l border-ink-500">
+              {SECTIONS.map((s) => (
+                <li key={s.id}>
+                  <a
+                    className={`-ml-px block border-l border-transparent py-1.5 pl-3 hover:border-paper-500 ${FOCUS_RING}`}
+                    href={`#${s.id}`}
+                  >
+                    <span className="block text-sm text-paper-200">{s.label}</span>
+                    <span className="block text-xs text-paper-500">{s.hint}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </nav>
+      </div>
+    </div>
+  );
+}

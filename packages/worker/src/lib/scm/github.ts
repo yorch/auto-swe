@@ -113,7 +113,7 @@ function credentialHostMismatch(repo: RepoRef, ghConfig: PlatformConfig) {
   const host = hostKey(repo.baseUrl ?? repo.apiUrl ?? ghConfig.baseUrl);
   const instanceHost = hostKey(ghConfig.baseUrl);
   return ApplicationFailure.nonRetryable(
-    `The repository is on ${host}, for which no platform GitHub credential is configured. A platform credential is valid only on the host it belongs to (the instance's is ${instanceHost}) and is not sent elsewhere. Ask an admin to add a PAT or GitHub App for ${host} (Studio > Integrations > GitHub > Host credentials), or save your own token for this repository. Or, if the instance's own credential belongs to ${host}, set the GitHub integration's web and API URLs to ${host}.`,
+    `The repository is on ${host}, for which no platform GitHub credential is configured. A platform credential is valid only on the host it belongs to (the instance's is ${instanceHost}) and is not sent elsewhere. Ask an admin to add a PAT or GitHub App for ${host} (Admin > Integrations > GitHub > Host credentials), or save your own token for this repository. Or, if the instance's own credential belongs to ${host}, set the GitHub integration's web and API URLs to ${host}.`,
     'REPO_CREDENTIAL_HOST_MISMATCH'
   );
 }

@@ -163,11 +163,11 @@ packages/
 |------|---------|
 | `src/app/page.tsx` | Dashboard home — KPIs, "needs attention" queue, recent activity |
 | `src/app/runs/[id]/` | Live run viewer — React Flow DAG with per-node status; bottom panel toggles between three layouts (split console, transcript, flight recorder), persisted per user via `/api/v1/me/preferences`; traces link to graph nodes and fan-out branches through `src/lib/traceLinkage.ts` |
-| `src/app/workflows/library/[id]/` | React Flow canvas editor — drag-to-create, drag-to-connect, version sidebar, A/B experiment, analytics |
-| `src/app/govern/approvals/` | HITL approvals — pending human steps with respond forms |
-| `src/app/govern/analytics/` | Global analytics — success rate, p50/p95, $/run, per-step failure rates |
-| `src/app/studio/*` | Model config, integrations, workflow defaults, skills, agents + agent library, schedules, bundles, MCP connections, evals |
-| `src/app/govern/*` | Access tokens, sessions, memory, scanner patterns, security events, Slack channels, organizations, teams, budgets, users |
+| `src/app/requests/`, `src/app/approvals/`, `src/app/pull-requests/`, `src/app/tickets/` | Work — requests with their attempts, pending human steps with respond forms, and the pull-request and ticket views |
+| `src/app/library/[id]/` | React Flow canvas editor — drag-to-create, drag-to-connect, version sidebar, A/B experiment, analytics |
+| `src/app/{agents,skills,models,mcp,bundles,connections}/` | Build — agents and the agent library, skills, model configuration, MCP connections, bundles, repositories and other connections |
+| `src/app/admin/` | Admin — one area with its own sub-navigation (`layout.tsx` renders `components/layout/AdminNav.tsx`): users, teams, organizations, sessions, API tokens, scanner patterns, autonomy policies, security events, audit, analytics, LLM usage, platform settings, workflow defaults, config grants, automations and schedules, Slack channels, integrations, GitHub installations, lessons, knowledge, error baselines, evals |
+| `src/lib/navigation.ts` | The page map: sidebar groups, Admin sub-navigation, page titles and breadcrumbs. Old addresses redirect permanently through `LEGACY_REDIRECTS` in `next.config.ts` |
 | `src/hooks/` | TanStack Query hooks split by resource domain |
 | `src/stores/` | Zustand — `authStore` (identity), `teamStore` (active team), `themeStore` (theme and palette preference), `assistantStore` (assistant panel) |
 | `src/components/ui/` | Design-system primitives — `Button`, `Input`, `Select`, `Textarea`, `Card`, `Modal`, `ConfirmModal`, `Alert`, `TabBar`, `Pagination`, `PageHeader`, `QueryBoundary`, shaped skeleton placeholders (`LoadingState.tsx`), `FieldWrapper`, `Th`, `Stat`, `StatusBadge`, `ToggleSwitch`, `CopyButton` |
@@ -661,7 +661,7 @@ in `AssistantMessage.errorDetail`: the error's name, failure type and message an
 it wraps, scrubbed of credential-shaped text and the turn's token. It is written by the turn activity
 when the turn throws, by `failAssistantReply` when the activity never reported back (a timeout or a
 dead worker, which says to look in Temporal), and by the gateway when the turn could not be handed to
-the workflow. Admins read it at `/govern/assistant` (`GET /api/v1/platform/assistant/failures`), across
+the workflow. Admins read it at `/admin/assistant` (`GET /api/v1/platform/assistant/failures`), across
 every user and newest first. Opening one failure lists the agent trace rows its turn wrote: kind,
 tool or model, tokens, duration, error, and the OpenTelemetry trace id to look up in Tempo. A turn
 tags every row it writes with its reply (`AgentTrace.assistantMessageId`), and the view reads them by
@@ -962,7 +962,7 @@ UI shows real overage, then throws a non-retryable `BUDGET_EXCEEDED` failure onc
 | `LARGE` | 8,000,000 | 2,000,000 |
 | `EPIC` | 20,000,000 | 5,000,000 |
 
-These are DB-backed defaults on the `WorkflowDefaults` singleton, editable at `/govern/workflow-defaults`,
+These are DB-backed defaults on the `WorkflowDefaults` singleton, editable at `/admin/workflow-defaults`,
 falling back to the built-in `BUDGET_LIMITS` when unconfigured.
 
 **Runless workflows.** Workflow authoring and explaining, scheduled evals, lesson consolidation and
@@ -1032,7 +1032,7 @@ run, and the ten runs that spent most inside the window. With no filter the repo
 platform-wide and ADMIN-only, since it includes spend no team owns; a team LEAD (by team
 membership) may read their team and an ORG_ADMIN their organization, and every query of a scoped
 report carries the `teamId`/`orgId` predicate the tenant guard checks. The dashboard renders it at
-`/govern/usage` with a scope picker. `GET /api/v1/platform/usage/scopes` returns what the caller may
+`/admin/usage` with a scope picker. `GET /api/v1/platform/usage/scopes` returns what the caller may
 read — `platform` (ADMIN), the teams they lead, the organizations they administer — by the same rules
 as the report. The page, its layout, and the sidebar entry all gate on that list being non-empty
 rather than on the platform role, so a team LEAD or ORG_ADMIN whose platform role is ENGINEER reaches
@@ -1089,7 +1089,7 @@ would defeat it.
 
 **Security scanners.** Six run during agent execution at distinct stages, five backed by DB regex
 patterns with a 60 s cache. Table and rules in
-[AGENTS.md §6](../AGENTS.md#runtime-security-scanners); the dashboards are `/govern/security` and the
+[AGENTS.md §6](../AGENTS.md#runtime-security-scanners); the dashboards are `/admin/security` and the
 per-run panel on `/runs/[id]`.
 
 ---
@@ -1498,7 +1498,7 @@ Current constraints of the system as built. Deliberate product boundaries are in
   by more than 10 s triggers one on every poll it writes during.
 - **Some assistant failures have no trace rows or no recorded cause.** A turn that failed before it
   wrote a trace row (the agent or its provider credential could not be resolved) shows none on
-  `/govern/assistant`, only its `errorDetail`; replies that failed before `errorDetail` existed show
+  `/admin/assistant`, only its `errorDetail`; replies that failed before `errorDetail` existed show
   no cause, and their untagged rows are matched by time rather than by reply. For those, the worker
   log line `[assistantTurn] turn failed` and the Temporal history of `assistant-<conversationId>`
   remain the sources.

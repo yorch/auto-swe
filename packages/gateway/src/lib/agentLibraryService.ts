@@ -540,8 +540,8 @@ export async function agentCredentialWarnings(
   if (creds.length === 0) {
     return [
       agent.scope === 'GLOBAL'
-        ? `No GLOBAL credential exists for provider '${provider}', so '${agent.modelSpec}' runs only for teams or organizations with their own. Add one at /studio/models.`
-        : `No credential for provider '${provider}' is reachable from this agent's scope, so runs of '${agent.modelSpec}' will fail until one is added at /studio/models.`,
+        ? `No GLOBAL credential exists for provider '${provider}', so '${agent.modelSpec}' runs only for teams or organizations with their own. Add one at /models.`
+        : `No credential for provider '${provider}' is reachable from this agent's scope, so runs of '${agent.modelSpec}' will fail until one is added at /models.`,
     ];
   }
   if (!BUILTIN_PROVIDERS.includes(provider) && creds.every((c) => !c.apiBase)) {

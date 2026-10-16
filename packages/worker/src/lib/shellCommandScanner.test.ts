@@ -331,7 +331,7 @@ describe('scanShellCommand — a scan that cannot complete fails CLOSED', () => 
     mockPatternRows([{ flags: '', label: 'redos', pattern: '(a+)+$' }], []);
     const result = await scanShellCommand(`echo ${'a'.repeat(40)}!`);
     expect(result).toContain('could not complete');
-    expect(result).toContain('/govern/scanner');
+    expect(result).toContain('/admin/scanner');
   });
 
   it('never throws — a scan must not abort the calling activity', async () => {

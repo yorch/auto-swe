@@ -18,6 +18,45 @@ const extraDevOrigins =
     .map((origin) => origin.trim())
     .filter((origin) => origin.length > 0) ?? [];
 
+/**
+ * Addresses the dashboard used before its navigation was regrouped into Work, Build and
+ * Admin, each sent permanently to where the page lives now. Next keeps the query string
+ * and fills `:path*` with the rest of the path, so a deep link (`/workflows/library/<id>/diff`,
+ * `/govern/approvals?status=x`) lands on the same view.
+ *
+ * Order matters: the first matching rule wins. The specific rules come before the prefix
+ * rules that would otherwise swallow them — `/workflows/library/…` before `/workflows/…`,
+ * `/govern/approvals` before `/govern/…`. No old prefix is reused by a new page, so every old
+ * address maps to exactly one new one.
+ *
+ * These run before `src/proxy.ts`: a signed-out visitor to an old address is first sent to
+ * the new one, and the proxy then sends that to `/login?redirect=<new address>`.
+ */
+export const LEGACY_REDIRECTS: { source: string; destination: string }[] = [
+  // Work. Requests left /workflows, and the library left /workflows/library for Build.
+  { destination: '/library', source: '/workflows/library' },
+  { destination: '/library/:path*', source: '/workflows/library/:path*' },
+  { destination: '/requests', source: '/workflows' },
+  { destination: '/requests/:path*', source: '/workflows/:path*' },
+  { destination: '/approvals', source: '/govern/approvals' },
+  // The approvals page's first address; Slack notifications and run callbacks linked here.
+  { destination: '/approvals', source: '/inbox' },
+  // Build: the Studio pages that are authoring move to the top level.
+  { destination: '/agents', source: '/studio/agents/library' },
+  { destination: '/agents', source: '/studio/agents' },
+  { destination: '/skills', source: '/studio/skills' },
+  { destination: '/models', source: '/studio/models' },
+  { destination: '/mcp', source: '/studio/mcp' },
+  { destination: '/bundles', source: '/studio/bundles' },
+  // Admin: the Studio pages that are administration, then every Govern page.
+  { destination: '/admin/integrations', source: '/studio/integrations' },
+  { destination: '/admin/github-installations', source: '/studio/github-installations' },
+  // Budget alerts became the "Alerting only" filter on Organizations.
+  { destination: '/admin/organizations?alerting=1', source: '/govern/budget-alerts' },
+  { destination: '/admin', source: '/govern' },
+  { destination: '/admin/:path*', source: '/govern/:path*' },
+];
+
 const nextConfig: NextConfig = {
   // Allow the dev server to serve _next/static, HMR, and font resources when
   // the browser reaches it via a non-localhost IP/hostname. Without this,
@@ -31,6 +70,7 @@ const nextConfig: NextConfig = {
   experimental: { useTypeScriptCli: true },
   output: 'standalone',
   reactStrictMode: true,
+  redirects: async () => LEGACY_REDIRECTS.map((rule) => ({ ...rule, permanent: true })),
 };
 
 export default nextConfig;

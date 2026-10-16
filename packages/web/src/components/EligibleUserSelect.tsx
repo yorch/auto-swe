@@ -33,7 +33,7 @@ export function EligibleUserSelect({
             Invite one from{' '}
             <Link
               className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
-              href="/govern/users"
+              href="/admin/users"
             >
               Users
             </Link>{' '}

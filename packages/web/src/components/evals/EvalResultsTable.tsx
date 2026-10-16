@@ -64,7 +64,7 @@ function ResultOrigin({ row, showEvalRun }: { row: EvalResultDto; showEvalRun: b
     return (
       <Link
         className="font-mono text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
-        href={`/govern/evals/runs/${row.evalRunId}`}
+        href={`/admin/evals/runs/${row.evalRunId}`}
         title={row.evalRunId}
       >
         eval run {row.evalRunId.slice(0, 8)}

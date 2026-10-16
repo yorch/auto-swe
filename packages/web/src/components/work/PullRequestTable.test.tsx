@@ -35,7 +35,7 @@ describe('PullRequestTable', () => {
     expect(host.getAttribute('target')).toBe('_blank');
     expect(screen.getByRole('link', { name: /Open run/ }).getAttribute('href')).toBe('/runs/run-1');
     expect(screen.getByRole('link', { name: 'JIRA-9' }).getAttribute('href')).toBe(
-      '/workflows?request=wr-1'
+      '/requests?request=wr-1'
     );
     expect(screen.getByText('CI passed')).toBeTruthy();
   });

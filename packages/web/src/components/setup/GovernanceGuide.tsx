@@ -22,18 +22,18 @@ interface GuideGroup {
   links: GuideLink[];
 }
 
-/** The order an admin is best served reading the Govern pages in. Hrefs are checked against the nav. */
+/** The order an admin is best served reading the Admin pages in. Hrefs are checked against the nav. */
 export const GOVERNANCE_GROUPS: GuideGroup[] = [
   {
     links: [
       {
-        href: '/govern/users',
+        href: '/admin/users',
         label: 'Users',
         reason:
           'New sign-ups can wait here for your approval. A GitHub sign-in from an organization on the auto-approve list is approved automatically.',
       },
       {
-        href: '/govern/teams',
+        href: '/admin/teams',
         label: 'Teams',
         reason: 'Teams own repositories, members, sandbox allowlists and per-team agent overrides.',
       },
@@ -43,13 +43,13 @@ export const GOVERNANCE_GROUPS: GuideGroup[] = [
   {
     links: [
       {
-        href: '/govern/policies',
+        href: '/admin/policies',
         label: 'Autonomy policies',
         reason:
           'Choose which risk classes an agent may act on automatically and which need human approval.',
       },
       {
-        href: '/govern/approvals',
+        href: '/approvals',
         label: 'Approvals',
         reason: 'Runs that stopped at a gate wait here for a person to answer.',
       },
@@ -59,13 +59,13 @@ export const GOVERNANCE_GROUPS: GuideGroup[] = [
   {
     links: [
       {
-        href: '/govern/scanner',
+        href: '/admin/scanner',
         label: 'Scanner patterns',
         reason:
           'The patterns behind the runtime scanners that block or flag risky shell commands, file writes and skill text.',
       },
       {
-        href: '/govern/security',
+        href: '/admin/security',
         label: 'Security events',
         reason: 'What the scanners stopped or flagged across all runs, newest first.',
       },
@@ -75,12 +75,12 @@ export const GOVERNANCE_GROUPS: GuideGroup[] = [
   {
     links: [
       {
-        href: '/govern/platform-settings',
+        href: '/admin/platform-settings',
         label: 'Platform settings',
         reason: 'Operator policy settings; each is badged when its value is frozen per run.',
       },
       {
-        href: '/govern/workflow-defaults',
+        href: '/admin/workflow-defaults',
         label: 'Workflow defaults',
         reason: 'Branch prefix, pull request templates, budget tiers and the CI wait strategy.',
       },
@@ -90,13 +90,13 @@ export const GOVERNANCE_GROUPS: GuideGroup[] = [
   {
     links: [
       {
-        href: '/govern/usage',
+        href: '/admin/usage',
         label: 'LLM usage',
         reason:
           'Every LLM and embedding call, attributed to the team and organization whose spend it is.',
       },
       {
-        href: '/govern/analytics',
+        href: '/admin/analytics',
         label: 'Analytics',
         reason: 'Run volume, outcomes, cost and time saved across workflow templates.',
       },
@@ -106,18 +106,18 @@ export const GOVERNANCE_GROUPS: GuideGroup[] = [
   {
     links: [
       {
-        href: '/govern/automations',
+        href: '/admin/automations',
         label: 'Automations',
         reason:
           'Everything that starts a run without a person pressing run: event rules, schedules and webhooks.',
       },
       {
-        href: '/govern/lessons',
+        href: '/admin/lessons',
         label: 'Lessons',
         reason: 'Lessons agents captured from completed workflows, and their consolidation.',
       },
       {
-        href: '/govern/evals',
+        href: '/admin/evals',
         label: 'Evals',
         reason: 'Quality signals over time and the datasets offline runs score against.',
       },
@@ -127,7 +127,7 @@ export const GOVERNANCE_GROUPS: GuideGroup[] = [
 ];
 
 /**
- * Admin Home guide to the Govern pages, shown once the setup card has nothing left to fix. It is
+ * Admin Home guide to the Admin pages, shown once the setup card has nothing left to fix. It is
  * a reading order, not a progress tracker: nothing here can be marked done, because the platform
  * cannot tell whether a policy has been reviewed.
  */
@@ -144,7 +144,7 @@ export function GovernanceGuide() {
         <div className="min-w-0">
           <h2 className="text-lg font-semibold tracking-tight text-paper-50">Set up governance</h2>
           <p className="mt-1 text-sm text-paper-400">
-            A suggested order for reading the Govern pages. It is a guide, not a checklist: nothing
+            A suggested order for reading the Admin pages. It is a guide, not a checklist: nothing
             here tracks what you have reviewed.
           </p>
         </div>

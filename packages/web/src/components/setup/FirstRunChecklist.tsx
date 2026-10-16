@@ -82,7 +82,7 @@ function FirstRunChecklistBody() {
       action: 'Open approvals',
       body: 'When a run reaches a gate, it waits for a person. Answer it in Approvals. A workflow with no gates never needs this step, so the card stays until you dismiss it.',
       done: (answered.data?.meta.total ?? 0) > 0,
-      href: '/govern/approvals',
+      href: '/approvals',
       id: 'gate',
       title: 'Answer a gate when a run reaches one',
     },

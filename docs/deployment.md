@@ -50,10 +50,10 @@ Before touching infrastructure, gather these:
 - **Domain + TLS.** Reverse-proxy in front of the gateway (`https://api.example.com`) and the web app (`https://app.example.com`). Both must serve HTTPS; better-auth refuses to issue secure cookies otherwise. The proxy must pass the gateway's `/api/auth/*`, `/api/v1/*` and `/.well-known/*` paths through unchanged (the OAuth authorization server for MCP clients is discovered at `/.well-known/oauth-authorization-server/api/auth`).
 - **GitHub PAT** with `repo` scope, or a GitHub App (short-lived installation tokens; see [`github-app-setup.md`](./github-app-setup.md)).
 - **GitHub webhook secret** — any strong random string; you'll add it to GitHub repo webhooks pointing at `https://api.example.com/api/v1/webhooks/git`.
-- **LLM provider key(s)** — configured via the admin UI (`/studio/models`) after first boot. There is no env-var fallback for LLM credentials: model + credential config is fully DB-driven (see [`model-configuration.md`](./model-configuration.md)).
+- **LLM provider key(s)** — configured via the admin UI (`/models`) after first boot. There is no env-var fallback for LLM credentials: model + credential config is fully DB-driven (see [`model-configuration.md`](./model-configuration.md)).
 - **Email transport** — pick one of SMTP (`SMTP_HOST/PORT/USER/PASS` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Required for magic-link sign-in and password reset outside development — without one those requests fail, and the gateway logs an error that never contains the link. Only with `NODE_ENV=development` or `test` does it print the link to stdout instead.
 - **OAuth credentials** (optional but recommended) — register a GitHub OAuth app, a Google OAuth client, and/or an Okta OIDC app, callback `{BETTER_AUTH_URL}/api/auth/callback/{github,google,okta}`. Credentials are environment variables (`GITHUB_CLIENT_ID/SECRET`, `GOOGLE_CLIENT_ID/SECRET`, `OKTA_ISSUER` + `OKTA_CLIENT_ID/SECRET`). See [`oauth-setup.md`](./oauth-setup.md).
-- **Slack credentials** (optional) — configured via `/studio/integrations` (Slack tab) after first boot.
+- **Slack credentials** (optional) — configured via `/admin/integrations` (Slack tab) after first boot.
 - **S3-compatible artifact store** (optional but recommended in prod) — configured with the `ARTIFACT_S3_*` environment variables. Without a bucket, large step outputs are stored inline in Postgres.
 
 Generate strong secrets:
@@ -101,10 +101,10 @@ TEMPORAL_ADDRESS=temporal:7233       # or your managed Temporal Cloud endpoint
 TEMPORAL_NAMESPACE=default
 
 # LLM — no env vars. Provider keys and model selection are configured in the
-# admin UI (/studio/models) after first boot and stored encrypted in the
+# admin UI (/models) after first boot and stored encrypted in the
 # DB; nothing in the codebase reads ANTHROPIC_API_KEY / OPENAI_API_KEY.
 
-# Source control — set here for bootstrap only; managed via /studio/integrations thereafter
+# Source control — set here for bootstrap only; managed via /admin/integrations thereafter
 # If these are set they act as fallback when the DB row hasn't been configured yet.
 # Remove them once you've saved the values in the admin UI.
 GITHUB_TOKEN=ghp_...
@@ -155,7 +155,7 @@ AUTH_FROM_EMAIL=auth@example.com
 
 # OAuth sign-in and artifact storage are environment-only — they are read at
 # process start, so they have no admin-UI form. Slack is configured via the
-# admin UI (/studio/integrations) after first boot; its env vars below are only
+# admin UI (/admin/integrations) after first boot; its env vars below are only
 # bootstrap fallbacks.
 #
 # OAuth sign-in (gateway restart required to change)
@@ -167,7 +167,7 @@ AUTH_FROM_EMAIL=auth@example.com
 # OKTA_CLIENT_ID=...
 # OKTA_CLIENT_SECRET=...
 #
-# Slack (env fallback — prefer /studio/integrations → Slack tab)
+# Slack (env fallback — prefer /admin/integrations → Slack tab)
 # SLACK_CLIENT_ID=...
 # SLACK_CLIENT_SECRET=...
 # SLACK_SIGNING_SECRET=...
@@ -187,7 +187,7 @@ AUTH_FROM_EMAIL=auth@example.com
 OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
 
 # Worker (optional tuning)
-WEB_URL=https://app.example.com      # base URL for the "Open inbox" link in Slack HITL
+WEB_URL=https://app.example.com      # base URL for the "Open inbox" link (to /approvals) in Slack HITL
                                      # notifications (defaults to http://localhost:3000 —
                                      # set it or Slack links point at localhost)
 # WORKER_MAX_CONCURRENT_ACTIVITIES=10  # cap on concurrent activity executions per worker
@@ -223,17 +223,17 @@ Integration credentials that an operator rotates during normal use are stored en
 
 | Admin page | What it configures | Restart required? |
 |---|---|---|
-| `/studio/models` | LLM provider credentials and per-role model selection | No — resolved fresh per activity call |
-| `/studio/integrations → GitHub` | GitHub PAT, webhook secret, GitHub Enterprise URLs, GitHub App credentials | No |
-| `/studio/integrations → Slack` | Slack client ID/secret, signing secret, bot token | No — read on every request |
-| `/govern/workflow-defaults` | Branch prefix, PR title/body templates, default team slug | No — resolved fresh per workflow activity |
+| `/models` | LLM provider credentials and per-role model selection | No — resolved fresh per activity call |
+| `/admin/integrations → GitHub` | GitHub PAT, webhook secret, GitHub Enterprise URLs, GitHub App credentials | No |
+| `/admin/integrations → Slack` | Slack client ID/secret, signing secret, bot token | No — read on every request |
+| `/admin/workflow-defaults` | Branch prefix, PR title/body templates, default team slug | No — resolved fresh per workflow activity |
 
 **Bootstrap order** (first deployment):
 1. Start gateway + web only — `docker compose -f docker-compose.infra.yml -f docker-compose.prod.yml up -d gateway web` in the compose stack (locally, `yarn dev:gateway` and `yarn dev:web`).
 2. Sign in as admin.
-3. `/studio/models` → Credentials → add a provider credential (the seed already created the agents + embedding config).
-4. `/studio/integrations` → GitHub tab → enter your PAT and webhook secret → Save.
-5. `/studio/integrations` → any other tabs you need (Slack, Issue Tracker, Knowledge Base, Figma).
+3. `/models` → Credentials → add a provider credential (the seed already created the agents + embedding config).
+4. `/admin/integrations` → GitHub tab → enter your PAT and webhook secret → Save.
+5. `/admin/integrations` → any other tabs you need (Slack, Issue Tracker, Knowledge Base, Figma).
 6. Start the worker (`… up -d worker`, or `yarn dev:worker` locally). The worker reads all config from the DB.
 7. Optionally clear the `GITHUB_TOKEN` and `GITHUB_WEBHOOK_SECRET` env vars — the DB config is now the source of truth.
 
@@ -437,7 +437,7 @@ Two constraints worth knowing before you set credentials:
 | Cloudflare R2 | `https://<account-id>.r2.cloudflarestorage.com` | `auto` | `false` |
 | Backblaze B2 | `https://s3.<region>.backblazeb2.com` | your region | `true` |
 
-`ARTIFACT_S3_ACCESS_KEY` / `ARTIFACT_S3_SECRET_KEY` become the provider's credentials — compose passes them into the container as the standard `AWS_*` names the SDK reads, but keeps them under a distinct name outside so an ambient `AWS_ACCESS_KEY_ID` in the deploying shell cannot silently win over `.env`. **The bucket must already exist** — only the bundled store self-provisions one. These same settings can be managed at `/studio/integrations → Storage` instead, which takes precedence over the environment.
+`ARTIFACT_S3_ACCESS_KEY` / `ARTIFACT_S3_SECRET_KEY` become the provider's credentials — compose passes them into the container as the standard `AWS_*` names the SDK reads, but keeps them under a distinct name outside so an ambient `AWS_ACCESS_KEY_ID` in the deploying shell cannot silently win over `.env`. **The bucket must already exist** — only the bundled store self-provisions one. These same settings can be managed at `/admin/integrations → Storage` instead, which takes precedence over the environment.
 
 **Migrating an existing MinIO deployment.** Garage's on-disk format is unrelated to MinIO's, so pointing it at `./data/minio` will not work and existing objects will not appear. `ArtifactRef` rows in the app DB hold keys, not blobs, so any object left behind becomes a broken artifact link rather than a visible failure. Copy the objects across before cutting over, with both stores running:
 
@@ -490,7 +490,7 @@ open https://app.example.com
 #  1. Settings → API tokens → "+ New token"  → save the PAT to your secret manager
 #  2. Connections → "+ Add connection"       → connect a real git repo (use a test one first)
 #  3. Dashboard "+ New request" → select the ticket-to-merge template → smallest possible task; verify the run starts
-#  4. Watch the request in /workflows (open it from the list) and the run in the Temporal UI
+#  4. Watch the request in /requests (open it from the list) and the run in the Temporal UI
 
 # Then verify webhooks both directions
 #  - GitHub merge of the test PR fires POST /api/v1/webhooks/git → workflow completes
@@ -503,18 +503,18 @@ open https://app.example.com
 
 | Concern                    | Where to look                                                                                                   |
 | -------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Workflow visibility        | Temporal UI (`:8233`), or `/workflows`, `/runs`, `/workflows/:id` in the dashboard.                              |
-| Cost tracking              | `/govern/usage` (every LLM and embedding call, runs or not), `WorkflowRun.costUsdAccrued`, `/govern/analytics`, the `llm_cost_usd_total` metric. Unknown models log `llm.cost_pricing_known=false`. |
+| Workflow visibility        | Temporal UI (`:8233`), or `/requests`, `/runs`, `/requests/:id` in the dashboard.                              |
+| Cost tracking              | `/admin/usage` (every LLM and embedding call, runs or not), `WorkflowRun.costUsdAccrued`, `/admin/analytics`, the `llm_cost_usd_total` metric. Unknown models log `llm.cost_pricing_known=false`. |
 | Metrics & traces           | Grafana (`:3001` with the bundled `otel-lgtm`) → **auto-swe — LLM & workflow overview**, provisioned from `infra/grafana/`. With your own collector, import `infra/grafana/dashboards/auto-swe-overview.json`; it expects Prometheus and Tempo datasources with UIDs `prometheus` and `tempo`. A run's activities are in the trace of the request that started it; search Tempo by `span.temporal.workflow_id`. Gateway and worker both export metrics. |
 | Logs                       | stdout/stderr on both services. Both services also export their logs over OTLP to Loki — the gateway's request logs, the worker's Temporal and activity lines (audit lines included) — each carrying its trace id. A custom `CMD` must keep `--import ./packages/<service>/dist/instrument.js`, or HTTP spans go missing (see [`architecture.md` §8](./architecture.md#8-observability--cost)). |
-| Per-team A/B experiments   | `/workflows/library/[id]` → set `experimentVersion` + `experimentSplit`.                                                  |
-| Rotating LLM models        | Change model spec at `/studio/models` (takes effect on next activity call). A model with no price is recorded at $0 — price it on its `model_catalog_entries` row (see [model configuration](./model-configuration.md#model-catalog)). |
-| Rotating GitHub PAT        | `/studio/integrations → GitHub` → enter new token → Save. No restart required. |
-| Rotating Slack bot token   | `/studio/integrations → Slack` → enter new bot token → Save. No restart required. |
+| Per-team A/B experiments   | `/library/[id]` → set `experimentVersion` + `experimentSplit`.                                                  |
+| Rotating LLM models        | Change model spec at `/models` (takes effect on next activity call). A model with no price is recorded at $0 — price it on its `model_catalog_entries` row (see [model configuration](./model-configuration.md#model-catalog)). |
+| Rotating GitHub PAT        | `/admin/integrations → GitHub` → enter new token → Save. No restart required. |
+| Rotating Slack bot token   | `/admin/integrations → Slack` → enter new bot token → Save. No restart required. |
 | Rotating S3 credentials    | Update `ARTIFACT_S3_ACCESS_KEY` / `ARTIFACT_S3_SECRET_KEY` (or `AWS_*`) in `.env` → restart the worker. |
 | Rotating OAuth app creds   | Update `GITHUB_CLIENT_SECRET` / `GOOGLE_CLIENT_SECRET` / `OKTA_CLIENT_SECRET` in `.env` → restart the gateway. |
 | Rotating secrets           | `BETTER_AUTH_SECRET` / `JWT_SECRET` invalidate all existing sessions/tokens. Communicate before rotating.        |
-| Sessions admin             | `/govern/sessions` (revoke any session); `/govern/api-tokens` (revoke PATs across all users).                   |
+| Sessions admin             | `/admin/sessions` (revoke any session); `/admin/api-tokens` (revoke PATs across all users).                   |
 | Shell-step audit           | `workflow_shell_audit` rows are kept as long as their template version; deleting a template removes its rows. |
 | Lesson retention           | `memory_items` grows over time; no automatic pruning. Manual `DELETE` is fine — drops the row from the HNSW index. |
 | pgvector index rebuild     | `REINDEX INDEX idx_memory_items_embedding;` — only needed after a bulk import or if recall degrades.            |
@@ -549,7 +549,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - [ ] S3 artifact store has lifecycle policy for old workflow artifacts (the DB stores references; the worker never deletes the objects itself).
 - [ ] Temporal namespace retention is set deliberately (default in self-hosted = 30d; tune for your humanMergeSignal wait).
 - [ ] `OTEL_EXPORTER_OTLP_ENDPOINT` is set and the collector is reachable — otherwise traces, metrics and logs silently drop.
-- [ ] GitHub PAT and webhook secret are set via `/studio/integrations` (or env var fallback). Secrets are random per-environment.
+- [ ] GitHub PAT and webhook secret are set via `/admin/integrations` (or env var fallback). Secrets are random per-environment.
 - [ ] `CONFIG_ENCRYPTION_KEY` (base64 32-byte random) is set and backed up — it encrypts all DB-stored secrets (GitHub token, Slack tokens, S3 key, OAuth secrets). Loss = all stored credentials are unreadable.
 
 ---

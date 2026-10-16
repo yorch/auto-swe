@@ -112,7 +112,7 @@ export function RunMetaRail({ run, collapsible = false }: RunMetaRailProps) {
                   'rounded-sm text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
                   FOCUS_RING
                 )}
-                href={`/workflows/library/${run.templateId}`}
+                href={`/library/${run.templateId}`}
               >
                 {run.templateName}
               </Link>

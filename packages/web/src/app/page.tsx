@@ -74,7 +74,7 @@ const BUCKETS: Bucket[] = [
 ];
 
 function listHref(scope: RequestScope, state: RequestState) {
-  return `/workflows?scope=${scope}&state=${state === 'success' ? 'finished' : state}`;
+  return `/requests?scope=${scope}&state=${state === 'success' ? 'finished' : state}`;
 }
 
 /** Same filters as the bucket's section, so the two share one cached query. */
@@ -183,7 +183,7 @@ function WorkSection({ bucket, scope }: { bucket: Bucket; scope: RequestScope })
       >
         {requests.length ? (
           <RequestList
-            hrefFor={(id) => `/workflows?${new URLSearchParams({ request: id, scope }).toString()}`}
+            hrefFor={(id) => `/requests?${new URLSearchParams({ request: id, scope }).toString()}`}
             requests={requests}
           />
         ) : (
@@ -225,7 +225,7 @@ function WaitingOnYou() {
             'inline-flex items-center gap-1 rounded-sm text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
             FOCUS_RING
           )}
-          href="/govern/approvals"
+          href="/approvals"
         >
           Open inbox
           <Icon name="arrowRight" size={13} />
@@ -336,7 +336,7 @@ export default function HomePage() {
       </Suspense>
       <PageHeader
         actions={
-          <ButtonLink href="/workflows/library" variant="secondary">
+          <ButtonLink href="/library" variant="secondary">
             Browse workflows
           </ButtonLink>
         }

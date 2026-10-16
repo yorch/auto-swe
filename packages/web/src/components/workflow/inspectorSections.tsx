@@ -874,7 +874,7 @@ export function McpSection({
         <Input
           className="font-mono text-xs"
           compact
-          hint="The MCP connection ID. Ask a platform admin for it; connections live under Studio → MCP connections"
+          hint="The MCP connection ID. Ask a platform admin for it; connections live under Build → MCP connections"
           label="Connection"
           onChange={(e) => onChange({ ...node, connectionRef: e.target.value })}
           value={node.connectionRef}
@@ -887,7 +887,7 @@ export function McpSection({
           <Combobox
             compact
             emptyMessage="No connections match"
-            hint="An active MCP connection, managed under Studio → MCP connections"
+            hint="An active MCP connection, managed under Build → MCP connections"
             label="Connection"
             onChange={(v) => onChange({ ...node, connectionRef: v })}
             options={(connections ?? []).map((c) => ({

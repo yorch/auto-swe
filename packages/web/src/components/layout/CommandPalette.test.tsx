@@ -168,7 +168,7 @@ describe('CommandPalette searching work', () => {
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'ArrowDown' });
     fireEvent.keyDown(input, { key: 'Enter' });
-    expect(push).toHaveBeenCalledWith('/workflows/tpl-1');
+    expect(push).toHaveBeenCalledWith('/library/tpl-1');
   });
 
   it('caps each group at five', async () => {

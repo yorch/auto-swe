@@ -21,17 +21,18 @@ export interface TourStep {
   body: string;
   /** Replaces `body` for LEAD and ADMIN, where the page offers more than it does to an engineer. */
   leadBody?: string;
+  /** Replaces `body` and `leadBody` for ADMIN, where the page offers more again. */
+  adminBody?: string;
   roles: Role[];
 }
 
 const ALL: Role[] = ['ENGINEER', 'LEAD', 'ADMIN'];
-const LEAD_UP: Role[] = ['LEAD', 'ADMIN'];
 const ADMIN_ONLY: Role[] = ['ADMIN'];
 
 export const TOUR_STEPS: TourStep[] = [
   {
     anchor: 'sidebar',
-    body: 'The sidebar lists the pages you can open, grouped into sections such as Work and Govern. What appears depends on your role.',
+    body: 'The sidebar lists the pages you can open, grouped into Work, Build and Admin. What appears depends on your role.',
     id: 'sidebar',
     roles: ALL,
     title: 'Main navigation',
@@ -46,11 +47,18 @@ export const TOUR_STEPS: TourStep[] = [
     title: 'Start work',
   },
   {
-    anchor: 'nav:/workflows',
+    anchor: 'nav:/approvals',
+    body: 'Runs that stop at a gate wait here for a person to approve, decide, fill in a form or review. The sidebar badge shows how many are waiting on you.',
+    id: 'approvals',
+    roles: ALL,
+    title: navLabel('/approvals'),
+  },
+  {
+    anchor: 'nav:/requests',
     body: 'Every request you made, with retries kept together. “Needs attention” means a person is needed or a run failed or timed out.',
     id: 'requests',
     roles: ALL,
-    title: navLabel('/workflows'),
+    title: navLabel('/requests'),
   },
   {
     anchor: 'nav:/pull-requests',
@@ -60,11 +68,29 @@ export const TOUR_STEPS: TourStep[] = [
     title: navLabel('/pull-requests'),
   },
   {
-    anchor: 'nav:/govern/approvals',
-    body: 'Runs that stop at a gate wait here for a person to approve, decide, fill in a form or review. The sidebar badge shows how many are waiting on you.',
-    id: 'approvals',
+    anchor: 'nav:/library',
+    body: 'Your reusable workflow templates. Pick one, run it with your inputs, and follow the request.',
+    id: 'workflow-library',
     roles: ALL,
-    title: navLabel('/govern/approvals'),
+    title: navLabel('/library'),
+  },
+  {
+    anchor: 'nav:/agents',
+    body: 'Versioned agents. Saving an edit creates a new version; runs already in progress keep the version they started with.',
+    id: 'agents',
+    roles: ADMIN_ONLY,
+    title: navLabel('/agents'),
+  },
+  {
+    adminBody:
+      'Administration in one place, with its own menu: users and teams, platform settings, autonomy policies, integration credentials, security events and more.',
+    anchor: 'nav:/admin',
+    body: 'Teams, analytics, automations and knowledge, in one area with its own menu.',
+    id: 'admin',
+    leadBody:
+      'Teams and organizations, platform settings, analytics, automations and knowledge, in one area with its own menu. Platform settings is operator policy; each row says which scope its value comes from.',
+    roles: ALL,
+    title: navLabel('/admin'),
   },
   {
     anchor: 'nav:/docs',
@@ -80,34 +106,6 @@ export const TOUR_STEPS: TourStep[] = [
     roles: ALL,
     title: 'Help on the page',
   },
-  {
-    anchor: 'nav:/govern/platform-settings',
-    body: 'Operator policy for agents, channels and workflows. Each row says which scope its value comes from.',
-    id: 'platform-settings',
-    roles: LEAD_UP,
-    title: navLabel('/govern/platform-settings'),
-  },
-  {
-    anchor: 'nav:/studio/agents/library',
-    body: 'Versioned agents. Saving an edit creates a new version; runs already in progress keep the version they started with.',
-    id: 'agents',
-    roles: ADMIN_ONLY,
-    title: navLabel('/studio/agents/library'),
-  },
-  {
-    anchor: 'nav:/studio/integrations',
-    body: 'Credentials for GitHub, Slack, your issue tracker, knowledge base and Figma.',
-    id: 'integrations',
-    roles: ADMIN_ONLY,
-    title: navLabel('/studio/integrations'),
-  },
-  {
-    anchor: 'nav:/govern/policies',
-    body: 'Which risk classes an agent may act on automatically and which need human approval, globally, per team or per workflow template.',
-    id: 'autonomy-policies',
-    roles: ADMIN_ONLY,
-    title: navLabel('/govern/policies'),
-  },
 ];
 
 /** The steps `role` sees, in order. An unknown or missing role sees the engineer steps. */
@@ -117,7 +115,10 @@ export function buildTourSteps(role: string | null | undefined): TourStep[] {
     : hasRole(role, 'LEAD')
       ? 'LEAD'
       : 'ENGINEER';
-  return TOUR_STEPS.filter((step) => step.roles.includes(effective)).map((step) =>
-    step.leadBody && effective !== 'ENGINEER' ? { ...step, body: step.leadBody } : step
-  );
+  return TOUR_STEPS.filter((step) => step.roles.includes(effective)).map((step) => {
+    if (step.adminBody && effective === 'ADMIN') {
+      return { ...step, body: step.adminBody };
+    }
+    return step.leadBody && effective !== 'ENGINEER' ? { ...step, body: step.leadBody } : step;
+  });
 }

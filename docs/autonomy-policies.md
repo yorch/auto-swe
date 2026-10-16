@@ -162,7 +162,7 @@ The record is deliberately a point-in-time snapshot. Editing a policy afterwards
 what a past run was held to, which is what makes the log answerable in an audit: it says what the
 rule *was*, not what it is now.
 
-Browse it at `/govern/policies/decisions`, or read it over the API.
+Browse it at `/admin/policies/decisions`, or read it over the API.
 
 ---
 
@@ -170,8 +170,8 @@ Browse it at `/govern/policies/decisions`, or read it over the API.
 
 | Surface | Where |
 |---|---|
-| Policy list and editor | `/govern/policies` |
-| Decision log | `/govern/policies/decisions` |
+| Policy list and editor | `/admin/policies` |
+| Decision log | `/admin/policies/decisions` |
 | API | `GET`/`POST` `/api/v1/admin/autonomy-policies`, `DELETE /api/v1/admin/autonomy-policies/:id`, `GET /api/v1/admin/autonomy-decisions` |
 
 The same routes are mounted under `/api/v1/platform` as well as `/api/v1/admin`.

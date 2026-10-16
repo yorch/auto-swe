@@ -17,10 +17,10 @@ const CHROMELESS_ROUTES = ['/login', '/reset-password'];
 // a URL change is a one-line edit here (and in AppShell.test.tsx).
 const FULLSCREEN_ROUTES: Record<string, RegExp> = {
   runDetail: /^\/runs\/[^/]+$/,
-  templateDiff: /^\/workflows\/library\/[^/]+\/diff/,
+  templateDiff: /^\/library\/[^/]+\/diff/,
   // The template detail page hosts the visual editor, which fills the viewport height. Exactly one
   // segment after the library: its analytics/runs/diff sub-pages are ordinary scrolling pages.
-  templateEditor: /^\/workflows\/library\/[^/]+\/?$/,
+  templateEditor: /^\/library\/[^/]+\/?$/,
 };
 
 export function isFullscreenRoute(pathname: string): boolean {

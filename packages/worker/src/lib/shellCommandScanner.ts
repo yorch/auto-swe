@@ -198,7 +198,7 @@ export async function scanShellCommand(command: string): Promise<string | null> 
     return (
       `Command blocked: the shell security rule [${quarantinedPatternKeys[0]}] is quarantined ` +
       `and was not enforced, so the command could not be cleared.\n  ${truncate()}\n` +
-      'An administrator must fix the offending pattern at /govern/scanner.'
+      'An administrator must fix the offending pattern at /admin/scanner.'
     );
   }
   if (incomplete) {
@@ -206,7 +206,7 @@ export async function scanShellCommand(command: string): Promise<string | null> 
       `Command blocked: the shell security scan could not complete.\n  ${truncate()}\n` +
       'A scanner pattern exceeded its execution budget, so the command could not be ' +
       'cleared. Retry; if this persists, an administrator must fix the offending ' +
-      'pattern at /govern/scanner.'
+      'pattern at /admin/scanner.'
     );
   }
 

@@ -66,7 +66,7 @@ An `@mention` starts a `ChannelAssistantWorkflow` that replies in-thread, with l
 **Persona.** `SlackChannel.personaPrompt` falls back to `Team.defaultPersonaPrompt` via
 `resolvePersonaPrompt` — a pure synchronous cascade in `lib/channelPersona.ts`. The result is
 injected at the top of the system prompt, before tool hints, across every channel LLM path.
-Editable per channel on the channel's Settings tab (`/govern/slack-channels/[id]`) and team-wide at `/teams/[id]`.
+Editable per channel on the channel's Settings tab (`/admin/slack-channels/[id]`) and team-wide at `/teams/[id]`.
 
 **Follow-up sessions.** With `followupSessionEnabled`, a plain reply continues a thread without a
 re-`@mention` while `ChannelThreadSession.lastAssistantAt` is fresh (a 30-minute window). Follow-up
@@ -87,7 +87,7 @@ like a delegated task. See
 [nl-workflow-authoring.md](./nl-workflow-authoring.md) for the authoring paths and their limits.
 
 **Injection scanning.** Channel input is scanned advisorily and surfaces as a `CHANNEL_SUSPICIOUS`
-security event in `/govern/security`.
+security event in `/admin/security`.
 
 ---
 
@@ -322,8 +322,8 @@ cost, tokens, run ID. The channel page's Activity tab renders it with a kind fil
 to the full tool-call sequence; Slack user IDs show as the linked account's email where one exists. Read access uses the same `assertChannelAccess` guard as memory and open
 items.
 
-Channels are listed at `/govern/slack-channels` and configured on each channel's page
-(`/govern/slack-channels/[id]`, tabs Settings, Memory, Open items, Activity) over
+Channels are listed at `/admin/slack-channels` and configured on each channel's page
+(`/admin/slack-channels/[id]`, tabs Settings, Memory, Open items, Activity) over
 `/api/v1/platform/slack-channels` (plus `/:id/budget`, `/:id/budget/reset`, `/:id/audit`, and the
 memory and open-item
 sub-resources); channel-scoped agents are created from the agent-library form with `CHANNEL` scope
@@ -341,7 +341,7 @@ the per-channel Temporal Schedule is created, retimed, or torn down to match the
 
 | Surface | Detail |
 |---|---|
-| Install | `GET /api/v1/auth/slack/install[/callback]` → `oauth.v2.access` → an encrypted per-workspace bot token. The bot token is the only per-workspace secret; the signing secret and OAuth credentials stay singleton. "Add to Slack" lives on `/studio/integrations` |
+| Install | `GET /api/v1/auth/slack/install[/callback]` → `oauth.v2.access` → an encrypted per-workspace bot token. The bot token is the only per-workspace secret; the signing secret and OAuth credentials stay singleton. "Add to Slack" lives on `/admin/integrations` |
 | App Home | `app_home_opened` → `publishAppHome` → `views.publish` renders a Block Kit front door (`buildAppHomeView` is pure and unit-tested) |
 | Slash | `/auto-swe` — workflow list/show and a run modal |
 | Shortcuts | A global "Run a workflow" picker, and a message shortcut "Ask auto-swe about this" that starts a turn on the message with no account link required |
@@ -419,5 +419,5 @@ unproven on real traffic, and turn them on one channel at a time.
 | Worker libs | `lib/channelMemory.ts`, `channelPersona.ts`, `channelTurnPrompts.ts`, `embeddingClustering.ts`, `slackNotify.ts` |
 | Steering | `workflows/runnable.ts` (`steer` handler), `activities/runAgentNode.ts` (`prependSteering`), `shared/workflow/interpreter.ts` (`drainSteering`) |
 | Gateway | `routes/slack.ts` + `routes/slack/events.ts` (events), `lib/slack/` (thread-reply steering, channel provisioning), `routes/slackChannels.ts`, `plugins/temporal.ts` (`startChannelAssistant`) |
-| Web | `app/govern/slack-channels/`, `app/teams/[id]/page.tsx` (persona card), `hooks/useSlackChannels.ts` |
+| Web | `app/admin/slack-channels/`, `app/teams/[id]/page.tsx` (persona card), `hooks/useSlackChannels.ts` |
 | Shared | `lib/channelTask.ts` (`channelTaskWorkflowId`, `CHANNEL_TASK_STEER_SIGNAL`), `lib/syncBuiltins.ts` (`channelAssistant`, `syncChannelTaskTemplate`) |

@@ -534,7 +534,7 @@ describe('the read tools', () => {
           {
             currentApprovers: 0,
             id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-            inboxUrl: 'https://app.example.com/govern/approvals',
+            inboxUrl: 'https://app.example.com/approvals',
             kind: 'approval',
             nodeId: 'approve-plan',
             requestedAt: '2026-10-01T10:00:00.000Z',

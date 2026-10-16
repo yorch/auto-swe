@@ -517,7 +517,7 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
       it('lists it for its requester, who is on no team, with no cost or PR they cannot reach', async () => {
         const epic = find((await tickets('frank')).data, 'EPIC');
         expect(epic).toMatchObject({ costUsd: 0, pullRequests: [], requestCount: 1 });
-        // The requester sees every run of their own request, as /workflows lists them.
+        // The requester sees every run of their own request, as /requests lists them.
         expect(epic?.runCounts).toEqual({ FAILED: 1, RUNNING: 1, SUCCESS: 1 });
       });
 

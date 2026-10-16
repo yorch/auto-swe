@@ -10,7 +10,7 @@ vi.mock('@/hooks/useHasRole', () => ({ useHasRole: () => role === 'ADMIN' }));
 const items = [
   {
     detail: 'No credential for google.',
-    href: '/studio/models?tab=credentials',
+    href: '/models?tab=credentials',
     id: 'credentials',
     label: 'Model provider credentials',
     ok: false,
@@ -59,7 +59,7 @@ describe('SetupReadiness', () => {
     expect(screen.getByRole('progressbar').getAttribute('aria-valuenow')).toBe('1');
     const links = screen.getAllByRole('link', { name: /Fix this/ });
     expect(links.map((l) => l.getAttribute('href'))).toEqual([
-      '/studio/models?tab=credentials',
+      '/models?tab=credentials',
       '/connections',
     ]);
   });

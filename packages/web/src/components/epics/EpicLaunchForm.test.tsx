@@ -116,7 +116,7 @@ describe('EpicLaunchForm', () => {
     fireEvent.click(checkboxes[1]);
     fireEvent.click(screen.getByRole('button', { name: /launch epic/i }));
 
-    // PROD-3: success must land on the epic detail page, NOT /workflows/<temporal-id>
+    // PROD-3: success must land on the epic detail page, NOT /requests/<temporal-id>
     // (which looks workflows up by DB UUID and would dead-end on "not found").
     await waitFor(() => expect(pushSpy).toHaveBeenCalledWith('/epics/epic-xyz'));
 

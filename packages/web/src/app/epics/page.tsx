@@ -20,7 +20,7 @@ export default function EpicsPage() {
 
   return (
     <div className="space-y-6">
-      <ButtonLink className="-ml-3" href="/workflows" size="sm" variant="ghost">
+      <ButtonLink className="-ml-3" href="/requests" size="sm" variant="ghost">
         <Icon name="arrowLeft" size={14} />
         Requests
       </ButtonLink>

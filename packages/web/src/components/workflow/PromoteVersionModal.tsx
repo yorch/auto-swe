@@ -12,7 +12,7 @@ import { usePromoteWorkflowVersion, useWorkflowSpecDiff } from '@/hooks/useTempl
  * match the counts above it.
  */
 export function diffHref(templateId: string, activeVersion: number, version: number): string {
-  const base = `/workflows/library/${templateId}/diff?a=${activeVersion}&b=${version}`;
+  const base = `/library/${templateId}/diff?a=${activeVersion}&b=${version}`;
   return version < activeVersion ? `${base}&reversed=1` : base;
 }
 

@@ -34,7 +34,7 @@ export function requestProgress(
 }
 
 export function requestHref(requestId: string): string {
-  return `/workflows?request=${encodeURIComponent(requestId)}`;
+  return `/requests?request=${encodeURIComponent(requestId)}`;
 }
 
 export interface AttentionReason {

@@ -2,7 +2,7 @@
  * Wall-clock-bounded execution of operator- and bundle-supplied regular
  * expressions.
  *
- * Scanner patterns are DATA: admins add them at `/govern/scanner`, and installed
+ * Scanner patterns are DATA: admins add them at `/admin/scanner`, and installed
  * bundles carry them. Their bodies are compiled with `new RegExp` and run
  * in-process against agent text (every `bash` command, every `writeFile` path,
  * every skill save, every TDD iteration's LLM output). JavaScript's backtracking

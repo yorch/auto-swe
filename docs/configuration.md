@@ -7,8 +7,8 @@ everything else is data an operator can change without a deploy.**
 | Tier | Lives in | Contents | Changed by |
 |---|---|---|---|
 | Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*`; sign-in credentials (`GITHUB_CLIENT_*`, `GOOGLE_CLIENT_*`, `OKTA_*`); artifact storage (`ARTIFACT_S3_*`, `AWS_*`); workspace sizing, images and network (`WORKSPACE_*`); the harness model proxy (`HARNESS_MODEL_PROXY_*`); `WORKER_MAX_CONCURRENT_ACTIVITIES`; `SCANNER_REGEX_BUDGET_MS`; the scheduled sweeps (`REPO_ACCESS_SYNC_*`, `REPO_DEPENDENCY_SCAN_*`, `MODEL_DISCOVERY_*`, `RUN_REAPER_*`, `AUTOMATION_DECISION_PRUNE_*`, `SKILL_SOURCE_SYNC_*`, `CALLBACK_DELIVERY_*`, `CALLBACK_DELIVERY_PRUNE_*`) | The deploy pipeline |
-| Integrations | Singleton config tables | GitHub, Slack, issue tracker, knowledge base, Figma, workflow defaults | Admins, at `/studio/integrations` and `/govern/workflow-defaults` |
-| Policy | The setting registry | Operator knobs that used to be constants in the worker | Admins and grant holders, at `/govern/platform-settings` |
+| Integrations | Singleton config tables | GitHub, Slack, issue tracker, knowledge base, Figma, workflow defaults | Admins, at `/admin/integrations` and `/admin/workflow-defaults` |
+| Policy | The setting registry | Operator knobs that used to be constants in the worker | Admins and grant holders, at `/admin/platform-settings` |
 
 Each integration tab compares its form with the saved config: Save stays disabled with "No unsaved
 changes" until something differs (a typed secret or a cleared field counts), the footer shows the
@@ -175,7 +175,7 @@ wins. Those keys deliberately do **not** offer a `CHANNEL` scope in the registry
 there would be stored and never read, and the effective-config view would report it as winning.
 
 `resolveEffectiveSettings(ctx)` returns every setting with the tier that supplied it. That is the
-effective-config view behind `/govern/platform-settings`, and the answer to "why is this run behaving that
+effective-config view behind `/admin/platform-settings`, and the answer to "why is this run behaving that
 way".
 
 ---
@@ -207,7 +207,7 @@ Every write, and every grant and revocation, lands in `ConfigAuditLog` with its 
 
 ### The audit log
 
-`/govern/audit` (ADMIN only) lists the log newest first, 50 per page, filtered by action, actor,
+`/admin/audit` (ADMIN only) lists the log newest first, 50 per page, filtered by action, actor,
 entity type and a UTC date range. Free-text search matches a person's email or name (as their actor
 ids), the entity type as a substring, and an entity or actor id only when the whole UUID is typed —
 both id columns are `uuid`, which a substring match cannot reach. The table shortens ids, so a
@@ -361,7 +361,7 @@ from the definition.
   code. Each is a definition away, but they are not done.
 - **`WorkflowDefaults` is platform-wide.** Branch prefix, PR templates, budget tiers, workspace
   sizing, and the TDD/eval iteration caps resolve from one global row and do not cascade to a team.
-  Moving them into the registry would give them the cascade; until then `/govern/workflow-defaults` edits them
+  Moving them into the registry would give them the cascade; until then `/admin/workflow-defaults` edits them
   for the whole deployment.
 - **Cache invalidation is per process.** A write invalidates the writing process's cache
   immediately; the other service picks the change up when its ~30 s TTL expires. Gateway and worker

@@ -157,7 +157,7 @@ On a GitHub `check_run` failure webhook, the worker fetches the actual CI logs, 
 
 ### 5.5 Semantic memory / learning loop
 
-When an engineering run's pull request is merged — or its review or CI loop runs out of attempts — the memory agent writes a structured lesson from the run's evidence (the reviewers' rejection, the failing CI output, the files changed): a `MemoryItem` with a failure type, rationale and 1536-dim embedding. The merge-conflict resolver and a shell step that pushes changes record lessons of their own without a model call. On later runs, `executeImplementation` does a per-repository similarity search and adds the closest lessons to the implementer's system prompt, fenced as reference data. A weekly job merges near-duplicate lessons. Every lesson passes an injection gate on the way in and on the way out (see [agents.md §6.4](./agents.md#64-custom-skill-security-scanning)). Platform admins browse, delete and consolidate lessons at `/govern/lessons`. See [memory.md](./memory.md).
+When an engineering run's pull request is merged — or its review or CI loop runs out of attempts — the memory agent writes a structured lesson from the run's evidence (the reviewers' rejection, the failing CI output, the files changed): a `MemoryItem` with a failure type, rationale and 1536-dim embedding. The merge-conflict resolver and a shell step that pushes changes record lessons of their own without a model call. On later runs, `executeImplementation` does a per-repository similarity search and adds the closest lessons to the implementer's system prompt, fenced as reference data. A weekly job merges near-duplicate lessons. Every lesson passes an injection gate on the way in and on the way out (see [agents.md §6.4](./agents.md#64-custom-skill-security-scanning)). Platform admins browse, delete and consolidate lessons at `/admin/lessons`. See [memory.md](./memory.md).
 
 ### 5.6 Configurable + versioned workflow templates
 
@@ -165,7 +165,7 @@ Teams author their own workflow DAGs on a visual canvas without code changes, ve
 
 ### 5.7 Scheduled work requests
 
-Admins configure standing automations backed by Temporal Schedules (nightly dependency checks, recurring lint sweeps, periodic doc generation) at `/govern/schedules`; every kind of automation, schedules included, is listed at `/govern/automations` ([automations.md](./automations.md)).
+Admins configure standing automations backed by Temporal Schedules (nightly dependency checks, recurring lint sweeps, periodic doc generation) at `/admin/schedules`; every kind of automation, schedules included, is listed at `/admin/automations` ([automations.md](./automations.md)).
 
 A schedule's runs share one branch, so a fire is skipped while a retry of its request is running, and a retry is refused while a fire is running ([work-views.md](./work-views.md)).
 

@@ -89,13 +89,13 @@ A repository with no overrides is never checked, so the common case costs nothin
 At startup the gateway warns, listing them (the first 20 and the total), when active repositories sit
 on a host with no platform credential: another host than the instance's that has none recorded, or a
 half override. Each entry names the error its runs will hit. When many repositories share one foreign
-host, either add credentials for it (Studio → Integrations → GitHub → Per-host credentials) or, if the
+host, either add credentials for it (Admin → Integrations → GitHub → Per-host credentials) or, if the
 instance's credential belongs to that host, correct the instance's own web and API URLs.
 
 ### Per-host credentials
 
 An admin records the platform credentials of a host other than the instance's at
-`/studio/integrations → GitHub → Per-host credentials`, or under
+`/admin/integrations → GitHub → Per-host credentials`, or under
 `/api/v1/platform/github-host-credentials` (ADMIN-only): a PAT, a GitHub App (id and private key), or
 both. The host is the lowercase `host[:port]` of its family (`github.com`, `ghe.corp`,
 `<tenant>.ghe.com`); it must be approved (the GitHub integration's own hosts or
@@ -116,7 +116,7 @@ repointing a repository to another host is refused while it points at an install
 
 The GitHub integration holds one webhook secret. Each GitHub Enterprise Server host configures its
 own webhooks, so each can have its own secret (`GitHubHostWebhookSecret`, managed by platform admins
-at `/studio/integrations → GitHub` or under `/api/v1/platform/github-webhook-secrets`). The host
+at `/admin/integrations → GitHub` or under `/api/v1/platform/github-webhook-secrets`). The host
 must be the integration's own host or listed in `github.repositoryHosts`; a secret for any other
 host is refused. So is one for `github.com`, `api.github.com`, or a GitHub Enterprise Cloud
 data-residency host (`<tenant>.ghe.com`, `api.<tenant>.ghe.com`) (`HOST_SENDS_NO_HEADER`): they send

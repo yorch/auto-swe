@@ -22,7 +22,7 @@ They split by how they bind a model: an agent carries either its own `modelSpec`
 
 Each has a GLOBAL `Agent` row with its own `modelSpec`. Model, prompt, skills, and tools are edited
 — and overridden at CHANNEL / TEAM / ORGANIZATION / WORKFLOW_TEMPLATE scope — through the Agent
-library at `/studio/agents/library`.
+library at `/agents`.
 
 | Key | Used by | Default model |
 |---|---|---|
@@ -128,7 +128,7 @@ CHANNEL / WORKFLOW_TEMPLATE override still wins and resolves its latest active v
   `409 AGENT_CHANGED` and writes nothing, so two editors cannot silently undo each other. RBAC is
   ADMIN for GLOBAL, team OWNER for TEAM.
 - **API + UI:** `/api/v1/platform/agent-library` (plus `/api/v1/teams/:id/agent-library`) and
-  `/studio/agents/library`. Each agent's History view lists its versions, shows what changed
+  `/agents`. Each agent's History view lists its versions, shows what changed
   between a version and the one before it (prompt as a line diff; model, skills, tools,
   credential, MCP connection, runtime and reasoning level as field changes), and restores an older version as a new one. A
   restore leaves the prompt out of the new version when it equals the current prompt, so it keeps
@@ -169,7 +169,7 @@ GLOBAL scope             →  (required — every referenced agent must resolve 
 
 **`systemPrompt` comes from the resolved row.** The most specific active row supplies the prompt along with everything else; a row whose `systemPrompt` is null runs on the agent's built-in prompt, not on a broader row's. A team override that changes the model and should keep a customised platform-wide prompt carries a copy of it. The review personas are the exception: one with no prompt of its own falls back to the parent `reviewer` row's prompt ([§4](#4-the-review-network)).
 
-Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is found at any scope. Missing rows surface as a clear error message; credentials are managed at `/studio/models`, per-agent model specs at `/studio/agents/library`.
+Resolution throws `ConfigMissingError` when no `Agent` (or its credential) is found at any scope. Missing rows surface as a clear error message; credentials are managed at `/models`, per-agent model specs at `/agents`.
 
 **Credentials** are stored AES-256-GCM encrypted in `ProviderCredential.apiKeyCiphertext`. Decryption failure also surfaces as `ConfigMissingError`. Credential resolution cascades TEAM → ORGANIZATION → GLOBAL (an Agent pins an existing credential via `Agent.credentialId`).
 
@@ -311,9 +311,9 @@ lessons carry their ids, so the agent can ask about one. See
 `writeFile` runs through two sequential checks before writing:
 
 1. **Sensitive file scanner** (`checkSensitiveFilePath`) — hard-block. Rejects `.env`, PEM/key files, SSH private keys, credential JSON files. Returns the block message to the agent and records a trace with `error: 'blocked by sensitive file scanner'`.
-2. **Pre-write content scanner** (`wrapWriteToolWithSecurityCheck`) — soft-block. Regex-based check for secrets/tokens in file content. Returns a prefixed error string starting with `SECURITY_CHECK_FAILED_PREFIX` or `SECURITY_WARNINGS_PREFIX`. The trace `error` field is set to `'blocked by content security check'` or `'content security warning'` so the gateway query in `/govern/security` can classify the event without raw SQL. Every trace tag (including the shell scanner's `'blocked by shell command scanner'`) is defined once, in `SECURITY_TRACE_ERRORS` (`@auto-swe/shared/lib/scannerCache`), which the tools write and the security-events endpoint and the eval trajectory scorer's guardrail count both read.
+2. **Pre-write content scanner** (`wrapWriteToolWithSecurityCheck`) — soft-block. Regex-based check for secrets/tokens in file content. Returns a prefixed error string starting with `SECURITY_CHECK_FAILED_PREFIX` or `SECURITY_WARNINGS_PREFIX`. The trace `error` field is set to `'blocked by content security check'` or `'content security warning'` so the gateway query in `/admin/security` can classify the event without raw SQL. Every trace tag (including the shell scanner's `'blocked by shell command scanner'`) is defined once, in `SECURITY_TRACE_ERRORS` (`@auto-swe/shared/lib/scannerCache`), which the tools write and the security-events endpoint and the eval trajectory scorer's guardrail count both read.
 
-**Trying a scanner pattern.** The pattern editor at `/govern/scanner` has a "Try this pattern" area
+**Trying a scanner pattern.** The pattern editor at `/admin/scanner` has a "Try this pattern" area
 backed by `POST /api/v1/platform/scanner-patterns/test` (ADMIN). The body is `{ pattern, flags?,
 samples }` with 1–10 samples of at most 20,000 characters each. The route applies the same checks as
 create and update: the flag set is checked by the request schema, so `g` or `y` is a validation
@@ -349,7 +349,7 @@ built-in workspace tools, via `@mastra/mcp` (`MCPClient`).
 - Interpreted as an **http(s) URL** of a streamable-HTTP (or legacy SSE) MCP server, e.g. `https://mcp.example.com/mcp`.
 - Anything that is not `http://` or `https://` is rejected (`mcp.invalid_ref` activity event). **stdio MCP servers are deliberately unsupported** — the worker must never exec arbitrary commands sourced from a DB column.
 
-**Authentication.** A connection may carry one optional **bearer token**. It is entered at `/studio/mcp`
+**Authentication.** A connection may carry one optional **bearer token**. It is entered at `/mcp`
 in a masked, write-only field and stored in the Connection's AES-256-GCM `apiKey*` envelope columns
 (the same envelope as every other secret, so `yarn keys:rotate` re-encrypts it); it is never part of
 `config`. Responses carry only `hasToken`; an edit that omits the token keeps it, supplying one replaces
@@ -366,7 +366,7 @@ a failed connect. A token that no longer decrypts yields no MCP tools for the ru
 sends the same header to the same origin only, trying streamable HTTP first and then the legacy SSE transport (a URL ending `/sse` goes straight to it), as the worker does.
 
 **Custom headers.** A connection may carry up to five custom request headers (an API gateway key, a
-tenant id). They are entered at `/studio/mcp` as name/value rows with masked values and sealed as one
+tenant id). They are entered at `/mcp` as name/value rows with masked values and sealed as one
 JSON list in the Connection's `headers*` envelope columns, which `yarn keys:rotate` covers like every
 other secret. They are write-only: responses carry header **names** (`headerNames`) only, the audit
 trail records names only, and an edit sends the complete list, where a row without a value keeps the
@@ -415,7 +415,7 @@ built-in tools.
 - Loaded tools are keyed `mcp_<toolName>` in the agent tool record (sanitized to provider-safe names); built-in tool keys always win on collision.
 - Every MCP tool call is audit-logged (`[mcp:audit] server=… tool=… args=…`, like the `bash` tool) and recorded on the `AgentTracer` with `toolName: 'mcp:<toolName>'`.
 - Successful loads record an `mcp.tools_loaded` activity event with the tool list.
-- Tool listing (default 15 s) and each tool call (default 60 s) are capped by timeouts, overridable per connection via optional `listTimeoutMs`/`callTimeoutMs` on the `mcp` `Connection.config` (resolved by `mcpUrlForConnection`/`resolveAgentMcpUrl` into `loadMcpTools`; edited at `/studio/mcp`).
+- Tool listing (default 15 s) and each tool call (default 60 s) are capped by timeouts, overridable per connection via optional `listTimeoutMs`/`callTimeoutMs` on the `mcp` `Connection.config` (resolved by `mcpUrlForConnection`/`resolveAgentMcpUrl` into `loadMcpTools`; edited at `/mcp`).
 
 **How the pieces fit:**
 - **Tool key:** the gateway `toolKeys` validation accepts `'mcp'` (via `AGENT_TOOL_KEYS`).
@@ -425,7 +425,7 @@ built-in tools.
   `resolveAgentMcpUrl` → `mcpUrlForConnection` → `loadMcpTools(config.url)` and closes the client in
   `finally`. The generic `runAgentNode` path (declarative `agent` node) binds MCP the same way, so any
   agent — not just the implementer — can use MCP.
-- **Write-path:** admins manage `mcp` Connections at `/studio/mcp` (gateway CRUD
+- **Write-path:** admins manage `mcp` Connections at `/mcp` (gateway CRUD
   `/api/v1/studio/mcp` — `POST` create, `PATCH :id` edit url/name/timeouts/token/headers/private-network flag,
   `DELETE :id` soft-delete; `PATCH` rebuilds `config` from the body so a blank timeout clears the
   override) and attach one to an Agent via the `mcpConnectionId` field on the
@@ -902,7 +902,7 @@ mode 0600, whose path is printed: it holds the prompt, tool output and the diff.
 The scanners load their patterns from the database, so the tool refuses to start without
 `DATABASE_URL` unless `--no-db-scanners` is given. That mode makes them read
 `BUILTIN_SCANNER_PATTERNS` instead and says so in the report; patterns an admin added or disabled
-at `/govern/scanner` do not apply. `--mock` swaps in a scripted model that writes a file and
+at `/admin/scanner` do not apply. `--mock` swaps in a scripted model that writes a file and
 answers, for checking the tool itself with no key or network (`pi/smoke.docker.test.ts` runs it in
 CI under the same `PI_DOCKER_TEST` flag).
 
@@ -1005,7 +1005,7 @@ The submitter's description is often a line or two; the ticket holds the require
 1. It reads the run's input. A ticket id the platform generated (`RunInput.ticketIsSynthetic`) is
    never looked up.
 2. It loads the ticket from `ContextSnapshot.rawTicketData`, or fetches it from the configured
-   tracker (`/studio/integrations → Tracker`) with the platform's tracker token and stores it. For
+   tracker (`/admin/integrations → Tracker`) with the platform's tracker token and stores it. For
    Jira it also reads the newest 20 comments and the parent issue (an epic's title, status, type and
    description); Linear and GitHub Issues return the ticket alone. A ticket stored without comments
    and parent is read again.
@@ -1282,7 +1282,7 @@ The preview body is `{ host?, owner, repo, path?, ref, scriptMode?, scope?, team
 
 **Added and removed.** An accept never installs an added skill and never deletes a removed one: added folders are listed (`added`), removed skills are flagged (`removed`) and stay installed. An added skill is installed separately, with `POST /skill-sources/:id/install` (`{ sha, skills }`, names): `sha` must be the source's `pinnedSha` (otherwise `409 SKILL_IMPORT_STALE_SHA`), and the text is read at that commit by sha, never through the ref, so the pin does not move. A folder first added upstream after the pin is therefore `400 SKILL_IMPORT_UNKNOWN_SKILLS` until an accept advances the pin. The rules are those of the first import: all-or-nothing; errors, `skills.import.blockOnScanWarnings` and name conflicts are refused as on create; the conflict check runs under the same advisory lock inside the transaction, together with a re-read of the source (a source disabled, deleted or re-pinned meanwhile is `409 SKILL_IMPORT_SOURCE_CHANGED` and nothing is written); a folder already installed from the source is `409 SKILL_IMPORT_ALREADY_INSTALLED`; a disabled source is `409 SKILL_IMPORT_DISABLED`. The install and an accept on one source are serialised by a per-source advisory lock, and an accept refuses `SOURCE_CHANGED` if the installed set changed since it planned. The new skills take the source's scope, start unverified at revision 1 with the pinned commit as their provenance, and the install is audited as an update of the source. The CLI has no install command; removed skills are never deleted by any path.
 
-**In the dashboard.** The skills studio page (`/studio/skills`) has an *External sources* tab for admins; the server enforces ADMIN regardless. It lists each source with its location, ref, pinned and latest commit (seven characters), status, last check time, the fixed `lastError` string and script mode, with *Check now*, *Review update* (when `UPDATE_AVAILABLE`), *Disable* / *Enable*, a script-mode switch and *Delete*, whose confirmation says the skills are detached and kept. *Add source* takes the location, script mode and scope (global or one team), previews without writing, and lists each skill with its description, text length, scan warnings, name conflicts, errors, skipped files and ignored frontmatter keys. Each skill that could be installed has *Read full text*, which shows its complete text in a scrollable panel (`POST /skill-sources/preview` with `skill`, at the previewed commit; each read costs one full fetch of the repository) and has to be used before the skill can be ticked. Skills with errors or conflicts, and skills with warnings while `skills.import.blockOnScanWarnings` is on, cannot be ticked; the create sends the chosen names with the previewed commit, and a moved ref, a name conflict or a refusal is shown with its reasons. *Review update* shows each changed skill's old and new description, rename, coloured unified diff, reference-file changes and scan warnings, with *edited by hand* and *diff incomplete* badges. Skills that are hand-edited or incomplete start unselected, and selecting one needs a confirmation (*Overwrite my edit*; *I've read the full text*, which is available once *Read full incoming text* has loaded the complete text). *Accept* sends the diffed commit and each selected skill with the revision the diff showed; a 409 asks the admin to reload the diff. *Install more skills* (shown while a source is `OK` or `UPDATE_AVAILABLE`) reads the source at its pinned commit and lists the folders nothing installed uses, with their scan results, name conflicts and errors as read at that commit; *Install* is off for any that would be refused, and sends that same commit. Each candidate that could be installed has *Read full text* (`GET /diff?sha=<pinnedSha>&skill=<name>&full=true`, one full fetch each, checked against the pinned commit), and *Install* stays off until the text has been read at that commit; the reads are discarded on reload, and the modal follows the source's current pin, so a pin that moved is picked up by *Reload*. An admin therefore reads the text of every skill before it is installed, in the first import and in a later install alike. The review lists added folders at the latest commit for information only. The skills list marks an imported skill `external: owner/repo@sha7` (`GET /skills` carries `externalSource` with the commit its current text was cut from), shows its revision and verified state, and *Verify* is in the skill's detail view, beside its rendered text, and attests to the revision that view shows. The detail view also lists the scanner findings recorded on the current revision (`GET /skills` returns them as `scanWarnings`, with the keys of the active agents that use the skill as `usedBy`), and the delete and deactivate confirmations name those agents. The review is read once when it opens and never refreshed behind the admin: a focus or reconnect does not re-read it, and only *Reload diff* does, which discards every selection and confirmation (those are keyed by commit, skill and installed revision). Every string that came from a repository (names, descriptions, folders, paths, diff lines, full text) is rendered as plain text with every control, format and default-ignorable character (zero-width characters, soft hyphens, variation selectors, Unicode tag characters, bidi controls) written out as `⟨U+202E⟩`, since the stored text keeps them; the CLI and the shared display helper apply the same rule. The one exception is an emoji: a single variation selector right after an emoji-capable character and a joiner between two pictographs are left as they are so that emoji render normally; they are shown in every other position, and tag characters always.
+**In the dashboard.** The skills studio page (`/skills`) has an *External sources* tab for admins; the server enforces ADMIN regardless. It lists each source with its location, ref, pinned and latest commit (seven characters), status, last check time, the fixed `lastError` string and script mode, with *Check now*, *Review update* (when `UPDATE_AVAILABLE`), *Disable* / *Enable*, a script-mode switch and *Delete*, whose confirmation says the skills are detached and kept. *Add source* takes the location, script mode and scope (global or one team), previews without writing, and lists each skill with its description, text length, scan warnings, name conflicts, errors, skipped files and ignored frontmatter keys. Each skill that could be installed has *Read full text*, which shows its complete text in a scrollable panel (`POST /skill-sources/preview` with `skill`, at the previewed commit; each read costs one full fetch of the repository) and has to be used before the skill can be ticked. Skills with errors or conflicts, and skills with warnings while `skills.import.blockOnScanWarnings` is on, cannot be ticked; the create sends the chosen names with the previewed commit, and a moved ref, a name conflict or a refusal is shown with its reasons. *Review update* shows each changed skill's old and new description, rename, coloured unified diff, reference-file changes and scan warnings, with *edited by hand* and *diff incomplete* badges. Skills that are hand-edited or incomplete start unselected, and selecting one needs a confirmation (*Overwrite my edit*; *I've read the full text*, which is available once *Read full incoming text* has loaded the complete text). *Accept* sends the diffed commit and each selected skill with the revision the diff showed; a 409 asks the admin to reload the diff. *Install more skills* (shown while a source is `OK` or `UPDATE_AVAILABLE`) reads the source at its pinned commit and lists the folders nothing installed uses, with their scan results, name conflicts and errors as read at that commit; *Install* is off for any that would be refused, and sends that same commit. Each candidate that could be installed has *Read full text* (`GET /diff?sha=<pinnedSha>&skill=<name>&full=true`, one full fetch each, checked against the pinned commit), and *Install* stays off until the text has been read at that commit; the reads are discarded on reload, and the modal follows the source's current pin, so a pin that moved is picked up by *Reload*. An admin therefore reads the text of every skill before it is installed, in the first import and in a later install alike. The review lists added folders at the latest commit for information only. The skills list marks an imported skill `external: owner/repo@sha7` (`GET /skills` carries `externalSource` with the commit its current text was cut from), shows its revision and verified state, and *Verify* is in the skill's detail view, beside its rendered text, and attests to the revision that view shows. The detail view also lists the scanner findings recorded on the current revision (`GET /skills` returns them as `scanWarnings`, with the keys of the active agents that use the skill as `usedBy`), and the delete and deactivate confirmations name those agents. The review is read once when it opens and never refreshed behind the admin: a focus or reconnect does not re-read it, and only *Reload diff* does, which discards every selection and confirmation (those are keyed by commit, skill and installed revision). Every string that came from a repository (names, descriptions, folders, paths, diff lines, full text) is rendered as plain text with every control, format and default-ignorable character (zero-width characters, soft hyphens, variation selectors, Unicode tag characters, bidi controls) written out as `⟨U+202E⟩`, since the stored text keeps them; the CLI and the shared display helper apply the same rule. The one exception is an emoji: a single variation selector right after an emoji-capable character and a joiner between two pictographs are left as they are so that emoji render normally; they are shown in every other position, and tag characters always.
 
 ---
 
@@ -1640,7 +1640,7 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
 - **The memory gate and the credential masker are pattern-based.** The memory gate (§6.4) refuses
   only the phrasings the `INJECTION` patterns name; a reworded instruction is stored and recalled,
   with only the `<recalled_memory>` fence between it and the model. A refused write or a dropped
-  recall is a security event on `/govern/security`, but there is no review queue: the refused text
+  recall is a security event on `/admin/security`, but there is no review queue: the refused text
   is not kept, and a dropped row stays in the table until an admin deletes it. Such a row is
   reported once per hour per process, not on every recall, so the feed undercounts how often it is
   reached, and a drop event is written after the recall returns, so a worker that exits at once can
@@ -1900,7 +1900,7 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   the caller decides what that means. The blocking scanners (`scanShellCommand`,
   `checkSensitiveFilePath`) block on a non-empty list — a rule they never ran cannot clear the
   input — so a quarantined shell or sensitive-file rule denies `bash` and `writeFile` until an admin
-  fixes or disables the row at `/govern/scanner`, instead of costing two budgets per call. The
+  fixes or disables the row at `/admin/scanner`, instead of costing two budgets per call. The
   advisory scanners proceed without the rule, and the memory write gate refuses the write instead
   (§6.4). It is logged on every skip, and quarantine is
   per-process, so gateway and worker decide independently and both forget on restart.

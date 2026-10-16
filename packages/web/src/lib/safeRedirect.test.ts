@@ -4,7 +4,7 @@ import { safeRedirectPath } from './safeRedirect';
 const ORIGIN = 'https://app.example.com';
 
 describe('safeRedirectPath', () => {
-  it.each(['/runs', '/runs/abc?tab=trace', '/govern/organizations#top'])(
+  it.each(['/runs', '/runs/abc?tab=trace', '/admin/organizations#top'])(
     'keeps the same-origin path %s',
     (p) => {
       expect(safeRedirectPath(p, ORIGIN)).toBe(p);
@@ -41,7 +41,7 @@ describe('safeRedirectPath', () => {
   });
 
   it('still normalises harmless dot segments', () => {
-    expect(safeRedirectPath('/runs/../govern?x=1', ORIGIN)).toBe('/govern?x=1');
+    expect(safeRedirectPath('/runs/../admin?x=1', ORIGIN)).toBe('/admin?x=1');
   });
 
   it('falls back when the parameter is absent', () => {

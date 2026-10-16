@@ -66,7 +66,7 @@ connector behind it is refused, and `validateBundle` in the SDK reports both bef
 does not let an attacker mark arbitrary content as verified. `BUNDLE_MAX_BYTES` caps the size of a
 bundle, whether fetched from a URL or sent inline by a file upload (default 5 MB; the inline routes
 accept a request body of that size plus a small envelope). `GET /api/v1/platform/bundles/limits`
-(ADMIN) returns the effective cap as `{ data: { maxBytes } }`, which Studio's file picker checks
+(ADMIN) returns the effective cap as `{ data: { maxBytes } }`, which the Bundles page's file picker checks
 against.
 
 ## Authoring a bundle
@@ -158,7 +158,7 @@ checks as an install through one shared validation, and returns the bundle's tru
 signer, the version already installed under its name, each entry it would create or replace (with a
 flag on every entry that replaces protected content), the advisory scan findings in its skills, and
 a `blockedReason` when this deployment would refuse it (an unverified bundle while unverified
-installs are off). It writes nothing. The Studio bundles page always previews first; the install
+installs are off). It writes nothing. The Bundles page always previews first; the install
 dialog needs a ticked box to replace protected content, and an unverified bundle needs a second
 "Install unverified bundle" confirmation. `install-from-url` takes the previewed `expectedContentHash`
 and answers `409 BUNDLE_CHANGED` when the URL now serves different content, so what is installed is
@@ -166,9 +166,9 @@ what was reviewed. The inline `POST /api/v1/platform/bundles/install` takes the 
 `expectedContentHash` and answers `409 BUNDLE_CHANGED` when the bundle sent differs from the one
 previewed.
 
-### Installing from a file in Studio
+### Installing from a file on the Bundles page
 
-Studio's bundles page also installs from a local `.json` file, picked or dropped onto the page. The
+The Bundles page also installs from a local `.json` file, picked or dropped onto the page. The
 browser reads and parses the file (invalid JSON, a non-object, or a file over the server's cap
 (5 MB unless `BUNDLE_MAX_BYTES` says otherwise) is reported without sending anything), sends the parsed bundle to `preview`, and shows the same dialog as a URL
 install: trust state, what is created or replaced, the protected-content checkbox, and the second

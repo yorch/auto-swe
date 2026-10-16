@@ -529,7 +529,7 @@ describe('notifySlackHumanStep (Block Kit resolve buttons)', () => {
 
     // Inbox link button always present.
     const inbox = buttons.find((b) => b.action_id === 'open_inbox');
-    expect(inbox?.url).toContain('/inbox');
+    expect(inbox?.url).toContain('/approvals');
   });
 
   it('DECISION: one select button per option, label truncated, value carried verbatim', async () => {
@@ -614,6 +614,6 @@ describe('notifySlackHumanStep (Block Kit resolve buttons)', () => {
     expect(resolveButtons(buttons)).toHaveLength(0);
     expect(buttons.find((b) => b.action_id === 'open_inbox')).toBeDefined();
     // Plain-text fallback keeps the inbox link for clients that drop blocks.
-    expect(text).toContain('/inbox');
+    expect(text).toContain('/approvals');
   });
 });

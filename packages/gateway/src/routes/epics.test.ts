@@ -789,7 +789,7 @@ describe('epic routes', () => {
         data.children.map((c: { repoId: string }) => [c.repoId, c])
       );
       // Started child: repoId parsed from the temporal ID suffix, DB UUID
-      // exposed for the /workflows/<uuid> link.
+      // exposed for the /requests/<uuid> link.
       expect(byRepo[REPO_A]).toMatchObject({
         branch: null,
         organizationName: 'org',

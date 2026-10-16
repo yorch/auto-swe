@@ -38,7 +38,7 @@ export default function EpicDetailPage({ params }: PageProps) {
   const mountedAtRef = useRef(Date.now());
   const { data: epic, isLoading, error } = useEpic(workflowId ?? '');
   // Every child run shares the epic's work request. The child's ActiveWorkflow
-  // row is self-registered without a repository, so /workflows/:id cannot show
+  // row is self-registered without a repository, so /requests/:id cannot show
   // it; its WorkflowRun (keyed by the same Temporal workflow ID) can.
   // 100 is the list endpoint's page cap — far above any realistic repo count.
   const { data: childRuns, isSuccess: childRunsSettled } = useRunsForWorkRequest(

@@ -95,7 +95,7 @@ yarn env:setup init
 # validates the file.
 # Optionally GITHUB_TOKEN / GITHUB_WEBHOOK_SECRET as bootstrap fallbacks.
 # LLM provider keys and model picks are NOT env vars — add them via the
-# dashboard at /studio/models after starting the gateway+web. See
+# dashboard at /models after starting the gateway+web. See
 # docs/model-configuration.md for the bootstrap flow.
 
 # 3. Start infrastructure (Postgres, Temporal + UI, Garage)
@@ -112,7 +112,7 @@ yarn dev:gateway     # Terminal 1 → http://localhost:8080
 yarn dev:web         # Terminal 2 → http://localhost:3000
 
 # 6. Sign in as admin@auto-swe.local and add model credentials at
-#    /studio/models (anthropic for the agents, openai for embeddings).
+#    /models (anthropic for the agents, openai for embeddings).
 #    The worker refuses to start until they exist.
 
 # 7. Start the worker
@@ -182,7 +182,7 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 | `DATABASE_URL`              | Yes       | PostgreSQL connection string                                                                   |
 | `TEMPORAL_ADDRESS`          | Yes       | Temporal server address (default: `localhost:7233`)                                            |
 | `CONFIG_ENCRYPTION_KEY`     | Yes       | AES-256-GCM key (base64-encoded 32 bytes) for encrypting `provider_credentials.api_key_ciphertext`. Generate with `openssl rand -base64 32`. |
-| `GITHUB_TOKEN`              | Bootstrap⁵ | GitHub PAT with `repo` scope — env var is a bootstrap fallback; the DB value set at `/studio/integrations → GitHub` takes precedence |
+| `GITHUB_TOKEN`              | Bootstrap⁵ | GitHub PAT with `repo` scope — env var is a bootstrap fallback; the DB value set at `/admin/integrations → GitHub` takes precedence |
 | `GITHUB_WEBHOOK_SECRET`     | Bootstrap⁵ | Secret for verifying GitHub webhook signatures — same DB-primary rule as `GITHUB_TOKEN`        |
 | `JWT_SECRET`                | Yes¹      | Secret for HS256 JWTs (used when `JWT_PRIVATE_KEY_PATH` is unset — default for Docker Compose) |
 | `JWT_PRIVATE_KEY_PATH`      | Optional¹ | Path to RSA private key. Setting this switches JWT signing to RS256                            |
@@ -219,9 +219,9 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 ² Required everywhere except `yarn dev:gateway`, which sets `NODE_ENV=development` and may fall back to a dev-only placeholder. The seed's better-auth step and every Docker image run without that, and refuse the placeholder.
 ³ Magic-link email transport. Choose one: SMTP (`SMTP_*` + `AUTH_FROM_EMAIL`) or Resend (`RESEND_API_KEY` + `AUTH_FROM_EMAIL`). Without either, links print to gateway stdout (dev only).
 ⁴ OAuth providers — the matching login button is hidden when its env vars are unset. See [`docs/oauth-setup.md`](./docs/oauth-setup.md) for the full setup.
-⁵ GitHub credentials are DB-primary: configure them at `/studio/integrations → GitHub` after first boot (`resolveGitHubConfig()` falls back to the env vars only when no DB row exists). One of the two must be configured somewhere for the worker/webhooks to function; GitHub App auth is also available (see [`docs/github-app-setup.md`](./docs/github-app-setup.md)).
+⁵ GitHub credentials are DB-primary: configure them at `/admin/integrations → GitHub` after first boot (`resolveGitHubConfig()` falls back to the env vars only when no DB row exists). One of the two must be configured somewhere for the worker/webhooks to function; GitHub App auth is also available (see [`docs/github-app-setup.md`](./docs/github-app-setup.md)).
 
-Provider API keys (Anthropic, OpenAI, Google, OpenAI-compatible) and per-role model selection are NOT env vars — they live in the database and are managed at `/studio/models`. See [`docs/model-configuration.md`](./docs/model-configuration.md) for the bootstrap flow and day-2 operations.
+Provider API keys (Anthropic, OpenAI, Google, OpenAI-compatible) and per-role model selection are NOT env vars — they live in the database and are managed at `/models`. See [`docs/model-configuration.md`](./docs/model-configuration.md) for the bootstrap flow and day-2 operations.
 
 See [`.env.example`](./.env.example) for the full annotated template, including LLM provider selection, per-model price overrides, and embedding configuration.
 

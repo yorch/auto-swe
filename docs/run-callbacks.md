@@ -148,7 +148,7 @@ public webhook); `templateId` names the template launched when there is one (not
 
 `pullRequestUrl` is present when the run opened one. `dashboardUrl` is built from the worker's
 `WEB_URL`. A `run.waiting_for_human` payload also carries
-`humanStep: { id, kind, dashboardUrl }` (the inbox), its `endedAt` is null and its `costUsd` is the
+`humanStep: { id, kind, dashboardUrl }` (the Approvals page, `/approvals`), its `endedAt` is null and its `costUsd` is the
 spend so far. A payload never carries a transcript, a trace, the run's context snapshot or the
 request's text: a receiver that needs more fetches it with the API, as itself.
 

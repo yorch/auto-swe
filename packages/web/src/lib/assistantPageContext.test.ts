@@ -5,10 +5,10 @@ describe('pageContextFor', () => {
   it.each([
     ['/runs/0b1c-2d', { entityId: '0b1c-2d', entityType: 'run', route: '/runs/0b1c-2d' }],
     [
-      '/workflows/library/tpl-1/runs',
-      { entityId: 'tpl-1', entityType: 'template', route: '/workflows/library/tpl-1/runs' },
+      '/library/tpl-1/runs',
+      { entityId: 'tpl-1', entityType: 'template', route: '/library/tpl-1/runs' },
     ],
-    ['/workflows/wf-9', { entityId: 'wf-9', entityType: 'workflow', route: '/workflows/wf-9' }],
+    ['/requests/wf-9', { entityId: 'wf-9', entityType: 'workflow', route: '/requests/wf-9' }],
     ['/epics/eng-x-1', { entityId: 'eng-x-1', entityType: 'epic', route: '/epics/eng-x-1' }],
     [
       '/docs/configuration',
@@ -18,7 +18,7 @@ describe('pageContextFor', () => {
     expect(pageContextFor(path)).toEqual(expected);
   });
 
-  it.each(['/workflows/library', '/docs/search', '/govern/approvals', '/'])(
+  it.each(['/library', '/docs/search', '/approvals', '/'])(
     'sends the route alone for %s',
     (path) => {
       expect(pageContextFor(path)).toEqual({ route: path });

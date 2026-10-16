@@ -228,7 +228,7 @@ export function StartWork({
     <div className="space-y-6">
       <PageHeader
         actions={
-          <ButtonLink href="/workflows" variant="secondary">
+          <ButtonLink href="/requests" variant="secondary">
             View requests
           </ButtonLink>
         }
@@ -268,7 +268,7 @@ export function StartWork({
                   {!runnable.length ? (
                     <EmptyState
                       action={
-                        <ButtonLink href="/workflows/library" size="sm">
+                        <ButtonLink href="/library" size="sm">
                           Open the library
                         </ButtonLink>
                       }
@@ -292,7 +292,7 @@ export function StartWork({
                       {template && (
                         <ButtonLink
                           className="sm:mb-px"
-                          href={`/workflows/library/${template.id}`}
+                          href={`/library/${template.id}`}
                           variant="ghost"
                         >
                           View process

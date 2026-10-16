@@ -73,7 +73,7 @@ describe('TicketTable', () => {
     expect(controlled).toBeTruthy();
     expect(document.getElementById(controlled as string)).not.toBeNull();
     expect(screen.getByRole('link', { name: 'Open latest request' }).getAttribute('href')).toBe(
-      '/workflows?request=wr-1'
+      '/requests?request=wr-1'
     );
     // The requests list can only substring-match a ticket, so it is not linked.
     expect(screen.queryByRole('link', { name: /All requests/ })).toBeNull();

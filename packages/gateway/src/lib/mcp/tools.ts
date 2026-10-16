@@ -320,7 +320,7 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
         return null;
       }
       return {
-        humanSteps: parsed.data.data.map((s) => ({ ...s, inboxUrl: `${origin}/govern/approvals` })),
+        humanSteps: parsed.data.data.map((s) => ({ ...s, inboxUrl: `${origin}/approvals` })),
         // MCP sends no paging params, so the route takes its default 100 and reports no total (it
         // only does for a request that asks): a full page may be hiding more.
         truncated: parsed.data.data.length >= 100,

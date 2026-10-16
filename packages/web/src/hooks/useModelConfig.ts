@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 
 // Per-role model config (`ModelRoleConfig`) and its UI were retired in P1.5 —
 // per-agent model/skill/tool config now lives on the first-class `Agent`
-// (managed at /admin/agents/library). This hook module is what remains: the
+// (managed at /agents). This hook module is what remains: the
 // provider-credential, embedding-config, and config-audit surfaces.
 
 export type ConfigScope = 'GLOBAL' | 'ORGANIZATION' | 'TEAM' | 'WORKFLOW_TEMPLATE';

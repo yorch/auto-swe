@@ -102,7 +102,7 @@ export function FigmaTab() {
             access during a run, add the Figma Dev Mode endpoint as an{' '}
             <Link
               className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
-              href="/studio/mcp"
+              href="/mcp"
             >
               MCP connection
             </Link>{' '}

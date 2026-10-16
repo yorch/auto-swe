@@ -79,17 +79,17 @@ describe('AppShell mobile drawer focus trap', () => {
 describe('isFullscreenRoute', () => {
   it.each([
     '/runs/abc',
-    '/workflows/library/t1/diff',
-    '/workflows/library/t1',
-    '/workflows/library/t1/',
+    '/library/t1/diff',
+    '/library/t1',
+    '/library/t1/',
   ])('gives %s the whole main area', (path) => {
     expect(isFullscreenRoute(path)).toBe(true);
   });
 
   it.each([
-    '/workflows/library',
-    '/workflows/library/t1/analytics',
-    '/workflows/library/t1/runs',
+    '/library',
+    '/library/t1/analytics',
+    '/library/t1/runs',
     '/runs',
   ])('leaves %s as an ordinary scrolling page', (path) => {
     expect(isFullscreenRoute(path)).toBe(false);

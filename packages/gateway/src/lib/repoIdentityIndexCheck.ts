@@ -105,7 +105,7 @@ export async function warnIfReposOnUnusableHosts(
         repositories: unusable.slice(0, MAX_UNUSABLE_LISTED),
         total: unusable.length,
       },
-      `${unusable.length} active repositor${unusable.length === 1 ? 'y is' : 'ies are'} on a host with no platform GitHub credential (the instance's host is ${hostFamily(ghConfig.baseUrl)}); a platform credential is never sent to a host it does not belong to, so their runs fail with the error named per repository. Remedy: add a PAT or GitHub App for that host (Studio -> Integrations -> GitHub -> Host credentials); or, if the instance's credential belongs to that host, set the GitHub integration's web and API URLs to it; for a half override, set both URL overrides to one host; otherwise a user must save their own token for the repository.`
+      `${unusable.length} active repositor${unusable.length === 1 ? 'y is' : 'ies are'} on a host with no platform GitHub credential (the instance's host is ${hostFamily(ghConfig.baseUrl)}); a platform credential is never sent to a host it does not belong to, so their runs fail with the error named per repository. Remedy: add a PAT or GitHub App for that host (Admin -> Integrations -> GitHub -> Host credentials); or, if the instance's credential belongs to that host, set the GitHub integration's web and API URLs to it; for a half override, set both URL overrides to one host; otherwise a user must save their own token for the repository.`
     );
     return true;
   } catch (err) {

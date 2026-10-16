@@ -73,13 +73,13 @@ async function buildEmbeddingModel(): Promise<CachedEmbeddingModel> {
       const problem = embeddingProviderProblem(provider);
       if (problem) {
         throw ApplicationFailure.nonRetryable(
-          `${problem} Set it at /studio/models (Embeddings tab).`,
+          `${problem} Set it at /models (Embeddings tab).`,
           'MODEL_CONFIG_INVALID'
         );
       }
       if (!apiBase) {
         throw ApplicationFailure.nonRetryable(
-          `Embedding provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /studio/models (Embeddings tab).`,
+          `Embedding provider '${provider}' is not built-in and requires an apiBase on its credential. Set it via /models (Embeddings tab).`,
           'MODEL_CONFIG_INVALID'
         );
       }

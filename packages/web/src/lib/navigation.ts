@@ -7,7 +7,14 @@ import { hasRole } from '@/lib/roles';
  * the sidebar label, the TopBar title and the page's own H1 — read from the
  * same string.
  *
- * Heading convention: a page reachable from the sidebar is titled with its nav
+ * The sidebar has three working groups: Work (daily use), Build (authoring) and
+ * Admin. Admin is a single sidebar entry that opens a settings area at `/admin`
+ * with its own sub-navigation; its pages are the entry's `children`, grouped by
+ * `section`. A group's label is the first segment of its URLs only for Admin:
+ * Work and Build pages sit at the top level, so a page keeps its address when it
+ * changes group.
+ *
+ * Heading convention: a page reachable from the navigation is titled with its nav
  * label, verbatim — no trailing period, no "Admin —" prefix. The TopBar shows
  * the same string. A detail page (one template, one team, one run) titles its
  * H1 with the entity's name and the TopBar keeps the section's label.
@@ -28,12 +35,17 @@ export interface NavItem {
    */
   needsUsageScope?: true;
   /**
-   * A collapsible subgroup inside the group (Govern's Access, Security, …). Items
-   * of one section are listed together, in the order they appear here.
+   * A subgroup of a sub-navigation (Admin's Access, Security, …). Items of one
+   * section are listed together, in the order they appear here.
    */
   section?: string;
-  /** Other path prefixes this entry owns (a sub-area with no sidebar entry of its own). */
+  /** Other path prefixes this entry owns (a sub-area with no navigation entry of its own). */
   alsoActiveFor?: string[];
+  /**
+   * The pages of an area with its own sub-navigation (Admin). The entry is offered only
+   * while at least one child is, and it owns every path under its own href.
+   */
+  children?: NavItem[];
 }
 
 export interface NavGroup {
@@ -41,17 +53,193 @@ export interface NavGroup {
   items: NavItem[];
 }
 
+/** The href of the Admin area: its sidebar entry, its overview page and its URL prefix. */
+export const ADMIN_HREF = '/admin';
+
+/** The Approvals page, which carries the sidebar's pending-count badge. */
+export const APPROVALS_HREF = '/approvals';
+
+const ADMIN_PAGES: NavItem[] = [
+  { href: '/admin/users', icon: 'users', label: 'Users', minRole: 'ADMIN', section: 'Access' },
+  { href: '/admin/teams', icon: 'teams', label: 'Teams', minRole: 'ENGINEER', section: 'Access' },
+  // GET /platform/organizations and the organizations layout both require LEAD.
+  {
+    href: '/admin/organizations',
+    icon: 'building',
+    label: 'Organizations',
+    minRole: 'LEAD',
+    section: 'Access',
+  },
+  {
+    href: '/admin/sessions',
+    icon: 'monitor',
+    label: 'Sessions',
+    minRole: 'ADMIN',
+    section: 'Access',
+  },
+  {
+    href: '/admin/api-tokens',
+    icon: 'key',
+    label: 'API tokens',
+    minRole: 'ADMIN',
+    section: 'Access',
+  },
+  {
+    href: '/admin/scanner',
+    icon: 'scan',
+    label: 'Scanner patterns',
+    minRole: 'ADMIN',
+    section: 'Security',
+  },
+  {
+    href: '/admin/policies',
+    icon: 'security',
+    label: 'Autonomy policies',
+    minRole: 'ADMIN',
+    section: 'Security',
+  },
+  {
+    href: '/admin/policies/decisions',
+    icon: 'gavel',
+    label: 'Autonomy decisions',
+    minRole: 'ADMIN',
+    section: 'Security',
+  },
+  {
+    href: '/admin/security',
+    icon: 'alert',
+    label: 'Security events',
+    minRole: 'ADMIN',
+    section: 'Security',
+  },
+  {
+    href: '/admin/audit',
+    icon: 'list',
+    label: 'Audit log',
+    minRole: 'ADMIN',
+    section: 'Security',
+  },
+  {
+    href: '/admin/analytics',
+    icon: 'analytics',
+    label: 'Analytics',
+    minRole: 'ENGINEER',
+    section: 'Spend & insights',
+  },
+  // Gated on holding a usage scope (a led team, an administered org, or ADMIN), not on
+  // the platform role; the gateway enforces which scopes each may read.
+  {
+    href: '/admin/usage',
+    icon: 'coin',
+    label: 'LLM usage',
+    minRole: 'ENGINEER',
+    needsUsageScope: true,
+    section: 'Spend & insights',
+  },
+  {
+    href: '/admin/assistant',
+    icon: 'warning',
+    label: 'Assistant failures',
+    minRole: 'ADMIN',
+    section: 'Spend & insights',
+  },
+  {
+    href: '/admin/platform-settings',
+    icon: 'settings',
+    label: 'Platform settings',
+    minRole: 'LEAD',
+    section: 'Configuration',
+  },
+  {
+    href: '/admin/workflow-defaults',
+    icon: 'workflows',
+    label: 'Workflow defaults',
+    minRole: 'ADMIN',
+    section: 'Configuration',
+  },
+  {
+    href: '/admin/config-grants',
+    icon: 'lock',
+    label: 'Config grants',
+    minRole: 'ADMIN',
+    section: 'Configuration',
+  },
+  // Every automation kind in one list; schedules are still edited on their own page, which
+  // keeps this entry lit. The APIs admit ENGINEERs (launch authorization is per repo).
+  {
+    alsoActiveFor: ['/admin/schedules'],
+    href: '/admin/automations',
+    icon: 'clock',
+    label: 'Automations',
+    minRole: 'ENGINEER',
+    section: 'Configuration',
+  },
+  {
+    href: '/admin/slack-channels',
+    icon: 'chat',
+    label: 'Slack channels',
+    minRole: 'ADMIN',
+    section: 'Configuration',
+  },
+  // Platform credentials: administration, not authoring.
+  {
+    href: '/admin/integrations',
+    icon: 'puzzle',
+    label: 'Integrations',
+    minRole: 'ADMIN',
+    section: 'Credentials',
+  },
+  {
+    href: '/admin/github-installations',
+    icon: 'github',
+    label: 'GitHub installations',
+    minRole: 'ADMIN',
+    section: 'Credentials',
+  },
+  {
+    href: '/admin/lessons',
+    icon: 'memory',
+    label: 'Lessons',
+    minRole: 'ADMIN',
+    section: 'Knowledge',
+  },
+  {
+    href: '/admin/knowledge',
+    icon: 'layers',
+    label: 'Knowledge',
+    minRole: 'ENGINEER',
+    section: 'Knowledge',
+  },
+  // The baselines API and layout both require LEAD.
+  {
+    href: '/admin/baselines',
+    icon: 'target',
+    label: 'Error baselines',
+    minRole: 'LEAD',
+    section: 'Knowledge',
+  },
+  {
+    href: '/admin/evals',
+    icon: 'flask',
+    label: 'Evals',
+    minRole: 'ADMIN',
+    section: 'Knowledge',
+  },
+];
+
 export const NAV_GROUPS: NavGroup[] = [
   {
     items: [
       { href: '/', icon: 'dashboard', label: 'Home', minRole: 'ENGINEER' },
+      { href: APPROVALS_HREF, icon: 'inbox', label: 'Approvals', minRole: 'ENGINEER' },
       {
         alsoActiveFor: ['/epics'],
-        href: '/workflows',
+        href: '/requests',
         icon: 'canvas',
         label: 'Requests',
         minRole: 'ENGINEER',
       },
+      { href: '/runs', icon: 'runs', label: 'All runs', minRole: 'ENGINEER' },
       {
         href: '/pull-requests',
         icon: 'pullRequest',
@@ -59,209 +247,33 @@ export const NAV_GROUPS: NavGroup[] = [
         minRole: 'ENGINEER',
       },
       { href: '/tickets', icon: 'ticket', label: 'Tickets', minRole: 'ENGINEER' },
-      { href: '/runs', icon: 'runs', label: 'All runs', minRole: 'ENGINEER' },
-      { href: '/govern/approvals', icon: 'inbox', label: 'Approvals', minRole: 'ENGINEER' },
-      {
-        href: '/workflows/library',
-        icon: 'templates',
-        label: 'Workflow library',
-        minRole: 'ENGINEER',
-      },
-      { href: '/connections', icon: 'connections', label: 'Connections', minRole: 'ENGINEER' },
     ],
     label: 'Work',
   },
   {
-    // Everything under /studio sits behind the ADMIN-only studio layout.
     items: [
-      { href: '/studio/agents/library', icon: 'agents', label: 'Agents', minRole: 'ADMIN' },
-      { href: '/studio/skills', icon: 'skills', label: 'Skills', minRole: 'ADMIN' },
-      { href: '/studio/mcp', icon: 'plug', label: 'MCP connections', minRole: 'ADMIN' },
-      {
-        href: '/studio/integrations',
-        icon: 'puzzle',
-        label: 'Integrations',
-        minRole: 'ADMIN',
-      },
-      {
-        href: '/studio/github-installations',
-        icon: 'github',
-        label: 'GitHub installations',
-        minRole: 'ADMIN',
-      },
-      { href: '/studio/models', icon: 'sliders', label: 'Model configuration', minRole: 'ADMIN' },
-      { href: '/studio/bundles', icon: 'package', label: 'Bundles', minRole: 'ADMIN' },
+      { href: '/library', icon: 'templates', label: 'Workflow library', minRole: 'ENGINEER' },
+      { href: '/connections', icon: 'connections', label: 'Connections', minRole: 'ENGINEER' },
+      // The authoring pages below are ADMIN-only: each route has its own ADMIN layout.
+      { href: '/agents', icon: 'agents', label: 'Agents', minRole: 'ADMIN' },
+      { href: '/skills', icon: 'skills', label: 'Skills', minRole: 'ADMIN' },
+      { href: '/models', icon: 'sliders', label: 'Model configuration', minRole: 'ADMIN' },
+      { href: '/mcp', icon: 'plug', label: 'MCP connections', minRole: 'ADMIN' },
+      { href: '/bundles', icon: 'package', label: 'Bundles', minRole: 'ADMIN' },
     ],
-    label: 'Studio',
+    label: 'Build',
   },
   {
     items: [
       {
-        href: '/govern/users',
-        icon: 'users',
-        label: 'Users',
-        minRole: 'ADMIN',
-        section: 'Access',
-      },
-      {
-        href: '/govern/teams',
-        icon: 'teams',
-        label: 'Teams',
+        children: ADMIN_PAGES,
+        href: ADMIN_HREF,
+        icon: 'admin',
+        label: 'Admin',
         minRole: 'ENGINEER',
-        section: 'Access',
-      },
-      // GET /platform/organizations and the organizations layout both require LEAD.
-      {
-        // Budget alerts is the "Alerting only" filter here now; the old URL redirects.
-        alsoActiveFor: ['/govern/budget-alerts'],
-        href: '/govern/organizations',
-        icon: 'building',
-        label: 'Organizations',
-        minRole: 'LEAD',
-        section: 'Access',
-      },
-      {
-        href: '/govern/sessions',
-        icon: 'monitor',
-        label: 'Sessions',
-        minRole: 'ADMIN',
-        section: 'Access',
-      },
-      {
-        href: '/govern/api-tokens',
-        icon: 'key',
-        label: 'API tokens',
-        minRole: 'ADMIN',
-        section: 'Access',
-      },
-      {
-        href: '/govern/scanner',
-        icon: 'scan',
-        label: 'Scanner patterns',
-        minRole: 'ADMIN',
-        section: 'Security',
-      },
-      {
-        href: '/govern/policies',
-        icon: 'security',
-        label: 'Autonomy policies',
-        minRole: 'ADMIN',
-        section: 'Security',
-      },
-      {
-        href: '/govern/policies/decisions',
-        icon: 'gavel',
-        label: 'Autonomy decisions',
-        minRole: 'ADMIN',
-        section: 'Security',
-      },
-      {
-        href: '/govern/security',
-        icon: 'alert',
-        label: 'Security events',
-        minRole: 'ADMIN',
-        section: 'Security',
-      },
-      {
-        href: '/govern/audit',
-        icon: 'list',
-        label: 'Audit log',
-        minRole: 'ADMIN',
-        section: 'Security',
-      },
-      {
-        href: '/govern/analytics',
-        icon: 'analytics',
-        label: 'Analytics',
-        minRole: 'ENGINEER',
-        section: 'Spend & insights',
-      },
-      // Gated on holding a usage scope (a led team, an administered org, or ADMIN), not on
-      // the platform role; the gateway enforces which scopes each may read.
-      {
-        href: '/govern/usage',
-        icon: 'coin',
-        label: 'LLM usage',
-        minRole: 'ENGINEER',
-        needsUsageScope: true,
-        section: 'Spend & insights',
-      },
-      {
-        href: '/govern/assistant',
-        icon: 'warning',
-        label: 'Assistant failures',
-        minRole: 'ADMIN',
-        section: 'Spend & insights',
-      },
-      {
-        href: '/govern/platform-settings',
-        icon: 'settings',
-        label: 'Platform settings',
-        minRole: 'LEAD',
-        section: 'Configuration',
-      },
-      {
-        href: '/govern/workflow-defaults',
-        icon: 'workflows',
-        label: 'Workflow defaults',
-        minRole: 'ADMIN',
-        section: 'Configuration',
-      },
-      {
-        href: '/govern/config-grants',
-        icon: 'lock',
-        label: 'Config grants',
-        minRole: 'ADMIN',
-        section: 'Configuration',
-      },
-      // Every automation kind in one list; schedules are still edited on their own page, which
-      // keeps this entry lit. The APIs admit ENGINEERs (launch authorization is per repo).
-      {
-        alsoActiveFor: ['/govern/schedules'],
-        href: '/govern/automations',
-        icon: 'clock',
-        label: 'Automations',
-        minRole: 'ENGINEER',
-        section: 'Configuration',
-      },
-      {
-        href: '/govern/slack-channels',
-        icon: 'chat',
-        label: 'Slack channels',
-        minRole: 'ADMIN',
-        section: 'Configuration',
-      },
-      {
-        href: '/govern/lessons',
-        icon: 'memory',
-        label: 'Lessons',
-        minRole: 'ADMIN',
-        section: 'Knowledge',
-      },
-      {
-        href: '/govern/knowledge',
-        icon: 'layers',
-        label: 'Knowledge',
-        minRole: 'ENGINEER',
-        section: 'Knowledge',
-      },
-      // The baselines API and layout both require LEAD.
-      {
-        href: '/govern/baselines',
-        icon: 'target',
-        label: 'Error baselines',
-        minRole: 'LEAD',
-        section: 'Knowledge',
-      },
-      {
-        href: '/govern/evals',
-        icon: 'flask',
-        label: 'Evals',
-        minRole: 'ADMIN',
-        section: 'Knowledge',
       },
     ],
-    label: 'Govern',
+    label: 'Admin',
   },
   {
     items: [
@@ -272,10 +284,33 @@ export const NAV_GROUPS: NavGroup[] = [
   },
 ];
 
-export const NAV_ITEMS: NavItem[] = NAV_GROUPS.flatMap((g) => g.items);
+/** `items` and, depth first, every child below them. */
+export function flattenNavItems(items: NavItem[]): NavItem[] {
+  return items.flatMap((item) => [item, ...flattenNavItems(item.children ?? [])]);
+}
+
+/** Every page with a navigation entry, sidebar and sub-navigation alike. */
+export const NAV_ITEMS: NavItem[] = flattenNavItems(NAV_GROUPS.flatMap((g) => g.items));
+
+function visibleItems(items: NavItem[], role: string | null | undefined, hasUsageScope: boolean) {
+  return items.flatMap((item): NavItem[] => {
+    if (
+      !hasRole(role, item.minRole) ||
+      (item.needsUsageScope && !hasUsageScope && !hasRole(role, 'ADMIN'))
+    ) {
+      return [];
+    }
+    if (!item.children) {
+      return [item];
+    }
+    const children = visibleItems(item.children, role, hasUsageScope);
+    return children.length > 0 ? [{ ...item, children }] : [];
+  });
+}
 
 /**
- * The groups, each narrowed to the items `role` may open; empty groups dropped.
+ * The groups, each narrowed to the items `role` may open; empty groups dropped. An item
+ * with children keeps only the visible ones, and is dropped when none is.
  * `hasUsageScope` unlocks the items gated on a usage scope; an ADMIN always has one.
  */
 export function visibleNavGroups(
@@ -284,16 +319,12 @@ export function visibleNavGroups(
 ): NavGroup[] {
   return NAV_GROUPS.map((group) => ({
     ...group,
-    items: group.items.filter(
-      (item) =>
-        hasRole(role, item.minRole) &&
-        (!item.needsUsageScope || hasUsageScope || hasRole(role, 'ADMIN'))
-    ),
+    items: visibleItems(group.items, role, hasUsageScope),
   })).filter((group) => group.items.length > 0);
 }
 
 /**
- * A group's visible items split into its sections, in first-appearance order.
+ * Items split into their sections, in first-appearance order.
  * An item with no section lands in an unnamed leading block (`label: null`).
  */
 export function navSections(items: NavItem[]): { label: string | null; items: NavItem[] }[] {
@@ -310,7 +341,11 @@ export function navSections(items: NavItem[]): { label: string | null; items: Na
   return out;
 }
 
-/** The most specific nav item whose href owns `pathname`, if any. */
+/**
+ * The most specific nav item whose href owns `pathname`, if any. An item with children
+ * owns everything under its href, so with only the sidebar's items `/admin/users`
+ * resolves to `/admin`, and with the Admin children it resolves to `/admin/users`.
+ */
 export function activeNavHref(pathname: string, items: NavItem[]): string {
   if (pathname === '/') {
     return '/';
@@ -334,13 +369,12 @@ export function isStartWorkPath(pathname: string): boolean {
 }
 
 /**
- * Pages with no sidebar entry of their own. Checked before the nav items so a
- * sub-page (`/govern/policies/decisions`) is not titled after its parent.
+ * Pages with no navigation entry of their own. Checked before the nav items so a
+ * sub-page is not titled after its parent.
  */
 const EXTRA_PAGE_TITLES: [string, string][] = [
   ['/runs/', 'Run'],
   ['/start', 'Start work'],
-  ['/govern/policies/decisions', 'Autonomy decisions'],
   ['/epics', 'Epics'],
   ['/docs', 'Docs'],
   ['/lessons', 'Lessons'],
@@ -359,16 +393,7 @@ export function knownPageTitle(pathname: string): string | null {
   }
   const href = activeNavHref(pathname, NAV_ITEMS);
   const item = NAV_ITEMS.find((i) => i.href === href);
-  if (item) {
-    return item.label;
-  }
-  if (pathname.startsWith('/govern')) {
-    return 'Govern';
-  }
-  if (pathname.startsWith('/studio')) {
-    return 'Studio';
-  }
-  return null;
+  return item?.label ?? null;
 }
 
 /**
@@ -389,11 +414,11 @@ export function navLabel(href: string): string {
   return item.label;
 }
 
-/** Sections for the pages that have no sidebar entry of their own. */
+/** Sections for the pages that have no navigation entry of their own. */
 const EXTRA_PAGE_SECTIONS: [string, string][] = [
   ['/start', 'Work'],
   ['/epics', 'Work'],
-  ['/lessons', 'Govern'],
+  ['/lessons', 'Admin'],
 ];
 
 /**
@@ -406,7 +431,7 @@ export function pageSection(pathname: string): string | null {
   if (href === '/docs') {
     return 'Help';
   }
-  const group = NAV_GROUPS.find((g) => g.items.some((i) => i.href === href));
+  const group = NAV_GROUPS.find((g) => flattenNavItems(g.items).some((i) => i.href === href));
   if (group && pageTitle(pathname) !== 'Home') {
     // A sub-page with its own title (autonomy decisions) still sits in its parent's group.
     return group.label;
@@ -415,12 +440,6 @@ export function pageSection(pathname: string): string | null {
     if (pathname === prefix || pathname.startsWith(`${prefix}/`)) {
       return section;
     }
-  }
-  if (pathname.startsWith('/govern')) {
-    return 'Govern';
-  }
-  if (pathname.startsWith('/studio')) {
-    return 'Studio';
   }
   return null;
 }

@@ -79,7 +79,7 @@ const COLUMNS: Record<
             'rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
             FOCUS_RING
           )}
-          href={`/govern/organizations/${org.id}`}
+          href={`/admin/organizations/${org.id}`}
         >
           {org.name}
         </Link>

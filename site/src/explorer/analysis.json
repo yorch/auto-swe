@@ -5010,7 +5010,7 @@
       "before": 0,
       "id": "web",
       "lines": 90,
-      "path": "packages/web/src/app/workflows/library/page.tsx",
+      "path": "packages/web/src/app/library/page.tsx",
       "title": "Workflow library UI"
     },
     {
@@ -5994,7 +5994,7 @@
       "before": 4,
       "id": "usageGate",
       "lines": 12,
-      "path": "packages/web/src/app/govern/usage/layout.tsx",
+      "path": "packages/web/src/app/admin/usage/layout.tsx",
       "title": "The usage page is gated on a held scope, not the platform role"
     },
     {
@@ -7170,7 +7170,7 @@
       "before": 4,
       "id": "bundleWebInstall",
       "lines": 16,
-      "path": "packages/web/src/app/studio/bundles/page.tsx",
+      "path": "packages/web/src/app/bundles/page.tsx",
       "title": "The install sends the same parsed file it previewed, with the previewed hash"
     },
     {
@@ -8418,7 +8418,7 @@
       "before": 3,
       "id": "auditExportNotice",
       "lines": 6,
-      "path": "packages/web/src/app/govern/audit/page.tsx",
+      "path": "packages/web/src/app/admin/audit/page.tsx",
       "title": "The dashboard states the export limit when the file was cut"
     },
     {
@@ -8658,7 +8658,7 @@
       "before": 8,
       "id": "standingCallout",
       "lines": 16,
-      "path": "packages/web/src/app/govern/policies/page.tsx",
+      "path": "packages/web/src/app/admin/policies/page.tsx",
       "title": "A governance page shows a fixed warning as a note, not a live announcement"
     },
     {

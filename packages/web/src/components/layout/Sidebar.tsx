@@ -9,56 +9,17 @@ import { Icon, isIconName } from '@/components/ui/Icon';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { useApprovalsCount } from '@/hooks/useApprovals';
 import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
-import { activeNavHref, isStartWorkPath, type NavItem, navSections } from '@/lib/navigation';
+import { APPROVALS_HREF, activeNavHref, isStartWorkPath, type NavItem } from '@/lib/navigation';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { useAuthStore } from '@/stores/authStore';
 import { type PalettePreference, type ThemePreference, useThemeStore } from '@/stores/themeStore';
 
-const SECTIONS_KEY = 'auto-swe.nav.sections';
-
-/** Which collapsible nav sections the user has closed or reopened (all start open), remembered per user in this browser. */
-function useOpenSections(userKey: string) {
-  const key = `${SECTIONS_KEY}.${userKey}`;
-  const [open, setOpen] = useState<Record<string, boolean>>({});
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(key);
-      setOpen(raw ? (JSON.parse(raw) as Record<string, boolean>) : {});
-    } catch {
-      setOpen({});
-    }
-  }, [key]);
-  const toggle = (label: string, current: boolean) => {
-    setOpen((prev) => {
-      const next = { ...prev, [label]: !current };
-      try {
-        window.localStorage.setItem(key, JSON.stringify(next));
-      } catch {
-        // Storage is a convenience; the section still toggles for this visit.
-      }
-      return next;
-    });
-  };
-  return { open, toggle };
-}
-
-function NavLink({
-  item,
-  active,
-  badge,
-  indent,
-}: {
-  item: NavItem;
-  active: boolean;
-  badge?: number;
-  indent?: boolean;
-}) {
+function NavLink({ item, active, badge }: { item: NavItem; active: boolean; badge?: number }) {
   return (
     <Link
       aria-current={active ? 'page' : undefined}
       className={cn(
-        'relative mx-2.5 flex items-center gap-2.5 rounded-md py-1.5 text-sm font-medium no-underline transition-colors',
-        indent ? 'pr-2.5 pl-6' : 'px-2.5',
+        'relative mx-2.5 flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium no-underline transition-colors',
         FOCUS_RING,
         active
           ? 'bg-ink-600 text-paper-50 before:absolute before:inset-y-1.5 before:-left-2.5 before:w-[3px] before:rounded-r-full before:bg-ember-400'
@@ -247,11 +208,10 @@ interface SidebarProps {
 
 export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
   const pathname = usePathname();
-  const user = useAuthStore((s) => s.user);
   const inboxCount = useApprovalsCount();
 
   const groups = useVisibleNavGroups();
-  // The most-specific matching nav item wins (e.g. /workflows/library over /workflows).
+  // The most-specific matching sidebar item wins; every /admin page lights the Admin entry.
   const activeHref = useMemo(
     () =>
       activeNavHref(
@@ -260,8 +220,6 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
       ),
     [pathname, groups]
   );
-
-  const sections = useOpenSections(user?.sub ?? 'anonymous');
 
   return (
     <aside
@@ -333,67 +291,22 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
         </div>
         {groups.map((group) => (
           <div key={group.label}>
-            <div className="px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600">
-              {group.label}
-            </div>
-            {navSections(group.items).map((section) => {
-              const links = (indent: boolean) =>
-                section.items.map((item) => (
-                  <NavLink
-                    active={activeHref === item.href}
-                    badge={item.href === '/govern/approvals' ? inboxCount : undefined}
-                    indent={indent}
-                    item={item}
-                    key={item.href}
-                  />
-                ));
-              if (section.label === null) {
-                return links(false);
-              }
-              const label = section.label;
-              const holdsActive = section.items.some((i) => i.href === activeHref);
-              const panelId = `nav-section-${label.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
-              const isOpen = holdsActive || (sections.open[label] ?? true);
-              return (
-                <div key={label}>
-                  <button
-                    aria-controls={panelId}
-                    // Not `disabled`: the section holding the current page cannot collapse, but
-                    // it stays focusable so a screen reader still finds and announces it.
-                    aria-disabled={holdsActive}
-                    aria-expanded={isOpen}
-                    className={cn(
-                      'mx-2.5 flex w-[calc(100%-1.25rem)] items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs font-medium text-paper-500 hover:text-paper-200',
-                      FOCUS_RING,
-                      holdsActive && 'cursor-default'
-                    )}
-                    onClick={() => {
-                      if (!holdsActive) {
-                        sections.toggle(label, isOpen);
-                      }
-                    }}
-                    type="button"
-                  >
-                    <svg
-                      aria-hidden="true"
-                      className={cn('shrink-0 transition-transform', isOpen && 'rotate-90')}
-                      fill="none"
-                      height={12}
-                      stroke="currentColor"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2.2}
-                      viewBox="0 0 24 24"
-                      width={12}
-                    >
-                      <path d="M9 6l6 6-6 6" />
-                    </svg>
-                    {label}
-                  </button>
-                  <div id={panelId}>{isOpen && links(true)}</div>
-                </div>
-              );
-            })}
+            {/* A group that is one entry of the same name (Admin) needs no heading over it. */}
+            {group.items.length === 1 && group.items[0].label === group.label ? (
+              <div className="pt-4" />
+            ) : (
+              <div className="px-5 pt-5 pb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-paper-600">
+                {group.label}
+              </div>
+            )}
+            {group.items.map((item) => (
+              <NavLink
+                active={activeHref === item.href}
+                badge={item.href === APPROVALS_HREF ? inboxCount : undefined}
+                item={item}
+                key={item.href}
+              />
+            ))}
           </div>
         ))}
       </nav>

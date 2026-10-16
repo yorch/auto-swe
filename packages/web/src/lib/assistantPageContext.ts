@@ -11,13 +11,13 @@ import type {
 
 const ENTITY_ROUTES: ReadonlyArray<[RegExp, AssistantPageEntityType]> = [
   [/^\/runs\/([^/]+)$/, 'run'],
-  [/^\/workflows\/library\/([^/]+)(?:\/.*)?$/, 'template'],
-  [/^\/workflows\/(?!library$)([^/]+)$/, 'workflow'],
+  [/^\/library\/([^/]+)(?:\/.*)?$/, 'template'],
+  [/^\/requests\/([^/]+)$/, 'workflow'],
   [/^\/epics\/([^/]+)$/, 'epic'],
-  [/^\/govern\/teams\/([^/]+)$/, 'team'],
-  [/^\/govern\/organizations\/([^/]+)$/, 'organization'],
-  [/^\/govern\/evals\/runs\/([^/]+)$/, 'evalRun'],
-  [/^\/govern\/evals\/datasets\/([^/]+)$/, 'evalDataset'],
+  [/^\/admin\/teams\/([^/]+)$/, 'team'],
+  [/^\/admin\/organizations\/([^/]+)$/, 'organization'],
+  [/^\/admin\/evals\/runs\/([^/]+)$/, 'evalRun'],
+  [/^\/admin\/evals\/datasets\/([^/]+)$/, 'evalDataset'],
   [/^\/docs\/(?!search$)([^/]+)$/, 'doc'],
 ];
 

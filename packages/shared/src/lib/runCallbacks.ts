@@ -517,7 +517,7 @@ export function buildCallbackPayload(input: BuildCallbackPayloadInput): Callback
     ...(input.humanStep
       ? {
           humanStep: {
-            dashboardUrl: `${web}/inbox`,
+            dashboardUrl: `${web}/approvals`,
             id: input.humanStep.id,
             kind: input.humanStep.kind,
           },

@@ -25,7 +25,7 @@ describe('RunListItem', () => {
   it('opens the request panel first and offers diagnostics second', () => {
     render(<RunListItem run={RUN} />);
     expect(screen.getByRole('link', { name: 'Fix login' }).getAttribute('href')).toBe(
-      '/workflows?request=wr-1'
+      '/requests?request=wr-1'
     );
     expect(screen.getByRole('link', { name: /diagnostics/i }).getAttribute('href')).toBe(
       '/runs/run-1'

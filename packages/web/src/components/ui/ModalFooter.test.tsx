@@ -39,12 +39,12 @@ describe('ModalFooter', () => {
         cancelLabel="Close"
         onCancel={() => {}}
         onSubmit={onSubmit}
-        submitHref="/workflows/abc"
+        submitHref="/requests/abc"
         submitLabel="View"
       />
     );
     const link = screen.getByRole('link', { name: 'View' });
-    expect(link.getAttribute('href')).toBe('/workflows/abc');
+    expect(link.getAttribute('href')).toBe('/requests/abc');
     expect(screen.queryByRole('button', { name: 'View' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();
     fireEvent.click(link);

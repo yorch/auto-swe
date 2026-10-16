@@ -33,7 +33,7 @@ describe('theme colour classes', () => {
   });
 
   it('keeps governed knowledge borders on a declared structural token', () => {
-    const knowledgePage = readFileSync(path.join(SRC, 'app/govern/knowledge/page.tsx'), 'utf8');
+    const knowledgePage = readFileSync(path.join(SRC, 'app/admin/knowledge/page.tsx'), 'utf8');
     expect(declared.has('ink-400')).toBe(true);
     expect(knowledgePage).not.toMatch(/\bborder-paper-800\b/);
   });

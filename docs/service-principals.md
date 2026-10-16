@@ -150,7 +150,7 @@ principal itself reads and cancels only the runs it started.
 
 ## 6. Managing principals and tokens
 
-On the dashboard, a team's page (**Govern → Teams → the team**) has a **Service principals** card for
+On the dashboard, a team's page (**Admin → Teams → the team**) has a **Service principals** card for
 those who may manage the team: create, edit the lists and limits, disable and enable, delete, and
 manage tokens.
 
@@ -177,7 +177,7 @@ Deleting a principal is refused (`409 SERVICE_PRINCIPAL_HAS_RUNS`) while any run
 in flight: disable it to stop new launches, and delete it once its runs finish. Deleting deletes its
 tokens; its finished runs keep their history but lose their attribution.
 
-Platform admins also see service tokens on **Govern → API tokens**, with their principal and team, and
+Platform admins also see service tokens on **Admin → API tokens**, with their principal and team, and
 may revoke them there.
 
 Every change is written to the audit log: entity `ServicePrincipal` for the principal (allowlists and

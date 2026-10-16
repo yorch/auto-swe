@@ -9,6 +9,7 @@ import { usePaletteSearch } from '@/hooks/usePaletteSearch';
 import { useVisibleNavGroups } from '@/hooks/useVisibleNav';
 import { runHref, templateHref } from '@/lib/entityLinks';
 import { requestHref } from '@/lib/requestDisplay';
+import { flattenNavItems } from '@/lib/navigation';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { useThemeStore } from '@/stores/themeStore';
 
@@ -108,7 +109,7 @@ function PaletteDialog({ onClose }: { onClose: () => void }) {
     () => [
       { group: 'Actions', href: '/start', icon: 'plus', id: 'href:/start', label: 'Start work' },
       ...groups.flatMap((g) =>
-        g.items.map((item) => ({
+        flattenNavItems(g.items).map((item) => ({
           group: item.section ? `${g.label} · ${item.section}` : g.label,
           href: item.href,
           icon: item.icon,

@@ -78,7 +78,7 @@ automation whose filters do not parse matches nothing.
 
 ### The Automations page
 
-**Automations** (`/govern/automations`, in the Configuration section of the navigation) lists every
+**Automations** (`/admin/automations`, in the Configuration section of the navigation) lists every
 automation the caller may see, of every kind (§5). Each row says:
 
 - when it fires;
@@ -90,7 +90,7 @@ automation the caller may see, of every kind (§5). Each row says:
 Rows can be filtered by kind and searched. **Manage** opens where that kind is edited: a
 repository's automations, or for an automation with no repository, its team's. **New event
 automation** asks for a repository and opens its automations. **Schedules**
-leads to the schedule editor at `/govern/schedules`, which keeps its own page and live state.
+leads to the schedule editor at `/admin/schedules`, which keeps its own page and live state.
 
 `GET /api/v1/automations` serves the page:
 
@@ -371,9 +371,9 @@ other decision that started no run.
 
 | Kind | Configured at | Who |
 |---|---|---|
-| Cron schedule (`ScheduledWorkRequest`) | `/govern/schedules`, linked from the Automations page | ADMIN, or a LEAD of the owning team or a team the repository is shared with |
+| Cron schedule (`ScheduledWorkRequest`) | `/admin/schedules`, linked from the Automations page | ADMIN, or a LEAD of the owning team or a team the repository is shared with |
 | Template webhook URL | the template's page | LEAD+ who may edit the template |
-| Issue-tracker transition | `/studio/integrations` → Tracker | ADMIN |
+| Issue-tracker transition | `/admin/integrations` → Tracker | ADMIN |
 
 ### 5.1 Signed template webhooks
 

@@ -20,7 +20,7 @@ export function TemplateSubNav({
   active: TemplateSubTab;
   templateId: string;
 }) {
-  const base = `/workflows/library/${templateId}`;
+  const base = `/library/${templateId}`;
   return (
     <TabBar
       active={active}
@@ -53,7 +53,7 @@ export function TemplateBackLink({ href, label }: { href: string; label: string 
 export function TemplateNotFound() {
   return (
     <EmptyState
-      action={<ButtonLink href="/workflows/library">Back to library</ButtonLink>}
+      action={<ButtonLink href="/library">Back to library</ButtonLink>}
       bordered
       hint="It may have been deleted, or the link is wrong."
       icon="workflows"
