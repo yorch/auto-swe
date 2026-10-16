@@ -18,7 +18,7 @@ import { cn } from '@/lib/utils';
 import { type DiffKind, type EdgeKind, NODE_HEIGHT, NODE_WIDTH } from '@/lib/workflowLayout';
 import type { FoldedGroup } from './foldGroups';
 import { nodeDisplayName, nodeGroupOf } from './nodeDisplay';
-import { isKnownNodeType, nodeTypeLabel, nodeTypeTone } from './nodeTypeTone';
+import { isKnownNodeType, nodeTypeIcon, nodeTypeLabel, nodeTypeTone } from './nodeTypeTone';
 
 /** The source-handle ids a node exposes are exactly the edge kinds the layout
  *  emits for it — one name, so the two cannot disagree. */
@@ -244,9 +244,15 @@ export function DagNode({ id, data, selected }: NodeProps) {
 
       {/* Body */}
       <div className="flex h-full flex-col justify-center gap-1 px-3 py-1.5">
-        <div className="flex items-baseline justify-between gap-2">
-          <span className="truncate font-display text-lg font-medium leading-none text-paper-50">
-            {name}
+        <div className="flex items-center justify-between gap-2">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span
+              className="shrink-0 text-paper-400"
+              title={unknown ? undefined : nodeTypeLabel(d.node.type)}
+            >
+              <Icon name={folded ? 'layers' : nodeTypeIcon(d.node.type)} size={13} />
+            </span>
+            <span className="truncate text-sm font-medium leading-tight text-paper-50">{name}</span>
           </span>
           <span className="flex shrink-0 items-center gap-1 text-xs text-paper-500">
             {!folded && ELEVATED.has(d.node.type) && (
