@@ -95,6 +95,20 @@ jobs:
       - name: Build
         run: yarn build
 
+      # TEMPORARY — records the two shared-signal replay fixtures, which need the
+      # Temporal test server this runner can download. Removed before review.
+      - name: Record shared-signal replay fixtures (temporary)
+        run: |
+          yarn workspace @auto-swe/worker exec tsx scripts/recordReplayHistory.ts \
+            fan-out-shared-signal fan-out-shared-signal-timeout
+          for f in fan-out-shared-signal fan-out-shared-signal-timeout; do
+            p=packages/worker/src/workflows/__fixtures__/$f.bin
+            echo "FIXTURE-BEGIN $f $(sha256sum "$p" | cut -d' ' -f1)"
+            gzip -9 -c "$p" | base64 -w 0
+            echo
+            echo "FIXTURE-END $f"
+          done
+
   # Real-container job: the suites that drive a real Docker daemon. The
   # unit-test job skips them (`describe.skipIf(!enabled)`), and the code they
   # cover — the Claude Code harness through `docker exec`, its worker-side tool
