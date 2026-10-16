@@ -342,6 +342,31 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
  * three lesson steps sit on the loops' exhausted edges and the merge wait's timeout edge, and
  * continue to the same terminals on error.
  */
+/**
+ * `default-engineering` gathers the run's tracker ticket before validating it: `gatherTicket`
+ * (non-blocking) digests the ticket, its parent and its newest comments, `setTicket` keeps the text
+ * in `context.ticket`, and `validate` and `implement` take it as their `ticket` input.
+ */
+function withTicketGatherer(g: WorkflowSpec): WorkflowSpec {
+  const nodes = { ...g.nodes } as Record<string, unknown>;
+  const ticketInput = { ticket: { from: 'context.ticket' } };
+  nodes.setValidating = { ...(nodes.setValidating as object), next: 'gatherTicket' };
+  nodes.gatherTicket = {
+    next: 'setTicket',
+    onError: 'continue',
+    step: 'gatherTicketContext',
+    type: 'step',
+  };
+  nodes.setTicket = {
+    next: 'validate',
+    type: 'set',
+    values: { 'context.ticket': { default: '', from: 'nodes.gatherTicket.output.text' } },
+  };
+  nodes.validate = { ...(nodes.validate as object), inputs: ticketInput };
+  nodes.implement = { ...(nodes.implement as object), inputs: ticketInput };
+  return { ...g, nodes } as WorkflowSpec;
+}
+
 function defaultEngineeringFailureLessons(g: WorkflowSpec): WorkflowSpec {
   const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
   const lesson = (outcome: string, next: string) => ({
@@ -679,11 +704,12 @@ const INTENDED_CHANGES: Record<
   },
   'default-engineering': {
     apply: (g: WorkflowSpec) =>
-      defaultEngineeringFailureLessons(removePassThrough(g, 'setCompleted')),
+      withTicketGatherer(defaultEngineeringFailureLessons(removePassThrough(g, 'setCompleted'))),
     reason:
       'the finalizer already writes COMPLETED on SUCCESS; a review or CI loop that runs out ' +
       'of attempts, or a merge wait that times out, stores a lesson about what happened ' +
-      'before the run ends, and every commitToMemory step names the outcome it records',
+      'before the run ends, and every commitToMemory step names the outcome it records; ' +
+      "the run's tracker ticket is gathered before validation and handed to validate and implement",
   },
   // The two templates that ended the run on the first CI failure now fix and retry like their
   // siblings, with CI ahead of the human / consensus gates (and the setCompleted removal above).

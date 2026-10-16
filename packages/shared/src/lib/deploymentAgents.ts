@@ -62,6 +62,8 @@ export const STEP_REQUIRED_AGENTS: Record<string, readonly string[] | null> = {
   executeGateFixImplementation: ['gateFixer', 'implementer', 'securityReview'],
   executeImplementation: ['implementer', 'securityReview'],
   executeReviewFixImplementation: ['reviewFixer', 'implementer', 'securityReview'],
+  // The `ticketContextGatherer` persona, on the `planner` model it inherits.
+  gatherTicketContext: ['ticketContextGatherer', 'planner'],
   planChannelTask: ['channelAssistant'],
   planDecomposition: ['decomposer', 'planner'],
   resolveMergeConflict: ['mergeConflictResolver', 'implementer', 'securityReview'],

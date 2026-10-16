@@ -9,6 +9,7 @@ import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { withHeartbeat } from '../lib/execUtils.js';
+import { resolveTicketContext } from '../lib/ticketFallback.js';
 import { runAgent } from './runAgent.js';
 
 // ── Zod schema for structured output ──
@@ -27,32 +28,41 @@ const ContextValidationSchema = z.object({
  * and the graceful-degradation behavior (an LLM failure yields empty criteria
  * so the workflow can still proceed).
  */
-export function buildValidationUserMessage(request: RunRequest): string {
+export function buildValidationUserMessage(request: RunRequest, ticketText = ''): string {
+  // The tracker ticket rides beside the request, so the criteria reflect what the ticket asks for
+  // and not only what the submitter typed.
+  const ticket = ticketText ? { ticket: ticketText } : {};
   // Generic workflows supply a structured payload; SWE workflows keep the
   // legacy scalar fields. Prefer the payload when present.
   if (request.payload != null) {
-    return JSON.stringify({ payload: request.payload });
+    return JSON.stringify({ payload: request.payload, ...ticket });
   }
   const legacy = request as RepoWorkRequest;
   return JSON.stringify({
     description: legacy.description,
     requestPayload: legacy.requestPayload,
     title: legacy.externalTicketId,
+    ...ticket,
   });
 }
 
 export async function validateContext(
   workRequest: RunRequest,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  ticketContext?: string
 ): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
   // Heartbeats while the whole activity runs: its LLM call can outlast the
   // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
-  return withHeartbeat('validateContext', validateContextImpl(workRequest, systemPromptOverride));
+  return withHeartbeat(
+    'validateContext',
+    validateContextImpl(workRequest, systemPromptOverride, ticketContext)
+  );
 }
 
 async function validateContextImpl(
   workRequest: RunRequest,
-  systemPromptOverride?: string
+  systemPromptOverride?: string,
+  ticketContext?: string
 ): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
   heartbeat('extracting success criteria');
 
@@ -66,7 +76,13 @@ async function validateContextImpl(
     ctx
   );
 
-  const userMessage = buildValidationUserMessage(workRequest);
+  const tracer = new AgentTracer();
+  const ticketText = await resolveTicketContext(ticketContext, {
+    ctx,
+    tracer,
+    workRequestId: workRequest.workRequestId,
+  });
+  const userMessage = buildValidationUserMessage(workRequest, ticketText);
 
   let successCriteria: string[] = [];
   try {
@@ -86,13 +102,15 @@ async function validateContextImpl(
     console.warn(
       `[validateContext] success-criteria extraction failed; continuing with none: ${error}`
     );
-    const tracer = new AgentTracer();
     tracer.addActivityEvent({
       error,
       name: 'context_validation.degraded',
       outputJson: { successCriteria: 0 },
     });
-    // Best-effort: the trace write must not turn a degraded run into a failed one.
+  }
+
+  // Best-effort: the trace write must not turn a degraded run into a failed one.
+  if (tracer.size > 0) {
     await persistActivityTrace(tracer, 'validateContext').catch(() => undefined);
   }
 

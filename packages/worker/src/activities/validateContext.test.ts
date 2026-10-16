@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { persistMock, runAgentMock, upsertMock } = vi.hoisted(() => ({
+const { persistMock, runAgentMock, settingMock, ticketMock, upsertMock } = vi.hoisted(() => ({
   persistMock: vi.fn(async (..._args: unknown[]) => {}),
   runAgentMock: vi.fn(),
+  settingMock: vi.fn(async (..._args: unknown[]) => false),
+  ticketMock: vi.fn(async (..._args: unknown[]) => ''),
   upsertMock: vi.fn(async () => ({ id: 'snap-1' })),
 }));
 
@@ -22,6 +24,11 @@ vi.mock('../lib/config/agentSpec.js', () => ({
 vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn(async () => ({})),
 }));
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/config')>()),
+  resolveSetting: (...args: unknown[]) => settingMock(...args),
+}));
+vi.mock('../lib/ticketContext.js', () => ({ loadTicketContext: ticketMock }));
 vi.mock('./runAgent.js', () => ({ runAgent: runAgentMock }));
 
 import { buildValidationUserMessage, validateContext } from './validateContext.js';
@@ -62,6 +69,34 @@ describe('buildValidationUserMessage', () => {
   });
 });
 
+describe('buildValidationUserMessage with a tracker ticket', () => {
+  const ticket = '\n\n## Issue tracker ticket\n<ticket>\nTitle: Health endpoint\n</ticket>';
+
+  it('adds the ticket beside the structured payload', () => {
+    const parsed = JSON.parse(
+      buildValidationUserMessage(
+        { payload: { title: 'T' }, workRequestId: 'wr-1' } as never,
+        ticket
+      )
+    );
+    expect(parsed).toEqual({ payload: { title: 'T' }, ticket });
+  });
+
+  it('adds the ticket to the legacy fields, and leaves them alone without one', () => {
+    const request = {
+      description: 'D',
+      externalTicketId: 'JIRA-1',
+      workRequestId: 'wr-1',
+    } as never;
+    expect(JSON.parse(buildValidationUserMessage(request, ticket))).toEqual({
+      description: 'D',
+      ticket,
+      title: 'JIRA-1',
+    });
+    expect(JSON.parse(buildValidationUserMessage(request, ''))).not.toHaveProperty('ticket');
+  });
+});
+
 describe('validateContext degradation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -95,5 +130,89 @@ describe('validateContext degradation', () => {
     const out = await validateContext({ description: 'x', workRequestId: 'wr-1' } as never);
     expect(out.successCriteria).toEqual(['a']);
     expect(persistMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('validateContext ticket context', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    settingMock.mockResolvedValue(false);
+    ticketMock.mockResolvedValue('');
+    runAgentMock.mockResolvedValue({ object: { successCriteria: ['a'] } });
+  });
+
+  const sentMessage = () => JSON.parse(runAgentMock.mock.calls[0]?.[1] as string);
+
+  describe('from an earlier step', () => {
+    it('gives the model the ticket the gatherer step produced, and fetches nothing itself', async () => {
+      settingMock.mockResolvedValue(true);
+      await validateContext(
+        { description: 'Some work', workRequestId: 'wr-9' } as never,
+        undefined,
+        '<ticket>Title: Health endpoint</ticket>'
+      );
+      expect(sentMessage().ticket).toContain('Health endpoint');
+      expect(ticketMock).not.toHaveBeenCalled();
+    });
+
+    it('takes an empty ticket from the step as "none", even with the fallback on', async () => {
+      settingMock.mockResolvedValue(true);
+      await validateContext({ description: 'x', workRequestId: 'wr-9' } as never, undefined, '');
+      expect(sentMessage()).not.toHaveProperty('ticket');
+      expect(ticketMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('when no step provided one', () => {
+    it('does not fetch on its own while the fallback setting is off', async () => {
+      await validateContext({ description: 'Some work', workRequestId: 'wr-9' } as never);
+      expect(settingMock).toHaveBeenCalledWith('workflow.ticketContextFallback', expect.anything());
+      expect(ticketMock).not.toHaveBeenCalled();
+      expect(sentMessage()).not.toHaveProperty('ticket');
+    });
+
+    it("fetches the run's ticket when the fallback is on", async () => {
+      settingMock.mockResolvedValue(true);
+      ticketMock.mockResolvedValue('<ticket>Title: Health endpoint</ticket>');
+      await validateContext({ description: 'Some work', workRequestId: 'wr-9' } as never);
+      expect(ticketMock).toHaveBeenCalledWith(expect.objectContaining({ workRequestId: 'wr-9' }));
+      expect(sentMessage().ticket).toContain('Health endpoint');
+    });
+
+    it('reads a failing setting as off, and still validates when the lookup itself fails', async () => {
+      settingMock.mockRejectedValue(new Error('db down'));
+      const off = await validateContext({ description: 'x', workRequestId: 'wr-9' } as never);
+      expect(off.successCriteria).toEqual(['a']);
+      expect(ticketMock).not.toHaveBeenCalled();
+
+      settingMock.mockResolvedValue(true);
+      ticketMock.mockRejectedValue(new Error('boom'));
+      const on = await validateContext({ description: 'x', workRequestId: 'wr-9' } as never);
+      expect(on.successCriteria).toEqual(['a']);
+    });
+
+    it('persists the ticket events it recorded, once, together with any degradation', async () => {
+      settingMock.mockResolvedValue(true);
+      ticketMock.mockImplementation(async (args: unknown) => {
+        (
+          args as { tracer: { addActivityEvent: (e: { name: string }) => void } }
+        ).tracer.addActivityEvent({
+          name: 'ticket.context_loaded',
+        });
+        return '<ticket>x</ticket>';
+      });
+      runAgentMock.mockRejectedValue(new Error('provider 529'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await validateContext({ description: 'x', workRequestId: 'wr-9' } as never);
+      expect(persistMock).toHaveBeenCalledTimes(1);
+      const [tracer] = persistMock.mock.calls[0] as [
+        { records: Array<{ toolName?: string | null }> },
+      ];
+      expect(tracer.records.map((r) => r.toolName)).toEqual([
+        'ticket.context_loaded',
+        'context_validation.degraded',
+      ]);
+      warn.mockRestore();
+    });
   });
 });

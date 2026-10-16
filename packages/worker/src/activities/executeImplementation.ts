@@ -40,6 +40,7 @@ import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
+import { resolveTicketContext } from '../lib/ticketFallback.js';
 import { requestHasTrackerTicket } from '../lib/trackerTicket.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import {
@@ -118,7 +119,13 @@ export async function executeImplementation(
   /** When set, the change may touch only these paths; anything else fails before the push. */
   allowedPaths?: string[],
   /** Further pre-push refusals (`config.refuseWorkflowChanges`). */
-  guardOptions?: PathGuardOptions
+  guardOptions?: PathGuardOptions,
+  /**
+   * The tracker ticket as an earlier step rendered it (`gatherTicketContext`'s `text`). An empty
+   * string means the run has none; unset, the ticket is fetched here only when
+   * `workflow.ticketContextFallback` is on.
+   */
+  ticketFromStep?: string
 ): Promise<CodeResult> {
   // First, before a clone or a container exists: an unpriced model under a USD
   // cap is refused here, not after the workspace has been built.
@@ -241,6 +248,15 @@ export async function executeImplementation(
       // Design context is optional — never block implementation on it.
     }
 
+    // The tracker ticket behind this run: the submitter's description is often a line or two, and the
+    // ticket holds the actual requirements. It arrives from the workflow's gatherer step, or, when
+    // the workflow has none and the fallback setting is on, is fetched here. Best-effort either way.
+    const ticketContext = await resolveTicketContext(ticketFromStep, {
+      ctx: activityCtx,
+      tracer,
+      workRequestId: request.workRequestId,
+    });
+
     // Cross-repo dependency context (repo dependency graph, P2): the active
     // 1-hop graph around this repo — upstream contracts to honour, downstream
     // consumers to avoid breaking. Best-effort exactly like design context; the
@@ -295,7 +311,11 @@ export async function executeImplementation(
     );
 
     const llmSystemPrompt =
-      turns.systemPrompt(systemPrompt) + lessonsContext + designContext + crossRepoContext;
+      turns.systemPrompt(systemPrompt) +
+      lessonsContext +
+      designContext +
+      ticketContext +
+      crossRepoContext;
 
     // TDD loop — bound by the DB-backed workflow default (falls back to 5).
     const maxTddIterations = workflowDefaults.maxTddIterations;

@@ -356,6 +356,10 @@ Encrypted fields use the same AES-256-GCM envelope as `ProviderCredential`, so
 
 **Tracker, knowledge-base, and Figma connectors** are fetched server-side at work-request submit
 time and seed `ContextSnapshot`. They are best-effort: a failure never blocks submission. The
+tracker ticket reaches the agents through the `gatherTicketContext` step of the workflow (a typed
+digest by the `ticketContextGatherer` persona), or, behind the off-by-default
+`workflow.ticketContextFallback` setting, a plain fetch in the validate and implement steps (see
+[`docs/agents.md` §3.8](./docs/agents.md#38-tracker-ticket-context-gatherticketcontext)). The
 tracker and knowledge-base configs carry an `allowPrivateNetwork` flag — an explicit opt-in
 required before the SSRF guard will accept a self-hosted base URL on a private address. The opt-in
 waives only that refusal (`checkProbeUrl` in `shared/lib/ssrfGuard.ts`): loopback, unspecified,
@@ -504,9 +508,9 @@ are added as data, not code. Seeded built-ins split by how they bind a model:
   dashboard's assistant panel, acting as the signed-in user. The rest exist because the
   platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
   `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product).
-- **Sub-role personas** (`inheritsModelFrom`), 12 of them: `securityReviewer` /
+- **Sub-role personas** (`inheritsModelFrom`), 13 of them: `securityReviewer` /
   `domainLogicReviewer` / `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` /
-  `prdDecomposer` / `ciTriager` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
+  `prdDecomposer` / `ciTriager` / `ticketContextGatherer` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
   `mergeConflictResolver` (← `implementer`); `lessonConsolidator` (← `commitToMemory`).
 
 Both lists are complete as written, and `yarn docs:check` fails if one stops being — see

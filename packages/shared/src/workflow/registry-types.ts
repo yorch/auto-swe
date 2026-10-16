@@ -54,6 +54,7 @@ export const BUILTIN_STEPS = [
   // Agent + control-flow + version-control steps
   'updateDomainState',
   'validateContext',
+  'gatherTicketContext',
   'executeImplementation',
   'runReviewNetwork',
   'executeReviewFixImplementation',

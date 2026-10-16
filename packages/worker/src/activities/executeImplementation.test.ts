@@ -8,30 +8,40 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * the `system` message the implementer agent is generated with.
  */
 
-const { checkoutMock, generateMock, loadMock, prismaMock, workspaceMock } = vi.hoisted(() => ({
-  checkoutMock: vi.fn(),
-  generateMock: vi.fn(),
-  loadMock: vi.fn(),
-  prismaMock: {
-    connection: { findUniqueOrThrow: vi.fn() },
-    contextSnapshot: { findUnique: vi.fn() },
-    workflowRun: { update: vi.fn() },
-  },
-  workspaceMock: {
-    destroy: vi.fn(async () => {}),
-    exec: vi.fn(async (_command: string, _options?: { timeoutMs?: number }) => ''),
-    execCapture: vi.fn(),
-    gitAuthed: vi.fn(async (_subcommand: string) => ''),
-  },
-}));
+const { checkoutMock, generateMock, loadMock, prismaMock, ticketMock, workspaceMock } = vi.hoisted(
+  () => ({
+    checkoutMock: vi.fn(),
+    generateMock: vi.fn(),
+    loadMock: vi.fn(),
+    prismaMock: {
+      connection: { findUniqueOrThrow: vi.fn() },
+      contextSnapshot: { findUnique: vi.fn() },
+      workflowRun: { update: vi.fn() },
+    },
+    ticketMock: vi.fn(async (..._args: unknown[]) => ''),
+    workspaceMock: {
+      destroy: vi.fn(async () => {}),
+      exec: vi.fn(async (_command: string, _options?: { timeoutMs?: number }) => ''),
+      execCapture: vi.fn(),
+      gitAuthed: vi.fn(async (_subcommand: string) => ''),
+    },
+  })
+);
+
+const fallbackSetting = vi.hoisted(() => ({ on: false }));
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: prismaMock }));
+
+vi.mock('../lib/ticketContext.js', () => ({ loadTicketContext: ticketMock }));
 
 // Which loop drives the implementer is a run-pinned setting; these tests are about
 // the Mastra loop, so the registry read answers without a database.
 vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/config')>()),
-  resolveSetting: vi.fn(async () => 'mastra'),
+  // `workflow.ticketContextFallback` is a boolean the tests flip; every other key is the runtime.
+  resolveSetting: vi.fn(async (key: string) =>
+    key === 'workflow.ticketContextFallback' ? fallbackSetting.on : 'mastra'
+  ),
 }));
 
 vi.mock('@auto-swe/shared/lib/skillScanner', () => ({
@@ -160,6 +170,8 @@ beforeEach(() => {
   vi.mocked(currentAttempt).mockReturnValue(1);
   vi.mocked(scanDiffForCodeIssues).mockResolvedValue([]);
   loadMock.mockResolvedValue('');
+  ticketMock.mockResolvedValue('');
+  fallbackSetting.on = false;
   checkoutMock.mockResolvedValue('');
   generateMock.mockResolvedValue({ text: 'done', usage: { inputTokens: 1, outputTokens: 1 } });
   prismaMock.connection.findUniqueOrThrow.mockResolvedValue({
@@ -237,6 +249,64 @@ describe('executeImplementation base branch', () => {
       executeImplementation({ ...REQUEST, payload: { baseBranch: '-x' } })
     ).rejects.toThrow(/not a valid branch name/);
     expect(vi.mocked(createWorkspace)).not.toHaveBeenCalled();
+  });
+});
+
+describe('executeImplementation tracker ticket context', () => {
+  const run = (ticket?: string) =>
+    executeImplementation(
+      { ...REQUEST, workRequestId: 'wr-1' } as RepoWorkRequest,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ticket
+    );
+
+  it('appends the ticket an earlier step produced to the implementer system prompt, and fetches nothing', async () => {
+    fallbackSetting.on = true;
+    await run('\n\n## Issue tracker ticket\n<ticket>\nTitle: Health endpoint\n</ticket>');
+    const prompt = systemPrompt();
+    expect(prompt.startsWith('BASE_PROMPT')).toBe(true);
+    expect(prompt).toContain('Title: Health endpoint');
+    expect(ticketMock).not.toHaveBeenCalled();
+  });
+
+  it('puts the ticket before the cross-repo block, so the dependency graph stays last', async () => {
+    loadMock.mockResolvedValue('[CROSS]');
+    await run('[TICKET]');
+    const prompt = systemPrompt();
+    expect(prompt.indexOf('[TICKET]')).toBeGreaterThan(-1);
+    expect(prompt.indexOf('[TICKET]')).toBeLessThan(prompt.indexOf('[CROSS]'));
+  });
+
+  it('takes an empty ticket from the step as "none", even with the fallback on', async () => {
+    fallbackSetting.on = true;
+    await run('');
+    expect(systemPrompt()).toBe('BASE_PROMPT');
+    expect(ticketMock).not.toHaveBeenCalled();
+  });
+
+  it('does not fetch on its own while the fallback setting is off', async () => {
+    await run();
+    expect(ticketMock).not.toHaveBeenCalled();
+    expect(systemPrompt()).toBe('BASE_PROMPT');
+  });
+
+  it("fetches the run's ticket when no step provided one and the fallback is on", async () => {
+    fallbackSetting.on = true;
+    ticketMock.mockResolvedValue('[TICKET]');
+    await run();
+    expect(ticketMock).toHaveBeenCalledWith(expect.objectContaining({ workRequestId: 'wr-1' }));
+    expect(systemPrompt()).toContain('[TICKET]');
+  });
+
+  it('does not stop the implementation when the fallback lookup rejects', async () => {
+    fallbackSetting.on = true;
+    ticketMock.mockRejectedValue(new Error('boom'));
+    await run();
+    expect(systemPrompt()).toBe('BASE_PROMPT');
   });
 });
 
