@@ -19,8 +19,14 @@ export interface Lesson {
   lessonSummary: string;
   rationale: string | null;
   failureType: string | null;
+  /** The writer's own grade of its evidence, 0–1; null where no model judged it. */
+  confidence: number | null;
   consolidatedAt: string | null;
   createdAt: string;
+  /** `outcome` (the run's end, written by code) and `evidence`, among others. */
+  metadata: { outcome?: unknown } | null;
+  /** The run the lesson was written from, when one was recorded. */
+  workflowRunId: string | null;
   /**
    * Null once the repository is deleted: the lesson's `repoId` is set null with
    * it, and the lesson stays in the list until an admin deletes it.
@@ -29,6 +35,7 @@ export interface Lesson {
   workflow: { id: string; temporalWorkflowId: string; currentStatus: string } | null;
 }
 
+/** Every team's repositories, so the gateway answers it to platform ADMINs only. */
 export function useAdminLessonStats() {
   return useQuery({
     queryFn: () =>

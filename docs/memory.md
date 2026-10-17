@@ -166,7 +166,11 @@ refused for a match and a drop are security events on `/admin/security` — `MEM
 
 ## 6. Administration
 
-`/admin/lessons` lists, searches and deletes lessons and starts consolidation. Channel memory is
+`/admin/lessons` lists and searches lessons for every role. An engineer or lead sees the lessons of
+the repositories they can reach — the owning team's or a team it is shared with, under the access
+gate — each with its failure type, the run's outcome, a `Low confidence` label below 0.5, and a link
+to the run it was written from. Platform ADMINs see every repository's, and only they delete lessons,
+start consolidation and see the per-repository counts. Channel memory is
 edited and deleted per channel ([channel-assistant.md §6](./channel-assistant.md#6-memory)).
 
 **Deleting forgets, through every copy.** Both delete routes run `forgetMemoryItems`
@@ -200,6 +204,9 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
 
 ## Limitations
 
+- **Only a platform ADMIN can remove a lesson.** Engineers and leads read their repositories'
+  lessons, but a lead who finds a wrong one on their own team's repository has no control to delete
+  it or to flag it for review; they ask an administrator.
 - **An incomplete scan refuses writes but not recall.** While an `INJECTION` scanner pattern is
   quarantined (up to ten minutes in that process), every lesson, channel summary and passively
   ingested fact written in that process is refused, and consolidation leaves its clusters as they

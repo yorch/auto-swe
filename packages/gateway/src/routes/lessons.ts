@@ -88,6 +88,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
             fastify.prisma.memoryItem.findMany({
               orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
               select: {
+                confidence: true,
                 consolidatedAt: true,
                 createdAt: true,
                 failureType: true,
@@ -97,6 +98,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
                 rationale: true,
                 repository: { select: { id: true, organizationName: true, repoName: true } },
                 workflow: { select: { currentStatus: true, id: true, temporalWorkflowId: true } },
+                workflowRunId: true,
               },
               skip: offset,
               take: limit,

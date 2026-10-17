@@ -29,6 +29,7 @@ function newMockPrisma() {
       findUnique: vi.fn().mockResolvedValue(null),
       update: vi.fn().mockResolvedValue({}),
     },
+    channelOpenItem: { findMany: vi.fn().mockResolvedValue([]) },
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     memoryItem: {
       count: vi.fn().mockResolvedValue(0),
@@ -1266,6 +1267,86 @@ describe('POST /memory/erase-user', () => {
       url: URL,
     });
     expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+});
+
+describe('private channel content', () => {
+  const CONTENT_PATHS = ['memory', 'open-items', 'audit'] as const;
+  const contentReads = (mockPrisma: ReturnType<typeof newMockPrisma>) => [
+    mockPrisma.memoryItem.findMany,
+    mockPrisma.channelOpenItem.findMany,
+    mockPrisma.workflowRun.findMany,
+  ];
+
+  it.each(CONTENT_PATHS)('refuses a team member the %s of a private channel', async (path) => {
+    const { app, mockPrisma } = await buildApp('ENGINEER');
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      isPrivate: true,
+      teamId: TEAM,
+    });
+    mockPrisma.teamMembership.findUnique.mockResolvedValue({ teamId: TEAM, userId: 'user-1' });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/${path}`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.payload).error.code).toBe('PRIVATE_CHANNEL');
+    for (const read of contentReads(mockPrisma)) {
+      expect(read).not.toHaveBeenCalled();
+    }
+    await app.close();
+  });
+
+  it.each(CONTENT_PATHS)('serves a team member the %s of a public channel', async (path) => {
+    const { app, mockPrisma } = await buildApp('ENGINEER');
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      isPrivate: false,
+      teamId: TEAM,
+    });
+    mockPrisma.teamMembership.findUnique.mockResolvedValue({ teamId: TEAM, userId: 'user-1' });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/${path}`,
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it.each(CONTENT_PATHS)('serves an admin the %s of a private channel', async (path) => {
+    const { app, mockPrisma } = await buildApp('ADMIN');
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      isPrivate: true,
+      teamId: TEAM,
+    });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/${path}`,
+    });
+    expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it('still 404s a non-member before saying anything about privacy', async () => {
+    const { app, mockPrisma } = await buildApp('ENGINEER');
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      isPrivate: true,
+      teamId: TEAM,
+    });
+    mockPrisma.teamMembership.findUnique.mockResolvedValue(null);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/memory`,
+    });
+    expect(res.statusCode).toBe(404);
     await app.close();
   });
 });

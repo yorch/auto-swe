@@ -200,7 +200,7 @@ const ADMIN_PAGES: NavItem[] = [
     href: '/admin/lessons',
     icon: 'memory',
     label: 'Lessons',
-    minRole: 'ADMIN',
+    minRole: 'ENGINEER',
     section: 'Knowledge',
   },
   {

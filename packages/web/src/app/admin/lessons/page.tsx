@@ -1,5 +1,6 @@
 'use client';
 
+import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
@@ -17,13 +18,17 @@ import { Stat } from '@/components/ui/Stat';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { triggerConsolidationNow, useConsolidationConfig } from '@/hooks/useAdminConfig';
+import { useHasRole } from '@/hooks/useHasRole';
 import {
+  type Lesson,
   type LessonRepoStats,
   triggerRepoConsolidation,
   useAdminLessonStats,
   useDeleteLesson,
   useLessons,
 } from '@/hooks/useLessons';
+import { useRepositories } from '@/hooks/useRepositories';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 const PAGE_SIZE = 20;
@@ -41,6 +46,15 @@ function Ago({ iso }: { iso: string }) {
 function humanizeEnum(value: string): string {
   const text = value.replace(/_/g, ' ').toLowerCase();
   return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** Below this the lesson writer judged its evidence thin; recall labels it the same way. */
+const LOW_CONFIDENCE = 0.5;
+
+/** The run outcome code recorded on the lesson, when it is one. */
+function lessonOutcome(lesson: Lesson): string | null {
+  const outcome = lesson.metadata?.outcome;
+  return typeof outcome === 'string' && outcome.length > 0 ? outcome : null;
 }
 
 function RepoStatsRow({
@@ -82,15 +96,19 @@ function RepoStatsRow({
   );
 }
 
-export default function GovernLessonsPage() {
-  const {
-    data: stats,
-    isLoading: statsLoading,
-    isError: statsIsError,
-    isFetching: statsIsFetching,
-    error: statsError,
-    refetch: refetchStats,
-  } = useAdminLessonStats();
+/**
+ * Lessons for every signed-in role. Engineers read the lessons of the repositories they
+ * can reach — the gateway scopes the list — because those lessons steer their runs;
+ * consolidation, the cross-team stats and deleting stay with platform ADMINs.
+ */
+export default function LessonsPage() {
+  const isAdmin = useHasRole('ADMIN');
+  const queryClient = useQueryClient();
+  // The filter's choices: the caller's own repositories, which is every one for an admin.
+  const { data: repositories } = useRepositories({ limit: 100 });
+  const repoOptions = (repositories ?? []).filter(
+    (r) => r.type === 'git_repo' && r.organizationName && r.repoName
+  );
   const [repoFilter, setRepoFilter] = useState('');
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
@@ -117,7 +135,6 @@ export default function GovernLessonsPage() {
     q: query || undefined,
     repoId: repoFilter || undefined,
   });
-  const { data: consolidation } = useConsolidationConfig();
   const deleteLesson = useDeleteLesson();
 
   const [deleting, setDeleting] = useState<{ id: string; summary: string } | null>(null);
@@ -140,36 +157,259 @@ export default function GovernLessonsPage() {
         `Consolidation started for ${target.organizationName}/${target.repoName}. Counts update as it finishes.`
       );
     }
-    void refetchStats();
+    void queryClient.invalidateQueries({ queryKey: ['admin-lesson-stats'] });
   };
-
-  const totalActive = stats?.reduce((sum, r) => sum + r.activeCount, 0) ?? 0;
-  const totalConsolidated = stats?.reduce((sum, r) => sum + r.consolidatedCount, 0) ?? 0;
 
   return (
     <div className="space-y-6">
       <PageHeader
         actions={
-          <Button
-            disabled={!consolidation?.schedule.exists}
-            onClick={() => setConsolidating('all')}
-            title={
-              consolidation?.schedule.exists
-                ? undefined
-                : 'Set a consolidation schedule in Workflow defaults first'
-            }
-          >
-            <Icon name="refresh" size={14} />
-            Consolidate all now
-          </Button>
+          isAdmin ? <ConsolidateAllButton onAsk={() => setConsolidating('all')} /> : undefined
         }
-        help={<p>Consolidation merges semantically similar lessons to reduce redundancy.</p>}
+        help={
+          isAdmin ? (
+            <p>Consolidation merges semantically similar lessons to reduce redundancy.</p>
+          ) : (
+            <p>
+              These are the lessons of the repositories you can reach. Later runs on a repository
+              recall its lessons as context. Administrators consolidate and remove lessons.
+            </p>
+          )
+        }
+        learnMore={{ ...HELP_LINKS.conceptsLessons, label: 'What is a lesson?' }}
         subtitle="Agent lessons captured from completed workflows."
         title="Lessons"
       />
 
       {triggerNotice && <Alert variant="success">{triggerNotice}</Alert>}
 
+      {isAdmin && <LessonAdministration onAsk={setConsolidating} />}
+
+      {/* Recent active lessons */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Active lessons</CardTitle>
+        </CardHeader>
+        <Toolbar
+          end={
+            lessonsMeta ? (
+              <span className="text-xs text-paper-500 tabular-nums">
+                {lessonsMeta.total} lesson{lessonsMeta.total === 1 ? '' : 's'}
+              </span>
+            ) : undefined
+          }
+        >
+          <SearchInput
+            className="sm:w-72"
+            label="Search lessons"
+            onChange={setSearch}
+            placeholder="Words in a lesson or its rationale"
+            value={search}
+          />
+          <Select
+            appearance="pill"
+            aria-label="Repository"
+            onChange={(v) => {
+              setRepoFilter(v);
+              setOffset(0);
+            }}
+            options={[
+              { label: 'All repositories', value: '' },
+              ...repoOptions.map((r) => ({
+                label: `${r.organizationName}/${r.repoName}`,
+                value: r.id,
+              })),
+            ]}
+            value={repoFilter}
+          />
+        </Toolbar>
+
+        <QueryBoundary
+          error={lessonsError}
+          isError={lessonsIsError}
+          isFetching={lessonsIsFetching}
+          isLoading={lessonsLoading}
+          label="lessons"
+          onRetry={() => void refetchLessons()}
+        >
+          {!lessons || lessons.length === 0 ? (
+            query || repoFilter ? (
+              <EmptyState
+                action={
+                  <Button
+                    onClick={() => {
+                      setSearch('');
+                      setQuery('');
+                      setRepoFilter('');
+                      setOffset(0);
+                    }}
+                    size="sm"
+                  >
+                    Clear filters
+                  </Button>
+                }
+                icon="search"
+                title="No lessons match those filters"
+              />
+            ) : (
+              <EmptyState
+                hint={
+                  isAdmin
+                    ? 'Agents record a lesson when a workflow completes after a failure or a review round. They are reused as context on later runs.'
+                    : 'Agents record a lesson when a workflow on one of your repositories completes after a failure or a review round. They are reused as context on later runs.'
+                }
+                icon="memory"
+                title="No active lessons yet"
+              />
+            )
+          ) : (
+            <ul className="divide-y divide-ink-600">
+              {lessons.map((lesson) => (
+                <li className="group flex items-start gap-4 py-4" key={lesson.id}>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm leading-relaxed text-paper-100">{lesson.lessonSummary}</p>
+                    {lesson.rationale && (
+                      <p className="mt-1 text-sm leading-relaxed text-paper-400">
+                        {lesson.rationale}
+                      </p>
+                    )}
+                    <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-paper-500">
+                      <span className="font-mono">
+                        {lesson.repository
+                          ? `${lesson.repository.organizationName}/${lesson.repository.repoName}`
+                          : 'Deleted repository'}
+                      </span>
+                      {lesson.failureType && (
+                        <Badge tone="muted" variant="outline">
+                          {humanizeEnum(lesson.failureType)}
+                        </Badge>
+                      )}
+                      {lessonOutcome(lesson) && (
+                        <Badge tone="muted" variant="outline">
+                          {humanizeEnum(lessonOutcome(lesson) as string)}
+                        </Badge>
+                      )}
+                      {lesson.confidence !== null && lesson.confidence < LOW_CONFIDENCE && (
+                        <Badge
+                          title="The agent that wrote this lesson judged its evidence thin"
+                          tone="warning"
+                          variant="outline"
+                        >
+                          Low confidence
+                        </Badge>
+                      )}
+                      <span aria-hidden>·</span>
+                      <Ago iso={lesson.createdAt} />
+                      {lesson.workflowRunId && (
+                        <>
+                          <span aria-hidden>·</span>
+                          <Link
+                            className="text-paper-300 underline-offset-2 hover:underline focus-visible:underline"
+                            href={`/runs/${lesson.workflowRunId}`}
+                          >
+                            Source run
+                          </Link>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {isAdmin && (
+                    <Button
+                      aria-label="Delete lesson"
+                      className="shrink-0 px-2 text-paper-500 hover:text-danger-400"
+                      onClick={() => setDeleting({ id: lesson.id, summary: lesson.lessonSummary })}
+                      size="sm"
+                      title="Delete lesson"
+                      variant="ghost"
+                    >
+                      <Icon name="trash" size={14} />
+                    </Button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {lessonsMeta && lessonsMeta.total > PAGE_SIZE && (
+            <div className="mt-4">
+              <Pagination
+                hasNext={offset + PAGE_SIZE < lessonsMeta.total}
+                hasPrev={offset > 0}
+                onNext={() => setOffset(offset + PAGE_SIZE)}
+                onPrev={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
+                rangeEnd={Math.min(offset + PAGE_SIZE, lessonsMeta.total)}
+                rangeStart={offset + 1}
+                total={lessonsMeta.total}
+              />
+            </div>
+          )}
+        </QueryBoundary>
+      </Card>
+
+      <ConfirmModal
+        confirmLabel="Run consolidation"
+        message={
+          consolidating === 'all'
+            ? 'Merge semantically similar lessons across every repository now? Merged lessons are marked consolidated and stop appearing in the active list. This can take a few minutes.'
+            : `Merge semantically similar lessons for ${consolidating?.organizationName}/${consolidating?.repoName} now? Merged lessons are marked consolidated and stop appearing in the active list.`
+        }
+        onClose={() => setConsolidating(null)}
+        onConfirm={runConsolidation}
+        open={consolidating !== null}
+        title="Run consolidation"
+      />
+
+      <ConfirmModal
+        confirmLabel="Delete"
+        dangerous
+        message={`Delete "${deleting?.summary}"? This cannot be undone.`}
+        onClose={() => setDeleting(null)}
+        onConfirm={async () => {
+          if (deleting) {
+            await deleteLesson.mutateAsync(deleting.id);
+          }
+        }}
+        open={deleting !== null}
+        title="Delete lesson"
+      />
+    </div>
+  );
+}
+
+/** Starts consolidation for every repository; needs the schedule that defines its settings. */
+function ConsolidateAllButton({ onAsk }: { onAsk: () => void }) {
+  const { data: consolidation } = useConsolidationConfig();
+  return (
+    <Button
+      disabled={!consolidation?.schedule.exists}
+      onClick={onAsk}
+      title={
+        consolidation?.schedule.exists
+          ? undefined
+          : 'Set a consolidation schedule in Workflow defaults first'
+      }
+    >
+      <Icon name="refresh" size={14} />
+      Consolidate all now
+    </Button>
+  );
+}
+
+/** The platform-wide memory health view: totals, the schedule, and per-repository counts. */
+function LessonAdministration({ onAsk }: { onAsk: (repo: LessonRepoStats) => void }) {
+  const {
+    data: stats,
+    isLoading: statsLoading,
+    isError: statsIsError,
+    isFetching: statsIsFetching,
+    error: statsError,
+    refetch: refetchStats,
+  } = useAdminLessonStats();
+  const { data: consolidation } = useConsolidationConfig();
+  const totalActive = stats?.reduce((sum, r) => sum + r.activeCount, 0) ?? 0;
+  const totalConsolidated = stats?.reduce((sum, r) => sum + r.consolidatedCount, 0) ?? 0;
+
+  return (
+    <>
       {/* Summary stats */}
       <Card className="p-5 sm:p-6">
         <h2 className="sr-only">Summary</h2>
@@ -250,7 +490,7 @@ export default function GovernLessonsPage() {
                 </THead>
                 <tbody>
                   {stats.map((repo) => (
-                    <RepoStatsRow key={repo.id} onAsk={setConsolidating} repo={repo} />
+                    <RepoStatsRow key={repo.id} onAsk={onAsk} repo={repo} />
                   ))}
                 </tbody>
               </Table>
@@ -258,162 +498,6 @@ export default function GovernLessonsPage() {
           )}
         </QueryBoundary>
       </Card>
-
-      {/* Recent active lessons */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Active lessons</CardTitle>
-        </CardHeader>
-        <Toolbar
-          end={
-            lessonsMeta ? (
-              <span className="text-xs text-paper-500 tabular-nums">
-                {lessonsMeta.total} lesson{lessonsMeta.total === 1 ? '' : 's'}
-              </span>
-            ) : undefined
-          }
-        >
-          <SearchInput
-            className="sm:w-72"
-            label="Search lessons"
-            onChange={setSearch}
-            placeholder="Words in a lesson or its rationale"
-            value={search}
-          />
-          <Select
-            appearance="pill"
-            aria-label="Repository"
-            onChange={(v) => {
-              setRepoFilter(v);
-              setOffset(0);
-            }}
-            options={[
-              { label: 'All repositories', value: '' },
-              ...(stats ?? []).map((r) => ({
-                label: `${r.organizationName}/${r.repoName}`,
-                value: r.id,
-              })),
-            ]}
-            value={repoFilter}
-          />
-        </Toolbar>
-
-        <QueryBoundary
-          error={lessonsError}
-          isError={lessonsIsError}
-          isFetching={lessonsIsFetching}
-          isLoading={lessonsLoading}
-          label="lessons"
-          onRetry={() => void refetchLessons()}
-        >
-          {!lessons || lessons.length === 0 ? (
-            query || repoFilter ? (
-              <EmptyState
-                action={
-                  <Button
-                    onClick={() => {
-                      setSearch('');
-                      setQuery('');
-                      setRepoFilter('');
-                      setOffset(0);
-                    }}
-                    size="sm"
-                  >
-                    Clear filters
-                  </Button>
-                }
-                icon="search"
-                title="No lessons match those filters"
-              />
-            ) : (
-              <EmptyState
-                hint="Agents record a lesson when a workflow completes after a failure or a review round. They are reused as context on later runs."
-                icon="memory"
-                title="No active lessons yet"
-              />
-            )
-          ) : (
-            <ul className="divide-y divide-ink-600">
-              {lessons.map((lesson) => (
-                <li className="group flex items-start gap-4 py-4" key={lesson.id}>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm leading-relaxed text-paper-100">{lesson.lessonSummary}</p>
-                    {lesson.rationale && (
-                      <p className="mt-1 text-sm leading-relaxed text-paper-400">
-                        {lesson.rationale}
-                      </p>
-                    )}
-                    <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-paper-500">
-                      <span className="font-mono">
-                        {lesson.repository
-                          ? `${lesson.repository.organizationName}/${lesson.repository.repoName}`
-                          : 'Deleted repository'}
-                      </span>
-                      {lesson.failureType && (
-                        <Badge tone="muted" variant="outline">
-                          {humanizeEnum(lesson.failureType)}
-                        </Badge>
-                      )}
-                      <span aria-hidden>·</span>
-                      <Ago iso={lesson.createdAt} />
-                    </div>
-                  </div>
-                  <Button
-                    aria-label="Delete lesson"
-                    className="shrink-0 px-2 text-paper-500 hover:text-danger-400"
-                    onClick={() => setDeleting({ id: lesson.id, summary: lesson.lessonSummary })}
-                    size="sm"
-                    title="Delete lesson"
-                    variant="ghost"
-                  >
-                    <Icon name="trash" size={14} />
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {lessonsMeta && lessonsMeta.total > PAGE_SIZE && (
-            <div className="mt-4">
-              <Pagination
-                hasNext={offset + PAGE_SIZE < lessonsMeta.total}
-                hasPrev={offset > 0}
-                onNext={() => setOffset(offset + PAGE_SIZE)}
-                onPrev={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-                rangeEnd={Math.min(offset + PAGE_SIZE, lessonsMeta.total)}
-                rangeStart={offset + 1}
-                total={lessonsMeta.total}
-              />
-            </div>
-          )}
-        </QueryBoundary>
-      </Card>
-
-      <ConfirmModal
-        confirmLabel="Run consolidation"
-        message={
-          consolidating === 'all'
-            ? 'Merge semantically similar lessons across every repository now? Merged lessons are marked consolidated and stop appearing in the active list. This can take a few minutes.'
-            : `Merge semantically similar lessons for ${consolidating?.organizationName}/${consolidating?.repoName} now? Merged lessons are marked consolidated and stop appearing in the active list.`
-        }
-        onClose={() => setConsolidating(null)}
-        onConfirm={runConsolidation}
-        open={consolidating !== null}
-        title="Run consolidation"
-      />
-
-      <ConfirmModal
-        confirmLabel="Delete"
-        dangerous
-        message={`Delete "${deleting?.summary}"? This cannot be undone.`}
-        onClose={() => setDeleting(null)}
-        onConfirm={async () => {
-          if (deleting) {
-            await deleteLesson.mutateAsync(deleting.id);
-          }
-        }}
-        open={deleting !== null}
-        title="Delete lesson"
-      />
-    </div>
+    </>
   );
 }
