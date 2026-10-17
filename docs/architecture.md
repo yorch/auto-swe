@@ -793,7 +793,7 @@ erDiagram
 | Channel assistant | `SlackWorkspace`, `SlackChannel`, `ChannelThreadSession`, `ChannelOpenItem` | See [channel-assistant.md](./channel-assistant.md) |
 | Evals | `EvalDataset`, `EvalCase`, `EvalRun`, `EvalRubric` | See [evals.md](./evals.md) |
 | Distribution | `InstalledBundle` | Installed bundles as a managed base layer |
-| Scanners | `ScannerPattern` | DB-backed regex patterns across five scanner types |
+| Scanners | `ScannerPattern` | DB-backed regex patterns across six pattern types |
 
 **Billing idempotency.** `finalizeWorkflowRun` performs the run-denormalize update and the
 `OrgMonthlyUsage` increment-upsert in one transaction, and only the write that sets `endedAt`
