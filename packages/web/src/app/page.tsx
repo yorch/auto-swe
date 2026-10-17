@@ -370,7 +370,7 @@ export default function HomePage() {
         </div>
       </section>
       <WaitingOnYou />
-      <div className="grid gap-8 xl:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="grid gap-8 2xl:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="min-w-0 space-y-8">
           {BUCKETS.map((bucket) => (
             <WorkSection bucket={bucket} key={bucket.id} scope={scope} />
