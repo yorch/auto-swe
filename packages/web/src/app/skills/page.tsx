@@ -11,6 +11,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FieldWrapper } from '@/components/ui/FieldWrapper';
 import { HelpTip } from '@/components/ui/HelpTip';
@@ -21,13 +22,14 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { useHasRole } from '@/hooks/useHasRole';
 import {
   type Skill,
+  type SkillEffectiveness,
   useCreateSkill,
   useDeleteSkill,
   useSkillEffectiveness,
@@ -433,7 +435,44 @@ function SkillFormModal({ open, onClose }: { open: boolean; onClose: () => void 
 
 // ── Effectiveness Card ────────────────────────────────────────────────────────
 
+type EffectivenessRow = SkillEffectiveness['perSkill'][number];
+
+const EFFECTIVENESS_COLUMNS: DataTableColumn<EffectivenessRow>[] = [
+  { cell: (s) => s.name, header: 'Skill', id: 'skill', primary: true, sortable: true },
+  {
+    align: 'right',
+    cell: (s) => <span className="tabular-nums text-paper-300">{s.runs}</span>,
+    header: 'Runs',
+    id: 'runs',
+    sortable: true,
+  },
+  {
+    align: 'right',
+    cell: (s) => (
+      <span className="tabular-nums text-paper-300">{formatPercent(s.successRate)}</span>
+    ),
+    header: 'Success rate',
+    id: 'success-rate',
+    sortable: true,
+  },
+  {
+    align: 'right',
+    cell: (s) => <span className="tabular-nums text-paper-300">{formatCost(s.avgCostUsd)}</span>,
+    header: 'Avg cost',
+    id: 'avg-cost',
+    sortable: true,
+  },
+];
+
+const EFFECTIVENESS_SORT = {
+  'avg-cost': (s: EffectivenessRow) => s.avgCostUsd,
+  runs: (s: EffectivenessRow) => s.runs,
+  skill: (s: EffectivenessRow) => s.name,
+  'success-rate': (s: EffectivenessRow) => s.successRate,
+};
+
 function EffectivenessCard() {
+  const { onSortChange, sort, sortRows } = useDataTableSort(EFFECTIVENESS_SORT);
   const {
     data,
     isLoading,
@@ -474,41 +513,23 @@ function EffectivenessCard() {
             title="No runs with active skills in this window yet"
           />
         ) : (
-          <Table>
-            <THead>
-              <Th className="pl-0" variant="plain">
-                Skill
-              </Th>
-              <Th align="right" variant="plain">
-                Runs
-              </Th>
-              <Th align="right" variant="plain">
-                Success rate
-              </Th>
-              <Th align="right" className="pr-0" variant="plain">
-                Avg cost
-              </Th>
-            </THead>
-            <tbody>
-              {data.perSkill.map((s) => (
-                <TRow key={s.name}>
-                  <Td className="py-2 pr-4 font-medium text-paper-100">{s.name}</Td>
-                  <Td className="px-4 py-2 text-right tabular-nums text-paper-300">{s.runs}</Td>
-                  <Td className="px-4 py-2 text-right tabular-nums text-paper-300">
-                    {formatPercent(s.successRate)}
-                  </Td>
-                  <Td className="py-2 pl-4 text-right tabular-nums text-paper-300">
-                    {formatCost(s.avgCostUsd)}
-                  </Td>
-                </TRow>
-              ))}
-            </tbody>
-          </Table>
+          <DataTable
+            columns={EFFECTIVENESS_COLUMNS}
+            getRowId={(s) => s.name}
+            onSortChange={onSortChange}
+            rows={sortRows(data.perSkill)}
+            sort={sort}
+          />
         )}
       </QueryBoundary>
     </Card>
   );
 }
+
+const SKILL_SORT = {
+  skill: (skill: Skill) => visibleText(skill.name),
+  'used-by': (skill: Skill) => skill.usedByCount,
+};
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 
@@ -563,6 +584,7 @@ export default function StudioSkillsPage() {
       (!q || `${sk.name} ${sk.description ?? ''}`.toLowerCase().includes(q))
   );
   const filtering = Boolean(q) || filter !== 'all';
+  const { onSortChange, sort, sortRows } = useDataTableSort(SKILL_SORT);
 
   // A skill that agents use is not switched off without a confirmation.
   const [deactivateTarget, setDeactivateTarget] = useState<Skill | null>(null);
@@ -701,120 +723,133 @@ export default function StudioSkillsPage() {
                   title="No skills match"
                 />
               ) : (
-                <Table stacked>
-                  <THead>
-                    <Th className="pl-0" variant="plain">
-                      Skill
-                    </Th>
-                    <Th variant="plain">Source</Th>
-                    <Th variant="plain">Status</Th>
-                    <Th align="right" variant="plain">
-                      Used by
-                    </Th>
-                    <Th variant="plain">Active</Th>
-                    <Th className="pr-0" variant="plain">
-                      <span className="sr-only">Actions</span>
-                    </Th>
-                  </THead>
-                  <tbody>
-                    {visibleSkills.map((skill) => (
-                      <TRow hover key={skill.id}>
-                        <Td className="py-2.5 pr-4 sm:max-w-md" primary>
-                          <button
-                            className={cn(
-                              'max-w-full truncate rounded-sm text-left font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
-                              FOCUS_RING
-                            )}
-                            onClick={() => setViewTarget(skill)}
-                            type="button"
-                          >
-                            {visibleText(skill.name)}
-                          </button>
-                          <div className="mt-0.5 line-clamp-2 text-xs text-paper-500 sm:line-clamp-1">
-                            {visibleOrNull(skill.description) ?? 'No description'}
-                          </div>
-                        </Td>
-                        <Td className="px-4 py-2.5" label="Source">
-                          <div className="flex flex-wrap items-center gap-1 max-sm:justify-end">
-                            {skill.isBuiltIn && <Badge tone="neutral">Built-in</Badge>}
-                            {skill.origin && <OriginBadge origin={skill.origin} />}
-                            <ExternalBadge source={skill.externalSource} />
-                            {!(skill.isBuiltIn || skill.origin || skill.externalSource) && (
-                              <span className="text-xs text-paper-400">Custom</span>
-                            )}
-                          </div>
-                        </Td>
-                        <Td className="px-4 py-2.5" label="Status">
-                          <div className="flex flex-wrap items-center gap-1 max-sm:justify-end">
-                            {skill.isVerified && (
-                              <Badge dot tone="success">
-                                Verified
-                              </Badge>
-                            )}
-                            {!skill.isVerified && !skill.isBuiltIn && (
-                              <Badge dot tone="warning">
-                                Unverified
-                              </Badge>
-                            )}
-                            {!skill.isBuiltIn && (
-                              <Badge className="tabular-nums" tone="neutral" variant="outline">
-                                Rev {skill.currentRevision}
-                              </Badge>
-                            )}
-                          </div>
-                        </Td>
-                        <Td
-                          align="right"
-                          className="px-4 py-2.5 text-paper-300 tabular-nums"
-                          label="Used by"
+                <DataTable
+                  actions={(skill) => (
+                    <>
+                      <Button
+                        aria-label={`Open ${visibleText(skill.name)}`}
+                        onClick={() => setViewTarget(skill)}
+                        size="sm"
+                      >
+                        Open
+                      </Button>
+                      {!skill.isBuiltIn && (
+                        <ActionMenu
+                          items={[
+                            {
+                              icon: 'trash',
+                              id: 'delete',
+                              label: 'Delete skill',
+                              onAction: () => setDeleteTarget(skill),
+                              tone: 'danger',
+                            },
+                          ]}
+                          label={`More actions for ${visibleText(skill.name)}`}
+                        />
+                      )}
+                    </>
+                  )}
+                  columns={[
+                    {
+                      // The skill opens in a modal, not on a page of its own, so the title is a button.
+                      cell: (skill) => (
+                        <button
+                          className={cn(
+                            'max-w-full truncate rounded-sm text-left font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
+                            FOCUS_RING
+                          )}
+                          onClick={() => setViewTarget(skill)}
+                          type="button"
                         >
-                          <span
-                            title={skill.usedBy.length > 0 ? skill.usedBy.join(', ') : 'No agents'}
-                          >
-                            {skill.usedByCount}
-                            <span className="text-paper-500">
-                              {' '}
-                              {skill.usedByCount === 1 ? 'agent' : 'agents'}
-                            </span>
+                          {visibleText(skill.name)}
+                        </button>
+                      ),
+                      header: 'Skill',
+                      id: 'skill',
+                      primary: true,
+                      secondary: (skill) => (
+                        <span className="line-clamp-2 sm:line-clamp-1">
+                          {visibleOrNull(skill.description) ?? 'No description'}
+                        </span>
+                      ),
+                      sortable: true,
+                      width: 'sm:max-w-md',
+                    },
+                    {
+                      cell: (skill) => (
+                        <div className="flex flex-wrap items-center gap-1 max-sm:justify-end">
+                          {skill.isBuiltIn && <Badge tone="neutral">Built-in</Badge>}
+                          {skill.origin && <OriginBadge origin={skill.origin} />}
+                          <ExternalBadge source={skill.externalSource} />
+                          {!(skill.isBuiltIn || skill.origin || skill.externalSource) && (
+                            <span className="text-xs text-paper-400">Custom</span>
+                          )}
+                        </div>
+                      ),
+                      header: 'Source',
+                      id: 'source',
+                    },
+                    {
+                      cell: (skill) => (
+                        <div className="flex flex-wrap items-center gap-1 max-sm:justify-end">
+                          {skill.isVerified && (
+                            <Badge dot tone="success">
+                              Verified
+                            </Badge>
+                          )}
+                          {!skill.isVerified && !skill.isBuiltIn && (
+                            <Badge dot tone="warning">
+                              Unverified
+                            </Badge>
+                          )}
+                          {!skill.isBuiltIn && (
+                            <Badge className="tabular-nums" tone="neutral" variant="outline">
+                              Rev {skill.currentRevision}
+                            </Badge>
+                          )}
+                        </div>
+                      ),
+                      header: 'Status',
+                      id: 'status',
+                    },
+                    {
+                      align: 'right',
+                      cell: (skill) => (
+                        <span
+                          className="text-paper-300 tabular-nums"
+                          title={skill.usedBy.length > 0 ? skill.usedBy.join(', ') : 'No agents'}
+                        >
+                          {skill.usedByCount}
+                          <span className="text-paper-500">
+                            {' '}
+                            {skill.usedByCount === 1 ? 'agent' : 'agents'}
                           </span>
-                        </Td>
-                        <Td className="px-4 py-2.5" label="Active">
-                          <ToggleSwitch
-                            ariaLabel={`Active: ${visibleText(skill.name)}`}
-                            checked={skill.isActive}
-                            disabled={togglingId === skill.id}
-                            onChange={() => requestToggle(skill)}
-                          />
-                        </Td>
-                        <Td align="right" className="py-2.5 pl-4">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              aria-label={`Open ${visibleText(skill.name)}`}
-                              onClick={() => setViewTarget(skill)}
-                              size="sm"
-                            >
-                              Open
-                            </Button>
-                            {!skill.isBuiltIn && (
-                              <ActionMenu
-                                items={[
-                                  {
-                                    icon: 'trash',
-                                    id: 'delete',
-                                    label: 'Delete skill',
-                                    onAction: () => setDeleteTarget(skill),
-                                    tone: 'danger',
-                                  },
-                                ]}
-                                label={`More actions for ${visibleText(skill.name)}`}
-                              />
-                            )}
-                          </div>
-                        </Td>
-                      </TRow>
-                    ))}
-                  </tbody>
-                </Table>
+                        </span>
+                      ),
+                      header: 'Used by',
+                      id: 'used-by',
+                      sortable: true,
+                    },
+                    {
+                      cell: (skill) => (
+                        <ToggleSwitch
+                          ariaLabel={`Active: ${visibleText(skill.name)}`}
+                          checked={skill.isActive}
+                          disabled={togglingId === skill.id}
+                          onChange={() => requestToggle(skill)}
+                        />
+                      ),
+                      header: 'Active',
+                      id: 'active',
+                    },
+                  ]}
+                  density="compact"
+                  getRowId={(skill) => skill.id}
+                  onSortChange={onSortChange}
+                  revealActions={false}
+                  rows={sortRows(visibleSkills)}
+                  sort={sort}
+                />
               )}
             </QueryBoundary>
           </Card>

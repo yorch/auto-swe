@@ -7,14 +7,16 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { Table, Td, TRow } from '@/components/ui/Table';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
+import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
   type CatalogEntryInput,
@@ -60,6 +62,64 @@ const sentence = (v: string) => v.charAt(0) + v.slice(1).toLowerCase();
 const kindLabel = (kind: ModelKind) => (kind === 'EMBEDDING' ? 'Embedding' : sentence(kind));
 const usd = (n: number) => `$${n}`;
 
+const CATALOG_COLUMNS: DataTableColumn<ModelCatalogEntry>[] = [
+  {
+    cell: (e) => <span className="font-mono text-xs">{entrySpec(e)}</span>,
+    header: 'Model',
+    id: 'model',
+    primary: true,
+    secondary: (e) =>
+      e.displayName || e.notes ? (
+        <>
+          {e.displayName && <div>{e.displayName}</div>}
+          {e.notes && <div>{e.notes}</div>}
+        </>
+      ) : null,
+    sortable: true,
+  },
+  {
+    cell: (e) => <span className="text-xs text-paper-300">{kindLabel(e.kind)}</span>,
+    header: 'Kind',
+    id: 'kind',
+    sortable: true,
+  },
+  {
+    cell: (e) => (
+      <span className="text-xs text-paper-300 tabular-nums">
+        {formatPrice(e)}
+        {divergesFromBuiltin(e) && e.builtin && (
+          <div className="text-xs text-warning-400">
+            built-in is now {formatPrice({ ...e.builtin })}
+            {e.builtin.status !== e.status && `, ${e.builtin.status.toLowerCase()}`}
+          </div>
+        )}
+      </span>
+    ),
+    header: 'Price',
+    id: 'price',
+    sortable: true,
+  },
+  {
+    cell: (e) => (
+      <Badge dot tone={STATUS_TONE[e.status]}>
+        {sentence(e.status)}
+      </Badge>
+    ),
+    header: 'Status',
+    id: 'status',
+    sortable: true,
+  },
+  { cell: (e) => <SourceBadge entry={e} />, header: 'Source', id: 'source' },
+];
+
+/** What each sortable catalog column compares by; price orders by the input rate. */
+const CATALOG_SORT = {
+  kind: (e: ModelCatalogEntry) => e.kind,
+  model: (e: ModelCatalogEntry) => entrySpec(e),
+  price: (e: ModelCatalogEntry) => e.inputUsdPerMTok,
+  status: (e: ModelCatalogEntry) => e.status,
+};
+
 /// The model catalog: the per-MTok prices every LLM and embedding call is
 /// costed at. A model with no entry is recorded at $0, which USD budgets never
 /// see — the unpriced panel lists the ones in use.
@@ -80,6 +140,7 @@ export function CatalogTab() {
   const [deleting, setDeleting] = useState<ModelCatalogEntry | null>(null);
   const reset = useResetCatalogEntry();
   const del = useDeleteCatalogEntry();
+  const { onSortChange, sort, sortRows } = useDataTableSort(CATALOG_SORT);
 
   return (
     <div className="space-y-6">
@@ -117,90 +178,58 @@ export function CatalogTab() {
           label="model catalog"
           onRetry={() => void refetch()}
         >
-          <Table>
-            <THead>
-              <Th variant="compact">Model</Th>
-              <Th variant="compact">Kind</Th>
-              <Th variant="compact">Price</Th>
-              <Th variant="compact">Status</Th>
-              <Th variant="compact">Source</Th>
-              <Th align="right" variant="compact">
-                Actions
-              </Th>
-            </THead>
-            <tbody>
-              {(entries ?? []).map((e) => (
-                <TRow key={e.id}>
-                  <Td className="py-2">
-                    <div className="font-mono text-xs text-paper-100">{entrySpec(e)}</div>
-                    {e.displayName && <div className="text-xs text-paper-500">{e.displayName}</div>}
-                    {e.notes && <div className="text-xs text-paper-500">{e.notes}</div>}
-                  </Td>
-                  <Td className="py-2 text-xs text-paper-300">{kindLabel(e.kind)}</Td>
-                  <Td className="py-2 text-xs text-paper-300 tabular-nums">
-                    {formatPrice(e)}
-                    {divergesFromBuiltin(e) && e.builtin && (
-                      <div className="text-xs text-warning-400">
-                        built-in is now {formatPrice({ ...e.builtin })}
-                        {e.builtin.status !== e.status && `, ${e.builtin.status.toLowerCase()}`}
-                      </div>
-                    )}
-                  </Td>
-                  <Td className="py-2">
-                    <Badge dot tone={STATUS_TONE[e.status]}>
-                      {sentence(e.status)}
-                    </Badge>
-                  </Td>
-                  <Td className="py-2">
-                    <SourceBadge entry={e} />
-                  </Td>
-                  <Td className="py-2 text-right whitespace-nowrap">
-                    <Button onClick={() => setEditing(e)} size="sm" variant="secondary">
-                      Edit
-                    </Button>
-                    {e.isBuiltIn && e.isCustomized && (
-                      <Button
-                        disabled={reset.isPending}
-                        onClick={() => reset.mutate(e.id)}
-                        size="sm"
-                        variant="ghost"
-                      >
-                        Reset
-                      </Button>
-                    )}
-                    {!e.isBuiltIn && (
-                      <Button
-                        className="text-danger-400 hover:text-danger-400"
-                        onClick={() => setDeleting(e)}
-                        size="sm"
-                        variant="ghost"
-                      >
-                        Delete
-                      </Button>
-                    )}
-                  </Td>
-                </TRow>
-              ))}
-              {(entries ?? []).length === 0 && (
-                <TableStatusRow colSpan={6}>
-                  <EmptyState
-                    action={
-                      <Button
-                        onClick={() => setCreating({ modelId: '', provider: '' })}
-                        size="sm"
-                        variant="primary"
-                      >
-                        Add model
-                      </Button>
-                    }
-                    hint="The gateway seeds the built-in models at startup."
-                    icon="coin"
-                    title="The catalog is empty"
-                  />
-                </TableStatusRow>
-              )}
-            </tbody>
-          </Table>
+          <DataTable
+            actions={(e) => (
+              <>
+                <Button onClick={() => setEditing(e)} size="sm" variant="secondary">
+                  Edit
+                </Button>
+                {e.isBuiltIn && e.isCustomized && (
+                  <Button
+                    disabled={reset.isPending}
+                    onClick={() => reset.mutate(e.id)}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    Reset
+                  </Button>
+                )}
+                {!e.isBuiltIn && (
+                  <Button
+                    className="text-danger-400 hover:text-danger-400"
+                    onClick={() => setDeleting(e)}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    Delete
+                  </Button>
+                )}
+              </>
+            )}
+            columns={CATALOG_COLUMNS}
+            density="compact"
+            empty={
+              <EmptyState
+                action={
+                  <Button
+                    onClick={() => setCreating({ modelId: '', provider: '' })}
+                    size="sm"
+                    variant="primary"
+                  >
+                    Add model
+                  </Button>
+                }
+                hint="The gateway seeds the built-in models at startup."
+                icon="coin"
+                title="The catalog is empty"
+              />
+            }
+            getRowId={(e) => e.id}
+            onSortChange={onSortChange}
+            revealActions={false}
+            rows={sortRows(entries ?? [])}
+            sort={sort}
+          />
         </QueryBoundary>
       </Card>
 
@@ -263,30 +292,35 @@ function UnpricedPanel({ onAdd }: { onAdd: (spec: string) => void }) {
         These models are configured or were called in the last 30 days, but nothing prices them, so
         their spend never reaches a USD budget. Add each one, or fix a misspelled spec.
       </p>
-      <Table>
-        <THead>
-          <Th variant="compact">Spec</Th>
-          <Th variant="compact">Used by</Th>
-          <Th variant="compact">Did you mean</Th>
-          <Th align="right" variant="compact">
-            Actions
-          </Th>
-        </THead>
-        <tbody>
-          {data.map((u) => (
-            <TRow key={u.spec}>
-              <Td className="py-2 font-mono text-xs">{u.spec}</Td>
-              <Td className="py-2 text-xs">{u.usedBy.join(', ')}</Td>
-              <Td className="py-2 font-mono text-xs">{u.suggestion ?? '—'}</Td>
-              <Td className="py-2 text-right">
-                <Button onClick={() => onAdd(u.spec)} size="sm" variant="secondary">
-                  Add to catalog
-                </Button>
-              </Td>
-            </TRow>
-          ))}
-        </tbody>
-      </Table>
+      <DataTable
+        actions={(u) => (
+          <Button onClick={() => onAdd(u.spec)} size="sm" variant="secondary">
+            Add to catalog
+          </Button>
+        )}
+        columns={[
+          {
+            cell: (u) => <span className="font-mono text-xs">{u.spec}</span>,
+            header: 'Spec',
+            id: 'spec',
+            primary: true,
+          },
+          {
+            cell: (u) => <span className="text-xs">{u.usedBy.join(', ')}</span>,
+            header: 'Used by',
+            id: 'used-by',
+          },
+          {
+            cell: (u) => <span className="font-mono text-xs">{u.suggestion ?? '—'}</span>,
+            header: 'Did you mean',
+            id: 'suggestion',
+          },
+        ]}
+        density="compact"
+        getRowId={(u) => u.spec}
+        revealActions={false}
+        rows={data}
+      />
     </Card>
   );
 }
