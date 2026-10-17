@@ -835,9 +835,19 @@ const legacyRedirects = (() => {
   if (!existsSync(join(ROOT, file))) {
     return [];
   }
-  return [...read(file).matchAll(/\{\s*destination:\s*'([^']+)',\s*source:\s*'([^']+)'\s*\}/g)].map(
-    ([, destination, source]) => ({ destination, source })
-  );
+  const text = read(file);
+  const rules = [
+    ...text.matchAll(/\{\s*destination:\s*'([^']+)',\s*source:\s*'([^']+)'\s*\}/g),
+  ].map(([, destination, source]) => ({ destination, source }));
+  // A rule written in another shape (an extra key, double quotes) would drop out of the match, and
+  // a list that drops out entirely would make this check refuse nothing while still passing.
+  if (text.includes('LEGACY_REDIRECTS') && rules.length === 0) {
+    throw new Error(
+      `${file} declares LEGACY_REDIRECTS but no rule matched the { destination, source } shape ` +
+        'this check reads; update the pattern in scripts/check-doc-drift.mjs.'
+    );
+  }
+  return rules;
 })();
 
 /** The redirect an old address would take, or undefined when the path is not an old one. */
