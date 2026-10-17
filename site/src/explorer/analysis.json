@@ -4330,7 +4330,7 @@
       "EventEndpoint"
     ]
   },
-  "reviewedCommit": "25f392bb0b8cd214f5d3dcd105c3440ee3408694",
+  "reviewedCommit": "cea8ce47ead23d0dd4852d8a397821c816eab639",
   "sourceHashes": {
     "docker-compose.app.yml": "5d335462b175a108e91337b9a4c2932844f1686bc9b66553676d5c8e71dc9f9e",
     "packages/cli/src/commands/evals.ts": "50af79eb82b90be5c1be4d891f974c93d52fe19cba409f7c92ce910f4d267362",
@@ -4515,6 +4515,7 @@
     "packages/web/src/components/workflow/starterTemplates.ts": "f1d53a763f6f34389d7745c7092f4fe5189d579c95b801e605cc58bb5dce7719",
     "packages/web/src/components/workflow/templateEditor/useTemplateEditorState.ts": "bbac0ebcfb07ce8d88bb1973517508df87b7588ad77f1ef425c8b2dfb146aac6",
     "packages/web/src/hooks/useModelConfig.ts": "07bca4bdfdb188807d7ab2ccc9f7e17c07cd30aa7de72f9401511d40da6c54d0",
+    "packages/web/src/hooks/usePaletteSearch.ts": "0fc1a461ed7cdfc5617db66807649397f3fd7191cd07bb4ec6047d743b868096",
     "packages/web/src/hooks/useRuns.ts": "7b7457e0e855762951aaa3af1c017af0b4e4bf877c36cb1e74b0f8382bb91f33",
     "packages/web/src/instrumentation.ts": "a3ea9846f78c64cbbe6f283287c1e74f700abdba6b34c1e2e6273b96030430de",
     "packages/web/src/lib/agentDisplay.ts": "d0b94fb4a38640c0c6ac59f4ab5315a365052869984112265aab4725f4e0f46e",
