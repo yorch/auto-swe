@@ -74,6 +74,7 @@ export const requestWorkspaceRoutes: FastifyPluginAsync = async (fastify) => {
               OR: [
                 { workRequest: { description: { contains: search, mode: 'insensitive' } } },
                 { workRequest: { externalTicketId: { contains: search, mode: 'insensitive' } } },
+                { workRequest: { title: { contains: search, mode: 'insensitive' } } },
               ],
             }
           : {}),

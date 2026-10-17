@@ -332,6 +332,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
                 OR: [
                   { workRequest: { description: { contains: q, mode: 'insensitive' } } },
                   { workRequest: { externalTicketId: { contains: q, mode: 'insensitive' } } },
+                  { workRequest: { title: { contains: q, mode: 'insensitive' } } },
                   { template: { name: { contains: q, mode: 'insensitive' } } },
                 ],
               },
