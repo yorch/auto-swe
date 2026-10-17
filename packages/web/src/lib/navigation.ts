@@ -196,34 +196,20 @@ const ADMIN_PAGES: NavItem[] = [
     minRole: 'ADMIN',
     section: 'Credentials',
   },
-  {
-    href: '/admin/lessons',
-    icon: 'memory',
-    label: 'Lessons',
-    minRole: 'ENGINEER',
-    section: 'Knowledge',
-  },
-  {
-    href: '/admin/knowledge',
-    icon: 'layers',
-    label: 'Knowledge',
-    minRole: 'ENGINEER',
-    section: 'Knowledge',
-  },
   // The baselines API and layout both require LEAD.
   {
     href: '/admin/baselines',
     icon: 'target',
     label: 'Error baselines',
     minRole: 'LEAD',
-    section: 'Knowledge',
+    section: 'Quality',
   },
   {
     href: '/admin/evals',
     icon: 'flask',
     label: 'Evals',
     minRole: 'ADMIN',
-    section: 'Knowledge',
+    section: 'Quality',
   },
 ];
 
@@ -262,6 +248,15 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: '/bundles', icon: 'package', label: 'Bundles', minRole: 'ADMIN' },
     ],
     label: 'Build',
+  },
+  {
+    // What the agents carry from one run to the next. Every role reads it, scoped to what
+    // they can reach; each page keeps its own management controls for those who hold them.
+    items: [
+      { href: '/knowledge', icon: 'layers', label: 'Knowledge', minRole: 'ENGINEER' },
+      { href: '/lessons', icon: 'memory', label: 'Lessons', minRole: 'ENGINEER' },
+    ],
+    label: 'Knowledge',
   },
   {
     items: [
@@ -377,7 +372,6 @@ const EXTRA_PAGE_TITLES: [string, string][] = [
   ['/start', 'Start work'],
   ['/epics', 'Epics'],
   ['/docs', 'Docs'],
-  ['/lessons', 'Lessons'],
   ['/oauth/consent', 'Authorize app'],
 ];
 
@@ -418,7 +412,6 @@ export function navLabel(href: string): string {
 const EXTRA_PAGE_SECTIONS: [string, string][] = [
   ['/start', 'Work'],
   ['/epics', 'Work'],
-  ['/lessons', 'Admin'],
 ];
 
 /**

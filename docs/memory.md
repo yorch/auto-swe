@@ -123,7 +123,7 @@ owning team and its organization, since lessons belong to the repository, and ap
 on `created_at` inside the similarity query, so `lessonRetrievalLimit` still counts only lessons
 that may be recalled. `searchLessons` applies it too; `explainLesson` explains any lesson of the
 repository whatever its age. An aged-out lesson is not deleted: it stays in the table and on
-`/admin/lessons`, can still be superseded, and comes back into recall if the setting is raised or
+`/lessons`, can still be superseded, and comes back into recall if the setting is raised or
 cleared. The owning team is cached for the ~30 s config-cache window; if the setting cannot be
 read, the failure is logged and aging is treated as off rather than failing recall or
 consolidation.
@@ -150,7 +150,7 @@ crowded one would get nothing back. The setting needs pgvector 0.8 or later.
 
 A Temporal Schedule (`consolidationCron`, default weekly) starts one `ConsolidateLessonsWorkflow`
 per repository with `Connection.consolidationEnabled`. Admins can also run it from
-`/admin/lessons`. It clusters the repository's active lessons that have not aged out (§3) by embedding similarity
+`/lessons`. It clusters the repository's active lessons that have not aged out (§3) by embedding similarity
 (`consolidationSimilarityThreshold`, default 0.85), and for each cluster of at least
 `consolidationMinClusterSize` (default 3) asks the `lessonConsolidator` agent for one or two
 generalised lessons. In one transaction, under a per-repository advisory lock, it inserts those and
@@ -173,7 +173,7 @@ refused for a match and a drop are security events on `/admin/security` — `MEM
 
 ## 6. Administration
 
-`/admin/lessons` lists and searches lessons for every role. An engineer or lead sees the lessons of
+`/lessons` lists and searches lessons for every role. An engineer or lead sees the lessons of
 the repositories they can reach — the owning team's or a team it is shared with, under the access
 gate — each with its failure type, the run's outcome, a `Low confidence` label below 0.5, and a link
 to the run it was written from. Platform ADMINs see every repository's, and only they delete lessons,

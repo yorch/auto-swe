@@ -89,7 +89,7 @@ export function RunLessons({ runId, live }: { runId: string; live: boolean }) {
         </section>
       )}
       <p className="mt-3 text-xs text-paper-500">
-        <Link className="underline-offset-2 hover:underline" href="/admin/lessons">
+        <Link className="underline-offset-2 hover:underline" href="/lessons">
           All lessons
         </Link>
       </p>

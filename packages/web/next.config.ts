@@ -53,6 +53,11 @@ export const LEGACY_REDIRECTS: { source: string; destination: string }[] = [
   { destination: '/admin/github-installations', source: '/studio/github-installations' },
   // Budget alerts became the "Alerting only" filter on Organizations.
   { destination: '/admin/organizations?alerting=1', source: '/govern/budget-alerts' },
+  // Knowledge: the two pages every role reads left Admin for their own group.
+  { destination: '/lessons', source: '/admin/lessons' },
+  { destination: '/knowledge', source: '/admin/knowledge' },
+  { destination: '/lessons', source: '/govern/lessons' },
+  { destination: '/knowledge', source: '/govern/knowledge' },
   { destination: '/admin', source: '/govern' },
   { destination: '/admin/:path*', source: '/govern/:path*' },
 ];

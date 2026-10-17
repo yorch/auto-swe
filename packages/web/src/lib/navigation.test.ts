@@ -73,8 +73,14 @@ describe('visibleNavGroups', () => {
   const hrefsFor = (role: string, scoped?: boolean) =>
     visibleNavGroups(role, scoped).flatMap((g) => flattenNavItems(g.items).map((i) => i.href));
 
-  it('groups the sidebar into Work, Build and Admin, plus the account links', () => {
-    expect(NAV_GROUPS.map((g) => g.label)).toEqual(['Work', 'Build', 'Admin', 'Account']);
+  it('groups the sidebar into Work, Build, Knowledge and Admin, plus the account links', () => {
+    expect(NAV_GROUPS.map((g) => g.label)).toEqual([
+      'Work',
+      'Build',
+      'Knowledge',
+      'Admin',
+      'Account',
+    ]);
   });
 
   it('shows an ENGINEER only ENGINEER pages', () => {
@@ -83,6 +89,8 @@ describe('visibleNavGroups', () => {
     expect(hrefs).not.toContain('/admin/baselines');
     expect(hrefs).toContain('/connections');
     expect(hrefs).toContain('/library');
+    expect(hrefs).toContain('/knowledge');
+    expect(hrefs).toContain('/lessons');
     expect(hrefs).not.toContain('/skills');
     expect(hrefs).not.toContain('/admin/users');
   });
@@ -218,7 +226,8 @@ describe('pageTitle', () => {
     expect(pageSection('/admin/integrations')).toBe('Admin');
     expect(pageSection('/admin/slack-channels/abc')).toBe('Admin');
     expect(pageTitle('/admin/slack-channels/abc')).toBe('Slack channels');
-    expect(pageSection('/lessons')).toBe('Admin');
+    expect(pageSection('/lessons')).toBe('Knowledge');
+    expect(pageSection('/knowledge')).toBe('Knowledge');
     expect(pageSection('/')).toBeNull();
   });
 
@@ -240,7 +249,7 @@ describe('navSections', () => {
       'Spend & insights',
       'Configuration',
       'Credentials',
-      'Knowledge',
+      'Quality',
     ]);
   });
 

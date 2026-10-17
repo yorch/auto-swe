@@ -112,7 +112,7 @@ export const GOVERNANCE_GROUPS: GuideGroup[] = [
           'Everything that starts a run without a person pressing run: event rules, schedules and webhooks.',
       },
       {
-        href: '/admin/lessons',
+        href: '/lessons',
         label: 'Lessons',
         reason: 'Lessons agents captured from completed workflows, and their consolidation.',
       },
