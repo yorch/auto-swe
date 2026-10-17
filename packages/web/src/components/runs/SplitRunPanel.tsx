@@ -101,8 +101,15 @@ export function SplitRunPanel({
                     )}
                     {(s.startedAt || s.endedAt) && (
                       <div className="tabular mt-0.5 text-xs text-paper-500">
-                        {s.startedAt ? formatDate(s.startedAt) : '?'}
-                        {s.endedAt ? ` – ${formatDate(s.endedAt)}` : ''}
+                        <span className="whitespace-nowrap">
+                          {s.startedAt ? formatDate(s.startedAt) : '?'}
+                        </span>
+                        {s.endedAt && (
+                          <>
+                            {' – '}
+                            <span className="whitespace-nowrap">{formatDate(s.endedAt)}</span>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
