@@ -56,6 +56,33 @@ describe('GET /lessons (list)', () => {
     expect(lastListWhere(prisma)).toMatchObject({ scope: 'swe-lessons' });
   });
 
+  // The dashboard's Lessons page is open to engineers, so the list is their only
+  // view of lessons and must be confined to repositories they can reach.
+  it('confines a non-admin to lessons of repositories they can reach', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/lessons' });
+    expect(res.statusCode).toBe(200);
+    expect(lastListWhere(prisma).repository).toEqual({
+      AND: [
+        {
+          OR: [
+            { team: { memberships: { some: { userId: 'admin-1' } } } },
+            { shares: { some: { team: { memberships: { some: { userId: 'admin-1' } } } } } },
+          ],
+        },
+        {},
+      ],
+    });
+  });
+
+  it('returns what a reader needs to judge a lesson, never its embedding', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/lessons' });
+    const select = prisma.memoryItem.findMany.mock.calls[0][0].select;
+    expect(select).toMatchObject({ confidence: true, metadata: true, workflowRunId: true });
+    expect(select.embedding).toBeUndefined();
+  });
+
   it('excludes consolidated lessons by default', async () => {
     const { app, prisma } = await buildApp();
     const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/lessons' });
