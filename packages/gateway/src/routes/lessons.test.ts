@@ -14,13 +14,18 @@ function newMockPrisma() {
   const prisma = {
     $transaction: vi.fn(),
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
-    connection: { findFirst: vi.fn() },
+    connection: {
+      findFirst: vi.fn(),
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn(),
+    },
     memoryItem: {
       count: vi.fn().mockResolvedValue(0),
       delete: vi.fn().mockResolvedValue({}),
       findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
     },
+    teamMembership: { findUnique: vi.fn().mockResolvedValue(null) },
   };
   prisma.$transaction.mockImplementation(async (fn: (tx: typeof prisma) => unknown) => fn(prisma));
   return prisma;
@@ -31,13 +36,15 @@ async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const prisma = newMockPrisma();
+  const temporal = { startConsolidationWorkflow: vi.fn().mockResolvedValue(undefined) };
   app.decorate('prisma', prisma as unknown as never);
+  app.decorate('temporal', temporal as unknown as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'admin-1' }),
   } as unknown as never);
   await app.register(lessonRoutes, { prefix: '/api/v1/lessons' });
   await app.ready();
-  return { app, prisma };
+  return { app, prisma, temporal };
 }
 
 const AUTH = { authorization: 'Bearer fake' };
@@ -73,6 +80,28 @@ describe('GET /lessons (list)', () => {
         {},
       ],
     });
+  });
+
+  it('names the repositories a non-admin leads, and none for an admin', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.connection.findMany.mockResolvedValue([{ id: REPO_ID }]);
+    const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/lessons' });
+    expect(res.json().meta.managedRepoIds).toEqual([REPO_ID]);
+    expect(prisma.connection.findMany.mock.calls[0][0].where).toEqual({
+      team: {
+        isActive: true,
+        memberships: { some: { role: { in: ['LEAD', 'ADMIN'] }, userId: 'admin-1' } },
+      },
+      type: 'git_repo',
+    });
+
+    const admin = await buildApp('ADMIN');
+    const adminRes = await admin.app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/lessons',
+    });
+    expect(adminRes.json().meta.managedRepoIds).toBeUndefined();
   });
 
   it('returns what a reader needs to judge a lesson, never its embedding', async () => {
@@ -225,14 +254,108 @@ describe('DELETE /lessons/:id', () => {
     });
   });
 
-  it('refuses a non-admin', async () => {
-    const { app } = await buildApp('ENGINEER');
-    const res = await app.inject({
-      headers: AUTH,
-      method: 'DELETE',
-      url: `/api/v1/lessons/${LESSON_ID}`,
+  const del = (app: Awaited<ReturnType<typeof buildApp>>['app']) =>
+    app.inject({ headers: AUTH, method: 'DELETE', url: `/api/v1/lessons/${LESSON_ID}` });
+  const repoLesson = { id: LESSON_ID, lessonSummary: 's', rationale: 'r', repoId: REPO_ID };
+
+  it('lets a lead of the repository team delete its lesson', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.memoryItem.findFirst.mockResolvedValue(repoLesson);
+    prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
+    prisma.teamMembership.findUnique.mockResolvedValue({ role: 'LEAD', team: { isActive: true } });
+    const res = await del(app);
+    expect(res.statusCode).toBe(200);
+    expect(forgetMock).toHaveBeenCalledWith(expect.anything(), [LESSON_ID]);
+    expect(prisma.teamMembership.findUnique.mock.calls[0][0].where).toEqual({
+      userId_teamId: { teamId: 'team-1', userId: 'admin-1' },
     });
+  });
+
+  it('refuses a member who reads the lesson but does not lead its team', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.memoryItem.findFirst.mockResolvedValue(repoLesson);
+    prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
+    prisma.teamMembership.findUnique.mockResolvedValue({
+      role: 'ENGINEER',
+      team: { isActive: true },
+    });
+    const res = await del(app);
     expect(res.statusCode).toBe(403);
+    expect(forgetMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a lead of an inactive team', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.memoryItem.findFirst.mockResolvedValue(repoLesson);
+    prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
+    prisma.teamMembership.findUnique.mockResolvedValue({ role: 'LEAD', team: { isActive: false } });
+    expect((await del(app)).statusCode).toBe(403);
+    expect(forgetMock).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 to someone who cannot reach the repository at all', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.memoryItem.findFirst.mockResolvedValue(repoLesson);
+    prisma.connection.findFirst.mockResolvedValue(null);
+    expect((await del(app)).statusCode).toBe(404);
+    expect(forgetMock).not.toHaveBeenCalled();
+  });
+
+  it('keeps a lesson of a deleted repository for platform admins', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.memoryItem.findFirst.mockResolvedValue({ ...repoLesson, repoId: null });
+    expect((await del(app)).statusCode).toBe(404);
+    expect(prisma.connection.findFirst).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /lessons/consolidate', () => {
+  const post = (app: Awaited<ReturnType<typeof buildApp>>['app']) =>
+    app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { repoId: REPO_ID },
+      url: '/api/v1/lessons/consolidate',
+    });
+
+  it('lets a lead of the repository team start consolidation', async () => {
+    const { app, prisma, temporal } = await buildApp('ENGINEER');
+    prisma.connection.findUnique.mockResolvedValue({ id: REPO_ID });
+    prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
+    prisma.teamMembership.findUnique.mockResolvedValue({ role: 'ADMIN', team: { isActive: true } });
+    const res = await post(app);
+    expect(res.statusCode).toBe(202);
+    expect(temporal.startConsolidationWorkflow).toHaveBeenCalledWith(
+      expect.stringContaining(`consolidate-lessons-${REPO_ID}-`),
+      expect.objectContaining({ repoId: REPO_ID })
+    );
+  });
+
+  it('refuses an engineer of the team', async () => {
+    const { app, prisma, temporal } = await buildApp('ENGINEER');
+    prisma.connection.findUnique.mockResolvedValue({ id: REPO_ID });
+    prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
+    prisma.teamMembership.findUnique.mockResolvedValue({
+      role: 'ENGINEER',
+      team: { isActive: true },
+    });
+    expect((await post(app)).statusCode).toBe(403);
+    expect(temporal.startConsolidationWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for a repository the caller cannot reach', async () => {
+    const { app, prisma, temporal } = await buildApp('ENGINEER');
+    prisma.connection.findUnique.mockResolvedValue({ id: REPO_ID });
+    prisma.connection.findFirst.mockResolvedValue(null);
+    expect((await post(app)).statusCode).toBe(404);
+    expect(temporal.startConsolidationWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('lets a platform admin consolidate any repository without a membership read', async () => {
+    const { app, prisma } = await buildApp('ADMIN');
+    prisma.connection.findUnique.mockResolvedValue({ id: REPO_ID });
+    expect((await post(app)).statusCode).toBe(202);
+    expect(prisma.teamMembership.findUnique).not.toHaveBeenCalled();
   });
 });
 

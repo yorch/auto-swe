@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useAuthStore } from '@/stores/authStore';
-import { setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
+import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
 import LessonsPage from './page';
 
 const lesson = (over: Record<string, unknown> = {}) => ({
@@ -21,18 +21,19 @@ const lesson = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-function mock(rows: unknown[]) {
+function mock(rows: unknown[], managedRepoIds?: string[]) {
   return setupFetchMock({
     '/api/v1/admin/config/consolidation': () => ({ data: null }),
     'GET /api/v1/lessons': () => ({
       data: rows,
-      meta: { limit: 20, offset: 0, total: rows.length },
+      meta: { limit: 20, managedRepoIds, offset: 0, total: rows.length },
     }),
     'GET /api/v1/lessons/stats': () => ({ data: [] }),
     'GET /api/v1/repositories': () => ({
       data: [{ id: 'r1', organizationName: 'acme', repoName: 'api', type: 'git_repo' }],
       meta: { limit: 100, offset: 0, total: 1 },
     }),
+    'POST /api/v1/lessons/consolidate': () => ({ data: { workflowId: 'wf-1' } }),
   });
 }
 
@@ -120,5 +121,47 @@ describe('LessonsPage (engineer)', () => {
     render(withQuery(<LessonsPage />));
     expect(await screen.findByText('Run migrations before deploying')).toBeTruthy();
     expect(screen.queryByText('Low confidence')).toBeNull();
+  });
+});
+
+describe('LessonsPage (lead of the repository team)', () => {
+  beforeEach(() => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+  });
+
+  it('offers delete only on lessons of repositories they lead', async () => {
+    mock(
+      [
+        lesson(),
+        lesson({
+          id: 'l2',
+          lessonSummary: 'Shared repo lesson',
+          repository: { id: 'r2', organizationName: 'acme', repoName: 'web' },
+        }),
+      ],
+      ['r1']
+    );
+    render(withQuery(<LessonsPage />));
+    const led = (await screen.findByText('Run migrations before deploying')).closest(
+      'li'
+    ) as HTMLElement;
+    expect(within(led).getByRole('button', { name: 'Delete lesson' })).toBeTruthy();
+    const other = screen.getByText('Shared repo lesson').closest('li') as HTMLElement;
+    expect(within(other).queryByRole('button', { name: 'Delete lesson' })).toBeNull();
+  });
+
+  it('consolidates the repository they filtered to', async () => {
+    const fetchSpy = mock([lesson()], ['r1']);
+    render(withQuery(<LessonsPage />));
+    await screen.findByText('Run migrations before deploying');
+    expect(screen.queryByRole('button', { name: /consolidate this repository/i })).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /repository/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'acme/api' }));
+    fireEvent.click(await screen.findByRole('button', { name: /consolidate this repository/i }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Run consolidation' }));
+
+    expect(await screen.findByText(/Consolidation started for acme\/api/)).toBeTruthy();
+    expect(bodyOf(fetchSpy, '/api/v1/lessons/consolidate')).toEqual({ repoId: 'r1' });
   });
 });

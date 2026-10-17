@@ -10,8 +10,9 @@ import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
-import { reachableConnections } from '../lib/tenantScope.js';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
+import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
+import { canManageTeamRepos } from './repositories.js';
 
 const ConsolidateBody = z.object({
   minClusterSize: z.number().int().min(2).max(20).optional(),
@@ -43,6 +44,37 @@ const LessonIdParams = z.object({ id: z.string().uuid() });
  * without the channel route's audit.
  */
 const LESSON_SCOPE = 'swe-lessons';
+
+/**
+ * What the caller may do with a repository's lessons. Managing them — deleting one,
+ * starting consolidation — is repository management, so it takes what editing the
+ * repository takes: a platform ADMIN, or a LEAD or ADMIN of its owning team
+ * (`canManageTeamRepos`). A shared team's members read the lessons but do not manage
+ * them. A lesson whose repository is gone is a platform ADMIN's alone.
+ */
+async function lessonRepoAccess(
+  fastify: Parameters<FastifyPluginAsync>[0],
+  user: JwtPayload,
+  gate: Parameters<typeof reachableConnections>[1],
+  repoId: string | null
+): Promise<'manage' | 'read' | 'none'> {
+  if (user.role === 'ADMIN') {
+    return 'manage';
+  }
+  if (!repoId) {
+    return 'none';
+  }
+  const repo = await fastify.prisma.connection.findFirst({
+    select: { teamId: true },
+    where: { AND: [{ id: repoId }, reachableConnections(user, gate)] },
+  });
+  if (!repo) {
+    return 'none';
+  }
+  return (await canManageTeamRepos(fastify.prisma, user, repo.teamId)) ? 'manage' : 'read';
+}
+
+const NOT_A_LEAD = "Only a lead of the repository's team can manage its lessons";
 
 export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -109,7 +141,20 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
           ])
       );
 
-      return { data: lessons, meta: { limit, offset, total } };
+      // The repositories whose lessons this caller may manage, so the page offers the
+      // controls only where the routes below would accept them. A platform ADMIN manages
+      // every repository and gets no list.
+      const managedRepoIds =
+        user.role === 'ADMIN'
+          ? undefined
+          : (
+              await fastify.prisma.connection.findMany({
+                select: { id: true },
+                where: { team: { ...ledTeams(user), isActive: true }, type: 'git_repo' },
+              })
+            ).map((r) => r.id);
+
+      return { data: lessons, meta: { limit, managedRepoIds, offset, total } };
     }
   );
 
@@ -173,22 +218,30 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // POST /api/v1/lessons/consolidate — Trigger lesson consolidation (ADMIN only)
+  // POST /api/v1/lessons/consolidate — Consolidate one repository's lessons (ADMIN, or a
+  // lead of the repository's team)
   app.post(
     '/consolidate',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: ConsolidateBody },
     },
     async (request, reply) => {
+      const user = requireUser(request);
       const { repoId, minClusterSize, similarityThreshold } = request.body;
 
       const repo = await fastify.prisma.connection.findUnique({
         select: { id: true },
         where: { id: repoId },
       });
-      if (!repo) {
+      const access = repo
+        ? await lessonRepoAccess(fastify, user, request.repoAccessGate, repo.id)
+        : 'none';
+      if (access === 'none') {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+      }
+      if (access === 'read') {
+        return sendError(reply, 403, 'FORBIDDEN', NOT_A_LEAD);
       }
 
       const workflowId = `consolidate-lessons-${repoId}-${Date.now()}`;
@@ -284,11 +337,11 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     return { data };
   });
 
-  // DELETE /api/v1/lessons/:id — Delete lesson (ADMIN only)
+  // DELETE /api/v1/lessons/:id — Delete lesson (ADMIN, or a lead of the repository's team)
   app.delete(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: LessonIdParams },
     },
     async (request, reply) => {
@@ -306,8 +359,15 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         },
         where: { id: request.params.id, scope: LESSON_SCOPE },
       });
-      if (!lesson) {
+      // A lesson the caller cannot read is not found, so a delete does not confirm it exists.
+      const access = lesson
+        ? await lessonRepoAccess(fastify, actor, request.repoAccessGate, lesson.repoId)
+        : 'none';
+      if (!lesson || access === 'none') {
         return sendError(reply, 404, 'LESSON_NOT_FOUND', 'Lesson not found');
+      }
+      if (access === 'read') {
+        return sendError(reply, 403, 'FORBIDDEN', NOT_A_LEAD);
       }
 
       // Forgetting follows the lesson into every row that carries it — merged

@@ -98,8 +98,9 @@ function RepoStatsRow({
 
 /**
  * Lessons for every signed-in role. Engineers read the lessons of the repositories they
- * can reach — the gateway scopes the list — because those lessons steer their runs;
- * consolidation, the cross-team stats and deleting stay with platform ADMINs.
+ * can reach — the gateway scopes the list — because those lessons steer their runs. A lead
+ * of a repository's owning team deletes its lessons and consolidates it; the cross-team
+ * stats and consolidating everything at once stay with platform ADMINs.
  */
 export default function LessonsPage() {
   const isAdmin = useHasRole('ADMIN');
@@ -136,10 +137,16 @@ export default function LessonsPage() {
     repoId: repoFilter || undefined,
   });
   const deleteLesson = useDeleteLesson();
+  const managed = new Set(lessonsMeta?.managedRepoIds ?? []);
+  const canManage = (repoId: string | undefined) => isAdmin || (!!repoId && managed.has(repoId));
+  // A lead consolidates the repository they filtered to; an admin has the per-repository table.
+  const filteredRepo = repoOptions.find((r) => r.id === repoFilter);
 
   const [deleting, setDeleting] = useState<{ id: string; summary: string } | null>(null);
   // `null` = nothing asked; `'all'` = every repository; otherwise one repository.
-  const [consolidating, setConsolidating] = useState<'all' | LessonRepoStats | null>(null);
+  const [consolidating, setConsolidating] = useState<
+    'all' | Pick<LessonRepoStats, 'id' | 'organizationName' | 'repoName'> | null
+  >(null);
   const [triggerNotice, setTriggerNotice] = useState<string | null>(null);
 
   const runConsolidation = async () => {
@@ -172,7 +179,8 @@ export default function LessonsPage() {
           ) : (
             <p>
               These are the lessons of the repositories you can reach. Later runs on a repository
-              recall its lessons as context. Administrators consolidate and remove lessons.
+              recall its lessons as context. A lead of a repository's team can delete its lessons
+              and merge similar ones; filter to the repository to consolidate it.
             </p>
           )
         }
@@ -192,11 +200,28 @@ export default function LessonsPage() {
         </CardHeader>
         <Toolbar
           end={
-            lessonsMeta ? (
-              <span className="text-xs text-paper-500 tabular-nums">
-                {lessonsMeta.total} lesson{lessonsMeta.total === 1 ? '' : 's'}
-              </span>
-            ) : undefined
+            <>
+              {!isAdmin && filteredRepo && canManage(filteredRepo.id) && (
+                <Button
+                  onClick={() =>
+                    setConsolidating({
+                      id: filteredRepo.id,
+                      organizationName: filteredRepo.organizationName ?? '',
+                      repoName: filteredRepo.repoName ?? '',
+                    })
+                  }
+                  size="sm"
+                >
+                  <Icon name="refresh" size={14} />
+                  Consolidate this repository
+                </Button>
+              )}
+              {lessonsMeta && (
+                <span className="text-xs text-paper-500 tabular-nums">
+                  {lessonsMeta.total} lesson{lessonsMeta.total === 1 ? '' : 's'}
+                </span>
+              )}
+            </>
           }
         >
           <SearchInput
@@ -313,7 +338,7 @@ export default function LessonsPage() {
                       )}
                     </div>
                   </div>
-                  {isAdmin && (
+                  {canManage(lesson.repository?.id) && (
                     <Button
                       aria-label="Delete lesson"
                       className="shrink-0 px-2 text-paper-500 hover:text-danger-400"

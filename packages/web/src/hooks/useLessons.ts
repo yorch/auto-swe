@@ -1,7 +1,7 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
+import { type ListMeta, type ListOptions, listUrl, useListQuery } from '@/hooks/useListQuery';
 import { api } from '@/lib/api';
 
 export interface LessonRepoStats {
@@ -50,6 +50,14 @@ export interface LessonListOptions extends ListOptions {
   repoId?: string;
 }
 
+export interface LessonListMeta extends ListMeta {
+  /**
+   * The repositories whose lessons the caller may delete and consolidate: those whose owning
+   * team they lead. Absent for a platform ADMIN, who manages every repository.
+   */
+  managedRepoIds?: string[];
+}
+
 export function useLessons(includeConsolidated = false, opts: LessonListOptions = {}) {
   const { q, repoId, ...page } = opts;
   const base = new URLSearchParams({ includeConsolidated: includeConsolidated ? 'true' : 'false' });
@@ -59,10 +67,11 @@ export function useLessons(includeConsolidated = false, opts: LessonListOptions 
   if (q) {
     base.set('q', q);
   }
-  return useListQuery<Lesson>({
+  const query = useListQuery<Lesson>({
     queryFn: () => api.get(listUrl(`/api/v1/lessons?${base.toString()}`, page)),
     queryKey: ['lessons', includeConsolidated, opts],
   });
+  return { ...query, meta: query.meta as LessonListMeta | undefined };
 }
 
 export function useDeleteLesson() {

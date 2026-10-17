@@ -149,8 +149,8 @@ crowded one would get nothing back. The setting needs pgvector 0.8 or later.
 ## 4. Consolidation
 
 A Temporal Schedule (`consolidationCron`, default weekly) starts one `ConsolidateLessonsWorkflow`
-per repository with `Connection.consolidationEnabled`. Admins can also run it from
-`/lessons`. It clusters the repository's active lessons that have not aged out (§3) by embedding similarity
+per repository with `Connection.consolidationEnabled`. A platform ADMIN can also run it for every
+repository, or one, from `/lessons`, and a lead of a repository's owning team for that repository. It clusters the repository's active lessons that have not aged out (§3) by embedding similarity
 (`consolidationSimilarityThreshold`, default 0.85), and for each cluster of at least
 `consolidationMinClusterSize` (default 3) asks the `lessonConsolidator` agent for one or two
 generalised lessons. In one transaction, under a per-repository advisory lock, it inserts those and
@@ -176,8 +176,13 @@ refused for a match and a drop are security events on `/admin/security` — `MEM
 `/lessons` lists and searches lessons for every role. An engineer or lead sees the lessons of
 the repositories they can reach — the owning team's or a team it is shared with, under the access
 gate — each with its failure type, the run's outcome, a `Low confidence` label below 0.5, and a link
-to the run it was written from. Platform ADMINs see every repository's, and only they delete lessons,
-start consolidation and see the per-repository counts. Channel memory is
+to the run it was written from. Managing a repository's lessons — deleting one, starting
+consolidation — takes what editing the repository takes: a platform ADMIN, or a LEAD or ADMIN of its
+owning (and active) team. A shared team's members read the lessons and do not manage them, and a
+lesson whose repository is gone is a platform ADMIN's alone. The list names the repositories the
+caller manages (`meta.managedRepoIds`) so the page offers the controls only there. Platform ADMINs
+also see every repository's lessons, the per-repository counts, and consolidate all at once.
+Channel memory is
 edited and deleted per channel ([channel-assistant.md §6](./channel-assistant.md#6-memory)).
 
 **Deleting forgets, through every copy.** Both delete routes run `forgetMemoryItems`
@@ -211,9 +216,9 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
 
 ## Limitations
 
-- **Only a platform ADMIN can remove a lesson.** Engineers and leads read their repositories'
-  lessons, but a lead who finds a wrong one on their own team's repository has no control to delete
-  it or to flag it for review; they ask an administrator.
+- **An engineer cannot flag a lesson.** Someone who reads a wrong lesson on a repository whose team
+  they do not lead has no control to dispute it; they ask a lead of that team or an administrator.
+  A lead's delete is final, like an admin's, and there is no review step before it.
 - **An incomplete scan refuses writes but not recall.** While an `INJECTION` scanner pattern is
   quarantined (up to ten minutes in that process), every lesson, channel summary and passively
   ingested fact written in that process is refused, and consolidation leaves its clusters as they
