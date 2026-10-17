@@ -3,7 +3,10 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { bodyOf, setupFetchMock, stubDialogPrototype, withQuery } from '@/test/rtl-helpers';
-import { TeamCallbackEndpointsSection } from './TeamCallbackEndpointsSection';
+import {
+  CallbackDeliveriesTable,
+  TeamCallbackEndpointsSection,
+} from './TeamCallbackEndpointsSection';
 
 vi.mock('next/navigation', async () => (await import('@/test/mockNavigation')).navigationMock());
 
@@ -59,5 +62,36 @@ describe('TeamCallbackEndpointsSection', () => {
       name: 'ci',
       origin: 'https://hooks.example.com',
     });
+  });
+});
+
+describe('CallbackDeliveriesTable', () => {
+  it('gives every row a Run cell, so a delivery with no run keeps its cells under their headings', () => {
+    const row = {
+      createdAt: '2026-10-01T00:00:00.000Z',
+      deliveredAt: null,
+      event: 'run.completed' as const,
+      status: 'DELIVERED' as const,
+      target: null,
+    };
+    const { container } = render(
+      withQuery(
+        <CallbackDeliveriesTable
+          rows={[
+            { ...row, id: 'with-run', workflowRunId: 'run-1' },
+            { ...row, id: 'without-run' },
+          ]}
+          showRun
+        />
+      )
+    );
+    const headings = container.querySelectorAll('thead th').length;
+    const rows = container.querySelectorAll('tbody tr');
+    expect(headings).toBe(5);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.querySelectorAll('td')).toHaveLength(headings);
+    }
+    expect(screen.getByRole('link', { name: 'View run' }).getAttribute('href')).toBe('/runs/run-1');
   });
 });

@@ -452,11 +452,20 @@ export function CallbackDeliveriesTable({
                   </div>
                 )}
               </Td>
-              {showRun && d.workflowRunId && (
+              {/* Every row keeps the Run cell, so a delivery with no run cannot shift its
+                  later cells under the wrong headings. */}
+              {showRun && (
                 <Td className="text-xs">
-                  <a className="underline" href={`/runs/${d.workflowRunId}`}>
-                    View run
-                  </a>
+                  {d.workflowRunId ? (
+                    <a
+                      className="text-paper-100 underline decoration-paper-600 underline-offset-2 hover:decoration-current"
+                      href={`/runs/${d.workflowRunId}`}
+                    >
+                      View run
+                    </a>
+                  ) : (
+                    <span className="text-paper-500">—</span>
+                  )}
                 </Td>
               )}
               <Td>
