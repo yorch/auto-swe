@@ -95,6 +95,80 @@ jobs:
       - name: Build
         run: yarn build
 
+  # Screenshot baselines of the dashboard (packages/web/e2e). Pixels depend on
+  # the browser build and the fonts it can fall back to, so the job runs inside
+  # the official Playwright image for exactly the pinned @playwright/test
+  # version (its Chromium is the one the baselines were recorded with). Every
+  # gateway call is answered from typed fixtures, so nothing else is needed. A
+  # failure uploads the actual shots and their diffs; update the baselines on
+  # purpose as docs/architecture.md describes, never to make a red run green.
+  visual:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.56.1-noble
+      options: --ipc=host
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # The image ships its own Node and no Yarn; `cache: yarn` would probe a
+      # `yarn` that does not exist yet, so the cache is not used here.
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: '.node-version'
+
+      # The same shim as the Dockerfiles: run the vendored release `yarnPath` names.
+      - name: Provide yarn
+        run: |
+          printf '%s\n' '#!/bin/sh' "exec node \"$GITHUB_WORKSPACE/\$(sed -n 's/^yarnPath: *//p' \"$GITHUB_WORKSPACE/.yarnrc.yml\")\" \"\$@\"" \
+            > /usr/local/bin/yarn
+          chmod +x /usr/local/bin/yarn
+          yarn --version
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Generate Prisma client
+        run: yarn db:generate
+
+      - name: Build shared
+        run: yarn workspace @auto-swe/shared build
+
+      - name: Build web
+        run: yarn workspace @auto-swe/web build
+
+      - name: Visual regression suite
+        id: visual
+        run: yarn workspace @auto-swe/web test:visual
+
+      # Also on a cancelled job (a timeout), which `failure()` does not cover. The output folder
+      # is `.output`, and the action skips hidden paths unless told otherwise.
+      - name: Upload shots and diffs
+        if: ${{ !success() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: visual-diffs
+          path: packages/web/e2e/.output/
+          include-hidden-files: true
+          retention-days: 14
+
+      # Pixels depend on this image's font rendering, so baselines recorded anywhere else drift.
+      # When the suite fails, record a full set here: if the diffs above are the intended change,
+      # these are the files to commit. The job still fails.
+      - name: Record baselines in this image
+        if: ${{ failure() && steps.visual.outcome == 'failure' }}
+        run: yarn workspace @auto-swe/web test:visual --update-snapshots=all
+
+      - name: Upload recorded baselines
+        if: ${{ failure() && steps.visual.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: visual-baselines
+          path: packages/web/e2e/__screenshots__/
+          retention-days: 14
+
   # Real-container job: the suites that drive a real Docker daemon. The
   # unit-test job skips them (`describe.skipIf(!enabled)`), and the code they
   # cover — the Claude Code harness through `docker exec`, its worker-side tool
