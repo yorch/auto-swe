@@ -5,12 +5,12 @@ import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type BundlePreview,
   useBundleMaxBytes,
@@ -310,46 +310,48 @@ export default function StudioBundlesPage() {
               title="No bundles installed yet"
             />
           ) : (
-            <Table stacked>
-              <THead>
-                <Th className="pl-0" variant="plain">
-                  Name
-                </Th>
-                <Th variant="plain">Version</Th>
-                <Th variant="plain">Trust</Th>
-                <Th className="pr-0" variant="plain">
-                  Source
-                </Th>
-              </THead>
-              <tbody>
-                {bundles.map((b) => (
-                  <TRow key={b.name}>
-                    <Td
-                      className="py-2.5 pr-4 font-mono text-sm font-medium text-paper-100"
-                      primary
-                    >
-                      {b.name}
-                    </Td>
-                    <Td className="px-4 py-2.5 font-mono text-xs text-paper-300" label="Version">
-                      {b.version}
-                    </Td>
-                    <Td className="px-4 py-2.5" label="Trust">
-                      <Badge dot tone={b.trustState === 'VERIFIED' ? 'success' : 'warning'}>
-                        {b.trustState === 'VERIFIED' ? 'Verified' : 'Unverified'}
-                        {b.signedBy ? ` · ${b.signedBy}` : ''}
-                      </Badge>
-                    </Td>
-                    <Td
-                      className="max-w-xs truncate py-2.5 pl-4 font-mono text-xs text-paper-400"
-                      label="Source"
+            <DataTable
+              columns={[
+                {
+                  cell: (b) => <span className="font-mono text-sm">{b.name}</span>,
+                  header: 'Name',
+                  id: 'name',
+                  primary: true,
+                },
+                {
+                  cell: (b) => (
+                    <span className="font-mono text-xs text-paper-300">{b.version}</span>
+                  ),
+                  header: 'Version',
+                  id: 'version',
+                },
+                {
+                  cell: (b) => (
+                    <Badge dot tone={b.trustState === 'VERIFIED' ? 'success' : 'warning'}>
+                      {b.trustState === 'VERIFIED' ? 'Verified' : 'Unverified'}
+                      {b.signedBy ? ` · ${b.signedBy}` : ''}
+                    </Badge>
+                  ),
+                  header: 'Trust',
+                  id: 'trust',
+                },
+                {
+                  cell: (b) => (
+                    <span
+                      className="block max-w-xs truncate font-mono text-xs text-paper-400"
                       title={b.source ?? undefined}
                     >
                       {b.source ?? '—'}
-                    </Td>
-                  </TRow>
-                ))}
-              </tbody>
-            </Table>
+                    </span>
+                  ),
+                  header: 'Source',
+                  id: 'source',
+                },
+              ]}
+              density="compact"
+              getRowId={(b) => b.name}
+              rows={bundles}
+            />
           )}
         </QueryBoundary>
       </Card>

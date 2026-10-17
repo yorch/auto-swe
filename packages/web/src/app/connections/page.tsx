@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
+import { DataTable } from '@/components/ui/DataTable';
 import { DocLink } from '@/components/ui/DocLink';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
@@ -26,7 +27,6 @@ import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader, SectionHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useHasRole } from '@/hooks/useHasRole';
 import {
@@ -131,6 +131,10 @@ export default function ConnectionsPage() {
   const credentialsEnabled = myCredentials.data?.enabled ?? false;
   const credentialFor = (id: string) =>
     myCredentials.data?.credentials.find((c) => c.connectionId === id);
+  // Offered when the feature is on, and kept reachable when it is off but a token is still
+  // saved, so it can always be removed.
+  const showsCredential = (r: { id: string; type?: string | null }) =>
+    (!r.type || r.type === 'git_repo') && (credentialsEnabled || !!credentialFor(r.id));
 
   const rows = repos ?? [];
 
@@ -249,152 +253,155 @@ export default function ConnectionsPage() {
                 title={query ? 'No connections match your search' : 'No connections yet'}
               />
             ) : (
-              <Table stacked>
-                <caption className="sr-only">Connections available to your teams</caption>
-                <THead>
-                  <Th variant="plain">Connection</Th>
-                  <Th variant="plain">Type</Th>
-                  <Th variant="plain">Team</Th>
-                  <Th variant="plain">Branch</Th>
-                  <Th align="right" variant="plain">
-                    Workflows
-                  </Th>
-                  <Th variant="plain">Status</Th>
-                  <Th align="right" variant="plain">
-                    <span className="sr-only">Actions</span>
-                  </Th>
-                </THead>
-                <tbody>
-                  {rows.map((r) => {
-                    const isGitRepo = !r.type || r.type === 'git_repo';
-                    const myCredential = isGitRepo ? credentialFor(r.id) : undefined;
-                    // Offered when the feature is on, and kept reachable when it is off
-                    // but a token is still saved, so it can always be removed.
-                    const showCredential = isGitRepo && (credentialsEnabled || !!myCredential);
-                    const canEdit = canManageTeam(r.team?.id);
-                    const label = connectionLabel(r);
-                    const menu: ActionMenuItem[] = [
-                      ...(isGitRepo
-                        ? [
-                            {
-                              icon: 'layers' as const,
-                              id: 'dependencies',
-                              label: 'Dependencies',
-                              onAction: () => setMode({ kind: 'dependencies', repo: r }),
-                            },
-                            {
-                              icon: 'alert' as const,
-                              id: 'automations',
-                              label: 'Automations',
-                              onAction: () => setMode({ kind: 'automations', repo: r }),
-                            },
-                          ]
-                        : []),
-                      ...(showCredential
-                        ? [
-                            {
-                              icon: 'key' as const,
-                              id: 'credential',
-                              label: myCredential ? 'My token' : 'Use my token',
-                              onAction: () => setMode({ kind: 'credential', repo: r }),
-                            },
-                          ]
-                        : []),
-                      // The server decides: only the owning team's leads (and
-                      // platform admins) may change sharing.
-                      ...(canEdit && isGitRepo
-                        ? [
-                            {
-                              icon: 'teams' as const,
-                              id: 'share',
-                              label: 'Share with teams',
-                              onAction: () => setMode({ kind: 'share', repo: r }),
-                            },
-                          ]
-                        : []),
-                    ];
-                    return (
-                      <TRow hover key={r.id}>
-                        <Td className="max-w-md px-4 py-3" primary>
-                          <div className="truncate font-medium text-paper-100" title={label}>
-                            {label}
-                          </div>
-                          {(r.description || showCredential) && (
-                            <div className="mt-0.5 truncate text-xs font-normal text-paper-400">
-                              {r.description}
-                              {r.description && showCredential && ' · '}
-                              {showCredential &&
-                                (myCredential
-                                  ? `Your token …${myCredential.lastFour || '????'}${credentialsEnabled ? '' : ' (unused)'}`
-                                  : 'Platform credential')}
-                            </div>
-                          )}
-                        </Td>
-                        <Td className="px-4 py-3" label="Type">
-                          <ConnectionTypeBadge type={r.type ?? 'git_repo'} />
-                        </Td>
-                        <Td className="px-4 py-3 text-paper-300" label="Team">
-                          <div>{r.team?.name ?? <span className="text-paper-500">None</span>}</div>
-                          {(r.shares?.length ?? 0) > 0 && (
-                            <div
-                              className="max-w-48 truncate text-xs text-paper-500"
-                              title={(r.shares ?? []).map((sh) => sh.team.name).join(', ')}
-                            >
-                              Shared with {(r.shares ?? []).map((sh) => sh.team.name).join(', ')}
-                            </div>
-                          )}
-                        </Td>
-                        <Td className="px-4 py-3" label="Branch">
-                          {isGitRepo ? (
-                            <>
-                              <div className="font-mono text-xs text-paper-300">
-                                {r.defaultBranch}
-                              </div>
-                              {r.executorImage && (
-                                <div
-                                  className="max-w-48 truncate font-mono text-xs text-paper-500"
-                                  title={`Executor image: ${r.executorImage}`}
-                                >
-                                  {r.executorImage}
-                                </div>
-                              )}
-                            </>
-                          ) : (
-                            <span className="text-paper-500">—</span>
-                          )}
-                        </Td>
-                        <Td
-                          align="right"
-                          className="tabular px-4 py-3 text-paper-200"
-                          label="Workflows"
+              <DataTable
+                actions={(r) => {
+                  const isGitRepo = !r.type || r.type === 'git_repo';
+                  const label = connectionLabel(r);
+                  const menu: ActionMenuItem[] = [
+                    ...(isGitRepo
+                      ? [
+                          {
+                            icon: 'layers' as const,
+                            id: 'dependencies',
+                            label: 'Dependencies',
+                            onAction: () => setMode({ kind: 'dependencies', repo: r }),
+                          },
+                          {
+                            icon: 'alert' as const,
+                            id: 'automations',
+                            label: 'Automations',
+                            onAction: () => setMode({ kind: 'automations', repo: r }),
+                          },
+                        ]
+                      : []),
+                    ...(showsCredential(r)
+                      ? [
+                          {
+                            icon: 'key' as const,
+                            id: 'credential',
+                            label: credentialFor(r.id) ? 'My token' : 'Use my token',
+                            onAction: () => setMode({ kind: 'credential', repo: r }),
+                          },
+                        ]
+                      : []),
+                    // The server decides: only the owning team's leads (and
+                    // platform admins) may change sharing.
+                    ...(canManageTeam(r.team?.id) && isGitRepo
+                      ? [
+                          {
+                            icon: 'teams' as const,
+                            id: 'share',
+                            label: 'Share with teams',
+                            onAction: () => setMode({ kind: 'share', repo: r }),
+                          },
+                        ]
+                      : []),
+                  ];
+                  return (
+                    <>
+                      {canManageTeam(r.team?.id) && (
+                        <Button
+                          aria-label={`Edit ${label}`}
+                          onClick={() => setMode({ kind: 'edit', repo: r })}
+                          size="sm"
+                          variant="ghost"
                         >
-                          {r._count?.activeWorkflows ?? 0}
-                        </Td>
-                        <Td className="px-4 py-3" label="Status">
-                          <Badge dot tone={r.isActive ? 'success' : 'muted'}>
-                            {r.isActive ? 'Active' : 'Inactive'}
-                          </Badge>
-                        </Td>
-                        <Td align="right" className="whitespace-nowrap px-4 py-3">
-                          <div className="flex items-center justify-end gap-1 max-sm:justify-start">
-                            {canEdit && (
-                              <Button
-                                aria-label={`Edit ${label}`}
-                                onClick={() => setMode({ kind: 'edit', repo: r })}
-                                size="sm"
-                                variant="ghost"
-                              >
-                                Edit
-                              </Button>
-                            )}
-                            <ActionMenu items={menu} label={`More actions for ${label}`} />
+                          Edit
+                        </Button>
+                      )}
+                      <ActionMenu items={menu} label={`More actions for ${label}`} />
+                    </>
+                  );
+                }}
+                caption="Connections available to your teams"
+                columns={[
+                  {
+                    cell: (r) => <span title={connectionLabel(r)}>{connectionLabel(r)}</span>,
+                    header: 'Connection',
+                    id: 'connection',
+                    primary: true,
+                    secondary: (r) => {
+                      const myCredential = credentialFor(r.id);
+                      const showCredential = showsCredential(r);
+                      return r.description || showCredential ? (
+                        <span className="block truncate">
+                          {r.description}
+                          {r.description && showCredential && ' · '}
+                          {showCredential &&
+                            (myCredential
+                              ? `Your token …${myCredential.lastFour || '????'}${credentialsEnabled ? '' : ' (unused)'}`
+                              : 'Platform credential')}
+                        </span>
+                      ) : null;
+                    },
+                    width: 'sm:max-w-md',
+                  },
+                  {
+                    cell: (r) => <ConnectionTypeBadge type={r.type ?? 'git_repo'} />,
+                    header: 'Type',
+                    id: 'type',
+                  },
+                  {
+                    cell: (r) => (
+                      <span className="text-paper-300">
+                        <div>{r.team?.name ?? <span className="text-paper-500">None</span>}</div>
+                        {(r.shares?.length ?? 0) > 0 && (
+                          <div
+                            className="max-w-48 truncate text-xs text-paper-500"
+                            title={(r.shares ?? []).map((sh) => sh.team.name).join(', ')}
+                          >
+                            Shared with {(r.shares ?? []).map((sh) => sh.team.name).join(', ')}
                           </div>
-                        </Td>
-                      </TRow>
-                    );
-                  })}
-                </tbody>
-              </Table>
+                        )}
+                      </span>
+                    ),
+                    header: 'Team',
+                    id: 'team',
+                  },
+                  {
+                    cell: (r) =>
+                      !r.type || r.type === 'git_repo' ? (
+                        <>
+                          <div className="font-mono text-xs text-paper-300">{r.defaultBranch}</div>
+                          {r.executorImage && (
+                            <div
+                              className="max-w-48 truncate font-mono text-xs text-paper-500"
+                              title={`Executor image: ${r.executorImage}`}
+                            >
+                              {r.executorImage}
+                            </div>
+                          )}
+                        </>
+                      ) : (
+                        <span className="text-paper-500">—</span>
+                      ),
+                    header: 'Branch',
+                    id: 'branch',
+                  },
+                  {
+                    align: 'right',
+                    cell: (r) => (
+                      <span className="tabular text-paper-200">
+                        {r._count?.activeWorkflows ?? 0}
+                      </span>
+                    ),
+                    header: 'Workflows',
+                    id: 'workflows',
+                  },
+                  {
+                    cell: (r) => (
+                      <Badge dot tone={r.isActive ? 'success' : 'muted'}>
+                        {r.isActive ? 'Active' : 'Inactive'}
+                      </Badge>
+                    ),
+                    header: 'Status',
+                    id: 'status',
+                  },
+                ]}
+                getRowId={(r) => r.id}
+                revealActions={false}
+                rows={rows}
+              />
             )}
           </QueryBoundary>
         </Card>
