@@ -64,8 +64,6 @@ function makePrisma(seed: Row[]) {
   return { prisma, rows };
 }
 
-const global = (rows: Row[], name: string) => rows.filter((r) => r.name === name && !r.teamId);
-
 describe('superseded descriptions', () => {
   it('replaces a description still carrying the old built-in text', async () => {
     const [old] = SUPERSEDED_TEMPLATE_DESCRIPTIONS['ticket-to-merge'];
