@@ -157,7 +157,7 @@ export function Modal({
     // biome-ignore lint/a11y/useKeyWithClickEvents: the keyboard equivalent of a backdrop click is Escape, which <dialog> handles natively
     <dialog
       aria-labelledby={titleId}
-      className={`m-auto ${width} border border-ink-400 bg-ink-900 p-0 text-paper-100 backdrop:bg-ink-950/80`}
+      className={`m-auto ${width} border border-ink-400 bg-ink-900 p-0 text-paper-100 backdrop:bg-black/60`}
       onCancel={(e) => {
         // Escape fires `cancel` first; preventing it keeps the dialog open.
         if (!dismissible) {
