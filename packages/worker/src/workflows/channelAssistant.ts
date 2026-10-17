@@ -142,6 +142,12 @@ const CHANNEL_CODE_NO_REPO_NOTE =
   'channel, so I am working on it as a general task instead. Name the repo (or have ' +
   'an admin link one to this channel) for a code/PR run.\n\n';
 
+// Prepended to the ack when a code task starts from a private channel. The run is
+// an ordinary run on its repository, so the channel's privacy does not extend to it.
+const CHANNEL_CODE_PRIVATE_NOTE =
+  ':lock: This channel is private, but a code task is not: the task, its run and its ' +
+  'pull request are visible to everyone with access to the repository.\n\n';
+
 // Posted (instead of the agent's ack) when a task was already launched in this
 // thread — the per-thread task run is single-use (REJECT_DUPLICATE), so a fresh
 // task needs its own thread; an in-flight task is steered by replying in-thread.
@@ -407,7 +413,10 @@ interface PreparedTaskRun {
 
 /** Outcome of a task launch attempt (drives what the caller posts to the thread). */
 interface LaunchOutcome {
-  /** Text to PREPEND to the agent's ack — empty, or the code→general fallback note. */
+  /**
+   * Text to PREPEND to the agent's ack — empty, the code→general fallback note, or
+   * the private-channel note on a code task.
+   */
   prefix: string;
   /**
    * True when the per-thread workflowId was already used (`REJECT_DUPLICATE`), so
@@ -472,7 +481,7 @@ async function launchTask(
       }
       if (prepared) {
         await startTaskChild(prepared);
-        return { prefix: '' };
+        return { prefix: prepared.fromPrivateChannel ? CHANNEL_CODE_PRIVATE_NOTE : '' };
       }
       // No (unambiguous) repo resolved — fall back to the general route and note it.
       log.info('ChannelAssistantWorkflow: code task fell back to general route (no repo)', {

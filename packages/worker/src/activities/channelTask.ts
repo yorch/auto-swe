@@ -66,6 +66,13 @@ export interface CreateChannelTaskRunResult {
    * the same `workflowId`.
    */
   runAt?: string;
+  /**
+   * Set on a code task launched from a private channel. A code run is an ordinary
+   * run on its repository — everyone who can reach the repository sees it, its
+   * traces and its pull request — so the thread is told before anyone relies on
+   * the channel's privacy.
+   */
+  fromPrivateChannel?: boolean;
 }
 
 /**
@@ -499,10 +506,15 @@ export async function createChannelCodeTaskRun(
 
   // Default SWE template: team `isDefault` ACTIVE → GLOBAL `isDefault` fallback.
   const { templateId, templateVersion } = await resolveTemplateForRepo(repo.repoId);
+  const channel = await prisma.slackChannel.findUnique({
+    select: { isPrivate: true },
+    where: { id: input.channelId },
+  });
   // Real `repoId` so the SWE spec's implement → review → PR nodes have a workspace.
-  return buildChannelTaskRun(
+  const prepared = await buildChannelTaskRun(
     input,
     { repoId: repo.repoId, templateId, templateVersion },
     input.requesterSlackId
   );
+  return channel?.isPrivate ? { ...prepared, fromPrivateChannel: true } : prepared;
 }

@@ -80,6 +80,8 @@ let codeRepoResolves = true;
 // instead of a prepared run — a different outcome from "no repo resolved", and
 // the one the workflow must NOT answer by falling through to the general route.
 let codeTaskRefusal: string | null = null;
+// When true, the prepared code run says it was launched from a private channel.
+let codeFromPrivateChannel = false;
 // When true, preparing the general task run throws (a launch failure that is
 // not WorkflowExecutionAlreadyStartedError).
 let taskRunThrows = false;
@@ -112,6 +114,7 @@ const fakeActivities = {
       return null;
     }
     return {
+      ...(codeFromPrivateChannel ? { fromPrivateChannel: true } : {}),
       request: {
         channelId: input.channelId,
         description: 'code task',
@@ -242,6 +245,7 @@ beforeEach((ctx: TestContext) => {
   overBudget = false;
   codeRepoResolves = true;
   codeTaskRefusal = null;
+  codeFromPrivateChannel = false;
   taskRunThrows = false;
 });
 
@@ -487,6 +491,18 @@ describe('ChannelAssistantWorkflow (TestWorkflowEnvironment)', () => {
     expect(calls.taskRuns).toHaveLength(0);
     // The ack is posted unprefixed (no fallback note).
     expect(calls.updates[0]?.text).toBe('On it — will open a PR.');
+  }, 60_000);
+
+  it('tells a private channel that a code task is visible to the repository', async () => {
+    turnDelegate = { description: 'add an endpoint', route: 'code', title: 'Endpoint' };
+    turnReply = 'On it — will open a PR.';
+    codeFromPrivateChannel = true;
+
+    await env.client.workflow.execute('ChannelAssistantWorkflow', startArgs('ca-code-private'));
+
+    expect(calls.codeTaskRuns).toHaveLength(1);
+    expect(calls.updates[0]?.text).toContain('This channel is private, but a code task is not');
+    expect(calls.updates[0]?.text).toContain('On it — will open a PR.');
   }, 60_000);
 
   it('falls back to the general route (with a note) when a code delegate resolves no repo', async () => {

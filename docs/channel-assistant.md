@@ -96,7 +96,9 @@ security event in `/admin/security`.
 Delegating with an `@mention` launches a durable, thread-bound `RunnableWorkflow`. There are two
 routes:
 
-- **Code route** — uses the team's SWE template and behaves like any engineering run.
+- **Code route** — uses the team's SWE template and behaves like any engineering run, visible to
+  everyone who can reach the repository. From a private channel the acknowledgement starts with a
+  note saying so: the channel's privacy does not extend to the task, its run or its pull request.
 - **General route** — runs the seeded "Channel Task" template: `plan → cond → {single | composite}`.
   A `planChannelTask` step, deliberately biased against splitting, returns 1..N subtasks. A cohesive
   task runs a single `channelAssistant` node; a splittable one runs `runChannelSubtasks`, which does
