@@ -7,11 +7,11 @@ import {
 } from '@auto-swe/shared/types/api';
 import Link from 'next/link';
 import { useState } from 'react';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Toolbar } from '@/components/ui/Toolbar';
 import { useEvalResults } from '@/hooks/useAdmin';
 import { resultRuntimes, runtimeLabel } from '@/lib/evalRuntime';
@@ -163,69 +163,90 @@ export function EvalResultsTable({
       >
         {/* Bleeds into the card's padding so cell text lines up with the toolbar above. */}
         <div className="-mx-4">
-          <Table className="max-sm:px-4" stacked>
-            <THead>
-              <Th variant="plain">Scorer</Th>
-              <Th align="right" variant="plain">
-                Score
-              </Th>
-              <Th variant="plain">Source</Th>
-              <Th variant="plain">
-                <span title="The implementer runtime the candidate arm ran on (and the baseline arm's, when it differs). Offline benchmark rows only.">
-                  Runtime
-                </span>
-              </Th>
-              <Th variant="plain">Origin</Th>
-              <Th align="right" variant="plain">
-                When
-              </Th>
-            </THead>
-            <tbody>
-              {rows.map((row) => (
-                <TRow hover key={row.id}>
-                  <Td className="px-4 py-2.5 font-mono text-sm text-paper-100" primary>
-                    <span title={row.rationale ?? undefined}>{row.scorer}</span>
-                  </Td>
-                  <Td align="right" className="px-4 py-2.5 text-sm font-medium" label="Score">
-                    <span className="tabular-nums" style={{ color: scoreColor(row.value) }}>
-                      {formatScore(row)}
-                    </span>
-                  </Td>
-                  <Td className="px-4 py-2.5 text-xs text-paper-400" label="Source">
-                    {row.source}
-                  </Td>
-                  <Td className="px-4 py-2.5 text-xs text-paper-400" label="Runtime">
+          <DataTable
+            className="max-sm:px-4"
+            columns={[
+              {
+                cell: (row) => (
+                  <span className="font-mono text-sm" title={row.rationale ?? undefined}>
+                    {row.scorer}
+                  </span>
+                ),
+                header: 'Scorer',
+                id: 'scorer',
+                primary: true,
+              },
+              {
+                align: 'right',
+                cell: (row) => (
+                  <span
+                    className="text-sm font-medium tabular-nums"
+                    style={{ color: scoreColor(row.value) }}
+                  >
+                    {formatScore(row)}
+                  </span>
+                ),
+                header: 'Score',
+                id: 'score',
+              },
+              {
+                cell: (row) => <span className="text-xs text-paper-400">{row.source}</span>,
+                header: 'Source',
+                id: 'source',
+              },
+              {
+                cell: (row) => (
+                  <span className="text-xs text-paper-400">
                     <ResultRuntime row={row} />
-                  </Td>
-                  <Td className="px-4 py-2.5 text-xs text-paper-400" label="Origin">
+                  </span>
+                ),
+                header: (
+                  <span title="The implementer runtime the candidate arm ran on (and the baseline arm's, when it differs). Offline benchmark rows only.">
+                    Runtime
+                  </span>
+                ),
+                id: 'runtime',
+                label: 'Runtime',
+              },
+              {
+                cell: (row) => (
+                  <span className="text-xs text-paper-400">
                     <ResultOrigin row={row} showEvalRun={!evalRunId} />
-                  </Td>
-                  <Td align="right" className="px-4 py-2.5 text-xs text-paper-400" label="When">
-                    <time
-                      className="whitespace-nowrap"
-                      dateTime={row.createdAt}
-                      title={formatDate(row.createdAt)}
-                    >
-                      {formatRelativeTime(row.createdAt)}
-                    </time>
-                  </Td>
-                </TRow>
-              ))}
-              {rows.length === 0 && (
-                <TableStatusRow colSpan={6}>
-                  <EmptyState
-                    hint={
-                      scorer || source
-                        ? 'Try another scorer or source.'
-                        : 'Results appear as scorers grade runs and benchmarks.'
-                    }
-                    icon="flask"
-                    title={scorer || source ? 'No eval results match' : 'No eval results yet'}
-                  />
-                </TableStatusRow>
-              )}
-            </tbody>
-          </Table>
+                  </span>
+                ),
+                header: 'Origin',
+                id: 'origin',
+              },
+              {
+                align: 'right',
+                cell: (row) => (
+                  <time
+                    className="whitespace-nowrap text-xs text-paper-400"
+                    dateTime={row.createdAt}
+                    title={formatDate(row.createdAt)}
+                  >
+                    {formatRelativeTime(row.createdAt)}
+                  </time>
+                ),
+                header: 'When',
+                id: 'when',
+              },
+            ]}
+            density="compact"
+            empty={
+              <EmptyState
+                hint={
+                  scorer || source
+                    ? 'Try another scorer or source.'
+                    : 'Results appear as scorers grade runs and benchmarks.'
+                }
+                icon="flask"
+                title={scorer || source ? 'No eval results match' : 'No eval results yet'}
+              />
+            }
+            getRowId={(row) => row.id}
+            rows={rows}
+          />
         </div>
       </QueryBoundary>
       {total > 0 && (
