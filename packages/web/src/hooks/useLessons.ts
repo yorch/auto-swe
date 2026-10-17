@@ -79,3 +79,34 @@ export function useDeleteLesson() {
 export function triggerRepoConsolidation(repoId: string) {
   return api.post<{ data: { workflowId: string } }>('/api/v1/lessons/consolidate', { repoId });
 }
+
+/** One lesson as the run page shows it. */
+export interface RunLesson {
+  id: string;
+  lessonSummary: string;
+  rationale: string | null;
+  failureType: string | null;
+  confidence: number | null;
+  consolidatedAt: string | null;
+  supersededAt: string | null;
+  createdAt: string;
+  metadata: { outcome?: unknown } | null;
+}
+
+export interface RunLessons {
+  /** In the order first recalled; `lesson` is null once the lesson was deleted. */
+  recalled: { lessonId: string; recalledFor: string[]; lesson: RunLesson | null }[];
+  written: RunLesson[];
+}
+
+/** The lessons a run recalled into its agents' prompts and the ones it wrote. */
+export function useRunLessons(runId: string, live: boolean) {
+  return useQuery({
+    enabled: !!runId,
+    queryFn: () =>
+      api.get<{ data: RunLessons }>(`/api/v1/workflow-runs/${runId}/lessons`).then((r) => r.data),
+    queryKey: ['run-lessons', runId],
+    // Recall happens as agents start and lessons are written at the end, so a live run is re-read.
+    refetchInterval: live ? 15_000 : false,
+  });
+}

@@ -181,6 +181,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/workflow-runs/:id/autonomy-decisions': 'read',
   'GET /api/v1/workflow-runs/:id/callback-deliveries': 'read',
   'GET /api/v1/workflow-runs/:id/eval-results': 'read',
+  'GET /api/v1/workflow-runs/:id/lessons': 'read',
   'GET /api/v1/workflow-runs/:id/traces': 'read',
   'GET /api/v1/workflow-runs/requests': 'read',
   'GET /api/v1/workflow-steps/registry': 'read',

@@ -21,6 +21,7 @@ import { SplitConsole } from '@/components/runs/layouts/SplitConsole';
 import { Transcript } from '@/components/runs/layouts/Transcript';
 import type { RunLayoutProps } from '@/components/runs/layouts/types';
 import { RunCallbackDeliveries } from '@/components/runs/RunCallbackDeliveries';
+import { RunLessons } from '@/components/runs/RunLessons';
 import { RunReadingGuide } from '@/components/runs/RunReadingGuide';
 import { RunSummaryBand } from '@/components/runs/RunSummaryBand';
 import { RunVerdictBanner } from '@/components/runs/RunVerdictBanner';
@@ -490,6 +491,8 @@ export default function RunDetailPage({ params }: PageProps) {
       />
 
       <RunCallbackDeliveries runId={run.id} />
+
+      <RunLessons live={!isTerminalWorkflowRunStatus(run.status)} runId={run.id} />
 
       {/* ── Layout body ───────────────────────────────────────────────────── */}
       <div className="flex flex-1 max-lg:min-w-0 lg:overflow-hidden" ref={traceAnchorRef}>

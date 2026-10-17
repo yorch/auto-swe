@@ -128,6 +128,13 @@ cleared. The owning team is cached for the ~30 s config-cache window; if the set
 read, the failure is logged and aging is treated as off rather than failing recall or
 consolidation.
 
+A run's page lists, under **Lessons**, every lesson its agents recalled — once each, naming the
+agents that were given it, and saying when one has since been merged, replaced or deleted — and the
+lessons the run wrote (`GET /api/v1/workflow-runs/:id/lessons`). Whoever can see the run sees them:
+a recalled lesson's text is already in the run's traces, as part of an agent's prompt. The recalled
+ids are read from the run's own `lessons.retrieved` trace events, so a recall that was not traced is
+not listed.
+
 The implementer and the fixers also get two read-only tools, `searchLessons` and `explainLesson`,
 bound to the session's repository: one asks for lessons by the agent's own query, the other shows
 where a recalled lesson came from — its run, outcome and evidence, the lessons it was merged from,
