@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
@@ -15,9 +16,9 @@ import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { CreateUserModal } from '@/components/users/CreateUserModal';
+import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { useInviteUser, useUpdateUser, useUsers } from '@/hooks/useUsers';
 import { errMsg } from '@/lib/errors';
 import { platformRoleLabel, roleChangeNeedsConfirm } from '@/lib/govLabels';
@@ -40,6 +41,8 @@ function teamNames(u: UserSummary): string {
     .filter(Boolean)
     .join(', ');
 }
+
+const USER_SORT_KEYS = { email: (u: UserSummary) => u.email.toLowerCase() };
 
 const ROLE_CONSEQUENCE: Record<Role, string> = {
   ADMIN: 'full access to every team and all platform settings',
@@ -69,6 +72,7 @@ export default function UsersPage() {
   const [suspendTarget, setSuspendTarget] = useState<{ email: string; id: string } | null>(null);
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState<'' | Role>('');
+  const { onSortChange, sort, sortRows } = useDataTableSort<UserSummary>(USER_SORT_KEYS);
 
   // Partition into pending (sign-ups awaiting approval) vs. active. Pending
   // users get a dedicated top section so admins notice them; the rest go
@@ -308,36 +312,50 @@ export default function UsersPage() {
             {roleError}
           </Alert>
         )}
-        <Table stacked>
-          <THead>
-            <Th className="pl-0" variant="plain">
-              Member
-            </Th>
-            <Th variant="plain">Role</Th>
-            <Th variant="plain">Slack</Th>
-            <Th className="pr-0" variant="plain">
-              <span className="sr-only">Actions</span>
-            </Th>
-          </THead>
-          <tbody>
-            {visible.map((u) => (
-              <TRow hover key={u.id}>
-                <Td className="py-3 pr-4" primary>
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate font-medium text-paper-100">{u.email}</span>
+        <div className="-mx-4">
+          <DataTable
+            actions={(u) =>
+              /* Suspending yourself would lock you out mid-session. */
+              u.id === currentUserId ? (
+                <span className="sr-only">Your own account cannot be suspended</span>
+              ) : (
+                <ActionMenu
+                  items={[
+                    {
+                      icon: 'lock',
+                      id: 'suspend',
+                      label: 'Suspend',
+                      onAction: () => setSuspendTarget({ email: u.email, id: u.id }),
+                      tone: 'danger',
+                    },
+                  ]}
+                  label={`More actions for ${u.email}`}
+                />
+              )
+            }
+            className="max-sm:px-4"
+            columns={[
+              {
+                cell: (u) => (
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate">{u.email}</span>
                     {u.id === currentUserId && (
                       <Badge tone="accent" variant="outline">
                         You
                       </Badge>
                     )}
-                  </div>
-                  <div className="mt-0.5 truncate text-xs font-normal text-paper-500">
-                    {teamNames(u) || 'No team'}
-                  </div>
-                </Td>
-                <Td className="px-4 py-3" label="Role">
-                  {/* Changing your own role could lock you out mid-session. */}
-                  {u.id === currentUserId ? (
+                  </span>
+                ),
+                header: 'Member',
+                id: 'email',
+                primary: true,
+                secondary: (u) => <span className="truncate">{teamNames(u) || 'No team'}</span>,
+                sortable: true,
+              },
+              {
+                /* Changing your own role could lock you out mid-session. */
+                cell: (u) =>
+                  u.id === currentUserId ? (
                     <Badge title="You cannot change your own role" tone="accent" variant="outline">
                       {platformRoleLabel(u.role)}
                     </Badge>
@@ -361,60 +379,48 @@ export default function UsersPage() {
                       options={ROLE_OPTIONS}
                       value={u.role}
                     />
-                  )}
-                </Td>
-                <Td className="px-4 py-3" label="Slack">
-                  {u.slackId ? (
+                  ),
+                header: 'Role',
+                id: 'role',
+              },
+              {
+                cell: (u) =>
+                  u.slackId ? (
                     <span className="font-mono text-xs text-paper-300">{u.slackId}</span>
                   ) : (
                     <span className="text-xs text-paper-500">Not linked</span>
-                  )}
-                </Td>
-                <Td align="right" className="py-3 pl-4">
-                  {/* Suspending yourself would lock you out mid-session. */}
-                  {u.id === currentUserId ? (
-                    <span className="sr-only">Your own account cannot be suspended</span>
-                  ) : (
-                    <ActionMenu
-                      items={[
-                        {
-                          icon: 'lock',
-                          id: 'suspend',
-                          label: 'Suspend',
-                          onAction: () => setSuspendTarget({ email: u.email, id: u.id }),
-                          tone: 'danger',
-                        },
-                      ]}
-                      label={`More actions for ${u.email}`}
-                    />
-                  )}
-                </Td>
-              </TRow>
-            ))}
-            {visible.length === 0 && (
-              <TableStatusRow colSpan={4}>
-                {filtering ? (
-                  <EmptyState
-                    action={
-                      <Button onClick={clearFilters} size="sm">
-                        Clear filters
-                      </Button>
-                    }
-                    hint="Try a different search or role."
-                    icon="search"
-                    title="No members match these filters"
-                  />
-                ) : (
-                  <EmptyState
-                    hint="Invite a teammate above, or approve a pending sign-up."
-                    icon="users"
-                    title="No active members"
-                  />
-                )}
-              </TableStatusRow>
-            )}
-          </tbody>
-        </Table>
+                  ),
+                header: 'Slack',
+                id: 'slack',
+              },
+            ]}
+            empty={
+              filtering ? (
+                <EmptyState
+                  action={
+                    <Button onClick={clearFilters} size="sm">
+                      Clear filters
+                    </Button>
+                  }
+                  hint="Try a different search or role."
+                  icon="search"
+                  title="No members match these filters"
+                />
+              ) : (
+                <EmptyState
+                  hint="Invite a teammate above, or approve a pending sign-up."
+                  icon="users"
+                  title="No active members"
+                />
+              )
+            }
+            getRowId={(u) => u.id}
+            onSortChange={onSortChange}
+            revealActions={false}
+            rows={sortRows(visible)}
+            sort={sort}
+          />
+        </div>
       </Card>
 
       <CreateUserModal onClose={() => setCreatingDirect(false)} open={creatingDirect} />
