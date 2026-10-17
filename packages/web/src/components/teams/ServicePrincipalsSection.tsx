@@ -15,13 +15,13 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import {
   type ServicePrincipalInput,
@@ -114,90 +114,95 @@ export function ServicePrincipalsSection({
             title="No service principals yet"
           />
         ) : (
-          <Table stacked>
-            <THead>
-              <Th className="pl-0" variant="plain">
-                Principal
-              </Th>
-              <Th variant="plain">May launch on</Th>
-              <Th variant="plain">Limits</Th>
-              <Th variant="plain">Tokens</Th>
-              <Th className="pr-0" variant="plain">
-                <span className="sr-only">Actions</span>
-              </Th>
-            </THead>
-            <tbody>
-              {principals.map((p) => (
-                <TRow hover key={p.id}>
-                  <Td className="py-3 pr-4" primary>
-                    <div className="flex items-center gap-2">
-                      <span className="truncate font-medium text-paper-100">{p.name}</span>
-                      {p.disabledAt && (
-                        <Badge tone="muted" variant="outline">
-                          Disabled
-                        </Badge>
-                      )}
-                    </div>
-                    {p.description && (
-                      <div className="mt-0.5 text-xs font-normal text-paper-500">
-                        {p.description}
-                      </div>
+          <DataTable
+            actions={(p) => (
+              <ActionMenu
+                items={[
+                  {
+                    icon: 'edit',
+                    id: 'edit',
+                    label: 'Edit',
+                    onAction: () => setEditing(p),
+                  },
+                  {
+                    icon: 'key',
+                    id: 'tokens',
+                    label: 'Tokens',
+                    onAction: () => setTokensFor(p),
+                  },
+                  {
+                    disabled: update.isPending,
+                    icon: p.disabledAt ? 'play' : 'pause',
+                    id: 'toggle',
+                    label: p.disabledAt ? 'Enable' : 'Disable',
+                    onAction: () => {
+                      setActionError(null);
+                      update
+                        .mutateAsync({ disabled: !p.disabledAt, id: p.id })
+                        .catch((err) => setActionError(errMsg(err, 'Update failed')));
+                    },
+                  },
+                  {
+                    icon: 'trash',
+                    id: 'delete',
+                    label: 'Delete',
+                    onAction: () => setDeleting(p),
+                    tone: 'danger',
+                  },
+                ]}
+                label={`Actions for service principal ${p.name}`}
+              />
+            )}
+            columns={[
+              {
+                cell: (p) => (
+                  <span className="inline-flex items-center gap-2">
+                    {p.name}
+                    {p.disabledAt && (
+                      <Badge tone="muted" variant="outline">
+                        Disabled
+                      </Badge>
                     )}
-                  </Td>
-                  <Td className="px-4 py-3 text-sm text-paper-300" label="May launch on">
+                  </span>
+                ),
+                header: 'Principal',
+                id: 'principal',
+                primary: true,
+                secondary: (p) => p.description,
+              },
+              {
+                cell: (p) => (
+                  <span className="text-sm text-paper-300">
                     {p.connectionIds.length === 1
                       ? '1 repository'
                       : `${p.connectionIds.length} repositories`}{' '}
                     · {plural(p.templateIds.length, 'template')}
-                  </Td>
-                  <Td className="px-4 py-3 text-sm text-paper-400" label="Limits">
+                  </span>
+                ),
+                header: 'May launch on',
+                id: 'launch-on',
+              },
+              {
+                cell: (p) => (
+                  <span className="text-sm text-paper-400">
                     {p.maxRunsPerDay}/day · {p.maxInFlight} in flight
-                  </Td>
-                  <Td className="px-4 py-3 text-sm text-paper-400" label="Tokens">
-                    {p.liveTokenCount} live
-                  </Td>
-                  <Td align="right" className="py-3 pl-4">
-                    <ActionMenu
-                      items={[
-                        {
-                          icon: 'edit',
-                          id: 'edit',
-                          label: 'Edit',
-                          onAction: () => setEditing(p),
-                        },
-                        {
-                          icon: 'key',
-                          id: 'tokens',
-                          label: 'Tokens',
-                          onAction: () => setTokensFor(p),
-                        },
-                        {
-                          disabled: update.isPending,
-                          icon: p.disabledAt ? 'play' : 'pause',
-                          id: 'toggle',
-                          label: p.disabledAt ? 'Enable' : 'Disable',
-                          onAction: () => {
-                            setActionError(null);
-                            update
-                              .mutateAsync({ disabled: !p.disabledAt, id: p.id })
-                              .catch((err) => setActionError(errMsg(err, 'Update failed')));
-                          },
-                        },
-                        {
-                          icon: 'trash',
-                          id: 'delete',
-                          label: 'Delete',
-                          onAction: () => setDeleting(p),
-                          tone: 'danger',
-                        },
-                      ]}
-                      label={`Actions for service principal ${p.name}`}
-                    />
-                  </Td>
-                </TRow>
-              ))}
-            </tbody>
-          </Table>
+                  </span>
+                ),
+                header: 'Limits',
+                id: 'limits',
+              },
+              {
+                cell: (p) => (
+                  <span className="text-sm text-paper-400">{p.liveTokenCount} live</span>
+                ),
+                header: 'Tokens',
+                id: 'tokens',
+              },
+            ]}
+            getRowId={(p) => p.id}
+            revealActions={false}
+            rows={principals}
+          />
         )}
       </QueryBoundary>
 
@@ -472,60 +477,71 @@ function TokensModal({
         )}
 
         {list.length > 0 && (
-          <Table stacked>
-            <THead>
-              <Th className="pl-0" variant="plain">
-                Token
-              </Th>
-              <Th variant="plain">Scopes</Th>
-              <Th variant="plain">Last used</Th>
-              <Th variant="plain">Expires</Th>
-              <Th className="pr-0" variant="plain">
-                <span className="sr-only">Actions</span>
-              </Th>
-            </THead>
-            <tbody>
-              {list.map((t) => {
-                const expired = new Date(t.expiresAt).getTime() <= now;
-                return (
-                  <TRow key={t.id}>
-                    <Td className="py-3 pr-4" primary>
-                      <div className={t.revokedAt ? 'text-paper-400 line-through' : 'font-medium'}>
-                        {t.name}
-                      </div>
-                      <code className="font-mono text-xs text-paper-500">{t.prefix}…</code>
-                    </Td>
-                    <Td className="px-4 py-3 font-mono text-xs text-paper-300" label="Scopes">
-                      {t.scopes.join(' ')}
-                    </Td>
-                    <Td className="px-4 py-3 text-sm text-paper-400" label="Last used">
-                      {t.lastUsedAt ? <RelativeTime value={t.lastUsedAt} /> : 'Never'}
-                    </Td>
-                    <Td className="px-4 py-3 text-sm text-paper-400" label="Expires">
-                      {t.revokedAt ? 'Revoked' : expired ? 'Expired' : formatDate(t.expiresAt)}
-                    </Td>
-                    <Td align="right" className="py-3 pl-4">
-                      {!t.revokedAt && !expired && (
-                        <Button
-                          disabled={revoke.isPending}
-                          onClick={() => {
-                            setError(null);
-                            revoke
-                              .mutateAsync(t.id)
-                              .catch((err) => setError(errMsg(err, 'Failed to revoke')));
-                          }}
-                          size="sm"
-                          variant="ghost"
-                        >
-                          Revoke
-                        </Button>
-                      )}
-                    </Td>
-                  </TRow>
-                );
-              })}
-            </tbody>
-          </Table>
+          <DataTable
+            actions={(t) =>
+              !t.revokedAt &&
+              new Date(t.expiresAt).getTime() > now && (
+                <Button
+                  disabled={revoke.isPending}
+                  onClick={() => {
+                    setError(null);
+                    revoke
+                      .mutateAsync(t.id)
+                      .catch((err) => setError(errMsg(err, 'Failed to revoke')));
+                  }}
+                  size="sm"
+                  variant="ghost"
+                >
+                  Revoke
+                </Button>
+              )
+            }
+            columns={[
+              {
+                cell: (t) => (
+                  <span className={t.revokedAt ? 'text-paper-400 line-through' : undefined}>
+                    {t.name}
+                  </span>
+                ),
+                header: 'Token',
+                id: 'token',
+                primary: true,
+                secondary: (t) => <code className="font-mono">{t.prefix}…</code>,
+              },
+              {
+                cell: (t) => (
+                  <span className="font-mono text-xs text-paper-300">{t.scopes.join(' ')}</span>
+                ),
+                header: 'Scopes',
+                id: 'scopes',
+              },
+              {
+                cell: (t) => (
+                  <span className="text-sm text-paper-400">
+                    {t.lastUsedAt ? <RelativeTime value={t.lastUsedAt} /> : 'Never'}
+                  </span>
+                ),
+                header: 'Last used',
+                id: 'last-used',
+              },
+              {
+                cell: (t) => (
+                  <span className="text-sm text-paper-400">
+                    {t.revokedAt
+                      ? 'Revoked'
+                      : new Date(t.expiresAt).getTime() <= now
+                        ? 'Expired'
+                        : formatDate(t.expiresAt)}
+                  </span>
+                ),
+                header: 'Expires',
+                id: 'expires',
+              },
+            ]}
+            getRowId={(t) => t.id}
+            revealActions={false}
+            rows={list}
+          />
         )}
 
         {live.length < SERVICE_TOKEN_MAX_LIVE ? (

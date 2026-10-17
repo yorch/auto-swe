@@ -7,12 +7,12 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type PatCreated,
   useCreatePat,
@@ -141,66 +141,77 @@ export function AccessTokensSection() {
               title="No tokens yet"
             />
           ) : (
-            <Table className="-mx-1" stacked>
-              <THead>
-                <Th className="pl-1">Name</Th>
-                <Th>Created</Th>
-                <Th>Last used</Th>
-                <Th>Expires</Th>
-                <Th>Status</Th>
-                <Th className="pr-1">
-                  <span className="sr-only">Actions</span>
-                </Th>
-              </THead>
-              <tbody>
-                {list.map((t) => {
-                  const revoked = !!t.revokedAt;
-                  const expired = !!t.expiresAt && new Date(t.expiresAt) < new Date();
-                  return (
-                    <TRow key={t.id}>
-                      <Td className="py-3 pr-4 pl-1" primary>
-                        <div
-                          className={
-                            revoked ? 'text-paper-400 line-through' : 'font-medium text-paper-100'
-                          }
-                        >
-                          {t.name}
-                        </div>
-                        <code className="font-mono text-xs text-paper-500">{t.prefix}…</code>
-                      </Td>
-                      <Td className="px-4 py-3 text-sm text-paper-400" label="Created">
-                        <When value={t.createdAt} />
-                      </Td>
-                      <Td className="px-4 py-3 text-sm text-paper-400" label="Last used">
-                        <When empty="Never" value={t.lastUsedAt} />
-                      </Td>
-                      <Td className="px-4 py-3 text-sm text-paper-400" label="Expires">
-                        <When empty="Never" value={t.expiresAt} />
-                      </Td>
-                      <Td className="px-4 py-3" label="Status">
-                        <TokenStatus expired={expired} revoked={revoked} />
-                      </Td>
-                      <Td align="right" className="py-3 pr-1 pl-4">
-                        {!revoked && (
-                          <ActionMenu
-                            items={[
-                              {
-                                icon: 'trash',
-                                id: 'revoke',
-                                label: 'Revoke token',
-                                onAction: () => setRevoking({ id: t.id, name: t.name }),
-                                tone: 'danger',
-                              },
-                            ]}
-                            label={`Actions for token ${t.name}`}
-                          />
-                        )}
-                      </Td>
-                    </TRow>
-                  );
-                })}
-              </tbody>
-            </Table>
+            <DataTable
+              actions={(t) =>
+                !t.revokedAt && (
+                  <ActionMenu
+                    items={[
+                      {
+                        icon: 'trash',
+                        id: 'revoke',
+                        label: 'Revoke token',
+                        onAction: () => setRevoking({ id: t.id, name: t.name }),
+                        tone: 'danger',
+                      },
+                    ]}
+                    label={`Actions for token ${t.name}`}
+                  />
+                )
+              }
+              columns={[
+                {
+                  cell: (t) => (
+                    <span className={t.revokedAt ? 'text-paper-400 line-through' : undefined}>
+                      {t.name}
+                    </span>
+                  ),
+                  header: 'Name',
+                  id: 'name',
+                  primary: true,
+                  secondary: (t) => <code className="font-mono">{t.prefix}…</code>,
+                },
+                {
+                  cell: (t) => (
+                    <span className="text-sm text-paper-400">
+                      <When value={t.createdAt} />
+                    </span>
+                  ),
+                  header: 'Created',
+                  id: 'created',
+                },
+                {
+                  cell: (t) => (
+                    <span className="text-sm text-paper-400">
+                      <When empty="Never" value={t.lastUsedAt} />
+                    </span>
+                  ),
+                  header: 'Last used',
+                  id: 'last-used',
+                },
+                {
+                  cell: (t) => (
+                    <span className="text-sm text-paper-400">
+                      <When empty="Never" value={t.expiresAt} />
+                    </span>
+                  ),
+                  header: 'Expires',
+                  id: 'expires',
+                },
+                {
+                  cell: (t) => (
+                    <TokenStatus
+                      expired={!!t.expiresAt && new Date(t.expiresAt) < new Date()}
+                      revoked={!!t.revokedAt}
+                    />
+                  ),
+                  header: 'Status',
+                  id: 'status',
+                },
+              ]}
+              getRowId={(t) => t.id}
+              revealActions={false}
+              rows={list}
+            />
           )}
         </QueryBoundary>
       </SettingsSection>

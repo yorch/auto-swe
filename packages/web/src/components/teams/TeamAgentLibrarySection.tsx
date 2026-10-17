@@ -14,11 +14,11 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type AgentRow,
   type AgentSaveWarnings,
@@ -239,79 +239,78 @@ export function TeamAgentLibrarySection({ teamId }: { teamId: string }) {
             title="No team overrides yet"
           />
         ) : (
-          <Table stacked>
-            <THead>
-              <Th className="pl-0" variant="plain">
-                Agent
-              </Th>
-              <Th variant="plain">Model</Th>
-              <Th align="right" variant="plain">
-                Skills
-              </Th>
-              <Th variant="plain">Version</Th>
-              <Th className="pr-0" variant="plain">
-                <span className="sr-only">Actions</span>
-              </Th>
-            </THead>
-            <tbody>
-              {(agents ?? []).map((a) => (
-                <TRow hover key={a.id}>
-                  <Td className="py-3 pr-4" primary>
-                    <div className="truncate font-medium text-paper-100">{a.name || a.key}</div>
-                    <div className="truncate font-mono text-xs font-normal text-paper-500">
-                      {a.key}
-                    </div>
-                  </Td>
-                  <Td className="px-4 py-3" label="Model">
-                    <span className="font-mono text-xs break-all text-paper-300">
-                      {modelLabel(a)}
-                    </span>
-                  </Td>
-                  <Td align="right" className="px-4 py-3 text-xs tabular-nums" label="Skills">
-                    {a.skillRefs.length > 0 ? (
-                      <span className="text-paper-300">{a.skillRefs.length}</span>
-                    ) : (
-                      <span className="text-paper-500">None</span>
-                    )}
-                  </Td>
-                  <Td className="px-4 py-3" label="Version">
-                    <Badge className="tabular-nums" tone="neutral" variant="outline">
-                      v{a.version}
-                    </Badge>
-                  </Td>
-                  <Td align="right" className="py-3 pl-4">
-                    <div className="flex items-center justify-end gap-1">
-                      <Button
-                        aria-label={`Edit ${a.key}`}
-                        onClick={() => {
-                          setSaveWarnings({});
-                          setEditError(null);
-                          setEditing({ ...a });
-                          setEditingOriginal(a);
-                        }}
-                        size="sm"
-                        variant="secondary"
-                      >
-                        Edit
-                      </Button>
-                      <ActionMenu
-                        items={[
-                          {
-                            icon: 'trash',
-                            id: 'delete',
-                            label: 'Delete override',
-                            onAction: () => setDeleteConfirm(a),
-                            tone: 'danger',
-                          },
-                        ]}
-                        label={`More actions for ${a.key}`}
-                      />
-                    </div>
-                  </Td>
-                </TRow>
-              ))}
-            </tbody>
-          </Table>
+          <DataTable
+            actions={(a) => (
+              <>
+                <Button
+                  aria-label={`Edit ${a.key}`}
+                  onClick={() => {
+                    setSaveWarnings({});
+                    setEditError(null);
+                    setEditing({ ...a });
+                    setEditingOriginal(a);
+                  }}
+                  size="sm"
+                  variant="secondary"
+                >
+                  Edit
+                </Button>
+                <ActionMenu
+                  items={[
+                    {
+                      icon: 'trash',
+                      id: 'delete',
+                      label: 'Delete override',
+                      onAction: () => setDeleteConfirm(a),
+                      tone: 'danger',
+                    },
+                  ]}
+                  label={`More actions for ${a.key}`}
+                />
+              </>
+            )}
+            columns={[
+              {
+                cell: (a) => a.name || a.key,
+                header: 'Agent',
+                id: 'agent',
+                primary: true,
+                secondary: (a) => <span className="font-mono">{a.key}</span>,
+              },
+              {
+                cell: (a) => (
+                  <span className="font-mono text-xs break-all text-paper-300">
+                    {modelLabel(a)}
+                  </span>
+                ),
+                header: 'Model',
+                id: 'model',
+              },
+              {
+                align: 'right',
+                cell: (a) =>
+                  a.skillRefs.length > 0 ? (
+                    <span className="tabular text-xs text-paper-300">{a.skillRefs.length}</span>
+                  ) : (
+                    <span className="text-xs text-paper-500">None</span>
+                  ),
+                header: 'Skills',
+                id: 'skills',
+              },
+              {
+                cell: (a) => (
+                  <Badge className="tabular-nums" tone="neutral" variant="outline">
+                    v{a.version}
+                  </Badge>
+                ),
+                header: 'Version',
+                id: 'version',
+              },
+            ]}
+            getRowId={(a) => a.id}
+            revealActions={false}
+            rows={agents ?? []}
+          />
         )}
       </QueryBoundary>
 
