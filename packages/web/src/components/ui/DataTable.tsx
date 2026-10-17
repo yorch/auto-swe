@@ -211,6 +211,9 @@ export function DataTable<Row>({
         ) : (
           rows.map((row) => {
             const href = rowHref?.(row);
+            const rowActions = actions?.(row);
+            const noActions =
+              rowActions === null || rowActions === undefined || rowActions === false;
             return (
               <TRow
                 className={cn('group', href && 'cursor-pointer')}
@@ -256,14 +259,17 @@ export function DataTable<Row>({
                   );
                 })}
                 {actions && (
-                  <Td align="right" className={cn(pad, 'max-sm:text-left')}>
+                  <Td
+                    align="right"
+                    className={cn(pad, 'max-sm:text-left', noActions && 'max-sm:hidden')}
+                  >
                     <div
                       className={cn(
                         'flex items-center justify-end gap-1.5 max-sm:justify-start',
                         revealActions && ROW_ACTION
                       )}
                     >
-                      {actions(row)}
+                      {rowActions}
                     </div>
                   </Td>
                 )}
