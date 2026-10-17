@@ -234,14 +234,17 @@ yarn workspace @auto-swe/web test:visual
 The CI `visual` job runs the same commands inside `mcr.microsoft.com/playwright:v<version>-noble`
 for exactly the pinned `@playwright/test` version, and fails when more than 0.1% of a shot's pixels
 change. Pixels depend on the browser build and the system fonts it falls back to, so baselines come
-from that image. To change the design on purpose:
+from that image, not from a workstation, whose font rendering differs by a few percent of every
+shot. When the suite fails, the job uploads two artifacts: `visual-diffs`, each failing shot as
+`*-actual.png` beside its diff, and `visual-baselines`, a full set re-recorded in the image. To
+change the design on purpose:
 
-1. Make the change and run `yarn workspace @auto-swe/web test:visual --update-snapshots=all`
-   locally to see every affected shot (`--update-snapshots` alone rewrites only the shots that
-   fail, so a change under the tolerance would keep its old baseline).
-2. Push. If the job still fails on a shot your change did not touch, the local fonts differ from
-   the image's: the job's `visual-diffs` artifact holds each failing shot as `*-actual.png` beside
-   its diff; copy those over the baselines in `e2e/__screenshots__/` and push again.
+1. Make the change and look at it locally: `yarn workspace @auto-swe/web test:visual` writes each
+   shot and its diff under `e2e/.output/`. Outside the image every shot differs by its font
+   rendering, so a local run shows what changed but is not the pass or fail; do not commit
+   baselines recorded locally.
+2. Push. The job fails on the shots the change moved. Check `visual-diffs` shows only the intended
+   change, then copy `visual-baselines` over `e2e/__screenshots__/visual.spec.ts/` and push again.
 3. Review the PNG diff of the pull request like code.
 
 Failed local runs leave the actual shot and a diff under `e2e/.output/`.

@@ -56,7 +56,9 @@ export default defineConfig({
     deviceScaleFactor: 1,
     locale: 'en-US',
     timezoneId: 'UTC',
-    trace: 'retain-on-failure',
+    // No trace: with the clock frozen, finishing a failed test's trace stalls until the 60 s test
+    // timeout, so every failure cost a minute. The actual shot and its diff say what changed.
+    trace: 'off',
   },
   webServer: {
     command: `yarn next start --hostname 127.0.0.1 --port ${WEB_PORT}`,
