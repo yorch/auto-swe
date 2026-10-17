@@ -140,15 +140,33 @@ jobs:
         run: yarn workspace @auto-swe/web build
 
       - name: Visual regression suite
+        id: visual
         run: yarn workspace @auto-swe/web test:visual
 
-      # Also on a cancelled job (a timeout), which `failure()` does not cover.
+      # Also on a cancelled job (a timeout), which `failure()` does not cover. The output folder
+      # is `.output`, and the action skips hidden paths unless told otherwise.
       - name: Upload shots and diffs
         if: ${{ !success() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: visual-diffs
           path: packages/web/e2e/.output/
+          include-hidden-files: true
+          retention-days: 14
+
+      # Pixels depend on this image's font rendering, so baselines recorded anywhere else drift.
+      # When the suite fails, record a full set here: if the diffs above are the intended change,
+      # these are the files to commit. The job still fails.
+      - name: Record baselines in this image
+        if: ${{ failure() && steps.visual.outcome == 'failure' }}
+        run: yarn workspace @auto-swe/web test:visual --update-snapshots=all
+
+      - name: Upload recorded baselines
+        if: ${{ failure() && steps.visual.outcome == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: visual-baselines
+          path: packages/web/e2e/__screenshots__/
           retention-days: 14
 
   # Real-container job: the suites that drive a real Docker daemon. The
