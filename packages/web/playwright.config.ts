@@ -35,10 +35,14 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   fullyParallel: true,
   globalSetup: './e2e/support/globalSetup.ts',
+  // Enough failures to show a pattern while leaving the job time to upload the shots and diffs.
+  maxFailures: process.env.CI ? 10 : 0,
   outputDir: './e2e/.output/results',
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  // `line` prints each failure as it happens: with `list` the errors come only at the end, so a
+  // job that runs out of time shows which shots failed but never why.
   reporter: process.env.CI
-    ? [['list'], ['html', { open: 'never', outputFolder: './e2e/.output/report' }]]
+    ? [['line'], ['html', { open: 'never', outputFolder: './e2e/.output/report' }]]
     : [['list']],
   retries: 0,
   // One platform-free name per shot: the only platform the baselines are for is
