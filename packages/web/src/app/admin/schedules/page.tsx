@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
@@ -17,9 +18,9 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { useHasRole } from '@/hooks/useHasRole';
 import { useRepositories } from '@/hooks/useRepositories';
 import {
@@ -265,27 +266,77 @@ function ScheduleFormModal({
   );
 }
 
-function ScheduleRow({
+/**
+ * What fires actually obey is the Temporal schedule; the row is only what the
+ * dashboard recorded. This is the live state, and whether the two disagree.
+ */
+function liveState(schedule: ScheduledWorkRequestSummary) {
+  const live = schedule.schedule;
+  return {
+    livePaused: live.exists ? live.paused : !schedule.isActive,
+    mismatch: live.exists && live.paused === schedule.isActive,
+  };
+}
+
+function ScheduleStatus({ schedule }: { schedule: ScheduledWorkRequestSummary }) {
+  const live = schedule.schedule;
+  const { livePaused, mismatch } = liveState(schedule);
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <Badge dot tone={livePaused ? 'muted' : 'success'} variant="outline">
+        {livePaused ? 'Paused' : 'Active'}
+      </Badge>
+      {mismatch && (
+        <Badge
+          title={`The dashboard records this schedule as ${schedule.isActive ? 'active' : 'paused'}, but the scheduler has it ${live.paused ? 'paused' : 'running'}. An owning-team lead can pause it again to re-sync it; resuming it makes it run as you.`}
+          tone="danger"
+          variant="outline"
+        >
+          Out of sync
+        </Badge>
+      )}
+      {schedule.schedule.unavailable && (
+        <Badge
+          title="The scheduler cannot be reached right now, so the live state of this schedule is unknown. The dates shown may be out of date."
+          tone="muted"
+          variant="outline"
+        >
+          Scheduler unavailable
+        </Badge>
+      )}
+      {schedule.schedule.exists === false && (
+        <Badge
+          title="The scheduler has no trigger for this schedule. Edit and save it to create the trigger again."
+          tone="danger"
+          variant="outline"
+        >
+          Not running — re-save to repair
+        </Badge>
+      )}
+    </div>
+  );
+}
+
+/** A row's controls and the confirmations behind them. */
+function ScheduleActions({
   schedule,
   onDelete,
   onEdit,
+  onError,
 }: {
   schedule: ScheduledWorkRequestSummary;
   onDelete: () => void;
   onEdit: () => void;
+  /** Reports a failed action (or null on a new attempt) to the page, which shows it. */
+  onError: (message: string | null) => void;
 }) {
   const update = useUpdateSchedule();
   const fire = useFireSchedule();
-  const [error, setError] = useState<string | null>(null);
   const [confirmFire, setConfirmFire] = useState(false);
   const [confirmResume, setConfirmResume] = useState(false);
   const me = useAuthStore((s) => s.user);
 
-  // What fires actually obey is the Temporal schedule; the row is only what the
-  // dashboard recorded. Show the live state and flag the two disagreeing.
-  const live = schedule.schedule;
-  const livePaused = live.exists ? live.paused : !schedule.isActive;
-  const mismatch = live.exists && live.paused === schedule.isActive;
+  const { livePaused } = liveState(schedule);
   // Firing by hand as someone other than the author makes the schedule run as
   // you from then on, so it is confirmed rather than a surprise.
   const takesOver = schedule.actsAs?.id !== me?.sub;
@@ -298,126 +349,56 @@ function ScheduleRow({
   const toggle = () => update.mutateAsync({ id: schedule.id, isActive: resume });
 
   async function run(action: () => Promise<unknown>) {
-    setError(null);
+    onError(null);
     try {
       await action();
     } catch (err) {
-      setError(errMsg(err, 'Action failed'));
+      onError(errMsg(err, 'Action failed'));
     }
+  }
+
+  if (!schedule.canManage) {
+    return <span className="text-xs text-paper-500">Team leads manage this schedule</span>;
   }
 
   return (
     <>
-      <TRow hover>
-        <Td className="px-4 py-3" primary>
-          <div className="font-medium text-paper-100">{schedule.name}</div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-paper-500">
-            <span className="font-mono">{schedule.externalTicketId}</span>
-            {/* Whose GitHub identity fires act as; editing it or firing it by hand makes it yours. */}
-            <span>Runs as {actsAsName}</span>
-          </div>
-        </Td>
-        <Td className="px-4 py-3" label="Repository">
-          <div className="whitespace-nowrap font-mono text-sm text-paper-200">
-            {schedule.repository.organizationName}/{schedule.repository.repoName}
-          </div>
-          <div className="mt-0.5 text-xs text-paper-500">
-            {schedule.team ? `Team ${schedule.team.name}` : 'No team (team deleted)'}
-          </div>
-        </Td>
-        <Td className="px-4 py-3" label="Schedule">
-          <code className="whitespace-nowrap font-mono text-sm text-paper-200">
-            {schedule.cronExpression}
-          </code>
-          <div className="mt-0.5 text-xs text-paper-500">
-            {schedule.template
-              ? `${schedule.template.name} v${schedule.templateVersion ?? '?'}`
-              : 'Team default template'}
-          </div>
-        </Td>
-        <Td className="px-4 py-3" label="Status">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge dot tone={livePaused ? 'muted' : 'success'} variant="outline">
-              {livePaused ? 'Paused' : 'Active'}
-            </Badge>
-            {mismatch && (
-              <Badge
-                title={`The dashboard records this schedule as ${schedule.isActive ? 'active' : 'paused'}, but the scheduler has it ${live.paused ? 'paused' : 'running'}. An owning-team lead can pause it again to re-sync it; resuming it makes it run as you.`}
-                tone="danger"
-                variant="outline"
-              >
-                Out of sync
-              </Badge>
-            )}
-            {schedule.schedule.unavailable && (
-              <Badge
-                title="The scheduler cannot be reached right now, so the live state of this schedule is unknown. The dates shown may be out of date."
-                tone="muted"
-                variant="outline"
-              >
-                Scheduler unavailable
-              </Badge>
-            )}
-            {schedule.schedule.exists === false && (
-              <Badge
-                title="The scheduler has no trigger for this schedule. Edit and save it to create the trigger again."
-                tone="danger"
-                variant="outline"
-              >
-                Not running — re-save to repair
-              </Badge>
-            )}
-          </div>
-        </Td>
-        <Td className="px-4 py-3 text-sm text-paper-300" label="Next fire">
-          <When iso={schedule.schedule.nextRunAt} />
-        </Td>
-        <Td className="px-4 py-3 text-sm text-paper-400" label="Last fire">
-          <When iso={schedule.schedule.lastRunAt ?? schedule.lastFiredAt} />
-        </Td>
-        <Td align="right" className="px-4 py-3">
-          {schedule.canManage ? (
-            <div className="flex items-center justify-end gap-1">
-              {/* One source of truth for "is it running": the live state the badge shows. */}
-              <Button
-                disabled={fire.isPending || livePaused}
-                onClick={() =>
-                  takesOver ? setConfirmFire(true) : run(() => fire.mutateAsync(schedule.id))
-                }
-                size="sm"
-                title={livePaused ? 'Paused: resume the schedule before firing it' : undefined}
-              >
-                {fire.isPending ? 'Firing…' : 'Fire now'}
-              </Button>
-              <ActionMenu
-                items={[
-                  { icon: 'edit', id: 'edit', label: 'Edit', onAction: onEdit },
-                  {
-                    disabled: update.isPending,
-                    icon: resume ? 'refresh' : 'clock',
-                    id: 'toggle',
-                    label: resume ? 'Resume' : 'Pause',
-                    onAction: () =>
-                      resume && takesOver && !schedule.isActive
-                        ? setConfirmResume(true)
-                        : void run(toggle),
-                  },
-                  {
-                    icon: 'trash',
-                    id: 'delete',
-                    label: 'Delete',
-                    onAction: onDelete,
-                    tone: 'danger',
-                  },
-                ]}
-                label={`Actions for ${schedule.name}`}
-              />
-            </div>
-          ) : (
-            <span className="text-xs text-paper-500">Team leads manage this schedule</span>
-          )}
-        </Td>
-      </TRow>
+      <div className="flex items-center justify-end gap-1">
+        {/* One source of truth for "is it running": the live state the badge shows. */}
+        <Button
+          disabled={fire.isPending || livePaused}
+          onClick={() =>
+            takesOver ? setConfirmFire(true) : run(() => fire.mutateAsync(schedule.id))
+          }
+          size="sm"
+          title={livePaused ? 'Paused: resume the schedule before firing it' : undefined}
+        >
+          {fire.isPending ? 'Firing…' : 'Fire now'}
+        </Button>
+        <ActionMenu
+          items={[
+            { icon: 'edit', id: 'edit', label: 'Edit', onAction: onEdit },
+            {
+              disabled: update.isPending,
+              icon: resume ? 'refresh' : 'clock',
+              id: 'toggle',
+              label: resume ? 'Resume' : 'Pause',
+              onAction: () =>
+                resume && takesOver && !schedule.isActive
+                  ? setConfirmResume(true)
+                  : void run(toggle),
+            },
+            {
+              icon: 'trash',
+              id: 'delete',
+              label: 'Delete',
+              onAction: onDelete,
+              tone: 'danger',
+            },
+          ]}
+          label={`Actions for ${schedule.name}`}
+        />
+      </div>
       <ConfirmModal
         confirmLabel="Resume and take over"
         message={`This schedule currently runs as ${actsAsName}. Resuming it makes it run as you for every future fire, using your saved GitHub token, until someone else takes it over. The change is recorded in the audit log.`}
@@ -436,14 +417,18 @@ function ScheduleRow({
         pendingLabel="Firing…"
         title={`Fire "${schedule.name}" as yourself?`}
       />
-      {error && (
-        <TableStatusRow colSpan={7}>
-          <Alert>{error}</Alert>
-        </TableStatusRow>
-      )}
     </>
   );
 }
+
+const lastFire = (s: ScheduledWorkRequestSummary) => s.schedule.lastRunAt ?? s.lastFiredAt;
+const time = (iso: string | null | undefined) => (iso ? new Date(iso).getTime() : null);
+
+const SCHEDULE_SORT_KEYS = {
+  lastFire: (s: ScheduledWorkRequestSummary) => time(lastFire(s)),
+  name: (s: ScheduledWorkRequestSummary) => s.name.toLowerCase(),
+  nextFire: (s: ScheduledWorkRequestSummary) => time(s.schedule.nextRunAt),
+};
 
 export default function GovernSchedulesPage() {
   const [newOpen, setNewOpen] = useState(false);
@@ -454,6 +439,9 @@ export default function GovernSchedulesPage() {
   const canCreate = isAdmin || (ledTeamIds?.size ?? 0) > 0;
   const [deleteTarget, setDeleteTarget] = useState<ScheduledWorkRequestSummary | null>(null);
   const [query, setQuery] = useState('');
+  const { onSortChange, sort, sortRows } =
+    useDataTableSort<ScheduledWorkRequestSummary>(SCHEDULE_SORT_KEYS);
+  const [actionError, setActionError] = useState<string | null>(null);
   const deleteSchedule = useDeleteSchedule();
   const {
     data: schedules,
@@ -540,6 +528,7 @@ export default function GovernSchedulesPage() {
                   value={query}
                 />
               </Toolbar>
+              {actionError && <Alert className="mb-3">{actionError}</Alert>}
               {shown.length === 0 ? (
                 <EmptyState
                   action={
@@ -552,29 +541,96 @@ export default function GovernSchedulesPage() {
                 />
               ) : (
                 <div className="-mx-4">
-                  <Table className="max-sm:px-4" stacked>
-                    <THead>
-                      <Th variant="plain">Name</Th>
-                      <Th variant="plain">Repository</Th>
-                      <Th variant="plain">Schedule</Th>
-                      <Th variant="plain">Status</Th>
-                      <Th variant="plain">Next fire</Th>
-                      <Th variant="plain">Last fire</Th>
-                      <Th variant="plain">
-                        <span className="sr-only">Actions</span>
-                      </Th>
-                    </THead>
-                    <tbody>
-                      {shown.map((s) => (
-                        <ScheduleRow
-                          key={s.id}
-                          onDelete={() => setDeleteTarget(s)}
-                          onEdit={() => setEditTarget(s)}
-                          schedule={s}
-                        />
-                      ))}
-                    </tbody>
-                  </Table>
+                  <DataTable
+                    actions={(s) => (
+                      <ScheduleActions
+                        onDelete={() => setDeleteTarget(s)}
+                        onEdit={() => setEditTarget(s)}
+                        onError={setActionError}
+                        schedule={s}
+                      />
+                    )}
+                    className="max-sm:px-4"
+                    columns={[
+                      {
+                        cell: (s) => s.name,
+                        header: 'Name',
+                        id: 'name',
+                        primary: true,
+                        secondary: (s) => (
+                          <div className="flex flex-wrap items-center gap-x-2">
+                            <span className="font-mono">{s.externalTicketId}</span>
+                            {/* Whose GitHub identity fires act as; editing it or firing it by hand makes it yours. */}
+                            <span>
+                              Runs as{' '}
+                              {s.actsAs ? (s.actsAs.name ?? s.actsAs.email) : 'the platform'}
+                            </span>
+                          </div>
+                        ),
+                        sortable: true,
+                      },
+                      {
+                        cell: (s) => (
+                          <>
+                            <div className="whitespace-nowrap font-mono text-sm text-paper-200">
+                              {s.repository.organizationName}/{s.repository.repoName}
+                            </div>
+                            <div className="mt-0.5 text-xs text-paper-500">
+                              {s.team ? `Team ${s.team.name}` : 'No team (team deleted)'}
+                            </div>
+                          </>
+                        ),
+                        header: 'Repository',
+                        id: 'repository',
+                      },
+                      {
+                        cell: (s) => (
+                          <>
+                            <code className="whitespace-nowrap font-mono text-sm text-paper-200">
+                              {s.cronExpression}
+                            </code>
+                            <div className="mt-0.5 text-xs text-paper-500">
+                              {s.template
+                                ? `${s.template.name} v${s.templateVersion ?? '?'}`
+                                : 'Team default template'}
+                            </div>
+                          </>
+                        ),
+                        header: 'Schedule',
+                        id: 'schedule',
+                      },
+                      {
+                        cell: (s) => <ScheduleStatus schedule={s} />,
+                        header: 'Status',
+                        id: 'status',
+                      },
+                      {
+                        cell: (s) => (
+                          <span className="text-paper-300">
+                            <When iso={s.schedule.nextRunAt} />
+                          </span>
+                        ),
+                        header: 'Next fire',
+                        id: 'nextFire',
+                        sortable: true,
+                      },
+                      {
+                        cell: (s) => (
+                          <span className="text-paper-400">
+                            <When iso={lastFire(s)} />
+                          </span>
+                        ),
+                        header: 'Last fire',
+                        id: 'lastFire',
+                        sortable: true,
+                      },
+                    ]}
+                    getRowId={(s) => s.id}
+                    onSortChange={onSortChange}
+                    revealActions={false}
+                    rows={sortRows(shown)}
+                    sort={sort}
+                  />
                 </div>
               )}
             </>

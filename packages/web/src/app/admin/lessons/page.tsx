@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -14,9 +15,9 @@ import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { triggerConsolidationNow, useConsolidationConfig } from '@/hooks/useAdminConfig';
+import { useDataTableSort } from '@/hooks/useDataTableSort';
 import {
   type LessonRepoStats,
   triggerRepoConsolidation,
@@ -43,44 +44,16 @@ function humanizeEnum(value: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
-function RepoStatsRow({
-  repo,
-  onAsk,
-}: {
-  repo: LessonRepoStats;
-  onAsk: (repo: LessonRepoStats) => void;
-}) {
-  return (
-    <TRow hover>
-      <Td className="px-4 py-3 font-mono text-sm text-paper-100" primary>
-        {repo.organizationName}/{repo.repoName}
-      </Td>
-      <Td align="right" className="px-4 py-3 text-paper-200 tabular-nums" label="Active">
-        {repo.activeCount}
-      </Td>
-      <Td align="right" className="px-4 py-3 text-paper-400 tabular-nums" label="Consolidated">
-        {repo.consolidatedCount}
-      </Td>
-      <Td className="px-4 py-3 text-sm text-paper-400" label="Last consolidated">
-        {repo.lastConsolidatedAt ? (
-          <Ago iso={repo.lastConsolidatedAt} />
-        ) : (
-          <span className="text-paper-500">Never</span>
-        )}
-      </Td>
-      <Td align="right" className="px-4 py-3">
-        <Button
-          disabled={repo.activeCount === 0}
-          onClick={() => onAsk(repo)}
-          size="sm"
-          title={repo.activeCount === 0 ? 'No active lessons to consolidate' : undefined}
-        >
-          Run now
-        </Button>
-      </Td>
-    </TRow>
-  );
-}
+const repoName = (r: LessonRepoStats) => `${r.organizationName}/${r.repoName}`;
+
+const REPO_SORT_KEYS = {
+  active: (r: LessonRepoStats) => r.activeCount,
+  consolidated: (r: LessonRepoStats) => r.consolidatedCount,
+  // A repository that was never consolidated sorts last.
+  lastConsolidated: (r: LessonRepoStats) =>
+    r.lastConsolidatedAt ? new Date(r.lastConsolidatedAt).getTime() : null,
+  repository: (r: LessonRepoStats) => repoName(r).toLowerCase(),
+};
 
 export default function GovernLessonsPage() {
   const {
@@ -92,6 +65,11 @@ export default function GovernLessonsPage() {
     refetch: refetchStats,
   } = useAdminLessonStats();
   const [repoFilter, setRepoFilter] = useState('');
+  const {
+    onSortChange: onRepoSortChange,
+    sort: repoSort,
+    sortRows: sortRepos,
+  } = useDataTableSort<LessonRepoStats>(REPO_SORT_KEYS);
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [offset, setOffset] = useState(0);
@@ -234,26 +212,65 @@ export default function GovernLessonsPage() {
             />
           ) : (
             <div className="-mx-4">
-              <Table className="max-sm:px-4" stacked>
-                <THead>
-                  <Th variant="plain">Repository</Th>
-                  <Th align="right" variant="plain">
-                    Active
-                  </Th>
-                  <Th align="right" variant="plain">
-                    Consolidated
-                  </Th>
-                  <Th variant="plain">Last consolidated</Th>
-                  <Th variant="plain">
-                    <span className="sr-only">Actions</span>
-                  </Th>
-                </THead>
-                <tbody>
-                  {stats.map((repo) => (
-                    <RepoStatsRow key={repo.id} onAsk={setConsolidating} repo={repo} />
-                  ))}
-                </tbody>
-              </Table>
+              <DataTable
+                actions={(repo) => (
+                  <Button
+                    disabled={repo.activeCount === 0}
+                    onClick={() => setConsolidating(repo)}
+                    size="sm"
+                    title={repo.activeCount === 0 ? 'No active lessons to consolidate' : undefined}
+                  >
+                    Run now
+                  </Button>
+                )}
+                actionsLabel="Actions"
+                className="max-sm:px-4"
+                columns={[
+                  {
+                    cell: (repo) => <span className="font-mono text-sm">{repoName(repo)}</span>,
+                    header: 'Repository',
+                    id: 'repository',
+                    primary: true,
+                    sortable: true,
+                  },
+                  {
+                    align: 'right',
+                    cell: (repo) => (
+                      <span className="text-paper-200 tabular-nums">{repo.activeCount}</span>
+                    ),
+                    header: 'Active',
+                    id: 'active',
+                    sortable: true,
+                  },
+                  {
+                    align: 'right',
+                    cell: (repo) => (
+                      <span className="text-paper-400 tabular-nums">{repo.consolidatedCount}</span>
+                    ),
+                    header: 'Consolidated',
+                    id: 'consolidated',
+                    sortable: true,
+                  },
+                  {
+                    cell: (repo) =>
+                      repo.lastConsolidatedAt ? (
+                        <span className="text-paper-400">
+                          <Ago iso={repo.lastConsolidatedAt} />
+                        </span>
+                      ) : (
+                        <span className="text-paper-500">Never</span>
+                      ),
+                    header: 'Last consolidated',
+                    id: 'lastConsolidated',
+                    sortable: true,
+                  },
+                ]}
+                getRowId={(repo) => repo.id}
+                onSortChange={onRepoSortChange}
+                revealActions={false}
+                rows={sortRepos(stats)}
+                sort={repoSort}
+              />
             </div>
           )}
         </QueryBoundary>
