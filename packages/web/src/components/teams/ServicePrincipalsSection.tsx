@@ -168,7 +168,7 @@ export function ServicePrincipalsSection({
                 header: 'Principal',
                 id: 'principal',
                 primary: true,
-                secondary: (p) => p.description,
+                secondary: (p) => p.description || null,
               },
               {
                 cell: (p) => (

@@ -355,6 +355,8 @@ export default function GovernBaselinesPage() {
                   },
                 ]}
                 getRowId={(b) => b.id}
+                // The row opens nothing, so its one control stays in view.
+                revealActions={false}
                 rows={baselines}
               />
             </div>

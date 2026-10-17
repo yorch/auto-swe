@@ -353,7 +353,8 @@ function ScheduleActions({
     try {
       await action();
     } catch (err) {
-      onError(errMsg(err, 'Action failed'));
+      // The message shows above the table, not under the row, so it names the schedule.
+      onError(`${schedule.name}: ${errMsg(err, 'Action failed')}`);
     }
   }
 
