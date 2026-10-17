@@ -3240,9 +3240,9 @@
       "title": "Workspace containers get a configurable list of DNS resolvers"
     },
     {
-      "body": "Dashboard pages keep explanation out of the way: inline help tips, and a Help panel (the “?” in the top bar) holding a page’s longer help, its doc links and a lifecycle overview; plus a first-run checklist, an optional tour, node help and a run verdict, with a built-in docs reader and text search.",
+      "body": "Dashboard pages keep explanation out of the way: inline help tips, and a Help panel (the “?” in the top bar) holding a page’s longer help, its doc links and a lifecycle overview; plus a first-run checklist, an optional tour, node help and a run verdict, with a built-in docs reader and and a command palette that finds pages and the work a person can see.",
       "category": "Collaboration",
-      "detail": "A help tip is a small button that opens a popover on hover, focus or click, showing either a glossary definition or the text its caller wrote, plus a link to the matching doc. The glossary and the table of doc links are constants compiled into the web app: opening a tip reads that local table and a doc link only builds an in-app URL, so neither calls the gateway or reads platform data (the link is a Next.js Link, which may prefetch the static doc page from the web server). A doc link is an ordinary in-app route into a docs reader, which serves only the top level of the repository’s docs directory; its pages are generated statically, so they show the docs as they were when the web app was built. The reader’s index also searches the doc text: once typing pauses, the browser asks a route of the web server (behind the web proxy’s sign-in redirect, which checks only that a session cookie is present, as for the docs pages themselves; the query is cut to a bounded length) for the best matching sections, which return as highlight segments rather than HTML, so only those few results are downloaded. The server builds the index once per process from the same files, begins it at start-up without delaying start-up, logs once when it is ready (or logs the failure), and does not keep a failed build; if the request fails, title and summary matching still works and the next edit retries. Longer explanations, a page header’s doc link and the request-to-merge lifecycle overview are not drawn on the page: the page declares them and they appear in the Help panel opened from the “?” in the top bar, for as long as that page is mounted, and a page that declares none shows a link to the docs. Home, Start work and the run page carry the lifecycle overview there. The node palette and admin pages carry tips of the same kind, and some forms carry static help text and doc links. The OAuth consent screen opens its docs link in a new tab so the reader does not navigate away from the grant. Home also shows people who are not admins a first-run checklist whose steps tick from data the person can already read (a visible repository, a request of theirs, a gate they answered, a merged pull request from their request), and shows admins a governance guide once the setup readiness check passes; each can be dismissed, and the dismissal is kept in that browser’s local storage only. A Take the tour button starts a short role-dependent tour that points at the sidebar and its links (one step points at nothing and is centred); it never starts by itself and is recorded as seen when it ends, in the same browser storage. In the workflow editor, selecting a node shows its type’s help, with an Output line and a link to the type’s section of the node reference; the library’s starter gallery offers specs built from node types only. Each run page opens with a verdict banner derived from the run record and the run’s visible open gates (a guide to reading the page sits in its Help panel): it names a cause only for an error the dashboard classifies, otherwise says none is stated, and it cannot say who a gate waits on. Start work offers a chooser between modes and a sample-task button that only fills fields and never launches. Standing warnings on the platform settings, workflow defaults and autonomy policy pages, and the models page’s mid-run notice, are fixed text shown at page load as notes rather than live announcements; they do not read the settings they describe.",
+      "detail": "A help tip is a small button that opens a popover on hover, focus or click, showing either a glossary definition or the text its caller wrote, plus a link to the matching doc. The glossary and the table of doc links are constants compiled into the web app: opening a tip reads that local table and a doc link only builds an in-app URL, so neither calls the gateway or reads platform data (the link is a Next.js Link, which may prefetch the static doc page from the web server). A doc link is an ordinary in-app route into a docs reader, which serves only the top level of the repository’s docs directory; its pages are generated statically, so they show the docs as they were when the web app was built. The reader’s index also searches the doc text: once typing pauses, the browser asks a route of the web server (behind the web proxy’s sign-in redirect, which checks only that a session cookie is present, as for the docs pages themselves; the query is cut to a bounded length) for the best matching sections, which return as highlight segments rather than HTML, so only those few results are downloaded. The server builds the index once per process from the same files, begins it at start-up without delaying start-up, logs once when it is ready (or logs the failure), and does not keep a failed build; if the request fails, title and summary matching still works and the next edit retries. Longer explanations, a page header’s doc link and the request-to-merge lifecycle overview are not drawn on the page: the page declares them and they appear in the Help panel opened from the “?” in the top bar, for as long as that page is mounted, and a page that declares none shows a link to the docs. Home, Start work and the run page carry the lifecycle overview there. The node palette and admin pages carry tips of the same kind, and some forms carry static help text and doc links. The OAuth consent screen opens its docs link in a new tab so the reader does not navigate away from the grant. Home also shows people who are not admins a first-run checklist whose steps tick from data the person can already read (a visible repository, a request of theirs, a gate they answered, a merged pull request from their request), and shows admins a governance guide once the setup readiness check passes; each can be dismissed, and the dismissal is kept in that browser’s local storage only. A Take the tour button starts a short role-dependent tour that points at the sidebar and its links (one step points at nothing and is centred); it never starts by itself and is recorded as seen when it ends, in the same browser storage. In the workflow editor, selecting a node shows its type’s help, with an Output line and a link to the type’s section of the node reference; the library’s starter gallery offers specs built from node types only. Each run page opens with a verdict banner derived from the run record and the run’s visible open gates (a guide to reading the page sits in its Help panel): it names a cause only for an error the dashboard classifies, otherwise says none is stated, and it cannot say who a gate waits on. Start work offers a chooser between modes and a sample-task button that only fills fields and never launches. The command palette opened from the top bar matches page names in the browser and, once typing pauses, searches requests, runs and workflow templates through the same list routes their own pages use, so it sees only what those pages would show: the run and template lists take an optional text filter (trimmed, at most 200 characters) that is ANDed with the visibility filter and so can only narrow a list. A failed search leaves its group empty rather than blocking the page results. Standing warnings on the platform settings, workflow defaults and autonomy policy pages, and the models page’s mid-run notice, are fixed text shown at page load as notes rather than live announcements; they do not read the settings they describe.",
       "id": "inAppGuidance",
       "refs": [
         "helpTip",
@@ -3271,7 +3271,10 @@
         "nodeHelpDocLink",
         "starterGallery",
         "pageHelpPortal",
-        "pageHeaderHelp"
+        "pageHeaderHelp",
+        "paletteSearch",
+        "runsTextFilter",
+        "templatesTextFilter"
       ],
       "status": "Implemented",
       "title": "In-app guided help"
@@ -4327,7 +4330,7 @@
       "EventEndpoint"
     ]
   },
-  "reviewedCommit": "25f392bb0b8cd214f5d3dcd105c3440ee3408694",
+  "reviewedCommit": "cea8ce47ead23d0dd4852d8a397821c816eab639",
   "sourceHashes": {
     "docker-compose.app.yml": "5d335462b175a108e91337b9a4c2932844f1686bc9b66553676d5c8e71dc9f9e",
     "packages/cli/src/commands/evals.ts": "50af79eb82b90be5c1be4d891f974c93d52fe19cba409f7c92ce910f4d267362",
@@ -4512,6 +4515,7 @@
     "packages/web/src/components/workflow/starterTemplates.ts": "f1d53a763f6f34389d7745c7092f4fe5189d579c95b801e605cc58bb5dce7719",
     "packages/web/src/components/workflow/templateEditor/useTemplateEditorState.ts": "bbac0ebcfb07ce8d88bb1973517508df87b7588ad77f1ef425c8b2dfb146aac6",
     "packages/web/src/hooks/useModelConfig.ts": "07bca4bdfdb188807d7ab2ccc9f7e17c07cd30aa7de72f9401511d40da6c54d0",
+    "packages/web/src/hooks/usePaletteSearch.ts": "0fc1a461ed7cdfc5617db66807649397f3fd7191cd07bb4ec6047d743b868096",
     "packages/web/src/hooks/useRuns.ts": "7b7457e0e855762951aaa3af1c017af0b4e4bf877c36cb1e74b0f8382bb91f33",
     "packages/web/src/instrumentation.ts": "a3ea9846f78c64cbbe6f283287c1e74f700abdba6b34c1e2e6273b96030430de",
     "packages/web/src/lib/agentDisplay.ts": "d0b94fb4a38640c0c6ac59f4ab5315a365052869984112265aab4725f4e0f46e",
@@ -9523,6 +9527,30 @@
       "lines": 12,
       "path": "packages/web/src/components/ui/PageHeader.tsx",
       "title": "A page header's longer help and doc link go to the Help panel"
+    },
+    {
+      "anchor": "export function usePaletteSearch(",
+      "before": 8,
+      "id": "paletteSearch",
+      "lines": 36,
+      "path": "packages/web/src/hooks/usePaletteSearch.ts",
+      "title": "The palette searches through each list's own route"
+    },
+    {
+      "anchor": "// The text filter is ANDed with everything above, visibility included, so a query can",
+      "before": 0,
+      "id": "runsTextFilter",
+      "lines": 18,
+      "path": "packages/gateway/src/routes/workflowRuns.ts",
+      "title": "A run search is ANDed with the visibility filter"
+    },
+    {
+      "anchor": "...(request.query.q",
+      "before": 6,
+      "id": "templatesTextFilter",
+      "lines": 14,
+      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "title": "A template search sits beside the membership filter"
     }
   ],
   "usecases": [
