@@ -181,9 +181,6 @@ export function CatalogTab() {
           <DataTable
             actions={(e) => (
               <>
-                <Button onClick={() => setEditing(e)} size="sm" variant="secondary">
-                  Edit
-                </Button>
                 {e.isBuiltIn && e.isCustomized && (
                   <Button
                     disabled={reset.isPending}
@@ -204,6 +201,9 @@ export function CatalogTab() {
                     Delete
                   </Button>
                 )}
+                <Button onClick={() => setEditing(e)} size="sm" variant="secondary">
+                  Edit
+                </Button>
               </>
             )}
             columns={CATALOG_COLUMNS}
