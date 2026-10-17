@@ -416,7 +416,7 @@
     "packages/shared/src/config/index.ts": "e91a0482f0132f1270a05df9d076080eab5b379a15e547858025dff68572c38c",
     "packages/shared/src/config/permissions.test.ts": "e64b6515b19a5c6665d7966dd68b22cbd412a10b7b8f88d1c3deb85a4238f9db",
     "packages/shared/src/config/permissions.ts": "4fb76a38c6986bc672e0b41ae5ee64d7db0e1abcb88314a5e687ee7c86e038ee",
-    "packages/shared/src/config/registry.ts": "a9d11710bf68dbb548fb6e63efdce41af203788c870e377562774cca3cc48495",
+    "packages/shared/src/config/registry.ts": "6291ed8969c6afbea3e5ef0cf2df2e354cdacdfeb697df74f138ea1d4599946a",
     "packages/shared/src/config/resolveSetting.test.ts": "ea33e8da46641b259268a6b8d3ff1202cfa768672d8f5d194d8b808f643d018c",
     "packages/shared/src/config/resolveSetting.ts": "30a53167899ece4d2274ba3be518729188de230e56e9a042ec0b4312b81a8413",
     "packages/shared/src/config/types.ts": "03c629fb44542db0fa89ea8f944280e70c7fe5fd6bcbde43a4a8687128afaeb0",
@@ -596,7 +596,7 @@
     "packages/shared/src/lib/syncBuiltins.test.ts": "cc1ce7939cbfc55b477bd10320d22196a6904aaf93f625a60c80c488dfa0fd0d",
     "packages/shared/src/lib/syncBuiltins.ts": "cb717b93531abd34fbb6a345a481fe96ea5f5dedf414149cc3e2c2f840e0c2e5",
     "packages/shared/src/lib/syncModelCatalog.test.ts": "d3746fcc7822ba5d9cc2c180234a055cfa78b452af51fd71b46a6d85b08ccca4",
-    "packages/shared/src/lib/syncTemplates.test.ts": "9bc6ef9253dc34f2af4fed7a05539c0a14a539107043e27572120c6cd840cedc",
+    "packages/shared/src/lib/syncTemplates.test.ts": "ff845bcc4c32b5b4d501bc92983d18fde9f117e6de7ad47f1a64d5358faec95e",
     "packages/shared/src/lib/systemConfig.test.ts": "5f96ea6bf989e59bf68a7c8bf98e48884111f03bd5b3eb333a4ae847f0d852ba",
     "packages/shared/src/lib/systemConfig.ts": "f7a1b654a245cfa408a5b184f05d876ecb89cd23d86899cefe98e2e0a537cc29",
     "packages/shared/src/lib/telemetry.ts": "2f76648fad3f08bfe6056bc780aaa745362fb7e56c11d8a05f5c66fd0593b90c",
@@ -4327,7 +4327,7 @@
       "EventEndpoint"
     ]
   },
-  "reviewedCommit": "700a68166b8345f21e9ec98bffa5be9841cbaa61",
+  "reviewedCommit": "25f392bb0b8cd214f5d3dcd105c3440ee3408694",
   "sourceHashes": {
     "docker-compose.app.yml": "5d335462b175a108e91337b9a4c2932844f1686bc9b66553676d5c8e71dc9f9e",
     "packages/cli/src/commands/evals.ts": "50af79eb82b90be5c1be4d891f974c93d52fe19cba409f7c92ce910f4d267362",
@@ -4420,7 +4420,7 @@
     "packages/shared/src/automation/types.ts": "c826c0395a50c3e627ade382cf55dd75738ad19c85f93bbf82cbb1714374fd5b",
     "packages/shared/src/bundle/index.ts": "6d1b3291942048e140ee986ba2f5dba7cfdcc9c7d57eeaa8ed3606550e035cd5",
     "packages/shared/src/config/cache.ts": "9fc7bab0d1474e03274b74d95d479a6ca2d51180363f3ba42b55200207d4775c",
-    "packages/shared/src/config/registry.ts": "a9d11710bf68dbb548fb6e63efdce41af203788c870e377562774cca3cc48495",
+    "packages/shared/src/config/registry.ts": "6291ed8969c6afbea3e5ef0cf2df2e354cdacdfeb697df74f138ea1d4599946a",
     "packages/shared/src/lib/agentRunAdmission.ts": "7f4e9154490633c19e771939db3260bf573e955f6ab05e912db83383fc40b087",
     "packages/shared/src/lib/automationLedger.ts": "ad3b8bd0864710feb618500ff1ced02fa860646ae32edcbc5cbf3527e15c1cb5",
     "packages/shared/src/lib/autonomyPolicy.ts": "236067063f1a33dfcaf1dc8960b7a39a9ce53a3bfc86a0d6f9ee94924671f970",
