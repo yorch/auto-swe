@@ -22,9 +22,12 @@ export default defineConfig({
     toHaveScreenshot: {
       animations: 'disabled',
       caret: 'hide',
-      // Antialiasing and subpixel text differ slightly between runs and hosts;
-      // a layout or colour regression moves far more than 1% of the pixels.
-      maxDiffPixelRatio: 0.01,
+      // Measured run-to-run noise is a few dozen antialiased pixels, and a glyph
+      // that falls back to a different system font is a few hundred; the
+      // smallest real fix this suite was built against moved about a thousand.
+      // 0.1% (1,152 pixels at 1280x900, 329 at 390x844) sits between the two.
+      // `threshold` ignores per-pixel colour drift below 0.2 entirely.
+      maxDiffPixelRatio: 0.001,
       scale: 'css',
       threshold: 0.2,
     },

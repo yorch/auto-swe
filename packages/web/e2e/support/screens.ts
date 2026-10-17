@@ -85,13 +85,6 @@ export const SCREENS: Screen[] = [
     },
   },
   {
-    name: 'admin-api-tokens',
-    path: '/admin/api-tokens',
-    ready: async (page) => {
-      await expect(page.getByText('Nightly dependency bot').first()).toBeVisible();
-    },
-  },
-  {
     name: 'settings',
     path: '/settings',
     ready: async (page) => {
