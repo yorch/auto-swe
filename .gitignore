@@ -43,6 +43,8 @@ packages/shared/src/generated/
 
 # ── Testing & coverage ──────────────────────────────────────────
 test-results/
+# Playwright visual suite: results, diffs and the HTML report (baselines are committed)
+packages/web/e2e/.output/
 # vitest coverage output
 coverage/
 

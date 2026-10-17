@@ -6,7 +6,8 @@
     "dev": "next dev --port 3000",
     "build": "next build",
     "typecheck": "tsc --noEmit",
-    "start": "next start --port 3000"
+    "start": "next start --port 3000",
+    "test:visual": "playwright test"
   },
   "dependencies": {
     "@auto-swe/shared": "workspace:*",
@@ -30,6 +31,7 @@
   },
   "devDependencies": {
     "@better-auth/oauth-provider": "1.7.7",
+    "@playwright/test": "1.56.1",
     "@tailwindcss/postcss": "4.3.3",
     "@testing-library/dom": "10.4.2",
     "@testing-library/react": "16.3.3",
