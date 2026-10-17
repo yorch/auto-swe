@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
@@ -19,7 +20,6 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Toolbar } from '@/components/ui/Toolbar';
 import {
   useCreateHumanErrorBaseline,
@@ -278,88 +278,87 @@ export default function GovernBaselinesPage() {
             />
           ) : (
             <div className="-mx-4">
-              <Table className="max-sm:px-4" stacked>
-                <THead>
-                  <Th variant="plain">Domain</Th>
-                  <Th variant="plain">Outcome</Th>
-                  <Th align="right" variant="plain">
-                    Sample
-                  </Th>
-                  <Th align="right" variant="plain">
-                    Errors
-                  </Th>
-                  <Th align="right" variant="plain">
-                    Error rate
-                  </Th>
-                  <Th align="right" variant="plain">
-                    Recorded
-                  </Th>
-                  <Th variant="plain">
-                    <span className="sr-only">Actions</span>
-                  </Th>
-                </THead>
-                <tbody>
-                  {baselines.map((b) => (
-                    <TRow hover key={b.id}>
-                      <Td className="px-4 py-3 font-medium text-paper-100" primary>
-                        {domainLabel(b.domain)}
-                      </Td>
-                      <Td className="px-4 py-3 text-paper-400" label="Outcome">
-                        {b.outcomeType ?? '—'}
-                      </Td>
-                      <Td align="right" className="px-4 py-3 tabular-nums" label="Sample">
-                        <span className="inline-flex items-center justify-end gap-2">
-                          {b.sampleSize < MIN_BASELINE_SAMPLE && (
-                            <Badge
-                              title={`Analytics compares only from ${MIN_BASELINE_SAMPLE} cases`}
-                              tone="warning"
-                              variant="outline"
-                            >
-                              Too small to compare
-                            </Badge>
-                          )}
-                          {b.sampleSize}
-                        </span>
-                      </Td>
-                      <Td align="right" className="px-4 py-3 tabular-nums" label="Errors">
-                        {b.errorCount}
-                      </Td>
-                      <Td
-                        align="right"
-                        className="px-4 py-3 font-medium text-paper-100 tabular-nums"
-                        label="Error rate"
-                      >
+              <DataTable
+                actions={(b) => (
+                  <Button
+                    aria-label={`Delete ${domainLabel(b.domain)} baseline`}
+                    className="px-2 text-paper-500 hover:text-danger-400"
+                    onClick={() => setDeleteTarget(b)}
+                    size="sm"
+                    title="Delete baseline"
+                    variant="ghost"
+                  >
+                    <Icon name="trash" size={14} />
+                  </Button>
+                )}
+                className="max-sm:px-4"
+                columns={[
+                  {
+                    cell: (b) => domainLabel(b.domain),
+                    header: 'Domain',
+                    id: 'domain',
+                    primary: true,
+                  },
+                  {
+                    cell: (b) => <span className="text-paper-400">{b.outcomeType ?? '—'}</span>,
+                    header: 'Outcome',
+                    id: 'outcome',
+                  },
+                  {
+                    align: 'right',
+                    cell: (b) => (
+                      <span className="inline-flex items-center justify-end gap-2 tabular-nums">
+                        {b.sampleSize < MIN_BASELINE_SAMPLE && (
+                          <Badge
+                            title={`Analytics compares only from ${MIN_BASELINE_SAMPLE} cases`}
+                            tone="warning"
+                            variant="outline"
+                          >
+                            Too small to compare
+                          </Badge>
+                        )}
+                        {b.sampleSize}
+                      </span>
+                    ),
+                    header: 'Sample',
+                    id: 'sample',
+                  },
+                  {
+                    align: 'right',
+                    cell: (b) => <span className="tabular-nums">{b.errorCount}</span>,
+                    header: 'Errors',
+                    id: 'errors',
+                  },
+                  {
+                    align: 'right',
+                    cell: (b) => (
+                      <span className="font-medium text-paper-100 tabular-nums">
                         {formatPercent(b.errorRate)}
-                      </Td>
-                      <Td
-                        align="right"
-                        className="px-4 py-3 text-sm text-paper-400"
-                        label="Recorded"
+                      </span>
+                    ),
+                    header: 'Error rate',
+                    id: 'errorRate',
+                  },
+                  {
+                    align: 'right',
+                    cell: (b) => (
+                      <time
+                        className="whitespace-nowrap text-sm text-paper-400"
+                        dateTime={b.recordedAt}
+                        title={formatDate(b.recordedAt)}
                       >
-                        <time
-                          className="whitespace-nowrap"
-                          dateTime={b.recordedAt}
-                          title={formatDate(b.recordedAt)}
-                        >
-                          {formatRelativeTime(b.recordedAt)}
-                        </time>
-                      </Td>
-                      <Td align="right" className="px-4 py-3">
-                        <Button
-                          aria-label={`Delete ${domainLabel(b.domain)} baseline`}
-                          className="px-2 text-paper-500 hover:text-danger-400"
-                          onClick={() => setDeleteTarget(b)}
-                          size="sm"
-                          title="Delete baseline"
-                          variant="ghost"
-                        >
-                          <Icon name="trash" size={14} />
-                        </Button>
-                      </Td>
-                    </TRow>
-                  ))}
-                </tbody>
-              </Table>
+                        {formatRelativeTime(b.recordedAt)}
+                      </time>
+                    ),
+                    header: 'Recorded',
+                    id: 'recorded',
+                  },
+                ]}
+                getRowId={(b) => b.id}
+                // The row opens nothing, so its one control stays in view.
+                revealActions={false}
+                rows={baselines}
+              />
             </div>
           )}
         </QueryBoundary>

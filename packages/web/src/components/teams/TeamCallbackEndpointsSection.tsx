@@ -9,6 +9,7 @@ import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
@@ -147,23 +148,49 @@ export function TeamCallbackEndpointsSection({
           title="No callback endpoints"
         />
       ) : (
-        <Table>
-          <THead>
-            <tr>
-              <Th>Name</Th>
-              <Th>Destination</Th>
-              <Th>Events</Th>
-              <Th>Secret</Th>
-              <Th>
-                <span className="sr-only">Actions</span>
-              </Th>
-            </tr>
-          </THead>
-          <tbody>
-            {rows.map((row) => (
-              <TRow key={row.id}>
-                <Td>
-                  <span className="font-medium">{row.name}</span>
+        <DataTable
+          actions={(row) => (
+            <>
+              <Button onClick={() => setHistory(row)} size="sm" variant="ghost">
+                Deliveries
+              </Button>
+              <ActionMenu
+                items={[
+                  { icon: 'edit', id: 'edit', label: 'Edit', onAction: () => openForm(row) },
+                  {
+                    icon: 'key',
+                    id: 'rotate',
+                    label: 'Rotate secret',
+                    onAction: () => setRotating(row),
+                  },
+                  {
+                    icon: row.disabled ? 'play' : 'pause',
+                    id: 'toggle',
+                    label: row.disabled ? 'Enable' : 'Disable',
+                    onAction: () => {
+                      setActionError(null);
+                      update
+                        .mutateAsync({ disabled: !row.disabled, id: row.id })
+                        .catch((e) => setActionError(errMsg(e, 'Could not update')));
+                    },
+                  },
+                  {
+                    icon: 'error',
+                    id: 'delete',
+                    label: 'Delete',
+                    onAction: () => setDeleting(row),
+                    tone: 'danger',
+                  },
+                ]}
+                label={`More actions for ${row.name}`}
+              />
+            </>
+          )}
+          columns={[
+            {
+              cell: (row) => (
+                <>
+                  {row.name}
                   {row.disabled && (
                     <Badge className="ml-2" tone="muted">
                       Disabled
@@ -179,61 +206,48 @@ export function TeamCallbackEndpointsSection({
                       Private network
                     </Badge>
                   )}
-                </Td>
-                <Td className="font-mono text-xs">
+                </>
+              ),
+              header: 'Name',
+              id: 'name',
+              primary: true,
+            },
+            {
+              cell: (row) => (
+                <span className="font-mono text-xs">
                   {row.origin}
                   {row.pathPrefix}
-                </Td>
-                <Td className="text-xs">{row.events.map((e) => EVENT_LABELS[e]).join(', ')}</Td>
-                <Td className="font-mono text-xs">
+                </span>
+              ),
+              header: 'Destination',
+              id: 'destination',
+            },
+            {
+              cell: (row) => (
+                <span className="text-xs">{row.events.map((e) => EVENT_LABELS[e]).join(', ')}</span>
+              ),
+              header: 'Events',
+              id: 'events',
+            },
+            {
+              cell: (row) => (
+                <span className="font-mono text-xs">
                   …{row.secretLastFour}
                   {row.previousSecretExpiresAt && (
                     <span className="ml-2 font-sans text-paper-500">
                       previous until <RelativeTime value={row.previousSecretExpiresAt} />
                     </span>
                   )}
-                </Td>
-                <Td>
-                  <div className="flex justify-end gap-2">
-                    <Button onClick={() => setHistory(row)} size="sm" variant="ghost">
-                      Deliveries
-                    </Button>
-                    <ActionMenu
-                      items={[
-                        { icon: 'edit', id: 'edit', label: 'Edit', onAction: () => openForm(row) },
-                        {
-                          icon: 'key',
-                          id: 'rotate',
-                          label: 'Rotate secret',
-                          onAction: () => setRotating(row),
-                        },
-                        {
-                          icon: row.disabled ? 'play' : 'pause',
-                          id: 'toggle',
-                          label: row.disabled ? 'Enable' : 'Disable',
-                          onAction: () => {
-                            setActionError(null);
-                            update
-                              .mutateAsync({ disabled: !row.disabled, id: row.id })
-                              .catch((e) => setActionError(errMsg(e, 'Could not update')));
-                          },
-                        },
-                        {
-                          icon: 'error',
-                          id: 'delete',
-                          label: 'Delete',
-                          onAction: () => setDeleting(row),
-                          tone: 'danger',
-                        },
-                      ]}
-                      label={`More actions for ${row.name}`}
-                    />
-                  </div>
-                </Td>
-              </TRow>
-            ))}
-          </tbody>
-        </Table>
+                </span>
+              ),
+              header: 'Secret',
+              id: 'secret',
+            },
+          ]}
+          getRowId={(row) => row.id}
+          revealActions={false}
+          rows={rows}
+        />
       )}
 
       <Modal

@@ -1,10 +1,10 @@
 'use client';
 
-import Link from 'next/link';
 import { Suspense, useMemo, useState } from 'react';
 import { DailyCostChart } from '@/components/charts/DailyCostChart';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { DataTable } from '@/components/ui/DataTable';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -13,15 +13,6 @@ import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select, type SelectOption } from '@/components/ui/Select';
 import { Stat } from '@/components/ui/Stat';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import {
-  type SortDirection,
-  Table,
-  TableStatusRow,
-  Td,
-  THead,
-  Th,
-  TRow,
-} from '@/components/ui/Table';
 import {
   type PlatformUsage,
   type UsageBucket,
@@ -38,10 +29,10 @@ import {
   rangePhrase,
 } from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
+import { runHref } from '@/lib/entityLinks';
 import { humanizeKey } from '@/lib/govLabels';
 import {
   cn,
-  FOCUS_RING,
   formatCount,
   formatDuration,
   formatPercent,
@@ -158,8 +149,6 @@ function BreakdownTable({ dimension, data }: { dimension: Dimension; data: Platf
       setSortDir(k === 'label' ? 'asc' : 'desc');
     }
   };
-  const dir = (k: SortKey): SortDirection =>
-    k !== sortKey ? 'none' : sortDir === 'desc' ? 'descending' : 'ascending';
 
   if (rows.length === 0) {
     return (
@@ -172,89 +161,92 @@ function BreakdownTable({ dimension, data }: { dimension: Dimension; data: Platf
   }
   return (
     <div className="overflow-x-auto">
-      <Table className="max-sm:px-4" stacked>
-        <THead className="bg-ink-900/40">
-          <Th onSort={() => sort('label')} sort={dir('label')} variant="plain">
-            {labelHeader}
-          </Th>
-          <Th align="right" onSort={() => sort('calls')} sort={dir('calls')} variant="plain">
-            Calls
-          </Th>
-          <Th align="right" onSort={() => sort('tokens')} sort={dir('tokens')} variant="plain">
-            Tokens in / out
-          </Th>
-          <Th align="right" onSort={() => sort('latency')} sort={dir('latency')} variant="plain">
-            Avg latency
-          </Th>
-          <Th
-            align="right"
-            onSort={() => sort('errorRate')}
-            sort={dir('errorRate')}
-            variant="plain"
-          >
-            Error rate
-          </Th>
-          <Th align="right" onSort={() => sort('cost')} sort={dir('cost')} variant="plain">
-            Cost
-          </Th>
-        </THead>
-        <tbody>
-          {shown.map((r) => (
-            <TRow hover key={r.label}>
-              <Td
+      <DataTable
+        className="max-sm:px-4"
+        columns={[
+          {
+            cell: (r) => (
+              // A model spec (`anthropic/…`) is an identifier; the other dimensions are names.
+              <span
                 className={cn(
-                  'px-4 py-2.5 font-medium text-paper-100',
-                  // A model spec (`anthropic/…`) is an identifier; the other dimensions are names.
-                  dimension === 'model' && r.label !== 'Model not resolved'
-                    ? 'font-mono text-sm'
-                    : 'text-sm'
+                  'text-sm',
+                  dimension === 'model' && r.label !== 'Model not resolved' && 'font-mono'
                 )}
-                primary
               >
                 {r.label}
-              </Td>
-              <Td
-                align="right"
-                className="px-4 py-2 text-sm text-paper-300 tabular-nums"
-                label="Calls"
-              >
-                {formatCount(r.calls)}
-              </Td>
-              <Td
-                align="right"
-                className="px-4 py-2 text-sm text-paper-300 tabular-nums"
-                label="Tokens in / out"
-              >
+              </span>
+            ),
+            header: labelHeader,
+            id: 'label',
+            label: labelHeader,
+            primary: true,
+            sortable: true,
+          },
+          {
+            align: 'right',
+            cell: (r) => (
+              <span className="text-sm text-paper-300 tabular-nums">{formatCount(r.calls)}</span>
+            ),
+            header: 'Calls',
+            id: 'calls',
+            sortable: true,
+          },
+          {
+            align: 'right',
+            cell: (r) => (
+              <span className="text-sm text-paper-300 tabular-nums">
                 {formatTokens(r.inputTokens)} / {formatTokens(r.outputTokens)}
-              </Td>
-              <Td
-                align="right"
-                className="px-4 py-2 text-sm text-paper-300 tabular-nums"
-                label="Avg latency"
-              >
+              </span>
+            ),
+            header: 'Tokens in / out',
+            id: 'tokens',
+            sortable: true,
+          },
+          {
+            align: 'right',
+            cell: (r) => (
+              <span className="text-sm text-paper-300 tabular-nums">
                 {formatDuration(r.avgDurationMs === null ? null : Math.round(r.avgDurationMs))}
-              </Td>
-              <Td
-                align="right"
+              </span>
+            ),
+            header: 'Avg latency',
+            id: 'latency',
+            sortable: true,
+          },
+          {
+            align: 'right',
+            cell: (r) => (
+              <span
                 className={cn(
-                  'px-4 py-2 text-sm tabular-nums',
+                  'text-sm tabular-nums',
                   r.errors > 0 ? 'text-danger-400' : 'text-paper-300'
                 )}
-                label="Error rate"
               >
                 {formatPercent(errorRate(r))}
-              </Td>
-              <Td
-                align="right"
-                className="px-4 py-2 text-sm font-medium text-paper-100 tabular-nums"
-                label="Cost"
-              >
+              </span>
+            ),
+            header: 'Error rate',
+            id: 'errorRate',
+            sortable: true,
+          },
+          {
+            align: 'right',
+            cell: (r) => (
+              <span className="text-sm font-medium text-paper-100 tabular-nums">
                 {formatTotalCost(r.costUsd)}
-              </Td>
-            </TRow>
-          ))}
-        </tbody>
-      </Table>
+              </span>
+            ),
+            header: 'Cost',
+            id: 'cost',
+            sortable: true,
+          },
+        ]}
+        density="compact"
+        getRowId={(r) => r.label}
+        onSortChange={(id) => sort(id as SortKey)}
+        rows={shown}
+        sort={{ columnId: sortKey, direction: sortDir === 'desc' ? 'descending' : 'ascending' }}
+      />
       {rows.length > TOP_N && (
         <div className="border-t border-ink-600 px-4 py-2">
           <Button onClick={() => setShowAll((v) => !v)} size="sm" variant="ghost">
@@ -444,65 +436,62 @@ function UsageWorkspace() {
                     <CardHeader className="px-4 pt-5">
                       <CardTitle>Costliest runs in this window</CardTitle>
                     </CardHeader>
-                    <Table className="max-sm:px-4" stacked>
-                      <THead className="bg-ink-900/40">
-                        <Th variant="plain">Run</Th>
-                        <Th variant="plain">Template</Th>
-                        <Th variant="plain">Status</Th>
-                        <Th align="right" variant="plain">
-                          Tokens in / out
-                        </Th>
-                        <Th align="right" variant="plain">
-                          Cost
-                        </Th>
-                      </THead>
-                      <tbody>
-                        {data.topRuns.length === 0 && (
-                          <TableStatusRow colSpan={5}>
-                            <EmptyState
-                              hint="Runs appear here once their LLM calls are priced."
-                              icon="runs"
-                              title="No priced runs in this window"
-                            />
-                          </TableStatusRow>
-                        )}
-                        {data.topRuns.map((r) => (
-                          <TRow hover key={r.runId}>
-                            <Td className="px-4 py-2.5" primary>
-                              <Link
-                                className={cn(
-                                  'rounded-sm font-mono text-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
-                                  FOCUS_RING
-                                )}
-                                href={`/runs/${r.runId}`}
-                              >
-                                {r.externalTicketId ?? r.runId.slice(0, 8)}
-                              </Link>
-                            </Td>
-                            <Td className="px-4 py-2 text-paper-300" label="Template">
-                              {r.templateName}
-                            </Td>
-                            <Td className="px-4 py-2" label="Status">
-                              <StatusBadge status={r.status} />
-                            </Td>
-                            <Td
-                              align="right"
-                              className="px-4 py-2 text-sm text-paper-300 tabular-nums"
-                              label="Tokens in / out"
-                            >
+                    <DataTable
+                      className="max-sm:px-4"
+                      columns={[
+                        {
+                          cell: (r) => (
+                            <span className="font-mono text-sm">
+                              {r.externalTicketId ?? r.runId.slice(0, 8)}
+                            </span>
+                          ),
+                          header: 'Run',
+                          id: 'run',
+                          primary: true,
+                        },
+                        {
+                          cell: (r) => <span className="text-paper-300">{r.templateName}</span>,
+                          header: 'Template',
+                          id: 'template',
+                        },
+                        {
+                          cell: (r) => <StatusBadge status={r.status} />,
+                          header: 'Status',
+                          id: 'status',
+                        },
+                        {
+                          align: 'right',
+                          cell: (r) => (
+                            <span className="text-sm text-paper-300 tabular-nums">
                               {formatTokens(r.inputTokens)} / {formatTokens(r.outputTokens)}
-                            </Td>
-                            <Td
-                              align="right"
-                              className="px-4 py-2 text-sm font-medium text-paper-100 tabular-nums"
-                              label="Cost"
-                            >
+                            </span>
+                          ),
+                          header: 'Tokens in / out',
+                          id: 'tokens',
+                        },
+                        {
+                          align: 'right',
+                          cell: (r) => (
+                            <span className="text-sm font-medium text-paper-100 tabular-nums">
                               {formatTotalCost(r.costUsd)}
-                            </Td>
-                          </TRow>
-                        ))}
-                      </tbody>
-                    </Table>
+                            </span>
+                          ),
+                          header: 'Cost',
+                          id: 'cost',
+                        },
+                      ]}
+                      density="compact"
+                      empty={
+                        <EmptyState
+                          hint="Runs appear here once their LLM calls are priced."
+                          icon="runs"
+                          title="No priced runs in this window"
+                        />
+                      }
+                      getRowId={(r) => r.runId}
+                      rowHref={(r) => runHref(r.runId)}
+                      rows={data.topRuns}
+                    />
                   </Card>
                 </>
               )}

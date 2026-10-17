@@ -13,6 +13,7 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
@@ -21,17 +22,18 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Select } from '@/components/ui/Select';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import {
   type AutomationKind,
   type AutomationSummary,
   useAllAutomations,
 } from '@/hooks/useAutomations';
+import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useSchedules } from '@/hooks/useSchedules';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { HELP_LINKS } from '@/lib/helpLinks';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 const KIND_LABEL: Record<AutomationKind, string> = {
   event: 'Event',
@@ -75,6 +77,13 @@ function manageHref(row: AutomationSummary): string | null {
       return null;
   }
 }
+
+const AUTOMATION_SORT_KEYS = {
+  // An automation that has never done anything sorts last.
+  lastActivity: (r: AutomationSummary) =>
+    r.lastActivity ? new Date(r.lastActivity.at).getTime() : null,
+  name: (r: AutomationSummary) => r.name.toLowerCase(),
+};
 
 /** Pick the repository a new event automation goes on, then open its automations. */
 function PickRepository({
@@ -129,6 +138,8 @@ export default function GovernAutomationsPage() {
   const schedules = useSchedules();
   const [kind, setKind] = useState<'all' | AutomationKind>('all');
   const [query, setQuery] = useState('');
+  const { onSortChange, sort, sortRows } =
+    useDataTableSort<AutomationSummary>(AUTOMATION_SORT_KEYS);
   const [picking, setPicking] = useState(false);
   const [openRepo, setOpenRepo] = useState<AutomationRepository | null>(null);
   const [openTeam, setOpenTeam] = useState<{ id: string; name: string } | null>(null);
@@ -262,116 +273,120 @@ export default function GovernAutomationsPage() {
                 <EmptyState icon="search" title="No automations match" />
               ) : (
                 <div className="-mx-4">
-                  <Table className="max-sm:px-4" stacked>
-                    <THead>
-                      <Th variant="plain">Name</Th>
-                      <Th variant="plain">When</Th>
-                      <Th variant="plain">On</Th>
-                      <Th variant="plain">Starts</Th>
-                      <Th variant="plain">Last activity</Th>
-                      <Th variant="plain">
-                        <span className="sr-only">Actions</span>
-                      </Th>
-                    </THead>
-                    <tbody>
-                      {shown.map((r) => {
-                        const href = manageHref(r);
-                        const repo = repoOf(r);
-                        return (
-                          <TRow key={`${r.kind}:${r.id}`}>
-                            <Td label="Name">
-                              <div className="font-medium text-paper-100">{r.name}</div>
-                              <div className="mt-0.5 flex flex-wrap gap-1.5">
-                                <Badge tone="neutral" variant="outline">
-                                  {KIND_LABEL[r.kind]}
+                  <DataTable
+                    actions={(r) => {
+                      const href = manageHref(r);
+                      const repo = repoOf(r);
+                      return r.kind === 'event' && repo ? (
+                        <Button onClick={() => setOpenRepo(repo)} size="sm" variant="ghost">
+                          {r.canManage ? 'Manage' : 'View'}
+                        </Button>
+                      ) : r.kind === 'event' && r.team ? (
+                        // An automation with no repository belongs to its team.
+                        <Button onClick={() => setOpenTeam(r.team)} size="sm" variant="ghost">
+                          {r.canManage ? 'Manage' : 'View'}
+                        </Button>
+                      ) : href ? (
+                        <Link
+                          className={cn(
+                            'rounded-sm text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
+                            FOCUS_RING
+                          )}
+                          href={href}
+                        >
+                          {r.canManage ? 'Manage' : 'View'}
+                        </Link>
+                      ) : null;
+                    }}
+                    className="max-sm:px-4"
+                    columns={[
+                      {
+                        cell: (r) => r.name,
+                        header: 'Name',
+                        id: 'name',
+                        primary: true,
+                        secondary: (r) => (
+                          <div className="flex flex-wrap gap-1.5">
+                            <Badge tone="neutral" variant="outline">
+                              {KIND_LABEL[r.kind]}
+                            </Badge>
+                            {!r.enabled && (
+                              <Badge tone="warning" variant="outline">
+                                off
+                              </Badge>
+                            )}
+                            {r.kind === 'template_webhook' && !r.signatureRequired && (
+                              <span
+                                title={
+                                  r.signed
+                                    ? 'Signed calls are checked, but unsigned calls are still accepted'
+                                    : 'Anyone holding the URL can call it: no signing secret'
+                                }
+                              >
+                                <Badge tone="warning" variant="outline">
+                                  {r.signed ? 'signature optional' : 'unsigned'}
                                 </Badge>
-                                {!r.enabled && (
-                                  <Badge tone="warning" variant="outline">
-                                    off
-                                  </Badge>
-                                )}
-                                {r.kind === 'template_webhook' && !r.signatureRequired && (
-                                  <span
-                                    title={
-                                      r.signed
-                                        ? 'Signed calls are checked, but unsigned calls are still accepted'
-                                        : 'Anyone holding the URL can call it: no signing secret'
-                                    }
-                                  >
-                                    <Badge tone="warning" variant="outline">
-                                      {r.signed ? 'signature optional' : 'unsigned'}
-                                    </Badge>
-                                  </span>
-                                )}
-                              </div>
-                            </Td>
-                            <Td label="When">
-                              <span className="text-paper-300 text-xs">{r.when}</span>
-                            </Td>
-                            <Td label="On">
-                              {r.repository
-                                ? `${r.repository.organizationName}/${r.repository.repoName}`
-                                : (r.team?.name ?? 'Platform')}
-                            </Td>
-                            <Td label="Starts">
-                              {r.template?.name ??
-                                (r.kind === 'event' && r.source
-                                  ? `${eventSource(r.source)?.defaultTemplate?.name ?? '—'} (default)`
-                                  : r.kind === 'tracker_transition'
-                                    ? 'the team’s default template'
-                                    : '—')}
-                            </Td>
-                            <Td label="Last activity">
-                              {r.lastActivity ? (
-                                <span
-                                  className="flex items-center gap-2"
-                                  title={r.lastActivity.reason ?? undefined}
-                                >
-                                  <Badge
-                                    tone={activityTone(r, r.lastActivity.outcome)}
-                                    variant="outline"
-                                  >
-                                    {isDecision(r)
-                                      ? outcomeLabel(r.lastActivity.outcome)
-                                      : r.lastActivity.outcome.toLowerCase()}
-                                  </Badge>
-                                  <RelativeTime
-                                    className="text-paper-500"
-                                    value={r.lastActivity.at}
-                                  />
-                                </span>
-                              ) : (
-                                <span className="text-paper-600">—</span>
-                              )}
-                            </Td>
-                            <Td label="Actions">
-                              {r.kind === 'event' && repo ? (
-                                <Button onClick={() => setOpenRepo(repo)} size="sm" variant="ghost">
-                                  {r.canManage ? 'Manage' : 'View'}
-                                </Button>
-                              ) : r.kind === 'event' && r.team ? (
-                                // An automation with no repository belongs to its team.
-                                <Button
-                                  onClick={() => setOpenTeam(r.team)}
-                                  size="sm"
-                                  variant="ghost"
-                                >
-                                  {r.canManage ? 'Manage' : 'View'}
-                                </Button>
-                              ) : href ? (
-                                <Link
-                                  className="text-sm text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
-                                  href={href}
-                                >
-                                  {r.canManage ? 'Manage' : 'View'}
-                                </Link>
-                              ) : null}
-                            </Td>
-                          </TRow>
-                        );
-                      })}
-                    </tbody>
-                  </Table>
+                              </span>
+                            )}
+                          </div>
+                        ),
+                        sortable: true,
+                      },
+                      {
+                        cell: (r) => <span className="text-paper-300 text-xs">{r.when}</span>,
+                        header: 'When',
+                        id: 'when',
+                      },
+                      {
+                        cell: (r) =>
+                          r.repository
+                            ? `${r.repository.organizationName}/${r.repository.repoName}`
+                            : (r.team?.name ?? 'Platform'),
+                        header: 'On',
+                        id: 'on',
+                      },
+                      {
+                        cell: (r) =>
+                          r.template?.name ??
+                          (r.kind === 'event' && r.source
+                            ? `${eventSource(r.source)?.defaultTemplate?.name ?? '—'} (default)`
+                            : r.kind === 'tracker_transition'
+                              ? 'the team’s default template'
+                              : '—'),
+                        header: 'Starts',
+                        id: 'starts',
+                      },
+                      {
+                        cell: (r) =>
+                          r.lastActivity ? (
+                            <span
+                              className="flex items-center gap-2"
+                              title={r.lastActivity.reason ?? undefined}
+                            >
+                              <Badge
+                                tone={activityTone(r, r.lastActivity.outcome)}
+                                variant="outline"
+                              >
+                                {isDecision(r)
+                                  ? outcomeLabel(r.lastActivity.outcome)
+                                  : r.lastActivity.outcome.toLowerCase()}
+                              </Badge>
+                              <RelativeTime className="text-paper-500" value={r.lastActivity.at} />
+                            </span>
+                          ) : (
+                            <span className="text-paper-600">—</span>
+                          ),
+                        header: 'Last activity',
+                        id: 'lastActivity',
+                        sortable: true,
+                      },
+                    ]}
+                    getRowId={(r) => `${r.kind}:${r.id}`}
+                    onSortChange={onSortChange}
+                    revealActions={false}
+                    rows={sortRows(shown)}
+                    sort={sort}
+                  />
                 </div>
               )}
             </>

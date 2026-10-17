@@ -5,12 +5,12 @@ import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import {
   type GithubHostCredentialRow,
@@ -227,40 +227,40 @@ export function GitHubHostCredentialsCard() {
             title="No per-host credentials"
           />
         ) : (
-          <Table>
-            <THead>
-              <Th className="pl-0" variant="plain">
-                Host
-              </Th>
-              <Th variant="plain">Credentials</Th>
-              <Th className="pr-0" variant="plain">
-                <span className="sr-only">Actions</span>
-              </Th>
-            </THead>
-            <tbody>
-              {credentials.map((c) => (
-                <TRow key={c.id}>
-                  <Td className="py-2.5 pr-4 font-mono text-sm text-paper-100">{c.host}</Td>
-                  <Td className="px-4 py-2.5 font-mono text-xs text-paper-300">{summary(c)}</Td>
-                  <Td className="py-2.5 pl-4 text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button onClick={() => setModal(c)} size="sm" variant="secondary">
-                        Edit
-                      </Button>
-                      <Button
-                        aria-label={`Delete the credentials for ${c.host}`}
-                        onClick={() => setDeleteTarget(c)}
-                        size="sm"
-                        variant="ghost"
-                      >
-                        <Icon className="text-danger-400" name="trash" size={14} />
-                      </Button>
-                    </div>
-                  </Td>
-                </TRow>
-              ))}
-            </tbody>
-          </Table>
+          <DataTable
+            actions={(c) => (
+              <>
+                <Button onClick={() => setModal(c)} size="sm" variant="secondary">
+                  Edit
+                </Button>
+                <Button
+                  aria-label={`Delete the credentials for ${c.host}`}
+                  onClick={() => setDeleteTarget(c)}
+                  size="sm"
+                  variant="ghost"
+                >
+                  <Icon className="text-danger-400" name="trash" size={14} />
+                </Button>
+              </>
+            )}
+            columns={[
+              {
+                cell: (c) => <span className="font-mono text-sm">{c.host}</span>,
+                header: 'Host',
+                id: 'host',
+                primary: true,
+              },
+              {
+                cell: (c) => <span className="font-mono text-xs text-paper-300">{summary(c)}</span>,
+                header: 'Credentials',
+                id: 'credentials',
+              },
+            ]}
+            density="compact"
+            getRowId={(c) => c.id}
+            revealActions={false}
+            rows={credentials}
+          />
         )}
       </QueryBoundary>
 

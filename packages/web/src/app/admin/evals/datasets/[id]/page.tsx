@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { use, useState } from 'react';
 import { EvalRunStatusBadge } from '@/components/evals/EvalRunStatusBadge';
 import { Alert } from '@/components/ui/Alert';
@@ -9,15 +8,15 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useEvalDataset, useEvalRuns, useRescreenEvalCases } from '@/hooks/useAdmin';
 import { formatArm } from '@/lib/evalRuntime';
 import { validateRouteParam } from '@/lib/routeParams';
-import { cn, FOCUS_RING, formatDate, formatRelativeTime } from '@/lib/utils';
+import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 const RUNS_LIMIT = 20;
 const CASES_PAGE_SIZE = 25;
@@ -88,64 +87,63 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                 shape="detail"
               >
                 <div className="-mx-4">
-                  <Table className="max-sm:px-4" stacked>
-                    <THead>
-                      <Th variant="plain">Started</Th>
-                      <Th variant="plain">Status</Th>
-                      <Th variant="plain">Candidate</Th>
-                      <Th variant="plain">Baseline</Th>
-                    </THead>
-                    <tbody>
-                      {runRows.map((r) => (
-                        <TRow hover key={r.id}>
-                          <Td className="px-4 py-2.5" primary>
-                            <Link
-                              className={cn(
-                                'rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
-                                FOCUS_RING
-                              )}
-                              href={`/admin/evals/runs/${r.id}`}
-                              title={formatDate(r.startedAt)}
-                            >
-                              {formatRelativeTime(r.startedAt)}
-                            </Link>
-                          </Td>
-                          <Td className="px-4 py-2.5" label="Status">
-                            <EvalRunStatusBadge partial={r.partial} status={r.status} />
-                          </Td>
-                          <Td
-                            className="px-4 py-2.5 font-mono text-xs text-paper-200"
-                            label="Candidate"
-                          >
+                  <DataTable
+                    className="max-sm:px-4"
+                    columns={[
+                      {
+                        cell: (r) => (
+                          <span title={formatDate(r.startedAt)}>
+                            {formatRelativeTime(r.startedAt)}
+                          </span>
+                        ),
+                        header: 'Started',
+                        id: 'started',
+                        primary: true,
+                      },
+                      {
+                        cell: (r) => <EvalRunStatusBadge partial={r.partial} status={r.status} />,
+                        header: 'Status',
+                        id: 'status',
+                      },
+                      {
+                        cell: (r) => (
+                          <span className="font-mono text-xs text-paper-200">
                             {formatArm(r.candidateRef, r.candidateRuntime)}
-                          </Td>
-                          <Td
-                            className="px-4 py-2.5 font-mono text-xs text-paper-400"
-                            label="Baseline"
-                          >
+                          </span>
+                        ),
+                        header: 'Candidate',
+                        id: 'candidate',
+                      },
+                      {
+                        cell: (r) => (
+                          <span className="font-mono text-xs text-paper-400">
                             {formatArm(r.baselineRef, r.baselineRuntime)}
-                          </Td>
-                        </TRow>
-                      ))}
-                      {runRows.length === 0 && (
-                        <TableStatusRow colSpan={4}>
-                          <EmptyState
-                            hint={
-                              <>
-                                Start one with{' '}
-                                <code className="font-mono text-paper-300">
-                                  auto-swe evals run {ds.slug} --candidate=&lt;ref&gt;
-                                  --against=&lt;ref&gt;
-                                </code>
-                              </>
-                            }
-                            icon="flask"
-                            title="No runs yet"
-                          />
-                        </TableStatusRow>
-                      )}
-                    </tbody>
-                  </Table>
+                          </span>
+                        ),
+                        header: 'Baseline',
+                        id: 'baseline',
+                      },
+                    ]}
+                    density="compact"
+                    empty={
+                      <EmptyState
+                        hint={
+                          <>
+                            Start one with{' '}
+                            <code className="font-mono text-paper-300">
+                              auto-swe evals run {ds.slug} --candidate=&lt;ref&gt;
+                              --against=&lt;ref&gt;
+                            </code>
+                          </>
+                        }
+                        icon="flask"
+                        title="No runs yet"
+                      />
+                    }
+                    getRowId={(r) => r.id}
+                    rowHref={(r) => `/admin/evals/runs/${r.id}`}
+                    rows={runRows}
+                  />
                 </div>
               </QueryBoundary>
               {runsTotal > RUNS_LIMIT && (
@@ -183,97 +181,110 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                 </Alert>
               )}
               <div className="-mx-4">
-                <Table className="max-sm:px-4" stacked>
-                  <THead>
-                    <Th variant="plain">Repository</Th>
-                    <Th variant="plain">Baseline</Th>
-                    <Th variant="plain">Golden test</Th>
-                    <Th variant="plain">Tags</Th>
-                    <Th variant="plain">
-                      <span title="Each case's golden test is run several times at its pinned commit; a case that fails any run is flaky, and the benchmark does not score it, so it cannot skew a verdict. Re-check one after fixing what made it fail.">
-                        Stability check
-                      </span>
-                    </Th>
-                  </THead>
-                  <tbody>
-                    {ds.cases
-                      .slice(casesPage * CASES_PAGE_SIZE, (casesPage + 1) * CASES_PAGE_SIZE)
-                      .map((c) => (
-                        <TRow key={c.id}>
-                          <Td className="px-4 py-2.5 font-mono text-xs text-paper-200" primary>
-                            <span className="break-all" title={c.id}>
-                              {c.repoUrl}
-                            </span>
-                          </Td>
-                          <Td
-                            className="px-4 py-2.5 font-mono text-xs text-paper-400"
-                            label="Baseline"
-                          >
-                            <span title={c.baselineSha}>{c.baselineSha.slice(0, 10)}</span>
-                          </Td>
-                          <Td
-                            className="px-4 py-2.5 font-mono text-xs text-paper-400"
-                            label="Golden test"
-                          >
-                            <span className="line-clamp-2" title={c.goldenTest}>
-                              {c.goldenTest}
-                            </span>
-                          </Td>
-                          <Td className="px-4 py-2.5" label="Tags">
-                            {c.tags.length ? (
-                              <span className="flex flex-wrap gap-1">
-                                {c.tags.map((t) => (
-                                  <Badge key={t} tone="muted" variant="outline">
-                                    {t}
-                                  </Badge>
-                                ))}
-                              </span>
-                            ) : (
-                              <span className="text-paper-500">—</span>
-                            )}
-                          </Td>
-                          <Td className="px-4 py-2.5" label="Stability check">
-                            {/* A failed check (runs recorded, no pass) is skipped like an unchecked case. */}
-                            <Badge
-                              dot
-                              tone={
-                                c.flakeScreened ? 'success' : c.flakeRuns > 0 ? 'warning' : 'muted'
-                              }
-                              variant="text"
-                            >
-                              {c.flakeScreened
-                                ? `Checked (${c.flakeRuns} runs)`
-                                : c.screenEnvironmentFailed
-                                  ? "Couldn't be checked (its runs kept being killed or timing out)"
-                                  : c.flakeRuns > 0
-                                    ? `Flaky (failed a ${c.flakeRuns}-run check)`
-                                    : 'Not checked yet'}
-                            </Badge>
-                            {c.flakeRuns > 0 && (
-                              <Button
-                                aria-label={`Re-check case ${c.id}`}
-                                className="ml-2"
-                                onClick={() => setConfirmRescreen({ caseId: c.id })}
-                                size="sm"
-                                variant="ghost"
-                              >
-                                Re-check
-                              </Button>
-                            )}
-                          </Td>
-                        </TRow>
-                      ))}
-                    {ds.cases.length === 0 && (
-                      <TableStatusRow colSpan={5}>
-                        <EmptyState
-                          hint="Cases are added through the platform API when the dataset is created."
-                          icon="layers"
-                          title="This dataset has no cases"
-                        />
-                      </TableStatusRow>
-                    )}
-                  </tbody>
-                </Table>
+                <DataTable
+                  actions={(c) =>
+                    c.flakeRuns > 0 ? (
+                      <Button
+                        aria-label={`Re-check case ${c.id}`}
+                        onClick={() => setConfirmRescreen({ caseId: c.id })}
+                        size="sm"
+                        variant="ghost"
+                      >
+                        Re-check
+                      </Button>
+                    ) : null
+                  }
+                  actionsLabel="Re-check"
+                  className="max-sm:px-4"
+                  columns={[
+                    {
+                      cell: (c) => (
+                        <span className="break-all font-mono text-xs text-paper-200" title={c.id}>
+                          {c.repoUrl}
+                        </span>
+                      ),
+                      header: 'Repository',
+                      id: 'repository',
+                      primary: true,
+                    },
+                    {
+                      cell: (c) => (
+                        <span className="font-mono text-xs text-paper-400" title={c.baselineSha}>
+                          {c.baselineSha.slice(0, 10)}
+                        </span>
+                      ),
+                      header: 'Baseline',
+                      id: 'baseline',
+                    },
+                    {
+                      cell: (c) => (
+                        <span
+                          className="line-clamp-2 font-mono text-xs text-paper-400"
+                          title={c.goldenTest}
+                        >
+                          {c.goldenTest}
+                        </span>
+                      ),
+                      header: 'Golden test',
+                      id: 'goldenTest',
+                    },
+                    {
+                      cell: (c) =>
+                        c.tags.length ? (
+                          <span className="flex flex-wrap gap-1">
+                            {c.tags.map((t) => (
+                              <Badge key={t} tone="muted" variant="outline">
+                                {t}
+                              </Badge>
+                            ))}
+                          </span>
+                        ) : (
+                          <span className="text-paper-500">—</span>
+                        ),
+                      header: 'Tags',
+                      id: 'tags',
+                    },
+                    {
+                      /* A failed check (runs recorded, no pass) is skipped like an unchecked case. */
+                      cell: (c) => (
+                        <Badge
+                          dot
+                          tone={c.flakeScreened ? 'success' : c.flakeRuns > 0 ? 'warning' : 'muted'}
+                          variant="text"
+                        >
+                          {c.flakeScreened
+                            ? `Checked (${c.flakeRuns} runs)`
+                            : c.screenEnvironmentFailed
+                              ? "Couldn't be checked (its runs kept being killed or timing out)"
+                              : c.flakeRuns > 0
+                                ? `Flaky (failed a ${c.flakeRuns}-run check)`
+                                : 'Not checked yet'}
+                        </Badge>
+                      ),
+                      header: (
+                        <span title="Each case's golden test is run several times at its pinned commit; a case that fails any run is flaky, and the benchmark does not score it, so it cannot skew a verdict. Re-check one after fixing what made it fail.">
+                          Stability check
+                        </span>
+                      ),
+                      id: 'stability',
+                      label: 'Stability check',
+                    },
+                  ]}
+                  density="compact"
+                  empty={
+                    <EmptyState
+                      hint="Cases are added through the platform API when the dataset is created."
+                      icon="layers"
+                      title="This dataset has no cases"
+                    />
+                  }
+                  getRowId={(c) => c.id}
+                  revealActions={false}
+                  rows={ds.cases.slice(
+                    casesPage * CASES_PAGE_SIZE,
+                    (casesPage + 1) * CASES_PAGE_SIZE
+                  )}
+                />
               </div>
               {ds.cases.length > CASES_PAGE_SIZE && (
                 <div className="mt-3">

@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
@@ -19,7 +20,6 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { Select } from '@/components/ui/Select';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import {
@@ -332,7 +332,7 @@ function EnforcementBadge({ type }: { type: PatternType }) {
   );
 }
 
-// ── Pattern Row ───────────────────────────────────────────────────────────────
+// ── Pattern Row actions ───────────────────────────────────────────────────────────────
 
 interface RowActions {
   onView: (pattern: ScannerPattern) => void;
@@ -341,13 +341,14 @@ interface RowActions {
   onError: (message: string | null) => void;
 }
 
-function PatternRow({
+/** The on/off switch of one rule, with the confirmation a blocking rule needs before it goes off. */
+function PatternActiveToggle({
   pattern,
-  onView,
-  onEdit,
-  onDelete,
   onError,
-}: { pattern: ScannerPattern } & RowActions) {
+}: {
+  pattern: ScannerPattern;
+  onError: RowActions['onError'];
+}) {
   const update = useUpdateScannerPattern();
   const [confirmDisable, setConfirmDisable] = useState(false);
   // Blocking rules stop agent actions outright, so switching one off needs a confirmation.
@@ -374,104 +375,31 @@ function PatternRow({
     );
   }
 
-  const regex = `/${pattern.pattern}/${pattern.flags}`;
-
   return (
-    <TRow hover>
-      <Td className="py-3 pr-4 sm:max-w-0 sm:w-full" primary>
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <button
-            className={cn(
-              'truncate rounded-sm text-left font-medium underline-offset-2 hover:underline focus-visible:underline',
-              pattern.isActive ? 'text-paper-100' : 'text-paper-400',
-              FOCUS_RING
-            )}
-            onClick={() => onView(pattern)}
-            type="button"
-          >
-            {pattern.label}
-          </button>
-          {!pattern.isActive && (
-            <Badge tone="muted" variant="outline">
-              Off
-            </Badge>
-          )}
-        </div>
-        <code
-          className="mt-1 block truncate font-mono text-xs font-normal text-paper-400"
-          title={regex}
-        >
-          {regex}
-        </code>
-      </Td>
-      <Td className="px-4 py-3" label="Source">
-        <div className="flex flex-wrap items-center gap-1">
-          {pattern.isBuiltIn ? (
-            <Badge tone="neutral" variant="outline">
-              Built-in
-            </Badge>
-          ) : (
-            <Badge tone="accent" variant="outline">
-              Custom
-            </Badge>
-          )}
-          {pattern.origin && (
-            <Badge title={`Installed by the ${pattern.origin} bundle`} tone="neutral">
-              {pattern.origin}
-            </Badge>
-          )}
-        </div>
-      </Td>
-      <Td className="px-4 py-3" label="Active">
-        <ToggleSwitch
-          ariaLabel={`Active: ${pattern.label}`}
-          checked={pattern.isActive}
-          disabled={update.isPending}
-          onChange={requestToggle}
-          title={`${pattern.isActive ? 'Disable' : 'Enable'} ${pattern.label}`}
+    <>
+      <ToggleSwitch
+        ariaLabel={`Active: ${pattern.label}`}
+        checked={pattern.isActive}
+        disabled={update.isPending}
+        onChange={requestToggle}
+        title={`${pattern.isActive ? 'Disable' : 'Enable'} ${pattern.label}`}
+      />
+      {confirmDisable && (
+        <ConfirmModal
+          confirmLabel="Disable rule"
+          dangerous
+          message={
+            pattern.type === 'SENSITIVE_FILE'
+              ? 'Agents will be able to write to files this rule protects, with no block from the sensitive file scanner, until you enable it again.'
+              : 'Agents will be able to run shell commands this rule blocks, with no warning from the shell scanner, until you enable it again.'
+          }
+          onClose={() => setConfirmDisable(false)}
+          onConfirm={() => toggleActive()}
+          open
+          title={`Disable "${pattern.label}"?`}
         />
-        {confirmDisable && (
-          <ConfirmModal
-            confirmLabel="Disable rule"
-            dangerous
-            message={
-              pattern.type === 'SENSITIVE_FILE'
-                ? 'Agents will be able to write to files this rule protects, with no block from the sensitive file scanner, until you enable it again.'
-                : 'Agents will be able to run shell commands this rule blocks, with no warning from the shell scanner, until you enable it again.'
-            }
-            onClose={() => setConfirmDisable(false)}
-            onConfirm={() => toggleActive()}
-            open
-            title={`Disable "${pattern.label}"?`}
-          />
-        )}
-      </Td>
-      <Td align="right" className="py-3 pl-4">
-        <ActionMenu
-          items={[
-            { icon: 'info', id: 'view', label: 'View details', onAction: () => onView(pattern) },
-            ...(pattern.isBuiltIn
-              ? []
-              : [
-                  {
-                    icon: 'edit' as const,
-                    id: 'edit',
-                    label: 'Edit',
-                    onAction: () => onEdit(pattern),
-                  },
-                  {
-                    icon: 'trash' as const,
-                    id: 'delete',
-                    label: 'Delete',
-                    onAction: () => onDelete(pattern),
-                    tone: 'danger' as const,
-                  },
-                ]),
-          ]}
-          label={`Actions for ${pattern.label}`}
-        />
-      </Td>
-    </TRow>
+      )}
+    </>
   );
 }
 
@@ -514,23 +442,109 @@ function PatternSection({
           title={filtered ? 'No patterns in this category match' : 'No patterns in this category'}
         />
       ) : (
-        <Table stacked>
-          <THead>
-            <Th className="pl-0" variant="plain">
-              Rule
-            </Th>
-            <Th variant="plain">Source</Th>
-            <Th variant="plain">Active</Th>
-            <Th className="pr-0" variant="plain">
-              <span className="sr-only">Actions</span>
-            </Th>
-          </THead>
-          <tbody>
-            {patterns.map((p) => (
-              <PatternRow key={p.id} pattern={p} {...actions} />
-            ))}
-          </tbody>
-        </Table>
+        <div className="-mx-4">
+          <DataTable
+            actions={(pattern) => (
+              <ActionMenu
+                items={[
+                  {
+                    icon: 'info',
+                    id: 'view',
+                    label: 'View details',
+                    onAction: () => actions.onView(pattern),
+                  },
+                  ...(pattern.isBuiltIn
+                    ? []
+                    : [
+                        {
+                          icon: 'edit' as const,
+                          id: 'edit',
+                          label: 'Edit',
+                          onAction: () => actions.onEdit(pattern),
+                        },
+                        {
+                          icon: 'trash' as const,
+                          id: 'delete',
+                          label: 'Delete',
+                          onAction: () => actions.onDelete(pattern),
+                          tone: 'danger' as const,
+                        },
+                      ]),
+                ]}
+                label={`Actions for ${pattern.label}`}
+              />
+            )}
+            className="max-sm:px-4"
+            columns={[
+              {
+                cell: (pattern) => (
+                  <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                    <button
+                      className={cn(
+                        'truncate rounded-sm text-left underline-offset-2 hover:underline focus-visible:underline',
+                        pattern.isActive ? 'text-paper-100' : 'text-paper-400',
+                        FOCUS_RING
+                      )}
+                      onClick={() => actions.onView(pattern)}
+                      type="button"
+                    >
+                      {pattern.label}
+                    </button>
+                    {!pattern.isActive && (
+                      <Badge tone="muted" variant="outline">
+                        Off
+                      </Badge>
+                    )}
+                  </span>
+                ),
+                header: 'Rule',
+                id: 'rule',
+                primary: true,
+                secondary: (pattern) => {
+                  const regex = `/${pattern.pattern}/${pattern.flags}`;
+                  return (
+                    <code className="block truncate font-mono text-paper-400" title={regex}>
+                      {regex}
+                    </code>
+                  );
+                },
+                width: 'sm:max-w-0 sm:w-full',
+              },
+              {
+                cell: (pattern) => (
+                  <div className="flex flex-wrap items-center gap-1">
+                    {pattern.isBuiltIn ? (
+                      <Badge tone="neutral" variant="outline">
+                        Built-in
+                      </Badge>
+                    ) : (
+                      <Badge tone="accent" variant="outline">
+                        Custom
+                      </Badge>
+                    )}
+                    {pattern.origin && (
+                      <Badge title={`Installed by the ${pattern.origin} bundle`} tone="neutral">
+                        {pattern.origin}
+                      </Badge>
+                    )}
+                  </div>
+                ),
+                header: 'Source',
+                id: 'source',
+              },
+              {
+                cell: (pattern) => (
+                  <PatternActiveToggle onError={actions.onError} pattern={pattern} />
+                ),
+                header: 'Active',
+                id: 'active',
+              },
+            ]}
+            getRowId={(pattern) => pattern.id}
+            revealActions={false}
+            rows={patterns}
+          />
+        </div>
       )}
     </Card>
   );

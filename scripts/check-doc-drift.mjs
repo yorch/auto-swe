@@ -825,6 +825,42 @@ const routeExists = (path) => {
   });
 };
 
+/**
+ * The dashboard's old addresses, read from `LEGACY_REDIRECTS` in `next.config.ts`. They still
+ * open through a redirect, so a doc that names one reads fine and works, which is exactly why
+ * nothing else notices: the docs keep teaching the old map. `:path*` marks a prefix rule.
+ */
+const legacyRedirects = (() => {
+  const file = 'packages/web/next.config.ts';
+  if (!existsSync(join(ROOT, file))) {
+    return [];
+  }
+  const text = read(file);
+  const rules = [
+    ...text.matchAll(/\{\s*destination:\s*'([^']+)',\s*source:\s*'([^']+)'\s*\}/g),
+  ].map(([, destination, source]) => ({ destination, source }));
+  // A rule written in another shape (an extra key, double quotes) would drop out of the match, and
+  // a list that drops out entirely would make this check refuse nothing while still passing.
+  if (text.includes('LEGACY_REDIRECTS') && rules.length === 0) {
+    throw new Error(
+      `${file} declares LEGACY_REDIRECTS but no rule matched the { destination, source } shape ` +
+        'this check reads; update the pattern in scripts/check-doc-drift.mjs.'
+    );
+  }
+  return rules;
+})();
+
+/** The redirect an old address would take, or undefined when the path is not an old one. */
+const legacyRedirectFor = (path) =>
+  legacyRedirects.find(({ source }) =>
+    source.endsWith('/:path*')
+      ? path.startsWith(`${source.slice(0, -'/:path*'.length)}/`)
+      : path === source
+  );
+
+/** A sentence about the redirects themselves names old addresses on purpose. */
+const REDIRECT_CONTEXT = /\bredirect|\bbookmark/i;
+
 /** A path is a page reference when its first segment names a real dashboard section. */
 const PAGE_LIKE = /`(\/(?:[a-z][a-z0-9-]*)(?:\/[a-z0-9[\]:-]+)*)`/g;
 
@@ -842,6 +878,16 @@ for (const file of targets) {
       }
       for (const m of line.matchAll(PAGE_LIKE)) {
         const path = m[1];
+        const legacy = REDIRECT_CONTEXT.test(line) ? undefined : legacyRedirectFor(path);
+        if (legacy) {
+          // A prefix rule carries the rest of the path over, as the redirect itself does.
+          const rest = legacy.source.endsWith('/:path*')
+            ? path.slice(legacy.source.length - '/:path*'.length + 1)
+            : '';
+          const movedTo = legacy.destination.replace(':path*', rest);
+          routeFailures.push({ file, line: i + 1, movedTo, path });
+          continue;
+        }
         const section = path.split('/')[1];
         if (!appSections.has(section)) {
           continue;
@@ -992,7 +1038,10 @@ if (clean) {
   );
   console.log(`  no forbidden status prose (${FORBIDDEN_PROSE.length} rules).`);
   console.log(`  every setting key named in prose resolves (${registeredKeyCount} registered).`);
-  console.log(`  every dashboard route named in prose exists (${appRoutes.size} rendered).`);
+  console.log(
+    `  every dashboard route named in prose exists (${appRoutes.size} rendered, ` +
+      `${legacyRedirects.length} old addresses refused).`
+  );
   console.log('  every repository path named in prose exists.');
   console.log(`  the agent roster names all ${seededAgentKeys.length} seeded agents.`);
   for (const [label, value] of facts) {
@@ -1058,7 +1107,11 @@ if (routeFailures.length > 0) {
   console.error(`Stale dashboard routes — ${routeFailures.length} in the living docs.\n`);
   for (const r of routeFailures) {
     console.error(`  ${r.file}:${r.line}`);
-    console.error(`    names the page ${r.path}, which the dashboard does not serve`);
+    console.error(
+      r.movedTo
+        ? `    names the old address ${r.path}; the page is now ${r.movedTo}`
+        : `    names the page ${r.path}, which the dashboard does not serve`
+    );
   }
   console.error('\n  source of truth: packages/web/src/app/**/page.tsx');
   console.error(

@@ -6,6 +6,7 @@ import { WorkflowsOverTimeChart } from '@/components/charts/WorkflowsOverTimeCha
 import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
+import { DataTable } from '@/components/ui/DataTable';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -25,9 +26,10 @@ import {
   rangePhrase,
 } from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
+import { templateHref } from '@/lib/entityLinks';
 import { outcomeTypeLabel } from '@/lib/govLabels';
 import { successTone } from '@/lib/tone';
-import { FOCUS_RING, formatCost, formatDuration, formatPercent } from '@/lib/utils';
+import { formatCost, formatDuration, formatPercent } from '@/lib/utils';
 
 type TemplateSort = 'name' | 'runs' | 'successRate' | 'totalCost' | 'avgCost';
 type DomainSort =
@@ -335,87 +337,73 @@ function AnalyticsWorkspace() {
               ) : (
                 <>
                   <div className="-mx-4">
-                    <Table>
-                      <THead>
-                        <Th
-                          className="px-4"
-                          onSort={() => templateSort.toggle('name')}
-                          sort={templateSort.direction('name')}
-                          variant="compact"
-                        >
-                          Template
-                        </Th>
-                        <Th
-                          align="right"
-                          className="px-4"
-                          onSort={() => templateSort.toggle('runs')}
-                          sort={templateSort.direction('runs')}
-                          variant="compact"
-                        >
-                          Runs
-                        </Th>
-                        <Th
-                          align="right"
-                          className="px-4"
-                          onSort={() => templateSort.toggle('successRate')}
-                          sort={templateSort.direction('successRate')}
-                          variant="compact"
-                        >
-                          Success rate
-                        </Th>
-                        <Th
-                          align="right"
-                          className="px-4"
-                          onSort={() => templateSort.toggle('totalCost')}
-                          sort={templateSort.direction('totalCost')}
-                          variant="compact"
-                        >
-                          Total cost
-                        </Th>
-                        <Th
-                          align="right"
-                          className="px-4"
-                          onSort={() => templateSort.toggle('avgCost')}
-                          sort={templateSort.direction('avgCost')}
-                          variant="compact"
-                        >
-                          Avg cost per run
-                        </Th>
-                      </THead>
-                      <tbody>
-                        {pageRows.map((row) => {
-                          const avgCost = row.totalRuns > 0 ? row.totalCost / row.totalRuns : null;
-                          return (
-                            <TRow hover key={row.templateId}>
-                              <Td className="px-4 py-2.5">
-                                <Link
-                                  className={`rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline ${FOCUS_RING}`}
-                                  href={`/library/${row.templateId}`}
-                                >
-                                  {row.templateName}
-                                </Link>
-                              </Td>
-                              <Td className="px-4 py-2 text-right tabular-nums">{row.totalRuns}</Td>
-                              <Td className="px-4 py-2 text-right tabular-nums">
-                                {row.successRate !== null ? (
-                                  <span className={successRateClass(row.successRate)}>
-                                    {formatPercent(row.successRate)}
-                                  </span>
-                                ) : (
-                                  '—'
-                                )}
-                              </Td>
-                              <Td className="px-4 py-2 text-right tabular-nums">
-                                {formatCost(row.totalCost)}
-                              </Td>
-                              <Td className="px-4 py-2 text-right tabular-nums">
-                                {avgCost !== null ? formatCost(avgCost) : '—'}
-                              </Td>
-                            </TRow>
-                          );
-                        })}
-                      </tbody>
-                    </Table>
+                    <DataTable
+                      className="max-sm:px-4"
+                      columns={[
+                        {
+                          cell: (row) => row.templateName,
+                          header: 'Template',
+                          id: 'name',
+                          primary: true,
+                          sortable: true,
+                        },
+                        {
+                          align: 'right',
+                          cell: (row) => <span className="tabular-nums">{row.totalRuns}</span>,
+                          header: 'Runs',
+                          id: 'runs',
+                          sortable: true,
+                        },
+                        {
+                          align: 'right',
+                          cell: (row) => (
+                            <span className="tabular-nums">
+                              {row.successRate !== null ? (
+                                <span className={successRateClass(row.successRate)}>
+                                  {formatPercent(row.successRate)}
+                                </span>
+                              ) : (
+                                '—'
+                              )}
+                            </span>
+                          ),
+                          header: 'Success rate',
+                          id: 'successRate',
+                          sortable: true,
+                        },
+                        {
+                          align: 'right',
+                          cell: (row) => (
+                            <span className="tabular-nums">{formatCost(row.totalCost)}</span>
+                          ),
+                          header: 'Total cost',
+                          id: 'totalCost',
+                          sortable: true,
+                        },
+                        {
+                          align: 'right',
+                          cell: (row) => (
+                            <span className="tabular-nums">
+                              {row.totalRuns > 0 ? formatCost(row.totalCost / row.totalRuns) : '—'}
+                            </span>
+                          ),
+                          header: 'Avg cost per run',
+                          id: 'avgCost',
+                          sortable: true,
+                        },
+                      ]}
+                      density="compact"
+                      getRowId={(row) => row.templateId}
+                      onSortChange={(id) => templateSort.toggle(id as TemplateSort)}
+                      rowHref={(row) => templateHref(row.templateId)}
+                      rows={pageRows}
+                      sort={{
+                        columnId: templateSort.key,
+                        direction: templateSort.direction(templateSort.key) as
+                          | 'ascending'
+                          | 'descending',
+                      }}
+                    />
                   </div>
                   {totalPages > 1 && (
                     <Pagination

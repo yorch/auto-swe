@@ -118,7 +118,7 @@ for that page's tickets only.
 | Parameter | Values | Default |
 |---|---|---|
 | `includeAutomated` | `true` / `false` | `false` |
-| `search` | substring of the ticket id or the request description | none |
+| `search` | substring of the ticket id, the request description or its launch label | none |
 | `scope`, `teamId` | as for pull requests | `MINE` |
 
 `search`, `scope` and `teamId` choose **which tickets are listed**. The figures for a listed ticket

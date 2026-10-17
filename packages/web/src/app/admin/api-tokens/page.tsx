@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonRows } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -14,12 +15,12 @@ import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Select } from '@/components/ui/Select';
-import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useAdminRevokeToken, useAdminTokens } from '@/hooks/useAdmin';
+import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { errMsg } from '@/lib/errors';
 import { navLabel } from '@/lib/navigation';
-import { cn, formatDate } from '@/lib/utils';
+import { formatDate } from '@/lib/utils';
 
 function StatusChip({ status }: { status: 'ACTIVE' | 'EXPIRED' | 'REVOKED' }) {
   return (
@@ -43,6 +44,15 @@ const STATUS_LABELS: Record<TokenStatus, string> = {
   REVOKED: 'Revoked',
 };
 
+type Token = NonNullable<ReturnType<typeof useAdminTokens>['data']>[number];
+
+const TOKEN_SORT_KEYS = {
+  created: (t: Token) => new Date(t.createdAt).getTime(),
+  // A token that was never used sorts last.
+  lastUsed: (t: Token) => (t.lastUsedAt ? new Date(t.lastUsedAt).getTime() : null),
+  name: (t: Token) => t.name.toLowerCase(),
+};
+
 export default function GovernAccessTokensPage() {
   const {
     data: tokens,
@@ -58,6 +68,7 @@ export default function GovernAccessTokensPage() {
   const [userFilter, setUserFilter] = useState('');
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
+  const { onSortChange, sort, sortRows } = useDataTableSort<Token>(TOKEN_SORT_KEYS);
 
   // Awaited so ConfirmModal keeps the dialog open and shows a failed revoke.
   const confirmRevoke = async () => {
@@ -84,12 +95,13 @@ export default function GovernAccessTokensPage() {
         : '—';
   const userOptions = [...new Set(all.map(ownerLabel))].sort();
   const query = search.trim().toLowerCase();
-  const rows = all.filter(
+  const filtered = all.filter(
     (t) =>
       (!statusFilter || statusOf(t) === statusFilter) &&
       (!userFilter || ownerLabel(t) === userFilter) &&
       (!query || t.name.toLowerCase().includes(query) || t.prefix.toLowerCase().includes(query))
   );
+  const rows = sortRows(filtered);
   const pageStart = Math.min(page * PAGE_SIZE, Math.max(0, rows.length - 1));
   const pageRows = rows.slice(pageStart, pageStart + PAGE_SIZE);
 
@@ -193,119 +205,124 @@ export default function GovernAccessTokensPage() {
           )}
         </Toolbar>
 
-        <Table stacked>
-          <THead>
-            <Th className="pl-0" variant="plain">
-              Token
-            </Th>
-            <Th variant="plain">Owner</Th>
-            <Th variant="plain">Status</Th>
-            <Th variant="plain">Last used</Th>
-            <Th variant="plain">Created</Th>
-            <Th variant="plain">Expires</Th>
-            <Th className="pr-0" variant="plain">
-              <span className="sr-only">Actions</span>
-            </Th>
-          </THead>
-          <tbody>
-            {pageRows.map((t) => {
-              const status = statusOf(t);
-              return (
-                <TRow hover key={t.id}>
-                  <Td className="py-3 pr-4" primary>
-                    <div
-                      className={cn(
-                        'truncate font-medium',
-                        status === 'ACTIVE' ? 'text-paper-100' : 'text-paper-400'
-                      )}
-                    >
-                      {t.name}
+        <div className="-mx-4">
+          <DataTable
+            actions={(t) =>
+              t.revokedAt ? null : (
+                <ActionMenu
+                  items={[
+                    {
+                      disabled: revokeToken.isPending,
+                      icon: 'lock',
+                      id: 'revoke',
+                      label: 'Revoke token',
+                      onAction: () => setRevokeTarget({ id: t.id, name: t.name }),
+                      tone: 'danger',
+                    },
+                  ]}
+                  label={`Actions for token ${t.name}`}
+                />
+              )
+            }
+            className="max-sm:px-4"
+            columns={[
+              {
+                cell: (t) => (
+                  <span className={statusOf(t) === 'ACTIVE' ? undefined : 'text-paper-400'}>
+                    {t.name}
+                  </span>
+                ),
+                header: 'Token',
+                id: 'name',
+                primary: true,
+                secondary: (t) => <span className="font-mono">{t.prefix}…</span>,
+                sortable: true,
+              },
+              {
+                cell: (t) =>
+                  t.user ? (
+                    <span className="text-paper-300">{t.user.email}</span>
+                  ) : t.servicePrincipal ? (
+                    <div className="text-paper-300">
+                      <div>{t.servicePrincipal.name}</div>
+                      <div className="mt-0.5 text-xs text-paper-500">
+                        Service principal · {t.servicePrincipal.team.name} ·{' '}
+                        <span className="font-mono">{t.scopes.join(' ')}</span>
+                      </div>
                     </div>
-                    <div className="mt-0.5 font-mono text-xs font-normal text-paper-500">
-                      {t.prefix}…
-                    </div>
-                  </Td>
-                  <Td className="px-4 py-3 text-sm text-paper-300" label="Owner">
-                    {t.user ? (
-                      t.user.email
-                    ) : t.servicePrincipal ? (
-                      <>
-                        <div>{t.servicePrincipal.name}</div>
-                        <div className="mt-0.5 text-xs text-paper-500">
-                          Service principal · {t.servicePrincipal.team.name} ·{' '}
-                          <span className="font-mono">{t.scopes.join(' ')}</span>
-                        </div>
-                      </>
-                    ) : (
-                      '—'
-                    )}
-                  </Td>
-                  <Td className="px-4 py-3" label="Status">
-                    <StatusChip status={status} />
-                  </Td>
-                  <Td className="px-4 py-3 text-sm text-paper-300" label="Last used">
-                    {t.lastUsedAt ? (
+                  ) : (
+                    '—'
+                  ),
+                header: 'Owner',
+                id: 'owner',
+              },
+              { cell: (t) => <StatusChip status={statusOf(t)} />, header: 'Status', id: 'status' },
+              {
+                cell: (t) =>
+                  t.lastUsedAt ? (
+                    <span className="text-paper-300">
                       <RelativeTime value={t.lastUsedAt} />
-                    ) : (
-                      <span className="text-paper-500">Never</span>
-                    )}
-                  </Td>
-                  <Td className="px-4 py-3 text-sm text-paper-400" label="Created">
+                    </span>
+                  ) : (
+                    <span className="text-paper-500">Never</span>
+                  ),
+                header: 'Last used',
+                id: 'lastUsed',
+                sortable: true,
+              },
+              {
+                cell: (t) => (
+                  <span className="text-paper-400">
                     <RelativeTime value={t.createdAt} />
-                  </Td>
-                  <Td className="px-4 py-3 text-sm text-paper-400" label="Expires">
-                    {t.expiresAt ? (
-                      <span className="whitespace-nowrap" title={formatDate(t.expiresAt)}>
-                        {formatDate(t.expiresAt)}
-                      </span>
-                    ) : (
-                      <span className="text-paper-500">Never</span>
-                    )}
-                  </Td>
-                  <Td align="right" className="py-3 pl-4">
-                    {!t.revokedAt && (
-                      <ActionMenu
-                        items={[
-                          {
-                            disabled: revokeToken.isPending,
-                            icon: 'lock',
-                            id: 'revoke',
-                            label: 'Revoke token',
-                            onAction: () => setRevokeTarget({ id: t.id, name: t.name }),
-                            tone: 'danger',
-                          },
-                        ]}
-                        label={`Actions for token ${t.name}`}
-                      />
-                    )}
-                  </Td>
-                </TRow>
-              );
-            })}
-            {rows.length === 0 && (
-              <TableStatusRow colSpan={7}>
-                {all.length === 0 ? (
-                  <EmptyState
-                    hint="People create personal access tokens under Settings → API tokens, for the CLI and CI."
-                    icon="key"
-                    title="No tokens issued yet"
-                  />
-                ) : (
-                  <EmptyState
-                    action={
-                      <Button onClick={clearFilters} size="sm">
-                        Clear filters
-                      </Button>
-                    }
-                    hint="Try a different status, user or search."
-                    icon="search"
-                    title="No tokens match these filters"
-                  />
-                )}
-              </TableStatusRow>
-            )}
-          </tbody>
-        </Table>
+                  </span>
+                ),
+                header: 'Created',
+                id: 'created',
+                sortable: true,
+              },
+              {
+                cell: (t) =>
+                  t.expiresAt ? (
+                    <span
+                      className="whitespace-nowrap text-paper-400"
+                      title={formatDate(t.expiresAt)}
+                    >
+                      {formatDate(t.expiresAt)}
+                    </span>
+                  ) : (
+                    <span className="text-paper-500">Never</span>
+                  ),
+                header: 'Expires',
+                id: 'expires',
+              },
+            ]}
+            empty={
+              all.length === 0 ? (
+                <EmptyState
+                  hint="People create personal access tokens under Settings → API tokens, for the CLI and CI."
+                  icon="key"
+                  title="No tokens issued yet"
+                />
+              ) : (
+                <EmptyState
+                  action={
+                    <Button onClick={clearFilters} size="sm">
+                      Clear filters
+                    </Button>
+                  }
+                  hint="Try a different status, user or search."
+                  icon="search"
+                  title="No tokens match these filters"
+                />
+              )
+            }
+            getRowId={(t) => t.id}
+            onSortChange={onSortChange}
+            revealActions={false}
+            rows={pageRows}
+            sort={sort}
+          />
+        </div>
         {rows.length > PAGE_SIZE && (
           <div className="mt-4 border-t border-ink-600 pt-4">
             <Pagination

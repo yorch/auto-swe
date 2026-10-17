@@ -8,13 +8,13 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useIntegrationConfigForm } from '@/hooks/useIntegrationConfigForm';
 import {
   type ProviderCredentialRow,
@@ -253,98 +253,96 @@ export function CredentialsTab() {
               title="No provider credentials yet"
             />
           ) : (
-            <Table stacked>
-              <THead>
-                <Th className="pl-0" variant="plain">
-                  Provider
-                </Th>
-                <Th variant="plain">Scope</Th>
-                <Th variant="plain">Key</Th>
-                <Th variant="plain">Last test</Th>
-                <Th className="pr-0" variant="plain">
-                  <span className="sr-only">Actions</span>
-                </Th>
-              </THead>
-              <tbody>
-                {(credentials ?? []).map((c) => {
-                  const probe = probeResults[c.id];
-                  return (
-                    <TRow key={c.id}>
-                      <Td className="py-2.5 pr-4" primary>
-                        <div className="font-mono text-sm font-medium text-paper-100">
-                          {c.provider}
-                        </div>
-                        {c.apiBase && (
-                          <div
-                            className="mt-0.5 max-w-xs truncate font-mono text-xs text-paper-500"
-                            title={c.apiBase}
-                          >
-                            {c.apiBase}
-                          </div>
-                        )}
-                      </Td>
-                      <Td className="px-4 py-2.5" label="Scope">
-                        <Badge tone={c.scope === 'GLOBAL' ? 'neutral' : 'info'}>
-                          {c.scope === 'GLOBAL' ? 'Platform-wide' : 'Team'}
-                        </Badge>
-                        {c.teamId && (
-                          <span className="ml-1.5 text-xs text-paper-400">
-                            {teamName(c.teamId)}
-                          </span>
-                        )}
-                      </Td>
-                      <Td className="px-4 py-2.5 font-mono text-xs text-paper-300" label="Key">
-                        {c.maskedKey}
-                      </Td>
-                      <Td className="px-4 py-2.5" label="Last test">
-                        {probe ? (
-                          <Badge dot tone={probe.ok ? 'success' : 'danger'}>
-                            {probe.ok
-                              ? `OK (${probe.status})`
-                              : (probe.error ?? `HTTP ${probe.status}`)}
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-paper-500">Not tested</span>
-                        )}
-                      </Td>
-                      <Td className="py-2.5 pl-4 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button
-                            aria-label={`Test the ${c.provider} credential`}
-                            disabled={!!probePending[c.id]}
-                            onClick={() => handleTest(c.id)}
-                            size="sm"
-                          >
-                            {probePending[c.id] ? 'Testing…' : 'Test'}
-                          </Button>
-                          <ActionMenu
-                            items={[
-                              {
-                                icon: 'edit',
-                                id: 'edit',
-                                label: 'Edit',
-                                onAction: () => {
-                                  clearProbeForRow(c.id);
-                                  setEditing(c);
-                                },
-                              },
-                              {
-                                icon: 'trash',
-                                id: 'delete',
-                                label: 'Delete',
-                                onAction: () => setDeleting(c),
-                                tone: 'danger',
-                              },
-                            ]}
-                            label={`More actions for the ${c.provider} credential`}
-                          />
-                        </div>
-                      </Td>
-                    </TRow>
-                  );
-                })}
-              </tbody>
-            </Table>
+            <DataTable
+              actions={(c) => (
+                <>
+                  <Button
+                    aria-label={`Test the ${c.provider} credential`}
+                    disabled={!!probePending[c.id]}
+                    onClick={() => handleTest(c.id)}
+                    size="sm"
+                  >
+                    {probePending[c.id] ? 'Testing…' : 'Test'}
+                  </Button>
+                  <ActionMenu
+                    items={[
+                      {
+                        icon: 'edit',
+                        id: 'edit',
+                        label: 'Edit',
+                        onAction: () => {
+                          clearProbeForRow(c.id);
+                          setEditing(c);
+                        },
+                      },
+                      {
+                        icon: 'trash',
+                        id: 'delete',
+                        label: 'Delete',
+                        onAction: () => setDeleting(c),
+                        tone: 'danger',
+                      },
+                    ]}
+                    label={`More actions for the ${c.provider} credential`}
+                  />
+                </>
+              )}
+              columns={[
+                {
+                  cell: (c) => <span className="font-mono text-sm">{c.provider}</span>,
+                  header: 'Provider',
+                  id: 'provider',
+                  primary: true,
+                  secondary: (c) =>
+                    c.apiBase ? (
+                      <span className="block max-w-xs truncate font-mono" title={c.apiBase}>
+                        {c.apiBase}
+                      </span>
+                    ) : null,
+                },
+                {
+                  cell: (c) => (
+                    <>
+                      <Badge tone={c.scope === 'GLOBAL' ? 'neutral' : 'info'}>
+                        {c.scope === 'GLOBAL' ? 'Platform-wide' : 'Team'}
+                      </Badge>
+                      {c.teamId && (
+                        <span className="ml-1.5 text-xs text-paper-400">{teamName(c.teamId)}</span>
+                      )}
+                    </>
+                  ),
+                  header: 'Scope',
+                  id: 'scope',
+                },
+                {
+                  cell: (c) => (
+                    <span className="font-mono text-xs text-paper-300">{c.maskedKey}</span>
+                  ),
+                  header: 'Key',
+                  id: 'key',
+                },
+                {
+                  cell: (c) => {
+                    const probe = probeResults[c.id];
+                    return probe ? (
+                      <Badge dot tone={probe.ok ? 'success' : 'danger'}>
+                        {probe.ok
+                          ? `OK (${probe.status})`
+                          : (probe.error ?? `HTTP ${probe.status}`)}
+                      </Badge>
+                    ) : (
+                      <span className="text-xs text-paper-500">Not tested</span>
+                    );
+                  },
+                  header: 'Last test',
+                  id: 'last-test',
+                },
+              ]}
+              density="compact"
+              getRowId={(c) => c.id}
+              revealActions={false}
+              rows={credentials ?? []}
+            />
           )}
         </QueryBoundary>
       </Card>

@@ -153,7 +153,7 @@ describe('request workspace', () => {
     await app.close();
   });
 
-  it('matches the description and ticket ID, ANDed with run visibility and the MINE scope', async () => {
+  it('matches the description, ticket ID and launch label, ANDed with run visibility and the MINE scope', async () => {
     const { app, prisma } = await build();
     prisma.workflowRun.findMany.mockResolvedValue([]);
     const response = await app.inject({ headers: auth, url: '/runs/requests?search=JIRA-4077' });
@@ -162,6 +162,7 @@ describe('request workspace', () => {
     expect(where.OR).toEqual([
       { workRequest: { description: { contains: 'JIRA-4077', mode: 'insensitive' } } },
       { workRequest: { externalTicketId: { contains: 'JIRA-4077', mode: 'insensitive' } } },
+      { workRequest: { title: { contains: 'JIRA-4077', mode: 'insensitive' } } },
     ]);
     // Siblings of the search `OR`, so all of them must hold: the search only narrows.
     expect(where.AND[0]).toHaveProperty('OR');
@@ -177,7 +178,7 @@ describe('request workspace', () => {
     const where = prisma.workflowRun.findMany.mock.calls[0][0].where;
     expect(where.AND[0]).toHaveProperty('OR');
     expect(where.workRequest).toBeUndefined();
-    expect(where.OR).toHaveLength(2);
+    expect(where.OR).toHaveLength(3);
     const long = await app.inject({
       headers: auth,
       url: `/runs/requests?search=${'a'.repeat(201)}`,

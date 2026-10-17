@@ -4,12 +4,12 @@ import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type GithubWebhookSecretRow,
   useCreateGithubWebhookSecret,
@@ -142,40 +142,42 @@ export function GitHubHostSecretsCard() {
             title="No per-host secrets"
           />
         ) : (
-          <Table>
-            <THead>
-              <Th className="pl-0" variant="plain">
-                Host
-              </Th>
-              <Th variant="plain">Secret</Th>
-              <Th className="pr-0" variant="plain">
-                <span className="sr-only">Actions</span>
-              </Th>
-            </THead>
-            <tbody>
-              {secrets.map((s) => (
-                <TRow key={s.id}>
-                  <Td className="py-2.5 pr-4 font-mono text-sm text-paper-100">{s.host}</Td>
-                  <Td className="px-4 py-2.5 font-mono text-xs text-paper-300">••••{s.lastFour}</Td>
-                  <Td className="py-2.5 pl-4 text-right">
-                    <div className="flex justify-end gap-1">
-                      <Button onClick={() => setModal(s)} size="sm" variant="secondary">
-                        Rotate
-                      </Button>
-                      <Button
-                        aria-label={`Delete the secret for ${s.host}`}
-                        onClick={() => setDeleteTarget(s)}
-                        size="sm"
-                        variant="ghost"
-                      >
-                        <Icon className="text-danger-400" name="trash" size={14} />
-                      </Button>
-                    </div>
-                  </Td>
-                </TRow>
-              ))}
-            </tbody>
-          </Table>
+          <DataTable
+            actions={(s) => (
+              <>
+                <Button onClick={() => setModal(s)} size="sm" variant="secondary">
+                  Rotate
+                </Button>
+                <Button
+                  aria-label={`Delete the secret for ${s.host}`}
+                  onClick={() => setDeleteTarget(s)}
+                  size="sm"
+                  variant="ghost"
+                >
+                  <Icon className="text-danger-400" name="trash" size={14} />
+                </Button>
+              </>
+            )}
+            columns={[
+              {
+                cell: (s) => <span className="font-mono text-sm">{s.host}</span>,
+                header: 'Host',
+                id: 'host',
+                primary: true,
+              },
+              {
+                cell: (s) => (
+                  <span className="font-mono text-xs text-paper-300">••••{s.lastFour}</span>
+                ),
+                header: 'Secret',
+                id: 'secret',
+              },
+            ]}
+            density="compact"
+            getRowId={(s) => s.id}
+            revealActions={false}
+            rows={secrets}
+          />
         )}
       </QueryBoundary>
 

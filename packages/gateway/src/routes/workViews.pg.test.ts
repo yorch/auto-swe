@@ -727,4 +727,60 @@ describe.skipIf(!enabled)('pull-request and ticket views against Postgres', () =
       });
     });
   });
+
+  // `run_inputs.title` is filled by a database trigger, so only a real database shows it: the
+  // search filters above match it, and a mocked Prisma would never evaluate it.
+  describe('launch label column', () => {
+    const titleOf = async (requestPayload: string) => {
+      const row = await prisma.runInput.create({
+        data: { externalTicketId: `LBL-${suffix}`, requestPayload },
+      });
+      try {
+        return (await prisma.runInput.findUniqueOrThrow({ where: { id: row.id } })).title;
+      } finally {
+        await prisma.runInput.delete({ where: { id: row.id } });
+      }
+    };
+
+    it('derives the trimmed label from the launch payload', async () => {
+      expect(await titleOf(JSON.stringify({ label: '  Q3 billing cleanup \n' }))).toBe(
+        'Q3 billing cleanup'
+      );
+      expect(await titleOf(JSON.stringify({ label: 'x'.repeat(250) }))).toHaveLength(200);
+    });
+
+    it('leaves no title, and never fails the insert, when there is no usable label', async () => {
+      for (const payload of [
+        '{}',
+        'not json',
+        JSON.stringify({ label: 42 }),
+        JSON.stringify({ label: '   ' }),
+        // Valid JSON text with an escape PostgreSQL cannot turn into text.
+        JSON.stringify({ label: 'nul\u0000here' }),
+        JSON.stringify({ label: 'lone \ud800' }),
+      ]) {
+        expect(await titleOf(payload)).toBeNull();
+      }
+    });
+
+    it('follows the payload on update and ignores a direct write', async () => {
+      const row = await prisma.runInput.create({
+        data: {
+          externalTicketId: `LBL-${suffix}`,
+          requestPayload: JSON.stringify({ label: 'first' }),
+          title: 'forged',
+        },
+      });
+      try {
+        expect(row.title).toBe('first');
+        const renamed = await prisma.runInput.update({
+          data: { requestPayload: JSON.stringify({ label: 'second' }) },
+          where: { id: row.id },
+        });
+        expect(renamed.title).toBe('second');
+      } finally {
+        await prisma.runInput.delete({ where: { id: row.id } });
+      }
+    });
+  });
 });

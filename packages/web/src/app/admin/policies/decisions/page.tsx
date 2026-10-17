@@ -7,6 +7,7 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
@@ -14,12 +15,12 @@ import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Select } from '@/components/ui/Select';
-import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useAutonomyDecisions, useAutonomyPolicies } from '@/hooks/useAutonomyPolicies';
 import { parseOffset, useUrlFilters } from '@/hooks/useUrlFilters';
 import { useUsers } from '@/hooks/useUsers';
 import { eventLabel, KNOWN_AUTONOMY_EVENTS, riskClassLabel } from '@/lib/autonomyEvents';
 import { HELP_LINKS } from '@/lib/helpLinks';
+import { cn, FOCUS_RING } from '@/lib/utils';
 
 const LIMIT = 50;
 
@@ -152,82 +153,101 @@ export default function AutonomyDecisionsPage() {
             onRetry={() => void refetch()}
             rows={6}
           >
-            <Table stacked>
-              <THead>
-                <Th className="pl-0" variant="plain">
-                  Decision
-                </Th>
-                <Th variant="plain">Risk class</Th>
-                <Th variant="plain">Policy</Th>
-                <Th variant="plain">Decided by</Th>
-                <Th variant="plain">Run</Th>
-                <Th className="pr-0" variant="plain">
-                  When
-                </Th>
-              </THead>
-              <tbody>
-                {data?.data.map((row) => (
-                  <TRow hover key={row.id}>
-                    <Td className="py-3 pr-4" primary>
+            <div className="-mx-4">
+              <DataTable
+                className="max-sm:px-4"
+                columns={[
+                  {
+                    cell: (row) => (
                       <Badge dot tone={EVENT_TONE[row.event] ?? 'neutral'} variant="outline">
                         {eventLabel(row.event)}
                       </Badge>
-                    </Td>
-                    <Td className="px-4 py-3 text-sm text-paper-200" label="Risk class">
-                      {row.riskClass ? (
-                        riskClassLabel(row.riskClass)
+                    ),
+                    header: 'Decision',
+                    id: 'decision',
+                    primary: true,
+                  },
+                  {
+                    cell: (row) =>
+                      row.riskClass ? (
+                        <span className="text-paper-200">{riskClassLabel(row.riskClass)}</span>
                       ) : (
                         <span className="text-paper-500">—</span>
-                      )}
-                    </Td>
-                    <Td className="px-4 py-3 text-sm text-paper-300" label="Policy">
-                      {row.policyName ?? <span className="text-paper-500">—</span>}
-                    </Td>
-                    <Td className="px-4 py-3 text-sm text-paper-300" label="Decided by">
-                      {row.actorId ? (
-                        (emailById.get(row.actorId) ?? 'Unknown user')
+                      ),
+                    header: 'Risk class',
+                    id: 'riskClass',
+                  },
+                  {
+                    cell: (row) => (
+                      <span className="text-paper-300">
+                        {row.policyName ?? <span className="text-paper-500">—</span>}
+                      </span>
+                    ),
+                    header: 'Policy',
+                    id: 'policy',
+                  },
+                  {
+                    cell: (row) =>
+                      row.actorId ? (
+                        <span className="text-paper-300">
+                          {emailById.get(row.actorId) ?? 'Unknown user'}
+                        </span>
                       ) : (
                         <span className="text-paper-500">System</span>
-                      )}
-                    </Td>
-                    <Td className="px-4 py-3" label="Run">
+                      ),
+                    header: 'Decided by',
+                    id: 'decidedBy',
+                  },
+                  {
+                    cell: (row) => (
                       <Link
-                        className="font-mono text-xs text-paper-100 underline-offset-2 hover:underline focus-visible:underline"
+                        className={cn(
+                          'rounded-sm font-mono text-xs text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
+                          FOCUS_RING
+                        )}
                         href={`/runs/${row.runId}`}
                         title={row.runId}
                       >
                         {row.runId.slice(0, 8)}
                       </Link>
-                    </Td>
-                    <Td className="py-3 pl-4 text-sm text-paper-400" label="When">
-                      <RelativeTime value={row.createdAt} />
-                    </Td>
-                  </TRow>
-                ))}
-                {(!data || data.data.length === 0) && (
-                  <TableStatusRow colSpan={6}>
-                    {anyFilter ? (
-                      <EmptyState
-                        action={
-                          <Button onClick={() => navigate({ ...EMPTY, offset: 0 })} size="sm">
-                            Clear filters
-                          </Button>
-                        }
-                        hint="Try a different policy, risk class or event."
-                        icon="search"
-                        title="No decisions match these filters"
-                      />
-                    ) : (
-                      <EmptyState
-                        hint="Decisions appear here when a run reaches a step an autonomy policy governs."
-                        icon="gavel"
-                        title="No autonomy decisions yet"
-                      />
-                    )}
-                  </TableStatusRow>
-                )}
-              </tbody>
-            </Table>
+                    ),
+                    header: 'Run',
+                    id: 'run',
+                  },
+                  {
+                    cell: (row) => (
+                      <span className="text-paper-400">
+                        <RelativeTime value={row.createdAt} />
+                      </span>
+                    ),
+                    header: 'When',
+                    id: 'when',
+                  },
+                ]}
+                empty={
+                  anyFilter ? (
+                    <EmptyState
+                      action={
+                        <Button onClick={() => navigate({ ...EMPTY, offset: 0 })} size="sm">
+                          Clear filters
+                        </Button>
+                      }
+                      hint="Try a different policy, risk class or event."
+                      icon="search"
+                      title="No decisions match these filters"
+                    />
+                  ) : (
+                    <EmptyState
+                      hint="Decisions appear here when a run reaches a step an autonomy policy governs."
+                      icon="gavel"
+                      title="No autonomy decisions yet"
+                    />
+                  )
+                }
+                getRowId={(row) => row.id}
+                rows={data?.data ?? []}
+              />
+            </div>
           </QueryBoundary>
           {total > 0 && (
             <div className="mt-4 border-t border-ink-600 pt-4">
