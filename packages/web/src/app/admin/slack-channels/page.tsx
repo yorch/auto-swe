@@ -1,22 +1,22 @@
 'use client';
 
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { RegisterChannelModal } from '@/components/slackChannels/RegisterChannelModal';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { type SlackChannel, useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
 import { navLabel } from '@/lib/navigation';
-import { cn, FOCUS_RING, formatCents, formatTotalCost } from '@/lib/utils';
+import { cn, formatCents, formatTotalCost } from '@/lib/utils';
 
 /** This month's spend against the cap: "$3.20 of $50.00", or "$3.20, no cap". */
 function spendLabel(channel: SlackChannel): string {
@@ -25,6 +25,11 @@ function spendLabel(channel: SlackChannel): string {
     ? `${spent}, no cap`
     : `${spent} of ${formatCents(channel.monthlyBudgetUsdCents)}`;
 }
+
+const CHANNEL_SORT_KEYS = {
+  name: (ch: SlackChannel) => ch.name?.toLowerCase() ?? null,
+  spend: (ch: SlackChannel) => ch.currentMonthUsage?.costUsdAccrued ?? 0,
+};
 
 /**
  * This month's spend as a share of the cap, as a thin meter. The fill carries
@@ -68,6 +73,7 @@ export default function GovernSlackChannelsPage() {
   const { data: teams } = useTeams();
   const [registerOpen, setRegisterOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const { onSortChange, sort, sortRows } = useDataTableSort<SlackChannel>(CHANNEL_SORT_KEYS);
   const teamNames = new Map(teams?.map((t) => [t.id, t.name]));
 
   const needle = query.trim().toLowerCase();
@@ -148,58 +154,63 @@ export default function GovernSlackChannelsPage() {
                 />
               ) : (
                 <div className="-mx-4">
-                  <Table>
-                    <THead>
-                      <Th variant="plain">Channel</Th>
-                      <Th variant="plain">Team</Th>
-                      <Th variant="plain">Status</Th>
-                      <Th align="right" variant="plain">
-                        Spend this month
-                      </Th>
-                    </THead>
-                    <tbody>
-                      {shown.map((ch) => (
-                        <TRow hover key={ch.id}>
-                          <Td className="px-4 py-3">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <Link
-                                className={cn(
-                                  'rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
-                                  FOCUS_RING
-                                )}
-                                href={`/admin/slack-channels/${ch.id}`}
-                              >
-                                {ch.name ? `#${ch.name}` : 'Unnamed channel'}
-                              </Link>
-                              {ch.isPrivate && (
-                                <Badge tone="warning" variant="outline">
-                                  Private
-                                </Badge>
-                              )}
-                            </div>
-                            <div className="mt-0.5 font-mono text-xs text-paper-500">
-                              {ch.slackChannelId}
-                            </div>
-                          </Td>
-                          <Td className="px-4 py-3 text-sm text-paper-300">
+                  <DataTable
+                    className="max-sm:px-4"
+                    columns={[
+                      {
+                        cell: (ch) => (ch.name ? `#${ch.name}` : 'Unnamed channel'),
+                        header: 'Channel',
+                        id: 'name',
+                        primary: true,
+                        secondary: (ch) => (
+                          <div className="flex flex-wrap items-center gap-2">
+                            {ch.isPrivate && (
+                              <Badge tone="warning" variant="outline">
+                                Private
+                              </Badge>
+                            )}
+                            <span className="font-mono">{ch.slackChannelId}</span>
+                          </div>
+                        ),
+                        sortable: true,
+                      },
+                      {
+                        cell: (ch) => (
+                          <span className="text-sm text-paper-300">
                             {teamNames.get(ch.teamId) ?? '—'}
-                          </Td>
-                          <Td className="px-4 py-3">
-                            <Badge dot tone={ch.isActive ? 'success' : 'muted'} variant="text">
-                              {ch.isActive ? 'Active' : 'Inactive'}
-                            </Badge>
-                          </Td>
-                          <Td
-                            align="right"
-                            className="px-4 py-3 text-sm text-paper-300 tabular-nums"
-                          >
+                          </span>
+                        ),
+                        header: 'Team',
+                        id: 'team',
+                      },
+                      {
+                        cell: (ch) => (
+                          <Badge dot tone={ch.isActive ? 'success' : 'muted'} variant="text">
+                            {ch.isActive ? 'Active' : 'Inactive'}
+                          </Badge>
+                        ),
+                        header: 'Status',
+                        id: 'status',
+                      },
+                      {
+                        align: 'right',
+                        cell: (ch) => (
+                          <span className="text-sm text-paper-300 tabular-nums">
                             {spendLabel(ch)}
                             <SpendMeter channel={ch} />
-                          </Td>
-                        </TRow>
-                      ))}
-                    </tbody>
-                  </Table>
+                          </span>
+                        ),
+                        header: 'Spend this month',
+                        id: 'spend',
+                        sortable: true,
+                      },
+                    ]}
+                    getRowId={(ch) => ch.id}
+                    onSortChange={onSortChange}
+                    rowHref={(ch) => `/admin/slack-channels/${ch.id}`}
+                    rows={sortRows(shown)}
+                    sort={sort}
+                  />
                 </div>
               )}
             </>

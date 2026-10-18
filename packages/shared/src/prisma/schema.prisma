@@ -1381,6 +1381,13 @@ model RunInput {
   ticketIsSynthetic       Boolean     @default(false) @map("ticket_is_synthetic")
   description             String      @default("")
   requestPayload          String      @map("request_payload")
+  /// The launch's `label`, trimmed and cut to 200 characters: what lists show as
+  /// the request's title, so a text search can match it. A database trigger
+  /// (migration `20261017120000_run_input_title`) derives it from `requestPayload`
+  /// on every insert and update, so every launch path has it without writing it,
+  /// and a value written here is replaced. Null when the payload is not a JSON
+  /// object or carries no string label.
+  title                   String?
   /// Generic run-input payload (P3); validated against the template's
   /// `inputSchema`. Null on rows created before this column existed.
   payload                 Json?

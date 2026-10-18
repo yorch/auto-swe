@@ -48,6 +48,8 @@ export interface DataTableSort {
 export interface DataTableProps<Row> {
   columns: DataTableColumn<Row>[];
   rows: Row[];
+  /** An accessible name for the table, read by screen readers and not shown. */
+  caption?: string;
   getRowId: (row: Row) => string;
   /** Where the row opens. The primary cell links there and a click elsewhere on the row follows it. */
   rowHref?: (row: Row) => string;
@@ -140,6 +142,7 @@ function sortState(column: { id: string; sortable?: boolean }, sort?: DataTableS
  */
 export function DataTable<Row>({
   actions,
+  caption,
   actionsLabel = 'Actions',
   className,
   columns,
@@ -181,6 +184,7 @@ export function DataTable<Row>({
 
   return (
     <Table className={cn('max-sm:p-3', className)} stacked>
+      {caption && <caption className="sr-only">{caption}</caption>}
       <THead>
         {columns.map((column) => (
           <Th

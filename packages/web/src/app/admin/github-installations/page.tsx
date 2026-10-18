@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
@@ -14,7 +15,6 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type GithubInstallationRow,
   useCreateGithubInstallation,
@@ -213,85 +213,85 @@ export default function StudioGithubInstallationsPage() {
               title="No installations recorded"
             />
           ) : (
-            <Table stacked>
-              <THead>
-                <Th className="pl-0" variant="plain">
-                  Account
-                </Th>
-                <Th variant="plain">Host</Th>
-                <Th variant="plain">Installation ID</Th>
-                <Th align="right" variant="plain">
-                  Repositories
-                </Th>
-                <Th variant="plain">Status</Th>
-                <Th className="pr-0" variant="plain">
-                  <span className="sr-only">Actions</span>
-                </Th>
-              </THead>
-              <tbody>
-                {installations.map((i) => {
+            <div className="-mx-4">
+              <DataTable
+                actions={(i) => {
                   const repos = i._count?.connections ?? 0;
                   return (
-                    <TRow key={i.id}>
-                      <Td
-                        className="py-2.5 pr-4 font-mono text-sm font-medium text-paper-100"
-                        primary
-                      >
-                        {i.accountLogin}
-                      </Td>
-                      <Td className="px-4 py-2.5 text-xs text-paper-300" label="Host">
-                        {i.host ? (
-                          <span className="font-mono">{i.host}</span>
-                        ) : (
-                          <span className="text-paper-500">Instance host</span>
-                        )}
-                      </Td>
-                      <Td
-                        className="px-4 py-2.5 font-mono text-xs text-paper-300"
-                        label="Installation ID"
-                      >
-                        {i.installationId}
-                      </Td>
-                      <Td
-                        align="right"
-                        className="px-4 py-2.5 text-xs text-paper-300 tabular-nums"
-                        label="Repositories"
-                      >
-                        {repos}
-                      </Td>
-                      <Td className="px-4 py-2.5" label="Status">
-                        <Badge dot tone={i.isActive ? 'success' : 'muted'}>
-                          {i.isActive ? 'In use' : 'Retired'}
-                        </Badge>
-                      </Td>
-                      <Td className="py-2.5 pl-4 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <Button onClick={() => setEditTarget(i)} size="sm" variant="secondary">
-                            Edit
-                          </Button>
-                          <ActionMenu
-                            items={[
-                              {
-                                disabled: repos > 0,
-                                icon: 'trash',
-                                id: 'delete',
-                                label:
-                                  repos > 0
-                                    ? `In use by ${repos} ${repos === 1 ? 'repository' : 'repositories'}`
-                                    : 'Delete',
-                                onAction: () => setDeleteTarget(i),
-                                tone: 'danger',
-                              },
-                            ]}
-                            label={`More actions for ${i.accountLogin}`}
-                          />
-                        </div>
-                      </Td>
-                    </TRow>
+                    <>
+                      <Button onClick={() => setEditTarget(i)} size="sm" variant="secondary">
+                        Edit
+                      </Button>
+                      <ActionMenu
+                        items={[
+                          {
+                            disabled: repos > 0,
+                            icon: 'trash',
+                            id: 'delete',
+                            label:
+                              repos > 0
+                                ? `In use by ${repos} ${repos === 1 ? 'repository' : 'repositories'}`
+                                : 'Delete',
+                            onAction: () => setDeleteTarget(i),
+                            tone: 'danger',
+                          },
+                        ]}
+                        label={`More actions for ${i.accountLogin}`}
+                      />
+                    </>
                   );
-                })}
-              </tbody>
-            </Table>
+                }}
+                className="max-sm:px-4"
+                columns={[
+                  {
+                    cell: (i) => <span className="font-mono text-sm">{i.accountLogin}</span>,
+                    header: 'Account',
+                    id: 'account',
+                    primary: true,
+                  },
+                  {
+                    cell: (i) =>
+                      i.host ? (
+                        <span className="font-mono text-xs text-paper-300">{i.host}</span>
+                      ) : (
+                        <span className="text-xs text-paper-500">Instance host</span>
+                      ),
+                    header: 'Host',
+                    id: 'host',
+                  },
+                  {
+                    cell: (i) => (
+                      <span className="font-mono text-xs text-paper-300">{i.installationId}</span>
+                    ),
+                    header: 'Installation ID',
+                    id: 'installationId',
+                  },
+                  {
+                    align: 'right',
+                    cell: (i) => (
+                      <span className="text-xs text-paper-300 tabular-nums">
+                        {i._count?.connections ?? 0}
+                      </span>
+                    ),
+                    header: 'Repositories',
+                    id: 'repositories',
+                  },
+                  {
+                    cell: (i) => (
+                      <Badge dot tone={i.isActive ? 'success' : 'muted'}>
+                        {i.isActive ? 'In use' : 'Retired'}
+                      </Badge>
+                    ),
+                    header: 'Status',
+                    id: 'status',
+                  },
+                ]}
+                density="compact"
+                getRowId={(i) => i.id}
+                revealActions={false}
+                rows={installations}
+              />
+            </div>
           )}
         </QueryBoundary>
       </Card>

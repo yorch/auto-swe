@@ -875,7 +875,7 @@ describe('workflowRunRoutes GET / (q text filter)', () => {
   const list = (app: Awaited<ReturnType<typeof buildApp>>['app'], qs: string) =>
     app.inject({ headers: AUTH, method: 'GET', url: `/api/v1/workflow-runs?${qs}` });
 
-  it('matches the request title, the ticket ID and the template name, case-insensitively', async () => {
+  it('matches the description, launch label, ticket ID and template name, case-insensitively', async () => {
     const { app, prisma } = await buildApp('ENGINEER');
     expect((await list(app, 'q=JIRA-4077')).statusCode).toBe(200);
     const where = lastListWhere(prisma) as { AND: Record<string, unknown>[] };
@@ -883,6 +883,7 @@ describe('workflowRunRoutes GET / (q text filter)', () => {
       OR: [
         { workRequest: { description: { contains: 'JIRA-4077', mode: 'insensitive' } } },
         { workRequest: { externalTicketId: { contains: 'JIRA-4077', mode: 'insensitive' } } },
+        { workRequest: { title: { contains: 'JIRA-4077', mode: 'insensitive' } } },
         { template: { name: { contains: 'JIRA-4077', mode: 'insensitive' } } },
       ],
     });

@@ -41,6 +41,18 @@ describe('DataTable', () => {
     expect(screen.getByText('5')).toBeTruthy();
   });
 
+  it('names the table with a screen-reader-only caption', () => {
+    render(
+      <DataTable
+        caption="Things, newest first"
+        columns={COLUMNS}
+        getRowId={(r) => r.id}
+        rows={ROWS}
+      />
+    );
+    expect(screen.getByRole('table', { name: 'Things, newest first' })).toBeTruthy();
+  });
+
   it('puts a real link in the primary cell when rows have an href', () => {
     render(
       <DataTable

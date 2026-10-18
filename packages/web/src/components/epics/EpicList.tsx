@@ -1,65 +1,59 @@
 import type { EpicSummary } from '@auto-swe/shared/types/api';
-import Link from 'next/link';
 import { Card } from '@/components/ui/Card';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
-import { cn, FOCUS_RING } from '@/lib/utils';
+
+const COLUMNS: DataTableColumn<EpicSummary>[] = [
+  {
+    cell: (epic) => <span className="font-mono text-sm">{epic.externalTicketId}</span>,
+    header: 'Epic',
+    id: 'epic',
+    primary: true,
+    secondary: (epic) =>
+      epic.description ? (
+        <span className="line-clamp-1 break-words">{epic.description}</span>
+      ) : null,
+  },
+  { cell: (epic) => <StatusBadge status={epic.status} />, header: 'Status', id: 'status' },
+  {
+    align: 'right',
+    cell: (epic) => <span className="tabular text-paper-200">{epic.repoCount}</span>,
+    header: 'Repositories',
+    id: 'repositories',
+  },
+  {
+    cell: (epic) =>
+      epic.requestedBy ? (
+        <span className="text-paper-300">{epic.requestedBy.name ?? epic.requestedBy.email}</span>
+      ) : (
+        <span className="text-paper-500">—</span>
+      ),
+    header: 'Requested by',
+    id: 'requested-by',
+  },
+  {
+    cell: (epic) => (
+      <span className="whitespace-nowrap text-paper-400">
+        <RelativeTime value={epic.createdAt} />
+      </span>
+    ),
+    header: 'Created',
+    id: 'created',
+  },
+];
 
 /** The epics list, shared by the Epics page and the Requests "Epics" type filter. */
 export function EpicList({ epics }: { epics: EpicSummary[] }) {
   return (
     <Card className="overflow-hidden p-0">
-      <Table stacked>
-        <caption className="sr-only">Multi-repository epics, newest first</caption>
-        <THead>
-          <Th variant="plain">Epic</Th>
-          <Th variant="plain">Status</Th>
-          <Th align="right" variant="plain">
-            Repositories
-          </Th>
-          <Th variant="plain">Requested by</Th>
-          <Th variant="plain">Created</Th>
-        </THead>
-        <tbody>
-          {epics.map((epic) => (
-            <TRow hover key={epic.workRequestId}>
-              <Td className="max-w-xl px-4 py-3" primary>
-                <Link
-                  className={cn(
-                    'rounded-sm font-mono text-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
-                    FOCUS_RING
-                  )}
-                  href={`/epics/${encodeURIComponent(epic.epicWorkflowId)}`}
-                >
-                  {epic.externalTicketId}
-                </Link>
-                {epic.description && (
-                  <div className="mt-0.5 line-clamp-1 break-words text-xs font-normal text-paper-400">
-                    {epic.description}
-                  </div>
-                )}
-              </Td>
-              <Td className="px-4 py-3" label="Status">
-                <StatusBadge status={epic.status} />
-              </Td>
-              <Td align="right" className="tabular px-4 py-3 text-paper-200" label="Repositories">
-                {epic.repoCount}
-              </Td>
-              <Td className="px-4 py-3 text-paper-300" label="Requested by">
-                {epic.requestedBy ? (
-                  (epic.requestedBy.name ?? epic.requestedBy.email)
-                ) : (
-                  <span className="text-paper-500">—</span>
-                )}
-              </Td>
-              <Td className="whitespace-nowrap px-4 py-3 text-paper-400" label="Created">
-                <RelativeTime value={epic.createdAt} />
-              </Td>
-            </TRow>
-          ))}
-        </tbody>
-      </Table>
+      <DataTable
+        caption="Multi-repository epics, newest first"
+        columns={COLUMNS}
+        getRowId={(epic) => epic.workRequestId}
+        rowHref={(epic) => `/epics/${encodeURIComponent(epic.epicWorkflowId)}`}
+        rows={epics}
+      />
     </Card>
   );
 }

@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/Card';
 import { Checkbox } from '@/components/ui/Checkbox';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
@@ -16,7 +17,6 @@ import { Modal, ModalFooter } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SecretStatusRow } from '@/components/ui/SecretStatusRow';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type McpConnectionRow,
   type McpHeaderInput,
@@ -626,31 +626,41 @@ export default function StudioMcpConnectionsPage() {
               title="No MCP connections yet"
             />
           ) : (
-            <Table stacked>
-              <THead>
-                <Th className="pl-0" variant="plain">
-                  Connection
-                </Th>
-                <Th variant="plain">Authentication</Th>
-                <Th variant="plain">Timeouts (list / call)</Th>
-                <Th variant="plain">Team</Th>
-                <Th variant="plain">Used by</Th>
-                <Th className="pr-0" variant="plain">
-                  <span className="sr-only">Actions</span>
-                </Th>
-              </THead>
-              <tbody>
-                {connections.map((c) => {
-                  const result = results[c.id];
-                  const usedBy = c.usedBy ?? [];
-                  return (
-                    <TRow key={c.id}>
-                      <Td className="py-3 pr-4 align-top sm:max-w-xs" primary>
-                        <div className="truncate font-medium text-paper-100">{c.name}</div>
-                        <code
-                          className="mt-0.5 block truncate font-mono text-xs text-paper-500"
-                          title={c.config?.url}
-                        >
+            <DataTable
+              actions={(c) => (
+                <>
+                  <Button
+                    disabled={testing === c.id}
+                    onClick={() => runTest(c.id)}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    {testing === c.id ? 'Testing…' : 'Test'}
+                  </Button>
+                  <Button onClick={() => setEditTarget(c)} size="sm" variant="secondary">
+                    Edit
+                  </Button>
+                  <Button
+                    aria-label={`Delete ${c.name}`}
+                    onClick={() => setDeleteTarget(c)}
+                    size="sm"
+                    variant="ghost"
+                  >
+                    <Icon className="text-danger-400" name="trash" size={14} />
+                  </Button>
+                </>
+              )}
+              columns={[
+                {
+                  cell: (c) => c.name,
+                  header: 'Connection',
+                  id: 'connection',
+                  primary: true,
+                  secondary: (c) => {
+                    const result = results[c.id];
+                    return (
+                      <>
+                        <code className="block truncate font-mono" title={c.config?.url}>
                           {c.config?.url}
                         </code>
                         {result && (
@@ -663,39 +673,57 @@ export default function StudioMcpConnectionsPage() {
                                 : (result.error ?? 'Not reachable')}
                             </Badge>
                             {result.ok && (result.toolNames ?? []).length > 0 && (
-                              <div className="font-mono text-xs text-paper-500">
-                                {(result.toolNames ?? []).join(', ')}
-                              </div>
+                              <div className="font-mono">{(result.toolNames ?? []).join(', ')}</div>
                             )}
                           </div>
                         )}
-                      </Td>
-                      <Td
-                        className="px-4 py-3 align-top text-xs text-paper-300"
-                        label="Authentication"
-                      >
-                        <div>{c.hasToken ? 'Bearer token stored' : 'No authentication'}</div>
-                        {(c.headerNames ?? []).length > 0 && (
-                          <div className="mt-0.5 text-paper-500">
-                            {`Headers: ${(c.headerNames ?? []).join(', ')}`}
-                          </div>
-                        )}
-                        {c.config?.allowPrivateNetwork && (
-                          <Badge className="mt-1" tone="warning" variant="outline">
-                            Private network
-                          </Badge>
-                        )}
-                      </Td>
-                      <Td
-                        className="px-4 py-3 align-top text-xs text-paper-300 tabular-nums"
-                        label="Timeouts (list / call)"
-                      >
-                        {msLabel(c.config?.listTimeoutMs)} / {msLabel(c.config?.callTimeoutMs)}
-                      </Td>
-                      <Td className="px-4 py-3 align-top text-xs text-paper-300" label="Team">
-                        {c.team?.name ?? <span className="text-paper-500">All teams</span>}
-                      </Td>
-                      <Td className="px-4 py-3 align-top text-xs text-paper-300" label="Used by">
+                      </>
+                    );
+                  },
+                  width: 'sm:max-w-xs',
+                },
+                {
+                  cell: (c) => (
+                    <span className="text-xs text-paper-300">
+                      <div>{c.hasToken ? 'Bearer token stored' : 'No authentication'}</div>
+                      {(c.headerNames ?? []).length > 0 && (
+                        <div className="mt-0.5 text-paper-500">
+                          {`Headers: ${(c.headerNames ?? []).join(', ')}`}
+                        </div>
+                      )}
+                      {c.config?.allowPrivateNetwork && (
+                        <Badge className="mt-1" tone="warning" variant="outline">
+                          Private network
+                        </Badge>
+                      )}
+                    </span>
+                  ),
+                  header: 'Authentication',
+                  id: 'authentication',
+                },
+                {
+                  cell: (c) => (
+                    <span className="text-xs text-paper-300 tabular-nums">
+                      {msLabel(c.config?.listTimeoutMs)} / {msLabel(c.config?.callTimeoutMs)}
+                    </span>
+                  ),
+                  header: 'Timeouts (list / call)',
+                  id: 'timeouts',
+                },
+                {
+                  cell: (c) => (
+                    <span className="text-xs text-paper-300">
+                      {c.team?.name ?? <span className="text-paper-500">All teams</span>}
+                    </span>
+                  ),
+                  header: 'Team',
+                  id: 'team',
+                },
+                {
+                  cell: (c) => {
+                    const usedBy = c.usedBy ?? [];
+                    return (
+                      <span className="text-xs text-paper-300">
                         {usedBy.length === 0 ? (
                           <span className="text-paper-500">No agents</span>
                         ) : (
@@ -706,35 +734,17 @@ export default function StudioMcpConnectionsPage() {
                             </div>
                           ))
                         )}
-                      </Td>
-                      <Td className="py-3 pl-4 text-right align-top">
-                        <div className="flex justify-end gap-1">
-                          <Button
-                            disabled={testing === c.id}
-                            onClick={() => runTest(c.id)}
-                            size="sm"
-                            variant="ghost"
-                          >
-                            {testing === c.id ? 'Testing…' : 'Test'}
-                          </Button>
-                          <Button onClick={() => setEditTarget(c)} size="sm" variant="secondary">
-                            Edit
-                          </Button>
-                          <Button
-                            aria-label={`Delete ${c.name}`}
-                            onClick={() => setDeleteTarget(c)}
-                            size="sm"
-                            variant="ghost"
-                          >
-                            <Icon className="text-danger-400" name="trash" size={14} />
-                          </Button>
-                        </div>
-                      </Td>
-                    </TRow>
-                  );
-                })}
-              </tbody>
-            </Table>
+                      </span>
+                    );
+                  },
+                  header: 'Used by',
+                  id: 'used-by',
+                },
+              ]}
+              getRowId={(c) => c.id}
+              revealActions={false}
+              rows={connections}
+            />
           )}
         </QueryBoundary>
       </Card>

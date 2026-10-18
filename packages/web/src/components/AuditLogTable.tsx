@@ -2,9 +2,9 @@
 
 import type { ReactNode } from 'react';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 /** The columns every config audit row carries, whichever endpoint it came from. */
@@ -105,68 +105,81 @@ export function AuditLogTable<T extends AuditLogEntry>({
       ) : (
         <div className="space-y-3">
           {caption && <p className="text-xs text-paper-500">{caption}</p>}
-          <Table stacked>
-            <THead>
-              <Th className="pl-0" variant="plain">
-                What
-              </Th>
-              <Th variant="plain">Action</Th>
-              <Th variant="plain">By</Th>
-              <Th variant="plain">{summaryHeader}</Th>
-              <Th className="pr-0" variant="plain">
-                When
-              </Th>
-            </THead>
-            <tbody>
-              {entries.map((entry) => (
-                <TRow hover key={entry.id}>
-                  <Td className="py-2.5 pr-4" primary>
-                    <span className="text-sm font-medium text-paper-100">
+          <div className="-mx-4">
+            <DataTable
+              className="max-sm:px-4"
+              columns={[
+                {
+                  cell: (entry) => (
+                    <span className="text-sm">
                       {ENTITY_LABELS[entry.entityType] ?? entry.entityType}
                     </span>
-                    {showEntityId && (
-                      <span
-                        className="block font-mono text-xs font-normal text-paper-500"
-                        title={entry.entityId}
-                      >
-                        {entry.entityId.slice(0, 8)}…
-                      </span>
-                    )}
-                  </Td>
-                  <Td className="px-4 py-2.5" label="Action">
+                  ),
+                  header: 'What',
+                  id: 'what',
+                  primary: true,
+                  secondary: showEntityId
+                    ? (entry) => (
+                        <span className="block font-mono" title={entry.entityId}>
+                          {entry.entityId.slice(0, 8)}…
+                        </span>
+                      )
+                    : undefined,
+                },
+                {
+                  cell: (entry) => (
                     <Badge tone={ACTION_TONES[entry.action] ?? 'neutral'} variant="outline">
                       {ACTION_LABELS[entry.action] ?? entry.action}
                     </Badge>
-                  </Td>
-                  <Td className="px-4 py-2.5 text-sm text-paper-300" label="By">
-                    {entry.actorEmail ??
-                      (entry.actorId ? (
-                        <span className="font-mono text-xs" title={entry.actorId}>
-                          {entry.actorId.slice(0, 8)}
-                        </span>
-                      ) : (
-                        <span className="text-paper-500">System</span>
-                      ))}
-                  </Td>
-                  <Td
-                    className="px-4 py-2.5 font-mono text-xs break-words text-paper-300"
-                    label={summaryHeader}
-                  >
-                    {summary(entry)}
-                  </Td>
-                  <Td className="py-2.5 pl-4 text-sm text-paper-400" label="When">
+                  ),
+                  header: 'Action',
+                  id: 'action',
+                },
+                {
+                  cell: (entry) => (
+                    <span className="text-sm text-paper-300">
+                      {entry.actorEmail ??
+                        (entry.actorId ? (
+                          <span className="font-mono text-xs" title={entry.actorId}>
+                            {entry.actorId.slice(0, 8)}
+                          </span>
+                        ) : (
+                          <span className="text-paper-500">System</span>
+                        ))}
+                    </span>
+                  ),
+                  header: 'By',
+                  id: 'by',
+                },
+                {
+                  cell: (entry) => (
+                    <span className="font-mono text-xs break-words text-paper-300">
+                      {summary(entry)}
+                    </span>
+                  ),
+                  header: summaryHeader,
+                  id: 'summary',
+                  label: summaryHeader,
+                },
+                {
+                  cell: (entry) => (
                     <time
-                      className="whitespace-nowrap tabular-nums"
+                      className="whitespace-nowrap text-sm text-paper-400 tabular-nums"
                       dateTime={entry.createdAt}
                       title={formatDate(entry.createdAt, { showSeconds: true })}
                     >
                       {formatRelativeTime(entry.createdAt)}
                     </time>
-                  </Td>
-                </TRow>
-              ))}
-            </tbody>
-          </Table>
+                  ),
+                  header: 'When',
+                  id: 'when',
+                },
+              ]}
+              density="compact"
+              getRowId={(entry) => entry.id}
+              rows={entries}
+            />
+          </div>
         </div>
       )}
     </QueryBoundary>

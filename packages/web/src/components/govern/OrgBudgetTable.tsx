@@ -1,8 +1,10 @@
-import Link from 'next/link';
+'use client';
+
 import { Badge } from '@/components/ui/Badge';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
+import { useDataTableSort } from '@/hooks/useDataTableSort';
 import { orgRoleLabel } from '@/lib/govLabels';
-import { cn, FOCUS_RING, formatCents, formatPercent } from '@/lib/utils';
+import { cn, formatCents, formatPercent } from '@/lib/utils';
 
 /** The budget fields both the organizations list and the budget-alerts list carry. */
 export interface OrgBudgetTableRow {
@@ -76,20 +78,7 @@ const COLUMNS: Record<
   },
   name: {
     alignRight: false,
-    cell: (org) => (
-      <>
-        <Link
-          className={cn(
-            'rounded-sm font-medium text-paper-100 underline-offset-2 hover:underline focus-visible:underline',
-            FOCUS_RING
-          )}
-          href={`/admin/organizations/${org.id}`}
-        >
-          {org.name}
-        </Link>
-        <div className="mt-0.5 font-mono text-xs font-normal text-paper-500">{org.slug}</div>
-      </>
-    ),
+    cell: (org) => org.name,
     label: 'Name',
   },
   percentUsed: {
@@ -146,10 +135,18 @@ const COLUMNS: Record<
   },
 };
 
+const SORT_KEYS = {
+  cap: (org: OrgBudgetTableRow) => org.monthlyBudgetUsdCents,
+  name: (org: OrgBudgetTableRow) => org.name.toLowerCase(),
+  percentUsed: (org: OrgBudgetTableRow) => org.alert.percent,
+  spent: (org: OrgBudgetTableRow) => org.currentMonthUsage?.costUsdAccrued ?? 0,
+};
+
 /**
  * Organizations with their monthly budget, spend, and alert state. The name
  * cell carries the slug as its secondary line, so `slug` is only needed as a
  * column of its own where the name is not shown; `nameLabel` renames the first one.
+ * The name opens the organization; name, cap, spend and share used sort the list.
  */
 export function OrgBudgetTable({
   columns,
@@ -160,43 +157,43 @@ export function OrgBudgetTable({
   nameLabel?: string;
   rows: OrgBudgetTableRow[];
 }) {
-  const last = columns.length - 1;
+  const { onSortChange, sort, sortRows } = useDataTableSort<OrgBudgetTableRow>(SORT_KEYS);
+
   return (
-    <Table stacked>
-      <THead>
-        {columns.map((col, i) => (
-          <Th
-            align={COLUMNS[col].alignRight ? 'right' : 'left'}
-            className={cn(i === 0 && 'pl-0', i === last && 'pr-0')}
-            key={col}
-            variant="plain"
-          >
-            {col === 'name' ? nameLabel : COLUMNS[col].label}
-          </Th>
-        ))}
-      </THead>
-      <tbody>
-        {rows.map((org) => (
-          <TRow hover key={org.id}>
-            {columns.map((col, i) => (
-              <Td
-                align={COLUMNS[col].alignRight ? 'right' : undefined}
-                className={cn(
-                  'px-4 py-3 text-sm text-paper-300',
-                  COLUMNS[col].alignRight && 'tabular-nums',
-                  i === 0 && 'pl-0',
-                  i === last && 'pr-0'
-                )}
-                key={col}
-                label={col === 'name' ? undefined : COLUMNS[col].label}
-                primary={col === 'name'}
-              >
-                {COLUMNS[col].cell(org)}
-              </Td>
-            ))}
-          </TRow>
-        ))}
-      </tbody>
-    </Table>
+    // Bleeds into the card's padding so cell text lines up with the card's heading.
+    <div className="-mx-4">
+      <DataTable
+        className="max-sm:px-4"
+        columns={columns.map((col): DataTableColumn<OrgBudgetTableRow> => {
+          const { alignRight, cell, label } = COLUMNS[col];
+          const header = col === 'name' ? nameLabel : label;
+          return col === 'name'
+            ? {
+                cell: (org) => org.name,
+                header,
+                id: col,
+                primary: true,
+                secondary: (org) => <span className="font-mono">{org.slug}</span>,
+                sortable: true,
+              }
+            : {
+                align: alignRight ? 'right' : undefined,
+                cell: (org) => (
+                  <span className={cn('text-sm text-paper-300', alignRight && 'tabular-nums')}>
+                    {cell(org)}
+                  </span>
+                ),
+                header,
+                id: col,
+                sortable: col in SORT_KEYS,
+              };
+        })}
+        getRowId={(org) => org.id}
+        onSortChange={onSortChange}
+        rowHref={(org) => `/admin/organizations/${org.id}`}
+        rows={sortRows(rows)}
+        sort={sort}
+      />
+    </div>
   );
 }

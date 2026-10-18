@@ -5,6 +5,7 @@ import { Alert } from '@/components/ui/Alert';
 import { ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CopyButton } from '@/components/ui/CopyButton';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { HelpTip } from '@/components/ui/HelpTip';
 import { Icon } from '@/components/ui/Icon';
@@ -12,7 +13,6 @@ import { SkeletonDetail } from '@/components/ui/LoadingState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { StatusBadge } from '@/components/ui/StatusBadge';
-import { Table, TableStatusRow, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useEpic } from '@/hooks/useEpics';
 import { useRunsForWorkRequest } from '@/hooks/useRuns';
 import { epicChildRunCell } from '@/lib/epicChildRun';
@@ -113,74 +113,71 @@ export default function EpicDetailPage({ params }: PageProps) {
                 {done} of {epic.children.length} finished
               </span>
             </CardHeader>
-            <Table stacked>
-              <THead>
-                <Th variant="plain">Repository</Th>
-                <Th variant="plain">Status</Th>
-                <Th variant="plain">Branch</Th>
-                <Th align="right" variant="plain">
-                  <span className="sr-only">Diagnostics</span>
-                </Th>
-              </THead>
-              <tbody>
-                {epic.children.length === 0 && (
-                  <TableStatusRow colSpan={4}>
-                    <EmptyState
-                      hint="The planner is still splitting the epic into per-repository work."
-                      icon="clock"
-                      title="No child runs yet"
-                    />
-                  </TableStatusRow>
-                )}
-                {epic.children.map((child) => (
-                  <TRow hover key={child.temporalWorkflowId ?? child.repoId ?? child.status}>
-                    <Td className="px-4 py-3 font-medium text-paper-100" primary>
-                      {child.repoName
-                        ? `${child.organizationName}/${child.repoName}`
-                        : (child.repoId ?? '—')}
-                    </Td>
-                    <Td className="px-4 py-3" label="Status">
-                      <StatusBadge status={child.status} />
-                    </Td>
-                    <Td
-                      className="break-all px-4 py-3 font-mono text-xs text-paper-400"
-                      label="Branch"
+            <DataTable
+              actions={(child) => {
+                const cell = epicChildRunCell(child, runIdByTemporalId, childRunsSettled);
+                if (cell.kind === 'run') {
+                  return (
+                    <ButtonLink href={`/runs/${cell.runId}`} size="sm" variant="ghost">
+                      Diagnostics
+                      <Icon name="arrowRight" size={13} />
+                    </ButtonLink>
+                  );
+                }
+                if (cell.kind === 'no-access') {
+                  return (
+                    <span
+                      className="inline-flex items-center gap-1 text-xs text-paper-500"
+                      title="This child's run is not visible to you — it likely belongs to a team you are not a member of."
                     >
+                      <Icon name="lock" size={12} />
+                      No access
+                    </span>
+                  );
+                }
+                return (
+                  <span className="text-xs text-paper-500">
+                    {cell.kind === 'starting' ? 'Starting…' : 'Not started'}
+                  </span>
+                );
+              }}
+              actionsLabel="Diagnostics"
+              columns={[
+                {
+                  cell: (child) =>
+                    child.repoName
+                      ? `${child.organizationName}/${child.repoName}`
+                      : (child.repoId ?? '—'),
+                  header: 'Repository',
+                  id: 'repository',
+                  primary: true,
+                },
+                {
+                  cell: (child) => <StatusBadge status={child.status} />,
+                  header: 'Status',
+                  id: 'status',
+                },
+                {
+                  cell: (child) => (
+                    <span className="break-all font-mono text-xs text-paper-400">
                       {child.branch ?? '—'}
-                    </Td>
-                    <Td align="right" className="whitespace-nowrap px-4 py-3">
-                      {(() => {
-                        const cell = epicChildRunCell(child, runIdByTemporalId, childRunsSettled);
-                        if (cell.kind === 'run') {
-                          return (
-                            <ButtonLink href={`/runs/${cell.runId}`} size="sm" variant="ghost">
-                              Diagnostics
-                              <Icon name="arrowRight" size={13} />
-                            </ButtonLink>
-                          );
-                        }
-                        if (cell.kind === 'no-access') {
-                          return (
-                            <span
-                              className="inline-flex items-center gap-1 text-xs text-paper-500"
-                              title="This child's run is not visible to you — it likely belongs to a team you are not a member of."
-                            >
-                              <Icon name="lock" size={12} />
-                              No access
-                            </span>
-                          );
-                        }
-                        return (
-                          <span className="text-xs text-paper-500">
-                            {cell.kind === 'starting' ? 'Starting…' : 'Not started'}
-                          </span>
-                        );
-                      })()}
-                    </Td>
-                  </TRow>
-                ))}
-              </tbody>
-            </Table>
+                    </span>
+                  ),
+                  header: 'Branch',
+                  id: 'branch',
+                },
+              ]}
+              empty={
+                <EmptyState
+                  hint="The planner is still splitting the epic into per-repository work."
+                  icon="clock"
+                  title="No child runs yet"
+                />
+              }
+              getRowId={(child) => child.temporalWorkflowId ?? child.repoId ?? child.status}
+              revealActions={false}
+              rows={epic.children}
+            />
           </Card>
         </div>
 

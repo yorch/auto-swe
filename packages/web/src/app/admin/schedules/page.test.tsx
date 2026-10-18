@@ -65,6 +65,15 @@ describe('GovernSchedulesPage', () => {
     expect(fire.disabled).toBe(true);
   });
 
+  it('names the schedule when an action fails, since the error shows above the table', async () => {
+    // No mock for the fire endpoint, so the request fails.
+    mock([schedule()]);
+    render(withQuery(<GovernSchedulesPage />));
+    fireEvent.click(await screen.findByRole('button', { name: 'Fire now' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toMatch(/^Weekly deps: /);
+  });
+
   it('shows a repair hint instead of internal wording when the trigger is missing', async () => {
     mock([
       schedule({ schedule: { exists: false, lastRunAt: null, nextRunAt: null, paused: false } }),

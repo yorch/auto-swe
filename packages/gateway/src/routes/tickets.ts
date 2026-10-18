@@ -122,6 +122,7 @@ export const ticketRoutes: FastifyPluginAsync = async (fastify) => {
           OR: [
             { externalTicketId: { contains: search, mode: 'insensitive' } },
             { description: { contains: search, mode: 'insensitive' } },
+            { title: { contains: search, mode: 'insensitive' } },
           ],
         });
       }

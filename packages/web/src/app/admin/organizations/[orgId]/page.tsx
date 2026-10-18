@@ -9,12 +9,12 @@ import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useHasRole } from '@/hooks/useHasRole';
 import {
@@ -273,89 +273,90 @@ export default function OrgAdminPage({ params }: { params: Promise<{ orgId: stri
                 title="No members yet"
               />
             ) : (
-              <Table stacked>
-                <THead>
-                  <Th className="pl-0" variant="plain">
-                    Member
-                  </Th>
-                  <Th variant="plain">Organization role</Th>
-                  {canAdmin && (
-                    <Th className="pr-0" variant="plain">
-                      <span className="sr-only">Actions</span>
-                    </Th>
-                  )}
-                </THead>
-                <tbody>
-                  {(members ?? []).map((m) => {
-                    const isMe = m.userId === authUserId;
-                    return (
-                      <TRow hover key={m.id}>
-                        <Td className="py-3 pr-4" primary>
-                          <div className="flex min-w-0 items-center gap-2">
-                            <span className="truncate font-medium text-paper-100">
-                              {m.user.email}
-                            </span>
-                            {isMe && (
-                              <Badge tone="accent" variant="outline">
-                                You
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="mt-0.5 truncate text-xs font-normal text-paper-500">
-                            {m.user.name ? `${m.user.name} · ` : ''}Platform role:{' '}
-                            {platformRoleLabel(m.user.role)}
-                          </div>
-                        </Td>
-                        <Td className="px-4 py-3" label="Organization role">
-                          {canAdmin && !isMe ? (
-                            <Select
-                              aria-label={`Org role for ${m.user.email}`}
-                              className="w-48"
-                              compact
-                              onChange={(role) => {
-                                if (isOrgRole(role)) {
-                                  handleRoleChange(m.userId, role);
-                                }
-                              }}
-                              options={ORG_ROLE_OPTIONS}
-                              value={m.role}
-                            />
+              <div className="-mx-4">
+                <DataTable
+                  actions={
+                    canAdmin
+                      ? (m) =>
+                          m.userId === authUserId ? (
+                            <span className="sr-only">You cannot remove yourself</span>
                           ) : (
-                            <Badge
-                              title={isMe ? 'You cannot change your own role' : undefined}
-                              tone={m.role === 'ORG_ADMIN' ? 'accent' : 'neutral'}
-                              variant="outline"
-                            >
-                              {orgRoleLabel(m.role)}
+                            <ActionMenu
+                              items={[
+                                {
+                                  icon: 'trash',
+                                  id: 'remove',
+                                  label: 'Remove from organization',
+                                  onAction: () =>
+                                    setPendingRemoval({ email: m.user.email, userId: m.userId }),
+                                  tone: 'danger',
+                                },
+                              ]}
+                              label={`More actions for ${m.user.email}`}
+                            />
+                          )
+                      : undefined
+                  }
+                  className="max-sm:px-4"
+                  columns={[
+                    {
+                      cell: (m) => (
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="truncate">{m.user.email}</span>
+                          {m.userId === authUserId && (
+                            <Badge tone="accent" variant="outline">
+                              You
                             </Badge>
                           )}
-                        </Td>
-                        {canAdmin && (
-                          <Td align="right" className="py-3 pl-4">
-                            {isMe ? (
-                              <span className="sr-only">You cannot remove yourself</span>
-                            ) : (
-                              <ActionMenu
-                                items={[
-                                  {
-                                    icon: 'trash',
-                                    id: 'remove',
-                                    label: 'Remove from organization',
-                                    onAction: () =>
-                                      setPendingRemoval({ email: m.user.email, userId: m.userId }),
-                                    tone: 'danger',
-                                  },
-                                ]}
-                                label={`More actions for ${m.user.email}`}
-                              />
-                            )}
-                          </Td>
-                        )}
-                      </TRow>
-                    );
-                  })}
-                </tbody>
-              </Table>
+                        </span>
+                      ),
+                      header: 'Member',
+                      id: 'member',
+                      primary: true,
+                      secondary: (m) => (
+                        <span className="block truncate">
+                          {m.user.name ? `${m.user.name} · ` : ''}Platform role:{' '}
+                          {platformRoleLabel(m.user.role)}
+                        </span>
+                      ),
+                    },
+                    {
+                      cell: (m) =>
+                        canAdmin && m.userId !== authUserId ? (
+                          <Select
+                            aria-label={`Org role for ${m.user.email}`}
+                            className="w-48"
+                            compact
+                            onChange={(role) => {
+                              if (isOrgRole(role)) {
+                                handleRoleChange(m.userId, role);
+                              }
+                            }}
+                            options={ORG_ROLE_OPTIONS}
+                            value={m.role}
+                          />
+                        ) : (
+                          <Badge
+                            title={
+                              m.userId === authUserId
+                                ? 'You cannot change your own role'
+                                : undefined
+                            }
+                            tone={m.role === 'ORG_ADMIN' ? 'accent' : 'neutral'}
+                            variant="outline"
+                          >
+                            {orgRoleLabel(m.role)}
+                          </Badge>
+                        ),
+                      header: 'Organization role',
+                      id: 'role',
+                    },
+                  ]}
+                  getRowId={(m) => m.id}
+                  revealActions={false}
+                  rows={members ?? []}
+                />
+              </div>
             )}
             {canAdmin && (
               <div className="mt-6 grid grid-cols-1 gap-6 border-t border-ink-600 pt-5 xl:grid-cols-2">

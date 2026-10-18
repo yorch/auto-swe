@@ -209,6 +209,34 @@ describe('CatalogTab', () => {
     expect(within(local).getByText('free')).toBeTruthy();
   });
 
+  it('sorts the catalog by a heading and keeps the incoming order until one is clicked', () => {
+    render(<CatalogTab />);
+    const table = screen.getByRole('columnheader', { name: /Price/ }).closest('table');
+    const specs = () =>
+      within(table as HTMLElement)
+        .getAllByRole('row')
+        .slice(1)
+        .map((row) => /([a-z]+\/[a-z0-9.-]+)/.exec(row.textContent ?? '')?.[1]);
+    expect(specs()).toEqual([
+      'anthropic/claude-opus-5-5',
+      'anthropic/claude-sonnet-5-5',
+      'ollama/llama-4',
+    ]);
+
+    fireEvent.click(within(table as HTMLElement).getByRole('button', { name: /Price/ }));
+    expect(screen.getByRole('columnheader', { name: /Price/ }).getAttribute('aria-sort')).toBe(
+      'ascending'
+    );
+    expect(specs()).toEqual([
+      'ollama/llama-4',
+      'anthropic/claude-sonnet-5-5',
+      'anthropic/claude-opus-5-5',
+    ]);
+
+    fireEvent.click(within(table as HTMLElement).getByRole('button', { name: /Price/ }));
+    expect(specs()[0]).toBe('anthropic/claude-opus-5-5');
+  });
+
   it('shows what code now ships only on a customized row that diverges, with a reset', () => {
     render(<CatalogTab />);
     const customized = rowFor('anthropic/claude-sonnet-5-5');

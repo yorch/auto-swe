@@ -7,10 +7,10 @@ import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable, type DataTableColumn } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import {
   type SkillSource,
   type SourceStatus,
@@ -42,6 +42,53 @@ const STATUS_LABEL: Record<SourceStatus, string> = {
 };
 
 const SCRIPT_MODE_LABEL = { REJECT: 'Reject scripts', TEXT_ONLY: 'Text only' } as const;
+
+const SOURCE_COLUMNS: DataTableColumn<SkillSource>[] = [
+  {
+    cell: (s) => <span className="font-mono text-sm break-all">{sourceLabel(s)}</span>,
+    header: 'Source',
+    id: 'source',
+    primary: true,
+    secondary: (s) => (
+      <>
+        ref {visibleText(s.ref)} · {s.skillCount} skill{s.skillCount === 1 ? '' : 's'}
+      </>
+    ),
+  },
+  {
+    cell: (s) => (
+      <span className="font-mono text-xs text-paper-400">
+        <span title={s.pinnedSha}>{shortSha(s.pinnedSha)}</span>
+        {' / '}
+        <span title={s.latestSha ?? undefined}>{shortSha(s.latestSha)}</span>
+      </span>
+    ),
+    header: 'Pinned / latest',
+    id: 'pinned',
+  },
+  {
+    cell: (s) => (
+      <>
+        <Badge dot tone={STATUS_TONE[s.status]}>
+          {STATUS_LABEL[s.status]}
+        </Badge>
+        <div className="mt-1 text-xs text-paper-500" title={s.lastCheckedAt ?? undefined}>
+          {s.lastCheckedAt ? `Checked ${formatDate(s.lastCheckedAt)}` : 'Never checked'}
+        </div>
+        {s.lastError && (
+          <div className="mt-0.5 text-xs text-danger-400">{visibleText(s.lastError)}</div>
+        )}
+      </>
+    ),
+    header: 'Status',
+    id: 'status',
+  },
+  {
+    cell: (s) => <span className="text-xs text-paper-300">{SCRIPT_MODE_LABEL[s.scriptMode]}</span>,
+    header: 'Scripts',
+    id: 'scripts',
+  },
+];
 
 /**
  * Skills imported from an external GitHub repository, pinned to a commit. The
@@ -155,119 +202,65 @@ export function SkillSourcesTab() {
               title="No external sources yet"
             />
           ) : (
-            <Table stacked>
-              <THead>
-                <Th className="pl-0" variant="plain">
-                  Source
-                </Th>
-                <Th variant="plain">Pinned / latest</Th>
-                <Th variant="plain">Status</Th>
-                <Th variant="plain">Scripts</Th>
-                <Th className="pr-0" variant="plain">
-                  <span className="sr-only">Actions</span>
-                </Th>
-              </THead>
-              <tbody>
-                {sources.map((s) => {
-                  const label = sourceLabel(s);
-                  return (
-                    <TRow key={s.id}>
-                      <Td className="py-2.5 pr-4" primary>
-                        <div className="font-mono text-sm font-medium break-all text-paper-100">
-                          {label}
-                        </div>
-                        <div className="mt-0.5 text-xs text-paper-500">
-                          ref {visibleText(s.ref)} · {s.skillCount} skill
-                          {s.skillCount === 1 ? '' : 's'}
-                        </div>
-                      </Td>
-                      <Td
-                        className="px-4 py-2.5 font-mono text-xs text-paper-400"
-                        label="Pinned / latest"
-                      >
-                        <span title={s.pinnedSha}>{shortSha(s.pinnedSha)}</span>
-                        {' / '}
-                        <span title={s.latestSha ?? undefined}>{shortSha(s.latestSha)}</span>
-                      </Td>
-                      <Td className="px-4 py-2.5" label="Status">
-                        <Badge dot tone={STATUS_TONE[s.status]}>
-                          {STATUS_LABEL[s.status]}
-                        </Badge>
-                        <div
-                          className="mt-1 text-xs text-paper-500"
-                          title={s.lastCheckedAt ?? undefined}
-                        >
-                          {s.lastCheckedAt
-                            ? `Checked ${formatDate(s.lastCheckedAt)}`
-                            : 'Never checked'}
-                        </div>
-                        {s.lastError && (
-                          <div className="mt-0.5 text-xs text-danger-400">
-                            {visibleText(s.lastError)}
-                          </div>
-                        )}
-                      </Td>
-                      <Td className="px-4 py-2.5 text-xs text-paper-300" label="Scripts">
-                        {SCRIPT_MODE_LABEL[s.scriptMode]}
-                      </Td>
-                      <Td align="right" className="py-2.5 pl-4">
-                        <div className="flex items-center justify-end gap-1">
-                          {s.status === 'UPDATE_AVAILABLE' && (
-                            <Button onClick={() => setReviewId(s.id)} size="sm" variant="primary">
-                              Review update
-                            </Button>
-                          )}
-                          <Button
-                            disabled={busyId === s.id || s.status === 'DISABLED'}
-                            onClick={() => checkNow(s)}
-                            size="sm"
-                          >
-                            {busyId === s.id ? 'Working…' : 'Check now'}
-                          </Button>
-                          <ActionMenu
-                            items={[
-                              ...(s.status === 'OK' || s.status === 'UPDATE_AVAILABLE'
-                                ? [
-                                    {
-                                      icon: 'plus' as const,
-                                      id: 'install',
-                                      label: 'Install more skills',
-                                      onAction: () => setInstallFor(s.id),
-                                    },
-                                  ]
-                                : []),
-                              {
-                                disabled: busyId === s.id,
-                                icon: s.status === 'DISABLED' ? 'check' : 'close',
-                                id: 'status',
-                                label: s.status === 'DISABLED' ? 'Enable' : 'Disable',
-                                onAction: () => void toggleStatus(s),
-                              },
-                              {
-                                disabled: busyId === s.id,
-                                icon: 'security',
-                                id: 'scripts',
-                                label:
-                                  s.scriptMode === 'REJECT' ? 'Allow text files' : 'Reject scripts',
-                                onAction: () => void toggleScripts(s),
-                              },
-                              {
-                                icon: 'trash',
-                                id: 'delete',
-                                label: 'Delete',
-                                onAction: () => setDeleteTarget(s),
-                                tone: 'danger',
-                              },
-                            ]}
-                            label={`More actions for ${label}`}
-                          />
-                        </div>
-                      </Td>
-                    </TRow>
-                  );
-                })}
-              </tbody>
-            </Table>
+            <DataTable
+              actions={(s) => (
+                <>
+                  {s.status === 'UPDATE_AVAILABLE' && (
+                    <Button onClick={() => setReviewId(s.id)} size="sm" variant="primary">
+                      Review update
+                    </Button>
+                  )}
+                  <Button
+                    disabled={busyId === s.id || s.status === 'DISABLED'}
+                    onClick={() => checkNow(s)}
+                    size="sm"
+                  >
+                    {busyId === s.id ? 'Working…' : 'Check now'}
+                  </Button>
+                  <ActionMenu
+                    items={[
+                      ...(s.status === 'OK' || s.status === 'UPDATE_AVAILABLE'
+                        ? [
+                            {
+                              icon: 'plus' as const,
+                              id: 'install',
+                              label: 'Install more skills',
+                              onAction: () => setInstallFor(s.id),
+                            },
+                          ]
+                        : []),
+                      {
+                        disabled: busyId === s.id,
+                        icon: s.status === 'DISABLED' ? 'check' : 'close',
+                        id: 'status',
+                        label: s.status === 'DISABLED' ? 'Enable' : 'Disable',
+                        onAction: () => void toggleStatus(s),
+                      },
+                      {
+                        disabled: busyId === s.id,
+                        icon: 'security',
+                        id: 'scripts',
+                        label: s.scriptMode === 'REJECT' ? 'Allow text files' : 'Reject scripts',
+                        onAction: () => void toggleScripts(s),
+                      },
+                      {
+                        icon: 'trash',
+                        id: 'delete',
+                        label: 'Delete',
+                        onAction: () => setDeleteTarget(s),
+                        tone: 'danger',
+                      },
+                    ]}
+                    label={`More actions for ${sourceLabel(s)}`}
+                  />
+                </>
+              )}
+              columns={SOURCE_COLUMNS}
+              density="compact"
+              getRowId={(s) => s.id}
+              revealActions={false}
+              rows={sources}
+            />
           )}
         </QueryBoundary>
       </Card>

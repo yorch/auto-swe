@@ -17,12 +17,12 @@ import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Icon } from '@/components/ui/Icon';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Select } from '@/components/ui/Select';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { Textarea } from '@/components/ui/Textarea';
 import { usePrefilledField } from '@/hooks/usePrefilledField';
 import { useRemoveTeamMember, useTeam, useUpdateTeam, useUpdateTeamMember } from '@/hooks/useTeams';
@@ -208,29 +208,45 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
               title="No members yet"
             />
           ) : (
-            <Table stacked>
-              <THead>
-                <Th className="pl-0" variant="plain">
-                  Member
-                </Th>
-                <Th variant="plain">Team role</Th>
-                {canManage && (
-                  <Th className="pr-0" variant="plain">
-                    <span className="sr-only">Actions</span>
-                  </Th>
-                )}
-              </THead>
-              <tbody>
-                {memberships.map((m) => (
-                  <TRow hover key={m.id}>
-                    <Td className="py-3 pr-4" primary>
-                      <div className="truncate font-medium text-paper-100">{m.user?.email}</div>
-                      <div className="mt-0.5 text-xs font-normal text-paper-500">
-                        Platform role: {platformRoleLabel(m.user?.role ?? '')}
-                      </div>
-                    </Td>
-                    <Td className="px-4 py-3" label="Team role">
-                      {canManage &&
+            <div className="-mx-4">
+              <DataTable
+                actions={
+                  canManage
+                    ? (m) =>
+                        m.user?.id ? (
+                          <ActionMenu
+                            items={[
+                              {
+                                disabled: removeMember.isPending,
+                                icon: 'trash',
+                                id: 'remove',
+                                label: 'Remove from team',
+                                onAction: () => {
+                                  if (m.user?.id) {
+                                    setConfirmRemoveId(m.user.id);
+                                    setConfirmRemoveEmail(m.user.email ?? null);
+                                  }
+                                },
+                                tone: 'danger',
+                              },
+                            ]}
+                            label={`More actions for ${m.user.email ?? 'member'}`}
+                          />
+                        ) : null
+                    : undefined
+                }
+                className="max-sm:px-4"
+                columns={[
+                  {
+                    cell: (m) => <span className="truncate">{m.user?.email}</span>,
+                    header: 'Member',
+                    id: 'member',
+                    primary: true,
+                    secondary: (m) => <>Platform role: {platformRoleLabel(m.user?.role ?? '')}</>,
+                  },
+                  {
+                    cell: (m) =>
+                      canManage &&
                       m.user?.id &&
                       isRole(m.role) &&
                       grantableRoles.includes(m.role) ? (
@@ -260,36 +276,16 @@ export default function TeamDetailPage({ params }: { params: Promise<{ id: strin
                         <Badge tone="neutral" variant="outline">
                           {platformRoleLabel(m.role)}
                         </Badge>
-                      )}
-                    </Td>
-                    {canManage && (
-                      <Td align="right" className="py-3 pl-4">
-                        {m.user?.id && (
-                          <ActionMenu
-                            items={[
-                              {
-                                disabled: removeMember.isPending,
-                                icon: 'trash',
-                                id: 'remove',
-                                label: 'Remove from team',
-                                onAction: () => {
-                                  if (m.user?.id) {
-                                    setConfirmRemoveId(m.user.id);
-                                    setConfirmRemoveEmail(m.user.email ?? null);
-                                  }
-                                },
-                                tone: 'danger',
-                              },
-                            ]}
-                            label={`More actions for ${m.user.email ?? 'member'}`}
-                          />
-                        )}
-                      </Td>
-                    )}
-                  </TRow>
-                ))}
-              </tbody>
-            </Table>
+                      ),
+                    header: 'Team role',
+                    id: 'role',
+                  },
+                ]}
+                getRowId={(m) => m.id}
+                revealActions={false}
+                rows={memberships}
+              />
+            </div>
           )}
         </Card>
 

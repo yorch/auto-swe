@@ -9,13 +9,13 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Combobox } from '@/components/ui/Combobox';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { DataTable } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Input } from '@/components/ui/Input';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Select } from '@/components/ui/Select';
-import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { useOrganizationDirectory } from '@/hooks/useAdmin';
 import {
   type ConfigGrant,
@@ -326,26 +326,34 @@ export default function GovernConfigGrantsPage() {
               title="No grants yet"
             />
           ) : (
-            <Table stacked>
-              <THead>
-                <Th className="pl-0" variant="plain">
-                  Pattern
-                </Th>
-                <Th variant="plain">Granted to</Th>
-                <Th variant="plain">Where</Th>
-                <Th variant="plain">Created</Th>
-                <Th className="pr-0" variant="plain">
-                  <span className="sr-only">Actions</span>
-                </Th>
-              </THead>
-              <tbody>
-                {allGrants.map((g) => (
-                  <TRow hover key={g.id}>
-                    <Td className="py-3 pr-4" primary>
-                      <span className="font-mono text-sm text-paper-100">{g.keyPattern}</span>
-                    </Td>
-                    <Td className="px-4 py-3 text-sm" label="Granted to">
-                      {g.user?.email ? (
+            <div className="-mx-4">
+              <DataTable
+                actions={(g) => (
+                  <ActionMenu
+                    items={[
+                      {
+                        disabled: revokeGrant.isPending,
+                        icon: 'trash',
+                        id: 'revoke',
+                        label: 'Revoke grant',
+                        onAction: () => setRevokeTarget(g),
+                        tone: 'danger',
+                      },
+                    ]}
+                    label={`Actions for grant ${g.keyPattern}`}
+                  />
+                )}
+                className="max-sm:px-4"
+                columns={[
+                  {
+                    cell: (g) => <span className="font-mono text-sm">{g.keyPattern}</span>,
+                    header: 'Pattern',
+                    id: 'pattern',
+                    primary: true,
+                  },
+                  {
+                    cell: (g) =>
+                      g.user?.email ? (
                         <span className="text-paper-200">{g.user.email}</span>
                       ) : g.role ? (
                         <Badge tone="neutral" variant="outline">
@@ -353,44 +361,45 @@ export default function GovernConfigGrantsPage() {
                         </Badge>
                       ) : (
                         <span className="text-paper-500">—</span>
-                      )}
-                    </Td>
-                    <Td className="px-4 py-3 text-sm" label="Where">
-                      <div className="text-paper-200">
-                        {g.scope === 'GLOBAL'
-                          ? 'Whole platform'
-                          : g.scope === 'ORGANIZATION'
-                            ? 'Organization'
-                            : 'Team'}
-                      </div>
-                      {(g.team?.name ?? g.organization?.name) && (
-                        <div className="text-xs text-paper-500">
-                          {g.team?.name ?? g.organization?.name}
+                      ),
+                    header: 'Granted to',
+                    id: 'grantedTo',
+                  },
+                  {
+                    cell: (g) => (
+                      <>
+                        <div className="text-paper-200">
+                          {g.scope === 'GLOBAL'
+                            ? 'Whole platform'
+                            : g.scope === 'ORGANIZATION'
+                              ? 'Organization'
+                              : 'Team'}
                         </div>
-                      )}
-                    </Td>
-                    <Td className="px-4 py-3 text-sm text-paper-400" label="Created">
-                      <RelativeTime value={g.createdAt} />
-                    </Td>
-                    <Td align="right" className="py-3 pl-4">
-                      <ActionMenu
-                        items={[
-                          {
-                            disabled: revokeGrant.isPending,
-                            icon: 'trash',
-                            id: 'revoke',
-                            label: 'Revoke grant',
-                            onAction: () => setRevokeTarget(g),
-                            tone: 'danger',
-                          },
-                        ]}
-                        label={`Actions for grant ${g.keyPattern}`}
-                      />
-                    </Td>
-                  </TRow>
-                ))}
-              </tbody>
-            </Table>
+                        {(g.team?.name ?? g.organization?.name) && (
+                          <div className="text-xs text-paper-500">
+                            {g.team?.name ?? g.organization?.name}
+                          </div>
+                        )}
+                      </>
+                    ),
+                    header: 'Where',
+                    id: 'where',
+                  },
+                  {
+                    cell: (g) => (
+                      <span className="text-paper-400">
+                        <RelativeTime value={g.createdAt} />
+                      </span>
+                    ),
+                    header: 'Created',
+                    id: 'created',
+                  },
+                ]}
+                getRowId={(g) => g.id}
+                revealActions={false}
+                rows={allGrants}
+              />
+            </div>
           )}
         </QueryBoundary>
       </Card>
