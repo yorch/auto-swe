@@ -3,6 +3,7 @@ import type {
   WorkflowRunDetail,
   WorkflowStepRecord,
 } from '@auto-swe/shared/types/api';
+import type { RunLessons } from '../../src/hooks/useLessons';
 import { ago } from './common';
 import { TICKET_TO_PR_SPEC } from './templates';
 import { RUNS } from './work';
@@ -130,4 +131,27 @@ export const RUN_DETAIL: WorkflowRunDetail = {
   tokensOutputTotal: 850,
   traces: RUN_TRACES,
   tracesTruncated: false,
+};
+
+/** The lessons run-0001 recalled into its agents' prompts; a failed run writes none. */
+export const RUN_LESSONS: RunLessons = {
+  recalled: [
+    {
+      lesson: {
+        confidence: 0.82,
+        consolidatedAt: null,
+        createdAt: ago(60 * 24 * 3),
+        failureType: 'TEST_FAILURE',
+        id: 'lesson-0001',
+        lessonSummary:
+          'Mock the card network client at the boundary; the sandbox times out on retries.',
+        metadata: { outcome: 'SUCCESS' },
+        rationale: 'Two earlier runs failed the test gate on real network calls.',
+        supersededAt: null,
+      },
+      lessonId: 'lesson-0001',
+      recalledFor: ['implementer'],
+    },
+  ],
+  written: [],
 };

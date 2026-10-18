@@ -14,7 +14,7 @@ import {
   USERS,
 } from './admin';
 import { page, REPOSITORIES, TEAMS } from './common';
-import { RUN_DETAIL } from './runDetail';
+import { RUN_DETAIL, RUN_LESSONS } from './runDetail';
 import { STEP_REGISTRY, TEMPLATE_DETAIL, TEMPLATES } from './templates';
 import { APPROVALS, PULL_REQUESTS, RUNS, requestsInState } from './work';
 
@@ -52,6 +52,10 @@ export const ROUTES: FixtureRoute[] = [
   },
   { path: '/api/v1/me/preferences', respond: () => ({ preferences: { runDetailLayout: 'A' } }) },
   { path: /^\/api\/v1\/workflow-runs\/run-[^/]+$/, respond: () => ({ data: RUN_DETAIL }) },
+  {
+    path: /^\/api\/v1\/workflow-runs\/run-[^/]+\/lessons$/,
+    respond: () => ({ data: RUN_LESSONS }),
+  },
   {
     path: /^\/api\/v1\/workflow-runs\/run-[^/]+\/traces$/,
     respond: () => ({
