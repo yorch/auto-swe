@@ -3,6 +3,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { LessonFlagActions, LessonFlagReasons } from '@/components/lessons/LessonFlags';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button, ButtonLink } from '@/components/ui/Button';
@@ -84,6 +85,7 @@ export default function LessonsPage() {
     (r) => r.type === 'git_repo' && r.organizationName && r.repoName
   );
   const [repoFilter, setRepoFilter] = useState('');
+  const [flaggedOnly, setFlaggedOnly] = useState(false);
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [offset, setOffset] = useState(0);
@@ -104,6 +106,7 @@ export default function LessonsPage() {
     error: lessonsError,
     refetch: refetchLessons,
   } = useLessons(false, {
+    flagged: flaggedOnly || undefined,
     limit: PAGE_SIZE,
     offset,
     q: query || undefined,
@@ -220,6 +223,19 @@ export default function LessonsPage() {
             ]}
             value={repoFilter}
           />
+          <Select
+            appearance="pill"
+            aria-label="Flags"
+            onChange={(v) => {
+              setFlaggedOnly(v === 'flagged');
+              setOffset(0);
+            }}
+            options={[
+              { label: 'All lessons', value: '' },
+              { label: 'Flagged as wrong', value: 'flagged' },
+            ]}
+            value={flaggedOnly ? 'flagged' : ''}
+          />
         </Toolbar>
 
         <QueryBoundary
@@ -231,7 +247,7 @@ export default function LessonsPage() {
           onRetry={() => void refetchLessons()}
         >
           {!lessons || lessons.length === 0 ? (
-            query || repoFilter ? (
+            query || repoFilter || flaggedOnly ? (
               <EmptyState
                 action={
                   <Button
@@ -239,6 +255,7 @@ export default function LessonsPage() {
                       setSearch('');
                       setQuery('');
                       setRepoFilter('');
+                      setFlaggedOnly(false);
                       setOffset(0);
                     }}
                     size="sm"
@@ -287,6 +304,15 @@ export default function LessonsPage() {
                           {humanizeEnum(lessonOutcome(lesson) as string)}
                         </Badge>
                       )}
+                      {lesson.flagCount > 0 && (
+                        <Badge
+                          title="People who read this lesson think it is wrong"
+                          tone="warning"
+                          variant="outline"
+                        >
+                          Flagged{lesson.flagCount > 1 ? ` · ${lesson.flagCount}` : ''}
+                        </Badge>
+                      )}
                       {lesson.confidence !== null && lesson.confidence < LOW_CONFIDENCE && (
                         <Badge
                           title="The agent that wrote this lesson judged its evidence thin"
@@ -310,6 +336,10 @@ export default function LessonsPage() {
                         </>
                       )}
                     </div>
+                    <LessonFlagReasons lesson={lesson} />
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <LessonFlagActions lesson={lesson} manages={canManage(lesson.repository?.id)} />
                   </div>
                   {canManage(lesson.repository?.id) && (
                     <Button

@@ -242,6 +242,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/knowledge/:id/publish': 'confirm',
   'POST /api/v1/knowledge/:id/reject': 'confirm',
   'POST /api/v1/knowledge/:id/supersede': 'confirm',
+  'POST /api/v1/lessons/:id/flags': 'confirm',
   'POST /api/v1/lessons/consolidate': 'confirm',
   'POST /api/v1/platform/agent-library': 'confirm',
   'POST /api/v1/platform/agent-library/:id/restore': 'confirm',

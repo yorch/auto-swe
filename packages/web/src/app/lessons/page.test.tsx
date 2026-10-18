@@ -24,6 +24,8 @@ const lesson = (over: Record<string, unknown> = {}) => ({
 function mock(rows: unknown[], managedRepoIds?: string[]) {
   return setupFetchMock({
     '/api/v1/admin/config/consolidation': () => ({ data: null }),
+    'DELETE /api/v1/lessons/l1/flags': () => ({ data: { cleared: 1 } }),
+    'DELETE /api/v1/lessons/l1/flags/mine': () => ({ data: { withdrawn: true } }),
     'GET /api/v1/lessons': () => ({
       data: rows,
       meta: { limit: 20, managedRepoIds, offset: 0, total: rows.length },
@@ -34,6 +36,7 @@ function mock(rows: unknown[], managedRepoIds?: string[]) {
       meta: { limit: 100, offset: 0, total: 1 },
     }),
     'POST /api/v1/lessons/consolidate': () => ({ data: { workflowId: 'wf-1' } }),
+    'POST /api/v1/lessons/l1/flags': () => ({ data: { flagged: true } }),
   });
 }
 
@@ -163,5 +166,78 @@ describe('LessonsPage (lead of the repository team)', () => {
 
     expect(await screen.findByText(/Consolidation started for acme\/api/)).toBeTruthy();
     expect(bodyOf(fetchSpy, '/api/v1/lessons/consolidate')).toEqual({ repoId: 'r1' });
+  });
+});
+
+describe('LessonsPage flags', () => {
+  beforeEach(() => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+  });
+
+  it('lets a reader flag a lesson with a reason', async () => {
+    const fetchSpy = mock([lesson({ flagCount: 0, myFlag: null })]);
+    render(withQuery(<LessonsPage />));
+    await screen.findByText('Run migrations before deploying');
+    fireEvent.click(screen.getByRole('button', { name: 'Flag' }));
+    fireEvent.change(await screen.findByLabelText('What is wrong with it'), {
+      target: { value: 'The deploy script runs them now' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Flag lesson' }));
+    await vi.waitFor(() =>
+      expect(bodyOf(fetchSpy, '/api/v1/lessons/l1/flags')).toEqual({
+        reason: 'The deploy script runs them now',
+      })
+    );
+  });
+
+  it("shows a reader their own flag as one they can withdraw, without anyone else's reasons", async () => {
+    mock([
+      lesson({
+        flagCount: 2,
+        myFlag: { createdAt: '2026-10-01T00:00:00.000Z', reason: 'outdated' },
+      }),
+    ]);
+    render(withQuery(<LessonsPage />));
+    expect(await screen.findByText('Flagged · 2')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Withdraw flag' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Clear flags' })).toBeNull();
+  });
+
+  it('shows a lead the reasons and lets them clear the flags', async () => {
+    const fetchSpy = mock(
+      [
+        lesson({
+          flagCount: 1,
+          flags: [{ createdAt: '2026-10-01T00:00:00.000Z', email: 'a@x.test', reason: 'stale' }],
+          myFlag: null,
+        }),
+      ],
+      ['r1']
+    );
+    render(withQuery(<LessonsPage />));
+    expect(await screen.findByText('stale')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Clear flags' }));
+    const confirm = await screen.findAllByRole('button', { name: 'Clear flags' });
+    fireEvent.click(confirm[confirm.length - 1] as HTMLElement);
+    await vi.waitFor(() =>
+      expect(
+        fetchSpy.mock.calls.some(
+          ([url, init]) =>
+            String(url).endsWith('/api/v1/lessons/l1/flags') &&
+            (init as RequestInit | undefined)?.method === 'DELETE'
+        )
+      ).toBe(true)
+    );
+  });
+
+  it('asks the server for flagged lessons only when filtered to them', async () => {
+    const fetchSpy = mock([lesson()]);
+    render(withQuery(<LessonsPage />));
+    await screen.findByText('Run migrations before deploying');
+    fireEvent.click(screen.getByRole('button', { name: /flags/i }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Flagged as wrong' }));
+    await vi.waitFor(() =>
+      expect(fetchSpy.mock.calls.some(([url]) => String(url).includes('flagged=true'))).toBe(true)
+    );
   });
 });

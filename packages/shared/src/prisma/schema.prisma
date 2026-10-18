@@ -228,6 +228,8 @@ model MemoryItem {
   /// lesson writer from its own rubric; null where no model judged it (the
   /// model-free writers, rows written before the column existed).
   confidence     Float?
+  /// People who think this lesson is wrong (repository lessons only; see `LessonFlag`).
+  flags          LessonFlag[]
 
   @@index([repoId, consolidatedAt])
   @@index([supersededById])
@@ -239,6 +241,26 @@ model MemoryItem {
   @@index([workflowId])
   @@index([workflowRunId])
   @@map("memory_items")
+}
+
+/// One person's report that a repository lesson is wrong, with their reason.
+///
+/// Raised by anyone who can read the lesson, one per person per lesson (flagging again replaces the
+/// reason). Read and cleared by whoever may delete the lesson: a lead of the repository's owning
+/// team, or a platform ADMIN. A flag changes nothing about recall; it is a queue for those people,
+/// who then delete the lesson or clear its flags. Deleting the lesson deletes its flags.
+model LessonFlag {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  memoryItemId String     @map("memory_item_id") @db.Uuid
+  memoryItem   MemoryItem @relation(fields: [memoryItemId], references: [id], onDelete: Cascade)
+  flaggedById  String     @map("flagged_by_id") @db.Uuid
+  flaggedBy    User       @relation("LessonFlagAuthor", fields: [flaggedById], references: [id], onDelete: Cascade)
+  reason       String
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([memoryItemId, flaggedById])
+  @@index([flaggedById])
+  @@map("lesson_flags")
 }
 
 model ContextSnapshot {
@@ -1324,6 +1346,7 @@ model User {
   launchedRuns          WorkflowRun[]            @relation("WorkflowRunLauncher")
   createdShares         ConnectionTeamShare[]    @relation("ConnectionShareCreator")
   createdCallbackEndpoints CallbackEndpoint[]    @relation("CallbackEndpointCreator")
+  lessonFlags           LessonFlag[]             @relation("LessonFlagAuthor")
 
   @@map("users")
 }
