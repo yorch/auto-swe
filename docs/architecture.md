@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 91 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 92 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | The consolidated `20260618000000_init` baseline (generated from `schema.prisma`) plus the hand-written `20260618000001_custom_constraints_and_indexes` beside it; new changes append their own migration once the schema is deployed |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -728,7 +728,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 91 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 92 models.
 
 ```mermaid
 erDiagram
@@ -790,7 +790,7 @@ erDiagram
 | Per-host webhook secrets | `GitHubHostWebhookSecret` | One GitHub Enterprise host's encrypted webhook secret, keyed by lowercase `host[:port]` and used only for deliveries naming that host in `X-GitHub-Enterprise-Host`. Platform infrastructure, not tenant-scoped. See [repositories.md](./repositories.md) |
 | Per-host platform credentials | `GitHubHostCredential` | One non-instance GitHub host's encrypted PAT and/or GitHub App (id and private key), keyed by the lowercase `host[:port]` of its host family. A repository on that host is reached with this set and never the instance's. Platform infrastructure, not tenant-scoped. See [repositories.md](./repositories.md) |
 | Billing | `OrgMonthlyUsage`, `ChannelMonthlyUsage`, `ChannelBudgetHold` | Monthly cost/run/token aggregates keyed by `(scope, yearMonth)`; a hold row is one turn's outstanding claim on a channel's remaining budget |
-| Channel assistant | `SlackWorkspace`, `SlackChannel`, `ChannelThreadSession`, `ChannelOpenItem` | See [channel-assistant.md](./channel-assistant.md) |
+| Channel assistant | `SlackWorkspace`, `SlackChannel`, `SlackChannelMember`, `ChannelThreadSession`, `ChannelOpenItem` | See [channel-assistant.md](./channel-assistant.md) |
 | Evals | `EvalDataset`, `EvalCase`, `EvalRun`, `EvalRubric` | See [evals.md](./evals.md) |
 | Distribution | `InstalledBundle` | Installed bundles as a managed base layer |
 | Scanners | `ScannerPattern` | DB-backed regex patterns across six pattern types |

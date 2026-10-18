@@ -58,6 +58,7 @@ export const MODEL_DISCOVERY_SCHEDULE_ID = 'auto-swe-model-discovery';
 export const RUN_REAPER_SCHEDULE_ID = 'auto-swe-run-reaper';
 export const AUTOMATION_DECISION_PRUNE_SCHEDULE_ID = 'auto-swe-automation-decision-prune';
 export const SKILL_SOURCE_SYNC_SCHEDULE_ID = 'auto-swe-skill-source-sync';
+export const SLACK_CHANNEL_SYNC_SCHEDULE_ID = 'auto-swe-slack-channel-sync';
 export const CALLBACK_DELIVERY_SCHEDULE_ID = 'auto-swe-callback-delivery';
 export const CALLBACK_DELIVERY_PRUNE_SCHEDULE_ID = 'auto-swe-callback-delivery-prune';
 
@@ -246,6 +247,15 @@ export interface SkillSourceSyncScheduleConfig {
   cronExpression: string;
 }
 
+/**
+ * The Slack channel sweep. The workflow reads the active channels itself, so the
+ * schedule carries no arguments.
+ */
+export interface SlackChannelSyncScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
 /** `connecting` covers both the first attempt and every retry after a failed one. */
 export type TemporalConnectionState = 'connecting' | 'connected';
 
@@ -378,6 +388,7 @@ declare module 'fastify' {
         config: AutomationDecisionPruneScheduleConfig
       ) => Promise<void>;
       syncSkillSourceSyncSchedule: (config: SkillSourceSyncScheduleConfig) => Promise<void>;
+      syncSlackChannelSyncSchedule: (config: SlackChannelSyncScheduleConfig) => Promise<void>;
       getRepoDependencyScanScheduleStatus: () => Promise<RepoDependencyScanScheduleStatus>;
       triggerRepoDependencyScanNow: () => Promise<void>;
       syncWorkRequestSchedule: (input: WorkRequestScheduleInput) => Promise<void>;
@@ -569,6 +580,17 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
       workflowType: 'ScheduledSkillSourceSyncWorkflow',
+    };
+  }
+
+  // Slack channel sweep action. The workflow lists the channels itself, so the
+  // schedule carries no arguments.
+  function makeSlackChannelSyncScheduleAction() {
+    return {
+      args: [] as unknown[],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType: 'ScheduledSlackChannelSyncWorkflow',
     };
   }
 
@@ -1299,6 +1321,16 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
     async syncSkillSourceSyncSchedule(config: SkillSourceSyncScheduleConfig): Promise<void> {
       await upsertSchedule(SKILL_SOURCE_SYNC_SCHEDULE_ID, {
         action: makeSkillSourceSyncScheduleAction(),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    // ── Slack channel privacy and membership sync (one system-wide Temporal Schedule) ──
+
+    async syncSlackChannelSyncSchedule(config: SlackChannelSyncScheduleConfig): Promise<void> {
+      await upsertSchedule(SLACK_CHANNEL_SYNC_SCHEDULE_ID, {
+        action: makeSlackChannelSyncScheduleAction(),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

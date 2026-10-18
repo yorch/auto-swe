@@ -1101,6 +1101,15 @@ model SlackChannel {
   /// and the min gap between successive nudges of the same item (default 12h).
   openItemNudgeAfterHours          Int?           @map("open_item_nudge_after_hours")
   openItemNudgeCooldownHours       Int?           @map("open_item_nudge_cooldown_hours")
+  /// When the Slack channel sync last asked Slack whether this channel is private.
+  /// The sync only ever turns `isPrivate` on, never off: an admin may have made a
+  /// public channel private on purpose. Null until the sync has answered once.
+  privacyCheckedAt                 DateTime?      @map("privacy_checked_at") @db.Timestamptz
+  /// When the sync last replaced `members` from Slack's member list. Membership
+  /// gives a private channel's members its content in the dashboard, and only
+  /// while this is within the sync's staleness window; null means never synced,
+  /// which grants nothing.
+  membersSyncedAt                  DateTime?      @map("members_synced_at") @db.Timestamptz
   isActive                         Boolean        @default(true) @map("is_active")
   createdAt                        DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
@@ -1108,6 +1117,7 @@ model SlackChannel {
   agents         Agent[]
   budgetHolds    ChannelBudgetHold[]
   memoryItems    MemoryItem[]
+  members        SlackChannelMember[]
   monthlyUsage   ChannelMonthlyUsage[]
   openItems      ChannelOpenItem[]
   threadSessions ChannelThreadSession[]
@@ -1118,6 +1128,21 @@ model SlackChannel {
   @@index([teamId])
   @@index([orgId])
   @@map("slack_channels")
+}
+
+/// One Slack user in a private channel, as Slack's member list last reported it.
+/// Written only by the Slack channel sync, which replaces a channel's rows whole,
+/// so a person who leaves the channel drops out at the next sync. Keyed by the
+/// Slack user id rather than a platform user: a dashboard user matches through
+/// their linked `User.slackId`, read fresh on every request.
+model SlackChannelMember {
+  channelId   String       @map("channel_id") @db.Uuid
+  channel     SlackChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  slackUserId String       @map("slack_user_id")
+
+  @@id([channelId, slackUserId])
+  @@index([slackUserId])
+  @@map("slack_channel_members")
 }
 
 /// Persistent live session (Gap H): tracks when the assistant was last active in

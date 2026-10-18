@@ -13,7 +13,7 @@ import type { FastifyInstance } from 'fastify';
  * logged. Consolidation, eval regression and revalidation can be re-saved from the
  * admin UI; the environment-driven schedules (repository dependency scan,
  * repository access sync, model discovery, run reaper, automation decision prune,
- * skill-source sync, run-callback delivery and its prune) are next synced at the following gateway start.
+ * skill-source sync, Slack channel sync, run-callback delivery and its prune) are next synced at the following gateway start.
  *
  * Only these system schedules are re-synced here. Per-channel and
  * per-work-request schedules are reconciled when their own rows are written
@@ -57,6 +57,12 @@ export async function syncSchedulesOnceConnected(
     .catch(warn('callback delivery prune'));
   // One cheap request per tracked source; it only flags. On by default.
   app.temporal.syncSkillSourceSyncSchedule(sweeps.skillSourceSync).catch(warn('skill source sync'));
+  // Re-checks channel privacy and records private channels' members. Paused unless enabled:
+  // it needs the bot's channels:read and groups:read scopes, and its member lists grant
+  // dashboard access to private channels' content.
+  app.temporal
+    .syncSlackChannelSyncSchedule(sweeps.slackChannelSync)
+    .catch(warn('slack channel sync'));
   // The nightly eval benchmark: off by default, needs a seeded dataset and a Docker-capable worker.
   resolveEvalScheduleConfig()
     .then((cfg) => app.temporal.syncEvalSchedule(cfg))

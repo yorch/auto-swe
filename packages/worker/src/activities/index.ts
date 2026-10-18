@@ -245,6 +245,8 @@ export type { SyncRepoAccessInput, SyncRepoAccessResult } from './syncRepoAccess
 export { syncRepoAccess } from './syncRepoAccess.js';
 export type { SyncSkillSourcesResult } from './syncSkillSources.js';
 export { syncSkillSources } from './syncSkillSources.js';
+export type { SyncSlackChannelsResult } from './syncSlackChannels.js';
+export { syncSlackChannels } from './syncSlackChannels.js';
 export {
   createWorkflowRun,
   finalizeWorkflowRun,

@@ -179,8 +179,19 @@ by the same pgvector search as everything else.
 - **`isPrivate` comes from Slack.** At provision time the gateway calls `conversations.info` for the
   authoritative `is_private`. When Slack cannot answer — no token, no `groups:read` scope, a network
   failure — it falls back to the payload heuristic (`channel_type: 'group'` on the events path, a
-  `G`-prefixed id on the shortcut path). The flag is written on CREATE only and is admin-editable
-  afterwards, so neither source can undo an override.
+  `G`-prefixed id on the shortcut path). The flag is written on CREATE and is admin-editable
+  afterwards.
+- **The Slack channel sync re-asks.** With `SLACK_CHANNEL_SYNC_ENABLED`, a scheduled sweep
+  (`ScheduledSlackChannelSyncWorkflow`, `lib/slackChannelSync.ts`) calls `conversations.info` for
+  every active channel and turns `isPrivate` on for one Slack now reports private, with an audit
+  row. It never turns the flag off: an admin may have marked a public channel private on purpose.
+  For each private channel it then replaces the channel's `SlackChannelMember` rows with Slack's
+  `conversations.members` list and stamps `membersSyncedAt`; a public channel's rows are dropped.
+  A list that cannot be read whole — a Slack error, a missing scope, more than 10,000 members —
+  leaves the previous rows and timestamp as they were, and they age out. Channels are synced one
+  at a time against the bot token, and the sweep's result and logs carry ids, counts and Slack's
+  error codes, never member ids. It needs the `channels:read` and `groups:read` bot scopes
+  ([slack-app-setup.md](./slack-app-setup.md#bot-scopes)).
 - **Passive ingestion** — with `passiveIngestEnabled`, `passiveIngestChannelMemory` silently
   extracts up to five salient facts from human messages on each ambient fire, advancing a
   `passiveIngestCursor` and de-duplicating at 0.85 similarity. Accrues with `countRun: false`.
@@ -411,12 +422,15 @@ unproven on real traffic, and turn them on one channel at a time.
   nothing else; a reworded instruction passes and is recalled like any other note, with only the
   `<recalled_memory>` fence between it and the model. A false positive costs the note, silently
   apart from a worker log line: there is no review queue for refused memory.
-- **`isPrivate` is captured once, at provision.** It is read from `conversations.info` when Slack
-  answers, but nothing re-checks it afterwards: a channel converted to private in Slack keeps the
-  value it was provisioned with, and its memory stays a cross-channel source, and its memory,
-  open items, audit feed and turn runs stay readable by its team, until an admin flips the flag. Where Slack cannot answer, the payload heuristics still apply and neither is
-  authoritative for every channel shape. Verify the flag on any channel holding sensitive
-  discussion rather than trusting the default.
+- **`isPrivate` is only as fresh as the last sync.** Without the Slack channel sync (it is off by
+  default), the flag is read once, at provision, and a channel converted to private in Slack keeps
+  the value it was provisioned with — its memory stays a cross-channel source, and its memory,
+  open items, audit feed and turn runs stay readable by its team — until an admin flips the flag.
+  With the sync on, that window is one sync interval. Where Slack cannot answer, the payload
+  heuristics still apply and neither is authoritative for every channel shape. Verify the flag on
+  any channel holding sensitive discussion rather than trusting the default.
+- **A channel made public in Slack stays private here.** The sync only tightens the flag, so a
+  private channel converted to public keeps its admin-only content until an admin clears it.
 
 ---
 
