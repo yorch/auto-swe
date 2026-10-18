@@ -46,6 +46,7 @@ function newMockPrisma() {
       findUnique: vi.fn(),
       update: vi.fn(),
     },
+    slackChannelMember: { findFirst: vi.fn().mockResolvedValue(null) },
     slackWorkspace: { upsert: vi.fn() },
     team: { findUnique: vi.fn() },
     teamMembership: { findUnique: vi.fn() },
@@ -69,7 +70,8 @@ function newMockTemporal() {
 
 async function buildApp(
   role: 'ADMIN' | 'ENGINEER' = 'ADMIN',
-  temporalState: 'connected' | 'connecting' = 'connected'
+  temporalState: 'connected' | 'connecting' = 'connected',
+  slackId?: string
 ) {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
@@ -80,7 +82,13 @@ async function buildApp(
   app.decorate('temporal', mockTemporal as unknown as never);
   app.decorate('temporalConnection', { state: () => temporalState } as unknown as never);
   app.decorate('auth', {
-    verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'user-1' }),
+    verifyAccessToken: () => ({
+      exp: 9999999999,
+      iat: 0,
+      role,
+      sub: 'user-1',
+      ...(slackId ? { slackId } : {}),
+    }),
   } as unknown as never);
   await app.register(slackChannelRoutes, { prefix: '/api/v1/platform/slack-channels' });
   await app.ready();
@@ -1330,6 +1338,69 @@ describe('private channel content', () => {
       url: `/api/v1/platform/slack-channels/${CHANNEL}/${path}`,
     });
     expect(res.statusCode).toBe(200);
+    await app.close();
+  });
+
+  it.each(CONTENT_PATHS)('serves the %s of a private channel to a synced member', async (path) => {
+    const { app, mockPrisma } = await buildApp('ENGINEER', 'connected', 'U-ME');
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      isPrivate: true,
+      teamId: TEAM,
+    });
+    mockPrisma.teamMembership.findUnique.mockResolvedValue({ teamId: TEAM, userId: 'user-1' });
+    mockPrisma.slackChannelMember.findFirst.mockResolvedValue({ slackUserId: 'U-ME' });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/${path}`,
+    });
+    expect(res.statusCode).toBe(200);
+    // Membership of this channel, by the caller's linked id, in a list that is still fresh.
+    const where = mockPrisma.slackChannelMember.findFirst.mock.calls[0][0].where;
+    expect(where).toMatchObject({ channelId: CHANNEL, slackUserId: 'U-ME' });
+    const cutoff = where.channel.membersSyncedAt.gte as Date;
+    const ageHours = (Date.now() - cutoff.getTime()) / 3_600_000;
+    expect(ageHours).toBeGreaterThan(5.9);
+    expect(ageHours).toBeLessThan(6.1);
+    await app.close();
+  });
+
+  it('refuses a linked team member who is not in the synced list, with a hint', async () => {
+    const { app, mockPrisma } = await buildApp('ENGINEER', 'connected', 'U-ME');
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      isPrivate: true,
+      teamId: TEAM,
+    });
+    mockPrisma.teamMembership.findUnique.mockResolvedValue({ teamId: TEAM, userId: 'user-1' });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/memory`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.payload).error.details.hint).toContain('periodic sync');
+    expect(mockPrisma.memoryItem.findMany).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('asks nothing about membership for a caller with no linked Slack account', async () => {
+    const { app, mockPrisma } = await buildApp('ENGINEER');
+    mockPrisma.slackChannel.findUnique.mockResolvedValue({
+      id: CHANNEL,
+      isPrivate: true,
+      teamId: TEAM,
+    });
+    mockPrisma.teamMembership.findUnique.mockResolvedValue({ teamId: TEAM, userId: 'user-1' });
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/slack-channels/${CHANNEL}/memory`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(JSON.parse(res.payload).error.details.hint).toContain('Link your Slack account');
+    expect(mockPrisma.slackChannelMember.findFirst).not.toHaveBeenCalled();
     await app.close();
   });
 

@@ -13,6 +13,7 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import { useDataTableSort } from '@/hooks/useDataTableSort';
+import { useHasRole } from '@/hooks/useHasRole';
 import { type SlackChannel, useSlackChannels } from '@/hooks/useSlackChannels';
 import { useTeams } from '@/hooks/useTeams';
 import { navLabel } from '@/lib/navigation';
@@ -61,6 +62,7 @@ function SpendMeter({ channel }: { channel: SlackChannel }) {
 }
 
 export default function GovernSlackChannelsPage() {
+  const isAdmin = useHasRole('ADMIN');
   const router = useRouter();
   const {
     data: channels,
@@ -89,16 +91,26 @@ export default function GovernSlackChannelsPage() {
     <div className="space-y-6">
       <PageHeader
         actions={
-          <Button onClick={() => setRegisterOpen(true)} variant="primary">
-            <Icon name="plus" size={14} />
-            Register channel
-          </Button>
+          isAdmin ? (
+            <Button onClick={() => setRegisterOpen(true)} variant="primary">
+              <Icon name="plus" size={14} />
+              Register channel
+            </Button>
+          ) : undefined
         }
         help={
-          <p>
-            Open a channel to change its settings, review what it remembers, and handle its open
-            items.
-          </p>
+          isAdmin ? (
+            <p>
+              Open a channel to change its settings, review what it remembers, and handle its open
+              items.
+            </p>
+          ) : (
+            <p>
+              The channels your teams own. Open one to read what the assistant remembers there, its
+              open items and its activity. A private channel's are shown only to the people in it,
+              once your Slack account is linked in Settings.
+            </p>
+          )
         }
         subtitle="Slack channels the assistant responds in."
         title={navLabel('/admin/slack-channels')}
@@ -117,9 +129,11 @@ export default function GovernSlackChannelsPage() {
           {!channels || channels.length === 0 ? (
             <EmptyState
               action={
-                <Button onClick={() => setRegisterOpen(true)} size="sm">
-                  Register channel
-                </Button>
+                isAdmin ? (
+                  <Button onClick={() => setRegisterOpen(true)} size="sm">
+                    Register channel
+                  </Button>
+                ) : undefined
               }
               hint="Register a channel to let the assistant answer, follow up and remember context there. Each channel belongs to a team and can carry its own spend cap."
               icon="chat"

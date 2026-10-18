@@ -178,7 +178,7 @@ const ADMIN_PAGES: NavItem[] = [
     href: '/admin/slack-channels',
     icon: 'chat',
     label: 'Slack channels',
-    minRole: 'ADMIN',
+    minRole: 'ENGINEER',
     section: 'Configuration',
   },
   // Platform credentials: administration, not authoring.

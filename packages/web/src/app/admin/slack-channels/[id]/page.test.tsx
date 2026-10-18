@@ -3,6 +3,7 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { Suspense } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { useAuthStore } from '@/stores/authStore';
 import { nav, resetNavigation } from '@/test/mockNavigation';
 import { withQuery } from '@/test/rtl-helpers';
 
@@ -39,7 +40,10 @@ vi.mock('@/components/slackChannels/ChannelActivityTab', () => ({
 
 import SlackChannelDetailPage from './page';
 
-beforeEach(() => resetNavigation('', `/admin/slack-channels/${ID}`));
+beforeEach(() => {
+  resetNavigation('', `/admin/slack-channels/${ID}`);
+  useAuthStore.setState({ isAuthenticated: true, user: { role: 'ADMIN', sub: 'me' } });
+});
 
 // `use()` needs a promise whose identity is stable across renders.
 const PARAMS = Promise.resolve({ id: ID });
@@ -67,6 +71,21 @@ describe('SlackChannelDetailPage tabs', () => {
 
     fireEvent.click(screen.getByRole('tab', { name: 'Settings' }));
     expect((screen.getByLabelText('Draft') as HTMLInputElement).value).toBe('half-typed');
+  });
+
+  it('gives everyone else the read-only tabs, opening on Memory', async () => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+    await renderPage();
+    expect(await screen.findByText('memory tab')).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: 'Settings' })).toBeNull();
+    expect(screen.queryByLabelText('Draft')).toBeNull();
+  });
+
+  it('does not open Settings from the URL for someone who may not edit it', async () => {
+    useAuthStore.setState({ isAuthenticated: true, user: { role: 'ENGINEER', sub: 'me' } });
+    resetNavigation('tab=settings', `/admin/slack-channels/${ID}`);
+    await renderPage();
+    expect(await screen.findByText('memory tab')).toBeTruthy();
   });
 
   it('opens the tab named in the URL', async () => {

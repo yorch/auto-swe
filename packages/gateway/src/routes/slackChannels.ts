@@ -10,6 +10,7 @@ import { writeAuditLog } from '../lib/auditLog.js';
 import { sendError } from '../lib/httpErrors.js';
 import { PG_INT_MAX } from '../lib/pgInt.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
+import { membersFreshSince } from '../lib/privateChannelMembers.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { sendTemporalUnavailable, temporalConnected } from '../lib/temporalErrors.js';
 import { memberTeams } from '../lib/tenantScope.js';
@@ -262,25 +263,44 @@ async function assertChannelAccess(
 /**
  * The guard for what a channel's conversations produced — its memory, open items and
  * audit feed — on top of `assertChannelAccess`. Team membership says nothing about
- * membership of a private Slack channel, and the platform records no channel membership
- * to check that against, so a private channel's content is platform-ADMIN only. Its
- * configuration and budget stay team-visible.
+ * membership of a private Slack channel, so a private channel's content takes a
+ * platform ADMIN, or a team member who is in the Slack channel by its recently synced
+ * member list (`lib/privateChannelMembers.ts`). Its configuration and budget stay
+ * team-visible.
  */
 async function assertChannelContentAccess(
   fastify: FastifyInstance,
   user: JwtPayload,
-  channel: { isPrivate: boolean; teamId: string },
+  channel: { id: string; isPrivate: boolean; teamId: string },
   reply: FastifyReply
 ): Promise<boolean> {
   if (!(await assertChannelAccess(fastify, user, channel.teamId, reply))) {
     return false;
   }
-  if (channel.isPrivate && user.role !== 'ADMIN') {
+  if (!channel.isPrivate || user.role === 'ADMIN') {
+    return true;
+  }
+  const member = user.slackId
+    ? await fastify.prisma.slackChannelMember.findFirst({
+        select: { slackUserId: true },
+        where: {
+          channel: { membersSyncedAt: { gte: membersFreshSince() } },
+          channelId: channel.id,
+          slackUserId: user.slackId,
+        },
+      })
+    : null;
+  if (!member) {
     await sendError(
       reply,
       403,
       'PRIVATE_CHANNEL',
-      "A private channel's conversations are visible to administrators only"
+      "A private channel's conversations are visible to administrators and to its members",
+      {
+        hint: user.slackId
+          ? 'Membership is read from Slack by a periodic sync; if you just joined, try again later.'
+          : 'Link your Slack account in Settings to see the private channels you are in.',
+      }
     );
     return false;
   }
@@ -924,7 +944,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const channel = await fastify.prisma.slackChannel.findUnique({
-        select: { isPrivate: true, teamId: true },
+        select: { id: true, isPrivate: true, teamId: true },
         where: { id: request.params.id },
       });
       if (!channel) {
@@ -980,7 +1000,7 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const channel = await fastify.prisma.slackChannel.findUnique({
-        select: { isPrivate: true, teamId: true },
+        select: { id: true, isPrivate: true, teamId: true },
         where: { id: request.params.id },
       });
       if (!channel) {

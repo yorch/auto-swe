@@ -207,13 +207,18 @@ by the same pgvector search as everything else.
   says they are reference data, not instructions — in a mention turn, a reactive interjection, an
   ambient digest, and both lists of an org-flagging check.
 
-**A private channel's conversations are admin-only.** A channel's memory, open items and audit
-feed are readable by members of its owning team, except on a channel with `isPrivate` set, where
-they answer `403 PRIVATE_CHANNEL` to anyone but a platform ADMIN (`assertChannelContentAccess`).
-Team membership is not membership of the Slack channel, and the platform records no channel
-membership to check instead. The channel's configuration and budget stay team-visible. The same
-rule decides the run viewer: a turn in a private channel is not one of the team's runs, because its
-traces carry the conversation.
+**A private channel's conversations are for the people in it.** A channel's memory, open items and
+audit feed are readable by members of its owning team. On a channel with `isPrivate` set they take
+more, because team membership is not membership of the Slack channel: a platform ADMIN, or a member
+of the owning team whose linked Slack account (`User.slackId`, re-read on every request) is in the
+channel's `SlackChannelMember` list, while its `membersSyncedAt` is within
+`SLACK_CHANNEL_SYNC_STALE_HOURS` (`assertChannelContentAccess`, `lib/privateChannelMembers.ts`).
+Anyone else gets `403 PRIVATE_CHANNEL` with a hint — link a Slack account, or wait for the next
+sync. A channel the sync never read, or one whose list has gone stale, is admin-only, so turning the
+sync off returns every private channel to admin-only within that window. The channel's
+configuration and budget stay team-visible. The same rule decides the run viewer: a turn in a
+private channel is one of the team's runs only for its synced members, because its traces carry the
+conversation.
 
 Admins can view, edit, and delete channel memory from the admin surface. Editing an item's text
 kicks off `ReembedMemoryWorkflow` so its pgvector embedding catches up to the new text — started
@@ -351,6 +356,11 @@ sub-resources); channel-scoped agents are created from the agent-library form wi
 and a channel picker. `/:id/budget/reset` has no UI control — it is called directly, by an admin who
 knows a worker crashed mid-turn.
 
+Everyone else on a channel's owning team sees the same pages read-only: the list of their teams'
+channels, and each channel's Memory, Open items and Activity tabs, without Settings and without the
+edit, delete, resolve and dismiss controls. Slack users show as their ids there, since the user
+list that names them is an administrator's. A private channel's tabs answer as above.
+
 **Schedule lifecycle.** `provisionChannel` registers a channel on first contact, defaulting
 `isPrivate` from Slack's `channel_type`. Toggling ambient or reactive mode calls
 `syncChannelAmbientSchedule` / `deleteChannelAmbientSchedule` on the gateway's Temporal plugin, so
@@ -397,7 +407,8 @@ unproven on real traffic, and turn them on one channel at a time.
 - **A channel's turn runs are visible to its owning team, not to everyone in the Slack channel.**
   A turn run links its channel (`WorkflowRun.channelId`), and run visibility admits members of the
   channel's owning team — the same people who can open the channel's settings and audit feed —
-  and, for a private channel, platform ADMINs only. Someone who talks to the assistant in Slack but is not on that team does not see the run in
+  and, for a private channel, platform ADMINs and the team members in its synced member list.
+  Someone who talks to the assistant in Slack but is not on that team does not see the run in
   `/runs`. A run whose channel row has since been deleted loses the link and is visible to platform
   ADMINs only.
 - **Slack cannot launch a library agent against a repository.** The assistant answers, delegates a
@@ -429,6 +440,11 @@ unproven on real traffic, and turn them on one channel at a time.
   With the sync on, that window is one sync interval. Where Slack cannot answer, the payload
   heuristics still apply and neither is authoritative for every channel shape. Verify the flag on
   any channel holding sensitive discussion rather than trusting the default.
+- **Private-channel access lags Slack by one sync.** Someone removed from a private channel keeps
+  its dashboard content until the next sync replaces the list, or until the list ages past
+  `SLACK_CHANNEL_SYNC_STALE_HOURS` if the sync keeps failing; someone added waits for the next sync.
+  Access also follows the linked `User.slackId`, so an account linked to the wrong Slack user sees
+  that user's private channels.
 - **A channel made public in Slack stays private here.** The sync only tightens the flag, so a
   private channel converted to public keeps its admin-only content until an admin clears it.
 

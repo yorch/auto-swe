@@ -12,6 +12,7 @@ import { ModalFooter } from '@/components/ui/Modal';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { Textarea } from '@/components/ui/Textarea';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
+import { useHasRole } from '@/hooks/useHasRole';
 import {
   type MemoryItemDto,
   type SlackChannel,
@@ -94,6 +95,8 @@ function MemoryItemEditForm({
 
 /** What the channel assistant remembers about this channel, with edit and delete. */
 export function ChannelMemoryTab({ channel }: { channel: SlackChannel }) {
+  // Editing and deleting a channel's memory are an administrator's.
+  const isAdmin = useHasRole('ADMIN');
   const [showConsolidated, setShowConsolidated] = useState(false);
   const {
     data: items,
@@ -189,7 +192,7 @@ export function ChannelMemoryTab({ channel }: { channel: SlackChannel }) {
                           </span>
                         </div>
                       </div>
-                      {!isConsolidated && (
+                      {!isConsolidated && isAdmin && (
                         <ActionMenu
                           items={[
                             {

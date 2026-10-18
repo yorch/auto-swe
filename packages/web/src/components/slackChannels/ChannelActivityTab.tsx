@@ -11,6 +11,7 @@ import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { SegmentedControl } from '@/components/ui/SegmentedControl';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { Toolbar } from '@/components/ui/Toolbar';
+import { useHasRole } from '@/hooks/useHasRole';
 import {
   type ChannelAuditKind,
   type SlackChannel,
@@ -45,7 +46,9 @@ export function ChannelActivityTab({ channel }: { channel: SlackChannel }) {
     refetch,
     isLoading,
   } = useChannelAudit(channel.id, kindFilter);
-  const { data: users } = useUsers();
+  // The user list is an administrator's; everyone else sees Slack ids.
+  const isAdmin = useHasRole('ADMIN');
+  const { data: users } = useUsers(isAdmin);
   const names = emailsBySlackId(users);
 
   return (

@@ -32,7 +32,14 @@ interface RunShape {
   launchedById?: string | null;
   template: { teamId: string | null; members: string[] };
   /** The Slack channel's owning team, for a channel-assistant run. */
-  channel: { teamId: string; members: string[]; isPrivate?: boolean } | null;
+  channel: {
+    teamId: string;
+    members: string[];
+    isPrivate?: boolean;
+    /** Slack user ids in the channel's synced member list, and when it was synced. */
+    slackMembers?: string[];
+    membersSyncedAt?: Date | null;
+  } | null;
   /** The run's own repository — set on an epic child. */
   connection: Repo | null;
   workRequest: {
@@ -113,21 +120,33 @@ function matchesRun(where: Record<string, unknown>, run: RunShape): boolean {
         return run.template.teamId !== null && matchesTeam(team, run.template.members);
       }
       case 'channel': {
-        const { isPrivate, team, ...rest } = v as {
+        const { isPrivate, team, members, membersSyncedAt, ...rest } = v as {
           isPrivate?: boolean;
           team?: Record<string, unknown>;
+          members?: { some?: { slackUserId?: string } };
+          membersSyncedAt?: { gte?: Date };
         };
+        const memberTerm = members !== undefined || membersSyncedAt !== undefined;
         if (
           Object.keys(rest).length > 0 ||
           !team ||
-          (isPrivate !== undefined && isPrivate !== false)
+          typeof isPrivate !== 'boolean' ||
+          (memberTerm &&
+            (isPrivate !== true || !members?.some?.slackUserId || !membersSyncedAt?.gte))
         ) {
           throw new Error(`unrecognised channel predicate: ${JSON.stringify(v)}`);
         }
+        const c = run.channel;
+        if (c === null || (c.isPrivate ?? false) !== isPrivate || !matchesTeam(team, c.members)) {
+          return false;
+        }
+        if (!memberTerm) {
+          return true;
+        }
         return (
-          run.channel !== null &&
-          (isPrivate === undefined || (run.channel.isPrivate ?? false) === isPrivate) &&
-          matchesTeam(team, run.channel.members)
+          (c.slackMembers ?? []).includes(members?.some?.slackUserId as string) &&
+          !!c.membersSyncedAt &&
+          c.membersSyncedAt >= (membersSyncedAt?.gte as Date)
         );
       }
       case 'connection':
@@ -294,6 +313,46 @@ describe('buildWorkflowRunVisibilityFilter', () => {
         })
       )
     ).toBe(false);
+  });
+
+  describe('a private channel I am in', () => {
+    const linked = { role: 'ENGINEER', slackId: 'U-ME', sub: ME };
+    const seenBy = (actor: typeof linked | typeof engineer, r: RunShape) =>
+      matchesRun(buildWorkflowRunVisibilityFilter(actor, undefined), r);
+    const privateRun = (channel: Partial<NonNullable<RunShape['channel']>>) =>
+      run({
+        channel: {
+          isPrivate: true,
+          members: [ME],
+          membersSyncedAt: new Date(),
+          slackMembers: ['U-ME'],
+          teamId: MY_TEAM,
+          ...channel,
+        },
+        workRequest: null,
+      });
+
+    it('shows its runs to a team member whose linked Slack account is in its fresh list', () => {
+      expect(seenBy(linked, privateRun({}))).toBe(true);
+    });
+
+    it('hides them from a caller with no linked Slack account', () => {
+      expect(seenBy(engineer, privateRun({}))).toBe(false);
+    });
+
+    it('hides them when the caller is not in the list', () => {
+      expect(seenBy(linked, privateRun({ slackMembers: ['U-SOMEONE'] }))).toBe(false);
+    });
+
+    it('hides them when the list was never synced, or is stale', () => {
+      expect(seenBy(linked, privateRun({ membersSyncedAt: null }))).toBe(false);
+      const old = new Date(Date.now() - 7 * 60 * 60 * 1000);
+      expect(seenBy(linked, privateRun({ membersSyncedAt: old }))).toBe(false);
+    });
+
+    it('hides them from a channel member who is not on the owning team', () => {
+      expect(seenBy(linked, privateRun({ members: [OTHER] }))).toBe(false);
+    });
   });
 
   it('hides a channel-assistant run in another team’s channel', () => {
