@@ -340,6 +340,20 @@ describe('createChannelCodeTaskRun', () => {
     decide.mockResolvedValue({ allowed: true, reason: 'permitted' });
   });
 
+  describe('privacy', () => {
+    it('marks a code task from a private channel, so the thread can be told', async () => {
+      findChannel.mockResolvedValue({ isPrivate: true, teamId: 'team-1' } as never);
+      const result = await createChannelCodeTaskRun(INPUT);
+      expect(result).toMatchObject({ fromPrivateChannel: true });
+    });
+
+    it('leaves a public channel unmarked', async () => {
+      findChannel.mockResolvedValue({ isPrivate: false, teamId: 'team-1' } as never);
+      const result = await createChannelCodeTaskRun(INPUT);
+      expect(result).not.toHaveProperty('fromPrivateChannel');
+    });
+  });
+
   describe('access', () => {
     it('asks nothing about the requester while the gate is off', async () => {
       // The long-standing behaviour: an @mention needs no linked account. That

@@ -23,7 +23,7 @@ import { humanErrorBaselineRoutes } from './humanErrorBaselines.js';
 import { humanStepRoutes } from './humanSteps.js';
 import { inboundEventRoutes } from './inboundEvents.js';
 import { knowledgeRoutes } from './knowledge.js';
-import { lessonRoutes } from './lessons.js';
+import { lessonRoutes, runLessonRoutes } from './lessons.js';
 import { mcpConnectionRoutes } from './mcpConnections.js';
 import { meRoutes } from './me.js';
 import { modelCatalogRoutes } from './modelCatalog.js';
@@ -84,6 +84,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(organizationRoutes, { prefix: '/api/v1/admin/organizations' });
   await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
   await app.register(runCallbackDeliveryRoutes, { prefix: '/api/v1/workflow-runs' });
+  await app.register(runLessonRoutes, { prefix: '/api/v1/workflow-runs' });
   await app.register(stepRegistryRoutes, { prefix: '/api/v1/workflow-steps' });
   await app.register(webhookRoutes, { prefix: '/api/v1/webhooks' });
   // Signed events from other services; reads bodies as bytes in its own plugin.

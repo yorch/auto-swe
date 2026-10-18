@@ -96,7 +96,9 @@ security event in `/admin/security`.
 Delegating with an `@mention` launches a durable, thread-bound `RunnableWorkflow`. There are two
 routes:
 
-- **Code route** — uses the team's SWE template and behaves like any engineering run.
+- **Code route** — uses the team's SWE template and behaves like any engineering run, visible to
+  everyone who can reach the repository. From a private channel the acknowledgement starts with a
+  note saying so: the channel's privacy does not extend to the task, its run or its pull request.
 - **General route** — runs the seeded "Channel Task" template: `plan → cond → {single | composite}`.
   A `planChannelTask` step, deliberately biased against splitting, returns 1..N subtasks. A cohesive
   task runs a single `channelAssistant` node; a splittable one runs `runChannelSubtasks`, which does
@@ -193,6 +195,14 @@ by the same pgvector search as everything else.
   retried as the raw exchange. Recalled items reach the model inside a `<recalled_memory>` fence that
   says they are reference data, not instructions — in a mention turn, a reactive interjection, an
   ambient digest, and both lists of an org-flagging check.
+
+**A private channel's conversations are admin-only.** A channel's memory, open items and audit
+feed are readable by members of its owning team, except on a channel with `isPrivate` set, where
+they answer `403 PRIVATE_CHANNEL` to anyone but a platform ADMIN (`assertChannelContentAccess`).
+Team membership is not membership of the Slack channel, and the platform records no channel
+membership to check instead. The channel's configuration and budget stay team-visible. The same
+rule decides the run viewer: a turn in a private channel is not one of the team's runs, because its
+traces carry the conversation.
 
 Admins can view, edit, and delete channel memory from the admin surface. Editing an item's text
 kicks off `ReembedMemoryWorkflow` so its pgvector embedding catches up to the new text — started
@@ -319,8 +329,8 @@ Code-route tasks use the team's SWE template and stay visible like any engineeri
 snapshot onto `specSnapshot.channel`. `GET /api/v1/platform/slack-channels/:id/audit` aggregates the
 channel's runs into a "who asked what, when, and what it touched" feed — kind, who, when, status,
 cost, tokens, run ID. The channel page's Activity tab renders it with a kind filter and a link through
-to the full tool-call sequence; Slack user IDs show as the linked account's email where one exists. Read access uses the same `assertChannelAccess` guard as memory and open
-items.
+to the full tool-call sequence; Slack user IDs show as the linked account's email where one exists. Read access uses the same `assertChannelContentAccess` guard as memory and
+open items, so a private channel's feed is admin-only (§6).
 
 Channels are listed at `/admin/slack-channels` and configured on each channel's page
 (`/admin/slack-channels/[id]`, tabs Settings, Memory, Open items, Activity) over
@@ -375,8 +385,8 @@ unproven on real traffic, and turn them on one channel at a time.
   refusal.
 - **A channel's turn runs are visible to its owning team, not to everyone in the Slack channel.**
   A turn run links its channel (`WorkflowRun.channelId`), and run visibility admits members of the
-  channel's owning team — the same people who can open the channel's settings and audit feed.
-  Someone who talks to the assistant in Slack but is not on that team does not see the run in
+  channel's owning team — the same people who can open the channel's settings and audit feed —
+  and, for a private channel, platform ADMINs only. Someone who talks to the assistant in Slack but is not on that team does not see the run in
   `/runs`. A run whose channel row has since been deleted loses the link and is visible to platform
   ADMINs only.
 - **Slack cannot launch a library agent against a repository.** The assistant answers, delegates a
@@ -403,8 +413,8 @@ unproven on real traffic, and turn them on one channel at a time.
   apart from a worker log line: there is no review queue for refused memory.
 - **`isPrivate` is captured once, at provision.** It is read from `conversations.info` when Slack
   answers, but nothing re-checks it afterwards: a channel converted to private in Slack keeps the
-  value it was provisioned with, and its memory stays a cross-channel source until an admin flips
-  the flag. Where Slack cannot answer, the payload heuristics still apply and neither is
+  value it was provisioned with, and its memory stays a cross-channel source, and its memory,
+  open items, audit feed and turn runs stay readable by its team, until an admin flips the flag. Where Slack cannot answer, the payload heuristics still apply and neither is
   authoritative for every channel shape. Verify the flag on any channel holding sensitive
   discussion rather than trusting the default.
 

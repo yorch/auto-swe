@@ -9,8 +9,10 @@ import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
-import { reachableConnections } from '../lib/tenantScope.js';
-import { requireAuth, requireUser } from '../plugins/auth.js';
+import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
+import { ledTeams, reachableConnections } from '../lib/tenantScope.js';
+import { type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
+import { canManageTeamRepos } from './repositories.js';
 
 const ConsolidateBody = z.object({
   minClusterSize: z.number().int().min(2).max(20).optional(),
@@ -42,6 +44,37 @@ const LessonIdParams = z.object({ id: z.string().uuid() });
  * without the channel route's audit.
  */
 const LESSON_SCOPE = 'swe-lessons';
+
+/**
+ * What the caller may do with a repository's lessons. Managing them — deleting one,
+ * starting consolidation — is repository management, so it takes what editing the
+ * repository takes: a platform ADMIN, or a LEAD or ADMIN of its owning team
+ * (`canManageTeamRepos`). A shared team's members read the lessons but do not manage
+ * them. A lesson whose repository is gone is a platform ADMIN's alone.
+ */
+async function lessonRepoAccess(
+  fastify: Parameters<FastifyPluginAsync>[0],
+  user: JwtPayload,
+  gate: Parameters<typeof reachableConnections>[1],
+  repoId: string | null
+): Promise<'manage' | 'read' | 'none'> {
+  if (user.role === 'ADMIN') {
+    return 'manage';
+  }
+  if (!repoId) {
+    return 'none';
+  }
+  const repo = await fastify.prisma.connection.findFirst({
+    select: { teamId: true },
+    where: { AND: [{ id: repoId }, reachableConnections(user, gate)] },
+  });
+  if (!repo) {
+    return 'none';
+  }
+  return (await canManageTeamRepos(fastify.prisma, user, repo.teamId)) ? 'manage' : 'read';
+}
+
+const NOT_A_LEAD = "Only a lead of the repository's team can manage its lessons";
 
 export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -88,6 +121,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
             fastify.prisma.memoryItem.findMany({
               orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
               select: {
+                confidence: true,
                 consolidatedAt: true,
                 createdAt: true,
                 failureType: true,
@@ -97,6 +131,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
                 rationale: true,
                 repository: { select: { id: true, organizationName: true, repoName: true } },
                 workflow: { select: { currentStatus: true, id: true, temporalWorkflowId: true } },
+                workflowRunId: true,
               },
               skip: offset,
               take: limit,
@@ -106,7 +141,20 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
           ])
       );
 
-      return { data: lessons, meta: { limit, offset, total } };
+      // The repositories whose lessons this caller may manage, so the page offers the
+      // controls only where the routes below would accept them. A platform ADMIN manages
+      // every repository and gets no list.
+      const managedRepoIds =
+        user.role === 'ADMIN'
+          ? undefined
+          : (
+              await fastify.prisma.connection.findMany({
+                select: { id: true },
+                where: { team: { ...ledTeams(user), isActive: true }, type: 'git_repo' },
+              })
+            ).map((r) => r.id);
+
+      return { data: lessons, meta: { limit, managedRepoIds, offset, total } };
     }
   );
 
@@ -170,22 +218,30 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     }
   );
 
-  // POST /api/v1/lessons/consolidate — Trigger lesson consolidation (ADMIN only)
+  // POST /api/v1/lessons/consolidate — Consolidate one repository's lessons (ADMIN, or a
+  // lead of the repository's team)
   app.post(
     '/consolidate',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { body: ConsolidateBody },
     },
     async (request, reply) => {
+      const user = requireUser(request);
       const { repoId, minClusterSize, similarityThreshold } = request.body;
 
       const repo = await fastify.prisma.connection.findUnique({
         select: { id: true },
         where: { id: repoId },
       });
-      if (!repo) {
+      const access = repo
+        ? await lessonRepoAccess(fastify, user, request.repoAccessGate, repo.id)
+        : 'none';
+      if (access === 'none') {
         return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+      }
+      if (access === 'read') {
+        return sendError(reply, 403, 'FORBIDDEN', NOT_A_LEAD);
       }
 
       const workflowId = `consolidate-lessons-${repoId}-${Date.now()}`;
@@ -281,11 +337,11 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     return { data };
   });
 
-  // DELETE /api/v1/lessons/:id — Delete lesson (ADMIN only)
+  // DELETE /api/v1/lessons/:id — Delete lesson (ADMIN, or a lead of the repository's team)
   app.delete(
     '/:id',
     {
-      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { params: LessonIdParams },
     },
     async (request, reply) => {
@@ -303,8 +359,15 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         },
         where: { id: request.params.id, scope: LESSON_SCOPE },
       });
-      if (!lesson) {
+      // A lesson the caller cannot read is not found, so a delete does not confirm it exists.
+      const access = lesson
+        ? await lessonRepoAccess(fastify, actor, request.repoAccessGate, lesson.repoId)
+        : 'none';
+      if (!lesson || access === 'none') {
         return sendError(reply, 404, 'LESSON_NOT_FOUND', 'Lesson not found');
+      }
+      if (access === 'read') {
+        return sendError(reply, 403, 'FORBIDDEN', NOT_A_LEAD);
       }
 
       // Forgetting follows the lesson into every row that carries it — merged
@@ -327,6 +390,134 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
       });
 
       return { data: { deleted: true, forgotten: result.deleted, restored: result.restored } };
+    }
+  );
+};
+
+/** What a run's lesson panel shows of one lesson. */
+const RUN_LESSON_SELECT = {
+  confidence: true,
+  consolidatedAt: true,
+  createdAt: true,
+  failureType: true,
+  id: true,
+  lessonSummary: true,
+  metadata: true,
+  rationale: true,
+  supersededAt: true,
+} satisfies Prisma.MemoryItemSelect;
+
+/** At most this many recall events, and distinct recalled lessons, are read per run. */
+const MAX_RECALL_EVENTS = 200;
+const MAX_RECALLED_LESSONS = 100;
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The lesson ids and recalling agents in one `lessons.retrieved` event. The event is the
+ * worker's own (`lib/lessonRecall.ts`), but its JSON is read defensively: a malformed entry
+ * is skipped rather than trusted as an id.
+ */
+function recallEntries(outputJson: unknown): { lessonId: string; recalledFor: string | null }[] {
+  const out = outputJson as { lessons?: unknown; recalledFor?: unknown } | null;
+  if (!out || !Array.isArray(out.lessons)) {
+    return [];
+  }
+  const recalledFor = typeof out.recalledFor === 'string' ? out.recalledFor : null;
+  return out.lessons.flatMap((l) => {
+    const id = (l as { lessonId?: unknown } | null)?.lessonId;
+    return typeof id === 'string' && UUID_RE.test(id) ? [{ lessonId: id, recalledFor }] : [];
+  });
+}
+
+/**
+ * `/api/v1/workflow-runs/:id/lessons`: the lessons a run recalled into its agents' prompts and
+ * the ones it wrote, for whoever can see the run.
+ *
+ * Seeing the run is the whole check. A recalled lesson's text is already in the run's traces —
+ * it was part of an agent's prompt — so this shows nothing the run's reader could not read
+ * there. The recalled ids come only from the run's own trace events, never from the caller.
+ */
+export const runLessonRoutes: FastifyPluginAsync = async (fastify) => {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+
+  app.get(
+    '/:id/lessons',
+    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: LessonIdParams } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const run = await fastify.prisma.workflowRun.findFirst({
+        select: { id: true },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+        },
+      });
+      if (!run) {
+        return sendError(reply, 404, 'RUN_NOT_FOUND', 'Workflow run not found');
+      }
+
+      const [events, written] = await runUnscoped(
+        'scoped by a run the caller was authorized to read',
+        ['AgentTrace', 'MemoryItem'],
+        () =>
+          Promise.all([
+            fastify.prisma.agentTrace.findMany({
+              orderBy: [{ createdAt: 'asc' }, { seq: 'asc' }],
+              select: { outputJson: true },
+              take: MAX_RECALL_EVENTS,
+              where: { runId: run.id, toolName: 'lessons.retrieved', type: 'activity_event' },
+            }),
+            fastify.prisma.memoryItem.findMany({
+              orderBy: { createdAt: 'asc' },
+              select: RUN_LESSON_SELECT,
+              take: 50,
+              where: { scope: LESSON_SCOPE, workflowRunId: run.id },
+            }),
+          ])
+      );
+
+      // One row per lesson, in the order it was first recalled, naming every agent that recalled it.
+      const recalledBy = new Map<string, Set<string>>();
+      for (const event of events) {
+        for (const { lessonId, recalledFor } of recallEntries(event.outputJson)) {
+          if (!recalledBy.has(lessonId)) {
+            if (recalledBy.size >= MAX_RECALLED_LESSONS) {
+              continue;
+            }
+            recalledBy.set(lessonId, new Set());
+          }
+          if (recalledFor) {
+            recalledBy.get(lessonId)?.add(recalledFor);
+          }
+        }
+      }
+      const recalledIds = [...recalledBy.keys()];
+      const rows =
+        recalledIds.length === 0
+          ? []
+          : await runUnscoped(
+              'ids read from the trace of a run the caller was authorized to read',
+              ['MemoryItem'],
+              () =>
+                fastify.prisma.memoryItem.findMany({
+                  select: RUN_LESSON_SELECT,
+                  where: { id: { in: recalledIds }, scope: LESSON_SCOPE },
+                })
+            );
+      const byId = new Map(rows.map((r) => [r.id, r]));
+
+      return {
+        data: {
+          // `lesson` is null once the lesson has been deleted: the run still recalled it.
+          recalled: recalledIds.map((lessonId) => ({
+            lesson: byId.get(lessonId) ?? null,
+            lessonId,
+            recalledFor: [...(recalledBy.get(lessonId) ?? [])],
+          })),
+          written,
+        },
+      };
     }
   );
 };

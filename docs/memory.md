@@ -123,10 +123,17 @@ owning team and its organization, since lessons belong to the repository, and ap
 on `created_at` inside the similarity query, so `lessonRetrievalLimit` still counts only lessons
 that may be recalled. `searchLessons` applies it too; `explainLesson` explains any lesson of the
 repository whatever its age. An aged-out lesson is not deleted: it stays in the table and on
-`/admin/lessons`, can still be superseded, and comes back into recall if the setting is raised or
+`/lessons`, can still be superseded, and comes back into recall if the setting is raised or
 cleared. The owning team is cached for the ~30 s config-cache window; if the setting cannot be
 read, the failure is logged and aging is treated as off rather than failing recall or
 consolidation.
+
+A run's page lists, under **Lessons**, every lesson its agents recalled — once each, naming the
+agents that were given it, and saying when one has since been merged, replaced or deleted — and the
+lessons the run wrote (`GET /api/v1/workflow-runs/:id/lessons`). Whoever can see the run sees them:
+a recalled lesson's text is already in the run's traces, as part of an agent's prompt. The recalled
+ids are read from the run's own `lessons.retrieved` trace events, so a recall that was not traced is
+not listed.
 
 The implementer and the fixers also get two read-only tools, `searchLessons` and `explainLesson`,
 bound to the session's repository: one asks for lessons by the agent's own query, the other shows
@@ -142,8 +149,8 @@ crowded one would get nothing back. The setting needs pgvector 0.8 or later.
 ## 4. Consolidation
 
 A Temporal Schedule (`consolidationCron`, default weekly) starts one `ConsolidateLessonsWorkflow`
-per repository with `Connection.consolidationEnabled`. Admins can also run it from
-`/admin/lessons`. It clusters the repository's active lessons that have not aged out (§3) by embedding similarity
+per repository with `Connection.consolidationEnabled`. A platform ADMIN can also run it for every
+repository, or one, from `/lessons`, and a lead of a repository's owning team for that repository. It clusters the repository's active lessons that have not aged out (§3) by embedding similarity
 (`consolidationSimilarityThreshold`, default 0.85), and for each cluster of at least
 `consolidationMinClusterSize` (default 3) asks the `lessonConsolidator` agent for one or two
 generalised lessons. In one transaction, under a per-repository advisory lock, it inserts those and
@@ -166,7 +173,16 @@ refused for a match and a drop are security events on `/admin/security` — `MEM
 
 ## 6. Administration
 
-`/admin/lessons` lists, searches and deletes lessons and starts consolidation. Channel memory is
+`/lessons` lists and searches lessons for every role. An engineer or lead sees the lessons of
+the repositories they can reach — the owning team's or a team it is shared with, under the access
+gate — each with its failure type, the run's outcome, a `Low confidence` label below 0.5, and a link
+to the run it was written from. Managing a repository's lessons — deleting one, starting
+consolidation — takes what editing the repository takes: a platform ADMIN, or a LEAD or ADMIN of its
+owning (and active) team. A shared team's members read the lessons and do not manage them, and a
+lesson whose repository is gone is a platform ADMIN's alone. The list names the repositories the
+caller manages (`meta.managedRepoIds`) so the page offers the controls only there. Platform ADMINs
+also see every repository's lessons, the per-repository counts, and consolidate all at once.
+Channel memory is
 edited and deleted per channel ([channel-assistant.md §6](./channel-assistant.md#6-memory)).
 
 **Deleting forgets, through every copy.** Both delete routes run `forgetMemoryItems`
@@ -200,6 +216,9 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
 
 ## Limitations
 
+- **An engineer cannot flag a lesson.** Someone who reads a wrong lesson on a repository whose team
+  they do not lead has no control to dispute it; they ask a lead of that team or an administrator.
+  A lead's delete is final, like an admin's, and there is no review step before it.
 - **An incomplete scan refuses writes but not recall.** While an `INJECTION` scanner pattern is
   quarantined (up to ten minutes in that process), every lesson, channel summary and passively
   ingested fact written in that process is refused, and consolidation leaves its clusters as they

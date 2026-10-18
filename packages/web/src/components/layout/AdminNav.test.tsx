@@ -30,7 +30,7 @@ describe('AdminNav', () => {
     resetNavigation('', '/admin/users');
     render(<AdminNav />);
     expect(links()).toEqual(expect.arrayContaining(['/admin', '/admin/users', '/admin/scanner']));
-    for (const section of ['Access', 'Security', 'Configuration', 'Credentials', 'Knowledge']) {
+    for (const section of ['Access', 'Security', 'Configuration', 'Credentials', 'Quality']) {
       expect(screen.getByRole('list', { hidden: true, name: section })).toBeTruthy();
     }
   });

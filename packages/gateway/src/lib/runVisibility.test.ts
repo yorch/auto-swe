@@ -32,7 +32,7 @@ interface RunShape {
   launchedById?: string | null;
   template: { teamId: string | null; members: string[] };
   /** The Slack channel's owning team, for a channel-assistant run. */
-  channel: { teamId: string; members: string[] } | null;
+  channel: { teamId: string; members: string[]; isPrivate?: boolean } | null;
   /** The run's own repository — set on an epic child. */
   connection: Repo | null;
   workRequest: {
@@ -113,11 +113,22 @@ function matchesRun(where: Record<string, unknown>, run: RunShape): boolean {
         return run.template.teamId !== null && matchesTeam(team, run.template.members);
       }
       case 'channel': {
-        const { team, ...rest } = v as { team?: Record<string, unknown> };
-        if (Object.keys(rest).length > 0 || !team) {
+        const { isPrivate, team, ...rest } = v as {
+          isPrivate?: boolean;
+          team?: Record<string, unknown>;
+        };
+        if (
+          Object.keys(rest).length > 0 ||
+          !team ||
+          (isPrivate !== undefined && isPrivate !== false)
+        ) {
           throw new Error(`unrecognised channel predicate: ${JSON.stringify(v)}`);
         }
-        return run.channel !== null && matchesTeam(team, run.channel.members);
+        return (
+          run.channel !== null &&
+          (isPrivate === undefined || (run.channel.isPrivate ?? false) === isPrivate) &&
+          matchesTeam(team, run.channel.members)
+        );
       }
       case 'connection':
         return matchesRepo(v, run.connection);
@@ -272,6 +283,17 @@ describe('buildWorkflowRunVisibilityFilter', () => {
     expect(visible(run({ channel: { members: [ME], teamId: MY_TEAM }, workRequest: null }))).toBe(
       true
     );
+  });
+
+  it('hides a channel-assistant run in a private channel of my team', () => {
+    expect(
+      visible(
+        run({
+          channel: { isPrivate: true, members: [ME], teamId: MY_TEAM },
+          workRequest: null,
+        })
+      )
+    ).toBe(false);
   });
 
   it('hides a channel-assistant run in another team’s channel', () => {

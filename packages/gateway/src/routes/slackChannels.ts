@@ -260,6 +260,34 @@ async function assertChannelAccess(
 }
 
 /**
+ * The guard for what a channel's conversations produced — its memory, open items and
+ * audit feed — on top of `assertChannelAccess`. Team membership says nothing about
+ * membership of a private Slack channel, and the platform records no channel membership
+ * to check that against, so a private channel's content is platform-ADMIN only. Its
+ * configuration and budget stay team-visible.
+ */
+async function assertChannelContentAccess(
+  fastify: FastifyInstance,
+  user: JwtPayload,
+  channel: { isPrivate: boolean; teamId: string },
+  reply: FastifyReply
+): Promise<boolean> {
+  if (!(await assertChannelAccess(fastify, user, channel.teamId, reply))) {
+    return false;
+  }
+  if (channel.isPrivate && user.role !== 'ADMIN') {
+    await sendError(
+      reply,
+      403,
+      'PRIVATE_CHANNEL',
+      "A private channel's conversations are visible to administrators only"
+    );
+    return false;
+  }
+  return true;
+}
+
+/**
  * The audit log keys every row on a UUID entity id, and an erasure is about a
  * Slack user, whose id is not one. Every erasure is recorded against this one
  * fixed id, with the Slack user id in the row's body.
@@ -545,13 +573,13 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const row = await fastify.prisma.slackChannel.findUnique({
-        select: { id: true, teamId: true },
+        select: { id: true, isPrivate: true, teamId: true },
         where: { id: request.params.id },
       });
       if (!row) {
         return sendError(reply, 404, 'NOT_FOUND', 'Channel not found');
       }
-      if (!(await assertChannelAccess(fastify, user, row.teamId, reply))) {
+      if (!(await assertChannelContentAccess(fastify, user, row, reply))) {
         return reply;
       }
       const showConsolidated = request.query.includeConsolidated;
@@ -896,13 +924,13 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const channel = await fastify.prisma.slackChannel.findUnique({
-        select: { teamId: true },
+        select: { isPrivate: true, teamId: true },
         where: { id: request.params.id },
       });
       if (!channel) {
         return sendError(reply, 404, 'NOT_FOUND', 'Channel not found');
       }
-      if (!(await assertChannelAccess(fastify, user, channel.teamId, reply))) {
+      if (!(await assertChannelContentAccess(fastify, user, channel, reply))) {
         return reply;
       }
       const statusFilter = request.query.status;
@@ -952,13 +980,13 @@ export const slackChannelRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       const channel = await fastify.prisma.slackChannel.findUnique({
-        select: { teamId: true },
+        select: { isPrivate: true, teamId: true },
         where: { id: request.params.id },
       });
       if (!channel) {
         return sendError(reply, 404, 'NOT_FOUND', 'Channel not found');
       }
-      if (!(await assertChannelAccess(fastify, user, channel.teamId, reply))) {
+      if (!(await assertChannelContentAccess(fastify, user, channel, reply))) {
         return reply;
       }
 

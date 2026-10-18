@@ -27,9 +27,11 @@ export interface VisibilityActor {
  * - it records its own repository (`WorkflowRun.connection`, an epic child)
  *   and they can reach that one;
  * - it runs a template owned by one of their teams;
- * - it is a channel-assistant run in a Slack channel owned by one of their
- *   teams — the same audience `assertChannelAccess` admits to the channel's
- *   config and its audit feed, which links to these runs.
+ * - it is a channel-assistant run in a public Slack channel owned by one of
+ *   their teams — the same audience `assertChannelContentAccess` admits to the
+ *   channel's memory and audit feed, which links to these runs. A private
+ *   channel's turns carry its conversation in their traces, and team membership
+ *   is not membership of the Slack channel, so those stay ADMIN-only.
  * - a service principal of one of their teams requested it AND it names no
  *   repository. A principal's run on a repository is decided by the repository
  *   terms above, like anyone's, so the access gate and shared-team rules apply
@@ -87,7 +89,7 @@ export function buildWorkflowRunVisibilityFilter(
       { workRequest: { connection: reachableConnections(actor, gate) } },
       { connection: reachableConnections(actor, gate) },
       { template: { team: memberTeams(actor) } },
-      { channel: { team: memberTeams(actor) } },
+      { channel: { isPrivate: false, team: memberTeams(actor) } },
       servicePrincipalTeamTerm(actor),
     ],
   };
