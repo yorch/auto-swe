@@ -1,4 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
+import { privateChannelMemberWhere } from './privateChannelMembers.js';
 import {
   type MaybeGate,
   memberTeams,
@@ -10,6 +11,8 @@ import {
 export interface VisibilityActor {
   sub: string;
   role: string;
+  /** The caller's linked Slack account, as the auth layer re-read it for this request. */
+  slackId?: string;
 }
 
 /**
@@ -27,11 +30,12 @@ export interface VisibilityActor {
  * - it records its own repository (`WorkflowRun.connection`, an epic child)
  *   and they can reach that one;
  * - it runs a template owned by one of their teams;
- * - it is a channel-assistant run in a public Slack channel owned by one of
- *   their teams — the same audience `assertChannelContentAccess` admits to the
+ * - it is a channel-assistant run in a Slack channel owned by one of their
+ *   teams — public, or private with the caller in its recently synced member
+ *   list — the same audience `assertChannelContentAccess` admits to the
  *   channel's memory and audit feed, which links to these runs. A private
  *   channel's turns carry its conversation in their traces, and team membership
- *   is not membership of the Slack channel, so those stay ADMIN-only.
+ *   is not membership of the Slack channel (`lib/privateChannelMembers.ts`).
  * - a service principal of one of their teams requested it AND it names no
  *   repository. A principal's run on a repository is decided by the repository
  *   terms above, like anyone's, so the access gate and shared-team rules apply
@@ -66,6 +70,12 @@ export interface VisibilityActor {
  * The requester term is not re-checked against current membership: someone
  * who launched a run keeps seeing it after leaving the team.
  */
+/** A private channel's runs, for a team member who is in the channel; none without a link. */
+function privateChannelTerm(actor: VisibilityActor): Prisma.WorkflowRunWhereInput[] {
+  const member = privateChannelMemberWhere(actor.slackId);
+  return member ? [{ channel: { ...member, team: memberTeams(actor) } }] : [];
+}
+
 export function buildWorkflowRunVisibilityFilter(
   actor: VisibilityActor,
   gate: MaybeGate
@@ -90,6 +100,7 @@ export function buildWorkflowRunVisibilityFilter(
       { connection: reachableConnections(actor, gate) },
       { template: { team: memberTeams(actor) } },
       { channel: { isPrivate: false, team: memberTeams(actor) } },
+      ...privateChannelTerm(actor),
       servicePrincipalTeamTerm(actor),
     ],
   };

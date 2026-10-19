@@ -19,6 +19,11 @@ function newMockPrisma() {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn(),
     },
+    lessonFlag: {
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
+      findMany: vi.fn().mockResolvedValue([]),
+      upsert: vi.fn().mockResolvedValue({}),
+    },
     memoryItem: {
       count: vi.fn().mockResolvedValue(0),
       delete: vi.fn().mockResolvedValue({}),
@@ -453,5 +458,169 @@ describe('GET /workflow-runs/:id/lessons', () => {
       workflowRunId: RUN_ID,
     });
     expect(prisma.memoryItem.findMany.mock.calls[0][0].select.embedding).toBeUndefined();
+  });
+});
+
+describe('lesson flags', () => {
+  const LESSON_ID = '55555555-5555-4555-8555-555555555555';
+  const lessonRow = { id: LESSON_ID, lessonSummary: 's', repoId: REPO_ID };
+
+  /** An ENGINEER who reaches the repository and, when `lead`, leads its team. */
+  async function reader(lead = false) {
+    const built = await buildApp('ENGINEER');
+    built.prisma.memoryItem.findFirst.mockResolvedValue(lessonRow);
+    built.prisma.connection.findFirst.mockResolvedValue({ teamId: 'team-1' });
+    built.prisma.teamMembership.findUnique.mockResolvedValue({
+      role: lead ? 'LEAD' : 'ENGINEER',
+      team: { isActive: true },
+    });
+    return built;
+  }
+
+  it('lets anyone who reads a lesson flag it, once, with an audited reason', async () => {
+    const { app, prisma } = await reader();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { reason: '  The migration step no longer exists  ' },
+      url: `/api/v1/lessons/${LESSON_ID}/flags`,
+    });
+    expect(res.statusCode).toBe(201);
+    expect(prisma.lessonFlag.upsert).toHaveBeenCalledWith({
+      create: {
+        flaggedById: 'admin-1',
+        memoryItemId: LESSON_ID,
+        reason: 'The migration step no longer exists',
+      },
+      update: { reason: 'The migration step no longer exists' },
+      where: { memoryItemId_flaggedById: { flaggedById: 'admin-1', memoryItemId: LESSON_ID } },
+    });
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        afterJson: { event: 'lesson.flagged', reason: 'The migration step no longer exists' },
+        entityId: LESSON_ID,
+        entityType: 'MemoryItem',
+      }),
+    });
+  });
+
+  it('refuses an empty reason', async () => {
+    const { app, prisma } = await reader();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { reason: '   ' },
+      url: `/api/v1/lessons/${LESSON_ID}/flags`,
+    });
+    expect(res.statusCode).toBe(400);
+    expect(prisma.lessonFlag.upsert).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for a lesson the caller cannot reach', async () => {
+    const { app, prisma } = await reader();
+    prisma.connection.findFirst.mockResolvedValue(null);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { reason: 'wrong' },
+      url: `/api/v1/lessons/${LESSON_ID}/flags`,
+    });
+    expect(res.statusCode).toBe(404);
+    expect(prisma.lessonFlag.upsert).not.toHaveBeenCalled();
+  });
+
+  it("withdraws only the caller's own flag", async () => {
+    const { app, prisma } = await reader();
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/lessons/${LESSON_ID}/flags/mine`,
+    });
+    expect(res.json().data).toEqual({ withdrawn: true });
+    expect(prisma.lessonFlag.deleteMany).toHaveBeenCalledWith({
+      where: { flaggedById: 'admin-1', memoryItemId: LESSON_ID },
+    });
+  });
+
+  it('lets a lead clear every flag, keeping the reasons in the audit row', async () => {
+    const { app, prisma } = await reader(true);
+    prisma.lessonFlag.findMany.mockResolvedValue([{ flaggedById: 'u-2', reason: 'stale' }]);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/lessons/${LESSON_ID}/flags`,
+    });
+    expect(res.json().data).toEqual({ cleared: 1 });
+    expect(prisma.lessonFlag.deleteMany).toHaveBeenCalledWith({
+      where: { memoryItemId: LESSON_ID },
+    });
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        afterJson: { event: 'lesson.flags_cleared' },
+        beforeJson: { flags: [{ flaggedById: 'u-2', reason: 'stale' }] },
+      }),
+    });
+  });
+
+  it('refuses to clear flags for someone who only reads the lesson', async () => {
+    const { app, prisma } = await reader(false);
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/lessons/${LESSON_ID}/flags`,
+    });
+    expect(res.statusCode).toBe(403);
+    expect(prisma.lessonFlag.deleteMany).not.toHaveBeenCalled();
+  });
+
+  describe('in the list', () => {
+    const flaggedLesson = {
+      _count: { flags: 2 },
+      flags: [
+        {
+          createdAt: '2026-10-01T00:00:00.000Z',
+          flaggedBy: { email: 'a@x.test' },
+          flaggedById: 'u-a',
+          reason: 'outdated',
+        },
+        {
+          createdAt: '2026-10-02T00:00:00.000Z',
+          flaggedBy: { email: 'me@x.test' },
+          flaggedById: 'admin-1',
+          reason: 'mine',
+        },
+      ],
+      id: LESSON_ID,
+      lessonSummary: 's',
+      repository: { id: REPO_ID, organizationName: 'acme', repoName: 'api' },
+    };
+
+    it('narrows to flagged lessons on request', async () => {
+      const { app, prisma } = await buildApp('ENGINEER');
+      await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/lessons?flagged=true' });
+      expect(lastListWhere(prisma).flags).toEqual({ some: {} });
+    });
+
+    it('shows a reader the count and their own flag, never who else flagged or why', async () => {
+      const { app, prisma } = await buildApp('ENGINEER');
+      prisma.memoryItem.findMany.mockResolvedValue([flaggedLesson]);
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/lessons' });
+      const [row] = res.json().data;
+      expect(row.flagCount).toBe(2);
+      expect(row.myFlag).toMatchObject({ reason: 'mine' });
+      expect(row.flags).toBeUndefined();
+      expect(row._count).toBeUndefined();
+    });
+
+    it('shows the reasons to a lead of the repository team', async () => {
+      const { app, prisma } = await buildApp('ENGINEER');
+      prisma.memoryItem.findMany.mockResolvedValue([flaggedLesson]);
+      prisma.connection.findMany.mockResolvedValue([{ id: REPO_ID }]);
+      const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/lessons' });
+      expect(res.json().data[0].flags).toEqual([
+        { createdAt: '2026-10-01T00:00:00.000Z', email: 'a@x.test', reason: 'outdated' },
+        { createdAt: '2026-10-02T00:00:00.000Z', email: 'me@x.test', reason: 'mine' },
+      ]);
+    });
   });
 });

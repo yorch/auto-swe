@@ -21,6 +21,8 @@ const ConsolidateBody = z.object({
 });
 
 const LessonListQuery = paginationQuery({ defaultLimit: 100, maxLimit: 200 }).extend({
+  // Only lessons someone has flagged as wrong.
+  flagged: booleanQueryParam(false),
   includeConsolidated: booleanQueryParam(false),
   // Narrow to one repository, and/or to lessons whose summary or rationale contains `q`.
   q: z.string().trim().min(1).max(200).optional(),
@@ -35,6 +37,8 @@ const LessonSearchQuery = z.object({
 });
 
 const LessonIdParams = z.object({ id: z.string().uuid() });
+
+const FlagBody = z.object({ reason: z.string().trim().min(1).max(500) });
 
 /**
  * `memory_items` holds two memories: repository lessons and Slack channel
@@ -88,7 +92,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { includeConsolidated, limit, offset, q, repoId } = request.query;
+      const { flagged, includeConsolidated, limit, offset, q, repoId } = request.query;
 
       const accessFilter: Prisma.MemoryItemWhereInput =
         user.role === 'ADMIN'
@@ -102,6 +106,7 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
         // Combined with the access filter, never replacing it: a repoId the caller cannot
         // reach matches nothing rather than widening the result.
         ...(repoId && { repoId }),
+        ...(flagged && { flags: { some: {} } }),
         ...(q && {
           OR: [
             { lessonSummary: { contains: q, mode: 'insensitive' } },
@@ -121,10 +126,21 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
             fastify.prisma.memoryItem.findMany({
               orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
               select: {
+                _count: { select: { flags: true } },
                 confidence: true,
                 consolidatedAt: true,
                 createdAt: true,
                 failureType: true,
+                flags: {
+                  orderBy: { createdAt: 'desc' },
+                  select: {
+                    createdAt: true,
+                    flaggedBy: { select: { email: true } },
+                    flaggedById: true,
+                    reason: true,
+                  },
+                  take: 20,
+                },
                 id: true,
                 lessonSummary: true,
                 metadata: true,
@@ -154,7 +170,28 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
               })
             ).map((r) => r.id);
 
-      return { data: lessons, meta: { limit, managedRepoIds, offset, total } };
+      // Who flagged a lesson and why is for the people who act on it; everyone else sees
+      // how many flags it has and their own.
+      const managed = new Set(managedRepoIds ?? []);
+      const data = lessons.map(({ _count, flags, ...lesson }) => {
+        const manages =
+          user.role === 'ADMIN' || (!!lesson.repository && managed.has(lesson.repository.id));
+        const mine = flags.find((f) => f.flaggedById === user.sub);
+        return {
+          ...lesson,
+          flagCount: _count.flags,
+          flags: manages
+            ? flags.map((f) => ({
+                createdAt: f.createdAt,
+                email: f.flaggedBy.email,
+                reason: f.reason,
+              }))
+            : undefined,
+          myFlag: mine ? { createdAt: mine.createdAt, reason: mine.reason } : null,
+        };
+      });
+
+      return { data, meta: { limit, managedRepoIds, offset, total } };
     }
   );
 
@@ -336,6 +373,111 @@ export const lessonRoutes: FastifyPluginAsync = async (fastify) => {
 
     return { data };
   });
+
+  /** A repository lesson and what the caller may do with it; null when they cannot read it. */
+  async function readableLesson(
+    user: JwtPayload,
+    gate: Parameters<typeof reachableConnections>[1],
+    id: string
+  ) {
+    const lesson = await fastify.prisma.memoryItem.findFirst({
+      select: { id: true, lessonSummary: true, repoId: true },
+      where: { id, scope: LESSON_SCOPE },
+    });
+    if (!lesson) {
+      return null;
+    }
+    const access = await lessonRepoAccess(fastify, user, gate, lesson.repoId);
+    return access === 'none' ? null : { access, lesson };
+  }
+
+  // POST /api/v1/lessons/:id/flags — Flag a lesson as wrong, or replace your reason
+  app.post(
+    '/:id/flags',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: { body: FlagBody, params: LessonIdParams },
+    },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const found = await readableLesson(actor, request.repoAccessGate, request.params.id);
+      if (!found) {
+        return sendError(reply, 404, 'LESSON_NOT_FOUND', 'Lesson not found');
+      }
+      const { reason } = request.body;
+      await fastify.prisma.$transaction(async (tx) => {
+        // `(memoryItemId, flaggedById)` is a plain unique index, so an upsert is safe here.
+        await tx.lessonFlag.upsert({
+          create: { flaggedById: actor.sub, memoryItemId: found.lesson.id, reason },
+          update: { reason },
+          where: {
+            memoryItemId_flaggedById: { flaggedById: actor.sub, memoryItemId: found.lesson.id },
+          },
+        });
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor,
+          after: { event: 'lesson.flagged', reason },
+          client: tx,
+          entityId: found.lesson.id,
+          entityType: 'MemoryItem',
+        });
+      });
+      return reply.status(201).send({ data: { flagged: true } });
+    }
+  );
+
+  // DELETE /api/v1/lessons/:id/flags/mine — Withdraw your own flag
+  app.delete(
+    '/:id/flags/mine',
+    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: LessonIdParams } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const found = await readableLesson(actor, request.repoAccessGate, request.params.id);
+      if (!found) {
+        return sendError(reply, 404, 'LESSON_NOT_FOUND', 'Lesson not found');
+      }
+      const { count } = await fastify.prisma.lessonFlag.deleteMany({
+        where: { flaggedById: actor.sub, memoryItemId: found.lesson.id },
+      });
+      return { data: { withdrawn: count > 0 } };
+    }
+  );
+
+  // DELETE /api/v1/lessons/:id/flags — Clear every flag on a lesson you manage, keeping the lesson
+  app.delete(
+    '/:id/flags',
+    { onRequest: requireAuth({ requiredRole: 'ENGINEER' }), schema: { params: LessonIdParams } },
+    async (request, reply) => {
+      const actor = requireUser(request);
+      const found = await readableLesson(actor, request.repoAccessGate, request.params.id);
+      if (!found) {
+        return sendError(reply, 404, 'LESSON_NOT_FOUND', 'Lesson not found');
+      }
+      if (found.access !== 'manage') {
+        return sendError(reply, 403, 'FORBIDDEN', NOT_A_LEAD);
+      }
+      // The reasons go into the audit row: clearing them is the decision that the lesson stands.
+      const cleared = await fastify.prisma.$transaction(async (tx) => {
+        const flags = await tx.lessonFlag.findMany({
+          select: { flaggedById: true, reason: true },
+          where: { memoryItemId: found.lesson.id },
+        });
+        await tx.lessonFlag.deleteMany({ where: { memoryItemId: found.lesson.id } });
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor,
+          after: { event: 'lesson.flags_cleared' },
+          before: { flags },
+          client: tx,
+          entityId: found.lesson.id,
+          entityType: 'MemoryItem',
+        });
+        return flags.length;
+      });
+      return { data: { cleared } };
+    }
+  );
 
   // DELETE /api/v1/lessons/:id — Delete lesson (ADMIN, or a lead of the repository's team)
   app.delete(

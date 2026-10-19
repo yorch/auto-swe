@@ -656,6 +656,9 @@ describe('systemConfig resolvers', () => {
       'SKILL_SOURCE_SYNC_CRON',
       'AUTOMATION_DECISION_PRUNE_ENABLED',
       'AUTOMATION_DECISION_PRUNE_CRON',
+      'SLACK_CHANNEL_SYNC_ENABLED',
+      'SLACK_CHANNEL_SYNC_CRON',
+      'SLACK_CHANNEL_SYNC_STALE_HOURS',
     ];
     beforeEach(() => {
       for (const key of KEYS) {
@@ -673,6 +676,7 @@ describe('systemConfig resolvers', () => {
         repoDependency: { cronExpression: '0 4 * * *', enabled: true },
         runReaper: { cronExpression: '*/15 * * * *', enabled: true },
         skillSourceSync: { cronExpression: '41 5 * * *', enabled: true },
+        slackChannelSync: { cronExpression: '29 * * * *', enabled: false, staleAfterHours: 6 },
       });
     });
 
@@ -693,6 +697,9 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('CALLBACK_DELIVERY_CRON', '*/2 * * * *');
       vi.stubEnv('CALLBACK_DELIVERY_PRUNE_ENABLED', 'false');
       vi.stubEnv('CALLBACK_DELIVERY_PRUNE_CRON', '3 3 * * *');
+      vi.stubEnv('SLACK_CHANNEL_SYNC_ENABLED', 'true');
+      vi.stubEnv('SLACK_CHANNEL_SYNC_CRON', '4 */2 * * *');
+      vi.stubEnv('SLACK_CHANNEL_SYNC_STALE_HOURS', '12');
       expect(resolveScheduledSweeps()).toEqual({
         automationDecisionPrune: { cronExpression: '1 2 * * *', enabled: false },
         callbackDelivery: { cronExpression: '*/2 * * * *', enabled: false },
@@ -702,6 +709,7 @@ describe('systemConfig resolvers', () => {
         repoDependency: { cronExpression: '30 2 * * 1', enabled: false },
         runReaper: { cronExpression: '*/5 * * * *', enabled: false },
         skillSourceSync: { cronExpression: '7 6 * * 2', enabled: false },
+        slackChannelSync: { cronExpression: '4 */2 * * *', enabled: true, staleAfterHours: 12 },
       });
     });
 
@@ -711,12 +719,14 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('MODEL_DISCOVERY_ENABLED', 'off');
       vi.stubEnv('RUN_REAPER_CRON', 'often');
       vi.stubEnv('SKILL_SOURCE_SYNC_ENABLED', 'off');
+      vi.stubEnv('SLACK_CHANNEL_SYNC_STALE_HOURS', '0');
       const sweeps = resolveScheduledSweeps();
       expect(sweeps.repoAccess.enabled).toBe(false);
       expect(sweeps.repoDependency.cronExpression).toBe('0 4 * * *');
       expect(sweeps.modelDiscovery.enabled).toBe(true);
       expect(sweeps.runReaper.cronExpression).toBe('*/15 * * * *');
       expect(sweeps.skillSourceSync.enabled).toBe(true);
+      expect(sweeps.slackChannelSync.staleAfterHours).toBe(6);
     });
 
     describe('validateScheduledSweepsEnv — the strict check the gateway runs at boot', () => {
@@ -753,6 +763,16 @@ describe('systemConfig resolvers', () => {
         expect(problems).toHaveLength(2);
         expect(problems.join('\n')).toContain('SKILL_SOURCE_SYNC_ENABLED="off"');
         expect(problems.join('\n')).toContain('SKILL_SOURCE_SYNC_CRON="daily"');
+      });
+
+      it('rejects an unusable Slack channel sync flag, cron or staleness', () => {
+        vi.stubEnv('SLACK_CHANNEL_SYNC_ENABLED', 'on');
+        vi.stubEnv('SLACK_CHANNEL_SYNC_CRON', 'hourly');
+        vi.stubEnv('SLACK_CHANNEL_SYNC_STALE_HOURS', '1.5');
+        const problems = validateScheduledSweepsEnv().join('\n');
+        expect(problems).toContain('SLACK_CHANNEL_SYNC_ENABLED="on"');
+        expect(problems).toContain('SLACK_CHANNEL_SYNC_CRON="hourly"');
+        expect(problems).toContain('SLACK_CHANNEL_SYNC_STALE_HOURS="1.5"');
       });
 
       it('rejects a cron expression that is not five fields, and reports every problem', () => {

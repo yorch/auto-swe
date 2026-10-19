@@ -12,6 +12,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     repoDependency: cfg,
     runReaper: cfg,
     skillSourceSync: cfg,
+    slackChannelSync: cfg,
   }),
 }));
 
@@ -27,6 +28,7 @@ const SYNCS = [
   'syncCallbackDeliverySchedule',
   'syncCallbackDeliveryPruneSchedule',
   'syncSkillSourceSyncSchedule',
+  'syncSlackChannelSyncSchedule',
   'syncEvalSchedule',
   'syncRevalidationSchedule',
 ] as const;

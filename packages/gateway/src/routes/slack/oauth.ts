@@ -31,10 +31,12 @@ interface SlackOAuthResponse {
 const SLACK_INSTALL_BOT_SCOPES = [
   'app_mentions:read',
   'channels:history',
+  'channels:read',
   'chat:write',
   'chat:write.public',
   'commands',
   'groups:history',
+  'groups:read',
   'im:history',
   'users:read',
   'users:read.email',

@@ -228,6 +228,8 @@ model MemoryItem {
   /// lesson writer from its own rubric; null where no model judged it (the
   /// model-free writers, rows written before the column existed).
   confidence     Float?
+  /// People who think this lesson is wrong (repository lessons only; see `LessonFlag`).
+  flags          LessonFlag[]
 
   @@index([repoId, consolidatedAt])
   @@index([supersededById])
@@ -239,6 +241,26 @@ model MemoryItem {
   @@index([workflowId])
   @@index([workflowRunId])
   @@map("memory_items")
+}
+
+/// One person's report that a repository lesson is wrong, with their reason.
+///
+/// Raised by anyone who can read the lesson, one per person per lesson (flagging again replaces the
+/// reason). Read and cleared by whoever may delete the lesson: a lead of the repository's owning
+/// team, or a platform ADMIN. A flag changes nothing about recall; it is a queue for those people,
+/// who then delete the lesson or clear its flags. Deleting the lesson deletes its flags.
+model LessonFlag {
+  id           String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  memoryItemId String     @map("memory_item_id") @db.Uuid
+  memoryItem   MemoryItem @relation(fields: [memoryItemId], references: [id], onDelete: Cascade)
+  flaggedById  String     @map("flagged_by_id") @db.Uuid
+  flaggedBy    User       @relation("LessonFlagAuthor", fields: [flaggedById], references: [id], onDelete: Cascade)
+  reason       String
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([memoryItemId, flaggedById])
+  @@index([flaggedById])
+  @@map("lesson_flags")
 }
 
 model ContextSnapshot {
@@ -1101,6 +1123,15 @@ model SlackChannel {
   /// and the min gap between successive nudges of the same item (default 12h).
   openItemNudgeAfterHours          Int?           @map("open_item_nudge_after_hours")
   openItemNudgeCooldownHours       Int?           @map("open_item_nudge_cooldown_hours")
+  /// When the Slack channel sync last asked Slack whether this channel is private.
+  /// The sync only ever turns `isPrivate` on, never off: an admin may have made a
+  /// public channel private on purpose. Null until the sync has answered once.
+  privacyCheckedAt                 DateTime?      @map("privacy_checked_at") @db.Timestamptz
+  /// When the sync last replaced `members` from Slack's member list. Membership
+  /// gives a private channel's members its content in the dashboard, and only
+  /// while this is within the sync's staleness window; null means never synced,
+  /// which grants nothing.
+  membersSyncedAt                  DateTime?      @map("members_synced_at") @db.Timestamptz
   isActive                         Boolean        @default(true) @map("is_active")
   createdAt                        DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt                        DateTime       @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
@@ -1108,6 +1139,7 @@ model SlackChannel {
   agents         Agent[]
   budgetHolds    ChannelBudgetHold[]
   memoryItems    MemoryItem[]
+  members        SlackChannelMember[]
   monthlyUsage   ChannelMonthlyUsage[]
   openItems      ChannelOpenItem[]
   threadSessions ChannelThreadSession[]
@@ -1118,6 +1150,21 @@ model SlackChannel {
   @@index([teamId])
   @@index([orgId])
   @@map("slack_channels")
+}
+
+/// One Slack user in a private channel, as Slack's member list last reported it.
+/// Written only by the Slack channel sync, which replaces a channel's rows whole,
+/// so a person who leaves the channel drops out at the next sync. Keyed by the
+/// Slack user id rather than a platform user: a dashboard user matches through
+/// their linked `User.slackId`, read fresh on every request.
+model SlackChannelMember {
+  channelId   String       @map("channel_id") @db.Uuid
+  channel     SlackChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  slackUserId String       @map("slack_user_id")
+
+  @@id([channelId, slackUserId])
+  @@index([slackUserId])
+  @@map("slack_channel_members")
 }
 
 /// Persistent live session (Gap H): tracks when the assistant was last active in
@@ -1299,6 +1346,7 @@ model User {
   launchedRuns          WorkflowRun[]            @relation("WorkflowRunLauncher")
   createdShares         ConnectionTeamShare[]    @relation("ConnectionShareCreator")
   createdCallbackEndpoints CallbackEndpoint[]    @relation("CallbackEndpointCreator")
+  lessonFlags           LessonFlag[]             @relation("LessonFlagAuthor")
 
   @@map("users")
 }

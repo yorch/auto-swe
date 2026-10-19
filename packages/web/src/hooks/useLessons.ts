@@ -27,6 +27,12 @@ export interface Lesson {
   metadata: { outcome?: unknown } | null;
   /** The run the lesson was written from, when one was recorded. */
   workflowRunId: string | null;
+  /** How many people flagged the lesson as wrong. */
+  flagCount: number;
+  /** Who flagged it and why — only for someone who may act on it (see `managedRepoIds`). */
+  flags?: { email: string; reason: string; createdAt: string }[];
+  /** The caller's own flag, when they raised one. */
+  myFlag: { reason: string; createdAt: string } | null;
   /**
    * Null once the repository is deleted: the lesson's `repoId` is set null with
    * it, and the lesson stays in the list until an admin deletes it.
@@ -47,6 +53,8 @@ export function useAdminLessonStats() {
 export interface LessonListOptions extends ListOptions {
   /** Only lessons whose summary or rationale contains this text. */
   q?: string;
+  /** Only lessons someone has flagged as wrong. */
+  flagged?: boolean;
   repoId?: string;
 }
 
@@ -59,13 +67,16 @@ export interface LessonListMeta extends ListMeta {
 }
 
 export function useLessons(includeConsolidated = false, opts: LessonListOptions = {}) {
-  const { q, repoId, ...page } = opts;
+  const { flagged, q, repoId, ...page } = opts;
   const base = new URLSearchParams({ includeConsolidated: includeConsolidated ? 'true' : 'false' });
   if (repoId) {
     base.set('repoId', repoId);
   }
   if (q) {
     base.set('q', q);
+  }
+  if (flagged) {
+    base.set('flagged', 'true');
   }
   const query = useListQuery<Lesson>({
     queryFn: () => api.get(listUrl(`/api/v1/lessons?${base.toString()}`, page)),
@@ -82,6 +93,36 @@ export function useDeleteLesson() {
       qc.invalidateQueries({ queryKey: ['lessons'] });
       qc.invalidateQueries({ queryKey: ['admin-lesson-stats'] });
     },
+  });
+}
+
+/** Flag a lesson as wrong, or replace the reason on your own flag. */
+export function useFlagLesson() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      api.post<{ data: { flagged: boolean } }>(`/api/v1/lessons/${id}/flags`, { reason }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lessons'] }),
+  });
+}
+
+/** Withdraw your own flag on a lesson. */
+export function useWithdrawLessonFlag() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.delete<{ data: { withdrawn: boolean } }>(`/api/v1/lessons/${id}/flags/mine`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lessons'] }),
+  });
+}
+
+/** Clear every flag on a lesson you manage: the decision that it stands. */
+export function useClearLessonFlags() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) =>
+      api.delete<{ data: { cleared: number } }>(`/api/v1/lessons/${id}/flags`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['lessons'] }),
   });
 }
 

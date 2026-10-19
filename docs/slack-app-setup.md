@@ -107,7 +107,9 @@ No extra bot scopes are needed beyond those already listed. Adding shortcuts to 
 
 ## Bot scopes
 
-`app_mentions:read`, `channels:history`, `chat:write`, `chat:write.public`, `commands`, `groups:history`, `im:history`, `users:read`, `users:read.email` — slash-command handling, channel posts, resolving Slack users to platform users, plus receiving @mentions (`app_mentions:read`) and DMs (`im:history`) for the conversational teammate.
+`app_mentions:read`, `channels:history`, `channels:read`, `chat:write`, `chat:write.public`, `commands`, `groups:history`, `groups:read`, `im:history`, `users:read`, `users:read.email` — slash-command handling, channel posts, resolving Slack users to platform users, plus receiving @mentions (`app_mentions:read`) and DMs (`im:history`) for the conversational teammate.
+
+`channels:read` and `groups:read` let the gateway ask Slack whether a channel is private when it is first registered, and let the Slack channel sync re-check that and read each private channel's member list ([channel-assistant.md §6](./channel-assistant.md#6-memory)). Without them both fall back: registration guesses privacy from the event payload, and the sync records nothing, so a private channel's content stays admin-only.
 
 The bot now reads the current thread's recent messages via `conversations.replies` to provide full in-thread context on each turn. This requires two additional history scopes beyond the original `im:history`:
 

@@ -182,6 +182,13 @@ owning (and active) team. A shared team's members read the lessons and do not ma
 lesson whose repository is gone is a platform ADMIN's alone. The list names the repositories the
 caller manages (`meta.managedRepoIds`) so the page offers the controls only there. Platform ADMINs
 also see every repository's lessons, the per-repository counts, and consolidate all at once.
+**Anyone who reads a lesson can flag it as wrong.** `POST /api/v1/lessons/:id/flags` records one
+`LessonFlag` per person per lesson, with a reason of up to 500 characters (flagging again replaces
+it); `DELETE …/flags/mine` withdraws it. Both are audited on the lesson. A lesson's managers see the
+reasons and who gave them, and either delete the lesson or clear its flags (`DELETE …/flags`, which
+keeps the reasons in the audit row); everyone else sees the count and their own flag. The list takes
+`?flagged=true`, and the page offers it as a filter. Deleting a lesson deletes its flags.
+
 Channel memory is
 edited and deleted per channel ([channel-assistant.md §6](./channel-assistant.md#6-memory)).
 
@@ -216,9 +223,12 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
 
 ## Limitations
 
-- **An engineer cannot flag a lesson.** Someone who reads a wrong lesson on a repository whose team
-  they do not lead has no control to dispute it; they ask a lead of that team or an administrator.
-  A lead's delete is final, like an admin's, and there is no review step before it.
+- **A flag does not change recall.** A flagged lesson is still recalled, unlabelled, until a lead or
+  an administrator deletes it; nothing reminds them that a flag is waiting beyond the `Flagged`
+  filter on `/lessons`. A lead's delete is final, like an admin's.
+- **A flagger is named only to the people who act on it.** Readers see how many flags a lesson has
+  and their own; the reasons and who wrote them are shown to its managers and kept in the audit row
+  when they clear the flags. At most the 20 newest reasons are listed per lesson.
 - **An incomplete scan refuses writes but not recall.** While an `INJECTION` scanner pattern is
   quarantined (up to ten minutes in that process), every lesson, channel summary and passively
   ingested fact written in that process is refused, and consolidation leaves its clusters as they

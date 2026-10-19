@@ -1122,6 +1122,12 @@ export interface ScheduledSweepsConfig {
   repoDependency: SweepSchedule;
   /// Asks each tracked skill source which commit its ref names now; only flags, never updates.
   skillSourceSync: SweepSchedule;
+  /// Re-checks each Slack channel's privacy and records who is in each private one.
+  slackChannelSync: SweepSchedule & {
+    /// How old a channel's synced member list may be and still give its members the
+    /// channel's content in the dashboard.
+    staleAfterHours: number;
+  };
 }
 
 const CRON_RE = /^(\S+\s+){4}\S+$/;
@@ -1129,6 +1135,14 @@ const CRON_RE = /^(\S+\s+){4}\S+$/;
 function envFlag(name: string, fallback: boolean): boolean {
   const raw = process.env[name];
   return raw === 'true' ? true : raw === 'false' ? false : fallback;
+}
+
+const HOURS_RE = /^[1-9]\d{0,3}$/;
+
+/// A whole number of hours, 1–9999.
+function envHours(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  return raw && HOURS_RE.test(raw) ? Number(raw) : fallback;
 }
 
 function envCron(name: string, fallback: string): string {
@@ -1154,6 +1168,10 @@ function envCron(name: string, fallback: string): string {
 ///   SKILL_SOURCE_SYNC_ENABLED     default true — one cheap request per source, and
 ///                                 it only flags: it never changes a skill
 ///   SKILL_SOURCE_SYNC_CRON        default `41 5 * * *`
+///   SLACK_CHANNEL_SYNC_ENABLED    default false — it needs the bot's `channels:read` and
+///                                 `groups:read` scopes, and grants dashboard access
+///   SLACK_CHANNEL_SYNC_CRON       default `29 * * * *`
+///   SLACK_CHANNEL_SYNC_STALE_HOURS default 6 — a member list older than this grants nothing
 ///   CALLBACK_DELIVERY_ENABLED     default true — it only sends what a launch asked for
 ///   CALLBACK_DELIVERY_CRON        default `* * * * *` — a callback waits at most this long
 ///   CALLBACK_DELIVERY_PRUNE_ENABLED default true
@@ -1195,6 +1213,11 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
       cronExpression: envCron('SKILL_SOURCE_SYNC_CRON', '41 5 * * *'),
       enabled: envFlag('SKILL_SOURCE_SYNC_ENABLED', true),
     },
+    slackChannelSync: {
+      cronExpression: envCron('SLACK_CHANNEL_SYNC_CRON', '29 * * * *'),
+      enabled: envFlag('SLACK_CHANNEL_SYNC_ENABLED', false),
+      staleAfterHours: envHours('SLACK_CHANNEL_SYNC_STALE_HOURS', 6),
+    },
   };
 }
 
@@ -1232,6 +1255,13 @@ export function validateScheduledSweepsEnv(): string[] {
   check('CALLBACK_DELIVERY_CRON', cron, 'a five-field cron expression such as "* * * * *"');
   check('CALLBACK_DELIVERY_PRUNE_ENABLED', flag, "'true' or 'false'");
   check('CALLBACK_DELIVERY_PRUNE_CRON', cron, 'a five-field cron expression such as "47 4 * * *"');
+  check('SLACK_CHANNEL_SYNC_ENABLED', flag, "'true' or 'false'");
+  check('SLACK_CHANNEL_SYNC_CRON', cron, 'a five-field cron expression such as "29 * * * *"');
+  check(
+    'SLACK_CHANNEL_SYNC_STALE_HOURS',
+    (raw) => HOURS_RE.test(raw.trim()),
+    'a whole number of hours from 1 to 9999'
+  );
   return problems;
 }
 
