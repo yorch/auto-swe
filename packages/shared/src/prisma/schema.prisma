@@ -73,6 +73,12 @@ enum KnowledgeVisibility {
   ORGANIZATION
 }
 
+enum OpenAIApiStyle {
+  AUTO
+  CHAT_COMPLETIONS
+  RESPONSES
+}
+
 enum ConfigScope {
   GLOBAL
   ORGANIZATION
@@ -2688,6 +2694,7 @@ model ProviderCredential {
   orgId            String?       @map("org_id") @db.Uuid
   organization     Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
   apiBase          String?       @map("api_base")
+  apiStyle         OpenAIApiStyle @default(AUTO) @map("api_style")
   apiKeyCiphertext Bytes         @map("api_key_ciphertext")
   apiKeyNonce      Bytes         @map("api_key_nonce")
   apiKeyAuthTag    Bytes         @map("api_key_auth_tag")
