@@ -431,6 +431,7 @@ function buildApp(state: {
       const s = state as { jobStatus?: unknown };
       return s.jobStatus ?? { phase: 'generating', status: 'running' };
     },
+    probeExecutorImage: async () => ({ checks: [], image: 'x', ok: true }),
     startWorkflowAuthorJob: async () => {},
   } as unknown as never);
 

@@ -29,7 +29,9 @@ connection with the image it already has. The team shell-image allowlist does no
 are approved for sandboxed shell steps, which never hold a credential. `build-executor.yml` writes
 each freshly tagged image to its repository, so its `GATEWAY_TOKEN` must belong to a platform
 admin. It builds `defaults/Dockerfile.node` unless a run sets `use_repo_dockerfile`, which builds the
-repository's own `.auto-swe/Dockerfile` instead.
+repository's own `.auto-swe/Dockerfile` instead. `defaults/` also carries `Dockerfile.python` and
+`Dockerfile.jvm`; the `stack` input (`node`|`python`|`jvm`, default `node`) selects which curated
+Dockerfile is built.
 
 The workspace image tracks its own major, not the services'. It stays on `node:24-alpine` while the gateway, worker and web images run Node 26, because that image puts `yarn`, `pnpm` and `corepack` on `PATH` and the Node 26 image puts none of them there — Corepack is no longer bundled with the Node distribution.
 

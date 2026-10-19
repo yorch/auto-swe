@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const connectionFindUnique = vi.fn();
 const connectionFindMany = vi.fn();
+const connectionUpdate = vi.fn();
 const repoDependencyFindFirst = vi.fn();
 const repoDependencyCreate = vi.fn();
 const repoDependencyUpdate = vi.fn();
@@ -12,6 +13,7 @@ vi.mock('@auto-swe/shared/db', () => ({
     connection: {
       findMany: (...args: unknown[]) => connectionFindMany(...args),
       findUnique: (...args: unknown[]) => connectionFindUnique(...args),
+      update: (...args: unknown[]) => connectionUpdate(...args),
     },
     repoDependency: {
       create: (...args: unknown[]) => repoDependencyCreate(...args),
@@ -30,8 +32,12 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 }));
 
 const fetchFileContent = vi.fn();
+const listDirectory = vi.fn();
 vi.mock('../lib/scm/index.js', () => ({
-  getScmProvider: () => ({ fetchFileContent: (...args: unknown[]) => fetchFileContent(...args) }),
+  getScmProvider: () => ({
+    fetchFileContent: (...args: unknown[]) => fetchFileContent(...args),
+    listDirectory: (...args: unknown[]) => listDirectory(...args),
+  }),
   toRepoRef: (repo: { organizationName: string; repoName: string }) => ({
     apiUrl: null,
     baseUrl: null,
@@ -63,11 +69,13 @@ function stubFiles(overrides: Record<string, string | null>) {
 beforeEach(() => {
   vi.clearAllMocks();
   connectionFindMany.mockResolvedValue([]);
+  connectionUpdate.mockResolvedValue({});
   repoDependencyFindFirst.mockResolvedValue(null);
   repoDependencyCreate.mockResolvedValue({ id: 'edge-new' });
   repoDependencyUpdate.mockResolvedValue({ id: 'edge-existing' });
   repoDependencyDelete.mockResolvedValue({ id: 'edge-stale' });
   fetchFileContent.mockResolvedValue(null);
+  listDirectory.mockResolvedValue([]);
 });
 
 describe('detectRepoDependencies', () => {
@@ -341,5 +349,50 @@ describe('detectRepoDependencies', () => {
     expect(result.edgesUpserted).toBe(0);
     expect(repoDependencyCreate).not.toHaveBeenCalled();
     expect(repoDependencyDelete).not.toHaveBeenCalled();
+  });
+
+  it('persists the detected stack on the connection, manifests and lockfile probes together', async () => {
+    connectionFindUnique.mockResolvedValue(BASE_CONNECTION);
+    stubFiles({
+      'package.json': '{}',
+      'pyproject.toml': '[project]\nname = "x"',
+      'yarn.lock': '# yarn lockfile v1',
+    });
+    listDirectory.mockResolvedValue(['package.json', 'pyproject.toml', 'yarn.lock']);
+
+    await detectRepoDependencies({ repoId: 'repo-self' });
+
+    expect(connectionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          detectedStack: expect.objectContaining({
+            primary: 'node',
+            stacks: ['node', 'python'],
+            suggestedDockerfile: 'node',
+          }),
+          detectedStackAt: expect.any(Date),
+        }),
+        where: { id: 'repo-self' },
+      })
+    );
+  });
+
+  it('records an empty detection for a repo with no manifests', async () => {
+    connectionFindUnique.mockResolvedValue(BASE_CONNECTION);
+    await detectRepoDependencies({ repoId: 'repo-self' });
+    expect(connectionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          detectedStack: expect.objectContaining({ primary: null, stacks: [] }),
+        }),
+      })
+    );
+  });
+
+  it('leaves a previous detection alone when the root listing fails', async () => {
+    connectionFindUnique.mockResolvedValue(BASE_CONNECTION);
+    listDirectory.mockResolvedValue(null);
+    await detectRepoDependencies({ repoId: 'repo-self' });
+    expect(connectionUpdate).not.toHaveBeenCalled();
   });
 });

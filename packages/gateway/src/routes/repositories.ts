@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { ConnectionTypeSchema, encryptConnectionApiToken, Prisma, Role } from '@auto-swe/shared';
 import { originOf, repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredential';
 // From the subpath, not the barrel: this module is pure (zod only), so a test that
@@ -1309,6 +1310,42 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         where: { id: repo.id },
       });
       return { data: shares?.shares ?? [] };
+    }
+  );
+
+  // POST /api/v1/repositories/:id/executor-image/probe — check an executor
+  // image against the workspace contract by starting it as a hardened
+  // workspace container and running the contract probe inside it. Platform
+  // ADMIN only: the image is code that runs next to the platform's git
+  // credential, the same authority `executorImageProblem` applies to setting
+  // one. The image defaults to the repository's override, else the worker's
+  // resolved workspace default (the activity resolves it when none is sent).
+  app.post(
+    '/:id/executor-image/probe',
+    {
+      onRequest: requireAuth({ requiredRole: Role.ADMIN }),
+      schema: {
+        body: z.object({ image: z.string().max(500).optional() }),
+        params: RepoParamsSchema,
+      },
+    },
+    async (request, reply) => {
+      const repo = await fastify.prisma.connection.findUnique({
+        select: { executorImage: true, type: true },
+        where: { id: request.params.id },
+      });
+      if (repo?.type !== 'git_repo') {
+        return sendError(reply, 404, 'REPO_NOT_FOUND', 'Repository not found');
+      }
+      const image = request.body.image ?? repo.executorImage ?? undefined;
+      if (image !== undefined && !DOCKER_IMAGE_REF_RE.test(image)) {
+        return sendError(reply, 400, 'VALIDATION_ERROR', 'image must be a Docker image reference');
+      }
+      const result = await fastify.temporal.probeExecutorImage(
+        `executor-image-probe-${request.params.id}-${crypto.randomBytes(8).toString('hex')}`,
+        { image }
+      );
+      return { data: result };
     }
   );
 };

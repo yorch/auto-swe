@@ -1,7 +1,11 @@
 'use client';
 
 import type { ConnectionType } from '@auto-swe/shared/lib/connectionTypes';
-import { REPO_GATE_COMMAND_KEYS, type RepositorySummary } from '@auto-swe/shared/types/api';
+import {
+  type ExecutorImageProbeResult,
+  REPO_GATE_COMMAND_KEYS,
+  type RepositorySummary,
+} from '@auto-swe/shared/types/api';
 import { useEffect, useMemo, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Combobox } from '@/components/ui/Combobox';
@@ -12,6 +16,7 @@ import { Textarea } from '@/components/ui/Textarea';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import { useCreateRepository, useUpdateRepository } from '@/hooks/useRepositories';
 import { useAdminTeamIds, useLedTeamIds, useTeams } from '@/hooks/useTeams';
+import { api } from '@/lib/api';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import {
   initialConnectionType,
@@ -104,6 +109,8 @@ export function ConnectionFormModal({
     initial?.consolidationEnabled ?? true
   );
   const [error, setError] = useState<string | null>(null);
+  const [probe, setProbe] = useState<ExecutorImageProbeResult | null>(null);
+  const [probing, setProbing] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -225,7 +232,27 @@ export function ConnectionFormModal({
   }, [connType, configJson]);
 
   const isEdit = mode.kind === 'edit';
+  const isPlatformAdmin = platformRole === 'ADMIN';
   const busy = create.isPending || update.isPending;
+
+  async function handleProbe() {
+    if (mode.kind !== 'edit') {
+      return;
+    }
+    setProbing(true);
+    setProbe(null);
+    try {
+      const res = await api.post<{ data: ExecutorImageProbeResult }>(
+        `/api/v1/repositories/${mode.repo.id}/executor-image/probe`,
+        { image: executorImage.trim() || undefined }
+      );
+      setProbe(res.data);
+    } catch (err) {
+      setError(errMsg(err, 'The image probe could not run'));
+    } finally {
+      setProbing(false);
+    }
+  }
   const isGit = connType === 'git_repo';
   // Judged on the team the repository will be saved to, as the gateway does.
   const canEditGateCommands = canAuthorTeamCode(platformRole, teamId, adminTeamIds);
@@ -297,13 +324,25 @@ export function ConnectionFormModal({
               />
             </div>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <Input
-                hint="Blank uses the deployment's default workspace image."
-                label="Executor image"
-                onChange={(e) => setExecutorImage(e.target.value)}
-                placeholder="Deployment default"
-                value={executorImage}
-              />
+              <div className="space-y-2">
+                <Input
+                  hint="Blank uses the deployment's default workspace image."
+                  label="Executor image"
+                  onChange={(e) => setExecutorImage(e.target.value)}
+                  placeholder="Deployment default"
+                  value={executorImage}
+                />
+                {isEdit && isPlatformAdmin && (
+                  <button
+                    className="text-xs text-accent-400 disabled:opacity-50"
+                    disabled={probing}
+                    onClick={handleProbe}
+                    type="button"
+                  >
+                    {probing ? 'Checking image…' : 'Check image'}
+                  </button>
+                )}
+              </div>
               <Input
                 hint="Optional. Helps agents pick the right tooling."
                 label="Language"
@@ -312,6 +351,50 @@ export function ConnectionFormModal({
                 value={language}
               />
             </div>
+            {probe && (
+              <Alert variant={probe.ok ? 'info' : 'warning'}>
+                <p className="font-medium">
+                  {probe.ok
+                    ? `${probe.image} meets the executor image contract`
+                    : `${probe.image} fails the executor image contract`}
+                </p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                  {probe.checks.map((c) => (
+                    <li key={c.name}>
+                      {c.ok ? '✓' : '✗'} {c.name}
+                      {c.required ? '' : ' (optional)'} — {c.detail}
+                    </li>
+                  ))}
+                </ul>
+              </Alert>
+            )}
+            {initial?.detectedStack && initial.detectedStack.stacks.length > 0 && (
+              <Alert variant="info">
+                <p>
+                  Detected: {initial.detectedStack.stacks.join(', ')}
+                  {initial.detectedStack.suggestedDockerfile &&
+                    ` — suggested executor build: defaults/Dockerfile.${initial.detectedStack.suggestedDockerfile}`}
+                </p>
+                {Object.keys(initial.detectedStack.suggestedGateCommands).length > 0 && (
+                  <button
+                    className="mt-1 text-xs text-accent-400"
+                    onClick={() =>
+                      setGateCommands((prev) => ({
+                        ...prev,
+                        ...Object.fromEntries(
+                          Object.entries(initial.detectedStack?.suggestedGateCommands ?? {}).map(
+                            ([k, v]) => [k, v ?? '']
+                          )
+                        ),
+                      }))
+                    }
+                    type="button"
+                  >
+                    Use suggested gate commands
+                  </button>
+                )}
+              </Alert>
+            )}
             <fieldset className="space-y-3">
               <legend className="text-sm font-medium text-paper-200">Gate commands</legend>
               <p className="text-xs leading-relaxed text-paper-400">

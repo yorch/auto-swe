@@ -1,6 +1,5 @@
-import { spawn } from 'node:child_process';
 import { EXEC_TAG_ENV, killTaggedProcessesScript } from '../../activities/workspace.js';
-import { spawnCaptureAsync } from '../../lib/execUtils.js';
+import { workspaceBackend } from '../../lib/workspaceBackend/index.js';
 import { type HarnessExec, type HarnessExecResult, WORKSPACE_DIR } from './adapter.js';
 
 /** Output kept from one command, stdout and stderr together; the rest is counted, not kept. */
@@ -39,23 +38,16 @@ export function execInContainer(options: {
   const hasStdin = exec.stdin !== undefined;
 
   return new Promise<HarnessExecResult>((resolve, reject) => {
-    const child = spawn(
-      'docker',
-      [
-        'exec',
-        ...(hasStdin ? ['-i'] : []),
-        '-w',
-        WORKSPACE_DIR,
-        '-e',
-        `${EXEC_TAG_ENV}=${tag}`,
-        containerId,
-        'sh',
-        '-c',
-        exec.script,
-        'sh',
-        ...(exec.args ?? []),
-      ],
-      { stdio: [hasStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'] }
+    const backend = workspaceBackend();
+    const child = backend.spawn(
+      backend.attach(containerId),
+      ['sh', '-c', exec.script, 'sh', ...(exec.args ?? [])],
+      {
+        env: [`${EXEC_TAG_ENV}=${tag}`],
+        stdin: hasStdin,
+        stdio: [hasStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
+        workdir: WORKSPACE_DIR,
+      }
     );
 
     const stdout: Buffer[] = [];
@@ -83,11 +75,12 @@ export function execInContainer(options: {
         return;
       }
       child.kill('SIGKILL');
-      killing = spawnCaptureAsync(
-        'docker',
-        ['exec', containerId, 'sh', '-c', killTaggedProcessesScript(tag)],
-        { heartbeatLabel: 'harness: stopping a command', timeoutMs: KILL_TIMEOUT_MS }
-      ).catch(() => undefined);
+      killing = backend
+        .exec(backend.attach(containerId), ['sh', '-c', killTaggedProcessesScript(tag)], {
+          heartbeatLabel: 'harness: stopping a command',
+          timeoutMs: KILL_TIMEOUT_MS,
+        })
+        .catch(() => undefined);
     };
     const timer = setTimeout(() => {
       timedOut = true;
