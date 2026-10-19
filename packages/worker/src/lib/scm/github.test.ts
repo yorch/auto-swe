@@ -84,7 +84,11 @@ function lastFetch(): { url: string; init: RequestInit } {
 }
 
 describe('GitHubScmProvider.listDirectory', () => {
-  const repo = { installationHost: 'github.com', organizationName: 'acme', repoName: 'payments-api' };
+  const repo = {
+    installationHost: 'github.com',
+    organizationName: 'acme',
+    repoName: 'payments-api',
+  };
   const provider = new GitHubScmProvider();
   const json = (body: unknown, status = 200) => {
     fetchMock.mockResolvedValueOnce(
