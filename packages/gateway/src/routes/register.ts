@@ -31,6 +31,7 @@ import { modelConfigRoutes } from './modelConfig.js';
 import { organizationRoutes } from './organizations.js';
 import { orgBudgetRoutes } from './orgBudget.js';
 import { orgMembersRoutes } from './orgMembers.js';
+import { packageRegistryRoutes } from './packageRegistries.js';
 import { prdRunRoutes } from './prdRuns.js';
 import { pullRequestRoutes } from './pullRequests.js';
 import { readinessRoutes } from './readiness.js';
@@ -130,6 +131,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(githubInstallationRoutes, { prefix: '/api/v1/admin' });
   await app.register(githubWebhookSecretRoutes, { prefix: '/api/v1/platform' });
   await app.register(githubHostCredentialRoutes, { prefix: '/api/v1/platform' });
+  await app.register(packageRegistryRoutes, { prefix: '/api/v1/admin' });
   await app.register(mcpConnectionRoutes, { prefix: '/api/v1/platform' });
   // Deprecated alias — kept for one release.
   await app.register(mcpConnectionRoutes, { prefix: '/api/v1/admin' });

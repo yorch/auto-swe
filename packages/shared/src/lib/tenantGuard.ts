@@ -40,6 +40,7 @@ export const TENANT_SCOPED_MODELS = new Set([
   'KnowledgeItem',
   'KnowledgeItemTeamGrant',
   'OrgMonthlyUsage',
+  'PackageRegistry',
   'OrganizationMembership',
   'ProviderCredential',
   'ScheduledWorkRequest',

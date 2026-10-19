@@ -283,7 +283,10 @@ async function runInCheckout(args: {
     authedCloneUrl,
     branch,
     baseBranch,
-    repo.executorImage ?? undefined
+    repo.executorImage ?? undefined,
+    undefined,
+    undefined,
+    { teamId: repo.teamId }
   );
   onOpen(workspace.destroy);
   let checkedOut = branch;

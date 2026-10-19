@@ -310,6 +310,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/stackDetection.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/lockfileAllowlist',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/lockfileAllowlist.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/packageRegistry',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/packageRegistry.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/guardedFetch',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/guardedFetch.ts'),
       },

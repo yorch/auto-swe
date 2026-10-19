@@ -6,6 +6,7 @@ import { FigmaTab } from '@/components/integrations/FigmaTab';
 import { GitHubTab } from '@/components/integrations/GitHubTab';
 import { IssueTrackerTab } from '@/components/integrations/IssueTrackerTab';
 import { KnowledgeBaseTab } from '@/components/integrations/KnowledgeBaseTab';
+import { PackageRegistriesTab } from '@/components/integrations/PackageRegistriesTab';
 import { SlackTab } from '@/components/integrations/SlackTab';
 import { SourceBadge } from '@/components/integrations/SourceBadge';
 import { SetupBanner } from '@/components/setup/SetupReadiness';
@@ -14,7 +15,7 @@ import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { HELP_LINKS } from '@/lib/helpLinks';
 
-type Tab = 'github' | 'slack' | 'tracker' | 'knowledge-base' | 'figma' | 'audit-log';
+type Tab = 'github' | 'slack' | 'tracker' | 'knowledge-base' | 'figma' | 'registries' | 'audit-log';
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'github', label: 'GitHub' },
@@ -22,6 +23,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'tracker', label: 'Issue tracker' },
   { id: 'knowledge-base', label: 'Knowledge base' },
   { id: 'figma', label: 'Figma' },
+  { id: 'registries', label: 'Package registries' },
   { id: 'audit-log', label: 'Audit log' },
 ];
 
@@ -99,6 +101,7 @@ function StudioIntegrationsPageInner() {
       {panel('tracker', <IssueTrackerTab />)}
       {panel('knowledge-base', <KnowledgeBaseTab />)}
       {panel('figma', <FigmaTab />)}
+      {panel('registries', <PackageRegistriesTab />)}
       {active === 'audit-log' && (
         <div {...tabPanelProps('integrations', 'audit-log')}>
           <ConfigAuditLogTab initialGroup="integrations" />

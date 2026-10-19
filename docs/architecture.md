@@ -1093,6 +1093,11 @@ sit on this seam; the ephemeral shell/container-step sandbox
 (`lib/ephemeralContainer.ts`, `shellStep.ts`, `containerStep.ts`, `agents/pi/smoke.ts`) still
 calls Docker directly and is outside it.
 
+Package installs go through a second seam: when `REGISTRY_PROXY_PORT` is set the worker runs a
+read-only npm registry proxy ([package-registries.md](./package-registries.md)) — the workspace
+gets a per-workspace token, the real upstream credential never enters the container, and in
+`lockfile` mode only the committed lockfile's `name@version` pairs resolve.
+
 `shellQuote()` wraps every `docker exec … sh -c` and every clone/checkout argument. It is the
 injection boundary for agent-generated commands; treat any change to it, or any caller that
 bypasses it, as security-critical.

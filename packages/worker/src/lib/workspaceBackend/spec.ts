@@ -25,8 +25,9 @@ export function agentWorkspaceSpec(
   // instead put workspaces on a network the worker joins (`WORKSPACE_NETWORK`),
   // which needs no port published on the host.
   if (
-    infra.harnessModelProxy &&
-    new URL(infra.harnessModelProxy.url).hostname === DOCKER_HOST_ALIAS
+    (infra.harnessModelProxy &&
+      new URL(infra.harnessModelProxy.url).hostname === DOCKER_HOST_ALIAS) ||
+    (infra.registryProxy && new URL(infra.registryProxy.url).hostname === DOCKER_HOST_ALIAS)
   ) {
     addHosts.push(`${DOCKER_HOST_ALIAS}:host-gateway`);
   }

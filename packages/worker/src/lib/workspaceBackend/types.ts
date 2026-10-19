@@ -17,6 +17,8 @@ export interface WorkspaceContainerSpec {
   dns: string[];
   network?: string;
   addHosts: string[];
+  /** Non-secret `NAME=value` pairs, passed to the container as `docker run -e`. */
+  env?: string[];
 }
 
 /**
@@ -36,6 +38,8 @@ export interface WorkspaceExecOptions {
   workdir?: string;
   /** Non-secret `NAME=value` pairs for `docker exec -e NAME=value`. */
   env?: string[];
+  /** Capture cap on stdout/stderr each (default the capture helper's own). */
+  maxOutputBytes?: number;
   /** Streamed to the command's stdin. */
   stdin?: string | Buffer;
   timeoutMs?: number;

@@ -94,11 +94,14 @@ The driver contract has to carry obligations a Kubernetes driver must meet:
 
 | # | Item | PR | State |
 |---|---|---|---|
-| 1 | Replace the Alpine-only git bootstrap; image-contract probe (activity + workflow + admin route + settings button) | A | in progress |
-| 4 | `Dockerfile.python` / `Dockerfile.jvm`, `build-executor.yml` `stack` input, stack detection with suggested image and gate commands | A | in progress |
-| 5 | `WorkspaceBackend` interface + Docker driver for the agent workspace (`createWorkspace`, harness exec, agent-run finalize); keeper PID recorded at creation | A | in progress |
-| 2 | `PackageRegistry` model (admin-managed, encrypted token), worker-side npm registry proxy, workspace npm/pnpm/yarn config, proxy-side tarball cache | B | pending |
-| 3 | Lockfile-scoped allowlist (`package-lock.json`, `yarn.lock` classic and Berry, `pnpm-lock.yaml`), refusal message and recorded denials | B | pending |
+| 1 | Replace the Alpine-only git bootstrap; image-contract probe (activity + workflow + admin route + settings button) | A (#473) | in review |
+| 4 | `Dockerfile.python` / `Dockerfile.jvm`, `build-executor.yml` `stack` input, stack detection with suggested image and gate commands | A (#473) | in review |
+| 5 | `WorkspaceBackend` interface + Docker driver for the agent workspace (`createWorkspace`, harness exec, agent-run finalize); keeper PID recorded at creation | A (#473) | in review |
+| 2 | `PackageRegistry` model (admin-managed, encrypted token), worker-side npm registry proxy, workspace npm/pnpm/yarn config, proxy-side tarball cache | B | in review |
+| 3 | Lockfile-scoped allowlist (`package-lock.json`, `yarn.lock` classic and Berry, `pnpm-lock.yaml`), refusal message and recorded denials | B | in review |
+| 2a | Verify pnpm, Yarn classic and Yarn Berry end to end through the proxy (only npm is verified: `npm ci` succeeds, and an unlisted package gets the 403) | — | not started |
+| 2b | Package-manager bootstrap: allowlist the root `package.json` `packageManager` pin and pass `COREPACK_NPM_REGISTRY` / `COREPACK_NPM_TOKEN`, or pre-install pnpm/yarn in the curated image | — | not started |
+| 2c | Check how npm routes scoped tarballs under `replace-registry-host=always` when the scope's upstream differs from the default registry | — | not started |
 | 6 | Kubernetes workspace driver (pods, NetworkPolicy egress, runtimeClass) | — | not started |
 | 7 | Further ecosystems through the proxy (PyPI, Maven, Docker registry v2) | — | not started |
 | 8 | Publish / push (remote BuildKit, gated by human approval) | — | not started |

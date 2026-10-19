@@ -42,6 +42,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [bundles.md](./bundles.md) | Signed, versioned distribution of reusable agents, skills, scanner patterns, and templates across deployments |
 | [repo-access-gating.md](./repo-access-gating.md) | Making repository access agree with GitHub — the permission projection, the sweep and webhook refresh, and the advisory-then-enforce rollout |
 | [repositories.md](./repositories.md) | What identifies a repository (host, owner, name), which hosts its URLs may point at, and sharing it with other teams |
+- [`package-registries.md`](./package-registries.md) — admin-managed npm registries fronted by a worker-side proxy; the upstream credential never enters the workspace.
 | [service-principals.md](./service-principals.md) | Team-owned machine identities that start and follow runs with scoped tokens of their own — the routes that accept them, what a launch checks, granting repositories as a lead's launch decision, attribution, token rotation |
 | [user-github-credentials.md](./user-github-credentials.md) | A user's own GitHub or GitHub Enterprise token for a repository — used only for runs they launch, the host allowlist, and how the access gate judges it |
 | [work-views.md](./work-views.md) | The pull-request and ticket views — the recorded PR lifecycle and its webhook events, the two list APIs, and how visibility is applied to every row and aggregate |

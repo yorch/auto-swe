@@ -816,6 +816,10 @@ export interface WorkspaceInfraConfig {
   /// so the workspace container never holds the provider credential. `null`
   /// when `HARNESS_MODEL_PROXY_PORT` is unset: the harness then holds the key.
   harnessModelProxy: HarnessModelProxyConfig | null;
+  /// The worker-side npm registry proxy workspaces install packages through,
+  /// so the registry credential stays in the worker. `null` when
+  /// `REGISTRY_PROXY_PORT` is unset: no registry wiring then happens at all.
+  registryProxy: RegistryProxyConfig | null;
   /// A Docker network every workspace container joins in place of the default
   /// bridge (`WORKSPACE_NETWORK`), or `null` for the default bridge. A network
   /// the worker also joins is how a workspace reaches the worker's model proxy
@@ -835,6 +839,30 @@ export interface HarnessModelProxyConfig {
   port: number;
   /// The base URL a workspace container reaches the proxy at.
   url: string;
+}
+
+export interface RegistryProxyConfig {
+  /// Where the worker listens.
+  bindHost: string;
+  port: number;
+  /// The base URL a workspace container reaches the proxy at.
+  url: string;
+  /// Tarball cache directory (`REGISTRY_PROXY_CACHE_DIR`); null disables it.
+  cacheDir: string | null;
+  /// Cache size cap in bytes (`REGISTRY_PROXY_CACHE_MAX_BYTES`, default 2 GiB).
+  cacheMaxBytes: number;
+}
+
+export interface RegistryProxyConfig {
+  /// Where the worker listens.
+  bindHost: string;
+  port: number;
+  /// The base URL a workspace container reaches the proxy at.
+  url: string;
+  /// Tarball cache directory (`REGISTRY_PROXY_CACHE_DIR`); null disables it.
+  cacheDir: string | null;
+  /// Cache size cap in bytes (`REGISTRY_PROXY_CACHE_MAX_BYTES`, default 2 GiB).
+  cacheMaxBytes: number;
 }
 
 /// The host a workspace container reaches its Docker host at, through the
@@ -863,6 +891,32 @@ const isHttpUrl = (raw: string) => {
 
 /// Lenient, like the rest of this section: an unusable value turns the proxy
 /// off rather than throwing; `assertWorkspaceInfraEnv()` fails the boot on it.
+/// Lenient, like `resolveHarnessModelProxy`: an unusable value turns the
+/// proxy off rather than throwing; `assertWorkspaceInfraEnv()` is the strict
+/// counterpart and runs at worker boot, so a bad value is a failed deploy
+/// rather than a silently different one.
+function resolveRegistryProxy(): RegistryProxyConfig | null {
+  const port = process.env.REGISTRY_PROXY_PORT;
+  if (!port || !isPort(port)) {
+    return null;
+  }
+  const url = process.env.REGISTRY_PROXY_URL;
+  return {
+    bindHost: process.env.REGISTRY_PROXY_BIND || '0.0.0.0',
+    cacheDir: process.env.REGISTRY_PROXY_CACHE_DIR || null,
+    cacheMaxBytes: boundedEnvInt(
+      'REGISTRY_PROXY_CACHE_MAX_BYTES',
+      2 * 1024 * 1024 * 1024,
+      1024 * 1024,
+      Number.MAX_SAFE_INTEGER
+    ),
+    port: Number(port),
+    url: (url && isHttpUrl(url) ? url : `http://${DOCKER_HOST_ALIAS}:${port}`)
+      .replaceAll(HOSTNAME_PLACEHOLDER, hostname())
+      .replace(/\/+$/, ''),
+  };
+}
+
 function resolveHarnessModelProxy(): HarnessModelProxyConfig | null {
   const port = process.env.HARNESS_MODEL_PROXY_PORT;
   if (!port || !isPort(port)) {
@@ -1029,6 +1083,7 @@ export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
       validatedEnv('WORKSPACE_NETWORK', '', DOCKER_NETWORK_RE, 'a Docker network name') || null,
     pidsLimit: boundedEnvInt('WORKSPACE_PIDS_LIMIT', 512, 1, Number.MAX_SAFE_INTEGER),
     regexScanBudgetMs: boundedEnvInt('SCANNER_REGEX_BUDGET_MS', 250, 10, 60_000),
+    registryProxy: resolveRegistryProxy(),
   };
 }
 
@@ -1073,6 +1128,10 @@ export function validateWorkspaceInfraEnv(): string[] {
   check('SCANNER_REGEX_BUDGET_MS', positiveInt, 'a positive integer (milliseconds)');
   check('HARNESS_MODEL_PROXY_PORT', isPort, 'a port number (1-65535)');
   check('HARNESS_MODEL_PROXY_URL', isHttpUrl, 'an http(s) URL with no credentials');
+  check('REGISTRY_PROXY_PORT', isPort, 'a port number (1-65535)');
+  check('REGISTRY_PROXY_URL', isHttpUrl, 'an http(s) URL with no credentials');
+  check('REGISTRY_PROXY_BIND', (raw) => raw.length > 0 && !raw.includes(' '), 'a listen address');
+  check('REGISTRY_PROXY_CACHE_MAX_BYTES', positiveInt, 'a positive integer (bytes)');
   check('WORKSPACE_NETWORK', (raw) => DOCKER_NETWORK_RE.test(raw), 'a Docker network name');
   check('WORKSPACE_DNS', (raw) => parseDnsList(raw) !== null, DNS_HINT);
   if (process.env.WORKSPACE_BLOCK_METADATA !== 'false') {
