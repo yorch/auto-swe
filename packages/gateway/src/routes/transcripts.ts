@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { Socket } from 'node:net';
 import { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 import { gunzip } from 'node:zlib';
@@ -50,12 +51,14 @@ const TranscriptMetaSchema = z.object({
   id: z.string(),
   legalHold: z.boolean(),
   modelCallCount: z.number(),
+  runHold: z.boolean(),
   runId: z.string().nullable(),
   runtime: z.string(),
   sha256: z.string().nullable(),
   sizeBytes: z.number(),
   specNodeId: z.string().nullable(),
   status: z.string(),
+  transcriptHold: z.boolean(),
   workflowId: z.string(),
 });
 
@@ -87,6 +90,7 @@ interface TranscriptRow {
   createdAt: Date;
   id: string;
   legalHold: boolean;
+  runLegalHold: boolean;
   modelCallCount: number;
   runId: string | null;
   runtime: string;
@@ -112,21 +116,23 @@ function toMeta(row: TranscriptRow) {
     closedAt: row.closedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
     id: row.id,
-    legalHold: row.legalHold,
+    legalHold: row.legalHold || row.runLegalHold,
     modelCallCount: row.modelCallCount,
+    runHold: row.runLegalHold,
     runId: row.runId,
     runtime: row.runtime,
     sha256: row.sha256,
     sizeBytes: row.sizeBytes,
     specNodeId: row.specNodeId,
     status: row.status,
+    transcriptHold: row.legalHold,
     workflowId: row.workflowId,
   };
 }
 
 type PartOutcome =
   | { kind: 'ok'; lines: string[] }
-  | { kind: 'integrity_error'; reason: 'sha_mismatch' | 'too_large' | 'read_failed' };
+  | { kind: 'integrity_error'; reason: 'sha_mismatch' | 'too_large' | 'corrupt' | 'read_failed' };
 
 /**
  * A gzipped part's NDJSON lines. The sha256 is verified against the gzipped
@@ -148,8 +154,13 @@ async function partLines(part: PartRow): Promise<PartOutcome> {
     text = (await gunzipAsync(body, { maxOutputLength: MAX_PART_UNCOMPRESSED_BYTES })).toString(
       'utf8'
     );
-  } catch {
-    return { kind: 'integrity_error', reason: 'too_large' };
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return {
+      kind: 'integrity_error',
+      reason:
+        code === 'ERR_BUFFER_TOO_LARGE' || err instanceof RangeError ? 'too_large' : 'corrupt',
+    };
   }
   return { kind: 'ok', lines: text.split('\n').filter((l) => l !== '') };
 }
@@ -246,7 +257,8 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
     transcript: TranscriptRow,
     format: 'raw' | 'normalized',
     doScrubPii: boolean,
-    wrap: (record: unknown, transcript: TranscriptRow) => unknown
+    wrap: (record: unknown, transcript: TranscriptRow) => unknown,
+    onIntegrityFailure?: () => void
   ): AsyncGenerator<string> {
     for (const part of await transcriptParts(transcript.id)) {
       const outcome = await partLines(part);
@@ -260,6 +272,9 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
           partSeq: part.seq,
           reason: outcome.reason,
         })}\n`;
+        // No eof sentinel follows — the socket dies so the caller cannot
+        // mistake a partial stream for the whole transcript.
+        onIntegrityFailure?.();
         return;
       }
       for (const line of outcome.lines) {
@@ -375,7 +390,20 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
         },
         'transcript content read'
       );
-      const lines = contentLines(request, transcript, format, doScrubPii, (record) => record);
+      const lines = contentLines(
+        request,
+        transcript,
+        format,
+        doScrubPii,
+        (record) => record,
+        () => {
+          // Destroy the transport so the transfer visibly ends short — the
+          // missing eof line is the signal for clients that see the write.
+          if (reply.raw.socket instanceof Socket) {
+            reply.raw.socket.destroy();
+          }
+        }
+      );
       return reply
         .header('Content-Type', 'application/x-ndjson; charset=utf-8')
         .header(
@@ -389,7 +417,9 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
                 yield* lines;
               } catch (err) {
                 yield `${JSON.stringify({ error: String(err), kind: 'stream_error' })}\n`;
-                reply.raw.destroy(new Error('transcript stream failed'));
+                if (reply.raw.socket instanceof Socket) {
+                  reply.raw.socket.destroy();
+                }
               }
             })()
           )
@@ -453,6 +483,12 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
     }
     const user = caller.user;
     const now = new Date();
+    const runHoldData = {
+      runLegalHold: held,
+      runLegalHoldAt: held ? now : null,
+      runLegalHoldById: held ? user.sub : null,
+      runLegalHoldReason: reason,
+    };
     const holdData = {
       legalHold: held,
       legalHoldAt: held ? now : null,
@@ -481,7 +517,10 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
               },
               where: { id: run.id },
             }),
-            fastify.prisma.agentTranscript.updateMany({ data: holdData, where: { runId: run.id } }),
+            fastify.prisma.agentTranscript.updateMany({
+              data: runHoldData,
+              where: { runId: run.id },
+            }),
           ])
       );
       request.log.info(
@@ -669,7 +708,9 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
                 yield* lines();
               } catch (err) {
                 yield `${JSON.stringify({ error: String(err), kind: 'stream_error' })}\n`;
-                reply.raw.destroy(new Error('transcript export failed'));
+                if (reply.raw.socket instanceof Socket) {
+                  reply.raw.socket.destroy();
+                }
               }
             })()
           )

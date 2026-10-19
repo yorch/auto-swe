@@ -2291,10 +2291,16 @@ model AgentTranscript {
   org                Organization?  @relation("OrgAgentTranscripts", fields: [orgId], references: [id], onDelete: SetNull)
   /// Copied from the run at open time; while true the retention sweep keeps
   /// this transcript and its parts. The hold route keeps the two in step.
+  // Per-transcript hold, set directly on this transcript.
   legalHold          Boolean        @default(false) @map("legal_hold")
   legalHoldReason    String?        @map("legal_hold_reason")
   legalHoldById      String?        @map("legal_hold_by_id")
   legalHoldAt        DateTime?      @map("legal_hold_at") @db.Timestamptz
+  // The run-level hold, copied at create so it survives the run.
+  runLegalHold       Boolean        @default(false) @map("run_legal_hold")
+  runLegalHoldReason String?        @map("run_legal_hold_reason")
+  runLegalHoldById   String?        @map("run_legal_hold_by_id")
+  runLegalHoldAt     DateTime?      @map("run_legal_hold_at") @db.Timestamptz
   createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz
   updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz
   closedAt           DateTime?      @map("closed_at") @db.Timestamptz

@@ -112,6 +112,19 @@ describe('normalizeTranscriptRecord', () => {
     expect(n?.tools?.[0]?.name).toBe('read_file');
   });
 
+  it('normalizes a Google streamGenerateContent call returned as a JSON array', () => {
+    const record = {
+      ...googleSse,
+      response: {
+        body: [JSON.parse(googleSse.response.body.split('data: ')[1]?.split('\n')[0] ?? '{}')],
+        contentType: 'application/json',
+      },
+    };
+    const n = normalizeTranscriptRecord(record);
+    expect(n?.provider).toBe('google');
+    expect(n?.response.content).toEqual([{ text: 'Reading the file now.', type: 'text' }]);
+  });
+
   it('normalizes a streamed Google streamGenerateContent call', () => {
     const n = normalizeTranscriptRecord(googleSse);
     expect(n?.provider).toBe('google');

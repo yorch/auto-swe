@@ -18,8 +18,10 @@ Secrets are redacted at write time (the same `redactJsonValues` used by trace ca
 - `GET /api/v1/transcripts/:id` — metadata plus part hashes.
 - `GET /api/v1/transcripts/:id/content` — the records as an NDJSON stream (`?format=raw|normalized`, `?scrubPii=true`).
 - `POST /api/v1/transcripts/:id/verify` (ADMIN) — re-hashes every part's gzipped bytes and the transcript hash.
-- `PUT` / `DELETE /api/v1/workflow-runs/:id/transcripts/legal-hold` (ADMIN, reason required on PUT) — sets or clears a run-wide retention hold in one transaction.
-- `PUT` / `DELETE /api/v1/transcripts/:id/legal-hold` (ADMIN) — the same hold on a single transcript, including one whose run was deleted.
+- `PUT` / `DELETE /api/v1/workflow-runs/:id/transcripts/legal-hold` (ADMIN, reason required on PUT) — sets or clears a run-wide retention hold in one transaction (the WorkflowRun columns plus every transcript's `runLegalHold*` copy).
+- `PUT` / `DELETE /api/v1/transcripts/:id/legal-hold` (ADMIN) — an independent per-transcript hold (`legalHold*`), for a transcript whose run was deleted or which must outlive the others.
+
+The two scopes are independent: releasing a run hold leaves per-transcript holds in place, and releasing a transcript's own hold leaves its run hold in place. `legalHold` in API metadata is the *effective* hold (either scope); `transcriptHold` and `runHold` report each scope. The sweep deletes only when both are false and the run itself is not held.
 - `GET /api/v1/admin/transcripts/export` (ADMIN) — NDJSON export of `{ transcript, record }` lines over a date range (`from`/`to` required, ≤ 31 days; `format`, `scrubPii`, `agentKey`, `activityType` filters), across all tenants including runless transcripts.
 
 Authorization: list and metadata follow the run's visibility filter; **content** requires run *control* (owning team or requester) or ADMIN — a shared-repo teammate can see a run but not its raw model traffic. A runless transcript is ADMIN-only; service principals get `403 TRANSCRIPTS_NOT_AVAILABLE` on every route; a caller short of the bar gets 404. Content reads and exports are audit-logged to the gateway log (`transcript_content_read`, `transcript_export`).

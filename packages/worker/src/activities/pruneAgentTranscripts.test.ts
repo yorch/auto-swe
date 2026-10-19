@@ -9,6 +9,7 @@ const agentTranscriptFindMany = async ({
     OR: ({ runId: null } | { run: { transcriptLegalHold: boolean } })[];
     createdAt: { lt: Date };
     legalHold: boolean;
+    runLegalHold: boolean;
     status: { not: string };
   };
 }) =>
@@ -17,6 +18,7 @@ const agentTranscriptFindMany = async ({
       (t) =>
         t.createdAt < where.createdAt.lt &&
         t.legalHold === where.legalHold &&
+        (t.runLegalHold ?? false) === where.runLegalHold &&
         t.status !== where.status.not &&
         (t.runId === null || t.run?.transcriptLegalHold === false)
     )
@@ -31,6 +33,7 @@ const h = vi.hoisted(() => ({
     createdAt: Date;
     id: string;
     legalHold: boolean;
+    runLegalHold?: boolean;
     parts: { artifactId: string }[];
     run?: { transcriptLegalHold: boolean };
     runId: string | null;

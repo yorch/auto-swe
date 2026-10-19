@@ -206,11 +206,11 @@ describe('TranscriptRecorder', () => {
     expect(row).toMatchObject({
       activityType: 'executeImplementation',
       attempt: 2,
-      legalHold: true,
-      legalHoldById: 'user-1',
-      legalHoldReason: 'litigation',
       orgId: 'org-1',
       runId: 'run-1',
+      runLegalHold: true,
+      runLegalHoldById: 'user-1',
+      runLegalHoldReason: 'litigation',
       runtime: 'ai-sdk',
       teamId: 'team-1',
       temporalRunId: 'temporal-1',
@@ -569,6 +569,28 @@ describe('record bounds', () => {
   });
 });
 
+describe('record ordering', () => {
+  it('keeps seqs consecutive and unique across an oversized record, marker after it', async () => {
+    const r = new TranscriptRecorder();
+    r.addHttpCall(record());
+    r.addHttpCall(
+      record({ response: { body: 'x'.repeat(20 * 1024 * 1024), contentType: 'text/plain' } })
+    );
+    r.addHttpCall(record());
+    await r.close('succeeded');
+    const lines = partLines().flat();
+    const seqs = lines.map((l) => l.seq as number);
+    expect(seqs).toEqual(seqs.map((_, i) => i));
+    const truncated = lines.findIndex(
+      (l) =>
+        l.kind === 'http_call' &&
+        (l.response as { body?: { truncated?: boolean } })?.body?.truncated === true
+    );
+    expect(lines[truncated + 1]?.kind).toBe('marker');
+    expect((lines[truncated + 1] as { event?: string }).event).toBe('record_truncated');
+  });
+});
+
 describe('timers', () => {
   it('leaves no timers behind after close', async () => {
     vi.useFakeTimers();
@@ -580,6 +602,34 @@ describe('timers', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('recordingFetch capture cap', () => {
+  it('caps a streaming response capture and marks it truncated', async () => {
+    const calls: Record<string, unknown>[] = [];
+    const recorder = {
+      addHttpCall: (c: Record<string, unknown>) => calls.push(c),
+      trackCapture: (p: Promise<void>) => void p,
+    } as never;
+    const chunk = new Uint8Array(1024).fill(120);
+    const stream = new ReadableStream<Uint8Array>({
+      start(c) {
+        for (let i = 0; i < 64; i++) {
+          c.enqueue(chunk);
+        }
+        c.close();
+      },
+    });
+    const wrapped = recordingFetch(async () => new Response(stream), {
+      maxRecordBytes: 4096,
+    });
+    const res = await runWithTranscriptRecorder(recorder, () =>
+      wrapped('https://api.anthropic.com/v1/messages', { method: 'POST' })
+    );
+    await res.text();
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]?.responseTruncated).toBe(true);
   });
 });
 

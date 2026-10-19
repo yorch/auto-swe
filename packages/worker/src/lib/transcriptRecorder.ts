@@ -279,46 +279,37 @@ export class TranscriptRecorder {
     if (this.truncated) {
       return false;
     }
-    let redacted = redactJsonValues(payload) as Record<string, unknown>;
-    let serialized = JSON.stringify({
-      kind,
-      seq: this.seq,
-      ts: new Date().toISOString(),
-      ...redacted,
-    });
-    if (Buffer.byteLength(serialized) > MAX_RECORD_BYTES) {
+    const redacted = redactJsonValues(payload) as Record<string, unknown>;
+    const seq = this.seq;
+    let line = JSON.stringify({ kind, seq, ts: new Date().toISOString(), ...redacted });
+    let markerAfter = false;
+    if (Buffer.byteLength(line) > MAX_RECORD_BYTES) {
       // A single unbounded field must not own the whole transcript: replace
       // request/response.body with a head + size marker, and say so.
-      redacted = { ...redacted };
-      if ('request' in redacted) {
-        redacted.request = truncatedValue(redacted.request);
+      const shrunk = { ...redacted };
+      if ('request' in shrunk) {
+        shrunk.request = truncatedValue(shrunk.request);
       }
-      const resp = redacted.response;
+      const resp = shrunk.response;
       if (resp && typeof resp === 'object' && 'body' in resp) {
-        redacted.response = {
+        shrunk.response = {
           ...(resp as Record<string, unknown>),
           body: truncatedValue((resp as Record<string, unknown>).body),
         };
       }
-      serialized = JSON.stringify({
-        kind,
-        seq: this.seq,
-        ts: new Date().toISOString(),
-        ...redacted,
-      });
-      if (Buffer.byteLength(serialized) > MAX_RECORD_BYTES) {
-        serialized = JSON.stringify({
+      line = JSON.stringify({ kind, seq, ts: new Date().toISOString(), ...shrunk });
+      if (Buffer.byteLength(line) > MAX_RECORD_BYTES) {
+        line = JSON.stringify({
           detail: 'record exceeded MAX_RECORD_BYTES after field truncation',
           event: 'record_truncated',
           kind,
-          seq: this.seq,
+          seq,
           ts: new Date().toISOString(),
         });
       } else {
-        this.appendMarker('record_truncated', 'record exceeded MAX_RECORD_BYTES; fields truncated');
+        markerAfter = true;
       }
     }
-    const line = serialized;
     const lineBytes = Buffer.byteLength(line) + 1;
     // Flush first when this record would push the buffer past the threshold —
     // a part stays under PART_FLUSH_BYTES plus one record.
@@ -329,6 +320,10 @@ export class TranscriptRecorder {
     this.lines.push(line);
     this.bufferedBytes += lineBytes;
     this.recordCount += 1;
+    if (markerAfter) {
+      // Marker follows the record, with the next seq.
+      this.appendMarker('record_truncated', 'record exceeded MAX_RECORD_BYTES; fields truncated');
+    }
     // Lazy: the row does not exist until there is something to put in it.
     this.openPromise ??= this.open();
     if (!this.timer) {
@@ -399,10 +394,12 @@ export class TranscriptRecorder {
           activityType: currentActivityType(),
           assistantMessageId: this.assistantMessageId ?? null,
           attempt: currentAttempt(),
-          legalHold: run?.transcriptLegalHold ?? false,
-          legalHoldAt: run?.transcriptLegalHold ? run.transcriptLegalHoldAt : null,
-          legalHoldById: run?.transcriptLegalHold ? run.transcriptLegalHoldById : null,
-          legalHoldReason: run?.transcriptLegalHold ? run.transcriptLegalHoldReason : null,
+          // The run's hold copies into runLegalHold* — the per-transcript
+          // legalHold* columns stay an independent scope.
+          runLegalHold: run?.transcriptLegalHold ?? false,
+          runLegalHoldAt: run?.transcriptLegalHold ? run.transcriptLegalHoldAt : null,
+          runLegalHoldById: run?.transcriptLegalHold ? run.transcriptLegalHoldById : null,
+          runLegalHoldReason: run?.transcriptLegalHold ? run.transcriptLegalHoldReason : null,
           runtime: this.runtime,
           temporalRunId: currentTemporalRunId(),
           workflowId: currentWorkflowId(),
@@ -653,7 +650,11 @@ function capturedBody(body: unknown): string | undefined {
  * fetch itself throws is recorded the same way. Pass-through when no activity
  * is recording.
  */
-export function recordingFetch(inner: typeof fetch): typeof fetch {
+export function recordingFetch(
+  inner: typeof fetch,
+  opts: { maxRecordBytes?: number } = {}
+): typeof fetch {
+  const cap = opts.maxRecordBytes ?? MAX_RECORD_BYTES;
   const wrapped = async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const recorder = currentTranscriptRecorder();
     if (!recorder) {
@@ -696,8 +697,33 @@ export function recordingFetch(inner: typeof fetch): typeof fetch {
       (async () => {
         let bodyText = '';
         let error: string | undefined;
+        let capped = false;
         try {
-          bodyText = await response.clone().text();
+          const clone = response.clone();
+          const reader = clone.body?.getReader();
+          if (!reader) {
+            bodyText = await clone.text();
+          } else {
+            const decoder = new TextDecoder();
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) {
+                break;
+              }
+              // Read but do not accumulate past the cap — a runaway stream
+              // cannot pin the worker's memory.
+              if (Buffer.byteLength(bodyText) < cap) {
+                bodyText += decoder.decode(value, { stream: true });
+              } else {
+                capped = true;
+                await reader.cancel();
+                break;
+              }
+            }
+            if (!capped) {
+              bodyText += decoder.decode();
+            }
+          }
         } catch (err) {
           error = err instanceof Error ? err.message : String(err);
         }
@@ -713,6 +739,7 @@ export function recordingFetch(inner: typeof fetch): typeof fetch {
               bodyText && (contentType ?? '').includes('json') ? tryParseJson(bodyText) : bodyText,
             contentType,
           },
+          responseTruncated: capped || undefined,
           status,
         });
       })()

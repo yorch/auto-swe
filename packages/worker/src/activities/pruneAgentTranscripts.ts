@@ -57,6 +57,7 @@ export async function pruneAgentTranscripts(
             createdAt: { lt: cutoff },
             legalHold: false,
             OR: [{ runId: null }, { run: { transcriptLegalHold: false } }],
+            runLegalHold: false,
             status: { not: 'open' },
           },
         })

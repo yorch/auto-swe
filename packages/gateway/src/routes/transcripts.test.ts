@@ -77,6 +77,7 @@ function transcriptRow(overrides: Record<string, unknown> = {}) {
     legalHold: false,
     modelCallCount: 1,
     runId: RUN_ID,
+    runLegalHold: false,
     runtime: 'ai-sdk',
     sha256: null,
     sizeBytes: 10,
@@ -416,5 +417,32 @@ describe('transcriptRoutes', () => {
     expect(prisma.agentTranscript.update).toHaveBeenLastCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ legalHold: false }) })
     );
+  });
+
+  it('releases a run hold without touching per-transcript holds', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.workflowRun.findUnique.mockResolvedValue({ id: RUN_ID });
+    await app.inject({
+      headers: AUTH,
+      method: 'DELETE',
+      url: `/api/v1/workflow-runs/${RUN_ID}/transcripts/legal-hold`,
+    });
+    const data = prisma.agentTranscript.updateMany.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.runLegalHold).toBe(false);
+    expect(data.legalHold).toBeUndefined();
+  });
+
+  it('writes only runLegalHold* when a run-level hold is set', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.workflowRun.findUnique.mockResolvedValue({ id: RUN_ID });
+    await app.inject({
+      headers: AUTH,
+      method: 'PUT',
+      payload: { reason: 'r' },
+      url: `/api/v1/workflow-runs/${RUN_ID}/transcripts/legal-hold`,
+    });
+    const data = prisma.agentTranscript.updateMany.mock.calls[0][0].data as Record<string, unknown>;
+    expect(data.runLegalHold).toBe(true);
+    expect(data.legalHold).toBeUndefined();
   });
 });

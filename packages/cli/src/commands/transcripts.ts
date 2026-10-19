@@ -24,6 +24,7 @@ interface TranscriptMeta {
   createdAt: string;
   id: string;
   legalHold: boolean;
+  runHold: boolean;
   modelCallCount: number;
   runtime: string;
   sizeBytes: number;

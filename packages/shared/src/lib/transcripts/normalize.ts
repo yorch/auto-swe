@@ -52,6 +52,10 @@ function responseEvents(record: HttpCallLike): unknown[] {
   if (isObj(body)) {
     return [body];
   }
+  // Google streamGenerateContent without alt=sse returns a JSON array of chunks.
+  if (Array.isArray(body)) {
+    return body;
+  }
   if (typeof body === 'string' && body.trim().length > 0) {
     return parseSseEvents(body);
   }

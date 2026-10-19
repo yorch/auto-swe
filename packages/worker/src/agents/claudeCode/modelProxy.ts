@@ -290,7 +290,7 @@ export function createModelProxy(options: {
     const exchange: ProxyExchange = {
       durationMs: 0,
       path: `${path}${search}`,
-      requestBody: body.toString('utf8'),
+      requestBody: recordExchange ? body.toString('utf8') : '',
       responseText: '',
     };
     try {

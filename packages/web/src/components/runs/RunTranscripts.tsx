@@ -39,7 +39,7 @@ export function RunTranscripts({ runId }: { runId: string }) {
   const [error_, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const held = data?.some((t) => t.legalHold) ?? false;
+  const held = data?.some((t) => t.runHold) ?? false;
 
   const submit = async () => {
     try {

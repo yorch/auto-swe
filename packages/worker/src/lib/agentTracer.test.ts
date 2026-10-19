@@ -130,6 +130,14 @@ describe('redactString / redactJsonValues', () => {
     expect(redactString(`AKIA${'G'.repeat(16)}`)).toBe('***');
     expect(redactString(`AIza${'h'.repeat(35)}`)).toBe('***');
     expect(redactString(`eyJ${'i'.repeat(12)}.eyJ${'j'.repeat(12)}.${'k'.repeat(12)}`)).toBe('***');
+    // Left boundary: a secret prefix inside a longer identifier is not a secret.
+    expect(redactString('task-1f2e3d4c-5b6a-7980-1234-567890abcdef')).toBe(
+      'task-1f2e3d4c-5b6a-7980-1234-567890abcdef'
+    );
+    expect(redactString('risk-assessment-sk-abcdefgh0123456789abcdefgh01')).toBe(
+      'risk-assessment-sk-abcdefgh0123456789abcdefgh01'
+    );
+    expect(redactString(`key=sk-proj-${'b'.repeat(40)}`)).toBe('key=***');
     expect(redactString('secret_access_key=abc123')).toBe('secret_access_key=***');
     expect(redactString('private_key: xyz')).toBe('private_key: ***');
     expect(redactString('password=hunter2')).toBe('password=***');
@@ -163,6 +171,17 @@ describe('redactString / redactJsonValues', () => {
     expect(out.budget_tokens).toBe(5);
     expect(out.tool_key).toBe('keep');
     expect(out.keys).toEqual(['a']);
+  });
+
+  it('keeps object shape under a sensitive key while redacting nested secrets', async () => {
+    const { redactJsonValues } = await import('./agentTracer.js');
+    const out = redactJsonValues({
+      properties: { token: { type: 'string' } },
+      tools: [{ parameters: { api_key: 'secret-val', name: 'x' } }],
+    }) as { properties: unknown; tools: { parameters: Record<string, unknown> }[] };
+    expect(out.properties).toEqual({ token: { type: 'string' } });
+    expect(out.tools[0]?.parameters.api_key).toBe('***');
+    expect(out.tools[0]?.parameters.name).toBe('x');
   });
 
   it('scrubs a 5 MB string in well under a second', async () => {

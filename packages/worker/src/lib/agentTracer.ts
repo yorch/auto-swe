@@ -61,14 +61,20 @@ export function redactString(s: string): string {
     /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
     '***'
   );
-  out = out.replace(/sk-ant-[A-Za-z0-9_-]{20,}/g, '***');
-  out = out.replace(/sk-(?:proj-)?[A-Za-z0-9_-]{20,}/g, '***');
-  out = out.replace(/gh[pousr]_[A-Za-z0-9]{36,}/g, '***');
-  out = out.replace(/github_pat_[A-Za-z0-9_]{22,}/g, '***');
-  out = out.replace(/xox[abprs]-[A-Za-z0-9-]{10,}/g, '***');
-  out = out.replace(/AKIA[0-9A-Z]{16}/g, '***');
-  out = out.replace(/AIza[0-9A-Za-z_-]{35}/g, '***');
-  out = out.replace(/eyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g, '***');
+  // Every value-shape pattern anchors on a left boundary — a secret prefix
+  // inside a longer identifier (a task id, a branch name) is not a secret.
+  const B = '(^|[^A-Za-z0-9_-])';
+  out = out.replace(new RegExp(`${B}sk-ant-[A-Za-z0-9_-]{20,}`, 'g'), '$1***');
+  out = out.replace(new RegExp(`${B}sk-(?:proj-)?[A-Za-z0-9_-]{20,}`, 'g'), '$1***');
+  out = out.replace(new RegExp(`${B}gh[pousr]_[A-Za-z0-9]{36,}`, 'g'), '$1***');
+  out = out.replace(new RegExp(`${B}github_pat_[A-Za-z0-9_]{22,}`, 'g'), '$1***');
+  out = out.replace(new RegExp(`${B}xox[abprs]-[A-Za-z0-9-]{10,}`, 'g'), '$1***');
+  out = out.replace(new RegExp(`${B}AKIA[0-9A-Z]{16}`, 'g'), '$1***');
+  out = out.replace(new RegExp(`${B}AIza[0-9A-Za-z_-]{35}`, 'g'), '$1***');
+  out = out.replace(
+    new RegExp(`${B}eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}`, 'g'),
+    '$1***'
+  );
   return out;
 }
 
@@ -91,7 +97,15 @@ export function redactJsonValues(obj: unknown): unknown {
   return Object.fromEntries(
     Object.entries(obj as Record<string, unknown>).map(([k, v]) => {
       if (isSensitiveKey(k)) {
-        return [k, typeof v === 'string' ? '***' : '[REDACTED]'];
+        if (typeof v === 'string') {
+          return [k, '***'];
+        }
+        // An object or array under a sensitive key keeps its shape — nested
+        // sensitive keys inside are still redacted on the way down.
+        if (v !== null && typeof v === 'object') {
+          return [k, redactJsonValues(v)];
+        }
+        return [k, '[REDACTED]'];
       }
       return [k, redactJsonValues(v)];
     })

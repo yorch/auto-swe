@@ -13,6 +13,8 @@ export interface TranscriptMeta {
   createdAt: string;
   id: string;
   legalHold: boolean;
+  transcriptHold: boolean;
+  runHold: boolean;
   modelCallCount: number;
   runId: string | null;
   runtime: string;
@@ -55,8 +57,10 @@ export function useTranscriptLegalHold(runId: string) {
  * blob — the same pattern as the audit-log export.
  */
 export async function downloadTranscript(id: string, format: 'raw' | 'normalized'): Promise<void> {
+  const token = api.getToken();
   const res = await fetch(`${API_BASE}/api/v1/transcripts/${id}/content?format=${format}`, {
     credentials: 'include',
+    ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
   });
   if (!res.ok) {
     throw new Error(`Transcript download failed: HTTP ${res.status}`);
