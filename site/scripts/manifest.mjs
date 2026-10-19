@@ -133,6 +133,7 @@ export const SIDEBAR = [
       'docs/user-github-credentials',
       'docs/work-views',
       'docs/bundles',
+      'docs/transcripts',
     ],
   },
   {

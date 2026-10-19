@@ -39,7 +39,7 @@ vi.mock('../lib/activityContext.js', () => ({
   currentTemporalRunId: vi.fn(() => 'temporal-run'),
   currentWorkflowRunId: vi.fn(async () => 'db-run'),
 }));
-vi.mock('../lib/artifactStore.js', () => ({
+vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
   putArtifact: vi.fn(async () => ({ id: 'artifact-1' })),
 }));
 vi.mock('../lib/evalCapture.js', () => ({ recordGateEval: vi.fn(async () => {}) }));
@@ -51,9 +51,9 @@ vi.mock('../lib/scm/index.js', () => ({
 }));
 
 import { prisma } from '@auto-swe/shared/db';
+import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { runWithActivityNodeTag } from '../lib/activityNodeTag.js';
-import { putArtifact } from '../lib/artifactStore.js';
 import {
   DEFAULT_COMMANDS,
   executeGateFixImplementation,

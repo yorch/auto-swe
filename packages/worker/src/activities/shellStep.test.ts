@@ -38,7 +38,7 @@ vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowId: vi.fn().mockReturnValue('wf-1'),
   currentWorkflowRunId: vi.fn().mockResolvedValue('run-1'),
 }));
-vi.mock('../lib/artifactStore.js', () => ({
+vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
   putArtifact: vi.fn().mockResolvedValue({ id: 'artifact-1' }),
 }));
 vi.mock('../lib/ephemeralContainer.js', () => ({
@@ -61,7 +61,7 @@ vi.mock('./commitToMemory.js', () => ({
 }));
 
 import { prisma } from '@auto-swe/shared/db';
-import { putArtifact } from '../lib/artifactStore.js';
+import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import { execShellAsync } from '../lib/execUtils.js';
 import { getScmProvider } from '../lib/scm/index.js';

@@ -9,6 +9,7 @@ import { runReposCommand } from './commands/repos.js';
 import { runRunsCommand } from './commands/runs.js';
 import { runSkillsCommand } from './commands/skills.js';
 import { runTokensCommand } from './commands/tokens.js';
+import { runTranscriptsCommand } from './commands/transcripts.js';
 import { runWorkflowsCommand } from './commands/workflows.js';
 import { runWorkRequestsCommand } from './commands/workRequests.js';
 import { type CliEnv, loadCliEnv } from './lib/env.js';
@@ -51,6 +52,7 @@ COMMANDS
                                        List recent workflow runs
   runs show <runId>                    Print one run (with steps) as JSON
   runs tail <runId> [--interval=SEC] [--max=N]
+  transcripts list <runId> / get <id> / export --from --to   Agent transcript inspection and export
                                        Poll until terminal status (exit 2 if the run did not succeed)
 
   tokens list                          List your personal access tokens
@@ -129,6 +131,9 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'runs') {
     return await runRunsCommand(rest, env);
+  }
+  if (cmd === 'transcripts') {
+    return await runTranscriptsCommand(rest, env);
   }
   if (cmd === 'tokens') {
     return await runTokensCommand(rest, env);

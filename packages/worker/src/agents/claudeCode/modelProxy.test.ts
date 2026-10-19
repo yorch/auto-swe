@@ -7,6 +7,7 @@ import {
   MessagesUsageReader,
   type ModelProxy,
   type ProxiedCall,
+  type ProxyExchange,
 } from './modelProxy.js';
 
 interface Seen {
@@ -302,6 +303,45 @@ describe('createModelProxy', () => {
     await res.text();
     await registration.release();
     expect(seenIn).toEqual(['activity-1']);
+  });
+
+  it('reports the full exchange to onExchange, in the registering activity’s context', async () => {
+    upstream = await upstreamServer((_req, res) => streamedReply(res));
+    proxy = createModelProxy({
+      advertisedUrl: (port) => `http://127.0.0.1:${port}`,
+      listenHost: '127.0.0.1',
+      listenPort: 0,
+      upstreamFetch: globalThis.fetch,
+    });
+    const activity = new AsyncLocalStorage<string>();
+    const seen: { ctx: string | undefined; exchange: ProxyExchange }[] = [];
+    const registration = await activity.run('activity-1', () =>
+      proxy.register({
+        apiKey: 'k',
+        onCall: () => undefined,
+        onExchange: (exchange) => seen.push({ ctx: activity.getStore(), exchange }),
+        signal: new AbortController().signal,
+        upstreamBaseUrl: upstream.baseUrl,
+      })
+    );
+    const requestBody = JSON.stringify({ max_tokens: 1, model: 'claude-opus-5-5' });
+    const res = await fetch(`${registration.baseUrl}/v1/messages`, {
+      body: requestBody,
+      headers: { 'content-type': 'application/json', 'x-api-key': registration.token },
+      method: 'POST',
+    });
+    await res.text();
+    await registration.release();
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.ctx).toBe('activity-1');
+    expect(seen[0]?.exchange).toMatchObject({
+      path: '/v1/messages',
+      requestBody,
+      status: 200,
+    });
+    expect(seen[0]?.exchange.responseText).toContain('message_start');
+    expect(seen[0]?.exchange.error).toBeUndefined();
   });
 });
 

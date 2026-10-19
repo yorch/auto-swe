@@ -4,6 +4,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { modelCallFetch } from '@auto-swe/shared/lib/modelDiscovery';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
+import { MAX_RECORD_BYTES } from '../../lib/transcriptRecorder.js';
 import type { UsageTotals } from '../harness/usage.js';
 
 /**
@@ -45,6 +46,23 @@ export interface ProxiedCall {
   usage: UsageTotals;
 }
 
+/** One HTTP exchange the proxy relayed, reported for transcript capture. */
+export interface ProxyExchange {
+  /** The API path the harness called (`/v1/messages`), query string included. */
+  path: string;
+  /** The upstream's status, or undefined when no response ever arrived. */
+  status?: number;
+  durationMs: number;
+  /** The harness's request body, UTF-8 (a Messages API JSON payload). */
+  requestBody: string;
+  /** Everything the upstream sent, decoded — SSE stays raw text. */
+  responseText: string;
+  /** The body kept growing past MAX_RECORD_BYTES; responseText holds only its head. */
+  responseTruncated?: boolean;
+  /** The failure, when the exchange never completed. */
+  error?: string;
+}
+
 export interface ProxyRegistration {
   /** What the harness uses as `ANTHROPIC_BASE_URL`. */
   baseUrl: string;
@@ -65,6 +83,11 @@ export interface ModelProxy {
     apiKey: string;
     /** Each call, once its response has ended. Runs in the registering activity's context. */
     onCall(call: ProxiedCall): void;
+    /**
+     * Every exchange, once it ends — Messages API or not, success or failure.
+     * Runs in the registering activity's context, bound the same way as `onCall`.
+     */
+    onExchange?(exchange: ProxyExchange): void;
     /** Aborted: in-flight calls are cut off and new ones refused. */
     signal: AbortSignal;
   }): Promise<ProxyRegistration>;
@@ -77,6 +100,7 @@ interface Registration {
   upstreamBaseUrl: string;
   apiKey: string;
   onCall: (call: ProxiedCall) => void;
+  onExchange: ((exchange: ProxyExchange) => void) | undefined;
   signal: AbortSignal;
   inFlight: Set<Promise<void>>;
 }
@@ -258,7 +282,17 @@ export function createModelProxy(options: {
     res.on('close', onAbort);
 
     const metered = path === METERED_PATH;
+    const started = performance.now();
     let reader: MessagesUsageReader | undefined;
+    // The response text is only accumulated when someone asked for it — a
+    // proxied turn without a transcript keeps paying nothing for the copy.
+    const recordExchange = reg.onExchange !== undefined;
+    const exchange: ProxyExchange = {
+      durationMs: 0,
+      path: `${path}${search}`,
+      requestBody: body.toString('utf8'),
+      responseText: '',
+    };
     try {
       const upstream = await upstreamFetch(`${reg.upstreamBaseUrl}${path}${search}`, {
         body,
@@ -267,6 +301,7 @@ export function createModelProxy(options: {
         redirect: 'error',
         signal: abort.signal,
       });
+      exchange.status = upstream.status;
       const responseHeaders: Record<string, string> = {};
       upstream.headers.forEach((value, name) => {
         if (!DROPPED_RESPONSE_HEADERS.has(name)) {
@@ -280,7 +315,15 @@ export function createModelProxy(options: {
       if (upstream.body) {
         const decoder = new TextDecoder();
         for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
-          reader?.write(decoder.decode(chunk, { stream: true }));
+          const decoded = decoder.decode(chunk, { stream: true });
+          reader?.write(decoded);
+          if (recordExchange) {
+            if (exchange.responseText.length < MAX_RECORD_BYTES) {
+              exchange.responseText += decoded;
+            } else {
+              exchange.responseTruncated = true;
+            }
+          }
           if (!res.write(chunk)) {
             await new Promise<void>((resolve) => {
               const done = () => {
@@ -296,15 +339,21 @@ export function createModelProxy(options: {
             break;
           }
         }
+        if (recordExchange && exchange.responseText.length < MAX_RECORD_BYTES) {
+          exchange.responseText += decoder.decode();
+        }
       }
       res.end();
-    } catch {
+    } catch (err) {
+      exchange.error = err instanceof Error ? err.message : String(err);
       // The provider failed or the turn was cut off: the harness sees a failed
       // call (and retries or ends, as it would against the provider itself).
       sendError(res, 502, 'api_error', 'The model call could not be completed.');
     } finally {
+      exchange.durationMs = Math.round(performance.now() - started);
       reg.signal.removeEventListener('abort', onAbort);
       res.off('close', onAbort);
+      reg.onExchange?.(exchange);
       const used = reader?.result(requestedModel);
       if (used) {
         callSeq += 1;
@@ -376,6 +425,8 @@ export function createModelProxy(options: {
         // Bound here so the debit it triggers runs in the registering activity's
         // context (its workflow id, its cancellation), not the server's.
         onCall: AsyncResource.bind(turn.onCall),
+        // Bound the same way so transcript recording sees the activity's recorder.
+        onExchange: turn.onExchange ? AsyncResource.bind(turn.onExchange) : undefined,
         signal: turn.signal,
         upstreamBaseUrl: turn.upstreamBaseUrl,
       };

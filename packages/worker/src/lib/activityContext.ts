@@ -5,6 +5,7 @@ import { currentNodeTag } from './activityNodeTag.js';
 import type { AgentTracer } from './agentTracer.js';
 import { takePersistingUsage } from './runlessBudget.js';
 import { currentSpendOwner } from './spendOwner.js';
+import { currentTranscriptRecorder } from './transcriptRecorder.js';
 
 /**
  * Returns the Temporal activity type (function name) for the currently
@@ -132,6 +133,11 @@ export async function persistActivityTrace(
   agentKey: string,
   tags: { assistantMessageId?: string } = {}
 ): Promise<boolean> {
+  // The attempt's transcript collects which agents wrote during it (deduped,
+  // no row of its own needed) and which assistant reply it served — same
+  // source as the `assistantMessageId` stamped on the rows below.
+  currentTranscriptRecorder()?.noteAgentKey(agentKey);
+  currentTranscriptRecorder()?.noteAssistantMessageId(tags.assistantMessageId);
   const spanContext = trace.getActiveSpan()?.spanContext();
   if (!tracer.hasSpanContext() && spanContext?.traceId && spanContext?.spanId) {
     tracer.setSpanContext(spanContext.traceId, spanContext.spanId);

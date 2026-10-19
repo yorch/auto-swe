@@ -49,6 +49,7 @@ import { systemConfigRoutes } from './systemConfig.js';
 import { teamRoutes } from './teams.js';
 import { ticketRoutes } from './tickets.js';
 import { tokenRoutes } from './tokens.js';
+import { transcriptRoutes } from './transcripts.js';
 import { usageRoutes } from './usage.js';
 import { userRoutes } from './users.js';
 import { webhookRoutes } from './webhooks.js';
@@ -85,6 +86,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
   await app.register(runCallbackDeliveryRoutes, { prefix: '/api/v1/workflow-runs' });
   await app.register(runLessonRoutes, { prefix: '/api/v1/workflow-runs' });
+  await app.register(transcriptRoutes);
   await app.register(stepRegistryRoutes, { prefix: '/api/v1/workflow-steps' });
   await app.register(webhookRoutes, { prefix: '/api/v1/webhooks' });
   // Signed events from other services; reads bodies as bytes in its own plugin.

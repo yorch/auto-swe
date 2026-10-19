@@ -35,6 +35,13 @@ const h = vi.hoisted(() => ({
   spawn: vi.fn(),
   spawnCaptureAsync: vi.fn(),
   throwIfActivityCancelled: vi.fn(),
+  transcriptRecorder: undefined as
+    | undefined
+    | {
+        addHarnessMessage: ReturnType<typeof vi.fn>;
+        addHttpCall: ReturnType<typeof vi.fn>;
+        setRuntime: ReturnType<typeof vi.fn>;
+      },
 }));
 
 vi.mock('node:child_process', () => ({ spawn: h.spawn }));
@@ -63,6 +70,10 @@ const relay = vi.hoisted(() => ({
   serverClose: vi.fn(async () => {}),
 }));
 vi.mock('../harness/mcpRelay.js', () => ({ openMcpRelay: relay.open }));
+vi.mock('../../lib/transcriptRecorder.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  currentTranscriptRecorder: () => h.transcriptRecorder,
+}));
 vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
   query: ({ options, prompt }: { options: QueryOptions; prompt: string }) => {
     h.queryCalls.push({ options, prompt });
@@ -181,6 +192,7 @@ beforeEach(() => {
   h.decideToolCall.mockResolvedValue({ allow: true });
   h.activityCancellationSignal.mockReturnValue(undefined);
   h.spawn.mockReturnValue({ pid: 1 });
+  h.transcriptRecorder = undefined;
 });
 
 describe('normalizeAnthropicBaseUrl', () => {
@@ -1134,6 +1146,70 @@ describe('through the worker’s model proxy', () => {
     ]);
     // Every call was debited as it ended, so the turn owes nothing more.
     expect(outcome.usageByModel).toEqual([]);
+  });
+});
+
+describe('transcript capture', () => {
+  const recorder = () => {
+    const rec = {
+      addHarnessMessage: vi.fn(),
+      addHttpCall: vi.fn(),
+      setRuntime: vi.fn(),
+    };
+    h.transcriptRecorder = rec;
+    return rec;
+  };
+
+  it('records each harness message when the turn is not proxied', async () => {
+    const rec = recorder();
+    const { runtime } = setup({ modelProxy: null });
+    h.script.push([
+      [init('s1'), assistantReply('m1', 'claude-opus-5-5', streamed(1, 2)), success('done')],
+    ]);
+
+    await runtime.runTurn({ system: 'S', user: 'U' });
+
+    expect(rec.setRuntime).toHaveBeenCalledWith('claude-code');
+    expect(rec.addHarnessMessage).toHaveBeenCalledTimes(3);
+    expect(rec.addHarnessMessage).toHaveBeenLastCalledWith(
+      expect.objectContaining({ type: 'result' })
+    );
+    expect(rec.addHttpCall).not.toHaveBeenCalled();
+  });
+
+  it('records no harness messages when the turn is proxied — the proxy’s exchanges are authoritative', async () => {
+    const rec = recorder();
+    const register = vi.fn(async (_reg: { onExchange?: (e: unknown) => void }) => ({
+      baseUrl: 'http://host.docker.internal:8790',
+      release: vi.fn(async () => {}),
+      token: 'sk-ant-proxy-turn-token',
+    }));
+    const { runtime } = setup({ modelProxy: { close: vi.fn(), listen: vi.fn(), register } });
+    h.script.push([
+      [init('s1'), assistantReply('m1', 'claude-opus-5-5', streamed(1, 2)), success('done')],
+    ]);
+
+    await runtime.runTurn({ system: 'S', user: 'U' });
+
+    expect(rec.addHarnessMessage).not.toHaveBeenCalled();
+    // …and the exchanges the proxy reports get turned into http_call records.
+    const onExchange = register.mock.calls[0]?.[0].onExchange as (e: unknown) => void;
+    expect(onExchange).toBeTypeOf('function');
+    onExchange({
+      durationMs: 5,
+      path: '/v1/messages',
+      requestBody: '{"model":"claude-opus-5-5"}',
+      responseText: '{"type":"message"}',
+      status: 200,
+    });
+    expect(rec.addHttpCall).toHaveBeenCalledWith(
+      expect.objectContaining({
+        method: 'POST',
+        path: '/v1/messages',
+        request: { model: 'claude-opus-5-5' },
+        status: 200,
+      })
+    );
   });
 });
 

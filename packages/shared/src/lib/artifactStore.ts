@@ -13,8 +13,8 @@
  * getArtifact(id) to materialize the payload on demand.
  */
 
-import { prisma } from '@auto-swe/shared/db';
-import { resolveStorageConfig } from '@auto-swe/shared/lib/systemConfig';
+import { prisma } from '../db.js';
+import { resolveStorageConfig } from './systemConfig.js';
 
 export type ArtifactBackend = 's3' | 'pg';
 
@@ -51,6 +51,7 @@ function copyToUint8Array(buf: Buffer): Uint8Array<ArrayBuffer> {
 interface S3Helper {
   putObject(key: string, body: Buffer, contentType: string): Promise<void>;
   getObject(key: string): Promise<Buffer>;
+  deleteObject(key: string): Promise<void>;
 }
 let s3ClientPromise: Promise<S3Helper> | null = null;
 
@@ -71,6 +72,7 @@ async function s3Client(): Promise<S3Helper> {
       };
       PutObjectCommand: new (input: Record<string, unknown>) => unknown;
       GetObjectCommand: new (input: Record<string, unknown>) => unknown;
+      DeleteObjectCommand: new (input: Record<string, unknown>) => unknown;
     } | null;
     if (!mod) {
       throw new Error(
@@ -78,7 +80,7 @@ async function s3Client(): Promise<S3Helper> {
           'Run `yarn workspace @auto-swe/worker add @aws-sdk/client-s3`.'
       );
     }
-    const { S3Client, PutObjectCommand, GetObjectCommand } = mod;
+    const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } = mod;
     const storageCfg = await resolveStorageConfig();
     if (!storageCfg.s3Bucket) {
       throw new Error(
@@ -94,6 +96,9 @@ async function s3Client(): Promise<S3Helper> {
     });
     const bucket = storageCfg.s3Bucket;
     return {
+      async deleteObject(key) {
+        await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+      },
       async getObject(key) {
         const resp = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
         if (!resp.Body) {
@@ -181,6 +186,24 @@ export async function getArtifact(id: string): Promise<{ ref: ArtifactRef; body:
     throw new Error(`artifact ${id} has backend=pg but no inlineBlob`);
   }
   return { body: Buffer.from(row.inlineBlob), ref };
+}
+
+/**
+ * Delete an artifact: its object first (S3 backend), then the row. The object
+ * goes first so a row-removal failure leaves a re-tryable orphan the
+ * transcript sweep's orphan pass can find, rather than a row pointing at
+ * nothing.
+ */
+export async function deleteArtifact(id: string): Promise<void> {
+  const row = await prisma.workflowArtifact.findUnique({ where: { id } });
+  if (!row) {
+    return;
+  }
+  if (row.backend === 's3' && row.s3Key) {
+    const client = await s3Client();
+    await client.deleteObject(row.s3Key);
+  }
+  await prisma.workflowArtifact.delete({ where: { id } });
 }
 
 /** Convenience: fetch artifact body as a UTF-8 string. */

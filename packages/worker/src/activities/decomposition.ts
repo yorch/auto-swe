@@ -10,6 +10,7 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
+import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
 import type {
   DecompositionResult,
   RepoWorkRequest,
@@ -30,7 +31,6 @@ import {
   persistActivityTrace,
 } from '../lib/activityContext.js';
 import { AgentTracer } from '../lib/agentTracer.js';
-import { putArtifact } from '../lib/artifactStore.js';
 import { throwIfActivityCancelled } from '../lib/cancellation.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';

@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 93 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 95 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | The consolidated `20260618000000_init` baseline (generated from `schema.prisma`) plus the hand-written `20260618000001_custom_constraints_and_indexes` beside it; new changes append their own migration once the schema is deployed |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -728,7 +728,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 93 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 95 models.
 
 ```mermaid
 erDiagram
@@ -782,7 +782,11 @@ erDiagram
 | Work | `RunInput`, `ContextSnapshot` | `RunInput.payload` is the generic request body, validated against the template's `inputSchema`. The in-memory `RunRequest` type is the base for domain-specific requests such as `RepoWorkRequest`; `ContextSnapshot` is an SWE satellite keyed by run |
 | Execution state | `ActiveWorkflow`, `PullRequest` | Temporal ↔ DB state sync |
 | Workflow engine | `WorkflowTemplate`, `WorkflowTemplateVersion`, `WorkflowRun`, `WorkflowStep`, `WorkflowArtifact`, `WorkflowShellAudit` | Versioning, run tracking, artifact storage, shell audit |
-| Observability | `AgentTrace` | Per-activity tool-call / LLM-response / activity-event rows |
+| ### Observability
+
+Every activity attempt records its model traffic at full fidelity into gzipped, hash-chained transcript parts — see [transcripts.md](./transcripts.md).
+
+Observability | `AgentTrace` | Per-activity tool-call / LLM-response / activity-event rows |
 | Memory | `MemoryItem`, `LessonFlag` | pgvector semantic memory, 1536-dim with an HNSW index; `scope` partitions domains (`swe-lessons`, `channel-memory`); `entityType`/`entityId` are written alongside the repo and channel columns, but every reader filters on `repo_id`, `channel_id`, `team_id` or `org_id`; a `LessonFlag` is one reader's report that a repository lesson is wrong |
 | Agent config | `Agent`, `AgentSkillRef`, `Skill`, `SkillRevision`, `SkillSource` | Versioned agents scoped GLOBAL / ORGANIZATION / TEAM / CHANNEL / WORKFLOW_TEMPLATE, joined to skills via `AgentSkillRef` |
 | Model config | `ProviderCredential`, `EmbeddingConfig`, `ConfigAuditLog` | Encrypted keys, embedding singleton, config audit trail |

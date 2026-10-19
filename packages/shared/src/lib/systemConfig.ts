@@ -1114,6 +1114,8 @@ export interface ScheduledSweepsConfig {
   /// Finalizes runs whose workflow ended in Temporal without finalizing them.
   runReaper: SweepSchedule;
   automationDecisionPrune: SweepSchedule;
+  /// Deletes agent transcripts past their retention (never those under legal hold).
+  agentTranscriptPrune: SweepSchedule;
   /// Sends due run callbacks (docs/run-callbacks.md).
   callbackDelivery: SweepSchedule;
   /// Deletes delivered and dead run callbacks past their retention.
@@ -1176,11 +1178,17 @@ function envCron(name: string, fallback: string): string {
 ///   CALLBACK_DELIVERY_CRON        default `* * * * *` — a callback waits at most this long
 ///   CALLBACK_DELIVERY_PRUNE_ENABLED default true
 ///   CALLBACK_DELIVERY_PRUNE_CRON  default `47 4 * * *`
+///   AGENT_TRANSCRIPT_PRUNE_ENABLED default true
+///   AGENT_TRANSCRIPT_PRUNE_CRON   default `57 4 * * *`
 ///
 /// Lenient, like `resolveWorkspaceInfra`: a bad value falls back to its default.
 /// `assertScheduledSweepsEnv()` is the strict check the gateway runs at boot.
 export function resolveScheduledSweeps(): ScheduledSweepsConfig {
   return {
+    agentTranscriptPrune: {
+      cronExpression: envCron('AGENT_TRANSCRIPT_PRUNE_CRON', '57 4 * * *'),
+      enabled: envFlag('AGENT_TRANSCRIPT_PRUNE_ENABLED', true),
+    },
     automationDecisionPrune: {
       cronExpression: envCron('AUTOMATION_DECISION_PRUNE_CRON', '37 4 * * *'),
       enabled: envFlag('AUTOMATION_DECISION_PRUNE_ENABLED', true),
@@ -1255,6 +1263,8 @@ export function validateScheduledSweepsEnv(): string[] {
   check('CALLBACK_DELIVERY_CRON', cron, 'a five-field cron expression such as "* * * * *"');
   check('CALLBACK_DELIVERY_PRUNE_ENABLED', flag, "'true' or 'false'");
   check('CALLBACK_DELIVERY_PRUNE_CRON', cron, 'a five-field cron expression such as "47 4 * * *"');
+  check('AGENT_TRANSCRIPT_PRUNE_ENABLED', flag, "'true' or 'false'");
+  check('AGENT_TRANSCRIPT_PRUNE_CRON', cron, 'a five-field cron expression such as "57 4 * * *"');
   check('SLACK_CHANNEL_SYNC_ENABLED', flag, "'true' or 'false'");
   check('SLACK_CHANNEL_SYNC_CRON', cron, 'a five-field cron expression such as "29 * * * *"');
   check(

@@ -834,6 +834,7 @@ model Organization {
   slackChannels       SlackChannel[]
   memoryItems         MemoryItem[]             @relation("OrgMemoryItems")
   agentTraces         AgentTrace[]             @relation("OrgAgentTraces")
+  agentTranscripts    AgentTranscript[]        @relation("OrgAgentTranscripts")
   knowledgeItems      KnowledgeItem[]
   humanErrorBaselines HumanErrorBaseline[]
 
@@ -896,6 +897,7 @@ model Team {
   configPermissions     ConfigPermission[]
   memoryItems           MemoryItem[]           @relation("TeamMemoryItems")
   agentTraces           AgentTrace[]           @relation("TeamAgentTraces")
+  agentTranscripts      AgentTranscript[]      @relation("TeamAgentTranscripts")
   callbackEndpoints     CallbackEndpoint[]
   autonomyPolicies      AutonomyPolicy[]
   skills                Skill[]
@@ -1733,6 +1735,8 @@ model WorkflowArtifact {
   inlineBlob  Bytes?       @map("inline_blob")
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
 
+  transcriptParts AgentTranscriptPart[]
+
   @@index([runId])
   @@map("workflow_artifacts")
 }
@@ -1894,6 +1898,14 @@ model WorkflowRun {
   /// failed (GATE, ASSERT, PII, REVIEW, or HUMAN_AUDIT).
   hasError                Boolean @default(false) @map("has_error")
 
+  /// Per-run legal hold on agent transcripts: while set, the transcript
+  /// retention sweep keeps this run's transcripts past their retention. The
+  /// recorder copies these onto each transcript row it opens for the run.
+  transcriptLegalHold       Boolean   @default(false) @map("transcript_legal_hold")
+  transcriptLegalHoldReason String?   @map("transcript_legal_hold_reason")
+  transcriptLegalHoldById   String?   @map("transcript_legal_hold_by_id")
+  transcriptLegalHoldAt     DateTime? @map("transcript_legal_hold_at") @db.Timestamptz
+
   steps             WorkflowStep[]
   artifacts         WorkflowArtifact[]
   trustedKnowledgeEvidence TrustedKnowledgeEvidence[]
@@ -1904,6 +1916,7 @@ model WorkflowRun {
   outcomeReferences WorkflowOutcomeReference[]
   autonomyDecisions AutonomyDecision[]
   outboundDeliveries OutboundDelivery[]
+  transcripts       AgentTranscript[]
 
   @@index([templateId])
   @@index([workRequestId])
@@ -2228,6 +2241,96 @@ model AgentTrace {
   @@index([orgId, createdAt])
   @@index([assistantMessageId])
   @@map("agent_traces")
+}
+
+/// A full-fidelity record of one activity attempt's model traffic: every
+/// recorded model HTTP call (and, for a non-proxied Claude Code turn, each
+/// harness message), flushed to `agent_transcript_parts` as gzipped NDJSON.
+/// Best-effort persistence: a write failure never fails the activity, it only
+/// leaves the row 'incomplete'.
+///
+/// `runId` is nullable for the same reasons `AgentTrace.runId` is (runless
+/// workflows, deleted runs — transcripts outlive their run until retention
+/// expires); `SetNull` rather than `Cascade` is what lets them.
+model AgentTranscript {
+  id                 String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  runId              String?        @map("run_id") @db.Uuid
+  run                WorkflowRun?   @relation(fields: [runId], references: [id], onDelete: SetNull)
+  /// The in-app assistant reply whose turn this transcript covers; same source
+  /// as `AgentTrace.assistantMessageId`.
+  assistantMessageId String?        @map("assistant_message_id") @db.Uuid
+  assistantMessage   AssistantMessage? @relation(fields: [assistantMessageId], references: [id], onDelete: SetNull)
+  workflowId         String         @map("workflow_id")
+  temporalRunId      String?        @map("temporal_run_id")
+  /// Temporal activity type that produced this transcript (e.g. "executeImplementation").
+  activityType       String         @map("activity_type")
+  specNodeId         String?        @map("spec_node_id")
+  recordingId        String?        @map("recording_id")
+  stepAttempt        Int?           @map("step_attempt")
+  /// Temporal activity attempt number (1-based).
+  attempt            Int            @default(1)
+  /// The agent keys that wrote trace rows during this attempt (dedup'd at write).
+  agentKeys          String[]       @default([]) @map("agent_keys")
+  /// 'ai-sdk' | 'claude-code' — which runtime's capture path wrote the records.
+  runtime            String         @default("ai-sdk")
+  /// open | complete | truncated | incomplete | abandoned
+  status             String         @default("open")
+  /// succeeded | failed | cancelled — the activity attempt's own outcome.
+  activityOutcome    String?        @map("activity_outcome")
+  /// Number of `http_call` records written.
+  modelCallCount     Int            @default(0) @map("model_call_count")
+  /// Compressed bytes summed over parts.
+  sizeBytes          Int            @default(0) @map("size_bytes")
+  /// sha256 of the ordered part hashes joined by '\n'.
+  sha256             String?
+  /// The team/org that owns this transcript; same rule as AgentTrace — absent
+  /// when the run lookup failed.
+  teamId             String?        @map("team_id") @db.Uuid
+  team               Team?          @relation("TeamAgentTranscripts", fields: [teamId], references: [id], onDelete: SetNull)
+  orgId              String?        @map("org_id") @db.Uuid
+  org                Organization?  @relation("OrgAgentTranscripts", fields: [orgId], references: [id], onDelete: SetNull)
+  /// Copied from the run at open time; while true the retention sweep keeps
+  /// this transcript and its parts. The hold route keeps the two in step.
+  legalHold          Boolean        @default(false) @map("legal_hold")
+  legalHoldReason    String?        @map("legal_hold_reason")
+  legalHoldById      String?        @map("legal_hold_by_id")
+  legalHoldAt        DateTime?      @map("legal_hold_at") @db.Timestamptz
+  createdAt          DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt          DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+  closedAt           DateTime?      @map("closed_at") @db.Timestamptz
+
+  parts              AgentTranscriptPart[]
+
+  @@index([runId])
+  @@index([workflowId, temporalRunId])
+  @@index([orgId, createdAt])
+  @@index([teamId, createdAt])
+  @@index([createdAt])
+  @@index([status, updatedAt])
+  @@map("agent_transcripts")
+}
+
+/// One flushed chunk of a transcript: gzipped NDJSON in a WorkflowArtifact.
+/// `onDelete: Restrict` on the artifact keeps a part row from losing its
+/// payload silently — the sweep deletes the artifact first, then the row.
+model AgentTranscriptPart {
+  id           String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transcriptId String           @map("transcript_id") @db.Uuid
+  transcript   AgentTranscript  @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+  /// 0-based flush order.
+  seq          Int              @map("seq")
+  artifactId   String           @map("artifact_id") @db.Uuid
+  artifact     WorkflowArtifact @relation(fields: [artifactId], references: [id], onDelete: Restrict)
+  /// sha256 (hex) of the gzipped bytes.
+  sha256       String
+  /// Compressed bytes.
+  sizeBytes    Int              @map("size_bytes")
+  recordCount  Int              @map("record_count")
+  createdAt    DateTime         @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([transcriptId, seq])
+  @@index([artifactId])
+  @@map("agent_transcript_parts")
 }
 
 /// One node execution within a run. Recorded incrementally so the UI can show
@@ -3719,6 +3822,8 @@ model AssistantMessage {
   updatedAt      DateTime               @updatedAt @map("updated_at") @db.Timestamptz
   /// The agent trace rows this reply's turn wrote.
   traces         AgentTrace[]
+  /// The agent transcript rows this reply's turn opened.
+  transcripts    AgentTranscript[]
 
   @@index([conversationId, createdAt])
   // The admin failure feed: FAILED replies, newest first.

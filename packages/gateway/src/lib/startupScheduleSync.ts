@@ -55,6 +55,11 @@ export async function syncSchedulesOnceConnected(
   app.temporal
     .syncCallbackDeliveryPruneSchedule(sweeps.callbackDeliveryPrune)
     .catch(warn('callback delivery prune'));
+  // Deletes agent transcripts past their retention; a legal hold always keeps
+  // its transcripts. On by default.
+  app.temporal
+    .syncAgentTranscriptPruneSchedule(sweeps.agentTranscriptPrune)
+    .catch(warn('agent transcript prune'));
   // One cheap request per tracked source; it only flags. On by default.
   app.temporal.syncSkillSourceSyncSchedule(sweeps.skillSourceSync).catch(warn('skill source sync'));
   // Re-checks channel privacy and records private channels' members. Paused unless enabled:

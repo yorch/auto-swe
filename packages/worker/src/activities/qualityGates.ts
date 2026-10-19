@@ -21,6 +21,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
+import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { activityInfo, heartbeat } from '@temporalio/activity';
@@ -31,7 +32,6 @@ import {
   currentWorkflowRunId,
 } from '../lib/activityContext.js';
 import { currentNodeTag } from '../lib/activityNodeTag.js';
-import { putArtifact } from '../lib/artifactStore.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { recordGateEval } from '../lib/evalCapture.js';
 import { throwIfActivityCancelled } from '../lib/execUtils.js';
@@ -656,7 +656,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
   let gateLogs = gateOutput.summary;
   if (gateOutput.artifactId) {
     try {
-      const { getArtifactText } = await import('../lib/artifactStore.js');
+      const { getArtifactText } = await import('@auto-swe/shared/lib/artifactStore');
       gateLogs = (await getArtifactText(gateOutput.artifactId)).slice(-50_000);
     } catch {
       // fall back to summary
