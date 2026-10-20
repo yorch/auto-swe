@@ -1,6 +1,7 @@
 'use client';
 
 import type { HumanStepSummary } from '@auto-swe/shared/types/api';
+import { approvalAllowsRequestChanges } from '@auto-swe/shared/workflow';
 import Link from 'next/link';
 import { useRef, useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
@@ -99,6 +100,9 @@ function settledBadge(step: HumanStepSummary): { label: string; tone: BadgeTone 
   if (step.kind === 'APPROVAL' && decision === 'reject') {
     return { label: 'Rejected', tone: 'danger' };
   }
+  if (step.kind === 'APPROVAL' && decision === 'request_changes') {
+    return { label: 'Changes requested', tone: 'warning' };
+  }
   if (step.kind === 'APPROVAL' && decision === 'approve') {
     return { label: 'Approved', tone: 'success' };
   }
@@ -168,6 +172,7 @@ function getTimeoutColor(timeoutAt: string): string {
 const ACTION_LABEL: Record<string, string> = {
   approve: 'Approved',
   reject: 'Rejected',
+  request_changes: 'Requested changes',
   select: 'Chose',
   submit: 'Submitted',
 };
@@ -176,6 +181,7 @@ const ACTION_LABEL: Record<string, string> = {
 const RESPONSE_ICON: Record<string, { icon: IconName; tone: string }> = {
   approve: { icon: 'checkCircle', tone: 'text-success-400' },
   reject: { icon: 'error', tone: 'text-danger-400' },
+  request_changes: { icon: 'edit', tone: 'text-warning-400' },
   select: { icon: 'check', tone: 'text-info-400' },
   submit: { icon: 'chat', tone: 'text-info-400' },
 };
@@ -188,7 +194,7 @@ const LINK = cn(
 /** The server caps an approver's note; the counter keeps the limit visible. */
 const MAX_COMMENT_LENGTH = 2000;
 
-/** A reject must carry enough of a reason to be useful to whoever reads it. */
+/** A reject or a change request must carry enough of a reason to be useful to the fix. */
 const MIN_REJECT_REASON = 5;
 
 function isExpired(step: HumanStepSummary): boolean {
@@ -229,7 +235,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
   // respond.isPending flips to true in the component's closure.
   const inFlight = useRef(false);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<'approve' | 'reject' | null>(null);
+  const [dialog, setDialog] = useState<'approve' | 'reject' | 'request_changes' | null>(null);
   const [comment, setComment] = useState('');
   const [dialogError, setDialogError] = useState<string | null>(null);
 
@@ -259,15 +265,20 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
     );
   }
 
-  // Approve and reject go through a dialog that carries the comment, and need a
-  // promise to show their pending state and render a failure inline.
-  async function handleDialogSubmit(action: 'approve' | 'reject') {
+  // Approve, reject and request-changes go through a dialog that carries the
+  // comment, and need a promise to show their pending state and render a
+  // failure inline.
+  async function handleDialogSubmit(action: 'approve' | 'reject' | 'request_changes') {
     if (inFlight.current) {
       return;
     }
     const text = comment.trim();
     if (action === 'reject' && text.length < MIN_REJECT_REASON) {
       setDialogError('Say why you are rejecting this so the requester knows what to change.');
+      return;
+    }
+    if (action === 'request_changes' && text.length < MIN_REJECT_REASON) {
+      setDialogError('Say what should change so the run knows what to fix.');
       return;
     }
     inFlight.current = true;
@@ -286,7 +297,7 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
     }
   }
 
-  function openDialog(next: 'approve' | 'reject') {
+  function openDialog(next: 'approve' | 'reject' | 'request_changes') {
     setComment('');
     setDialogError(null);
     setDialog(next);
@@ -443,11 +454,12 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
       {expanded && canRespond && (
         <div className="space-y-4 border-t border-ink-600 pt-4">
           {/* A failed approve or reject is already shown inside its dialog. */}
-          {respond.isError && !['approve', 'reject'].includes(respond.variables?.action ?? '') && (
-            <Alert variant="error">
-              {respond.error?.message ?? 'Submission failed. Please try again.'}
-            </Alert>
-          )}
+          {respond.isError &&
+            !['approve', 'reject', 'request_changes'].includes(respond.variables?.action ?? '') && (
+              <Alert variant="error">
+                {respond.error?.message ?? 'Submission failed. Please try again.'}
+              </Alert>
+            )}
 
           {/* Context for APPROVAL / DECISION is what the decision rests on, so it is open. */}
           {(step.kind === 'APPROVAL' || step.kind === 'DECISION') && hasContext && (
@@ -475,6 +487,18 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
                   <Icon name="close" size={13} />
                   Reject
                 </Button>
+                {approvalAllowsRequestChanges(step.options) && (
+                  <Button
+                    className="h-[40px] lg:h-8"
+                    disabled={respond.isPending}
+                    onClick={() => openDialog('request_changes')}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    <Icon name="edit" size={13} />
+                    Request changes
+                  </Button>
+                )}
                 <Button
                   className="h-[40px] lg:h-8"
                   disabled={respond.isPending}
@@ -637,22 +661,36 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
         dismissible={pendingAction === null}
         onClose={() => setDialog(null)}
         open={dialog !== null}
-        title={dialog === 'reject' ? 'Reject this step?' : 'Approve this step?'}
+        title={
+          dialog === 'reject'
+            ? 'Reject this step?'
+            : dialog === 'request_changes'
+              ? 'Request changes?'
+              : 'Approve this step?'
+        }
       >
         <p className="text-sm text-paper-400">
           {dialog === 'reject'
             ? 'The run is told this step was rejected and continues down its rejection path. This cannot be undone.'
-            : approveConsequence(step)}
+            : dialog === 'request_changes'
+              ? 'The run gets your feedback and continues down its change-request path — usually a fix, then back here. This cannot be undone.'
+              : approveConsequence(step)}
         </p>
         <Textarea
           compact
           hint={`${comment.length} / ${MAX_COMMENT_LENGTH}`}
           id={`human-step-${step.id}-comment`}
-          label={dialog === 'reject' ? 'Reason (required)' : 'Comment (optional)'}
+          label={
+            dialog === 'reject'
+              ? 'Reason (required)'
+              : dialog === 'request_changes'
+                ? 'What should change? (required)'
+                : 'Comment (optional)'
+          }
           maxLength={MAX_COMMENT_LENGTH}
           onChange={(e) => setComment(e.target.value)}
           placeholder={
-            dialog === 'reject' ? 'What needs to change?' : 'Add a note for the requester…'
+            dialog === 'approve' ? 'Add a note for the requester…' : 'What needs to change?'
           }
           rows={3}
           value={comment}
@@ -660,12 +698,31 @@ export function HumanStepCard({ step, showRunLink = true }: HumanStepCardProps) 
         {dialogError && <Alert>{dialogError}</Alert>}
         <ModalFooter
           dangerous={dialog === 'reject'}
-          disabled={dialog === 'reject' && comment.trim().length < MIN_REJECT_REASON}
-          isPending={pendingAction === 'approve' || pendingAction === 'reject'}
+          disabled={
+            (dialog === 'reject' || dialog === 'request_changes') &&
+            comment.trim().length < MIN_REJECT_REASON
+          }
+          isPending={
+            pendingAction === 'approve' ||
+            pendingAction === 'reject' ||
+            pendingAction === 'request_changes'
+          }
           onCancel={() => setDialog(null)}
           onSubmit={() => dialog && handleDialogSubmit(dialog)}
-          pendingLabel={dialog === 'reject' ? 'Rejecting…' : 'Approving…'}
-          submitLabel={dialog === 'reject' ? 'Reject' : 'Approve'}
+          pendingLabel={
+            dialog === 'reject'
+              ? 'Rejecting…'
+              : dialog === 'request_changes'
+                ? 'Requesting…'
+                : 'Approving…'
+          }
+          submitLabel={
+            dialog === 'reject'
+              ? 'Reject'
+              : dialog === 'request_changes'
+                ? 'Request changes'
+                : 'Approve'
+          }
         />
       </Modal>
     </Card>

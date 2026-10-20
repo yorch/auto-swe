@@ -224,4 +224,38 @@ describe('HumanStepCard dialog and responses', () => {
     expect(screen.getByText(/Grace · Submitted/)).toBeTruthy();
     expect(screen.getByText('Needs a rollback plan')).toBeTruthy();
   });
+
+  it('offers Request changes only when the step carries the marker, and requires feedback', () => {
+    // No marker -> no third button.
+    render(<HumanStepCard step={approvalStep()} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    expect(screen.queryByRole('button', { name: 'Request changes' })).toBeNull();
+  });
+
+  it('request changes needs feedback before it submits and sends the comment', async () => {
+    render(
+      <HumanStepCard
+        step={approvalStep({
+          options: [{ label: 'Request changes', value: 'request_changes' }],
+        })}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Respond' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Request changes' }));
+    const submit = screen
+      .getAllByRole('button', { name: 'Request changes' })
+      .at(-1) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText('What should change? (required)'), {
+      target: { value: 'Add a test' },
+    });
+    expect(submit.disabled).toBe(false);
+    fireEvent.click(submit);
+    await screen.findByText('Requesting…');
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({
+      action: 'request_changes',
+      comment: 'Add a test',
+      id: 's2',
+    });
+  });
 });

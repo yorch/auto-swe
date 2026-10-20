@@ -68,6 +68,7 @@ const HANDLE_LABEL_FULL: Record<HandleKind, string> = {
   onFalse: 'On false',
   onReceive: 'On receive',
   onReject: 'On reject',
+  onRequestChanges: 'On request changes',
   onSubmit: 'On submit',
   onTimeout: 'On timeout',
   onTrue: 'On true',

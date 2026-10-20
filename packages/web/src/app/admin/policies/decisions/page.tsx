@@ -30,6 +30,7 @@ const EVENT_TONE: Record<string, BadgeTone> = {
   approve_partial: 'warning',
   publish: 'info',
   reject: 'danger',
+  request_changes: 'warning',
 };
 
 type Filters = {
