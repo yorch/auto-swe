@@ -131,6 +131,40 @@ export type RepoGateCommandKey = (typeof REPO_GATE_COMMAND_KEYS)[number];
 /** A repository's gate commands: only the gates it overrides, each a non-blank command. */
 export type RepoGateCommands = Partial<Record<RepoGateCommandKey, string>>;
 
+/**
+ * One check `POST /repositories/:id/executor-image/probe` reports for a
+ * candidate executor image (docs/repositories.md — the image contract).
+ */
+export interface ExecutorImageProbeCheck {
+  name: string;
+  ok: boolean;
+  detail: string;
+  /** A failed required check fails the image; optional/informational ones do not. */
+  required: boolean;
+}
+
+export interface ExecutorImageProbeResult {
+  image: string;
+  /** True when every required check passed. */
+  ok: boolean;
+  checks: ExecutorImageProbeCheck[];
+}
+
+/**
+ * What the scheduled dependency scan detected at a repository's root, stored
+ * on `Connection.detectedStack` (see `detectStack` in shared/lib). Shown in
+ * repository settings as a suggestion, never applied silently.
+ */
+export interface DetectedStack {
+  stacks: Array<'node' | 'python' | 'jvm' | 'go'>;
+  primary: 'node' | 'python' | 'jvm' | 'go' | null;
+  suggestedGateCommands: RepoGateCommands;
+  /** Which curated defaults/ Dockerfile to build, or null when none matches. */
+  suggestedDockerfile: 'node' | 'python' | 'jvm' | null;
+  /** The root filenames the detection read as signals. */
+  evidence: string[];
+}
+
 /** Shape returned by GET /api/v1/repositories */
 export interface RepositorySummary {
   id: string;
@@ -148,6 +182,8 @@ export interface RepositorySummary {
   executorImage: string | null;
   /** Per-gate command overrides; null when the repository overrides none. */
   gateCommands?: RepoGateCommands | null;
+  /** Stack detected from root manifests by the dependency scan; null until one ran. */
+  detectedStack?: DetectedStack | null;
   language: string | null;
   description: string | null;
   team: TeamRef;

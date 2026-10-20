@@ -128,6 +128,7 @@ export const SIDEBAR = [
       'docs/knowledge',
       'docs/repo-dependency-graph',
       'docs/repo-access-gating',
+      'docs/package-registries',
       'docs/repositories',
       'docs/service-principals',
       'docs/user-github-credentials',

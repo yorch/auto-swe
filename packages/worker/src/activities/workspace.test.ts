@@ -21,6 +21,14 @@ vi.mock('../lib/execUtils.js', async (importOriginal) => {
   };
 });
 
+/**
+ * Default `execShellAsync` behaviour for `createWorkspace`: every command
+ * succeeds with empty output, except the driver's keeper-PID probe (run right
+ * after `docker run`), which must report exactly one child of PID 1 or
+ * creation fails.
+ */
+const okExec = async (cmd: string) => (cmd.includes('PPid:') ? '7\n' : '');
+
 // `createWorkspace` reads container caps, the default base image and the
 // metadata-blocking policy from the environment-backed infra resolver.
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
@@ -44,6 +52,7 @@ import {
   cloneDependencyRepos,
   createWorkspace,
   fetchBranchesSubcommand,
+  gitBootstrapScript,
   killStrayProcessesScript,
   killTaggedProcessesScript,
   MAX_DEPENDENCY_CHECKOUTS,
@@ -121,7 +130,7 @@ describe('buildMetadataBlockArgs', () => {
 describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no Docker daemon here)', () => {
   beforeEach(() => {
     vi.mocked(execShellAsync).mockReset();
-    vi.mocked(execShellAsync).mockImplementation(async () => '');
+    vi.mocked(execShellAsync).mockImplementation(okExec);
   });
 
   it('starts the workspace unprivileged (--cap-drop=ALL, no --cap-add) and runs a distinct metadata-block sidecar', async () => {
@@ -271,7 +280,7 @@ describe('createWorkspace metadata-IP egress block (execShellAsync mocked — no
       if (cmd.includes('--network container:')) {
         throw new Error('sidecar boom');
       }
-      return '';
+      return okExec(cmd);
     });
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
@@ -297,7 +306,7 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
 
   beforeEach(() => {
     vi.mocked(execShellAsync).mockReset();
-    vi.mocked(execShellAsync).mockImplementation(async () => '');
+    vi.mocked(execShellAsync).mockImplementation(okExec);
   });
 
   const cloneCommands = () =>
@@ -345,7 +354,7 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
           stdout: '',
         });
       }
-      return '';
+      return okExec(cmd);
     });
 
     let caught: (Error & { cmd?: string; stderr?: string }) | undefined;
@@ -372,7 +381,7 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
       if (cmd.includes('push')) {
         throw Object.assign(new Error(`Command failed: ${cmd}`), { cmd });
       }
-      return '';
+      return okExec(cmd);
     });
     await expect(ws.gitAuthed(`push origin ${shellQuote('auto/TICKET-1')}`)).rejects.toSatisfy(
       (err: Error & { cmd?: string }) =>
@@ -410,7 +419,7 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
         await opts?.onTimeout?.();
         throw Object.assign(new Error('Command failed: timed out'), { killed: true });
       }
-      return '';
+      return okExec(cmd);
     });
     await expect(ws.exec('yarn test', { timeoutMs: 1000 })).rejects.toThrow('timed out');
 
@@ -428,7 +437,7 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
       if (cmd.startsWith('docker run -d')) {
         throw new Error('Command failed: docker run timed out');
       }
-      return '';
+      return okExec(cmd);
     });
     await expect(createWorkspace(AUTHED, 'auto/TICKET-1', 'main')).rejects.toThrow('docker run');
     const cmds = vi.mocked(execShellAsync).mock.calls.map((c) => c[0] as string);
@@ -459,7 +468,7 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
 describe('Workspace.execStdin (spawn mocked)', () => {
   beforeEach(() => {
     vi.mocked(execShellAsync).mockReset();
-    vi.mocked(execShellAsync).mockImplementation(async () => '');
+    vi.mocked(execShellAsync).mockImplementation(okExec);
     vi.mocked(spawnWithStdinAsync).mockReset();
     vi.mocked(spawnWithStdinAsync).mockResolvedValue({ exitCode: 0, stderr: '', stdout: '' });
   });
@@ -605,7 +614,7 @@ describe('cloneDependencyRepos', () => {
           throw new Error('clone failed');
         }
       }
-      return '';
+      return okExec(cmd);
     });
 
     const cloned = await cloneDependencyRepos(ws, [
@@ -806,7 +815,7 @@ describe('fetchBranchesSubcommand', () => {
 describe('killStrayProcessesScript', () => {
   // Not executed for real: outside a container it would kill every process
   // the test runner's user owns. Its structure is what these assert.
-  const script = killStrayProcessesScript();
+  const script = killStrayProcessesScript(42);
 
   it('stops everything before killing anything', () => {
     const stop = script.indexOf('asw_sweep STOP');
@@ -820,12 +829,48 @@ describe('killStrayProcessesScript', () => {
       'if [ "$asw_p" = 1 ] || [ "$asw_p" = "$asw_keeper" ] || asw_mine "$asw_p"; then continue; fi'
     );
     expect(script).toContain('if [ "$asw_a" = "$$" ]; then return 0; fi');
-    // The keeper is the lowest-numbered child of PID 1.
-    expect(script).toContain('[ "$(asw_ppid "$asw_p")" = 1 ]');
   });
+
+  it('uses the keeper pid the driver recorded, rather than inferring one', () => {
+    expect(script).toContain('asw_keeper=42');
+    expect(killStrayProcessesScript(99)).toContain('asw_keeper=99');
+    // No /proc scan for a keeper any more: the driver supplies it.
+    expect(script).not.toContain('asw_keeper=' + '$');
+  });
+
+  it.each([0, -3, 1.5, Number.NaN, 'abc' as unknown as number])(
+    'rejects a keeper pid that is not a positive integer: %s',
+    (pid) => {
+      expect(() => killStrayProcessesScript(pid)).toThrow('keeper pid');
+    }
+  );
 
   it('is valid POSIX sh', () => {
     execFileSync('/bin/sh', ['-n', '-c', script]);
+  });
+});
+
+describe('gitBootstrapScript', () => {
+  it('uses git when present, installs via apk then apt-get, else fails naming the contract', () => {
+    const script = gitBootstrapScript('alpine:3.20');
+    expect(script).toContain('command -v git');
+    expect(script).toContain('apk add --no-cache git');
+    // apt-get runs as root: the workspace drops every capability, so apt's own
+    // privilege drop to _apt would fail without the sandbox override.
+    expect(script).toContain('apt-get -o APT::Sandbox::User=root update');
+    expect(script).toContain(
+      'apt-get -o APT::Sandbox::User=root install -y --no-install-recommends git'
+    );
+    expect(script).toContain('apk');
+    expect(script.indexOf('apk')).toBeLessThan(script.indexOf('apt-get'));
+    // The failure names the image and the contract.
+    expect(script).toContain("'alpine:3.20'");
+    expect(script).toContain('must provide sh, git and tar');
+    expect(script).toContain('exit 1');
+  });
+
+  it('is valid POSIX sh', () => {
+    execFileSync('/bin/sh', ['-n', '-c', gitBootstrapScript('node:24-alpine')]);
   });
 });
 

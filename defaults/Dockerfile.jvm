@@ -1,0 +1,25 @@
+# Default executor image for JVM projects (Maven; Gradle via the repo's wrapper)
+FROM eclipse-temurin:21-jdk@sha256:23cc5734ff46e776f51ce66eb9ee08444fd47caabec0a95b7eb6e94be2d3696d
+
+# git is required for workspace operations, tar for copy in/out, bash for the
+# agent's shell tooling, ripgrep so Pi's grep honours .gitignore. Gradle is not
+# installed: JVM repos build through their checked-in ./gradlew wrapper, which
+# pins the version.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ripgrep tar bash maven \
+    && rm -rf /var/lib/apt/lists/*
+
+# No daemons in the workspace: the stray-process sweep (killStrayProcessesScript)
+# SIGKILLs every process outside the keeper at every authenticated git call, so
+# a Gradle or Kotlin daemon would be killed and restarted each time anyway.
+ENV GRADLE_OPTS="-Dorg.gradle.daemon=false -Dkotlin.compiler.execution.strategy=in-process"
+
+WORKDIR /workspace/target-repo
+
+# Hand ownership of the workspace tree to the base image's non-root user
+# (uid 1000 — ubuntu's stock user — so no new account is needed) so the
+# executor can write files at runtime (clone, build artifacts, ~/.m2,
+# ~/.gradle) without EACCES.
+RUN mkdir -p /workspace && chown -R 1000:1000 /workspace
+
+USER 1000:1000

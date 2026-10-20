@@ -83,6 +83,53 @@ function lastFetch(): { url: string; init: RequestInit } {
   return { init: call[1], url: call[0].toString() };
 }
 
+describe('GitHubScmProvider.listDirectory', () => {
+  const repo = {
+    installationHost: 'github.com',
+    organizationName: 'acme',
+    repoName: 'payments-api',
+  };
+  const provider = new GitHubScmProvider();
+  const json = (body: unknown, status = 200) => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify(body), {
+        headers: { 'content-type': 'application/json' },
+        status,
+      }) as never
+    );
+  };
+
+  it('maps a directory listing to entry names', async () => {
+    json([
+      { name: 'package.json', type: 'file' },
+      { name: 'src', type: 'dir' },
+    ]);
+    expect(await provider.listDirectory(repo, '')).toEqual(['package.json', 'src']);
+    expect(lastFetch().url).toContain('/repos/acme/payments-api/contents');
+  });
+
+  it('passes the root call through as an empty path', async () => {
+    json([]);
+    await provider.listDirectory(repo, '');
+    expect(lastFetch().url).not.toContain('contents/.');
+  });
+
+  it('returns null for a file (non-array response)', async () => {
+    json({ content: 'e30=', name: 'package.json', type: 'file' });
+    expect(await provider.listDirectory(repo, 'package.json')).toBeNull();
+  });
+
+  it('returns null on a 404', async () => {
+    json({ message: 'Not Found' }, 404);
+    expect(await provider.listDirectory(repo, 'missing')).toBeNull();
+  });
+
+  it('throws on other errors', async () => {
+    json({ message: 'Internal Server Error' }, 500);
+    await expect(provider.listDirectory(repo, '')).rejects.toThrow();
+  });
+});
+
 describe('resolveCiLogsTarget', () => {
   const trusted = ['https://github.com', 'https://api.github.com'];
 

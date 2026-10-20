@@ -240,7 +240,10 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
       authedCloneUrl,
       branch,
       baseBranch,
-      repo.executorImage ?? undefined
+      repo.executorImage ?? undefined,
+      undefined,
+      undefined,
+      { teamId: repo.teamId }
     );
     const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
 
@@ -306,7 +309,9 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
       branch,
       baseBranch,
       repo.executorImage ?? undefined,
-      baseSha
+      baseSha,
+      undefined,
+      { teamId: repo.teamId }
     );
     await importAgentTree(agentWs, trusted);
     const committed = await commitTrustedTree(

@@ -261,7 +261,10 @@ async function provisionGateWorkspace(
     authedCloneUrl,
     branch,
     baseBranch,
-    repo.executorImage ?? undefined
+    repo.executorImage ?? undefined,
+    undefined,
+    undefined,
+    { teamId: repo.teamId }
   );
 
   // createWorkspace produces a fresh local branch from the base branch.

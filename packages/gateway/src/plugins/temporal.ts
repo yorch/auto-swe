@@ -15,7 +15,7 @@ import {
 } from '@auto-swe/shared/lib/assistantConversation';
 import { resolveTemporalAddress } from '@auto-swe/shared/lib/systemConfig';
 import { traceContextClientInterceptor } from '@auto-swe/shared/lib/temporalTracing';
-import type { ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
+import type { ExecutorImageProbeResult, ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
 import type {
   ChannelAssistantTurnInput,
   ConsolidateLessonsInput,
@@ -327,6 +327,15 @@ declare module 'fastify' {
         workflowId: string,
         input: { spec: WorkflowSpec; teamId?: string | null }
       ) => Promise<{ explanation: string }>;
+      /**
+       * Probe a candidate executor image against the workspace contract by
+       * starting it as a workspace container (request/response; image pulls
+       * can take minutes).
+       */
+      probeExecutorImage: (
+        workflowId: string,
+        input: { image?: string }
+      ) => Promise<ExecutorImageProbeResult>;
       /** Start an async NL-generation job (does NOT await the result). */
       startWorkflowAuthorJob: (workflowId: string, input: WorkflowAuthorJobInput) => Promise<void>;
       /** Poll an async NL-generation job's status/progress/result. */
@@ -1038,6 +1047,21 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
           throw err;
         }
       }
+    },
+
+    async probeExecutorImage(
+      workflowId: string,
+      input: { image?: string }
+    ): Promise<ExecutorImageProbeResult> {
+      // execute() = start + await result. The bound sits above the activity's
+      // 10-minute start-to-close (image pulls are slow) so the workflow does
+      // not time out before the activity does.
+      return (await client.workflow.execute('ExecutorImageProbeWorkflow', {
+        args: [input],
+        taskQueue: 'engineering-workflow',
+        workflowExecutionTimeout: '11 minutes',
+        workflowId,
+      })) as ExecutorImageProbeResult;
     },
 
     async sendAssistantTurn(input, turn) {

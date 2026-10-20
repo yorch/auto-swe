@@ -1,0 +1,22 @@
+# Default executor image for Python projects
+FROM python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+
+# git is required for workspace operations, tar for copy in/out, bash for the
+# agent's shell tooling, ripgrep so Pi's grep honours .gitignore.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git ripgrep tar bash \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv as the package/manager front-end, pinned to a release at least 7 days old
+# at the time this Dockerfile was updated.
+RUN pip install --no-cache-dir 'uv==0.12.24'
+
+WORKDIR /workspace/target-repo
+
+# Hand ownership of the workspace tree to a non-root user so the executor can
+# write files at runtime (clone, build artifacts, venvs) without EACCES.
+RUN useradd --create-home --uid 1000 executor \
+    && mkdir -p /workspace \
+    && chown -R executor:executor /workspace
+
+USER executor

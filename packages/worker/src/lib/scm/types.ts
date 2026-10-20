@@ -220,6 +220,12 @@ export interface ScmProvider {
    */
   fetchFileContent(repo: RepoRef, path: string, ref?: string): Promise<string | null>;
   /**
+   * List the entry names of a directory in the repo at `ref` (default branch
+   * when omitted). Returns `null` when the path is missing or is not a
+   * directory; other errors propagate, as `fetchFileContent` does.
+   */
+  listDirectory(repo: RepoRef, path: string, ref?: string): Promise<string[] | null>;
+  /**
    * Whether `branch` exists on the host, how many commits it has that `baseBranch`
    * lacks (null when it does not exist), and the open PR from it if any. Lets a run
    * that would reuse a fixed branch (a schedule) stop before it spends a workspace on

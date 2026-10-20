@@ -163,7 +163,10 @@ async function verify(input: {
     authedCloneUrl,
     fixBranch,
     baseBranch,
-    repo.executorImage ?? undefined
+    repo.executorImage ?? undefined,
+    undefined,
+    undefined,
+    { teamId: repo.teamId }
   );
   try {
     const file = await workspace.execCapture(`cat -- ${shellQuote(path)}`);

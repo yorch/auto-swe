@@ -29,7 +29,9 @@ connection with the image it already has. The team shell-image allowlist does no
 are approved for sandboxed shell steps, which never hold a credential. `build-executor.yml` writes
 each freshly tagged image to its repository, so its `GATEWAY_TOKEN` must belong to a platform
 admin. It builds `defaults/Dockerfile.node` unless a run sets `use_repo_dockerfile`, which builds the
-repository's own `.auto-swe/Dockerfile` instead.
+repository's own `.auto-swe/Dockerfile` instead. `defaults/` also carries `Dockerfile.python` and
+`Dockerfile.jvm`; the `stack` input (`node`|`python`|`jvm`, default `node`) selects which curated
+Dockerfile is built.
 
 The workspace image tracks its own major, not the services'. It stays on `node:24-alpine` while the gateway, worker and web images run Node 26, because that image puts `yarn`, `pnpm` and `corepack` on `PATH` and the Node 26 image puts none of them there — Corepack is no longer bundled with the Node distribution.
 
@@ -203,6 +205,15 @@ WEB_URL=https://app.example.com      # base URL for the "Open approvals" link (t
 # SCANNER_REGEX_BUDGET_MS=250          # per-pattern scanner wall-clock budget
 # The Claude Code harness's model proxy (the compose files turn it on): the worker holds the model
 # key and meters every call; a workspace gets a per-turn token. Unset the port to turn it off.
+# npm registry proxy — workspaces install packages through the worker, which
+# alone holds each registry's credential. Empty REGISTRY_PROXY_PORT disables it.
+# REGISTRY_PROXY_PORT=8791
+# REGISTRY_PROXY_URL=http://{hostname}:8791   # how a workspace reaches this worker; {hostname}
+#                                             # becomes the replica's hostname
+# REGISTRY_PROXY_BIND=0.0.0.0
+# REGISTRY_PROXY_CACHE_DIR=                   # tarball cache dir; empty disables the cache
+# REGISTRY_PROXY_CACHE_MAX_BYTES=2147483648   # cache cap (default 2 GiB)
+
 # HARNESS_MODEL_PROXY_PORT=8790
 # HARNESS_MODEL_PROXY_URL=http://{hostname}:8790   # how a workspace reaches this worker; {hostname}
 #                                                  # is the worker's own (default http://host.docker.internal:<port>)

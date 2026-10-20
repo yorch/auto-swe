@@ -222,6 +222,43 @@ the same role on the destination, because its commands start running in that tea
 change writes a `Connection` entry to the config audit log with the set before and after. Only a
 `git_repo` connection has gate commands.
 
+### Executor images
+
+A run's workspace container starts on the deployment's workspace image
+(`WORKSPACE_IMAGE`), or on the repository's `executorImage` override — a
+platform-admin-only field, because the image is code that runs next to the
+clone credential. An executor image must meet the **image contract**: it
+provides `sh`, `git` and `tar`, runs `sleep infinity` under `--init`, and has
+a `/workspace` the exec user can write to. When `git` is missing the workspace
+tries to install it (`apk`, then `apt-get`) before giving up with an error
+naming this contract; `ripgrep` is optional but recommended — Pi's grep
+honours `.gitignore` only through it.
+
+A platform admin can check a candidate image without waiting for a run: the
+**Check image** button in the repository's connection form, or
+`POST /api/v1/repositories/:id/executor-image/probe` (`{ image? }`, defaulting
+to the repository's override, else the resolved workspace default). It runs a
+short `ExecutorImageProbeWorkflow` on the worker, which starts the image as a
+hardened workspace container, runs the contract checks inside it, removes the
+container, and returns each check with `required`/`ok`/`detail`.
+
+`defaults/` holds curated executor bases — `Dockerfile.node`, plus
+`Dockerfile.python` (Python slim + `uv`) and `Dockerfile.jvm` (Temurin 21 +
+Maven, daemons off). `build-executor.yml` builds one of them per run: the
+`stack` input (`node`|`python`|`jvm`, default `node`) selects it, unless
+`use_repo_dockerfile` builds the repository's own Dockerfile instead.
+
+### Detected stack
+
+The scheduled dependency scan also probes the repository's root for stack
+signals and records the result on the connection (`detectedStack`, with
+`detectedStackAt`): the detected stack(s) (`node`/`python`/`jvm`/`go`), a
+primary by fixed precedence (node, then python, then jvm, then go), a suggested
+curated Dockerfile, and conservative suggested gate commands. The repository
+edit form shows it as a suggestion — detected stacks, the suggested
+`defaults/Dockerfile.<stack>` for `build-executor.yml`, and a **Use suggested
+gate commands** button that fills (but does not save) the gate fields.
+
 ---
 
 ## 3. Sharing with other teams
@@ -341,6 +378,9 @@ longer fit.
   `build-executor` `repository_dispatch`); a run without one fails. Nothing lists the repositories
   and dispatches a periodic rebuild, so an image picks up base-image fixes only when someone
   triggers it.
+- **Stack detection reads root files only.** `detectedStack` comes from filenames at the repository
+  root — a monorepo whose manifests live in subdirectories reports the root's stacks, and nested
+  components are invisible to it.
 - **Overrides must be base URLs on one host each.** A GitHub Enterprise server served under a path
   prefix rather than at the root of its host cannot be expressed: the web base is stored as an
   origin.

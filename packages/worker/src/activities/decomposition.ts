@@ -413,7 +413,10 @@ async function provisionMergeWorkspace(
     authedCloneUrl,
     targetBranch,
     baseBranch,
-    repo.executorImage ?? undefined
+    repo.executorImage ?? undefined,
+    undefined,
+    undefined,
+    { teamId: repo.teamId }
   );
   heartbeat(`${label}: workspace provisioned`);
 

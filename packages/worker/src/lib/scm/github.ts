@@ -690,6 +690,25 @@ export class GitHubScmProvider implements ScmProvider {
     }
   }
 
+  async listDirectory(repo: RepoRef, path: string, ref?: string): Promise<string[] | null> {
+    const octokit = await octokitFor(repo);
+    try {
+      const { data } = await octokit.repos.getContent({
+        owner: repo.organizationName,
+        path,
+        repo: repo.repoName,
+        ...(ref && { ref }),
+      });
+      // An array is a directory listing; a file/submodule is a plain object.
+      return Array.isArray(data) ? data.map((entry) => entry.name) : null;
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
   async findBranchWork(
     repo: RepoRef,
     branch: string,

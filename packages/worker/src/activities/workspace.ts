@@ -1,16 +1,24 @@
 import crypto from 'node:crypto';
-import { DOCKER_HOST_ALIAS, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
+import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
-import {
-  type CapturedResult,
-  execShellAsync,
-  type OnTimeout,
-  spawnCaptureAsync,
-  spawnWithStdinAsync,
-} from '../lib/execUtils.js';
+import type { CapturedResult, OnTimeout } from '../lib/execUtils.js';
 import { redactExecError } from '../lib/redactToken.js';
+import {
+  beginWorkspaceRegistries,
+  buildRegistryAllowlist,
+  renderNpmrc,
+  renderYarnrc,
+  type WorkspaceRegistryAccess,
+} from '../lib/registryProxy/workspaceWiring.js';
+import { shellQuote } from '../lib/shellQuote.js';
+import { workspaceBackend } from '../lib/workspaceBackend/index.js';
+import { agentWorkspaceSpec } from '../lib/workspaceBackend/spec.js';
+import type { WorkspaceHandle } from '../lib/workspaceBackend/types.js';
 
 export type CapturedExec = CapturedResult;
+
+export { buildMetadataBlockArgs } from '../lib/workspaceBackend/docker.js';
+export { shellQuote };
 
 export interface Workspace {
   containerId: string;
@@ -44,10 +52,6 @@ export interface Workspace {
    */
   gitAuthed: (subcommand: string) => Promise<string>;
   destroy: () => Promise<void>;
-}
-
-export function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }
 
 export interface SplitCloneCredential {
@@ -282,13 +286,18 @@ export function fetchBranchesSubcommand(branches: string[]): string {
  *    rewrite and git reading it.
  *
  * Processes are stopped (twice, to catch a child forked mid-scan) before any
- * is killed, as in {@link killTaggedProcessesScript}. The keeper is the
- * lowest-numbered child of PID 1 — the first thing the container started. If
- * PID reuse ever handed an agent process a lower number, the keeper is the
- * one killed and the container stops before the git call runs: the failure
- * is closed. Uses only `/proc`, `sed` and `kill`.
+ * is killed, as in {@link killTaggedProcessesScript}. The keeper's PID comes
+ * from the workspace driver, which records it at creation when the `sleep
+ * infinity` process is provably the only child of PID 1 — it is not found
+ * here because a Kubernetes pod has no `--init`: there the keeper is itself
+ * PID 1, so "the lowest-numbered child of PID 1" would name the agent's
+ * first process instead, and sparing it would leave it alive to read the
+ * git credential off git's command line. Uses only `/proc`, `sed` and `kill`.
  */
-export function killStrayProcessesScript(): string {
+export function killStrayProcessesScript(keeperPid: number): string {
+  if (!Number.isInteger(keeperPid) || keeperPid <= 0) {
+    throw new Error(`invalid keeper pid: ${keeperPid}`);
+  }
   return [
     'asw_ppid() { sed -n \'s/^PPid:[[:space:]]*//p\' "/proc/$1/status" 2>/dev/null; }',
     'asw_mine() {',
@@ -299,11 +308,7 @@ export function killStrayProcessesScript(): string {
     '  done',
     '  return 1',
     '}',
-    'asw_keeper=',
-    'for asw_d in /proc/[0-9]*; do',
-    `  asw_p=\${asw_d#/proc/}`,
-    '  if [ "$(asw_ppid "$asw_p")" = 1 ] && { [ -z "$asw_keeper" ] || [ "$asw_p" -lt "$asw_keeper" ]; }; then asw_keeper=$asw_p; fi',
-    'done',
+    `asw_keeper=${keeperPid}`,
     'asw_sweep() {',
     '  for asw_d in /proc/[0-9]*; do',
     `    asw_p=\${asw_d#/proc/}`,
@@ -391,48 +396,36 @@ export function killTaggedProcessesScript(execId: string): string {
 // Docker runtime (e.g. `--network container:` unsupported). Default ON.
 // `WORKSPACE_BLOCK_METADATA=false` is the only value that turns it off, and the
 // sidecar image is `WORKSPACE_METADATA_BLOCK_IMAGE`. Both are deploy-time
-// settings: nothing a run, a team, or an admin session can change.
+// settings: nothing a run, a team, or an admin session can change. The driver
+// runs the sidecar in create() — see `buildMetadataBlockArgs`, re-exported
+// above.
 
 /**
- * Build the `docker run` invocation for the short-lived metadata-block sidecar.
+ * `sh` script that leaves a working `git` on PATH, run as the first exec in a
+ * fresh workspace. Three cases:
  *
- * Why a sidecar rather than doing this in the workspace container itself: the
- * workspace runs with `--cap-drop=ALL` (see `createWorkspace` below) so it has
- * no `NET_ADMIN` and cannot install routes on its own network stack. Instead,
- * a *separate*, throwaway container joins the workspace's network namespace
- * via `--network container:<containerName>` with `NET_ADMIN` added just long
- * enough to install blackhole routes for the cloud metadata IPs, then exits
- * (`--rm`). The routes live in the shared netns and persist after the sidecar
- * is gone, so the long-lived agent-controlled workspace container never holds
- * `NET_ADMIN` itself.
- *
- * Blocked addresses: `169.254.169.254` (AWS/GCP/Azure IMDS), `169.254.170.2`
- * (ECS task metadata endpoint), `fd00:ec2::254` (IPv6 IMDS). Each `ip route
- * add` is `|| true`'d so a route that already exists (or an `ip -6` on a
- * netns without IPv6) doesn't fail the whole sidecar.
- *
- * Pure and side-effect-free — returns the command string for the caller to
- * exec, so it's unit-testable without a Docker daemon. The route-install
- * behavior itself (does the workspace actually lose IMDS reachability
- * afterward?) still requires a real-Docker smoke test; there is no Docker
- * daemon available in CI or this sandbox to exercise it end-to-end.
+ *  - git already ships in the image — nothing to do;
+ *  - git is missing but a package manager can install it: `apk` on Alpine,
+ *    then `apt-get` on Debian/Ubuntu (with `APT::Sandbox::User=root`, because
+ *    the container runs `--cap-drop=ALL` and apt's default privilege drop to
+ *    the `_apt` user fails without it);
+ *  - neither — the image cannot meet the executor image contract (git is
+ *    required; see docs/repositories.md) and provisioning fails naming it.
  */
-export function buildMetadataBlockArgs(containerName: string, image: string): string {
-  // Install the IPv4 IMDS blackholes, then VERIFY at least one landed: if the
-  // runtime's `ip` applet doesn't support `blackhole` routes, the adds fail
-  // silently and this control would otherwise be a no-op with no signal. The
-  // final `grep`/`exit 1` makes that case surface as a non-zero exit, which the
-  // caller's try/catch logs as a warning instead of a false success. The IPv6
-  // add stays soft (a netns without IPv6 legitimately can't add it, and IMDS is
-  // IPv4), so it isn't part of the success check.
-  const routeCmd = [
-    'ip route add blackhole 169.254.169.254/32 2>/dev/null',
-    'ip route add blackhole 169.254.170.2/32 2>/dev/null',
-    'ip -6 route add blackhole fd00:ec2::254/128 2>/dev/null || true',
-    'ip route show 2>/dev/null | grep -q blackhole || ' +
-      '{ echo "metadata block: no blackhole route installed (ip may lack blackhole support)" >&2; exit 1; }',
-  ].join('; ');
-  return `docker run --rm --network container:${containerName} --cap-add=NET_ADMIN -- ${shellQuote(image)} sh -c ${shellQuote(routeCmd)}`;
+export function gitBootstrapScript(image: string): string {
+  return [
+    'if ! command -v git >/dev/null 2>&1; then',
+    '  if command -v apk >/dev/null 2>&1; then',
+    '    apk add --no-cache git',
+    '  elif command -v apt-get >/dev/null 2>&1; then',
+    '    apt-get -o APT::Sandbox::User=root update &&',
+    '      apt-get -o APT::Sandbox::User=root install -y --no-install-recommends git',
+    '  else',
+    `    echo ${shellQuote(`auto-swe: executor image '${image}' does not ship git and provides neither apk nor apt-get to install it. An executor image must provide sh, git and tar — see the executor image contract in docs/repositories.md`)} >&2`,
+    '    exit 1',
+    '  fi',
+    'fi',
+  ].join('\n');
 }
 
 /** Hard cap on `full_checkout` dependency clones per workspace. */
@@ -562,14 +555,14 @@ export async function createWorkspace(
    * candidate's already-pushed branch — not a fresh branch off main. Ignored
    * when `checkoutSha` is set (the pinned-fixture path takes precedence).
    */
-  existingBranch?: boolean
+  existingBranch?: boolean,
+  options?: { teamId?: string | null }
 ): Promise<Workspace> {
   // Container caps, default base image and metadata-blocking policy all come
   // from the environment. A caller-supplied `image` still wins (executor-image
   // override).
   const infra = resolveWorkspaceInfra();
   const effectiveImage = image ?? infra.image;
-  const { blockMetadata, metadataBlockImage } = infra;
 
   if (!DOCKER_IMAGE_REF_RE.test(effectiveImage)) {
     throw new Error(`Invalid Docker image name: ${effectiveImage}`);
@@ -592,6 +585,7 @@ export async function createWorkspace(
 
   const id = crypto.randomBytes(8).toString('hex');
   const containerName = `workspace-${id}`;
+  const backend = workspaceBackend();
 
   // Every command run in the container carries a fresh tag, and a command that
   // outlives its timeout has its whole in-container process tree killed by
@@ -602,98 +596,50 @@ export async function createWorkspace(
     return {
       env: `${EXEC_TAG_ENV}=${execId}`,
       onTimeout: async () => {
-        await execShellAsync(
-          `docker exec ${containerName} sh -c ${shellQuote(killTaggedProcessesScript(execId))}`,
+        await backend.execShell(
+          backend.attach(containerName),
+          ['sh', '-c', killTaggedProcessesScript(execId)],
           { heartbeatLabel: 'workspace: killing timed-out command', timeoutMs: 30_000 }
         );
       },
     };
   };
 
-  // Start container — use '--' to separate docker flags from the image argument.
-  // Pin public DNS resolvers (Cloudflare + Google) so name resolution doesn't
-  // depend on Docker's embedded forwarder, which intermittently times out when
-  // the host's upstream DNS is briefly unreachable (e.g. VPN/hotspot/sleep) and
-  // breaks long-running git operations like clone/push mid-job.
-  //
-  // Hardening notes (unlike the locked-down `ephemeralContainer` runner, this
-  // workspace intentionally keeps default bridge networking and omits
-  // `--read-only`/`--tmpfs`: the implementer agent needs outbound git
-  // clone/push + `npm install` and writes freely to its own container layer
-  // for the duration of the run):
-  //  - `--memory`/`--cpus`/`--pids-limit` bound a runaway agent-driven build
-  //    or test process instead of letting it exhaust the host.
-  //  - `--cap-drop=ALL` + `--security-opt=no-new-privileges` remove Linux
-  //    capabilities and privilege-escalation the workspace never needs.
-  //  - `--add-host` blackholes the *hostname* form of the GCP metadata
-  //    endpoint (`metadata.google.internal`/`metadata.gke.internal`) so an
-  //    agent can't trivially exfiltrate the host's cloud credentials through
-  //    it. This does NOT block the metadata service's link-local IP
-  //    (169.254.169.254) directly — an agent could still reach it by IP.
-  //    That gap is closed below via a short-lived privileged sidecar (see
-  //    `buildMetadataBlockArgs`) run right after this container starts, since
-  //    installing the route here would need `NET_ADMIN`, which conflicts
-  //    with `--cap-drop=ALL`.
-  //  - With the harness model proxy advertised at the Docker host alias, the
-  //    alias resolves to the host gateway, so a harness turn can reach the
-  //    worker's proxy (and never needs the provider credential itself).
-  //    A deployment can instead put workspaces on a network the worker joins
-  //    (`WORKSPACE_NETWORK`), which needs no port published on the host.
-  //
-  // Everything from `docker run` on sits inside one try: the container has a
-  // deterministic name before it exists, so any failure — including a
-  // `docker run` whose client timed out after the daemon had already created
-  // the container — removes it by that name instead of leaking it.
-  const proxyHost =
-    infra.harnessModelProxy && new URL(infra.harnessModelProxy.url).hostname === DOCKER_HOST_ALIAS
-      ? ` --add-host=${DOCKER_HOST_ALIAS}:host-gateway`
-      : '';
-  // A deployment-chosen network in place of the default bridge — the one the
-  // worker also joins, so a harness turn reaches the worker's model proxy.
-  const network = infra.network ? ` --network=${shellQuote(infra.network)}` : '';
-  const dns = infra.dns.map((server) => `--dns=${shellQuote(server)}`).join(' ');
+  // The container has a deterministic name before it exists, so any failure —
+  // including a `docker run` whose client timed out after the daemon had
+  // already created the container — removes it by that name instead of
+  // leaking it. The driver adds the hardening (init, cap-drop, keeper PID,
+  // metadata sidecar); `agentWorkspaceSpec` carries the deployment's caps,
+  // resolvers, network and host aliases.
+  // Registry wiring registers before the container exists: the token goes in
+  // as env on `docker run`, and the registration answers 503 until the
+  // lockfile allowlist is set — a state the agent never reaches.
+  let registry: WorkspaceRegistryAccess | null = null;
   try {
-    await execShellAsync(
-      // `workspaceMemory` is a DB-backed string, so shell-quote it (the numeric
-      // caps can't carry shell metacharacters); defense-in-depth on top of the
-      // route-level format validation.
-      `docker run -d --name ${containerName} --init ${dns} --memory=${shellQuote(infra.memory)} --cpus=${infra.cpus} --pids-limit=${infra.pidsLimit} --cap-drop=ALL --security-opt=no-new-privileges --add-host=metadata.google.internal:0.0.0.0 --add-host=metadata.gke.internal:0.0.0.0${proxyHost}${network} -- ${shellQuote(effectiveImage)} sleep infinity`,
-      { heartbeatLabel: 'workspace: starting container' }
-    );
-
-    // Cloud metadata-IP egress block (deferred follow-up, now implemented): run
-    // a throwaway sidecar that shares this container's network namespace to
-    // install blackhole routes for the metadata IPs — see `buildMetadataBlockArgs`
-    // for the full rationale. Best-effort and non-fatal: a failure here (e.g. an
-    // unsupported `--network container:` mode on some Docker runtime) must not
-    // break every workspace run, especially since the primary IMDS
-    // credential-exfil vector — leaking the *host's* cloud credentials pulled
-    // from the metadata service — is already mitigated by the credential
-    // scrubbing elsewhere in this function. This path has no daemon available to
-    // smoke-test in CI/this sandbox; it still needs a real-Docker validation
-    // pass before being relied on in production.
-    if (blockMetadata) {
-      try {
-        await execShellAsync(buildMetadataBlockArgs(containerName, metadataBlockImage), {
-          heartbeatLabel: 'workspace: blocking metadata-IP egress',
-        });
-      } catch (err) {
-        console.warn(
-          `workspace ${containerName}: metadata-IP egress block failed, continuing without it — ` +
-            `agent may be able to reach cloud metadata endpoints by IP: ${
-              err instanceof Error ? err.message : String(err)
-            }`
-        );
-      }
+    registry = await beginWorkspaceRegistries(options?.teamId ?? null, containerName);
+  } catch (err) {
+    // A resolution/registration failure fails workspace creation — a workspace
+    // with the wrong registries (or none, when some should apply) is not safe
+    // to hand the agent.
+    throw redactExecError(err instanceof Error ? err : new Error(String(err)), cloneSecrets);
+  }
+  let handle: WorkspaceHandle = backend.attach(containerName);
+  try {
+    const spec = agentWorkspaceSpec(containerName, effectiveImage, infra);
+    if (registry) {
+      spec.env = [...(spec.env ?? []), ...registry.env];
     }
+    handle = await backend.create(spec);
 
     // Initial exec function (root of container)
     const rootExec = (command: string, timeoutMs?: number): Promise<string> => {
       const tag = newExecTag();
-      return execShellAsync(
-        `docker exec -e ${tag.env} ${containerName} sh -c ${shellQuote(command)}`,
-        { heartbeatLabel: 'workspace: provisioning', onTimeout: tag.onTimeout, timeoutMs }
-      );
+      return backend.execShell(handle, ['sh', '-c', command], {
+        env: [tag.env],
+        heartbeatLabel: 'workspace: provisioning',
+        onTimeout: tag.onTimeout,
+        timeoutMs,
+      });
     };
 
     // A clone of a large repository legitimately outlasts the 2-minute exec
@@ -710,8 +656,9 @@ export async function createWorkspace(
         gitAuthHeader
       );
 
-    // Install git if not present (alpine images may not have it)
-    await rootExec('which git || apk add --no-cache git');
+    // Leave a working git on PATH: use it if shipped, install via apk/apt-get
+    // when the image can, else fail naming the image contract.
+    await rootExec(gitBootstrapScript(effectiveImage));
 
     // Configure git identity — required for commits in ephemeral containers.
     // Without this, `git commit` fails with "Author identity unknown".
@@ -746,12 +693,62 @@ export async function createWorkspace(
     await rootExec(
       `cd /workspace/target-repo && git remote set-url origin ${shellQuote(cleanUrl)}`
     );
-  } catch (err) {
-    try {
-      await execShellAsync(`docker rm -f ${containerName}`);
-    } catch {
-      /* already gone */
+
+    if (registry) {
+      // npmrc via stdin: the token lands in a file, never on a command line.
+      const npmrc = renderNpmrc(registry.registries, registry.baseUrl, registry.token);
+      await rootExec('mkdir -p /workspace/.auto-swe');
+      await backend.exec(
+        handle,
+        ['sh', '-c', 'cat > /workspace/.auto-swe/npmrc && chmod 600 /workspace/.auto-swe/npmrc'],
+        {
+          heartbeatLabel: 'workspace: writing registry config',
+          stdin: npmrc,
+        }
+      );
+      // Berry scope overrides live in the exec user's home rc — a project
+      // .yarnrc.yml scope entry wins over it, which fails closed.
+      const yarnrc = renderYarnrc(registry.registries, registry.baseUrl);
+      if (yarnrc) {
+        const home = (await rootExec('echo $HOME')).trim();
+        await backend.exec(handle, ['sh', '-c', `cat >> ${shellQuote(home)}/.yarnrc.yml`], {
+          heartbeatLabel: 'workspace: writing yarn registry config',
+          stdin: yarnrc,
+        });
+      }
+      // The allowlist comes from the ref the workspace was cut from, never the
+      // working tree: HEAD after clone, the pinned SHA, or — for an existing
+      // branch clone that has no local default — the fetched origin/defaultBranch.
+      let ref = 'HEAD';
+      if (checkoutSha) {
+        ref = checkoutSha;
+      } else if (existingBranch) {
+        const fetchScript = [
+          killStrayProcessesScript(handle.keeperPid),
+          authedGitScript('/workspace/target-repo', fetchBranchesSubcommand([defaultBranch]), {
+            cleanUrl,
+            gitAuthHeader,
+          }),
+        ].join('\n');
+        const tag = newExecTag();
+        await backend.execShell(handle, ['sh', '-c', fetchScript], {
+          env: [tag.env],
+          heartbeatLabel: 'workspace: fetching base for registry allowlist',
+          onTimeout: tag.onTimeout,
+        });
+        ref = `origin/${defaultBranch}`;
+      }
+      const execCapture = (command: string, maxOutputBytes?: number) =>
+        backend.exec(handle, ['sh', '-c', command], {
+          heartbeatLabel: 'workspace: building registry allowlist',
+          ...(maxOutputBytes !== undefined ? { maxOutputBytes } : {}),
+          timeoutMs: 60_000,
+        });
+      registry.registration.setAllowlist(await buildRegistryAllowlist(registry, ref, execCapture));
     }
+  } catch (err) {
+    await registry?.registration.release().catch(() => {});
+    await backend.remove(containerName);
     // A failed git command rejects with the full command line in
     // `error.message` (and stdout/stderr/cmd) — scrub the credential before
     // it reaches Temporal history or a log line.
@@ -762,54 +759,38 @@ export async function createWorkspace(
   return {
     containerId: containerName,
     destroy: async () => {
-      try {
-        await execShellAsync(`docker rm -f ${containerName}`);
-      } catch {
-        // Container may already be gone
-      }
+      await registry?.registration.release().catch(() => {});
+      await backend.remove(containerName);
     },
     exec: (command: string, options) => {
       const tag = newExecTag();
-      return execShellAsync(
-        `docker exec -w /workspace/target-repo -e ${tag.env} ${containerName} sh -c ${shellQuote(command)}`,
-        {
-          heartbeatLabel: 'workspace: exec',
-          onTimeout: tag.onTimeout,
-          timeoutMs: options?.timeoutMs,
-        }
-      );
+      return backend.execShell(handle, ['sh', '-c', command], {
+        env: [tag.env],
+        heartbeatLabel: 'workspace: exec',
+        onTimeout: tag.onTimeout,
+        timeoutMs: options?.timeoutMs,
+        workdir: '/workspace/target-repo',
+      });
     },
     execCapture: (command: string, options) => {
       const tag = newExecTag();
-      return spawnCaptureAsync(
-        'docker',
-        ['exec', '-w', '/workspace/target-repo', '-e', tag.env, containerName, 'sh', '-c', command],
-        {
-          heartbeatLabel: 'workspace: exec (capture)',
-          onTimeout: tag.onTimeout,
-          timeoutMs: options?.timeoutMs ?? 600_000,
-        }
-      );
+      return backend.exec(handle, ['sh', '-c', command], {
+        env: [tag.env],
+        heartbeatLabel: 'workspace: exec (capture)',
+        onTimeout: tag.onTimeout,
+        timeoutMs: options?.timeoutMs ?? 600_000,
+        workdir: '/workspace/target-repo',
+      });
     },
     execStdin: async (command: string, stdin: string | Buffer) => {
       const tag = newExecTag();
-      const result = await spawnWithStdinAsync(
-        'docker',
-        [
-          'exec',
-          '-i',
-          '-w',
-          '/workspace/target-repo',
-          '-e',
-          tag.env,
-          containerName,
-          'sh',
-          '-c',
-          command,
-        ],
+      const result = await backend.exec(handle, ['sh', '-c', command], {
+        env: [tag.env],
+        heartbeatLabel: 'workspace: exec (stdin)',
+        onTimeout: tag.onTimeout,
         stdin,
-        { heartbeatLabel: 'workspace: exec (stdin)', onTimeout: tag.onTimeout }
-      );
+        workdir: '/workspace/target-repo',
+      });
       if (result.exitCode !== 0) {
         throw Object.assign(
           new Error(
@@ -825,18 +806,19 @@ export async function createWorkspace(
         // The repo has been writable by the agent since clone, so every
         // authenticated call rewrites its config and runs git hardened — see
         // `authedGitScript`. The credential is injected for this call only.
-        // Nothing the agent left running may witness the call — see
-        // `killStrayProcessesScript` — so the sweep, the rewrite and the git
-        // call share one exec.
+        // Nothing the agent left running may witness the call — the sweep
+        // spares only PID 1, the recorded keeper and the script's own tree —
+        // so the sweep, the rewrite and the git call share one exec.
         const script = [
-          killStrayProcessesScript(),
+          killStrayProcessesScript(handle.keeperPid),
           authedGitScript('/workspace/target-repo', subcommand, { cleanUrl, gitAuthHeader }),
         ].join('\n');
         const tag = newExecTag();
-        return await execShellAsync(
-          `docker exec -e ${tag.env} ${containerName} sh -c ${shellQuote(script)}`,
-          { heartbeatLabel: 'workspace: git', onTimeout: tag.onTimeout }
-        );
+        return await backend.execShell(handle, ['sh', '-c', script], {
+          env: [tag.env],
+          heartbeatLabel: 'workspace: git',
+          onTimeout: tag.onTimeout,
+        });
       } catch (err) {
         // Same leak as a failed clone: the auth header is on the command line.
         redactExecError(err, cloneSecrets);

@@ -446,6 +446,7 @@ describe('systemConfig resolvers', () => {
         network: null,
         pidsLimit: 512,
         regexScanBudgetMs: 250,
+        registryProxy: null,
       });
     });
 

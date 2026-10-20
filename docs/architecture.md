@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 95 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 96 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | The consolidated `20260618000000_init` baseline (generated from `schema.prisma`) plus the hand-written `20260618000001_custom_constraints_and_indexes` beside it; new changes append their own migration once the schema is deployed |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -728,7 +728,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 95 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 96 models.
 
 ```mermaid
 erDiagram
@@ -1081,6 +1081,26 @@ anything else in the system. `createWorkspace()` (`activities/workspace.ts`) app
 | Docker socket | **Not** mounted into the workspace — there is no daemon-level escape path |
 | Timed-out commands | Every `docker exec` carries a per-call `AUTO_SWE_EXEC_ID` tag; when a command overruns its timeout, its whole in-container process tree (found by that tag in `/proc/*/environ`) is stopped and killed, not just the local `docker exec` client. The container runs under `--init`, so the killed processes are reaped rather than left holding PIDs |
 | Provisioning failure | The container is named before `docker run`, and any failure from `docker run` onward removes it by that name |
+
+Everything the worker does to a workspace goes through `WorkspaceBackend`
+(`lib/workspaceBackend/`): create, attach, exec (capture and throwing variants), spawn, copy
+out/in, pause, remove. The Docker driver is the only implementation — there is no backend
+selector — but the interface carries the obligations a Kubernetes driver would have to meet:
+`create()` applies the hardening itself (`--init`, `--cap-drop=ALL`, `no-new-privileges`, the
+metadata add-hosts, `sleep infinity`) and records the keeper's in-container PID once, right
+after start (a pod has no `--init`, so "the only child of PID 1" cannot be found later the way
+the Docker driver's one-shot probe does); secret env travels by *name* only, never as a value on
+a command line (`docker exec -e NAME` reads from the daemon-side environment — a Kubernetes exec
+API takes argv only, so a value there would be readable in `/proc` and the audit log); and
+`remove()` is idempotent. `createWorkspace`, the harness exec/spawn paths and agent-run finalize
+sit on this seam; the ephemeral shell/container-step sandbox
+(`lib/ephemeralContainer.ts`, `shellStep.ts`, `containerStep.ts`, `agents/pi/smoke.ts`) still
+calls Docker directly and is outside it.
+
+Package installs go through a second seam: when `REGISTRY_PROXY_PORT` is set the worker runs a
+read-only npm registry proxy ([package-registries.md](./package-registries.md)) — the workspace
+gets a per-workspace token, the real upstream credential never enters the container, and in
+`lockfile` mode only the committed lockfile's `name@version` pairs resolve.
 
 `shellQuote()` wraps every `docker exec … sh -c` and every clone/checkout argument. It is the
 injection boundary for agent-generated commands; treat any change to it, or any caller that

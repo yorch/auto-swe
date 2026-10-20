@@ -16,9 +16,10 @@ import {
 } from '../lib/agentRunPolicy.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
-import { execShellAsync, spawnToFileCapped, throwIfActivityCancelled } from '../lib/execUtils.js';
+import { throwIfActivityCancelled } from '../lib/execUtils.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { checkSensitiveFilePath } from '../lib/sensitiveFileScanner.js';
+import { workspaceBackend } from '../lib/workspaceBackend/index.js';
 import { parseDiffToFileChanges } from './utils.js';
 import { shellQuote, type Workspace } from './workspace.js';
 
@@ -106,26 +107,20 @@ export async function importAgentTree(
     // consistent snapshot rather than a tree still being written to. Best-effort:
     // the copy below is what is scanned and pushed either way, so a process that
     // survives only costs consistency, never correctness.
+    const backend = workspaceBackend();
     try {
-      await execShellAsync(`docker pause ${shellQuote(agent.containerId)}`, {
-        heartbeatLabel: 'agent run: freezing the agent container',
-        timeoutMs: 30_000,
-      });
+      await backend.pause(backend.attach(agent.containerId));
     } catch {
       /* already stopped, or the runtime cannot pause */
     }
     // The daemon produces the archive, not the agent's `tar`. The size cap is
     // enforced while the archive streams to disk: a sparse file expands in full
     // in `docker cp`'s output, so measuring afterwards is too late.
-    const copied = await spawnToFileCapped(
-      'docker',
-      ['cp', `${agent.containerId}:/workspace/target-repo/.`, '-'],
+    const copied = await backend.copyOut(
+      backend.attach(agent.containerId),
+      '/workspace/target-repo/.',
       archive,
-      {
-        heartbeatLabel: 'agent run: exporting the working tree',
-        maxBytes,
-        timeoutMs: 600_000,
-      }
+      { heartbeatLabel: 'agent run: exporting the working tree', maxBytes, timeoutMs: 600_000 }
     );
     if (copied.exceeded) {
       throw ApplicationFailure.nonRetryable(
@@ -139,10 +134,7 @@ export async function importAgentTree(
     }
     const size = copied.bytes;
     await trusted.exec('rm -rf /stage && mkdir /stage');
-    await execShellAsync(
-      `docker cp - ${shellQuote(`${trusted.containerId}:/stage`)} < ${shellQuote(archive)}`,
-      { heartbeatLabel: 'agent run: importing the working tree', timeoutMs: 600_000 }
-    );
+    await backend.copyIn(backend.attach(trusted.containerId), archive, '/stage');
     // Replace the clean checkout's tree with the copied one. `.git` of the
     // checkout is the trusted repository; a `.git` inside the copy is dropped.
     await trusted.exec(

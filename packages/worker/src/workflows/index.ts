@@ -10,6 +10,7 @@ export { ConsolidateLessonsWorkflow } from './consolidateLessons.js';
 export { EpicOrchestratorWorkflow, epicCancelSignal } from './epicOrchestrator.js';
 export { EvalRunWorkflow } from './evalRun.js';
 export { EvalScreenWorkflow } from './evalScreen.js';
+export { ExecutorImageProbeWorkflow } from './executorImageProbe.js';
 export { InferRepoDependenciesWorkflow } from './inferRepoDependencies.js';
 export { ReembedMemoryWorkflow, ReembedStaleMemoryWorkflow } from './reembedMemory.js';
 export { RunnableWorkflow } from './runnable.js';
