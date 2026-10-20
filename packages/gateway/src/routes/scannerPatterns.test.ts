@@ -297,14 +297,18 @@ describe('POST /scanner-patterns/test — try a pattern', () => {
 
     it('stops after the total time cap and reports the rest as not_run', async () => {
       const { res } = await test({ pattern: 'a+a+$', samples: [SLOW, SLOW, SLOW, 'b'] });
+      expect(res.statusCode).toBe(200);
       const data = JSON.parse(res.payload).data;
       expect(data.totalCapMs).toBe(450);
-      expect(data.results.map((r: { status: string }) => r.status)).toEqual([
-        'timed_out',
-        'timed_out',
-        'not_run',
-        'not_run',
-      ]);
+      expect(data.results).toHaveLength(4);
+      expect(data.results.map((r: { index: number }) => r.index)).toEqual([0, 1, 2, 3]);
+      expect(data.results[0].status).toBe('timed_out');
+      // Whether sample 1 runs depends on scheduling: it only starts if sample 0
+      // spent under the 450ms cap, which load can push over.
+      expect(['timed_out', 'not_run']).toContain(data.results[1].status);
+      // Samples 2 and 3 are always past the cap; 'b' would be 'no_match' if it ran.
+      expect(data.results[2].status).toBe('not_run');
+      expect(data.results[3].status).toBe('not_run');
     }, 20_000);
   });
 });
