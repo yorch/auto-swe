@@ -1,8 +1,9 @@
 # Default executor image for Node.js projects
 FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a
 
-# Install git (required for workspace operations)
-RUN apk add --no-cache git
+# Install git (required for workspace operations) and ripgrep (Pi's grep
+# honours .gitignore only through it)
+RUN apk add --no-cache git ripgrep
 
 # Pre-install common global tools.
 #

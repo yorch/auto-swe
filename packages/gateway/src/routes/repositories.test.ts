@@ -101,13 +101,16 @@ async function buildApp() {
     }),
   };
 
+  const mockTemporal = { probeExecutorImage: vi.fn() };
+
   app.decorate('prisma', mockPrisma as unknown as never);
   app.decorate('auth', mockAuth as unknown as never);
+  app.decorate('temporal', mockTemporal as unknown as never);
 
   await app.register(repositoryRoutes, { prefix: '/api/v1/repositories' });
   await app.ready();
 
-  return { app, authState, mockPrisma };
+  return { app, authState, mockPrisma, mockTemporal };
 }
 
 const AUTH_HEADER = { authorization: 'Bearer fake-jwt' };
@@ -1164,6 +1167,103 @@ describe('repositoryRoutes', () => {
         url: '/api/v1/repositories/not-a-uuid',
       });
       expect(res.statusCode).toBe(400);
+    });
+  });
+
+  describe('POST /api/v1/repositories/:id/executor-image/probe', () => {
+    const PROBE_RESULT = {
+      checks: [{ detail: 'ok', name: 'git', ok: true, required: true }],
+      image: 'node:24-alpine',
+      ok: true,
+    };
+
+    beforeEach(() => {
+      ctx.mockTemporal.probeExecutorImage.mockReset().mockResolvedValue(PROBE_RESULT);
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        executorImage: 'ghcr.io/acme/exec:1',
+        type: 'git_repo',
+      });
+    });
+
+    it('probes the repo’s executorImage by default and returns the checks', async () => {
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: {},
+        url: `/api/v1/repositories/${REPO_ID}/executor-image/probe`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data).toEqual(PROBE_RESULT);
+      const [workflowId, input] = ctx.mockTemporal.probeExecutorImage.mock.calls[0] as [
+        string,
+        { image?: string },
+      ];
+      expect(workflowId).toContain(`executor-image-probe-${REPO_ID}`);
+      expect(input).toEqual({ image: 'ghcr.io/acme/exec:1' });
+    });
+
+    it('sends no image when the repo has none (the worker resolves its default)', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        executorImage: null,
+        type: 'git_repo',
+      });
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: {},
+        url: `/api/v1/repositories/${REPO_ID}/executor-image/probe`,
+      });
+      expect(ctx.mockTemporal.probeExecutorImage.mock.calls[0]?.[1]).toEqual({
+        image: undefined,
+      });
+    });
+
+    it('honours an explicit image in the body', async () => {
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: { image: 'debian:stable-slim' },
+        url: `/api/v1/repositories/${REPO_ID}/executor-image/probe`,
+      });
+      expect(ctx.mockTemporal.probeExecutorImage.mock.calls[0]?.[1]).toEqual({
+        image: 'debian:stable-slim',
+      });
+    });
+
+    it('rejects a non-image string', async () => {
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: { image: 'not an image;;' },
+        url: `/api/v1/repositories/${REPO_ID}/executor-image/probe`,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(ctx.mockTemporal.probeExecutorImage).not.toHaveBeenCalled();
+    });
+
+    it('is ADMIN only', async () => {
+      for (const role of ['LEAD', 'ENGINEER'] as const) {
+        ctx.authState.role = role;
+        const res = await ctx.app.inject({
+          headers: AUTH_HEADER,
+          method: 'POST',
+          payload: {},
+          url: `/api/v1/repositories/${REPO_ID}/executor-image/probe`,
+        });
+        expect(res.statusCode).toBe(403);
+      }
+      expect(ctx.mockTemporal.probeExecutorImage).not.toHaveBeenCalled();
+    });
+
+    it('404s when the repository does not exist', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue(null);
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: {},
+        url: `/api/v1/repositories/${REPO_ID}/executor-image/probe`,
+      });
+      expect(res.statusCode).toBe(404);
     });
   });
 });

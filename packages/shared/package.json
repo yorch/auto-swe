@@ -65,6 +65,7 @@
     "./lib/repoDependencyResolver": "./dist/lib/repoDependencyResolver.js",
     "./lib/guardedFetch": "./dist/lib/guardedFetch.js",
     "./lib/ssrfGuard": "./dist/lib/ssrfGuard.js",
+    "./lib/stackDetection": "./dist/lib/stackDetection.js",
     "./lib/guardedDispatcher": "./dist/lib/guardedDispatcher.js",
     "./lib/mcpHeaders": "./dist/lib/mcpHeaders.js",
     "./lib/modelDiscovery": "./dist/lib/modelDiscovery.js",

@@ -1,3 +1,4 @@
+import type { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import {
   MANIFEST_FILES,
@@ -9,6 +10,7 @@ import {
   matchRepoDependency,
   type RepoDependencyCandidate,
 } from '@auto-swe/shared/lib/repoDependencyMatch';
+import { detectStack } from '@auto-swe/shared/lib/stackDetection';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { findEdgeWriteTarget } from '../lib/repoDependencyEdgeWrite.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
@@ -32,6 +34,13 @@ export interface DetectRepoDependenciesResult {
  * first one found is used — GitHub itself only honors a single location.
  */
 const CODEOWNERS_PATHS = ['CODEOWNERS', '.github/CODEOWNERS', 'docs/CODEOWNERS'];
+
+/**
+ * Extra root files probed (existence only) for stack detection, beyond the
+ * manifests `MANIFEST_FILES` already covers — package.json, go.mod,
+ * requirements.txt and pom.xml are fetched above. Not added to `scanned`:
+ * they are signals for `detectStack`, not dependency manifests.
+ */
 
 const EDGE_KIND = 'code';
 
@@ -167,12 +176,14 @@ export async function detectRepoDependencies(
   const scanned: string[] = [];
   const rawDeps: RawDependency[] = [];
 
+  const manifestContents = new Map<string, string>();
   for (const manifestPath of MANIFEST_FILES) {
     const content = await safeFetchFile(provider, repoRef, manifestPath);
     if (content === null) {
       continue;
     }
     scanned.push(manifestPath);
+    manifestContents.set(manifestPath, content);
     for (const raw of parseManifest(manifestPath, content)) {
       rawDeps.push({ manifestPath, raw, source: 'manifest' });
     }
@@ -196,6 +207,43 @@ export async function detectRepoDependencies(
       rawDeps.push({ manifestPath: codeownersPath, raw, source: 'git_signal' });
     }
     break; // only one CODEOWNERS location is honored, first found wins
+  }
+
+  // Stack detection from one root listing, plus the root package.json already
+  // fetched above for its script names. A listing failure must not fail the
+  // scan, and must not overwrite a previous detection with an empty one.
+  let rootEntries: string[] | null = null;
+  try {
+    rootEntries = await provider.listDirectory(repoRef, '');
+  } catch (err) {
+    console.error(
+      `detectRepoDependencies: failed to list ${repoRef.organizationName}/${repoRef.repoName} root`,
+      err
+    );
+  }
+  if (rootEntries !== null) {
+    // Root package.json was already fetched by the manifest loop when present.
+    const packageJson =
+      manifestContents.get('package.json') ??
+      (await safeFetchFile(provider, repoRef, 'package.json'));
+    let scripts: string[] | undefined;
+    if (packageJson !== null) {
+      try {
+        const parsed = JSON.parse(packageJson) as { scripts?: Record<string, unknown> };
+        scripts = Object.keys(parsed.scripts ?? {});
+      } catch {
+        /* invalid JSON: suggest nothing */
+      }
+    }
+    await prisma.connection.update({
+      data: {
+        detectedStack: detectStack(rootEntries, {
+          packageJsonScripts: scripts,
+        }) as unknown as Prisma.InputJsonValue,
+        detectedStackAt: new Date(),
+      },
+      where: { id: connection.id },
+    });
   }
 
   if (rawDeps.length === 0) {

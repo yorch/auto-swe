@@ -306,6 +306,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoDependency.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/stackDetection',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/stackDetection.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/guardedFetch',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/guardedFetch.ts'),
       },

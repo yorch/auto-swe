@@ -1,5 +1,6 @@
-import { spawn } from 'node:child_process';
+import type { ChildProcessByStdio } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import type { Readable, Writable } from 'node:stream';
 import { ApplicationFailure, heartbeat } from '@temporalio/activity';
 import {
   EXEC_TAG_ENV,
@@ -8,7 +9,7 @@ import {
 } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
 import { activityCancellationSignal, throwIfActivityCancelled } from '../../lib/cancellation.js';
-import { spawnCaptureAsync } from '../../lib/execUtils.js';
+import { workspaceBackend } from '../../lib/workspaceBackend/index.js';
 import {
   type ImplementerRuntime,
   type ImplementerTurnInput,
@@ -78,9 +79,11 @@ async function installBinary(
   if ((await installedSha256(workspace, containerPath)) === expected) {
     return;
   }
-  const copy = await spawnCaptureAsync(
-    'docker',
-    ['cp', binary, `${workspace.containerId}:${containerPath}`],
+  const backend = workspaceBackend();
+  const copy = await backend.copyFileIn(
+    backend.attach(workspace.containerId),
+    binary,
+    containerPath,
     { heartbeatLabel: `${adapter.kind}: install binary`, timeoutMs: 120_000 }
   );
   if (copy.exitCode !== 0) {
@@ -281,30 +284,22 @@ export function harnessRuntime<Report>(
         if (!provisioning) {
           throw new Error(`${adapter.label} runs in the worker; it has no binary to start.`);
         }
-        const child = spawn(
-          'docker',
-          [
-            'exec',
-            '-i',
-            '-w',
-            WORKSPACE_DIR,
-            ...leadingEnvArgs,
-            '-e',
-            `${EXEC_TAG_ENV}=${tag}`,
+        const backend = workspaceBackend();
+        const child = backend.spawn(
+          backend.attach(workspace.containerId),
+          [provisioning.containerPath, ...args],
+          {
+            env: [`${EXEC_TAG_ENV}=${tag}`, ...env],
+            leadingArgs: leadingEnvArgs,
             // Named without a value: docker reads it from its own environment below,
             // so a secret never appears on a command line or in `ps`.
-            ...Object.keys(secretEnv).flatMap((name) => ['-e', name]),
-            ...env.flatMap((pair) => ['-e', pair]),
-            workspace.containerId,
-            provisioning.containerPath,
-            ...args,
-          ],
-          {
-            env: { ...process.env, ...secretEnv },
+            secretEnv,
             signal,
+            stdin: true,
             stdio: ['pipe', 'pipe', 'pipe'],
+            workdir: WORKSPACE_DIR,
           }
-        );
+        ) as ChildProcessByStdio<Writable, Readable, Readable>;
         // Drained here whatever the client does with it: unread, a full pipe stalls
         // the harness, and its tail is what explains a run that died.
         child.stderr?.setEncoding('utf8');

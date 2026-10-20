@@ -1078,6 +1078,21 @@ anything else in the system. `createWorkspace()` (`activities/workspace.ts`) app
 | Timed-out commands | Every `docker exec` carries a per-call `AUTO_SWE_EXEC_ID` tag; when a command overruns its timeout, its whole in-container process tree (found by that tag in `/proc/*/environ`) is stopped and killed, not just the local `docker exec` client. The container runs under `--init`, so the killed processes are reaped rather than left holding PIDs |
 | Provisioning failure | The container is named before `docker run`, and any failure from `docker run` onward removes it by that name |
 
+Everything the worker does to a workspace goes through `WorkspaceBackend`
+(`lib/workspaceBackend/`): create, attach, exec (capture and throwing variants), spawn, copy
+out/in, pause, remove. The Docker driver is the only implementation — there is no backend
+selector — but the interface carries the obligations a Kubernetes driver would have to meet:
+`create()` applies the hardening itself (`--init`, `--cap-drop=ALL`, `no-new-privileges`, the
+metadata add-hosts, `sleep infinity`) and records the keeper's in-container PID once, right
+after start (a pod has no `--init`, so "the only child of PID 1" cannot be found later the way
+the Docker driver's one-shot probe does); secret env travels by *name* only, never as a value on
+a command line (`docker exec -e NAME` reads from the daemon-side environment — a Kubernetes exec
+API takes argv only, so a value there would be readable in `/proc` and the audit log); and
+`remove()` is idempotent. `createWorkspace`, the harness exec/spawn paths and agent-run finalize
+sit on this seam; the ephemeral shell/container-step sandbox
+(`lib/ephemeralContainer.ts`, `shellStep.ts`, `containerStep.ts`, `agents/pi/smoke.ts`) still
+calls Docker directly and is outside it.
+
 `shellQuote()` wraps every `docker exec … sh -c` and every clone/checkout argument. It is the
 injection boundary for agent-generated commands; treat any change to it, or any caller that
 bypasses it, as security-critical.

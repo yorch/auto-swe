@@ -10,7 +10,12 @@ on:
         description: "Build the repository's own .auto-swe/Dockerfile instead of the platform default"
         type: boolean
         default: false
-  # client_payload: { repo_id, use_repo_dockerfile? } — the same opt-in, default off.
+      stack:
+        description: 'Curated defaults/Dockerfile.<stack> to build (ignored when use_repo_dockerfile)'
+        type: choice
+        options: [node, python, jvm]
+        default: node
+  # client_payload: { repo_id, use_repo_dockerfile?, stack? } — stack defaults to node.
   repository_dispatch:
     types: [build-executor]
   # No schedule: a scheduled run carries no repo_id, and fanning a schedule out
@@ -96,6 +101,8 @@ jobs:
           CONTROL_PLANE_REPO: ${{ github.repository }}
           INPUT_USE_REPO_DOCKERFILE: ${{ github.event.inputs.use_repo_dockerfile }}
           PAYLOAD_USE_REPO_DOCKERFILE: ${{ github.event.client_payload.use_repo_dockerfile }}
+          INPUT_STACK: ${{ github.event.inputs.stack }}
+          PAYLOAD_STACK: ${{ github.event.client_payload.stack }}
           RUNNER_TEMP_DIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
@@ -108,14 +115,22 @@ jobs:
             echo "path=.auto-swe/Dockerfile" >> "$GITHUB_OUTPUT"
             echo "context=." >> "$GITHUB_OUTPUT"
           else
+            STACK="${INPUT_STACK:-${PAYLOAD_STACK:-node}}"
+            case "${STACK}" in
+              node|python|jvm) ;;
+              *)
+                echo "::error::Unknown stack '${STACK}' (expected node, python or jvm)"
+                exit 1
+                ;;
+            esac
             if [ -f ".auto-swe/Dockerfile" ]; then
-              echo "::warning::The repository has .auto-swe/Dockerfile but use_repo_dockerfile is not set; building defaults/Dockerfile.node"
+              echo "::warning::The repository has .auto-swe/Dockerfile but use_repo_dockerfile is not set; building defaults/Dockerfile.${STACK}"
             fi
-            # Fetch the default executor Dockerfile from the control-plane repo
+            # Fetch the curated executor Dockerfile for the stack from the control-plane repo
             curl -sf -H "Authorization: Bearer ${GH_TOKEN}" \
-              "https://raw.githubusercontent.com/${CONTROL_PLANE_REPO}/main/defaults/Dockerfile.node" \
-              -o "${RUNNER_TEMP_DIR}/Dockerfile.node"
-            echo "path=${RUNNER_TEMP_DIR}/Dockerfile.node" >> "$GITHUB_OUTPUT"
+              "https://raw.githubusercontent.com/${CONTROL_PLANE_REPO}/main/defaults/Dockerfile.${STACK}" \
+              -o "${RUNNER_TEMP_DIR}/Dockerfile.${STACK}"
+            echo "path=${RUNNER_TEMP_DIR}/Dockerfile.${STACK}" >> "$GITHUB_OUTPUT"
             # An empty build context: nothing from the repository can reach the
             # default image, whatever Dockerfile.node later copies.
             mkdir -p "${RUNNER_TEMP_DIR}/empty-context"
