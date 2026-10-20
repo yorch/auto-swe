@@ -1,9 +1,9 @@
 # Workspace platform: secrets, stacks, and execution backends
 
-> **Build plan, kept here while it is in progress.** It tracks the work and lets it be picked up
-> again later. When the tracked work lands, sweep it for anything still true (open gaps, never-built
-> items) and move that into the living docs' `## Limitations` sections. After that the file is
-> frozen like the rest of `docs/history/`. The code wins wherever the two disagree.
+> **Frozen build plan.** The tracked work has landed. What is still true (open gaps, items never
+> built) lives in the living docs' `## Limitations` sections: `package-registries.md`,
+> `repositories.md`, `architecture.md` §10 and `product-overview.md` §7. This file is kept for
+> rationale only and is not maintained. The code wins wherever the two disagree.
 
 ## 1. Questions
 
@@ -99,14 +99,14 @@ The driver contract has to carry obligations a Kubernetes driver must meet:
 | 5 | `WorkspaceBackend` interface + Docker driver for the agent workspace (`createWorkspace`, harness exec, agent-run finalize); keeper PID recorded at creation | #473 | merged |
 | 2 | `PackageRegistry` model (admin-managed, encrypted token), worker-side npm registry proxy, workspace npm/pnpm/yarn config, proxy-side tarball cache | #474 | merged |
 | 3 | Lockfile-scoped allowlist (`package-lock.json`, `yarn.lock` classic and Berry, `pnpm-lock.yaml`), refusal message and recorded denials | #474 | merged |
-| 2a | All four clients end to end: `clients.docker.test.ts` (npm, pnpm, Yarn classic, Yarn Berry; frozen install in lockfile mode, plus denial of an unlisted package) runs in the CI `docker-tests` job. Found and fixed along the way: the Yarn classic host-level auth line, `always-auth` and `$HOME/.npmrc`; Berry's `unsafeHttpWhitelist`; the denial message as the reason phrase for pnpm | C | in review |
-| 2b | Package-manager bootstrap: pnpm, Yarn classic and Yarn Berry pre-installed in `Dockerfile.node`; `COREPACK_NPM_REGISTRY` / `COREPACK_NPM_TOKEN` env; `packageManager` pins added to the allowlist | C | in review |
-| 2b-verify | Corepack downloading a pin that is not pre-installed, through the proxy, against a real upstream. Configured but not exercised end to end; Corepack's signature check against a non-npmjs upstream is unknown | — | not started |
-| 2c | npm swaps only the origin of a lockfile `resolved` URL, and uses the default registry even for scopes (npm 11.19 `@npmcli/arborist` `#registryResolved`). The proxy now validates and ignores a tarball path prefix, strips the Artifactory `@scope/` file form, and routes by package name to the scope's or the default registry. Covered by unit tests and the npm e2e case | C | in review |
-| G1 | Ephemeral sandbox behind `WorkspaceBackend` (`runEphemeral` / `startDetached` always apply lockdown; `runHelper` for the platform's git helpers; volumes); registry wiring for `network: 'egress'` shell steps | C | in review |
-| G2 | `teamId` for the eval harness and `runGateStandalone` (both eval callers), so they get registries too | C | in review |
-| G3 | Weekly scheduled executor-image rebuilds from the stored `Connection.executorImageBuild` | C | in review |
-| G4 | Stack detection over the recursive tree (`ScmProvider.listTree`), with per-directory `components` | C | in review |
+| 2a | All four clients end to end: `clients.docker.test.ts` (npm, pnpm, Yarn classic, Yarn Berry; frozen install in lockfile mode, plus denial of an unlisted package) runs in the CI `docker-tests` job. Found and fixed along the way: the Yarn classic host-level auth line, `always-auth` and `$HOME/.npmrc`; Berry's `unsafeHttpWhitelist`; the denial message as the reason phrase for pnpm | #479 | merged |
+| 2b | Package-manager bootstrap: pnpm, Yarn classic and Yarn Berry pre-installed in `Dockerfile.node`; `COREPACK_NPM_REGISTRY` / `COREPACK_NPM_TOKEN` env; `packageManager` pins added to the allowlist | #479 | merged |
+| 2b-verify | Corepack downloading a pin that is not pre-installed, through the proxy. The proxy gained the `/<name>/<version>` manifest path Corepack reads (it was a 404) and literal `@scope/pkg` packuments. CI covers a signed pin, a forged signature, a hash pin and a denied pin; a manual run against `registry.npmjs.org` verified real npm signatures for `pnpm@9.15.9` and `yarn@4.5.0` | — | done |
+| 2c | npm swaps only the origin of a lockfile `resolved` URL, and uses the default registry even for scopes (npm 11.19 `@npmcli/arborist` `#registryResolved`). The proxy now validates and ignores a tarball path prefix, strips the Artifactory `@scope/` file form, and routes by package name to the scope's or the default registry. Covered by unit tests and the npm e2e case | #479 | merged |
+| G1 | Ephemeral sandbox behind `WorkspaceBackend` (`runEphemeral` / `startDetached` always apply lockdown; `runHelper` for the platform's git helpers; volumes); registry wiring for `network: 'egress'` shell steps | #479 | merged |
+| G2 | `teamId` for the eval harness and `runGateStandalone` (both eval callers), so they get registries too | #479 | merged |
+| G3 | Weekly scheduled executor-image rebuilds from the stored `Connection.executorImageBuild` | #479 | merged |
+| G4 | Stack detection over the recursive tree (`ScmProvider.listTree`), with per-directory `components` | #479 | merged |
 | 6 | Kubernetes workspace driver: pods per workspace, for autoscaling and isolation | — | not started |
 | 7 | Further ecosystems through the proxy (PyPI, Maven, Docker registry v2) | — | not started |
 | 8 | Publish / push, opt-in per flow, gated by human approval | — | not started |

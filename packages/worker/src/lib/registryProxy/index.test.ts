@@ -319,3 +319,157 @@ describe('npmrc rendering', () => {
     expect(renderYarnrc([], 'http://h:1')).toBeNull();
   });
 });
+
+describe('version manifests (Corepack)', () => {
+  const manifest = (over: object = {}) => ({
+    dist: {
+      integrity: 'sha512-AAAA',
+      signatures: [{ keyid: 'SHA256:x', sig: 'c2ln' }],
+      tarball: 'http://upstream.test/pnpm/-/pnpm-9.15.9.tgz',
+    },
+    name: 'pnpm',
+    version: '9.15.9',
+    ...over,
+  });
+
+  it('serves /pnpm/9.15.9 with the upstream credential and rewrites dist.tarball only', async () => {
+    const calls: { auth?: string; url: string }[] = [];
+    const { base, proxy } = await startProxy(async (url, init) => {
+      calls.push({
+        auth: (init?.headers as Record<string, string> | undefined)?.authorization,
+        url,
+      });
+      return new Response(JSON.stringify(manifest()), {
+        headers: { 'content-type': 'application/json' },
+        status: 200,
+      });
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, new Map([['pnpm', new Set(['9.15.9'])]])]]));
+    const res = await get(base, `/npm/${REG.id}/pnpm/9.15.9`, reg.token);
+    expect(res.status).toBe(200);
+    expect(calls).toEqual([{ auth: 'Bearer up-token', url: 'http://upstream.test/pnpm/9.15.9' }]);
+    const doc = JSON.parse(res.body);
+    expect(doc.dist.tarball).toBe(`${reg.baseUrl}/npm/${REG.id}/pnpm/-/pnpm-9.15.9.tgz`);
+    expect(doc.dist.signatures).toEqual([{ keyid: 'SHA256:x', sig: 'c2ln' }]);
+    expect(doc.dist.integrity).toBe('sha512-AAAA');
+    await proxy.close();
+  });
+
+  it('serves scoped version manifests, literal and %2f-encoded alike', async () => {
+    const calls: string[] = [];
+    const { base, proxy } = await startProxy(async (url) => {
+      calls.push(url);
+      return new Response(
+        JSON.stringify(manifest({ name: '@yarnpkg/cli-dist', version: '4.5.0' })),
+        {
+          headers: { 'content-type': 'application/json' },
+          status: 200,
+        }
+      );
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, new Map([['@yarnpkg/cli-dist', new Set(['4.5.0'])]])]]));
+    for (const path of ['/@yarnpkg/cli-dist/4.5.0', '/@yarnpkg%2fcli-dist/4.5.0']) {
+      const res = await get(base, `/npm/${REG.id}${path}`, reg.token);
+      expect(res.status).toBe(200);
+    }
+    expect(calls).toEqual([
+      'http://upstream.test/@yarnpkg%2fcli-dist/4.5.0',
+      'http://upstream.test/@yarnpkg%2fcli-dist/4.5.0',
+    ]);
+    await proxy.close();
+  });
+
+  it('denies a version outside the allowlist without calling upstream', async () => {
+    let called = false;
+    const { base, proxy } = await startProxy(async () => {
+      called = true;
+      return new Response('{}');
+    });
+    const denials: { name?: string; version?: string }[] = [];
+    const reg = await proxy.register({
+      onDenied: (d) => denials.push(d),
+      registries: [REG],
+    });
+    reg.setAllowlist(new Map([[REG.id, new Map([['pnpm', new Set(['9.15.9'])]])]]));
+    const res = await get(base, `/npm/${REG.id}/pnpm/9.15.8`, reg.token);
+    expect(res.status).toBe(403);
+    expect(res.body).toContain("is not in the repository's committed lockfiles");
+    expect(denials).toEqual([
+      { name: 'pnpm', reason: 'not-in-lockfile', registryId: 'reg-1', version: '9.15.8' },
+    ]);
+    expect(called).toBe(false);
+    await proxy.close();
+  });
+
+  it('denies dist-tags in lockfile mode and forwards them in open mode', async () => {
+    const calls: string[] = [];
+    const { base, proxy } = await startProxy(async (url) => {
+      calls.push(url);
+      return new Response(JSON.stringify(manifest()), {
+        headers: { 'content-type': 'application/json' },
+        status: 200,
+      });
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, new Map([['pnpm', new Set(['9.15.9'])]])]]));
+    expect((await get(base, `/npm/${REG.id}/pnpm/latest`, reg.token)).status).toBe(403);
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect((await get(base, `/npm/${REG.id}/pnpm/latest`, reg.token)).status).toBe(200);
+    expect(calls).toEqual(['http://upstream.test/pnpm/latest']);
+    await proxy.close();
+  });
+
+  it('404s invalid version segments without calling upstream', async () => {
+    let called = false;
+    const { base, proxy } = await startProxy(async () => {
+      called = true;
+      return new Response('{}');
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    for (const v of ['..', '%2e%2e', '.hidden', 'a%2fb', 'x%2f..']) {
+      expect((await get(base, `/npm/${REG.id}/pnpm/${v}`, reg.token)).status).toBe(404);
+    }
+    expect(called).toBe(false);
+    await proxy.close();
+  });
+
+  it('serves a literal-slash scoped packument and applies the allowlist', async () => {
+    const calls: string[] = [];
+    const { base, proxy } = await startProxy(async (url) => {
+      calls.push(url);
+      return new Response(
+        JSON.stringify({
+          'dist-tags': { latest: '1.0.0' },
+          versions: { '1.0.0': { dist: { tarball: 'http://upstream.test/@s/p/-/p-1.0.0.tgz' } } },
+        }),
+        { headers: { 'content-type': 'application/json' }, status: 200 }
+      );
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, new Map([['@s/p', new Set(['1.0.0'])]])]]));
+    const res = await get(base, `/npm/${REG.id}/@s/p`, reg.token);
+    expect(res.status).toBe(200);
+    const doc = JSON.parse(res.body);
+    expect(doc.versions['1.0.0'].dist.tarball).toBe(
+      `${reg.baseUrl}/npm/${REG.id}/@s/p/-/p-1.0.0.tgz`
+    );
+    expect(calls).toEqual(['http://upstream.test/@s%2fp']);
+    await proxy.close();
+  });
+
+  it('404s a third trailing segment after the name', async () => {
+    let called = false;
+    const { base, proxy } = await startProxy(async () => {
+      called = true;
+      return new Response('{}');
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect((await get(base, `/npm/${REG.id}/pkg/1.0.0/extra`, reg.token)).status).toBe(404);
+    expect(called).toBe(false);
+    await proxy.close();
+  });
+});

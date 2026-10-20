@@ -400,6 +400,8 @@ longer fit.
   skipped until one dispatched build records it. A scheduled rebuild of an opted-in
   `use_repo_dockerfile` repository builds whatever its default branch holds at that moment, so the
   merge-trust caveat above applies to every scheduled run, not only the first one.
+- **Go has no curated executor image.** Stack detection recognizes `go.mod`, but `defaults/` has
+  no Go Dockerfile, so a Go repository needs its own image or `use_repo_dockerfile`.
 - **Stack detection is bounded.** It ignores signals deeper than four directories, and anything
   under the ignored build/vendor directories. It records at most 50 components
   (`componentsTruncated`). When the provider truncates a very large tree (`treeTruncated`), it
