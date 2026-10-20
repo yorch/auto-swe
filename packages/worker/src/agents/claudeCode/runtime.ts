@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type {
   HookCallback,
   ModelUsage,
@@ -9,7 +10,11 @@ import type {
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ApplicationFailure } from '@temporalio/activity';
 import type { Workspace } from '../../activities/workspace.js';
-import { currentTranscriptRecorder } from '../../lib/transcriptRecorder.js';
+import {
+  currentTranscriptRecorder,
+  type HarnessSessionFileRecord,
+  type TranscriptRecorder,
+} from '../../lib/transcriptRecorder.js';
 import {
   HARNESS_DIR,
   HARNESS_HOME,
@@ -68,6 +73,109 @@ export const PRE_TOOL_USE_TIMEOUT_S = 120;
 const SDK_ENV_NAME = /^CLAUDE_(?:CODE|AGENT_SDK)_[A-Z0-9_]+$/;
 
 const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
+
+/** How long reading a turn's session-file delta may take before it is given up. */
+const SESSION_FILE_READ_MS = 10_000;
+/**
+ * The most of a session file one turn records. A line that does not parse is
+ * kept as a JSON string, and escaping can grow it severalfold; at this size
+ * the record stays under the recorder's MAX_RECORD_BYTES and the read under the
+ * workspace exec's 10 MiB stdout buffer.
+ */
+export const SESSION_FILE_MAX_BYTES = 4 * 1024 * 1024;
+/** A session id is interpolated into a shell glob, so it must be a plain UUID. */
+const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** `promise`'s value, or undefined if it rejects or `ms` pass first. */
+async function within<T>(promise: Promise<T>, ms: number): Promise<T | undefined> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      promise.catch(() => undefined),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), ms);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Read what the harness appended to session `sessionId`'s JSONL file since
+ * byte `offset`, capped at {@link SESSION_FILE_MAX_BYTES}. Undefined when the
+ * id is not a UUID or no regular file matches.
+ *
+ * One exec copies the capped delta to a temp file, then prints the session
+ * file's path, its size, the delta's size, and the delta — so `bytes` is what
+ * was delivered, even when the file grows during the read. A file smaller than
+ * `offset` was rewritten: it is read from 0 and the record says `reset`.
+ */
+export async function readSessionFileDelta(
+  workspace: Workspace,
+  sessionId: string,
+  offset: number
+): Promise<HarnessSessionFileRecord | undefined> {
+  if (!SESSION_ID.test(sessionId)) {
+    return undefined;
+  }
+  const cap = SESSION_FILE_MAX_BYTES;
+  const script = [
+    `for f in ${HARNESS_HOME}/.claude/projects/*/${sessionId}.jsonl; do`,
+    '  [ -f "$f" ] || continue',
+    '  t=$(mktemp) || exit 4',
+    `  trap 'rm -f "$t"' EXIT`,
+    '  size=$(($(wc -c < "$f")))',
+    `  start=${offset}`,
+    '  [ "$size" -lt "$start" ] && start=0',
+    `  tail -c +$((start + 1)) "$f" | head -c ${cap} > "$t"`,
+    `  printf '%s\\n%s\\n%s\\n' "$f" "$size" "$(($(wc -c < "$t")))"`,
+    '  cat "$t"',
+    '  exit 0',
+    'done',
+    'exit 3',
+  ].join('\n');
+  const out = await workspace.exec(script, { timeoutMs: SESSION_FILE_READ_MS });
+  const header: string[] = [];
+  let at = 0;
+  for (let i = 0; i < 3; i++) {
+    const end = out.indexOf('\n', at);
+    if (end < 0) {
+      return undefined;
+    }
+    header.push(out.slice(at, end));
+    at = end + 1;
+  }
+  const [path = '', sizeText = '', deliveredText = ''] = header;
+  const size = Number(sizeText.trim());
+  const delivered = Number(deliveredText.trim());
+  if (!path || !Number.isInteger(size) || !Number.isInteger(delivered)) {
+    return undefined;
+  }
+  const reset = size < offset;
+  const lines = out
+    .slice(at)
+    .split('\n')
+    .filter((line) => line !== '')
+    .map((line) => {
+      try {
+        return JSON.parse(line) as unknown;
+      } catch {
+        return line;
+      }
+    });
+  return {
+    bytes: delivered,
+    lines,
+    offset: reset ? 0 : offset,
+    path,
+    ...(reset ? { reset: true as const } : {}),
+    runtime: 'claude-code',
+    sessionId,
+    truncated: delivered >= cap,
+  };
+}
 
 export interface ClaudeCodeAccess {
   /** The credential's base URL, in the AI SDK's spelling (it may end in `/v1`). */
@@ -260,6 +368,40 @@ export function claudeCodeAdapter(
   // starts from its saved totals. What a turn spent is the change since the last.
   const totals = runningTotalsUsage('anthropic/');
   let sessionId: string | undefined;
+  // How far into the session's JSONL file the transcript has recorded: turns
+  // resume one session, so its file grows and each turn records the rest.
+  let sessionFile: { sessionId: string; offset: number } | undefined;
+  // The last turn's read, still running in the background: the next waits for
+  // it, so offsets advance in order.
+  let sessionRead: Promise<void> | undefined;
+  // The prompt the last `harness_turn` carried in full, and the transcript it went to.
+  let lastPrompt: { recorder: TranscriptRecorder; sha256: string } | undefined;
+
+  /**
+   * Record what a non-proxied turn added to the session file. Best-effort and
+   * bounded: a missing file, a failed exec or a slow container costs the
+   * record, never the turn. The offset advances only when the record landed,
+   * so bytes a dropped record held are read again by the next turn.
+   */
+  async function recordSessionFile(
+    workspace: Workspace,
+    recorder: TranscriptRecorder,
+    id: string,
+    previous: Promise<void> | undefined
+  ): Promise<void> {
+    if (previous) {
+      await within(previous, SESSION_FILE_READ_MS);
+    }
+    // Past the transcript cap nothing more is stored; reading would only repeat.
+    if (!recorder.acceptsRecords()) {
+      return;
+    }
+    const offset = sessionFile?.sessionId === id ? sessionFile.offset : 0;
+    const delta = await within(readSessionFileDelta(workspace, id, offset), SESSION_FILE_READ_MS);
+    if (delta && recorder.addHarnessSessionFile(delta)) {
+      sessionFile = { offset: delta.offset + delta.bytes, sessionId: id };
+    }
+  }
 
   /**
    * One turn against `endpoint`: the provider itself with the real key, or the
@@ -349,6 +491,32 @@ export function claudeCodeAdapter(
     if (system.length > MAX_INLINE_SYSTEM_CHARS) {
       await turn.workspace.execStdin(`cat > ${STAGED_PROMPT}`, system);
       append = `Your operating instructions are in ${STAGED_PROMPT}. Read that file in full before anything else, and follow it as if it were this prompt.`;
+    }
+
+    // What the turn runs with, for the transcript: the appended prompt and the
+    // tool and server names — never the endpoint, a key, or an MCP server's
+    // address. The preset's own text and the tool schemas are the harness's.
+    // The full prompt goes in once per transcript and again only when it
+    // changes; the hash identifies it on every turn.
+    const recorder = currentTranscriptRecorder();
+    if (recorder) {
+      const sha256 = createHash('sha256').update(system).digest('hex');
+      const unchanged = lastPrompt?.recorder === recorder && lastPrompt.sha256 === sha256;
+      lastPrompt = { recorder, sha256 };
+      const staged = append !== system ? { stagedPath: STAGED_PROMPT } : {};
+      recorder.addHarnessTurn({
+        ...(access.effort ? { effort: access.effort } : {}),
+        loadProjectSettings,
+        maxTurns,
+        mcpServers: mcpServer ? [MCP_RELAY_SERVER] : [],
+        model: access.modelId,
+        proxied: endpoint.proxied,
+        runtime: 'claude-code',
+        systemPrompt: unchanged
+          ? { preset: 'claude_code', sha256, unchanged: true, ...staged }
+          : { append: system, preset: 'claude_code', sha256, ...staged },
+        tools: [...tools],
+      });
     }
 
     const stream = query({
@@ -570,6 +738,17 @@ export function claudeCodeAdapter(
         // Every call the turn made is reported before the turn's usage is settled.
         await registration?.release();
         await mcpServer?.instance.close().catch(() => undefined);
+        // Without the proxy no exchange was recorded; the session file the
+        // harness wrote holds the conversation as it saw it.
+        // The read runs in the background — the recorder's close drains it —
+        // and is skipped for a turn stopped by cancellation or its deadline.
+        if (!registration && recorder && sessionId && !turn.abort.signal.aborted) {
+          const read = recordSessionFile(turn.workspace, recorder, sessionId, sessionRead).catch(
+            () => {}
+          );
+          sessionRead = read;
+          recorder.trackCapture(read);
+        }
       }
     },
     usage: {

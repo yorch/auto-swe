@@ -5,6 +5,7 @@ import {
   googleJson,
   googleSse,
   harnessAssistant,
+  harnessSessionFile,
   openaiChatJson,
   openaiChatSse,
   openaiResponsesJson,
@@ -140,6 +141,108 @@ describe('normalizeTranscriptRecord', () => {
       { text: 'Checking the tests.', type: 'text' },
       { id: 'toolu_1', input: { command: 'yarn test' }, name: 'Bash', type: 'tool_call' },
     ]);
+  });
+
+  it('maps a Claude Code session-file delta to one Anthropic conversation', () => {
+    const n = normalizeTranscriptRecord(harnessSessionFile);
+    expect(n).toEqual({
+      messages: [
+        { content: [{ text: 'Make the failing test pass.', type: 'text' }], role: 'user' },
+        {
+          content: [
+            { text: 'Running the tests first.', type: 'text' },
+            { id: 'toolu_1', input: { command: 'yarn test' }, name: 'Bash', type: 'tool_call' },
+          ],
+          role: 'assistant',
+        },
+        {
+          content: [{ id: 'toolu_1', isError: true, output: '1 failed', type: 'tool_result' }],
+          role: 'user',
+        },
+      ],
+      // The sidechain's haiku model is a subagent's, not the turn's.
+      model: 'claude-opus-5-5',
+      provider: 'anthropic',
+      // Every call the turn made, the subagent's included.
+      response: {
+        content: [],
+        usage: { cacheRead: 40, cacheWrite: 7, inputTokens: 130, outputTokens: 35 },
+      },
+      source: 'harness_session_file',
+    });
+  });
+
+  it('counts the last usage report per message id once, as the harness repeats it per block', () => {
+    const line = (text: string, output: number) => ({
+      message: {
+        content: [{ text, type: 'text' }],
+        id: 'msg_1',
+        model: 'claude-opus-5-5',
+        usage: { input_tokens: 100, output_tokens: output },
+      },
+      type: 'assistant',
+    });
+    const n = normalizeTranscriptRecord({
+      kind: 'harness_session_file',
+      lines: [line('a', 4), line('b', 9)],
+    });
+    expect(n?.response.usage).toEqual({
+      cacheRead: undefined,
+      cacheWrite: undefined,
+      inputTokens: 100,
+      outputTokens: 9,
+    });
+  });
+
+  it('says which kind of record each call was built from', () => {
+    expect(normalizeTranscriptRecord(anthropicJson)?.source).toBe('http_call');
+    expect(normalizeTranscriptRecord(googleSse)?.source).toBe('http_call');
+    expect(normalizeTranscriptRecord(harnessAssistant)?.source).toBe('harness_message');
+  });
+
+  it('returns null for a harness_turn configuration record', () => {
+    expect(
+      normalizeTranscriptRecord({
+        kind: 'harness_turn',
+        model: 'claude-opus-5-5',
+        systemPrompt: { append: 'S', preset: 'claude_code' },
+        tools: ['Bash'],
+      } as never)
+    ).toBeNull();
+  });
+
+  it('never reads an embedding call as a chat call', () => {
+    const openaiEmbedding = {
+      kind: 'http_call',
+      path: '/v1/embeddings',
+      request: { input: ['hello'], model: 'text-embedding-3-large' },
+      response: {
+        body: { data: [{ embedding: { dimensions: 1536, omitted: 'vector' }, index: 0 }] },
+        contentType: 'application/json',
+      },
+    };
+    expect(normalizeTranscriptRecord(openaiEmbedding)).toBeNull();
+    // A gateway that routes embeddings under a chat-looking path is still caught by purpose.
+    expect(
+      normalizeTranscriptRecord({
+        ...openaiEmbedding,
+        path: '/v1/chat/completions',
+        purpose: 'embedding',
+      })
+    ).toBeNull();
+    for (const path of [
+      '/v1beta/models/gemini-embedding-001:embedContent',
+      '/v1beta/models/gemini-embedding-001:batchEmbedContents',
+    ]) {
+      expect(
+        normalizeTranscriptRecord({
+          kind: 'http_call',
+          path,
+          request: { content: { parts: [{ text: 'hello' }] } },
+          response: { body: { embedding: { values: { dimensions: 1536, omitted: 'vector' } } } },
+        })
+      ).toBeNull();
+    }
   });
 
   it('returns null for an unknown record shape', () => {

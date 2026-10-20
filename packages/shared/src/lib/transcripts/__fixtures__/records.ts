@@ -318,3 +318,71 @@ export const harnessAssistant = {
     type: 'assistant',
   },
 };
+
+/** A non-proxied Claude Code turn's session-file delta, as the harness writes it. */
+export const harnessSessionFile = {
+  bytes: 4096,
+  kind: 'harness_session_file',
+  lines: [
+    {
+      isSidechain: false,
+      message: { content: 'Make the failing test pass.', role: 'user' },
+      sessionId: '0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9',
+      type: 'user',
+      uuid: 'u-1',
+    },
+    {
+      isSidechain: false,
+      message: {
+        content: [
+          { text: 'Running the tests first.', type: 'text' },
+          { id: 'toolu_1', input: { command: 'yarn test' }, name: 'Bash', type: 'tool_use' },
+        ],
+        id: 'msg_1',
+        model: 'claude-opus-5-5',
+        role: 'assistant',
+        usage: {
+          cache_creation_input_tokens: 7,
+          cache_read_input_tokens: 40,
+          input_tokens: 120,
+          output_tokens: 30,
+        },
+      },
+      parentUuid: 'u-1',
+      type: 'assistant',
+      uuid: 'a-1',
+    },
+    {
+      isSidechain: false,
+      message: {
+        content: [
+          { content: '1 failed', is_error: true, tool_use_id: 'toolu_1', type: 'tool_result' },
+        ],
+        role: 'user',
+      },
+      parentUuid: 'a-1',
+      toolUseResult: { stdout: '1 failed' },
+      type: 'user',
+      uuid: 'u-2',
+    },
+    {
+      isSidechain: true,
+      message: {
+        content: [{ text: 'Subagent: searching the codebase.', type: 'text' }],
+        id: 'msg_side',
+        model: 'claude-haiku-4-5-20251001',
+        role: 'assistant',
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+      type: 'assistant',
+      uuid: 's-1',
+    },
+    { leafUuid: 'a-1', summary: 'Fixing a failing test', type: 'summary' },
+    '{"truncated line',
+  ],
+  offset: 0,
+  path: '/workspace/.harness/home/.claude/projects/-workspace-target-repo/0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9.jsonl',
+  runtime: 'claude-code',
+  sessionId: '0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9',
+  truncated: false,
+};

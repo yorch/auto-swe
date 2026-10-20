@@ -120,6 +120,7 @@ import { CancelledFailure } from '@temporalio/activity';
 import {
   activityTranscriptInterceptor,
   currentTranscriptRecorder,
+  omitEmbeddingVectors,
   recordingFetch,
   runWithTranscriptRecorder,
   TranscriptRecorder,
@@ -659,5 +660,221 @@ describe('recordingFetch Request input', () => {
     await vi.waitFor(() => expect(calls).toHaveLength(1));
     expect(calls[0]?.request).toEqual({ prompt: 'hi' });
     expect(calls[0]?.method).toBe('POST');
+  });
+});
+
+describe('embedding capture', () => {
+  const vector = (n: number) => Array.from({ length: n }, (_, i) => i / n);
+  const json = (body: unknown) =>
+    new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
+
+  it('omits OpenAI and OpenAI-compatible data[].embedding vectors, keeping the rest', () => {
+    expect(
+      omitEmbeddingVectors({
+        data: [
+          { embedding: vector(1536), index: 0, object: 'embedding' },
+          { embedding: vector(3), index: 1, object: 'embedding' },
+        ],
+        model: 'text-embedding-3-large',
+        usage: { prompt_tokens: 4, total_tokens: 4 },
+      })
+    ).toEqual({
+      data: [
+        { embedding: { dimensions: 1536, omitted: 'vector' }, index: 0, object: 'embedding' },
+        { embedding: { dimensions: 3, omitted: 'vector' }, index: 1, object: 'embedding' },
+      ],
+      model: 'text-embedding-3-large',
+      usage: { prompt_tokens: 4, total_tokens: 4 },
+    });
+  });
+
+  it("omits Google's embedding.values and embeddings[].values", () => {
+    expect(omitEmbeddingVectors({ embedding: { values: vector(1536) } })).toEqual({
+      embedding: { values: { dimensions: 1536, omitted: 'vector' } },
+    });
+    expect(
+      omitEmbeddingVectors({ embeddings: [{ values: vector(768) }, { values: vector(768) }] })
+    ).toEqual({
+      embeddings: [
+        { values: { dimensions: 768, omitted: 'vector' } },
+        { values: { dimensions: 768, omitted: 'vector' } },
+      ],
+    });
+    // Anything that is not an embedding response passes through.
+    expect(omitEmbeddingVectors('not json')).toBe('not json');
+    expect(omitEmbeddingVectors({ error: { message: 'bad' } })).toEqual({
+      error: { message: 'bad' },
+    });
+  });
+
+  it('records the full input and the vector-free response, flagged and not counted', async () => {
+    const input = `Authorization: Bearer abc.def.ghi ${'z'.repeat(40_000)}`;
+    const r = new TranscriptRecorder();
+    const embeddingFetch = recordingFetch(
+      async () =>
+        json({ data: [{ embedding: vector(1536), index: 0 }], model: 'text-embedding-3-large' }),
+      { purpose: 'embedding' }
+    );
+    const chatFetch = recordingFetch(async () => json({ type: 'message' }));
+    await runWithTranscriptRecorder(r, async () => {
+      await (
+        await embeddingFetch('https://api.openai.com/v1/embeddings', {
+          body: JSON.stringify({ input: [input], model: 'text-embedding-3-large' }),
+          method: 'POST',
+        })
+      ).text();
+      await (
+        await chatFetch('https://api.anthropic.com/v1/messages', {
+          body: '{"model":"claude-x"}',
+          method: 'POST',
+        })
+      ).text();
+    });
+    await r.close('succeeded');
+
+    const calls = partLines()
+      .flat()
+      .filter((l) => l.kind === 'http_call');
+    const embedding = calls.find((c) => c.path === '/v1/embeddings') as {
+      purpose: string;
+      request: { input: string[] };
+      response: { body: unknown };
+    };
+    expect(embedding.purpose).toBe('embedding');
+    // Redaction still applies; length does not truncate it.
+    const recordedInput = embedding.request.input[0] ?? '';
+    expect(recordedInput).not.toContain('abc.def.ghi');
+    expect(recordedInput.length).toBeGreaterThan(40_000);
+    expect(recordedInput.endsWith('z'.repeat(40_000))).toBe(true);
+    expect(embedding.response.body).toEqual({
+      data: [{ embedding: { dimensions: 1536, omitted: 'vector' }, index: 0 }],
+      model: 'text-embedding-3-large',
+    });
+    const chat = calls.find((c) => c.path === '/v1/messages');
+    expect(chat).not.toHaveProperty('purpose');
+    // Only the chat call is a model call.
+    expect(h.updates.at(-1)?.data.modelCallCount).toBe(1);
+  });
+
+  it('strips vectors from an embedding response whatever its content-type says', async () => {
+    const { calls, recorder } = (() => {
+      const calls: Record<string, unknown>[] = [];
+      return {
+        calls,
+        recorder: {
+          addHttpCall: (c: Record<string, unknown>) => calls.push(c),
+          trackCapture: (p: Promise<void>) => void p,
+        } as never,
+      };
+    })();
+    const wrapped = recordingFetch(
+      async () =>
+        new Response(JSON.stringify({ embedding: { values: vector(1536) } }), {
+          headers: { 'content-type': 'text/plain' },
+        }),
+      { purpose: 'embedding' }
+    );
+    const res = await runWithTranscriptRecorder(recorder, () =>
+      wrapped('https://gw.example/v1beta/models/m:embedContent', { method: 'POST' })
+    );
+    await res.text();
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect((calls[0]?.response as { body: unknown } | undefined)?.body).toEqual({
+      embedding: { values: { dimensions: 1536, omitted: 'vector' } },
+    });
+  });
+
+  it('flags a failed embedding call too, still without counting it', async () => {
+    const r = new TranscriptRecorder();
+    const wrapped = recordingFetch(
+      async () => {
+        throw new Error('net down');
+      },
+      { purpose: 'embedding' }
+    );
+    await expect(
+      runWithTranscriptRecorder(r, () =>
+        wrapped('https://api.openai.com/v1/embeddings', { body: '{"input":["x"]}', method: 'POST' })
+      )
+    ).rejects.toThrow('net down');
+    await r.close('failed');
+    const line = partLines().flat()[0];
+    expect(line).toMatchObject({ error: 'net down', kind: 'http_call', purpose: 'embedding' });
+    expect(h.updates.at(-1)?.data.modelCallCount).toBe(0);
+  });
+});
+
+describe('Claude Code turn records', () => {
+  it('records harness_turn and harness_session_file, redacted, without counting model calls', async () => {
+    const r = new TranscriptRecorder();
+    r.addHarnessTurn({
+      loadProjectSettings: false,
+      maxTurns: 40,
+      mcpServers: ['connection'],
+      model: 'claude-opus-5-5',
+      proxied: false,
+      runtime: 'claude-code',
+      systemPrompt: {
+        append: 'Use password=hunter22 to log in.',
+        preset: 'claude_code',
+        sha256: 'ab'.repeat(32),
+      },
+      tools: ['Read', 'Bash'],
+    });
+    r.addHarnessSessionFile({
+      bytes: 10,
+      lines: [{ message: { content: 'api_key=sk-live-abcdef', role: 'user' }, type: 'user' }],
+      offset: 0,
+      path: '/workspace/.harness/home/.claude/projects/p/s.jsonl',
+      runtime: 'claude-code',
+      sessionId: 's',
+      truncated: false,
+    });
+    await r.close('succeeded');
+
+    const [turn, file] = partLines().flat();
+    expect(turn).toMatchObject({ kind: 'harness_turn', tools: ['Read', 'Bash'] });
+    expect(JSON.stringify(turn)).not.toContain('hunter22');
+    expect(file).toMatchObject({ kind: 'harness_session_file', offset: 0, truncated: false });
+    expect(JSON.stringify(file)).not.toContain('sk-live-abcdef');
+    expect(h.updates.at(-1)?.data.modelCallCount).toBe(0);
+  });
+});
+
+describe('addHarnessSessionFile outcome', () => {
+  const file = (lines: unknown[]) => ({
+    bytes: 1,
+    lines,
+    offset: 0,
+    path: '/p.jsonl',
+    runtime: 'claude-code' as const,
+    sessionId: 's',
+    truncated: false,
+  });
+
+  it('is true only when the record itself landed', async () => {
+    const r = new TranscriptRecorder();
+    expect(r.acceptsRecords()).toBe(true);
+    expect(r.addHarnessSessionFile(file([{ type: 'user' }]))).toBe(true);
+    // Too big even after field truncation: only a bare marker stands in for it.
+    expect(r.addHarnessSessionFile(file(['x'.repeat(17 * 1024 * 1024)]))).toBe(false);
+    await r.close('succeeded');
+    expect(r.acceptsRecords()).toBe(false);
+    expect(r.addHarnessSessionFile(file([{ type: 'user' }]))).toBe(false);
+    const kinds = partLines()
+      .flat()
+      .map((l) => [l.kind, l.event]);
+    expect(kinds).toContainEqual(['harness_session_file', 'record_truncated']);
+  });
+
+  it('is false past the transcript cap, and the recorder stops accepting', async () => {
+    h.settings.maxBytes = 1;
+    const r = new TranscriptRecorder();
+    r.addHttpCall(record({ request: { blob: 'x'.repeat(8 * 1024 * 1024) } }));
+    await vi.waitFor(() => expect(h.parts.length).toBeGreaterThan(0));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(r.acceptsRecords()).toBe(false);
+    expect(r.addHarnessSessionFile(file([{ type: 'user' }]))).toBe(false);
+    await r.close('succeeded');
   });
 });
