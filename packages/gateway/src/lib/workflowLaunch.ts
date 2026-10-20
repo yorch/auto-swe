@@ -9,6 +9,7 @@ import {
 } from '@auto-swe/shared/lib/workflowId';
 import type { FastifyInstance } from 'fastify';
 import { getErrorName } from '../plugins/auth.js';
+import { auditContextData } from './auditContext.js';
 import { isUniqueConstraintError } from './prismaErrors.js';
 
 /**
@@ -379,6 +380,11 @@ export async function launchTrackedWorkflow(
     log?: { error: (obj: unknown, msg?: string) => void };
     guard?: LaunchGuard;
     sourceAuthorization?: LaunchSourceAuthorization;
+    /**
+     * Who launched the run and through which door (`work-request`, `webhook`, ...), for the
+     * audit row written once the workflow has started. Omit `actor` for a system launch.
+     */
+    audit?: { actor?: { sub: string } | null; source: string; templateId?: string };
   }
 ): Promise<LaunchWorkflowResult> {
   const { runInput } = rows;
@@ -526,7 +532,54 @@ export async function launchTrackedWorkflow(
     throw err;
   }
 
+  await recordLaunchAudit(prisma, rows, activeWorkflowId, opts);
   return { activeWorkflowId, ok: true };
+}
+
+/**
+ * One audit row for a launch whose workflow has started. Written outside the ledger transaction
+ * and after the start, so a refused, duplicate or compensated launch leaves none. The run row is
+ * created later by the worker, so the entity is the work request (or, for a launch without one,
+ * the spend-ledger row). Never throws: a failed audit write must not fail a launched run.
+ */
+async function recordLaunchAudit(
+  prisma: FastifyInstance['prisma'],
+  rows: WorkflowLedgerRows,
+  activeWorkflowId: string | null,
+  opts?: {
+    log?: { error: (obj: unknown, msg?: string) => void };
+    audit?: { actor?: { sub: string } | null; source: string; templateId?: string };
+  }
+): Promise<void> {
+  const workRequestId = (rows.runInput?.id ?? rows.activeWorkflow?.workRequestId) as
+    | string
+    | null
+    | undefined;
+  const entityId = workRequestId ?? activeWorkflowId;
+  if (!entityId) {
+    return;
+  }
+  try {
+    await prisma.configAuditLog.create({
+      data: {
+        ...auditContextData(),
+        action: 'CREATE',
+        actorId: opts?.audit?.actor?.sub ?? null,
+        afterJson: {
+          source: opts?.audit?.source ?? 'unspecified',
+          templateId:
+            (rows.runInput?.templateId as string | undefined) ?? opts?.audit?.templateId ?? null,
+          temporalWorkflowId: rows.activeWorkflow?.temporalWorkflowId ?? rows.temporalWorkflowId,
+          workRequestId: workRequestId ?? null,
+        } as never,
+        beforeJson: null as never,
+        entityId,
+        entityType: workRequestId ? 'WorkRequest' : 'ActiveWorkflow',
+      },
+    });
+  } catch (err) {
+    opts?.log?.error({ entityId, err }, 'launch audit write failed — the run was launched');
+  }
 }
 
 /**

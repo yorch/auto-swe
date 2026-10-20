@@ -48,6 +48,7 @@ function mockPrisma(opts?: { activeWorkflowCreateError?: Error }) {
         return {};
       }),
     },
+    configAuditLog: { create: vi.fn(async (_args: unknown) => ({})) },
     connection: {
       findMany: vi.fn(async () => []),
       findUnique: vi.fn(async () => null),
@@ -76,6 +77,113 @@ const ROWS = {
   activeWorkflow: { currentStatus: 'IMPLEMENTING', temporalWorkflowId: 'wf-1' },
   runInput: { id: 'ri-1' },
 };
+
+describe('launchTrackedWorkflow audit', () => {
+  it('writes one CREATE row after the start, with the actor and source', async () => {
+    const { prisma } = mockPrisma();
+    const order: string[] = [];
+    prisma.configAuditLog.create.mockImplementation(async () => {
+      order.push('audit');
+      return {};
+    });
+    await launchTrackedWorkflow(
+      prisma as never,
+      { ...ROWS, runInput: { id: 'ri-1', templateId: 'tpl-1' } },
+      async () => {
+        order.push('start');
+      },
+      { audit: { actor: { sub: 'user-1' }, source: 'work-request' } }
+    );
+    expect(order).toEqual(['start', 'audit']);
+    expect(prisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'CREATE',
+        actorId: 'user-1',
+        afterJson: {
+          source: 'work-request',
+          templateId: 'tpl-1',
+          temporalWorkflowId: 'wf-1',
+          workRequestId: 'ri-1',
+        },
+        entityId: 'ri-1',
+        entityType: 'WorkRequest',
+      }),
+    });
+  });
+
+  it('records an ActiveWorkflow entity, never a WorkRequest, when there is no work request id', async () => {
+    const { prisma } = mockPrisma();
+    await launchTrackedWorkflow(
+      prisma as never,
+      { activeWorkflow: { currentStatus: 'IMPLEMENTING', temporalWorkflowId: 'wf-9' } },
+      async () => {},
+      { audit: { source: 'prd-run', templateId: 'tpl-9' } }
+    );
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        afterJson: expect.objectContaining({ templateId: 'tpl-9', workRequestId: null }),
+        entityId: 'aw-1',
+        entityType: 'ActiveWorkflow',
+      }),
+    });
+  });
+
+  it('takes the template from opts.audit for a retry that writes no RunInput', async () => {
+    const { prisma } = mockPrisma();
+    await launchTrackedWorkflow(
+      prisma as never,
+      { activeWorkflow: { temporalWorkflowId: 'wf-r', workRequestId: 'wr-1' } },
+      async () => {},
+      { audit: { source: 'work-request-retry', templateId: 'tpl-r' } }
+    );
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        afterJson: expect.objectContaining({ templateId: 'tpl-r', workRequestId: 'wr-1' }),
+        entityId: 'wr-1',
+        entityType: 'WorkRequest',
+      }),
+    });
+  });
+
+  it('records a system launch with a null actor', async () => {
+    const { prisma } = mockPrisma();
+    await launchTrackedWorkflow(prisma as never, ROWS, async () => {}, {
+      audit: { source: 'webhook' },
+    });
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ actorId: null }),
+    });
+  });
+
+  it('writes no row when the start fails and the ledger is compensated', async () => {
+    const { prisma } = mockPrisma();
+    await expect(
+      launchTrackedWorkflow(prisma as never, ROWS, async () => {
+        throw new Error('temporal unreachable');
+      })
+    ).rejects.toThrow('temporal unreachable');
+    expect(prisma.configAuditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('writes no row for a duplicate start', async () => {
+    const { prisma } = mockPrisma();
+    const res = await launchTrackedWorkflow(prisma as never, ROWS, async () => {
+      throw alreadyStarted();
+    });
+    expect(res).toMatchObject({ ok: false, reason: 'DUPLICATE' });
+    expect(prisma.configAuditLog.create).not.toHaveBeenCalled();
+  });
+
+  it('survives a failed audit write and logs it', async () => {
+    const { prisma } = mockPrisma();
+    prisma.configAuditLog.create.mockRejectedValue(new Error('audit down'));
+    const log = { error: vi.fn() };
+    const res = await launchTrackedWorkflow(prisma as never, ROWS, async () => {}, { log });
+    expect(res).toEqual({ activeWorkflowId: 'aw-1', ok: true });
+    expect(log.error).toHaveBeenCalled();
+  });
+});
 
 describe('launchTrackedWorkflow', () => {
   it('writes the ledger BEFORE starting the workflow', async () => {

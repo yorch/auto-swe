@@ -457,6 +457,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
               }),
             }
           : {}),
+        audit: { actor: user ?? null, source: service ? 'service-token' : 'agent-run' },
         log: fastify.log,
         sourceAuthorization: user ? { actor: user } : {},
       }

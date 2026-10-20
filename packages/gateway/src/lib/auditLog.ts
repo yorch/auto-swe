@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { JwtPayload } from '../plugins/auth.js';
+import { type AuditContext, auditContextData } from './auditContext.js';
 
 export type AuditEntityType =
+  | 'ActiveWorkflow'
   | 'Agent'
   | 'AssistantAction'
   | 'Automation'
@@ -46,6 +48,7 @@ export type AuditEntityType =
   | 'TeamMembership'
   | 'User'
   | 'WorkflowTemplate'
+  | 'WorkRequest'
   | 'WorkflowRun';
 
 export async function writeAuditLog(
@@ -58,6 +61,8 @@ export async function writeAuditLog(
     before?: unknown;
     entityId: string;
     entityType: AuditEntityType;
+    /** Overrides the request's audit context; by default it is read from the request being handled. */
+    context?: AuditContext;
     /** A transaction client, so the entry commits or rolls back with the change it records. */
     client?: Pick<FastifyInstance['prisma'], 'configAuditLog'>;
   }
@@ -70,6 +75,7 @@ export async function writeAuditLog(
       beforeJson: (args.before ?? null) as never,
       entityId: args.entityId,
       entityType: args.entityType,
+      ...auditContextData(args.context),
     },
   });
 }

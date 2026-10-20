@@ -1439,7 +1439,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             templateId: template.id,
             templateVersion,
           }),
-        { log: fastify.log }
+        { audit: { source: 'webhook' }, log: fastify.log }
       );
       if (!launch.ok) {
         await refused(
@@ -1659,7 +1659,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             templateId: defaultTemplate.id,
             templateVersion,
           }),
-        { log: fastify.log }
+        { audit: { source: 'webhook' }, log: fastify.log }
       );
       if (!launch.ok) {
         return reply.code(200).send({ data: { duplicate: true, ticketId } });

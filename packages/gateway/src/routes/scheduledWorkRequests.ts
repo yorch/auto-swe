@@ -13,6 +13,7 @@ import { BUDGET_TIERS, type RepoWorkRequest } from '@auto-swe/shared/types/workf
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { auditContextData } from '../lib/auditContext.js';
 import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
@@ -636,6 +637,7 @@ export async function deactivateSchedulesOutsideTeams(
         try {
           await fastify.prisma.configAuditLog.create({
             data: {
+              ...auditContextData(),
               action: 'UPDATE',
               actorId,
               afterJson: {
@@ -1103,6 +1105,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
             if ((rebinds && existing.actsAsUserId !== user.sub) || movesTeam) {
               await tx.configAuditLog.create({
                 data: {
+                  ...auditContextData(),
                   action: 'UPDATE',
                   actorId: user.sub,
                   afterJson: {
@@ -1306,6 +1309,7 @@ export const scheduledWorkRequestRoutes: FastifyPluginAsync = async (fastify) =>
             // A takeover is recorded, never silent.
             await tx.configAuditLog.create({
               data: {
+                ...auditContextData(),
                 action: 'UPDATE',
                 actorId: user.sub,
                 afterJson: { actsAsUserId: user.sub, event: 'acts-as-changed' },

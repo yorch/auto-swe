@@ -14,6 +14,7 @@ import type { PrismaClient } from '@auto-swe/shared';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
+import { auditContextData } from './auditContext.js';
 import { resolveGithubApiUrl } from './githubEnterpriseAuth.js';
 
 /** Wall-clock cap: this sits on the sign-in path, so it must not hang it. */
@@ -200,6 +201,7 @@ export async function autoApproveGithubUser(
     }
     await tx.configAuditLog.create({
       data: {
+        ...auditContextData(),
         action: 'UPDATE',
         actorId: null,
         afterJson: { approvalSource, githubLogin: user.githubLogin, isActive: true },

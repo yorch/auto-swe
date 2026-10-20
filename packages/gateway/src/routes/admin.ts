@@ -73,6 +73,8 @@ const AuditLogResponseSchema = z.object({
       actorId: z.string().nullable(),
       afterJson: AuditJsonSchema.nullable().optional(),
       beforeJson: AuditJsonSchema.nullable().optional(),
+      /** How the action arrived: `via`, a truncated `ip`, the request id. Null on older rows. */
+      context: AuditJsonSchema.nullable().optional(),
       createdAt: z.string(),
       entityId: z.string().optional(),
       entityType: z.string(),
@@ -503,6 +505,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
           actor: row.actorId ? (actorById.get(row.actorId) ?? null) : null,
           afterJson: row.afterJson as z.infer<typeof AuditJsonSchema> | null,
           beforeJson: row.beforeJson as z.infer<typeof AuditJsonSchema> | null,
+          context: row.context as z.infer<typeof AuditJsonSchema> | null,
           createdAt: row.createdAt.toISOString(),
         })),
         meta: {

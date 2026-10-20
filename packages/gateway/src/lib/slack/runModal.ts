@@ -447,6 +447,7 @@ export async function handleRunModalSubmission(
         templateVersion: resolvedTemplate.version,
       }),
     {
+      audit: { actor: { sub: user.id }, source: 'slack' },
       log: fastify.log,
       sourceAuthorization: { actor: { role: user.role, sub: user.id } },
     }

@@ -202,6 +202,11 @@ export async function retryTemplateRequest(
             },
           }
         : {}),
+      audit: {
+        actor: user,
+        source: 'template-retry',
+        templateId: input.templateId as string,
+      },
       log: app.log,
     }
   );

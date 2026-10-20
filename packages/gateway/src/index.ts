@@ -10,6 +10,7 @@ import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { otel } from './instrument.js';
+import { registerAuditContext } from './lib/auditContext.js';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
 import { createBetterAuthHandler, registerBetterAuthRoutes } from './lib/betterAuthHandler.js';
 import { getCorsOrigins, getPort } from './lib/env.js';
@@ -112,6 +113,7 @@ async function start() {
   await app.register(prismaPlugin);
   await app.register(temporalPlugin);
   await app.register(authPlugin);
+  registerAuditContext(app);
 
   // Sync built-in reference data (templates, skills, scanner patterns, tool
   // config) so every deploy automatically picks up new or updated built-ins.
