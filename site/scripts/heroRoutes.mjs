@@ -103,11 +103,6 @@ export const HERO_ROUTES = [
       },
       {
         detail: 'Asked only if a sign-off is rejected',
-        gate: {
-          action: 'Say what should change',
-          held: 'Held at the question a rejection asks. The reviewer says what should change.',
-          timeout: '1h',
-        },
         label: 'If rejected',
       },
     ],

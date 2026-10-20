@@ -410,7 +410,7 @@ describe('syncBuiltins — rolling the helper-built templates out', () => {
     expect(nodesOf(f2).checkApproval?.onTrue).toBe('setAwaitingCi');
     expect(nodesOf(f2).checkCI?.onTrue).toBe('setAwaitingSignoff');
     expect(nodesOf(f2).secondSignoff?.onApprove).toBe('done');
-    expect(nodesOf(f2).firstSignoff?.onReject).toBe('askRejectionReason');
+    expect(nodesOf(f2).firstSignoff?.onReject).toBe('terminateRejected');
   });
 
   it('is a no-op once rolled out, and for a stored spec that differs only in key order', async () => {
