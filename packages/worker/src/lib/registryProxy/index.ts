@@ -230,7 +230,7 @@ function packageNameOf(
   const tail = segs[dash - 1] ?? '';
   if (!tail.startsWith('@') && !tail.startsWith('%40') && !tail.toLowerCase().includes('%2f')) {
     const scopeSeg = segs[dash - 2];
-    if (scopeSeg !== undefined && scopeSeg.startsWith('@')) {
+    if (scopeSeg?.startsWith('@')) {
       nameSegs = 2;
     }
   }
