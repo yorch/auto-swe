@@ -215,6 +215,40 @@ snapshot is fixed when a run starts, so the page reads it once and every later r
 `includeSpec=false` — the gateway then leaves the column out of the query — and carries the held
 copy over; the flag defaults to true for other callers. Nothing streams: updates arrive on the poll, not as they are written.
 
+**Visual regression suite.** `packages/web/e2e/` holds Playwright screenshot tests of the main
+screens — Home, the runs and requests lists, a failed run, the workflow library and template
+editor, approvals, the model catalog, the users admin table, account settings, the command palette and
+the Help panel — in all four palette × theme looks at 1280px, plus four of them at a 390px touch
+viewport. The suite drives a production build served by `next start` and answers every gateway call
+from typed fixtures in `e2e/fixtures/` (built on the shared API types and the hooks' own types), so
+it needs no gateway, database or Docker; a page that calls an endpoint no fixture answers fails its
+test. The server-side role gate (`lib/auth.server.ts`) fetches from Node, where `page.route` cannot
+reach, so `e2e/support/globalSetup.ts` starts a stub for it. Each shot freezes the clock, disables
+motion and waits for the web fonts. Run it after building:
+
+```bash
+yarn workspace @auto-swe/web build
+yarn workspace @auto-swe/web test:visual
+```
+
+The CI `visual` job runs the same commands inside `mcr.microsoft.com/playwright:v<version>-noble`
+for exactly the pinned `@playwright/test` version, and fails when more than 0.1% of a shot's pixels
+change. Pixels depend on the browser build and the system fonts it falls back to, so baselines come
+from that image, not from a workstation, whose font rendering differs by a few percent of every
+shot. When the suite fails, the job uploads two artifacts: `visual-diffs`, each failing shot as
+`*-actual.png` beside its diff, and `visual-baselines`, a full set re-recorded in the image. To
+change the design on purpose:
+
+1. Make the change and look at it locally: `yarn workspace @auto-swe/web test:visual` writes each
+   shot and its diff under `e2e/.output/`. Outside the image every shot differs by its font
+   rendering, so a local run shows what changed but is not the pass or fail; do not commit
+   baselines recorded locally.
+2. Push. The job fails on the shots the change moved. Check `visual-diffs` shows only the intended
+   change, then copy `visual-baselines` over `e2e/__screenshots__/visual.spec.ts/` and push again.
+3. Review the PNG diff of the pull request like code.
+
+Failed local runs leave the actual shot and a diff under `e2e/.output/`.
+
 ---
 
 ## 3. Run Lifecycle
@@ -1151,6 +1185,11 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
+- **The visual suite checks rendering, not the gateway contract.** Its fixtures are typed against
+  the API types, so a renamed or retyped field fails the type check, but a response the gateway
+  shapes differently from those types renders here and breaks only in production. It shoots a fixed
+  set of screens in a single state each; a regression elsewhere, or in a hover, focus or error state
+  it does not open, is not caught.
 - **A run fails permanently on any non-Temporal error from workflow code.** `RunnableWorkflow`
   turns every such error into a non-retryable `WORKFLOW_SPEC_FAILED`, because the spec failures that
   produce them are deterministic. A bug in the workflow code itself is therefore not retried by a
