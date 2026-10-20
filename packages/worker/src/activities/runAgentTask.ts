@@ -100,6 +100,254 @@ export async function runAgentTask(input: RunAgentTaskInput): Promise<RunAgentTa
   return withHeartbeat('runAgentTask', runAgentTaskImpl(input));
 }
 
+/**
+ * What every caller hands the shared agent-run core: which agent (resolved at GLOBAL and
+ * ORGANIZATION scope), on which repository, what the prompt and the branch pair are, which
+ * ceilings were already decided, and whether the gated commit is pushed.
+ */
+export interface AgentTaskCoreInput {
+  /** The `git_repo` connection row, with its installation. */
+  repo: Parameters<typeof toRepoRef>[0] & {
+    executorImage?: string | null;
+    teamId: string | null;
+  };
+  /** The library agent key (already checked `isLaunchableAgentKey`). */
+  key: string;
+  /** The version the run pinned, when one was. */
+  version?: number;
+  /** The run's agent/skill pinning, carried into the resolve context. */
+  agentVersions?: ResolveCtx['agentVersions'];
+  skillRevisions?: ResolveCtx['skillRevisions'];
+  /** The tenant context the run resolved: ceilings and MCP scoping come from it. */
+  baseCtx: ResolveCtx;
+  effective: { maxSteps: number; maxWallClockSeconds: number };
+  prompt: string;
+  /** The branch the checkout is cut from and a fix is diffed against. */
+  baseBranch: string;
+  /** The branch the gated commit is pushed to. */
+  branch: string;
+  /** The commit message of the gated commit. */
+  commitMessage: string;
+  /** `push` delivers through the fresh trusted container; `none` reports the agent's own diff. */
+  deliver: 'push' | 'none';
+  /** Whether the gate lets the agent touch workflow files. */
+  allowWorkflowChanges: boolean;
+  /**
+   * Runs inside the core's try after a pushed commit, before the trace persists — the caller's
+   * publish step (the agent run's draft pull request). Never called for `deliver: 'none'` or
+   * a `no_changes` result.
+   */
+  afterPush?: (args: {
+    branch: string;
+    filesChanged: FileChange[];
+    findingsCount: number;
+    headSha: string;
+    stoppedReason?: 'max_steps' | 'wall_clock';
+    text: string;
+    tracer: AgentTracer;
+  }) => Promise<void>;
+}
+
+export interface AgentTaskCoreResult {
+  agent: string;
+  baseSha: string;
+  branch?: string;
+  codeSecurityFindingCount: number;
+  costUsd?: number;
+  diff: string;
+  diffTruncated: boolean;
+  diffVerified: boolean;
+  effective: { maxSteps: number; maxWallClockSeconds: number };
+  filesChanged: FileChange[];
+  gate: 'passed' | 'no_changes' | 'not_applicable';
+  headSha?: string;
+  steps?: number;
+  stoppedReason?: 'max_steps' | 'wall_clock';
+  text: string;
+}
+
+/**
+ * The core of an agent task: resolve the agent (GLOBAL + ORGANIZATION only — the caller's
+ * team must never shape it), pick its runtime, run it in a container it cannot push from,
+ * then commit and gate what it wrote in a FRESH container and push the gated commit.
+ * Who may call it at all is each caller's own check.
+ */
+export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<AgentTaskCoreResult> {
+  const {
+    repo,
+    key,
+    version,
+    baseCtx,
+    effective,
+    prompt,
+    baseBranch,
+    branch,
+    commitMessage,
+    deliver,
+    allowWorkflowChanges,
+  } = input;
+  const settingsCtx: ResolveCtx = { orgId: baseCtx.orgId, teamId: baseCtx.teamId };
+  const settings = await resolveSettings(
+    ['workspace.agentRunAllowWorkflowChanges', 'workspace.maxToolOutputChars'],
+    settingsCtx
+  );
+  const agentCtx: ResolveCtx = {
+    agentVersions: {
+      ...(baseCtx.agentVersions ?? {}),
+      ...(version !== undefined ? { [key]: version } : {}),
+    },
+    orgId: baseCtx.orgId,
+    skillRevisions: baseCtx.skillRevisions,
+  };
+  const resolved = await resolveAgent(key, agentCtx);
+  // Before any container exists: an unpriced model under a USD cap is refused
+  // here rather than after a clone (runAgent checks again before the call).
+  await assertModelPricedForUsdCap(resolved.model.spec);
+  const loop = await resolveAgentRuntime(key, agentCtx, 'mastra');
+  const harness =
+    loop.runtime === 'mastra'
+      ? undefined
+      : HARNESSES.select(loop.runtime).bind(key, resolved.model);
+
+  const repoRef = toRepoRef(repo);
+  const scm = getScmProvider(repoRef);
+  const { authedCloneUrl } = await scm.cloneCredentials(repoRef);
+
+  const tracer = new AgentTracer();
+  let agentWs: Workspace | undefined;
+  let trusted: Workspace | undefined;
+  let closeMcp: (() => Promise<void>) | undefined;
+  try {
+    // The agent's container is cloned with the credential (a private repo needs
+    // it) but the credential is never written into it: origin is the clean URL
+    // and only `gitAuthed` injects the header, which the agent run never calls
+    // on this workspace.
+    agentWs = await createWorkspace(
+      authedCloneUrl,
+      branch,
+      baseBranch,
+      repo.executorImage ?? undefined,
+      undefined,
+      undefined,
+      { teamId: repo.teamId }
+    );
+    const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
+
+    tracer.addActivityEvent({
+      name: 'agent.runtime',
+      outputJson: { agentKey: key, runtime: loop.runtime, source: loop.source },
+    });
+    const loopInput: AgentLoopInput = {
+      agentCtx,
+      deadline: AbortSignal.timeout(effective.maxWallClockSeconds * 1000),
+      key,
+      maxSteps: effective.maxSteps,
+      maxToolOutputChars: settings['workspace.maxToolOutputChars'],
+      prompt,
+      resolved,
+      settingsCtx,
+      tracer,
+      workspace: agentWs,
+    };
+    const result = harness
+      ? await runOnHarness(loopInput, harness)
+      : await runOnMastra(loopInput, (close) => {
+          closeMcp = close;
+        });
+    const text = redactString(result.text ?? '').slice(0, AGENT_RUN_MAX_TEXT_CHARS);
+    const base: Omit<
+      AgentTaskCoreResult,
+      | 'diff'
+      | 'diffTruncated'
+      | 'diffVerified'
+      | 'filesChanged'
+      | 'gate'
+      | 'codeSecurityFindingCount'
+    > = {
+      agent: key,
+      baseSha,
+      costUsd: result.costUsd,
+      effective,
+      steps: result.steps,
+      stoppedReason: result.stoppedReason,
+      text,
+    };
+    if (deliver === 'none') {
+      const raw = await agentDiff(agentWs, baseSha);
+      return {
+        ...base,
+        ...capDiff(raw),
+        codeSecurityFindingCount: 0,
+        diffVerified: false,
+        filesChanged: capFilesChanged(parseDiffToFileChanges(raw)),
+        gate: 'not_applicable',
+      };
+    }
+
+    // Delivery: judge and publish from a FRESH container the agent never ran in.
+    throwIfActivityCancelled();
+    trusted = await createWorkspace(
+      authedCloneUrl,
+      branch,
+      baseBranch,
+      repo.executorImage ?? undefined,
+      baseSha,
+      undefined,
+      { teamId: repo.teamId }
+    );
+    await importAgentTree(agentWs, trusted);
+    const committed = await commitTrustedTree(trusted, baseSha, commitMessage);
+    if (committed.empty) {
+      return {
+        ...base,
+        codeSecurityFindingCount: 0,
+        diff: '',
+        diffTruncated: false,
+        diffVerified: true,
+        filesChanged: [],
+        gate: 'no_changes',
+      };
+    }
+    const gated = await gateTrustedCommit(trusted, {
+      allowWorkflowChanges:
+        allowWorkflowChanges && settings['workspace.agentRunAllowWorkflowChanges'],
+      baseSha,
+      sha: committed.sha,
+      tracer,
+    });
+    await pushGatedCommit(trusted, gated, branch);
+    tracer.addActivityEvent({
+      name: 'git.commit_push',
+      outputJson: { branch, headSha: gated.sha },
+    });
+    await input.afterPush?.({
+      branch,
+      filesChanged: gated.filesChanged,
+      findingsCount: gated.codeSecurityFindings.length,
+      headSha: gated.sha,
+      stoppedReason: result.stoppedReason,
+      text,
+      tracer,
+    });
+    return {
+      ...base,
+      branch,
+      codeSecurityFindingCount: gated.codeSecurityFindings.length,
+      headSha: gated.sha,
+      ...capDiff(gated.diff),
+      diffVerified: true,
+      filesChanged: capFilesChanged(gated.filesChanged),
+      gate: 'passed',
+    };
+  } finally {
+    await closeMcp?.();
+    await persistActivityTrace(tracer, resolved.key);
+    // The agent workspace never holds the push credential, but both are removed.
+    await agentWs?.destroy();
+    await trusted?.destroy();
+  }
+}
+
 async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgentTaskResult> {
   const repoId = requireRepoId(request, 'runAgentTask');
   const workflowId = currentWorkflowId();
@@ -188,222 +436,90 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     ),
   };
 
-  // ── 4. Resolve the agent: GLOBAL and ORGANIZATION scope only. A member of a
-  // team the repo is shared with launches this, so the owning team's own agent
-  // overrides, and the template's, must not apply.
-  const agentCtx: ResolveCtx = {
-    agentVersions: {
-      ...(baseCtx.agentVersions ?? {}),
-      ...(version !== undefined ? { [key]: version } : {}),
-    },
-    orgId: baseCtx.orgId,
-    // Same reason as agentVersions: the run's skill text is frozen at its start.
-    skillRevisions: baseCtx.skillRevisions,
-  };
-  const resolved = await resolveAgent(key, agentCtx);
-  // Before any container exists: an unpriced model under a USD cap is refused
-  // here rather than after a clone (runAgent checks again before the call).
-  await assertModelPricedForUsdCap(resolved.model.spec);
-  // The loop: Mastra unless the Agent asks for a harness. Decided (and pinned on
-  // the run) before the clone, and the harness bound to the Agent's model here,
-  // so a model the harness cannot drive is refused before any container exists.
-  const loop = await resolveAgentRuntime(key, agentCtx, 'mastra');
-  const harness =
-    loop.runtime === 'mastra'
-      ? undefined
-      : HARNESSES.select(loop.runtime).bind(key, resolved.model);
-
+  // ── 4. The shared core: resolve the agent at GLOBAL + ORGANIZATION (never the
+  // owning team's scope — a member of a team the repo is shared with launches
+  // this), run it in its container, gate the commit and push it.
   const repo = await prisma.connection.findUniqueOrThrow({
     include: { installation: { select: { host: true, installationId: true } } },
     where: { id: repoId },
   });
   const workflowDefaults = await resolveWorkflowDefaults();
   const branch = `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
-  const repoRef = toRepoRef(repo);
-  const scm = getScmProvider(repoRef);
-  const { authedCloneUrl } = await scm.cloneCredentials(repoRef);
-
-  const tracer = new AgentTracer();
   // The branch the checkout is cut from and a draft PR targets: the launch's, else the
   // repository's default. Refused before any container exists when it is not one a run
   // may use.
   const baseBranch = await resolveRunBaseBranch(payload.baseBranch, repo);
-  let agentWs: Workspace | undefined;
-  let trusted: Workspace | undefined;
-  let closeMcp: (() => Promise<void>) | undefined;
-  try {
-    // The agent's container is cloned with the credential (a private repo needs
-    // it) but the credential is never written into it: origin is the clean URL
-    // and only `gitAuthed` injects the header, which the agent run never calls
-    // on this workspace.
-    agentWs = await createWorkspace(
-      authedCloneUrl,
-      branch,
-      baseBranch,
-      repo.executorImage ?? undefined,
-      undefined,
-      undefined,
-      { teamId: repo.teamId }
-    );
-    const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
+  let pr: { prNumber: number; prUrl: string } | undefined;
+  const repoRef = toRepoRef(repo);
+  const scm = getScmProvider(repoRef);
+  const core = await runAgentTaskCore({
+    agentVersions: baseCtx.agentVersions,
+    allowWorkflowChanges: true,
+    baseBranch,
+    baseCtx,
+    branch,
+    commitMessage: `auto: agent run ${request.externalTicketId} (${payload.agentRef})`,
+    deliver: payload.deliver === 'none' ? 'none' : 'push',
+    effective,
+    key,
+    prompt: request.description,
+    repo,
+    skillRevisions: baseCtx.skillRevisions,
+    version,
+    ...(payload.deliver !== 'draft_pr'
+      ? {}
+      : {
+          afterPush: async (pushed) => {
+            const title = prTitle(request.description);
+            try {
+              pr = await scm.createOrUpdatePullRequest({
+                baseBranch,
+                body: prBody({
+                  agent: payload.agentRef,
+                  files: pushed.filesChanged,
+                  findings: pushed.findingsCount,
+                  stoppedReason: pushed.stoppedReason,
+                  text: pushed.text,
+                  workflowId,
+                }),
+                draft: true,
+                headBranch: branch,
+                repo: repoRef,
+                title,
+              });
+            } catch (err) {
+              // The branch is already published, and stays so. A repository that cannot
+              // hold drafts must never get a ready-for-review PR in its place.
+              const unsupported = err instanceof DraftPullRequestUnsupportedError;
+              throw refuse(
+                unsupported
+                  ? `This repository does not support draft pull requests. The branch ${branch} was pushed (${pushed.headSha}); open a pull request from it manually or re-run with deliver=branch.`
+                  : `The branch ${branch} was pushed (${pushed.headSha}) but the pull request could not be opened: ${err instanceof Error ? err.message : String(err)}`,
+                unsupported ? 'DRAFT_PR_UNSUPPORTED' : 'PR_CREATE_FAILED',
+                { branch, headSha: pushed.headSha }
+              );
+            }
+            await recordAgentRunPullRequest(
+              {
+                headSha: pushed.headSha,
+                isDraft: true,
+                ledgerId: ledger.id,
+                prNumber: pr.prNumber,
+                repoId,
+                title,
+              },
+              pushed.tracer
+            );
+          },
+        }),
+  });
 
-    tracer.addActivityEvent({
-      name: 'agent.runtime',
-      outputJson: { agentKey: key, runtime: loop.runtime, source: loop.source },
-    });
-    // ── 5–6. Run the agent, bounded, on the loop it resolved to.
-    const loopInput: AgentLoopInput = {
-      agentCtx,
-      deadline: AbortSignal.timeout(effective.maxWallClockSeconds * 1000),
-      key,
-      maxSteps: effective.maxSteps,
-      maxToolOutputChars: settings['workspace.maxToolOutputChars'],
-      prompt: request.description,
-      resolved,
-      settingsCtx,
-      tracer,
-      workspace: agentWs,
-    };
-    const result = harness
-      ? await runOnHarness(loopInput, harness)
-      : await runOnMastra(loopInput, (close) => {
-          closeMcp = close;
-        });
-    const text = redactString(result.text ?? '').slice(0, AGENT_RUN_MAX_TEXT_CHARS);
-    const base: Omit<
-      RunAgentTaskResult,
-      | 'diff'
-      | 'diffTruncated'
-      | 'diffVerified'
-      | 'filesChanged'
-      | 'gate'
-      | 'codeSecurityFindingCount'
-    > = {
-      agent: payload.agentRef,
-      baseSha,
-      costUsd: result.costUsd,
-      deliver: payload.deliver,
-      effective,
-      steps: result.steps,
-      stoppedReason: result.stoppedReason,
-      text,
-    };
-
-    // ── 7a. Nothing leaves the sandbox: show the agent's own view, unverified.
-    if (payload.deliver === 'none') {
-      const raw = await agentDiff(agentWs, baseSha);
-      return {
-        ...base,
-        ...capDiff(raw),
-        codeSecurityFindingCount: 0,
-        diffVerified: false,
-        filesChanged: capFilesChanged(parseDiffToFileChanges(raw)),
-        gate: 'not_applicable',
-      };
-    }
-
-    // ── 7b. Delivery: judge and publish from a FRESH container the agent never ran in.
-    throwIfActivityCancelled();
-    trusted = await createWorkspace(
-      authedCloneUrl,
-      branch,
-      baseBranch,
-      repo.executorImage ?? undefined,
-      baseSha,
-      undefined,
-      { teamId: repo.teamId }
-    );
-    await importAgentTree(agentWs, trusted);
-    const committed = await commitTrustedTree(
-      trusted,
-      baseSha,
-      `auto: agent run ${request.externalTicketId} (${payload.agentRef})`
-    );
-    if (committed.empty) {
-      return {
-        ...base,
-        codeSecurityFindingCount: 0,
-        diff: '',
-        diffTruncated: false,
-        diffVerified: true,
-        filesChanged: [],
-        gate: 'no_changes',
-      };
-    }
-    const gated = await gateTrustedCommit(trusted, {
-      allowWorkflowChanges: settings['workspace.agentRunAllowWorkflowChanges'],
-      baseSha,
-      sha: committed.sha,
-      tracer,
-    });
-    await pushGatedCommit(trusted, gated, branch);
-    tracer.addActivityEvent({
-      name: 'git.commit_push',
-      outputJson: { branch, headSha: gated.sha },
-    });
-
-    let pr: { prNumber: number; prUrl: string } | undefined;
-    if (payload.deliver === 'draft_pr') {
-      const title = prTitle(request.description);
-      try {
-        pr = await scm.createOrUpdatePullRequest({
-          baseBranch,
-          body: prBody({
-            agent: payload.agentRef,
-            files: gated.filesChanged,
-            findings: gated.codeSecurityFindings.length,
-            stoppedReason: result.stoppedReason,
-            text,
-            workflowId,
-          }),
-          draft: true,
-          headBranch: branch,
-          repo: repoRef,
-          title,
-        });
-      } catch (err) {
-        // The branch is already published, and stays so. A repository that cannot
-        // hold drafts must never get a ready-for-review PR in its place.
-        const unsupported = err instanceof DraftPullRequestUnsupportedError;
-        throw refuse(
-          unsupported
-            ? `This repository does not support draft pull requests. The branch ${branch} was pushed (${gated.sha}); open a pull request from it manually or re-run with deliver=branch.`
-            : `The branch ${branch} was pushed (${gated.sha}) but the pull request could not be opened: ${err instanceof Error ? err.message : String(err)}`,
-          unsupported ? 'DRAFT_PR_UNSUPPORTED' : 'PR_CREATE_FAILED',
-          { branch, headSha: gated.sha }
-        );
-      }
-      await recordAgentRunPullRequest(
-        {
-          headSha: gated.sha,
-          isDraft: true,
-          ledgerId: ledger.id,
-          prNumber: pr.prNumber,
-          repoId,
-          title,
-        },
-        tracer
-      );
-    }
-
-    return {
-      ...base,
-      branch,
-      codeSecurityFindingCount: gated.codeSecurityFindings.length,
-      headSha: gated.sha,
-      ...capDiff(gated.diff),
-      diffVerified: true,
-      filesChanged: capFilesChanged(gated.filesChanged),
-      gate: 'passed',
-      ...(pr ? { prNumber: pr.prNumber, prUrl: pr.prUrl } : {}),
-    };
-  } finally {
-    await closeMcp?.();
-    await persistActivityTrace(tracer, resolved.key);
-    // The agent workspace never holds the push credential, but both are removed.
-    await agentWs?.destroy();
-    await trusted?.destroy();
-  }
+  return {
+    ...core,
+    agent: payload.agentRef,
+    deliver: payload.deliver,
+    ...(pr ? { prNumber: pr.prNumber, prUrl: pr.prUrl } : {}),
+  };
 }
 
 interface AgentLoopInput {
