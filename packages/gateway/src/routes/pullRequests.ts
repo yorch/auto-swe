@@ -4,11 +4,17 @@ import {
   type PullRequestState,
   pullRequestUrl,
 } from '@auto-swe/shared/lib/pullRequest';
+import { summarizePullRequestOutcomes } from '@auto-swe/shared/lib/pullRequestOutcomes';
 import { resolveGitHubBaseUrl } from '@auto-swe/shared/lib/systemConfig';
-import type { PullRequestListItem, WorkflowRunStatus } from '@auto-swe/shared/types/api';
+import type {
+  PullRequestListItem,
+  PullRequestOutcomesResponse,
+  WorkflowRunStatus,
+} from '@auto-swe/shared/types/api';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { reachableConnections } from '../lib/tenantScope.js';
@@ -23,6 +29,20 @@ const Query = paginationQuery({ defaultLimit: 50, maxLimit: 100 }).extend({
   /** Substring match on the ticket id of the request the PR came from. */
   ticket: z.string().trim().max(200).optional(),
 });
+
+const OutcomesQuery = refineCustomRange(
+  z.object({
+    ...customRangeFields,
+    repoId: z.string().uuid().optional(),
+    scope: z.enum(['MINE', 'TEAM']).default('TEAM'),
+    teamId: z.string().uuid().optional(),
+    window: z.coerce.number().int().min(1).max(365).default(30),
+  })
+);
+
+/** Most rows one outcomes read takes; one more is fetched to detect a cut. */
+const OUTCOMES_ROW_CAP = 10_000;
+const OUTCOMES_TOP_REPOSITORIES = 10;
 
 /**
  * Pull requests the platform opened, newest first.
@@ -143,6 +163,99 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         };
       });
       return { data, meta: { limit, offset, total } };
+    }
+  );
+
+  const engineerOnly = requireAuth({ requiredRole: 'ENGINEER' });
+  // Delivery metric: the cohort of PRs opened in the window, judged as of now.
+  app.get(
+    '/outcomes',
+    {
+      onRequest: engineerOnly,
+      schema: { querystring: OutcomesQuery },
+    },
+    async (request) => {
+      const user = requireUser(request);
+      const { repoId, scope, teamId } = request.query;
+      const { days, end, previousStart, start } = resolveWindow(
+        request.query,
+        request.query.window
+      );
+      const filters: Prisma.PullRequestWhereInput[] = [
+        user.role === 'ADMIN'
+          ? {}
+          : { repository: reachableConnections(user, request.repoAccessGate) },
+        { openedAt: { gte: previousStart, lt: end } },
+      ];
+      if (repoId) {
+        filters.push({ repoId });
+      }
+      if (teamId) {
+        filters.push({ repository: { OR: [{ teamId }, { shares: { some: { teamId } } }] } });
+      }
+      if (scope === 'MINE') {
+        filters.push({ workflow: { workRequest: { requestedById: user.sub } } });
+      }
+      const rows = await fastify.prisma.pullRequest.findMany({
+        orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+        select: {
+          ciStatus: true,
+          isDraft: true,
+          mergedAt: true,
+          openedAt: true,
+          repository: { select: { id: true, organizationName: true, repoName: true } },
+          status: true,
+        },
+        take: OUTCOMES_ROW_CAP + 1,
+        where: { AND: filters },
+      });
+      const capped = rows.length > OUTCOMES_ROW_CAP;
+      const kept = rows.slice(0, OUTCOMES_ROW_CAP);
+      // Newest first, so a capped read loses the previous window before this one. The extra row
+      // fetched past the cap is the first one lost: this window is cut only if it is in this window.
+      const firstLost = rows[OUTCOMES_ROW_CAP]?.openedAt;
+      const isTruncated = capped && firstLost !== undefined && firstLost >= start;
+
+      const current = kept.filter((r) => r.openedAt >= start);
+      const previous = kept.filter((r) => r.openedAt < start);
+
+      const byRepo = new Map<
+        string,
+        {
+          repository: NonNullable<(typeof current)[number]['repository']>;
+          rows: typeof current;
+        }
+      >();
+      for (const row of current) {
+        const repository = row.repository;
+        if (!repository) {
+          continue;
+        }
+        const group = byRepo.get(repository.id) ?? { repository, rows: [] };
+        group.rows.push(row);
+        byRepo.set(repository.id, group);
+      }
+      const byRepository = [...byRepo.values()]
+        .sort((a, b) => b.rows.length - a.rows.length)
+        .slice(0, OUTCOMES_TOP_REPOSITORIES)
+        .map(({ repository, rows: repoRows }) => ({
+          repository: {
+            id: repository.id,
+            name: repository.repoName ?? '',
+            org: repository.organizationName ?? '',
+          },
+          summary: summarizePullRequestOutcomes(repoRows),
+        }));
+
+      const data: PullRequestOutcomesResponse = {
+        byRepository,
+        current: summarizePullRequestOutcomes(current),
+        isTruncated,
+        previous: capped ? null : summarizePullRequestOutcomes(previous),
+        previousComplete: !capped,
+        window: { days, end: end.toISOString(), start: start.toISOString() },
+      };
+      return { data };
     }
   );
 };
