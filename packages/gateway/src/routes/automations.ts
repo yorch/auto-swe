@@ -271,6 +271,22 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         message: `${source.label} automations start the template they name: choose a templateId`,
       };
     }
+    // A filter value a setting refuses, same refusal as a gated option: the fire decides
+    // again (`mismatch`), but an author learns at save rather than from a dead rule.
+    for (const gate of source.gatedFilters ?? []) {
+      const selected = (filters as Record<string, unknown>)[gate.key];
+      const chosen = Array.isArray(selected) ? selected : [selected];
+      if (!chosen.some((v) => (gate.values as readonly unknown[]).includes(v))) {
+        continue;
+      }
+      const allowed = await resolveSetting(gate.setting, {
+        ...(team.orgId ? { orgId: team.orgId } : {}),
+        teamId: team.id,
+      });
+      if (allowed !== true) {
+        return { code: 'OPTION_DISABLED', message: gate.disabledMessage };
+      }
+    }
     const inputs = storedInputs(body.inputs);
     for (const gate of source.gatedOptions ?? []) {
       if (!gate.values.includes(inputs[gate.key])) {
