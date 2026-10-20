@@ -22,6 +22,7 @@ export type EdgeKind =
   | 'join'
   | 'onApprove'
   | 'onReject'
+  | 'onRequestChanges'
   | 'onSubmit';
 
 export interface LayoutEdge {

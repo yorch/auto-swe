@@ -134,6 +134,78 @@ describe('humanApproval', () => {
     expect(records).toContainEqual({ nodeId: 'gate', status: 'SKIPPED' });
     expect(resolutions).toEqual([{ nodeId: 'gate', status: 'TIMED_OUT' }]);
   });
+
+  describe('request_changes', () => {
+    // Same shape as approvalSpec plus the optional edge.
+    const changesSpec = (withEdge: boolean): WorkflowSpec =>
+      parseWorkflowSpec({
+        entry: 'gate',
+        name: 'hitl-approval-changes',
+        nodes: {
+          approved: {
+            result: { edge: { literal: 'approved' } },
+            status: 'SUCCESS',
+            type: 'terminate',
+          },
+          changes: {
+            result: {
+              comment: { from: 'nodes.gate.output.comment' },
+              edge: { literal: 'changes' },
+            },
+            status: 'FAILED',
+            type: 'terminate',
+          },
+          gate: {
+            onApprove: 'approved',
+            onReject: 'rejected',
+            ...(withEdge ? { onRequestChanges: 'changes' } : {}),
+            onTimeout: 'timedOut',
+            timeout: '24h',
+            title: 'Approve plan?',
+            type: 'humanApproval',
+          },
+          rejected: {
+            result: { edge: { literal: 'rejected' } },
+            status: 'FAILED',
+            type: 'terminate',
+          },
+          timedOut: { status: 'TIMED_OUT', type: 'terminate' },
+        },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      });
+
+    it('routes to onRequestChanges and the comment is readable at nodes.<id>.output.comment', async () => {
+      const { dispatcher, notifications } = makeHitlDispatcher({
+        hitl_gate: [{ action: 'request_changes', comment: 'add tests', resolvedBy: 'user-1' }],
+      });
+      const result = await runSpec(changesSpec(true), baseCtx(), dispatcher);
+      expect(result.status).toBe('FAILED');
+      expect(result.result.edge).toBe('changes');
+      expect(result.result.comment).toBe('add tests');
+      expect(notifications[0]?.allowRequestChanges).toBe(true);
+    });
+
+    it('leaves allowRequestChanges absent on the notify input without the edge', async () => {
+      const { dispatcher, notifications } = makeHitlDispatcher({
+        hitl_gate: [{ action: 'approve' }],
+      });
+      await runSpec(approvalSpec, baseCtx(), dispatcher);
+      expect(notifications[0]).toMatchObject({ kind: 'APPROVAL' });
+      expect('allowRequestChanges' in (notifications[0] ?? {})).toBe(false);
+    });
+
+    it('falls back to onReject when the edge is missing', async () => {
+      // The gateway never lets this happen — a request_changes signal that gets
+      // here anyway takes the stop path rather than silently approving.
+      const { dispatcher, notifications } = makeHitlDispatcher({
+        hitl_gate: [{ action: 'request_changes', comment: 'add tests' }],
+      });
+      const result = await runSpec(changesSpec(false), baseCtx(), dispatcher);
+      expect(result.status).toBe('FAILED');
+      expect(result.result.edge).toBe('rejected');
+      expect('allowRequestChanges' in (notifications[0] ?? {})).toBe(false);
+    });
+  });
 });
 
 // ── HITL inside a fanOut branch ──

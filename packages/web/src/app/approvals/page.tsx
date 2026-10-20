@@ -93,7 +93,8 @@ export default function GovernApprovalsPage() {
           </p>
           <ul className="list-disc space-y-1 pl-4">
             <li>
-              <span className="font-mono text-paper-200">humanApproval</span>: approve or reject{' '}
+              <span className="font-mono text-paper-200">humanApproval</span>: approve or reject —
+              and request changes, with a note, where the workflow offers it{' '}
               <HelpTip term="approval" />.
             </li>
             <li>

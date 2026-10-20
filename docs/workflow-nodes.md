@@ -1026,13 +1026,18 @@ timeout writes nothing.
 | `timeout` | yes | A positive duration, as for `signal`. |
 | `onApprove` | yes | The node to run when approved. |
 | `onReject` | yes | The node to run when rejected. |
+| `onRequestChanges` | no | When set, the gate offers a third action — request changes — which needs a written note and routes here. |
 | `onTimeout` | yes | The node to run when nobody answers in time. |
 
-**Edges.** `onApprove`, `onReject`, `onTimeout`.
+**Edges.** `onApprove`, `onReject`, `onRequestChanges` (optional), `onTimeout`.
 
-**Output.** The response at `nodes.<id>.output`: `nodes.<id>.output.action` is `"approve"` or
-`"reject"` and `nodes.<id>.output.resolvedBy` is the id of the user who answered — with
-`approverCount` above 1, the approver whose approval completed the count (or whoever rejected).
+**Output.** The response at `nodes.<id>.output`: `nodes.<id>.output.action` is `"approve"`,
+`"reject"` or — on a gate with `onRequestChanges` — `"request_changes"`, and
+`nodes.<id>.output.resolvedBy` is the id of the user who answered — with
+`approverCount` above 1, the approver whose approval completed the count (or whoever rejected or
+requested changes, either of which resolves the step at once). A `request_changes` answer also
+carries `nodes.<id>.output.comment`, the required feedback; approve and reject comments stay
+stored-only and never reach the workflow.
 There is no `storeAs`.
 
 **Failure.** None: a timeout takes `onTimeout` and marks the inbox item timed out.
@@ -1068,9 +1073,9 @@ There is no `storeAs`.
 
 **Pitfalls.**
 
-- A rejection requires a written reason. The reason is shown to the requester but is not part of
-  the output.
-- With `approverCount` above 1, a single rejection still rejects.
+- A rejection or change request requires a written reason. A rejection's reason is shown to the requester but is not part of
+  the output; a change request's note is — the workflow reads it at `nodes.<id>.output.comment`.
+- With `approverCount` above 1, a single rejection still rejects, and a single change request resolves the step the same way.
 
 **See also.** [hitl-workflows.md](./hitl-workflows.md).
 

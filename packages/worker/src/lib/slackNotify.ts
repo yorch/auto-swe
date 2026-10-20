@@ -3,6 +3,7 @@ import {
   resolveSlackBotTokenForSlackChannel,
   resolveWebUrl,
 } from '@auto-swe/shared/lib/systemConfig';
+import { approvalAllowsRequestChanges } from '@auto-swe/shared/workflow';
 
 /**
  * Slack notifications. Four surfaces:
@@ -641,9 +642,18 @@ export function buildHumanStepBlocks(input: {
     const stepId = input.stepId;
     if (input.kind === 'APPROVAL') {
       const approve = hitlButton('approve', 'Approve', { action: 'approve', stepId }, 'primary');
+      const requestChanges = approvalAllowsRequestChanges(input.options)
+        ? hitlButton('request_changes', 'Request changes', {
+            action: 'request_changes',
+            stepId,
+          })
+        : null;
       const reject = hitlButton('reject', 'Reject', { action: 'reject', stepId }, 'danger');
       if (approve) {
         elements.push(approve);
+      }
+      if (requestChanges) {
+        elements.push(requestChanges);
       }
       if (reject) {
         elements.push(reject);

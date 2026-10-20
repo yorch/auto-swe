@@ -308,43 +308,30 @@ type Step =
   | 'ci'
   | 'first:approve'
   | 'first:reject'
+  | 'first:changes'
   | 'second:approve'
   | 'second:reject'
-  | 'reason:text'
-  | 'reason:empty'
-  | 'reason:timeout';
+  | 'second:changes';
 
 const REASON = 'Add a test for the empty case';
 
-/** Walk a run through the scripted CI results, sign-offs and rejection reasons, in order. */
+/** Walk a run through the scripted CI results, sign-offs and change requests, in order. */
 async function drive(handle: Handle, steps: Step[]) {
-  const round = { first: 0, reason: 0, second: 0 };
+  const round = { first: 0, second: 0 };
   for (const step of steps) {
     if (step === 'ci') {
       await ci(handle);
       continue;
     }
-    if (step.startsWith('reason:')) {
-      round.reason += 1;
-      await until(
-        `reason #${round.reason}`,
-        () => count('humanStep:askRejectionReason') >= round.reason
-      );
-      await env.sleep('1 second');
-      if (step === 'reason:timeout') {
-        await env.sleep('2 hours');
-      } else {
-        const reason = step === 'reason:text' ? REASON : '';
-        await handle.signal('hitl_askRejectionReason', { action: 'submit', value: { reason } });
-      }
-      continue;
-    }
-    const [who, action] = step.split(':') as ['first' | 'second', 'approve' | 'reject'];
+    const [who, action] = step.split(':') as ['first' | 'second', 'approve' | 'reject' | 'changes'];
     round[who] += 1;
     const node = `${who}Signoff`;
     await until(`${node} #${round[who]}`, () => count(`humanStep:${node}`) >= round[who]);
     await env.sleep('1 second');
-    await handle.signal(`hitl_${node}`, { action });
+    await handle.signal(
+      `hitl_${node}`,
+      action === 'changes' ? { action: 'request_changes', comment: REASON } : { action }
+    );
   }
 }
 
@@ -366,7 +353,6 @@ function expectRearmFollowsPushImmediately() {
 
 const FIRST = 'humanStep:firstSignoff';
 const SECOND = 'humanStep:secondSignoff';
-const WHY = 'humanStep:askRejectionReason';
 const GREEN_HUMANS = ['first:approve', 'second:approve'] as const;
 
 // ── four-eyes ────────────────────────────────────────────────────────────────
@@ -478,16 +464,15 @@ describe('four-eyes: CI first, then two sign-offs on the green code', () => {
     expect(events.some((e) => e.startsWith('humanStep'))).toBe(false);
   }, 120_000);
 
-  it('a rejection asks why, then goes fix -> CI -> BOTH sign-offs again, with new pending steps', async () => {
-    const h = await run('fe-reject-first');
-    await drive(h, ['ci', 'first:reject', 'reason:text', 'ci', ...GREEN_HUMANS]);
+  it('a change request goes fix -> CI -> BOTH sign-offs again, with new pending steps', async () => {
+    const h = await run('fe-changes-first');
+    await drive(h, ['ci', 'first:changes', 'ci', ...GREEN_HUMANS]);
     expect((await result(h)).status).toBe('SUCCESS');
     expect(events).toEqual([
       'implement:push',
       'review',
       'openPr',
       FIRST,
-      WHY,
       'reviewFix:push',
       'rearm',
       FIRST,
@@ -507,41 +492,19 @@ describe('four-eyes: CI first, then two sign-offs on the green code', () => {
     });
   }, 120_000);
 
-  it.each([
-    ['gives an empty reason', 'reason:empty'],
-    ['lets the question time out', 'reason:timeout'],
-  ] as const)(
-    'falls back to the generic text when the reviewer %s',
-    async (_name, reason) => {
-      const h = await run(`fe-reason-${reason}`);
-      await drive(h, ['ci', 'first:reject', reason, 'ci', ...GREEN_HUMANS]);
-      expect((await result(h)).status).toBe('SUCCESS');
-      expect(fixSummaries).toHaveLength(1);
-      expect(fixSummaries[0]).toContain('left no written reason');
-    },
-    120_000
-  );
-
-  it('does not reuse an earlier reason when the next rejection gives none', async () => {
-    const h = await run('fe-reason-stale');
-    await drive(h, [
-      'ci',
-      'first:reject',
-      'reason:text',
-      'ci',
-      'first:reject',
-      'reason:timeout',
-      'ci',
-      ...GREEN_HUMANS,
-    ]);
-    expect((await result(h)).status).toBe('SUCCESS');
-    expect(fixSummaries[0]).toBe(REASON);
-    expect(fixSummaries[1]).toContain('left no written reason');
+  it('a rejection ends the run immediately, without a fix', async () => {
+    const h = await run('fe-reject-first');
+    await drive(h, ['ci', 'first:reject']);
+    const r = await result(h);
+    expect(r.status).toBe('FAILED');
+    expect(r.prNumber).toBe(42);
+    expect(count('reviewFix:push')).toBe(0);
+    expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
   }, 120_000);
 
-  it('an approval never carries over: rejecting at the second gate asks the first person again', async () => {
-    const h = await run('fe-reject-second');
-    await drive(h, ['ci', 'first:approve', 'second:reject', 'reason:text', 'ci', ...GREEN_HUMANS]);
+  it('an approval never carries over: requesting changes at the second gate asks the first person again', async () => {
+    const h = await run('fe-changes-second');
+    await drive(h, ['ci', 'first:approve', 'second:changes', 'ci', ...GREEN_HUMANS]);
     expect((await result(h)).status).toBe('SUCCESS');
     expect(count(FIRST)).toBe(2);
     expect(count(SECOND)).toBe(2);
@@ -554,14 +517,13 @@ describe('four-eyes: CI first, then two sign-offs on the green code', () => {
     // run goes straight back to the gate instead of waiting 4 h for one.
     noops = [true];
     const h = await run('fe-signoff-noop');
-    await drive(h, ['ci', 'first:reject', 'reason:text', ...GREEN_HUMANS]);
+    await drive(h, ['ci', 'first:changes', ...GREEN_HUMANS]);
     expect((await result(h)).status).toBe('SUCCESS');
     expect(events).toEqual([
       'implement:push',
       'review',
       'openPr',
       FIRST,
-      WHY,
       'reviewFix:noop',
       FIRST,
       SECOND,
@@ -577,53 +539,35 @@ describe('four-eyes: CI first, then two sign-offs on the green code', () => {
     expect(fixSummaries).toEqual([REASON]);
   }, 120_000);
 
-  it('still fails on the third rejection when every fix changes nothing', async () => {
+  it('still fails on the third change request when every fix changes nothing', async () => {
     noops = [true, true];
     const h = await run('fe-signoff-noop-limit');
-    await drive(h, [
-      'ci',
-      'first:reject',
-      'reason:text',
-      'first:reject',
-      'reason:text',
-      'first:reject',
-      'reason:text',
-    ]);
+    await drive(h, ['ci', 'first:changes', 'first:changes', 'first:changes']);
     const r = await result(h);
     expect(r.status).toBe('FAILED');
     expect(count('reviewFix:noop')).toBe(2);
     expect(count('rearm')).toBe(0);
   }, 120_000);
 
-  it('gives a fix after a rejection a fresh CI budget', async () => {
-    // Round 1: CI fails once (1 of 3 used). Round 2, after a rejection: CI fails twice and
-    // passes the third time, which a leftover counter would not allow.
+  it('gives a fix after a change request a fresh CI budget', async () => {
+    // Round 1: CI fails once (1 of 3 used). Round 2, after a change request: CI fails
+    // twice and passes the third time, which a leftover counter would not allow.
     ciOutcomes = [false, true, false, false, true];
     const h = await run('fe-budget-reset');
-    await drive(h, ['ci', 'ci', 'first:reject', 'reason:text', 'ci', 'ci', 'ci', ...GREEN_HUMANS]);
+    await drive(h, ['ci', 'ci', 'first:changes', 'ci', 'ci', 'ci', ...GREEN_HUMANS]);
     expect((await result(h)).status).toBe('SUCCESS');
     expect(count('ciFix:push')).toBe(3);
     expect(dropped).toEqual([]);
   }, 120_000);
 
-  it('fails on the third rejection, after 2 fixes', async () => {
-    const h = await run('fe-reject-limit');
-    await drive(h, [
-      'ci',
-      'first:reject',
-      'reason:text',
-      'ci',
-      'first:reject',
-      'reason:text',
-      'ci',
-      'first:reject',
-      'reason:text',
-    ]);
+  it('fails on the third change request, after 2 fixes', async () => {
+    const h = await run('fe-changes-limit');
+    await drive(h, ['ci', 'first:changes', 'ci', 'first:changes', 'ci', 'first:changes']);
     const r = await result(h);
     expect(r.status).toBe('FAILED');
     expect(r.prNumber).toBe(42);
     expect(count('reviewFix:push')).toBe(2);
-    // People's rejections are not the review network's: the sign-off loop stores no lesson.
+    // People's change requests are not the review network's: the sign-off loop stores no lesson.
     expect(lessons).toEqual([]);
     expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
   }, 120_000);
@@ -640,21 +584,12 @@ describe('four-eyes: CI first, then two sign-offs on the green code', () => {
     expect(finalized.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
   }, 120_000);
 
-  it('keeps agent-review attempts and sign-off rejections as separate budgets', async () => {
+  it('keeps agent-review attempts and sign-off change requests as separate budgets', async () => {
     // Two agent rejections use 2 of the 3 review attempts before the PR exists; two human
-    // rejections still fit their own budget of 3.
+    // change requests still fit their own budget of 3.
     reviewVerdicts = [false, false];
     const h = await run('fe-budgets');
-    await drive(h, [
-      'ci',
-      'first:reject',
-      'reason:text',
-      'ci',
-      'first:reject',
-      'reason:text',
-      'ci',
-      ...GREEN_HUMANS,
-    ]);
+    await drive(h, ['ci', 'first:changes', 'ci', 'first:changes', 'ci', ...GREEN_HUMANS]);
     expect((await result(h)).status).toBe('SUCCESS');
     expect(count('reviewFix:push')).toBe(4);
   }, 120_000);

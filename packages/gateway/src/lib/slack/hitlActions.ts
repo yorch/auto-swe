@@ -63,9 +63,14 @@ export async function handleHitlResolveAction(
     return { data: { action: 'hitl_resolve', ignored: true, reason: 'malformed_value' } };
   }
 
-  // Approve and reject collect a note first, as the dashboard does: a reject needs a reason and
-  // an approve may carry a comment. Every other action (a decision option) resolves in one click.
-  if (parsed.action === 'approve' || parsed.action === 'reject') {
+  // Approve, reject and request-changes collect a note first, as the dashboard does: reject and
+  // request_changes need a reason and an approve may carry a comment. Every other action (a
+  // decision option) resolves in one click.
+  if (
+    parsed.action === 'approve' ||
+    parsed.action === 'reject' ||
+    parsed.action === 'request_changes'
+  ) {
     return openHitlCommentModal(fastify, user, payload, signingSecret, {
       action: parsed.action,
       stepId: parsed.stepId,
@@ -144,13 +149,14 @@ async function resolveHitlStepFromSlack(
   }
 
   const who = where.slackUserId ? `<@${where.slackUserId}>` : 'someone';
+  const actionWord = target.action.replaceAll('_', ' ');
   let text: string;
   if (result.status === 'PENDING') {
-    text = `:hourglass: *${result.title}* — ${who} recorded \`${target.action}\` (${result.currentApprovers}/${result.requiredApprovers}). ${result.approvalsRemaining} more approval${result.approvalsRemaining === 1 ? '' : 's'} needed.`;
+    text = `:hourglass: *${result.title}* — ${who} recorded \`${actionWord}\` (${result.currentApprovers}/${result.requiredApprovers}). ${result.approvalsRemaining} more approval${result.approvalsRemaining === 1 ? '' : 's'} needed.`;
   } else if (result.signalSent) {
-    text = `:white_check_mark: *${result.title}* — resolved with \`${target.action}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}).`;
+    text = `:white_check_mark: *${result.title}* — resolved with \`${actionWord}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}).`;
   } else {
-    text = `:white_check_mark: *${result.title}* — recorded as \`${target.action}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}), but the workflow run had already finished, so nothing was signalled.`;
+    text = `:white_check_mark: *${result.title}* — recorded as \`${actionWord}\` by ${who} (${result.currentApprovers}/${result.requiredApprovers}), but the workflow run had already finished, so nothing was signalled.`;
   }
   if (result.status === 'RESOLVED') {
     // Replaces the buttons with the decision, so a decided step reads as decided in place.
@@ -201,7 +207,7 @@ async function openHitlCommentModal(
   user: { id: string; role: Role },
   payload: SlackInteractivePayload,
   signingSecret: string,
-  target: { stepId: string; action: 'approve' | 'reject' }
+  target: { stepId: string; action: 'approve' | 'reject' | 'request_changes' }
 ): Promise<unknown> {
   const ignored = (reason: string) => ({ data: { action: 'hitl_resolve', ignored: true, reason } });
   if (!payload.trigger_id) {
@@ -289,7 +295,10 @@ export async function handleHitlModalSubmission(
   const typed = (
     payload.view?.state?.values?.[HITL_COMMENT_BLOCK]?.[HITL_COMMENT_INPUT]?.value ?? ''
   ).trim();
-  if (metadata.action === 'reject' && typed.length < HITL_REJECT_REASON_MIN) {
+  if (
+    (metadata.action === 'reject' || metadata.action === 'request_changes') &&
+    typed.length < HITL_REJECT_REASON_MIN
+  ) {
     return fail(`Give a reason of at least ${HITL_REJECT_REASON_MIN} characters.`);
   }
   if (typed.length > HITL_COMMENT_MAX) {

@@ -1,6 +1,10 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { Prisma } from '@auto-swe/shared';
-import { HITL_VALID_ACTIONS, type HitlKind } from '@auto-swe/shared/workflow/interpreter';
+import {
+  approvalAllowsRequestChanges,
+  HITL_VALID_ACTIONS,
+  type HitlKind,
+} from '@auto-swe/shared/workflow/interpreter';
 import { z } from 'zod';
 import { buildWorkflowHumanStepControlFilter } from './runVisibility.js';
 import {
@@ -301,6 +305,16 @@ export async function resolveHitlStep(
       ok: false,
     };
   }
+  // `request_changes` is offered only by an APPROVAL step whose spec node has an
+  // `onRequestChanges` edge, marked by the option createHumanStep stored. Steps
+  // created before that marker existed have options null and fail closed.
+  if (action === 'request_changes' && !approvalAllowsRequestChanges(resolvedStep.options)) {
+    return {
+      code: 'INVALID_ACTION',
+      message: `Action 'request_changes' is not offered by this ${resolvedStep.kind} step.`,
+      ok: false,
+    };
+  }
 
   const validation = validateHitlValue(step, value);
   if (!validation.ok) {
@@ -322,17 +336,23 @@ export async function resolveHitlStep(
 
   if (
     resolvedStep.kind === 'APPROVAL' &&
-    action === 'reject' &&
+    (action === 'reject' || action === 'request_changes') &&
     (comment?.length ?? 0) < HITL_REJECT_REASON_MIN
   ) {
     return {
       code: 'REASON_REQUIRED',
-      message: `Give a reason of at least ${HITL_REJECT_REASON_MIN} characters when rejecting.`,
+      message: `Give a reason of at least ${HITL_REJECT_REASON_MIN} characters when rejecting or requesting changes.`,
       ok: false,
     };
   }
 
+  // The workflow reads the feedback from the signal only for request_changes —
+  // approve and reject keep the payload shape every recorded history was
+  // written with, and their comments stay stored-only.
   const signalPayload = { action, resolvedBy: user.sub, value };
+  if (action === 'request_changes' && comment !== undefined) {
+    Object.assign(signalPayload, { comment });
+  }
   const storedPayload = comment === undefined ? signalPayload : { ...signalPayload, comment };
   const requiredApprovers = resolvedStep.requiredApprovers;
   const isMultiApprover =

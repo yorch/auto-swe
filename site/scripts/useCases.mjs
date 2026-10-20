@@ -244,8 +244,8 @@ export const USE_CASES = {
     summary:
       'Two sequential, independent approvals, asked once the agent review loop has passed and ' +
       'the pull request is green on CI — the two-person rule that change-management ' +
-      'processes ask for. A rejection asks why, sends the change back for a fix and CI, then ' +
-      'both people sign off again.',
+      'processes ask for. Requesting changes — with a required note — sends the change back for ' +
+      'a fix and CI, then both people sign off again; a rejection stops the run.',
     title: 'Four-eyes change',
   },
   'db-migration-dry-run': {

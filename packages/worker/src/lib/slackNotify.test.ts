@@ -532,6 +532,36 @@ describe('notifySlackHumanStep (Block Kit resolve buttons)', () => {
     expect(inbox?.url).toContain('/approvals');
   });
 
+  it('APPROVAL: adds a Request changes button between Approve and Reject only with the marker', async () => {
+    mockChannelResolution();
+    await notifySlackHumanStep({
+      kind: 'APPROVAL',
+      options: [{ label: 'Request changes', value: 'request_changes' }],
+      runId: 'r1',
+      stepId: 'step-1',
+      title: 'Approve plan',
+    });
+    const { buttons } = postedBlocks();
+    const resolve = resolveButtons(buttons);
+    expect(resolve.map((b) => b.text.text)).toEqual(['Approve', 'Request changes', 'Reject']);
+    const rc = resolve[1];
+    expect(rc?.style).toBeUndefined();
+    expect(JSON.parse(rc?.value ?? '{}')).toEqual({
+      action: 'request_changes',
+      stepId: 'step-1',
+    });
+
+    // No marker -> the two-button shape is unchanged.
+    fetchCalls.length = 0;
+    await notifySlackHumanStep({
+      kind: 'APPROVAL',
+      runId: 'r1',
+      stepId: 'step-1',
+      title: 'Approve plan',
+    });
+    expect(resolveButtons(postedBlocks().buttons)).toHaveLength(2);
+  });
+
   it('DECISION: one select button per option, label truncated, value carried verbatim', async () => {
     mockChannelResolution();
     const longLabel = 'x'.repeat(200);

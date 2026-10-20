@@ -10,6 +10,7 @@ const EVENT_LABELS: Record<string, string> = {
   approve_partial: 'Approved (more approvals needed)',
   publish: 'Published',
   reject: 'Rejected',
+  request_changes: 'Requested changes',
 };
 
 export const KNOWN_AUTONOMY_EVENTS = Object.keys(EVENT_LABELS);

@@ -1,6 +1,6 @@
 import { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
-import { waitDurationMs } from '@auto-swe/shared/workflow';
+import { REQUEST_CHANGES_OPTION, waitDurationMs } from '@auto-swe/shared/workflow';
 import {
   type CallbackDeliveryInput,
   callbackDeliveryRow,
@@ -72,6 +72,12 @@ export interface CreateHumanStepInput {
   timeout?: string;
   /** Number of distinct approvals required to resolve this step. */
   requiredApprovers?: number;
+  /**
+   * Set by the interpreter only on an APPROVAL step whose spec node has an
+   * `onRequestChanges` edge. Marks the step as offering `request_changes` by
+   * storing {@link REQUEST_CHANGES_OPTION} in `options`.
+   */
+  allowRequestChanges?: true;
 }
 
 /**
@@ -87,6 +93,12 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
   // is still sent even when the DB write was already done by an earlier attempt.
   // Note: we intentionally do NOT return early on P2002 — the Slack notification must
   // reach the user even when the DB create was skipped.
+  // An APPROVAL step whose node has `onRequestChanges` carries the
+  // request-changes marker as its options — the gateway and the web inbox read
+  // it to offer the action, and Slack reads the same options to draw the button.
+  const options =
+    input.options ??
+    (input.kind === 'APPROVAL' && input.allowRequestChanges ? [REQUEST_CHANGES_OPTION] : undefined);
   let stepId: string | undefined;
   // A `run.waiting_for_human` callback (docs/run-callbacks.md) is inserted in the same
   // transaction as the step, so it is recorded once: a retry whose create hits the unique index
@@ -106,8 +118,7 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
           fields: input.fields !== undefined ? (input.fields as Prisma.InputJsonValue) : undefined,
           kind: input.kind,
           nodeId: input.nodeId,
-          options:
-            input.options !== undefined ? (input.options as Prisma.InputJsonValue) : undefined,
+          options: options !== undefined ? (options as Prisma.InputJsonValue) : undefined,
           requiredApprovers: input.requiredApprovers,
           runId: input.runId,
           signalName: input.signalName,
@@ -153,7 +164,7 @@ export async function createHumanStep(input: CreateHumanStepInput): Promise<void
   await notifySlackHumanStep({
     description: input.description,
     kind: input.kind,
-    options: input.options,
+    options,
     runId: input.runId,
     stepId,
     title: input.title,

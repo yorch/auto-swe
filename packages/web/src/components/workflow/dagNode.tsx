@@ -142,7 +142,7 @@ function handleKindsFor(node: SpecNode): HandleKind[] {
     case 'terminate':
       return [];
     case 'humanApproval':
-      return ['onApprove', 'onReject', 'onTimeout'];
+      return ['onApprove', 'onReject', 'onRequestChanges', 'onTimeout'];
     case 'humanDecision':
       // Option edges are not `EdgeKind`s; `handlePortsFor` adds them.
       return ['onTimeout'];
@@ -159,6 +159,7 @@ const HANDLE_BG: Record<HandleKind, string> = {
   onFalse: 'bg-danger-400',
   onReceive: 'bg-info-400',
   onReject: 'bg-danger-400',
+  onRequestChanges: 'bg-warning-400',
   onSubmit: 'bg-success-400',
   onTimeout: 'bg-warning-400',
   onTrue: 'bg-success-400',
@@ -172,6 +173,7 @@ const HANDLE_LABEL: Record<HandleKind, string> = {
   onFalse: 'false',
   onReceive: 'recv',
   onReject: 'reject',
+  onRequestChanges: 'changes',
   onSubmit: 'submit',
   onTimeout: 'timeout',
   onTrue: 'true',

@@ -261,6 +261,13 @@ export interface Dispatcher {
     timeout?: string;
     /** Number of distinct human responses required to resolve the step. */
     requiredApprovers?: number;
+    /**
+     * Set only on APPROVAL steps whose node has an `onRequestChanges` edge:
+     * tells the activity to mark the step as offering `request_changes`. Absent
+     * (not false) on every other step, so a recorded replay history for a spec
+     * without the edge carries exactly the input it always did.
+     */
+    allowRequestChanges?: true;
   }): Promise<void>;
 
   /**
@@ -313,11 +320,36 @@ export type HitlKind = (typeof HITL_KINDS)[keyof typeof HITL_KINDS];
  * added here must also get a valid-actions entry or TypeScript will error.
  */
 export const HITL_VALID_ACTIONS: Record<HitlKind, readonly string[]> = {
-  APPROVAL: ['approve', 'reject'],
+  APPROVAL: ['approve', 'reject', 'request_changes'],
   DECISION: ['select'],
   INPUT: ['submit'],
   REVIEW: ['submit'],
 };
+
+/**
+ * The option a `WorkflowHumanStep.options` row carries on an APPROVAL step when
+ * its spec node has an `onRequestChanges` edge — the marker the gateway, Slack
+ * and the web inbox all read to offer (or accept) `request_changes`. Approval
+ * steps have no other use for `options`, so the marker fails closed: a step
+ * created before the field existed has `options: null` and never offers it.
+ */
+export const REQUEST_CHANGES_OPTION = {
+  label: 'Request changes',
+  value: 'request_changes',
+} as const;
+
+/** Does a stored APPROVAL step's `options` carry the request-changes marker? */
+export function approvalAllowsRequestChanges(options: unknown): boolean {
+  return (
+    Array.isArray(options) &&
+    options.some(
+      (o) =>
+        typeof o === 'object' &&
+        o !== null &&
+        (o as Record<string, unknown>).value === REQUEST_CHANGES_OPTION.value
+    )
+  );
+}
 
 /**
  * Default per-fanOut concurrency cap when a spec doesn't supply one. Bounded
@@ -1054,6 +1086,12 @@ async function runHumanNode(
     notifyHumanStep
       ? () =>
           notifyHumanStep({
+            // Present (never `false`) only when the node routes request_changes:
+            // an absent key keeps the activity input identical for specs without
+            // the edge, which is what recorded replay histories carry.
+            ...(node.type === 'humanApproval' && node.onRequestChanges
+              ? { allowRequestChanges: true as const }
+              : {}),
             context: contextData ?? contentData,
             description: node.description,
             fields: node.type === 'humanInput' ? node.fields : undefined,
@@ -1123,7 +1161,16 @@ async function runHumanNode(
 
   // Route based on node type
   if (node.type === 'humanApproval') {
-    return p.action === 'reject' ? node.onReject : node.onApprove;
+    if (p.action === 'reject') {
+      return node.onReject;
+    }
+    if (p.action === 'request_changes') {
+      // The gateway only accepts the action on a step whose node carries the
+      // edge; a signal that gets here without one takes the stop path rather
+      // than silently continuing.
+      return node.onRequestChanges ?? node.onReject;
+    }
+    return node.onApprove;
   }
   if (node.type === 'humanDecision') {
     // `chosen` is defined here: the unknown-value case returned above.

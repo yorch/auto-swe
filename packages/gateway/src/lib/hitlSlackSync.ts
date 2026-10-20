@@ -82,6 +82,8 @@ export function buildOutcomeText(
     line = `:white_check_mark: *Approved* by ${person}`;
   } else if (outcome.action === 'reject') {
     line = `:x: *Rejected* by ${person}`;
+  } else if (outcome.action === 'request_changes') {
+    line = `:pencil: *Changes requested* by ${person}`;
   } else if (typeof outcome.value === 'string' && outcome.value) {
     line = `:white_check_mark: *Decided* by ${person}: ${escapeSlackMrkdwn(outcome.value)}`;
   } else {

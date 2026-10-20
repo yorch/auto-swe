@@ -117,16 +117,17 @@ export const NODE_HELP: Record<SpecNode['type'], NodeHelp> = {
     example: {
       onApprove: 'ship',
       onReject: 'stop',
+      onRequestChanges: 'fix',
       onTimeout: 'stop',
       timeout: '24h',
       title: 'Approve the plan',
       type: 'humanApproval',
     },
     gotcha:
-      '`timeout` is required and so is the onTimeout edge. When time runs out the pending inbox item is marked timed out and the run follows onTimeout; nobody approved. The title is the heading the approver sees.',
+      '`timeout` is required and so is the onTimeout edge. When time runs out the pending inbox item is marked timed out and the run follows onTimeout; nobody approved. The title is the heading the approver sees. Set onRequestChanges to offer a third action — request changes — which needs a written reason and resolves the step at once, even when several approvers are required.',
     output:
-      'nodes.<id>.output.action is approve or reject, and nodes.<id>.output.resolvedBy is who answered (with several approvers, the one whose approval completed the count). There is no storeAs; read the answer from the node output.',
-    what: 'Pauses the run until a person approves or rejects in the inbox, then follows the matching edge.',
+      'nodes.<id>.output.action is approve, reject, or request_changes when the gate offers it, and nodes.<id>.output.resolvedBy is who answered (with several approvers, the one whose approval completed the count). A request_changes answer also carries nodes.<id>.output.comment, the required feedback. There is no storeAs; read the answer from the node output.',
+    what: 'Pauses the run until a person approves, rejects, or — when onRequestChanges is set — requests changes in the inbox, then follows the matching edge.',
     when: 'A yes/no human decision must come before the next step.',
   },
   humanDecision: {
