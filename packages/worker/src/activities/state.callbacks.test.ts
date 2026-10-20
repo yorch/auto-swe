@@ -111,4 +111,21 @@ describe('createHumanStep and the run.waiting_for_human callback', () => {
     expect(prisma.$transaction).not.toHaveBeenCalled();
     expect(prisma.workflowHumanStep.create).toHaveBeenCalledTimes(1);
   });
+
+  it('stores the request-changes option on an APPROVAL step only when asked', async () => {
+    await createHumanStep({ ...INPUT, allowRequestChanges: true });
+    expect(txCreateStep).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          options: [{ label: 'Request changes', value: 'request_changes' }],
+        }),
+      })
+    );
+    // Without the flag the approval step carries no options — the action fails closed.
+    txCreateStep.mockClear();
+    await createHumanStep(INPUT);
+    expect(
+      (txCreateStep.mock.calls[0] as unknown as [{ data: { options?: unknown } }])[0]?.data.options
+    ).toBeUndefined();
+  });
 });

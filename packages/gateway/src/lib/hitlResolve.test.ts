@@ -93,3 +93,89 @@ describe('resolveHitlStep — Temporal not connected', () => {
     );
   });
 });
+
+// ── APPROVAL request_changes ─────────────────────────────────────────────────
+
+const approvalStep = (overrides: Record<string, unknown> = {}) => ({
+  fields: null,
+  id: 'step-1',
+  kind: 'APPROVAL',
+  options: null,
+  requiredApprovers: 1,
+  run: { id: 'run-1', status: 'RUNNING', workflowId: 'wf-1' },
+  signalName: 'hitl_gate',
+  status: 'PENDING',
+  title: 'Approve?',
+  ...overrides,
+});
+
+const WITH_CHANGES = [{ label: 'Request changes', value: 'request_changes' }];
+const COMMENT = 'Please add a test';
+
+describe('resolveHitlStep — APPROVAL request_changes', () => {
+  it('resolves and signals with the comment in the payload when the step offers it', async () => {
+    const { deps, signalWorkflow } = makeDeps(approvalStep({ options: WITH_CHANGES }));
+    const result = await resolveHitlStep(
+      deps,
+      'step-1',
+      'request_changes',
+      undefined,
+      ADMIN,
+      COMMENT
+    );
+    expect(result).toMatchObject({ ok: true, signalSent: true, status: 'RESOLVED' });
+    expect(signalWorkflow).toHaveBeenCalledWith('wf-1', 'hitl_gate', [
+      { action: 'request_changes', comment: COMMENT, resolvedBy: 'user-1', value: undefined },
+    ]);
+  });
+
+  it('is INVALID_ACTION on a step without the marker (options null)', async () => {
+    const { deps, signalWorkflow, updateMany } = makeDeps(approvalStep());
+    const result = await resolveHitlStep(
+      deps,
+      'step-1',
+      'request_changes',
+      undefined,
+      ADMIN,
+      COMMENT
+    );
+    expect(result).toMatchObject({ code: 'INVALID_ACTION', ok: false });
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(signalWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('needs a comment of at least 5 characters (REASON_REQUIRED)', async () => {
+    const { deps, signalWorkflow } = makeDeps(approvalStep({ options: WITH_CHANGES }));
+    const result = await resolveHitlStep(deps, 'step-1', 'request_changes', undefined, ADMIN, 'no');
+    expect(result).toMatchObject({ code: 'REASON_REQUIRED', ok: false });
+    expect(signalWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('keeps approve and reject signal payloads unchanged (no comment key)', async () => {
+    const { deps, signalWorkflow } = makeDeps(approvalStep({ options: WITH_CHANGES }));
+    await resolveHitlStep(deps, 'step-1', 'approve', undefined, ADMIN, 'looks good');
+    expect(signalWorkflow).toHaveBeenCalledWith('wf-1', 'hitl_gate', [
+      { action: 'approve', resolvedBy: 'user-1', value: undefined },
+    ]);
+  });
+
+  it('resolves a multi-approver step immediately, like reject', async () => {
+    const { deps, signalWorkflow, updateMany } = makeDeps(
+      approvalStep({ options: WITH_CHANGES, requiredApprovers: 2 })
+    );
+    const result = await resolveHitlStep(
+      deps,
+      'step-1',
+      'request_changes',
+      undefined,
+      ADMIN,
+      COMMENT
+    );
+    // Single-shot path: one PENDING→RESOLVED update, the signal, no approval rows.
+    expect(result).toMatchObject({ ok: true, status: 'RESOLVED' });
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(signalWorkflow).toHaveBeenCalledWith('wf-1', 'hitl_gate', [
+      { action: 'request_changes', comment: COMMENT, resolvedBy: 'user-1', value: undefined },
+    ]);
+  });
+});

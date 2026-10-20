@@ -532,6 +532,8 @@ const HumanApprovalNodeSchema = z.object({
   description: z.string().max(2000).optional(),
   onApprove: NodeIdSchema,
   onReject: NodeIdSchema,
+  /** When set, approvers get a third action — request changes — routed here. */
+  onRequestChanges: NodeIdSchema.optional(),
   onTimeout: NodeIdSchema,
   timeout: WaitTimeoutSchema,
   title: z.string().min(1).max(200),
@@ -701,6 +703,7 @@ export function nodeEdges(node: Node): Array<[field: string, target: string]> {
     case 'humanApproval':
       add('onApprove', node.onApprove);
       add('onReject', node.onReject);
+      add('onRequestChanges', node.onRequestChanges);
       add('onTimeout', node.onTimeout);
       break;
     case 'humanDecision':

@@ -11,7 +11,7 @@ export const HITL_MODAL_PRIVATE_METADATA_MAX = 3000;
 
 export interface HitlModalMetadata {
   stepId: string;
-  action: 'approve' | 'reject';
+  action: 'approve' | 'reject' | 'request_changes';
   /** The Slack user the modal was opened for; a submission must come from the same one. */
   slackUserId: string;
   /** Where the confirmation goes — presentation only, never consulted for authorization. */
@@ -53,7 +53,9 @@ export function verifyHitlModalMetadata(
     if (
       typeof parsed.stepId !== 'string' ||
       !parsed.stepId ||
-      (parsed.action !== 'approve' && parsed.action !== 'reject') ||
+      (parsed.action !== 'approve' &&
+        parsed.action !== 'reject' &&
+        parsed.action !== 'request_changes') ||
       typeof parsed.slackUserId !== 'string'
     ) {
       return null;
@@ -71,20 +73,37 @@ export function verifyHitlModalMetadata(
 }
 
 export function buildHitlCommentModalView(input: {
-  action: 'approve' | 'reject';
+  action: 'approve' | 'reject' | 'request_changes';
   stepTitle: string;
   privateMetadata: string;
 }): unknown {
-  const reject = input.action === 'reject';
+  const requestChanges = input.action === 'request_changes';
+  const required = requestChanges || input.action === 'reject';
+  const copy = requestChanges
+    ? {
+        label: 'What should change?',
+        submit: 'Request changes',
+        text: 'Requesting changes sends the run down its change-request path with your feedback.',
+        title: 'Request changes',
+      }
+    : input.action === 'reject'
+      ? {
+          label: 'Reason',
+          submit: 'Reject',
+          text: 'Rejecting sends the run down its rejection path.',
+          title: 'Reject step',
+        }
+      : {
+          label: 'Comment (optional)',
+          submit: 'Approve',
+          text: 'Approving lets the run continue to its next step.',
+          title: 'Approve step',
+        };
   return {
     blocks: [
       {
         text: {
-          text: `*${escapeSlackMrkdwn(input.stepTitle).slice(0, 300)}*\n${
-            reject
-              ? 'Rejecting sends the run down its rejection path.'
-              : 'Approving lets the run continue to its next step.'
-          }`,
+          text: `*${escapeSlackMrkdwn(input.stepTitle).slice(0, 300)}*\n${copy.text}`,
           type: 'mrkdwn',
         },
         type: 'section',
@@ -97,16 +116,16 @@ export function buildHitlCommentModalView(input: {
           multiline: true,
           type: 'plain_text_input',
         },
-        label: { text: reject ? 'Reason' : 'Comment (optional)', type: 'plain_text' },
-        optional: !reject,
+        label: { text: copy.label, type: 'plain_text' },
+        optional: !required,
         type: 'input',
       },
     ],
     callback_id: HITL_MODAL_CALLBACK_ID,
     close: { text: 'Cancel', type: 'plain_text' },
     private_metadata: input.privateMetadata,
-    submit: { text: reject ? 'Reject' : 'Approve', type: 'plain_text' },
-    title: { text: reject ? 'Reject step' : 'Approve step', type: 'plain_text' },
+    submit: { text: copy.submit, type: 'plain_text' },
+    title: { text: copy.title, type: 'plain_text' },
     type: 'modal',
   };
 }

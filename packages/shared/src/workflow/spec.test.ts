@@ -544,4 +544,50 @@ describe('wait timeouts', () => {
       })
     ).toThrow(/positive duration/);
   });
+
+  it('accepts an optional onRequestChanges edge and rejects a dangling one', () => {
+    const gate = {
+      onApprove: 'done',
+      onReject: 'done',
+      onRequestChanges: 'fix',
+      onTimeout: 'done',
+      timeout: '24h',
+      title: 'ok?',
+      type: 'humanApproval',
+    };
+    const spec = parseWorkflowSpec({
+      entry: 'gate',
+      name: 'hitl',
+      nodes: {
+        done: { status: 'SUCCESS', type: 'terminate' },
+        fix: { status: 'FAILED', type: 'terminate' },
+        gate,
+      },
+      schemaVersion: SPEC_SCHEMA_VERSION,
+    });
+    expect(spec.nodes.gate).toMatchObject({ onRequestChanges: 'fix' });
+
+    // Without the edge the node still parses.
+    const { onRequestChanges: _omitted, ...noEdge } = gate;
+    expect(() =>
+      parseWorkflowSpec({
+        entry: 'gate',
+        name: 'hitl',
+        nodes: { done: { status: 'SUCCESS', type: 'terminate' }, gate: noEdge },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      })
+    ).not.toThrow();
+
+    expect(() =>
+      parseWorkflowSpec({
+        entry: 'gate',
+        name: 'hitl',
+        nodes: {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          gate: { ...gate, onRequestChanges: 'missing' },
+        },
+        schemaVersion: SPEC_SCHEMA_VERSION,
+      })
+    ).toThrow(/unknown node/);
+  });
 });

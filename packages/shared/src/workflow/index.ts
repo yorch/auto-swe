@@ -68,10 +68,12 @@ export {
 } from './expr.js';
 export type { CancellationToken, Dispatcher, InterpreterResult } from './interpreter.js';
 export {
+  approvalAllowsRequestChanges,
   BranchCancelledError,
   DEFAULT_FANOUT_CONCURRENCY,
   DEFAULT_MAX_TRANSITIONS,
   normalizeApproverCount,
+  REQUEST_CHANGES_OPTION,
   runSpec,
 } from './interpreter.js';
 export type {
