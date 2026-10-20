@@ -190,6 +190,8 @@ export {
 } from './prdWorkflow.js';
 export { prepareScheduledEvalRun } from './prepareScheduledEvalRun.js';
 export { probeExecutorImage } from './probeExecutorImage.js';
+export type { PruneAgentTranscriptsResult } from './pruneAgentTranscripts.js';
+export { pruneAgentTranscripts } from './pruneAgentTranscripts.js';
 export type { PruneAutomationDecisionsResult } from './pruneAutomationDecisions.js';
 export { pruneAutomationDecisions } from './pruneAutomationDecisions.js';
 export type { PruneCallbackDeliveriesResult } from './pruneCallbackDeliveries.js';

@@ -24,6 +24,7 @@ import { RunCallbackDeliveries } from '@/components/runs/RunCallbackDeliveries';
 import { RunLessons } from '@/components/runs/RunLessons';
 import { RunReadingGuide } from '@/components/runs/RunReadingGuide';
 import { RunSummaryBand } from '@/components/runs/RunSummaryBand';
+import { RunTranscripts } from '@/components/runs/RunTranscripts';
 import { RunVerdictBanner } from '@/components/runs/RunVerdictBanner';
 import { classifyTraceAsSecurityEvent } from '@/components/security/SecurityEventList';
 import { Alert } from '@/components/ui/Alert';
@@ -491,6 +492,8 @@ export default function RunDetailPage({ params }: PageProps) {
       />
 
       <RunCallbackDeliveries runId={run.id} />
+
+      <RunTranscripts runId={run.id} />
 
       <RunLessons live={!isTerminalWorkflowRunStatus(run.status)} runId={run.id} />
 

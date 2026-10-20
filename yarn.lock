@@ -617,6 +617,7 @@ __metadata:
   resolution: "@auto-swe/gateway@workspace:packages/gateway"
   dependencies:
     "@auto-swe/shared": "workspace:*"
+    "@aws-sdk/client-s3": "npm:3.1144.0"
     "@better-auth/oauth-provider": "npm:1.7.7"
     "@fastify/cookie": "npm:11.1.2"
     "@fastify/cors": "npm:11.3.0"

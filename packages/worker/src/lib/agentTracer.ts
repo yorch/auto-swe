@@ -7,37 +7,84 @@ import { nodeTagColumns } from './activityNodeTag.js';
 // payloads while keeping individual rows manageable.
 const MAX_JSON_CHARS = 32_000;
 
-/** Keys that commonly carry credentials or session material. */
+/** Keys that commonly carry credentials or session material (normalized form). */
 const SENSITIVE_KEYS = new Set([
   'access_token',
   'api_key',
-  'api-key',
   'apikey',
   'authorization',
   'client_secret',
   'cookie',
+  'credentials',
   'password',
   'private_key',
   'refresh_token',
   'secret',
   'token',
-  'x-api-key',
+  'x_api_key',
 ]);
+
+/**
+ * Normalized key suffixes that mean "credential": `aws_secret_access_key`
+ * ends with `access_key`, `next_page_token` with `_token`. Deliberately no
+ * bare `_key`/`key` suffix — `tool_key`, `max_tokens`, `input_tokens`,
+ * `budget_tokens`, `total_tokens` and the like are not secrets.
+ */
+const SENSITIVE_KEY_SUFFIXES = [
+  'secret',
+  'password',
+  'passwd',
+  'api_key',
+  'apikey',
+  'access_key',
+  'private_key',
+  '_token',
+];
+
+function isSensitiveKey(key: string): boolean {
+  const k = key.toLowerCase().replace(/-/g, '_');
+  return SENSITIVE_KEYS.has(k) || SENSITIVE_KEY_SUFFIXES.some((suffix) => k.endsWith(suffix));
+}
 
 export function redactString(s: string): string {
   // URLs with embedded credentials: https://user:pass@host/…
   let out = s.replace(/(\/\/)[^/:@]+:[^/@]+@/g, '$1***:***@');
   // Authorization headers / bearer tokens in common formats.
   out = out.replace(/(Authorization\s*[:=]\s*(?:Bearer|Basic|Token)\s+)[^\s\r\n]+/gi, '$1***');
-  // Loose hex/base64 API-key-looking values following common key names.
+  // Loose key-name assignments carrying a credential value.
   out = out.replace(
-    /((?:api[_-]?key|apikey|token|secret|access[_-]?token)\s*[:=]\s*)[^\s\r\n'"]+/gi,
+    /((?:api[_-]?key|apikey|token|secret|access[_-]?token|secret[_-]?access[_-]?key|private[_-]?key|password|credentials)\s*[:=]\s*)[^\s\r\n'"]+/gi,
+    '$1***'
+  );
+  // Value shapes that are credentials wherever they appear.
+  out = out.replace(
+    /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/g,
+    '***'
+  );
+  // Every value-shape pattern anchors on a left boundary — a secret prefix
+  // inside a longer identifier (a task id, a branch name) is not a secret.
+  const B = '(^|[^A-Za-z0-9_-])';
+  out = out.replace(new RegExp(`${B}sk-ant-[A-Za-z0-9_-]{20,}`, 'g'), '$1***');
+  out = out.replace(new RegExp(`${B}sk-(?:proj-)?[A-Za-z0-9_-]{20,}`, 'g'), '$1***');
+  out = out.replace(new RegExp(`${B}gh[pousr]_[A-Za-z0-9]{36,}`, 'g'), '$1***');
+  out = out.replace(new RegExp(`${B}github_pat_[A-Za-z0-9_]{22,}`, 'g'), '$1***');
+  out = out.replace(new RegExp(`${B}xox[abprs]-[A-Za-z0-9-]{10,}`, 'g'), '$1***');
+  out = out.replace(new RegExp(`${B}AKIA[0-9A-Z]{16}`, 'g'), '$1***');
+  out = out.replace(new RegExp(`${B}AIza[0-9A-Za-z_-]{35}`, 'g'), '$1***');
+  out = out.replace(
+    new RegExp(`${B}eyJ[A-Za-z0-9_-]{10,}\\.eyJ[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}`, 'g'),
     '$1***'
   );
   return out;
 }
 
-function redactJsonValues(obj: unknown): unknown {
+/**
+ * Redact likely secrets in a JSON value WITHOUT truncating: key-based
+ * redaction plus `redactString` on every string. The transcript recorder uses
+ * this — full fidelity is the point of a transcript, so unlike
+ * `sanitizeJsonValues` nothing here shortens values.
+ */
+export function redactJsonValues(obj: unknown): unknown {
   if (typeof obj === 'string') {
     return redactString(obj);
   }
@@ -49,8 +96,16 @@ function redactJsonValues(obj: unknown): unknown {
   }
   return Object.fromEntries(
     Object.entries(obj as Record<string, unknown>).map(([k, v]) => {
-      if (SENSITIVE_KEYS.has(k.toLowerCase())) {
-        return [k, typeof v === 'string' ? '***' : '[REDACTED]'];
+      if (isSensitiveKey(k)) {
+        if (typeof v === 'string') {
+          return [k, '***'];
+        }
+        // An object or array under a sensitive key keeps its shape — nested
+        // sensitive keys inside are still redacted on the way down.
+        if (v !== null && typeof v === 'object') {
+          return [k, redactJsonValues(v)];
+        }
+        return [k, '[REDACTED]'];
       }
       return [k, redactJsonValues(v)];
     })

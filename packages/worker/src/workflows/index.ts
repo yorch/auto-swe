@@ -14,6 +14,7 @@ export { ExecutorImageProbeWorkflow } from './executorImageProbe.js';
 export { InferRepoDependenciesWorkflow } from './inferRepoDependencies.js';
 export { ReembedMemoryWorkflow, ReembedStaleMemoryWorkflow } from './reembedMemory.js';
 export { RunnableWorkflow } from './runnable.js';
+export { ScheduledAgentTranscriptPruneWorkflow } from './scheduledAgentTranscriptPrune.js';
 export { ScheduledAutomationDecisionPruneWorkflow } from './scheduledAutomationDecisionPrune.js';
 export {
   ScheduledCallbackDeliveryPruneWorkflow,

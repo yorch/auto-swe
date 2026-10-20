@@ -17,15 +17,38 @@ vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     workflowArtifact: {
       create: vi.fn(),
+      delete: vi.fn(),
+      findUnique: vi.fn(),
       findUniqueOrThrow: vi.fn(),
     },
   },
 }));
 
+const s3 = vi.hoisted(() => ({ sent: [] as { input: Record<string, unknown>; name: string }[] }));
+vi.mock('@aws-sdk/client-s3', () => ({
+  DeleteObjectCommand: class {
+    constructor(public input: Record<string, unknown>) {}
+  },
+  GetObjectCommand: class {
+    constructor(public input: Record<string, unknown>) {}
+  },
+  PutObjectCommand: class {
+    constructor(public input: Record<string, unknown>) {}
+  },
+  S3Client: class {
+    send(cmd: { constructor: { name: string }; input: Record<string, unknown> }) {
+      s3.sent.push({ input: cmd.input, name: cmd.constructor.name });
+      return Promise.resolve({ Body: { transformToByteArray: async () => new Uint8Array() } });
+    }
+  },
+}));
+
 import { prisma } from '@auto-swe/shared/db';
-import { getArtifact, getArtifactText, putArtifact } from './artifactStore.js';
+import { deleteArtifact, getArtifact, getArtifactText, putArtifact } from './artifactStore.js';
 
 const createMock = vi.mocked(prisma.workflowArtifact.create);
+const deleteMock = vi.mocked(prisma.workflowArtifact.delete);
+const findUniqueMock = vi.mocked(prisma.workflowArtifact.findUnique);
 const findMock = vi.mocked(prisma.workflowArtifact.findUniqueOrThrow);
 
 const originalEnv = { ...process.env };
@@ -37,7 +60,10 @@ beforeEach(() => {
 afterEach(() => {
   process.env = { ...originalEnv };
   createMock.mockReset();
+  deleteMock.mockReset();
+  findUniqueMock.mockReset();
   findMock.mockReset();
+  s3.sent.length = 0;
 });
 
 describe('putArtifact (postgres backend)', () => {
@@ -127,6 +153,51 @@ describe('getArtifact / getArtifactText (postgres backend)', () => {
     } as never);
 
     await expect(getArtifact('art-broken')).rejects.toThrow(/no inlineBlob/);
+  });
+});
+
+describe('deleteArtifact', () => {
+  it('deletes a pg-backed artifact by deleting only its row', async () => {
+    findUniqueMock.mockResolvedValue({
+      backend: 'pg',
+      id: 'art-pg',
+      s3Key: null,
+    } as never);
+
+    await deleteArtifact('art-pg');
+
+    expect(deleteMock).toHaveBeenCalledWith({ where: { id: 'art-pg' } });
+    expect(s3.sent).toEqual([]);
+  });
+
+  it('deletes the S3 object before its row', async () => {
+    process.env.ARTIFACT_S3_BUCKET = 'bucket-1';
+    findUniqueMock.mockResolvedValue({
+      backend: 's3',
+      id: 'art-s3',
+      s3Key: 'workflow-artifacts/global/x/y',
+    } as never);
+    // The object goes first: by the time the row delete runs, the S3 delete
+    // must already have been sent.
+    deleteMock.mockImplementation((async () => {
+      expect(s3.sent).toEqual([
+        {
+          input: { Bucket: 'bucket-1', Key: 'workflow-artifacts/global/x/y' },
+          name: 'DeleteObjectCommand',
+        },
+      ]);
+      return {};
+    }) as never);
+
+    await deleteArtifact('art-s3');
+
+    expect(deleteMock).toHaveBeenCalledWith({ where: { id: 'art-s3' } });
+  });
+
+  it('is a no-op for a row that does not exist', async () => {
+    findUniqueMock.mockResolvedValue(null as never);
+    await deleteArtifact('missing');
+    expect(deleteMock).not.toHaveBeenCalled();
   });
 });
 

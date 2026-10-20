@@ -115,3 +115,80 @@ describe('AgentTracer.persist', () => {
     expect(tracer.hasSpanContext()).toBe(true);
   });
 });
+
+describe('redactString / redactJsonValues', () => {
+  it('redacts credential-shaped values wherever they appear', async () => {
+    const { redactString } = await import('./agentTracer.js');
+    const pem = '-----BEGIN RSA PRIVATE KEY-----\nabc123\n-----END RSA PRIVATE KEY-----';
+    expect(redactString(pem)).toBe('***');
+    expect(redactString(`key is sk-ant-${'a'.repeat(30)}`)).toBe('key is ***');
+    expect(redactString(`sk-proj-${'b'.repeat(40)}`)).toBe('***');
+    expect(redactString(`sk-${'c'.repeat(40)}`)).toBe('***');
+    expect(redactString(`ghp_${'d'.repeat(40)}`)).toBe('***');
+    expect(redactString(`github_pat_${'e'.repeat(30)}`)).toBe('***');
+    expect(redactString(`xoxb-${'f'.repeat(12)}-more`)).toBe('***');
+    expect(redactString(`AKIA${'G'.repeat(16)}`)).toBe('***');
+    expect(redactString(`AIza${'h'.repeat(35)}`)).toBe('***');
+    expect(redactString(`eyJ${'i'.repeat(12)}.eyJ${'j'.repeat(12)}.${'k'.repeat(12)}`)).toBe('***');
+    // Left boundary: a secret prefix inside a longer identifier is not a secret.
+    expect(redactString('task-1f2e3d4c-5b6a-7980-1234-567890abcdef')).toBe(
+      'task-1f2e3d4c-5b6a-7980-1234-567890abcdef'
+    );
+    expect(redactString('risk-assessment-sk-abcdefgh0123456789abcdefgh01')).toBe(
+      'risk-assessment-sk-abcdefgh0123456789abcdefgh01'
+    );
+    expect(redactString(`key=sk-proj-${'b'.repeat(40)}`)).toBe('key=***');
+    expect(redactString('secret_access_key=abc123')).toBe('secret_access_key=***');
+    expect(redactString('private_key: xyz')).toBe('private_key: ***');
+    expect(redactString('password=hunter2')).toBe('password=***');
+  });
+
+  it('redacts sensitive keys by suffix and leaves usage counters alone', async () => {
+    const { redactJsonValues } = await import('./agentTracer.js');
+    const out = redactJsonValues({
+      AWS_SECRET_ACCESS_KEY: 'x',
+      anthropic_api_key: 'x',
+      budget_tokens: 5,
+      cache_creation_input_tokens: 5,
+      GITHUB_APP_PRIVATE_KEY: 'x',
+      input_tokens: 5,
+      keys: ['a'],
+      max_tokens: 5,
+      next_page_token: 'x',
+      output_tokens: 5,
+      tool_key: 'keep',
+      total_tokens: 5,
+    }) as Record<string, unknown>;
+    expect(out.AWS_SECRET_ACCESS_KEY).toBe('***');
+    expect(out.anthropic_api_key).toBe('***');
+    expect(out.GITHUB_APP_PRIVATE_KEY).toBe('***');
+    expect(out.next_page_token).toBe('***');
+    expect(out.max_tokens).toBe(5);
+    expect(out.input_tokens).toBe(5);
+    expect(out.output_tokens).toBe(5);
+    expect(out.cache_creation_input_tokens).toBe(5);
+    expect(out.total_tokens).toBe(5);
+    expect(out.budget_tokens).toBe(5);
+    expect(out.tool_key).toBe('keep');
+    expect(out.keys).toEqual(['a']);
+  });
+
+  it('keeps object shape under a sensitive key while redacting nested secrets', async () => {
+    const { redactJsonValues } = await import('./agentTracer.js');
+    const out = redactJsonValues({
+      properties: { token: { type: 'string' } },
+      tools: [{ parameters: { api_key: 'secret-val', name: 'x' } }],
+    }) as { properties: unknown; tools: { parameters: Record<string, unknown> }[] };
+    expect(out.properties).toEqual({ token: { type: 'string' } });
+    expect(out.tools[0]?.parameters.api_key).toBe('***');
+    expect(out.tools[0]?.parameters.name).toBe('x');
+  });
+
+  it('scrubs a 5 MB string in well under a second', async () => {
+    const { redactString } = await import('./agentTracer.js');
+    const big = `${'x'.repeat(5 * 1024 * 1024)} sk-ant-${'a'.repeat(30)}`;
+    const start = performance.now();
+    expect(redactString(big)).toContain('***');
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+});

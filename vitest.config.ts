@@ -60,6 +60,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/temporalTracing.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/artifactStore',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/artifactStore.ts'),
+      },
+      {
+        find: /^@auto-swe\/shared\/lib\/transcripts\/(.*)$/,
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/transcripts/$1.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/pullRequest',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/pullRequest.ts'),
       },

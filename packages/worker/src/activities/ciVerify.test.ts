@@ -23,7 +23,9 @@ vi.mock('../lib/scm/index.js', () => ({
 }));
 vi.mock('../lib/runBaseBranch.js', () => ({ resolveRequestBaseBranch: async () => 'main' }));
 vi.mock('../lib/activityContext.js', () => ({ currentWorkflowRunId: async () => 'run-1' }));
-vi.mock('../lib/artifactStore.js', () => ({ putArtifact: vi.fn(async () => ({ id: 'art-1' })) }));
+vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
+  putArtifact: vi.fn(async () => ({ id: 'art-1' })),
+}));
 const scan = vi.hoisted(() => ({ blocked: null as string | null }));
 vi.mock('../lib/shellCommandScanner.js', () => ({ scanShellCommand: async () => scan.blocked }));
 

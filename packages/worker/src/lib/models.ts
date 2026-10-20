@@ -17,6 +17,7 @@ import type {
 } from './config/types.js';
 import { reasoningCallSetting, reasoningMiddleware } from './reasoning.js';
 import { schemaInPromptMiddleware } from './schemaInPrompt.js';
+import { recordingFetch } from './transcriptRecorder.js';
 
 // The provider factories no longer agree on a return type: since
 // @ai-sdk/anthropic 4.0.34 the Anthropic and OpenAI providers return the
@@ -160,7 +161,7 @@ function buildModel(
  * between that check and the call (a name that later resolves, or redirects,
  * to an internal host would otherwise receive the prompt and the API key).
  */
-const modelFetch = modelCallFetch();
+const modelFetch = recordingFetch(modelCallFetch());
 
 function buildModelUncached(spec: string, apiKey: string, apiBase?: string): LanguageModel {
   const { provider, modelId } = parseProviderModelSpec(spec);
