@@ -153,6 +153,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/platform/usage': 'read',
   'GET /api/v1/platform/usage/scopes': 'read',
   'GET /api/v1/pull-requests': 'read',
+  'GET /api/v1/pull-requests/outcomes': 'read',
   'GET /api/v1/repositories': 'read',
   'GET /api/v1/repositories/:id/dependencies': 'read',
   'GET /api/v1/repositories/:id/share-candidates': 'read',

@@ -107,7 +107,36 @@ counts the same filtered set.
 
 ---
 
-## 3. `GET /api/v1/tickets`
+## 3. `GET /api/v1/pull-requests/outcomes`
+
+The delivery metric: of the pull requests opened in a window, how many were merged and how fast.
+The cohort is the PRs **opened** in the window, with each one's outcome read as of now.
+
+| Parameter | Values | Default |
+|---|---|---|
+| `window` | 1 to 365 days, whole UTC days ending today | `30` |
+| `since`, `until` | an inclusive UTC day range (`YYYY-MM-DD`), together; replaces `window` | none |
+| `scope` | `MINE` (requests the caller made) or `TEAM` (everything visible) | `TEAM` |
+| `teamId` | narrow to a team's repositories, including ones shared with it | any |
+| `repoId` | a repository id | any |
+
+The response `data` holds `window` (`start`, `end`, `days`), `current` for the window and
+`previous` for the same number of days directly before it (null when `previousComplete` is false),
+`previousComplete`, `isTruncated`, and
+`byRepository`: the ten repositories with the most PRs opened, each with its own summary. A summary
+carries `opened`, `merged`, `closedUnmerged`, `open`, `mergeRate` (merged over merged plus closed
+unmerged; null while none has resolved), `timeToMergeMs` (`p50`, `p95` and `count` of merged PRs
+with a valid open-to-merge time), `ciStatusCounts` and `draftCount`. The summaries are computed by
+`summarizePullRequestOutcomes()` in `@auto-swe/shared/lib/pullRequestOutcomes`.
+
+Visibility is the list's: an ADMIN sees every row, anyone else the PRs of repositories they may
+reach (`reachableConnections`). The read takes at most 10,000 rows, newest first. When that cap
+cuts into the window, `isTruncated` is true and `current` is computed from the rows read; when it
+cuts into the previous window only, `previousComplete` is false and `previous` is null.
+
+---
+
+## 4. `GET /api/v1/tickets`
 
 Groups everything filed under one `externalTicketId`. The grouping, the ordering and the paging are
 done in the database (`groupBy` over the matching requests), so a call reads one page of groups, not
@@ -173,7 +202,7 @@ rendered as plain text. `url` is returned only for an http(s) address; anything 
 
 ---
 
-## 4. Dashboard
+## 5. Dashboard
 
 The Work group of the sidebar lists **Pull requests** (`/pull-requests`) and **Tickets**
 (`/tickets`). Filters live in the address, so a filtered list can be bookmarked and survives a
@@ -193,6 +222,16 @@ http(s) address.
 
 ## Limitations
 
+- Outcomes group PRs by the time they were opened and judge them as of now, so a recent cohort
+  under-reports merges that have not happened yet and its merge rate rises as its PRs resolve.
+- An outcomes read takes at most 10,000 PRs; beyond that the figures cover only the newest ones
+  read, and `isTruncated` or `previousComplete` says so.
+- Outcomes are not grouped by workflow template or agent, and no dashboard page shows them.
+- The read filters on `openedAt` alone, and the only index that leads with a time column is
+  `(status, openedAt)`, so on a large table it scans rather than seeks.
+- `scope` defaults to `TEAM` here and to `MINE` on the list, so the same caller sees different
+  counts from the two endpoints unless one is set explicitly.
+- A closed draft counts as `closedUnmerged`; the merge rate does not separate drafts from ready PRs.
 - A PR closed by a reviewer is not replaced by a re-push in the same workflow; the run fails until
   the PR is reopened or the request is run again.
 - Pull requests opened outside the platform are not listed: a webhook only updates a row the

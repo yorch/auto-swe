@@ -1301,6 +1301,37 @@ export interface PullRequestListItem {
   costUsd: number | null;
 }
 
+/** Outcome figures for a cohort of pull requests opened in one window. */
+export interface PullRequestOutcomeSummary {
+  opened: number;
+  merged: number;
+  closedUnmerged: number;
+  open: number;
+  /** merged / (merged + closedUnmerged); null while none has resolved. */
+  mergeRate: number | null;
+  /** Open-to-merge time of the merged PRs; the percentiles are null when none merged. */
+  timeToMergeMs: { p50: number | null; p95: number | null; count: number };
+  ciStatusCounts: Record<string, number>;
+  draftCount: number;
+}
+
+/** Response data of GET /api/v1/pull-requests/outcomes. */
+export interface PullRequestOutcomesResponse {
+  window: { start: string; end: string; days: number };
+  current: PullRequestOutcomeSummary;
+  /** Null when the row cap cut into the previous window. */
+  previous: PullRequestOutcomeSummary | null;
+  /** False when the row cap cut into the previous window. */
+  previousComplete: boolean;
+  /** True when the row cap cut into the current window, so `current` is partial. */
+  isTruncated: boolean;
+  /** Top 10 repositories by PRs opened in the window. */
+  byRepository: {
+    repository: { id: string; name: string; org: string };
+    summary: PullRequestOutcomeSummary;
+  }[];
+}
+
 /** A PR as a ticket group lists it. */
 export interface TicketPullRequest {
   id: string;

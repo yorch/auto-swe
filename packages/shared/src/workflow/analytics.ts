@@ -163,7 +163,7 @@ function isDecidedStatus(status: string): boolean {
   return status === 'SUCCESS' || isFailureStatus(status);
 }
 
-function percentile(sorted: number[], p: number): number | null {
+export function percentile(sorted: number[], p: number): number | null {
   if (sorted.length === 0) {
     return null;
   }
