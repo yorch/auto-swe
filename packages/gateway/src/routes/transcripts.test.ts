@@ -3,6 +3,7 @@ import { gzipSync } from 'node:zlib';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { assertServiceScopesAdmissible } from '../plugins/auth.js';
 import { transcriptRoutes } from './transcripts.js';
 
 const h = vi.hoisted(() => ({
@@ -127,6 +128,9 @@ async function buildApp(opts: { role?: string; service?: boolean } = {}) {
   app.addHook('onRequest', async (request) => {
     request.log = h.log as never;
   });
+  // The auth plugin's boot-time check: a route may only declare serviceScopes behind a role a
+  // service principal can hold.
+  app.addHook('onRoute', assertServiceScopesAdmissible);
   await app.register(transcriptRoutes);
   await app.ready();
   return { app, prisma };
@@ -151,10 +155,19 @@ describe('transcriptRoutes', () => {
   it('refuses service principals on every route', async () => {
     const { app, prisma } = await buildApp({ service: true });
     prisma.agentTranscript.findUnique.mockResolvedValue(transcriptRow({ id: SP_TX }));
+    // Routes open to ENGINEER declare serviceScopes, so a principal reaches the handler's refusal.
+    for (const url of [
+      `/api/v1/workflow-runs/${RUN_ID}/transcripts`,
+      `/api/v1/transcripts/${SP_TX}`,
+      `/api/v1/transcripts/${SP_TX}/content`,
+    ]) {
+      const res = await app.inject({ headers: SP_AUTH, method: 'GET', url });
+      expect(res.statusCode).toBe(403);
+      expect(res.json().error.code).toBe('TRANSCRIPTS_NOT_AVAILABLE');
+    }
+    // ADMIN routes cannot declare serviceScopes (a principal holds no role), so the auth layer
+    // refuses a service token before the handler runs.
     for (const [method, url] of [
-      ['GET', `/api/v1/workflow-runs/${RUN_ID}/transcripts`],
-      ['GET', `/api/v1/transcripts/${SP_TX}`],
-      ['GET', `/api/v1/transcripts/${SP_TX}/content`],
       ['POST', `/api/v1/transcripts/${SP_TX}/verify`],
       [
         'GET',
@@ -162,10 +175,8 @@ describe('transcriptRoutes', () => {
       ],
     ] as const) {
       const res = await app.inject({ headers: SP_AUTH, method, url });
-      expect(res.statusCode).toBe(403);
-      // ENGINEER-role routes reach the handler's refusal; ADMIN routes are
-      // refused at the auth layer (a principal holds no role).
-      expect(['TRANSCRIPTS_NOT_AVAILABLE', 'FORBIDDEN']).toContain(res.json().error.code);
+      expect(res.statusCode).toBe(401);
+      expect(res.json().error.code).toBe('SERVICE_TOKEN_NOT_ALLOWED');
     }
   });
 

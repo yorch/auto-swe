@@ -431,7 +431,6 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   app.post(
     '/api/v1/transcripts/:id/verify',
     {
-      config: { serviceScopes: ['runs:read'] },
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
       schema: { params: TranscriptIdParam },
     },
@@ -560,7 +559,6 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/api/v1/workflow-runs/:id/transcripts/legal-hold',
     {
-      config: { serviceScopes: ['runs:read'] },
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
       schema: { body: LegalHoldBody, params: RunIdParam },
     },
@@ -570,7 +568,6 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/api/v1/workflow-runs/:id/transcripts/legal-hold',
     {
-      config: { serviceScopes: ['runs:read'] },
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
       schema: { params: RunIdParam },
     },
@@ -579,7 +576,6 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   app.put(
     '/api/v1/transcripts/:id/legal-hold',
     {
-      config: { serviceScopes: ['runs:read'] },
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
       schema: { body: LegalHoldBody, params: TranscriptIdParam },
     },
@@ -589,7 +585,6 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   app.delete(
     '/api/v1/transcripts/:id/legal-hold',
     {
-      config: { serviceScopes: ['runs:read'] },
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
       schema: { params: TranscriptIdParam },
     },
@@ -600,7 +595,6 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/api/v1/platform/transcripts/export',
     {
-      config: { serviceScopes: ['runs:read'] },
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
       schema: { querystring: ExportQuery },
     },
