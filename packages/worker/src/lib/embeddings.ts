@@ -19,6 +19,7 @@ import { calculateCostUsd } from './costTracking.js';
 import { recordLlmCallMetrics } from './metrics.js';
 import { currentSpendOwner } from './spendOwner.js';
 import { EMBEDDING_AGENT_KEY } from './traceTotals.js';
+import { recordingFetch } from './transcriptRecorder.js';
 
 /**
  * pgvector column for MemoryItem is `vector(1536)` (see prisma schema). All
@@ -44,8 +45,12 @@ interface CachedEmbeddingModel {
 
 let cachedModel: CachedEmbeddingModel | null = null;
 
-/** Embedding calls go through the same SSRF guard as model calls (see `models.ts`). */
-const embeddingFetch = modelCallFetch();
+/**
+ * Embedding calls go through the same SSRF guard as model calls (see
+ * `models.ts`), and are recorded on the activity's transcript — inputs in full,
+ * vectors omitted, not counted as model calls.
+ */
+const embeddingFetch = recordingFetch(modelCallFetch(), { purpose: 'embedding' });
 
 async function buildEmbeddingModel(): Promise<CachedEmbeddingModel> {
   const { spec, apiKey, apiBase } = await resolveEmbeddingConfig();

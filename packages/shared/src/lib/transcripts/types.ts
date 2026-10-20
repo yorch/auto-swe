@@ -18,6 +18,12 @@ export interface NormalizedMessage {
 
 export interface NormalizedCall {
   provider: 'anthropic' | 'openai-responses' | 'openai-chat' | 'google' | 'claude-code';
+  /**
+   * The record this was built from: a real API exchange (`http_call`), one
+   * SDK stream message, or a reconstruction from the harness's session file —
+   * which carries neither the system prompt nor the tool schemas.
+   */
+  source?: 'http_call' | 'harness_message' | 'harness_session_file';
   model?: string;
   system?: string;
   messages: NormalizedMessage[];

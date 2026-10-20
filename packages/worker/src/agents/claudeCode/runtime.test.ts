@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -38,9 +39,13 @@ const h = vi.hoisted(() => ({
   transcriptRecorder: undefined as
     | undefined
     | {
+        acceptsRecords: ReturnType<typeof vi.fn>;
         addHarnessMessage: ReturnType<typeof vi.fn>;
+        addHarnessSessionFile: ReturnType<typeof vi.fn>;
+        addHarnessTurn: ReturnType<typeof vi.fn>;
         addHttpCall: ReturnType<typeof vi.fn>;
         setRuntime: ReturnType<typeof vi.fn>;
+        trackCapture: ReturnType<typeof vi.fn>;
       },
 }));
 
@@ -97,6 +102,7 @@ import {
   normalizeAnthropicBaseUrl,
   POLICY_DECISION_MS,
   PRE_TOOL_USE_TIMEOUT_S,
+  SESSION_FILE_MAX_BYTES,
   sdkEnvArgs,
 } from './runtime.js';
 
@@ -1152,9 +1158,13 @@ describe('through the worker’s model proxy', () => {
 describe('transcript capture', () => {
   const recorder = () => {
     const rec = {
+      acceptsRecords: vi.fn(() => true),
       addHarnessMessage: vi.fn(),
+      addHarnessSessionFile: vi.fn(() => true),
+      addHarnessTurn: vi.fn(),
       addHttpCall: vi.fn(),
       setRuntime: vi.fn(),
+      trackCapture: vi.fn(),
     };
     h.transcriptRecorder = rec;
     return rec;
@@ -1210,6 +1220,424 @@ describe('transcript capture', () => {
         status: 200,
       })
     );
+  });
+});
+
+describe('Claude Code turn and session-file records', () => {
+  const SESSION = '0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9';
+  const FILE = `/workspace/.harness/home/.claude/projects/-workspace-target-repo/${SESSION}.jsonl`;
+  const recorder = () => {
+    const captures: Promise<void>[] = [];
+    const rec = {
+      acceptsRecords: vi.fn(() => true),
+      addHarnessMessage: vi.fn(),
+      addHarnessSessionFile: vi.fn((_r: unknown) => true),
+      addHarnessTurn: vi.fn(),
+      addHttpCall: vi.fn(),
+      captures,
+      /** What close() does: wait for every background capture. */
+      drain: () => Promise.all(captures),
+      setRuntime: vi.fn(),
+      trackCapture: vi.fn((p: Promise<void>) => {
+        captures.push(p);
+      }),
+    };
+    h.transcriptRecorder = rec;
+    return rec;
+  };
+  const isSessionRead = (command: string) => command.includes('/.claude/projects/');
+  const sessionReads = (exec: ReturnType<typeof vi.fn>) =>
+    exec.mock.calls.map((c) => c[0] as string).filter(isSessionRead);
+  const startOf = (command: string) => Number(/start=(\d+)/.exec(command)?.[1]);
+  /**
+   * The container's side of the read for a session file holding `content`:
+   * path, size, delivered bytes, then the delta — from 0 when the file is
+   * shorter than the offset, as the script does.
+   */
+  const fileExec = (exec: ReturnType<typeof vi.fn>, content: () => string) =>
+    exec.mockImplementation(async (command: string) => {
+      if (!isSessionRead(command)) {
+        return '';
+      }
+      const bytes = Buffer.from(content());
+      const offset = startOf(command);
+      const start = bytes.length < offset ? 0 : offset;
+      const delta = bytes.subarray(start, start + SESSION_FILE_MAX_BYTES);
+      return `${FILE}\n${bytes.length}\n${delta.length}\n${delta.toString()}`;
+    });
+  const jsonl = (...lines: unknown[]) =>
+    `${lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n')}\n`;
+  const proxy = () => ({
+    close: vi.fn(),
+    listen: vi.fn(),
+    register: vi.fn(async () => ({
+      baseUrl: 'http://host.docker.internal:8790',
+      release: vi.fn(async () => {}),
+      token: 'sk-ant-proxy-turn-token',
+    })),
+  });
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+
+  beforeEach(() => {
+    // The cancellation test above leaves its implementation behind.
+    h.throwIfActivityCancelled.mockImplementation(() => {});
+    relay.open.mockResolvedValue({
+      callTimeoutMs: 1234,
+      close: relay.close,
+      createServer: () => ({ close: relay.serverClose, marker: 'in-process server' }),
+      tools: [{ inputSchema: { type: 'object' }, name: 'search' }],
+    });
+  });
+
+  it.each([
+    ['not proxied', null],
+    ['proxied', 'proxy'],
+  ] as const)(
+    'records the turn’s configuration when %s, with no credential or MCP address',
+    async (_label, via) => {
+      const rec = recorder();
+      const { runtime } = setup({
+        access: { apiKey: API_KEY, effort: 'high', modelId: 'claude-opus-5-5' },
+        mcp: { headers: { authorization: 'Bearer mcp-secret' }, url: 'https://mcp.example/mcp' },
+        modelProxy: via === 'proxy' ? proxy() : null,
+      });
+      h.script.push([[init(SESSION), success('ok')]]);
+
+      await runtime.runTurn({ system: 'Implement the ticket.', user: 'U' });
+
+      expect(rec.addHarnessTurn).toHaveBeenCalledTimes(1);
+      const turn = rec.addHarnessTurn.mock.calls[0]?.[0];
+      expect(turn).toEqual({
+        effort: 'high',
+        loadProjectSettings: true,
+        maxTurns: 40,
+        mcpServers: ['connection'],
+        model: 'claude-opus-5-5',
+        proxied: via === 'proxy',
+        runtime: 'claude-code',
+        systemPrompt: {
+          append: 'Implement the ticket.',
+          preset: 'claude_code',
+          sha256: sha('Implement the ticket.'),
+        },
+        tools: ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep'],
+      });
+      const serialized = JSON.stringify(turn);
+      for (const secret of [API_KEY, 'mcp.example', 'mcp-secret', 'sk-ant-proxy-turn-token']) {
+        expect(serialized).not.toContain(secret);
+      }
+    }
+  );
+
+  it('carries the full prompt again only when it changes; the hash on every turn', async () => {
+    const rec = recorder();
+    const { runtime } = setup({ modelProxy: null });
+    h.script.push(
+      [[init(SESSION), success('1')]],
+      [[init(SESSION), success('2')]],
+      [[init(SESSION), success('3')]]
+    );
+
+    await runtime.runTurn({ system: 'S1', user: 'U' });
+    await runtime.runTurn({ system: 'S1', user: 'U' });
+    await runtime.runTurn({ system: 'S2', user: 'U' });
+
+    expect(rec.addHarnessTurn.mock.calls.map((c) => c[0].systemPrompt)).toEqual([
+      { append: 'S1', preset: 'claude_code', sha256: sha('S1') },
+      { preset: 'claude_code', sha256: sha('S1'), unchanged: true },
+      { append: 'S2', preset: 'claude_code', sha256: sha('S2') },
+    ]);
+  });
+
+  it('records the full prompt, and where it was staged, when it is too long to pass inline', async () => {
+    const rec = recorder();
+    const { runtime } = setup({ modelProxy: null });
+    h.script.push([[init(SESSION), success('ok')]]);
+    const system = 'p'.repeat(100_001);
+
+    await runtime.runTurn({ system, user: 'U' });
+
+    expect(rec.addHarnessTurn.mock.calls[0]?.[0].systemPrompt).toEqual({
+      append: system,
+      preset: 'claude_code',
+      sha256: sha(system),
+      stagedPath: '/workspace/.harness/home/.claude/system-prompt.md',
+    });
+  });
+
+  it('records only what each non-proxied turn added to the session file', async () => {
+    const rec = recorder();
+    const { runtime, exec } = setup({ modelProxy: null });
+    const first = jsonl({ message: { content: 'U1', role: 'user' }, type: 'user' }, '{"torn');
+    let content = first;
+    fileExec(exec, () => content);
+    h.script.push([[init(SESSION), success('one')]], [[init(SESSION), success('two')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U1' });
+    await rec.drain();
+    const second = jsonl({ message: { content: 'U2', role: 'user' }, type: 'user' });
+    content = first + second;
+    await runtime.runTurn({ system: 'S', user: 'U2' });
+    await rec.drain();
+
+    const reads = sessionReads(exec);
+    expect(reads).toHaveLength(2);
+    expect(reads[0]).toContain(
+      `for f in /workspace/.harness/home/.claude/projects/*/${SESSION}.jsonl`
+    );
+    expect(reads[0]).toContain(`head -c ${SESSION_FILE_MAX_BYTES} > "$t"`);
+    expect(startOf(reads[0] ?? '')).toBe(0);
+    // The second turn resumes the session; its read starts where the first ended.
+    expect(startOf(reads[1] ?? '')).toBe(Buffer.byteLength(first));
+    expect(rec.addHarnessSessionFile.mock.calls.map((c) => c[0])).toEqual([
+      {
+        bytes: Buffer.byteLength(first),
+        lines: [{ message: { content: 'U1', role: 'user' }, type: 'user' }, '{"torn'],
+        offset: 0,
+        path: FILE,
+        runtime: 'claude-code',
+        sessionId: SESSION,
+        truncated: false,
+      },
+      {
+        bytes: Buffer.byteLength(second),
+        lines: [{ message: { content: 'U2', role: 'user' }, type: 'user' }],
+        offset: Buffer.byteLength(first),
+        path: FILE,
+        runtime: 'claude-code',
+        sessionId: SESSION,
+        truncated: false,
+      },
+    ]);
+  });
+
+  it('does not advance the offset when the record was not stored', async () => {
+    const rec = recorder();
+    rec.addHarnessSessionFile.mockReturnValueOnce(false);
+    const { runtime, exec } = setup({ modelProxy: null });
+    fileExec(exec, () => jsonl({ type: 'user' }));
+    h.script.push([[init(SESSION), success('one')]], [[init(SESSION), success('two')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U1' });
+    await runtime.runTurn({ system: 'S', user: 'U2' });
+    await rec.drain();
+
+    expect(sessionReads(exec).map(startOf)).toEqual([0, 0]);
+  });
+
+  it('stops reading once the transcript accepts nothing more', async () => {
+    const rec = recorder();
+    rec.acceptsRecords.mockReturnValue(false);
+    const { runtime, exec } = setup({ modelProxy: null });
+    fileExec(exec, () => jsonl({ type: 'user' }));
+    h.script.push([[init(SESSION), success('one')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U1' });
+    await rec.drain();
+
+    expect(sessionReads(exec)).toEqual([]);
+    expect(rec.addHarnessSessionFile).not.toHaveBeenCalled();
+  });
+
+  it('counts the bytes delivered, not the size measured before the read', async () => {
+    const rec = recorder();
+    const { runtime, exec } = setup({ modelProxy: null });
+    const delta = jsonl({ type: 'user' }, { type: 'assistant' });
+    // The file grew between `wc -c` and the read: the size says 5, 30-odd bytes came.
+    exec.mockImplementation(async (command: string) =>
+      isSessionRead(command) ? `${FILE}\n5\n${Buffer.byteLength(delta)}\n${delta}` : ''
+    );
+    h.script.push([[init(SESSION), success('one')]], [[init(SESSION), success('two')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U1' });
+    await runtime.runTurn({ system: 'S', user: 'U2' });
+    await rec.drain();
+
+    expect(rec.addHarnessSessionFile.mock.calls[0]?.[0]).toMatchObject({
+      bytes: Buffer.byteLength(delta),
+      offset: 0,
+    });
+    expect(startOf(sessionReads(exec)[1] ?? '')).toBe(Buffer.byteLength(delta));
+  });
+
+  it('reads a file that shrank below the offset from the start, and says so', async () => {
+    const rec = recorder();
+    const { runtime, exec } = setup({ modelProxy: null });
+    let content = jsonl({ n: 1 }, { n: 2 }, { n: 3 });
+    fileExec(exec, () => content);
+    h.script.push([[init(SESSION), success('one')]], [[init(SESSION), success('two')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U1' });
+    await rec.drain();
+    content = jsonl({ compacted: true });
+    await runtime.runTurn({ system: 'S', user: 'U2' });
+    await rec.drain();
+
+    const second = rec.addHarnessSessionFile.mock.calls[1]?.[0];
+    expect(second).toMatchObject({
+      bytes: Buffer.byteLength(content),
+      lines: [{ compacted: true }],
+      offset: 0,
+      reset: true,
+    });
+    // The script restarts from 0 when the size is below the offset.
+    expect(sessionReads(exec)[1]).toContain('[ "$size" -lt "$start" ] && start=0');
+  });
+
+  it('skips a glob match that is not a regular file and uses the next', async () => {
+    recorder();
+    const { runtime, exec } = setup({ modelProxy: null });
+    h.script.push([[init(SESSION), success('one')]]);
+    await runtime.runTurn({ system: 'S', user: 'U1' });
+    const script = sessionReads(exec)[0] ?? '';
+    expect(script).toContain('[ -f "$f" ] || continue');
+    expect(script).not.toContain('|| exit 3');
+  });
+
+  it('marks a delta at the cap truncated, and continues from the cap next turn', async () => {
+    const rec = recorder();
+    const { runtime, exec } = setup({ modelProxy: null });
+    const big = `${'x'.repeat(SESSION_FILE_MAX_BYTES)}${'y'.repeat(499)}\n`;
+    fileExec(exec, () => big);
+    h.script.push([[init(SESSION), success('one')]], [[init(SESSION), success('two')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U1' });
+    await runtime.runTurn({ system: 'S', user: 'U2' });
+    await rec.drain();
+
+    expect(rec.addHarnessSessionFile.mock.calls[0]?.[0]).toMatchObject({
+      bytes: SESSION_FILE_MAX_BYTES,
+      offset: 0,
+      truncated: true,
+    });
+    expect(rec.addHarnessSessionFile.mock.calls[1]?.[0]).toMatchObject({
+      bytes: 500,
+      offset: SESSION_FILE_MAX_BYTES,
+      truncated: false,
+    });
+  });
+
+  it('reads no session file when the turn is proxied', async () => {
+    const rec = recorder();
+    const { runtime, exec } = setup({ modelProxy: proxy() });
+    h.script.push([[init(SESSION), success('ok')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U' });
+
+    expect(sessionReads(exec)).toEqual([]);
+    expect(rec.trackCapture).not.toHaveBeenCalled();
+  });
+
+  it('reads no session file after a turn stopped by its deadline', async () => {
+    const rec = recorder();
+    const { runtime, exec } = setup({ deadline: AbortSignal.abort(), modelProxy: null });
+    h.script.push([[init(SESSION)], new Error('aborted')]);
+
+    await expect(runtime.runTurn({ system: 'S', user: 'U' })).resolves.toMatchObject({
+      stoppedReason: 'wall_clock',
+    });
+
+    expect(sessionReads(exec)).toEqual([]);
+    expect(rec.trackCapture).not.toHaveBeenCalled();
+  });
+
+  it('still reads the session file after a turn that failed', async () => {
+    const rec = recorder();
+    const { runtime, exec } = setup({ modelProxy: null });
+    fileExec(exec, () => jsonl({ type: 'user' }));
+    h.script.push([[init(SESSION)], new Error('process died')]);
+
+    await expect(runtime.runTurn({ system: 'S', user: 'U' })).rejects.toThrow('process died');
+    await rec.drain();
+    expect(rec.addHarnessSessionFile).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not record when the session-file read fails', async () => {
+    const rec = recorder();
+    const { runtime, exec } = setup({ modelProxy: null });
+    exec.mockImplementation(async (command: string) => {
+      if (isSessionRead(command)) {
+        throw new Error('exit code 3');
+      }
+      return '';
+    });
+    h.script.push([[init(SESSION), success('ok')]]);
+
+    await expect(runtime.runTurn({ system: 'S', user: 'U' })).resolves.toMatchObject({
+      text: 'ok',
+    });
+    await rec.drain();
+    expect(rec.addHarnessSessionFile).not.toHaveBeenCalled();
+  });
+
+  it('never holds the turn: a hung read runs in the background, drained by close, bounded to 10 s', async () => {
+    const rec = recorder();
+    const { runtime, exec } = setup({ modelProxy: null });
+    exec.mockImplementation((command: string) =>
+      isSessionRead(command) ? new Promise<string>(() => {}) : Promise.resolve('')
+    );
+    h.script.push([[init(SESSION), success('ok')]]);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+    // The turn resolves with the read still hanging — no timer had to fire.
+    await expect(runtime.runTurn({ system: 'S', user: 'U' })).resolves.toMatchObject({
+      text: 'ok',
+    });
+    expect(rec.trackCapture).toHaveBeenCalledTimes(1);
+    let drained = false;
+    const draining = rec.drain().then(() => {
+      drained = true;
+    });
+    await vi.waitFor(() => expect(sessionReads(exec)).toHaveLength(1));
+    expect(drained).toBe(false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    await draining;
+    expect(drained).toBe(true);
+    expect(rec.addHarnessSessionFile).not.toHaveBeenCalled();
+  });
+
+  it('starts the next turn’s read only after the previous one finished', async () => {
+    const rec = recorder();
+    const { runtime, exec } = setup({ modelProxy: null });
+    let release: (out: string) => void = () => {};
+    const content = jsonl({ type: 'user' });
+    let reads = 0;
+    exec.mockImplementation((command: string) => {
+      if (!isSessionRead(command)) {
+        return Promise.resolve('');
+      }
+      reads += 1;
+      const out = `${FILE}\n${Buffer.byteLength(content)}\n${startOf(command) === 0 ? Buffer.byteLength(content) : 0}\n${startOf(command) === 0 ? content : ''}`;
+      return reads === 1
+        ? new Promise<string>((resolve) => {
+            release = () => resolve(out);
+          })
+        : Promise.resolve(out);
+    });
+    h.script.push([[init(SESSION), success('one')]], [[init(SESSION), success('two')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U1' });
+    await runtime.runTurn({ system: 'S', user: 'U2' });
+    await vi.waitFor(() => expect(sessionReads(exec)).toHaveLength(1));
+    // The second read waits for the first, so it starts from the first's end.
+    expect(sessionReads(exec)).toHaveLength(1);
+    release('');
+    await rec.drain();
+
+    expect(sessionReads(exec).map(startOf)).toEqual([0, Buffer.byteLength(content)]);
+  });
+
+  it('never puts a session id that is not a UUID into a shell command', async () => {
+    const rec = recorder();
+    const { runtime, exec } = setup({ modelProxy: null });
+    h.script.push([[init('x; rm -rf / #'), success('ok')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U' });
+    await rec.drain();
+
+    expect(sessionReads(exec)).toEqual([]);
+    expect(exec.mock.calls.map((c) => c[0]).join('\n')).not.toContain('rm -rf');
+    expect(rec.addHarnessSessionFile).not.toHaveBeenCalled();
   });
 });
 

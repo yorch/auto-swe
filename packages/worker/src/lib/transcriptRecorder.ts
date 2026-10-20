@@ -5,10 +5,13 @@
  * One `TranscriptRecorder` per activity attempt, bound to the attempt's async
  * context by `activityTranscriptInterceptor` (registered LAST so the node-tag
  * ALS and the activity span are already bound). `recordingFetch` wraps the
- * fetch every in-process model call goes through (lib/models.ts) and records
- * each exchange as an `http_call`; a proxied Claude Code turn's exchanges
- * arrive through the model proxy's `onExchange`, and a non-proxied one's SDK
- * messages arrive as `harness_message` records.
+ * fetch every in-process model call goes through (lib/models.ts) and the
+ * embedding fetch (lib/embeddings.ts, vectors omitted), and records each
+ * exchange as an `http_call`; a proxied Claude Code turn's exchanges arrive
+ * through the model proxy's `onExchange`, and a non-proxied one's SDK messages
+ * arrive as `harness_message` records, plus the session-file delta the turn
+ * wrote (`harness_session_file`). Every Claude Code turn starts with a
+ * `harness_turn` record of the options it ran with.
  *
  * Records are serialized NDJSON lines — `{ seq, ts, kind, … }`, secrets
  * redacted by `redactJsonValues` and NEVER truncated — flushed to gzipped
@@ -112,6 +115,51 @@ export interface HttpCallRecord {
   responseTruncated?: boolean;
   error?: string;
   agentKeys?: string[];
+  /** `embedding`: an embedding call — recorded, but not counted as a model call. */
+  purpose?: 'embedding';
+}
+
+/** A Claude Code turn's configuration, as the runtime passed it to the SDK. */
+export interface HarnessTurnRecord {
+  runtime: 'claude-code';
+  proxied: boolean;
+  model: string;
+  /**
+   * `append` is the prompt text appended to the preset — on the adapter's
+   * first turn in this transcript and whenever its sha256 changes; otherwise
+   * `unchanged: true` with the same sha256. A prompt too long for the command
+   * line is staged as a file the harness is pointed at — `stagedPath` names
+   * it, and `append` still holds the full text.
+   */
+  systemPrompt: {
+    preset: 'claude_code';
+    /** sha256 of the appended prompt text, on every turn. */
+    sha256: string;
+    stagedPath?: string;
+  } & ({ append: string } | { unchanged: true });
+  tools: string[];
+  maxTurns: number;
+  /** Server names only — never URLs, headers, or credentials. */
+  mcpServers: string[];
+  loadProjectSettings: boolean;
+  effort?: string;
+}
+
+/** The bytes a non-proxied Claude Code turn added to its session JSONL file. */
+export interface HarnessSessionFileRecord {
+  runtime: 'claude-code';
+  sessionId: string;
+  path: string;
+  /** Byte offset in the file where this delta starts. */
+  offset: number;
+  /** Bytes delivered by the read (what `lines` was parsed from). */
+  bytes: number;
+  /** The read stopped at the per-turn cap; the rest follows on a later turn. */
+  truncated: boolean;
+  /** The file was smaller than the recorded offset (rewritten), so it was read from 0. */
+  reset?: true;
+  /** Parsed JSONL objects; an unparseable line is kept as its string. */
+  lines: unknown[];
 }
 
 const storage = new AsyncLocalStorage<TranscriptRecorder>();
@@ -208,7 +256,10 @@ export class TranscriptRecorder {
     void capture.finally(() => this.captures.delete(capture));
   }
 
-  /** The model call the proxy or fetch layer saw end. Counts toward `modelCallCount`. */
+  /**
+   * The model call the proxy or fetch layer saw end. Counts toward
+   * `modelCallCount`, except token counting and embedding calls.
+   */
   addHttpCall(record: HttpCallRecord): void {
     const rec =
       record.responseTruncated && record.response
@@ -217,7 +268,11 @@ export class TranscriptRecorder {
             response: { ...record.response, body: truncatedValue(record.response.body) },
           }
         : record;
-    if (this.append('http_call', rec) && !rec.path.split('?')[0]?.endsWith('/count_tokens')) {
+    if (
+      this.append('http_call', rec) &&
+      rec.purpose !== 'embedding' &&
+      !rec.path.split('?')[0]?.endsWith('/count_tokens')
+    ) {
       this.modelCallCount += 1;
     }
   }
@@ -225,6 +280,26 @@ export class TranscriptRecorder {
   /** A Claude Code SDK stream message — only ever called for a non-proxied turn. */
   addHarnessMessage(message: unknown): void {
     this.append('harness_message', { message, runtime: 'claude-code' });
+  }
+
+  /** A Claude Code turn's configuration, recorded as the turn starts. */
+  addHarnessTurn(record: HarnessTurnRecord): void {
+    this.append('harness_turn', record);
+  }
+
+  /**
+   * What a non-proxied Claude Code turn appended to its session file. True
+   * only when the record itself landed in the buffer — false when it was
+   * dropped (closed, past the transcript cap) or replaced by a bare
+   * `record_truncated` marker, so the caller knows not to advance its offset.
+   */
+  addHarnessSessionFile(record: HarnessSessionFileRecord): boolean {
+    return this.append('harness_session_file', record) === 'stored';
+  }
+
+  /** False once nothing more can be recorded (closed, or past the transcript cap). */
+  acceptsRecords(): boolean {
+    return !this.closed && !this.truncated;
   }
 
   /** 'ai-sdk' | 'claude-code'; stamps the row's runtime column. */
@@ -271,7 +346,12 @@ export class TranscriptRecorder {
     }
   }
 
-  private append(kind: string, payload: object): boolean {
+  /**
+   * Buffer one record. `stored`: the record's line (fields possibly shrunk);
+   * `replaced`: only a bare `record_truncated` marker stands in for it; false:
+   * nothing was recorded.
+   */
+  private append(kind: string, payload: object): 'stored' | 'replaced' | false {
     if (this.closed) {
       this.recordDropped();
       return false;
@@ -283,6 +363,7 @@ export class TranscriptRecorder {
     const seq = this.seq;
     let line = JSON.stringify({ kind, seq, ts: new Date().toISOString(), ...redacted });
     let markerAfter = false;
+    let outcome: 'stored' | 'replaced' = 'stored';
     if (Buffer.byteLength(line) > MAX_RECORD_BYTES) {
       // A single unbounded field must not own the whole transcript: replace
       // request/response.body with a head + size marker, and say so.
@@ -306,6 +387,7 @@ export class TranscriptRecorder {
           seq,
           ts: new Date().toISOString(),
         });
+        outcome = 'replaced';
       } else {
         markerAfter = true;
       }
@@ -336,7 +418,7 @@ export class TranscriptRecorder {
     if (this.bufferedBytes >= PART_FLUSH_BYTES) {
       this.scheduleFlush();
     }
-    return true;
+    return outcome;
   }
 
   /** A `marker` bookkeeping record; never itself truncated or a trigger for one. */
@@ -642,6 +724,42 @@ function capturedBody(body: unknown): string | undefined {
   return undefined;
 }
 
+/** The stand-in a recorded embedding vector is replaced with. */
+function omittedVector(vector: unknown): unknown {
+  return Array.isArray(vector) ? { dimensions: vector.length, omitted: 'vector' } : vector;
+}
+
+/**
+ * An embedding response body with every vector replaced by
+ * `{ omitted: 'vector', dimensions }`: OpenAI and OpenAI-compatible
+ * `data[].embedding`, Google `embedding.values` (`:embedContent`) and
+ * `embeddings[].values` (`:batchEmbedContents`). Everything else is kept.
+ */
+export function omitEmbeddingVectors(body: unknown): unknown {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+    return body;
+  }
+  const out: Record<string, unknown> = { ...(body as Record<string, unknown>) };
+  const withValues = (item: unknown): unknown =>
+    typeof item === 'object' && item !== null && 'values' in item
+      ? { ...item, values: omittedVector((item as { values: unknown }).values) }
+      : item;
+  if (Array.isArray(out.data)) {
+    out.data = out.data.map((item: unknown) =>
+      typeof item === 'object' && item !== null && 'embedding' in item
+        ? { ...item, embedding: omittedVector((item as { embedding: unknown }).embedding) }
+        : item
+    );
+  }
+  if (out.embedding !== undefined) {
+    out.embedding = withValues(out.embedding);
+  }
+  if (Array.isArray(out.embeddings)) {
+    out.embeddings = out.embeddings.map(withValues);
+  }
+  return out;
+}
+
 /**
  * Wrap a model-call fetch so every exchange is recorded on the active
  * transcript. The caller's response is returned untouched and un-delayed; the
@@ -649,12 +767,18 @@ function capturedBody(body: unknown): string | undefined {
  * records when it ends — or with an `error` when the body aborts. A call whose
  * fetch itself throws is recorded the same way. Pass-through when no activity
  * is recording.
+ *
+ * `purpose: 'embedding'` marks the records as embedding calls (not counted as
+ * model calls) and records the response with its vectors omitted
+ * ({@link omitEmbeddingVectors}); the request — the embedded inputs — is kept
+ * in full.
  */
 export function recordingFetch(
   inner: typeof fetch,
-  opts: { maxRecordBytes?: number } = {}
+  opts: { maxRecordBytes?: number; purpose?: 'embedding' } = {}
 ): typeof fetch {
   const cap = opts.maxRecordBytes ?? MAX_RECORD_BYTES;
+  const purpose = opts.purpose;
   const wrapped = async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const recorder = currentTranscriptRecorder();
     if (!recorder) {
@@ -685,6 +809,7 @@ export function recordingFetch(
         host,
         method,
         path,
+        ...(purpose ? { purpose } : {}),
         request,
       });
       throw err;
@@ -733,10 +858,17 @@ export function recordingFetch(
           host,
           method,
           path,
+          ...(purpose ? { purpose } : {}),
           request,
           response: {
+            // An embedding response is stripped of its vectors whatever its
+            // content-type says, whenever it parses as JSON.
             body:
-              bodyText && (contentType ?? '').includes('json') ? tryParseJson(bodyText) : bodyText,
+              purpose === 'embedding'
+                ? omitEmbeddingVectors(bodyText ? tryParseJson(bodyText) : bodyText)
+                : bodyText && (contentType ?? '').includes('json')
+                  ? tryParseJson(bodyText)
+                  : bodyText,
             contentType,
           },
           responseTruncated: capped || undefined,

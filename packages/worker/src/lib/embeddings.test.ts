@@ -12,12 +12,14 @@ const {
   traceCreateMock,
   runFindUniqueMock,
   ledgerUpdateManyMock,
+  guardedFetch,
 } = vi.hoisted(() => ({
   activity: { inActivity: false },
   credFindFirstMock: vi.fn().mockResolvedValue(null),
   embeddingFindUniqueMock: vi.fn(),
   embedMock: vi.fn(),
   googleEmbeddingFactory: vi.fn(),
+  guardedFetch: vi.fn(),
   ledgerUpdateManyMock: vi.fn(),
   openaiCompatTextEmbeddingFactory: vi.fn(),
   openaiEmbeddingFactory: vi.fn(),
@@ -49,6 +51,12 @@ vi.mock('@ai-sdk/openai-compatible', () => ({
   createOpenAICompatible: vi.fn(() => ({ embeddingModel: openaiCompatTextEmbeddingFactory })),
 }));
 
+// The SSRF-guarded fetch the embedding clients are built over.
+vi.mock('@auto-swe/shared/lib/modelDiscovery', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/modelDiscovery')>()),
+  modelCallFetch: () => guardedFetch,
+}));
+
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     activeWorkflow: { updateMany: ledgerUpdateManyMock },
@@ -78,12 +86,14 @@ vi.mock('./costTracking.js', () => ({
     spec === 'openai/text-embedding-3-large' ? (input * 0.13) / 1_000_000 : 0,
 }));
 
+import { createOpenAI } from '@ai-sdk/openai';
 import { _resetConfigCacheForTests } from '@auto-swe/shared/config/cache';
 import { _resetKeyCacheForTests, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { APICallError } from 'ai';
 import { ConfigMissingError } from './config/resolver.js';
 import { _resetEmbeddingClientForTests, generateEmbedding } from './embeddings.js';
 import { withSpendOwner } from './spendOwner.js';
+import { runWithTranscriptRecorder } from './transcriptRecorder.js';
 
 const originalEnv = { ...process.env };
 
@@ -105,6 +115,7 @@ beforeEach(() => {
   _resetConfigCacheForTests();
   _resetEmbeddingClientForTests();
   embedMock.mockReset();
+  guardedFetch.mockReset();
   openaiEmbeddingFactory.mockReset().mockReturnValue({ tag: 'openai-embed' });
   openaiCompatTextEmbeddingFactory.mockReset().mockReturnValue({ tag: 'compat-embed' });
   googleEmbeddingFactory.mockReset().mockReturnValue({ tag: 'google-embed' });
@@ -359,5 +370,59 @@ describe('embedding usage recording', () => {
     embedMock.mockResolvedValue({ embedding: new Array(1536).fill(0), usage: { tokens: 10 } });
 
     await expect(generateEmbedding('x')).resolves.toHaveLength(1536);
+  });
+});
+
+describe('embedding transcript capture', () => {
+  type EmbeddingBody = { data: { embedding: number[] }[] };
+  /** The fetch embeddings.ts handed the OpenAI client. */
+  async function clientFetch(): Promise<typeof fetch> {
+    embeddingFindUniqueMock.mockResolvedValue({
+      credential: credRow('sk-from-db-1234'),
+      modelSpec: 'openai/text-embedding-3-large',
+    });
+    embedMock.mockResolvedValue({ embedding: new Array(1536).fill(0) });
+    await generateEmbedding('x');
+    const options = vi.mocked(createOpenAI).mock.calls.at(-1)?.[0] as { fetch: typeof fetch };
+    return options.fetch;
+  }
+  const response = () =>
+    new Response(JSON.stringify({ data: [{ embedding: new Array(1536).fill(0.5), index: 0 }] }), {
+      headers: { 'content-type': 'application/json' },
+    });
+
+  it('records each call on the activity transcript, vectors omitted', async () => {
+    const fetchFn = await clientFetch();
+    guardedFetch.mockImplementation(async () => response());
+    const calls: Record<string, unknown>[] = [];
+    const recorder = {
+      addHttpCall: (c: Record<string, unknown>) => calls.push(c),
+      trackCapture: (p: Promise<void>) => void p,
+    } as never;
+
+    const res = await runWithTranscriptRecorder(recorder, () =>
+      fetchFn('https://api.openai.com/v1/embeddings', {
+        body: JSON.stringify({ input: ['hello'], model: 'text-embedding-3-large' }),
+        method: 'POST',
+      })
+    );
+
+    // The caller still gets the vectors.
+    expect(((await res.json()) as EmbeddingBody).data[0]?.embedding).toHaveLength(1536);
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]).toMatchObject({
+      path: '/v1/embeddings',
+      purpose: 'embedding',
+      request: { input: ['hello'] },
+      response: { body: { data: [{ embedding: { dimensions: 1536, omitted: 'vector' } }] } },
+    });
+  });
+
+  it('passes straight through outside an activity recorder', async () => {
+    const fetchFn = await clientFetch();
+    guardedFetch.mockImplementation(async () => response());
+    const res = await fetchFn('https://api.openai.com/v1/embeddings', { method: 'POST' });
+    expect(((await res.json()) as EmbeddingBody).data[0]?.embedding).toHaveLength(1536);
+    expect(guardedFetch).toHaveBeenCalledTimes(1);
   });
 });

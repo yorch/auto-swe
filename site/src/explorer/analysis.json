@@ -8175,8 +8175,8 @@
       "title": "modelCallFetch is the list guard plus redirect refusal, with the host list read per request"
     },
     {
-      "anchor": "const embeddingFetch = modelCallFetch();",
-      "before": 1,
+      "anchor": "const embeddingFetch = recordingFetch(modelCallFetch(), { purpose: 'embedding' });",
+      "before": 5,
       "id": "embeddingFetch",
       "lines": 45,
       "path": "packages/worker/src/lib/embeddings.ts",

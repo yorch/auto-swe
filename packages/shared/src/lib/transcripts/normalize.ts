@@ -1,12 +1,14 @@
 /**
- * Map one transcript record (`http_call` request/response bodies, or a Claude
- * Code `harness_message`) to a provider-agnostic {@link NormalizedCall}.
+ * Map one transcript record (`http_call` request/response bodies, a Claude
+ * Code `harness_message`, or a Claude Code `harness_session_file`) to a
+ * provider-agnostic {@link NormalizedCall}.
  *
  * Detection is by path: Anthropic `/v1/messages`, OpenAI Responses
  * `/responses`, OpenAI-compatible `/chat/completions`, Google
  * `:generateContent` / `:streamGenerateContent`. Both JSON and SSE responses
  * are reassembled (Anthropic thinking + `input_json_delta` included). An
- * unknown shape returns `null`; the caller emits the raw record instead.
+ * embedding call, a `harness_turn`, or an unknown shape returns `null`; the
+ * caller emits the raw record instead.
  */
 import { parseSseEvents } from './sse.js';
 import type { NormalizedCall, NormalizedMessage, NormalizedPart } from './types.js';
@@ -25,6 +27,8 @@ interface RecordLike {
   request?: unknown;
   response?: { contentType?: string | null; body?: unknown };
   message?: unknown;
+  purpose?: string;
+  lines?: unknown;
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> =>
@@ -781,16 +785,103 @@ function normalizeHarnessMessage(record: RecordLike): NormalizedCall | null {
 }
 
 /**
+ * A non-proxied Claude Code turn's session-file delta as one NormalizedCall:
+ * the main conversation's user and assistant lines, in order, mapped like
+ * `harness_message`s. Sidechain lines (a subagent's own conversation),
+ * summaries, and lines that did not parse are left to the raw record.
+ * `response.usage` sums the assistant lines' usage (sidechains included). The
+ * preset prompt and tool schemas are not in the file, so `system` and `tools`
+ * stay unset; `source: 'harness_session_file'` marks it as a reconstruction.
+ */
+function normalizeHarnessSessionFile(record: RecordLike): NormalizedCall | null {
+  if (!Array.isArray(record.lines)) {
+    return null;
+  }
+  const messages: NormalizedMessage[] = [];
+  let model: string | undefined;
+  // The harness writes one line per content block, each repeating its API
+  // call's usage so far: the last report per message id counts. Sidechain
+  // calls are summed too — they are model calls the turn made.
+  const usageById = new Map<string, Record<string, unknown>>();
+  for (const [i, line] of record.lines.entries()) {
+    if (
+      isObj(line) &&
+      line.type === 'assistant' &&
+      isObj(line.message) &&
+      isObj(line.message.usage)
+    ) {
+      usageById.set(asString(line.message.id) ?? `line-${i}`, line.message.usage);
+    }
+  }
+  for (const line of record.lines) {
+    if (!isObj(line) || line.isSidechain === true) {
+      continue;
+    }
+    if (line.type !== 'assistant' && line.type !== 'user') {
+      continue;
+    }
+    const call = normalizeHarnessMessage({ message: line });
+    if (call) {
+      messages.push(...call.messages);
+      model = call.model ?? model;
+    }
+  }
+  let usage: NonNullable<NormalizedCall['response']['usage']> | undefined;
+  const add = (a: number | undefined, b: unknown) =>
+    asNumber(b) === undefined ? a : (a ?? 0) + (asNumber(b) ?? 0);
+  for (const u of usageById.values()) {
+    usage = {
+      cacheRead: add(usage?.cacheRead, u.cache_read_input_tokens),
+      cacheWrite: add(usage?.cacheWrite, u.cache_creation_input_tokens),
+      inputTokens: add(usage?.inputTokens, u.input_tokens),
+      outputTokens: add(usage?.outputTokens, u.output_tokens),
+    };
+  }
+  return {
+    messages,
+    model,
+    provider: 'anthropic',
+    response: { content: [], ...(usage ? { usage } : {}) },
+  };
+}
+
+/** An embedding call — by its recorded purpose, or by the provider's path. */
+function isEmbeddingCall(record: RecordLike): boolean {
+  const path = (record.path ?? '').split('?')[0] ?? '';
+  return (
+    record.purpose === 'embedding' ||
+    path.endsWith('/embeddings') ||
+    path.endsWith(':embedContent') ||
+    path.endsWith(':batchEmbedContents')
+  );
+}
+
+/**
  * Normalize one transcript record. Returns `null` when the record's shape is
- * not one of the known provider APIs.
+ * not one of the known provider APIs, and for records that are not a model
+ * conversation: embedding calls and `harness_turn` configuration records.
  */
 export function normalizeTranscriptRecord(record: RecordLike): NormalizedCall | null {
   if (record.kind === 'harness_message') {
-    return normalizeHarnessMessage(record);
+    return withSource(normalizeHarnessMessage(record), 'harness_message');
   }
-  if (record.kind !== 'http_call') {
+  if (record.kind === 'harness_session_file') {
+    return withSource(normalizeHarnessSessionFile(record), 'harness_session_file');
+  }
+  if (record.kind !== 'http_call' || isEmbeddingCall(record)) {
     return null;
   }
+  return withSource(normalizeHttpCall(record), 'http_call');
+}
+
+function withSource(
+  call: NormalizedCall | null,
+  source: NonNullable<NormalizedCall['source']>
+): NormalizedCall | null {
+  return call ? { ...call, source } : null;
+}
+
+function normalizeHttpCall(record: RecordLike): NormalizedCall | null {
   const path = record.path ?? '';
   if (path.includes('/v1/messages')) {
     return normalizeAnthropic(record);
