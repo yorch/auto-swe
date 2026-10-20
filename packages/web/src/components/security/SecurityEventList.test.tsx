@@ -74,6 +74,25 @@ describe('SecurityEventList memory events', () => {
     expect(screen.getByText('Lesson refused')).toBeTruthy();
     expect(screen.queryByText(/memory\.lesson_refused/)).toBeNull();
   });
+
+  it('names a dropped transcript digest entry apart from a dropped recall', () => {
+    render(
+      <SecurityEventList
+        events={[
+          {
+            ...base,
+            error: null,
+            eventType: 'MEMORY_RECALL_DROPPED',
+            inputJson: null,
+            outputJson: { count: 2, patterns: ['ignore-previous-instructions'] },
+            toolName: 'memory.transcript_digest_dropped',
+          },
+        ]}
+      />
+    );
+
+    expect(screen.getByText('2 transcript digest entries dropped')).toBeTruthy();
+  });
 });
 
 describe('SecurityEventList rows', () => {

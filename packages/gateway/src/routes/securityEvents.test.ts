@@ -144,7 +144,12 @@ describe('memory gate events', () => {
     });
     const where = prisma.agentTrace.findMany.mock.calls[0][0].where as { OR: object[] };
     expect(where.OR).toEqual([
-      { AND: [{ type: 'activity_event' }, { toolName: 'memory.recall_dropped' }] },
+      {
+        AND: [
+          { type: 'activity_event' },
+          { toolName: { in: ['memory.recall_dropped', 'memory.transcript_digest_dropped'] } },
+        ],
+      },
     ]);
   });
 
@@ -155,6 +160,7 @@ describe('memory gate events', () => {
       traceRow({ id: 'b', toolName: 'memory.consolidation_refused' }),
       traceRow({ id: 'c', toolName: 'memory.channel_write_refused' }),
       traceRow({ id: 'd', toolName: 'memory.recall_dropped' }),
+      traceRow({ id: 'e', toolName: 'memory.transcript_digest_dropped' }),
     ]);
     const res = await app.inject({
       headers: AUTH,
@@ -165,6 +171,7 @@ describe('memory gate events', () => {
       'MEMORY_WRITE_REFUSED',
       'MEMORY_WRITE_REFUSED',
       'MEMORY_WRITE_REFUSED',
+      'MEMORY_RECALL_DROPPED',
       'MEMORY_RECALL_DROPPED',
     ]);
   });

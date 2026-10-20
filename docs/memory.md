@@ -73,13 +73,61 @@ they failed in different ways. Every `<` in the fenced JSON is escaped, so quote
 the fence. A history that cannot be read is traced as `memory.attempt_history_unavailable` and the
 lesson is written from the latest evidence alone.
 
+Alongside the history, the activity reads what the implementer actually did from the run's
+[agent transcripts](./transcripts.md) (`lib/lessonTranscriptEvidence.ts`), with no model call:
+the newest three closed transcripts of the run's implementer sessions (`executeImplementation`, the
+CI, review and gate fixers, and the merge-conflict resolver). A retried activity counts once: of the
+transcripts that share an activity type, recording id and step attempt, only the highest Temporal
+attempt is read (a transcript with no recording id cannot be matched to its retries and is kept).
+Each part's sha256 is checked before it is decompressed, and a transcript with a part that fails is
+skipped whole. Records are folded into the extraction one at a time and dropped, so no whole
+transcript is held in memory; reading stops at the part that would take the total past 8 MiB
+uncompressed. The whole digest — the setting read included — has 20 seconds, and at the limit the
+work stops between records, parts and scans rather than running on unobserved. Code extracts four
+kinds of entry:
+
+- **failed tools** — a result of any tool other than the shell marked as an error, or a Mastra
+  workspace tool's result that starts with the text it returns on failure (`Error reading file:`,
+  `Error writing file:`, `Error listing directory:`, `Write blocked:`, `SECURITY CHECK FAILED`):
+  the tool, the head of its input (the file it named, if any) and the head of the error;
+- **failed commands** — a `bash` (Mastra) or `Bash` (Claude Code) call whose result is marked as an
+  error or says so in the tool's own format: Mastra's `Command finished (exit code N)` with a
+  non-zero N, or `Command failed:`, at the start of the output, and Claude Code's `Exit code N` on
+  its first line. An exit code mentioned anywhere else in the output does not count. The entry is
+  the head of the command and the tail of its output; a failing shell call is listed here only,
+  never also as a failed tool;
+- **churned files** — a file written three or more times, by `writeFile` (Mastra) or `Edit`,
+  `Write` and `MultiEdit` (Claude Code), with the count;
+- **final notes** — the head of each session's last assistant text.
+
+A model call's request repeats the conversation so far, so a tool result is paired with its call by
+call id and each call counts once however often it is replayed. A provider whose calls carry no
+unique id — a Google call is keyed by its tool's name — is paired by position within the record
+instead (the k-th call of a tool with the k-th result of that tool), and its replays are told apart
+by the tool's name and input plus the result's text, so two writes of one file with different
+content count as two.
+
+Identical entries are listed once, the latest five of each kind are kept, and the kinds share 4,000
+characters in equal parts. Every entry then goes through the memory gate's `INJECTION` scan (§5):
+one that matches is dropped, counted, and recorded as a `memory.transcript_digest_dropped` security
+event naming the patterns and the transcripts, never the text; a scan that cannot complete leaves
+the lesson without a digest. The digest reaches the agent as `transcriptDigest` inside the same
+fence, labelled as a heuristic extract that is data, not instructions, and only when it holds an
+entry. Only transcripts that contributed an entry are cited. A built digest is traced as
+`memory.transcript_digest` (the count of each kind, the drops and the transcript ids); one that
+cannot be built — a read error, the time limit, or the scan — as
+`memory.transcript_digest_unavailable` with its reason, and the lesson is written without it.
+`memory.lessonTranscriptEvidence` (setting registry, `/admin/platform-settings`, overridable per team
+and organization, on by default) turns it off; off, no transcript is read.
+
 Each lesson records where it came from. The row's `workflowRunId` names the run (whose traces hold
 the rest), `agentKey` and `model` the writer, and `metadata.evidence` cites the pull requests and
 head commit it was written about plus a 300-character quote of the evidence that drove it — the
 start of the rejection, or the end of the failing CI log, whichever the outcome failed on — and,
 when the lesson saw a history, how many rejections and CI failures it was written from
-(`history`). The model-free
-writers record their run and an `agentKey` of `mergeConflictResolver` or `shellStep`.
+(`history`), and, when it saw a transcript digest, the transcript ids and how many failed tools,
+failed commands and churned files it held (`transcripts`). The model-free writers record their run
+and an `agentKey` of `mergeConflictResolver` or `shellStep`.
 
 The agent also grades its confidence by how directly the evidence supports the lesson — `high`
 when a rejection or CI failure states the problem, `medium` when it points to it, `low` when the
@@ -168,7 +216,9 @@ its budget or is quarantined); a pattern set that could not be loaded fails the 
 writers log and drop the note). A recalled item that matches is dropped; a partial scan alone does not
 drop one, while a pattern set that could not be loaded, or a scan that throws, recalls nothing. A write
 refused for a match and a drop are security events on `/admin/security` — `MEMORY_WRITE_REFUSED` or
-`MEMORY_RECALL_DROPPED` — naming the patterns and, for a drop, the item ids, never the text. See
+`MEMORY_RECALL_DROPPED` — naming the patterns and, for a drop, the item ids, never the text. A
+transcript digest entry the lesson writer would have seen (§2) is screened the same way, and a
+drop is listed under `MEMORY_RECALL_DROPPED` too, as `memory.transcript_digest_dropped`. See
 [agents.md §6.4](./agents.md#64-custom-skill-security-scanning).
 
 ## 6. Administration
@@ -260,6 +310,18 @@ rows in id order, 100 per activity and four embedding calls at a time, and conti
   entries of each kind; at most 60 trace rows of each kind are read, and a review dispatch the
   bound cut short is left out. A `four-eyes` sign-off rejection is a person's answer, not a trace,
   and is not in it.
+- **The transcript digest is a heuristic extract.** It recognises the Mastra workspace tools and
+  Claude Code's `Bash`, `Edit`, `Write` and `MultiEdit` by name, and a failed command by its exit
+  code or error flag; a tool it does not know is reported only when its result is marked as an
+  error, and a file written through the shell is not counted as churn. A provider whose calls carry
+  no unique id is paired by position, and two identical calls with identical results — the same
+  command run twice with the same output — count once. It reads only the newest three implementer transcripts, so an earlier
+  session of a long run is not in it, and only transcripts that exist: with
+  `workflow.transcriptCaptureEnabled` off, or after `workflow.transcriptRetentionDays` has pruned
+  them, the lesson gets no digest. A transcript cut short — `truncated` at
+  `workflow.transcriptMaxBytes`, `incomplete` after a failed part write, `abandoned` mid-attempt,
+  or stopped by the 8 MiB read bound — yields a partial digest, and the read bound keeps a
+  session's earliest parts, not its last.
 - **The CI run that exhausts the loop is never read.** The loop fetches logs only for a failure it
   is about to fix, so the latest CI failure a lesson sees is the one before the run that ended the
   loop.

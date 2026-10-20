@@ -1,5 +1,5 @@
 import {
-  MEMORY_SECURITY_EVENTS,
+  MEMORY_DROPPED_EVENTS,
   MEMORY_WRITE_REFUSED_EVENTS,
   SECURITY_TRACE_ERRORS,
 } from '@auto-swe/shared/lib/scannerCache';
@@ -40,7 +40,7 @@ const TYPE_PREDICATES: Record<SecurityEventType, object> = {
   CONTENT_SECURITY_WARN: { error: SECURITY_TRACE_ERRORS.CONTENT_WARN },
   FILE_BLOCK: { error: { startsWith: SECURITY_TRACE_ERRORS.FILE_BLOCK } },
   LLM_SUSPICIOUS: activityEvent('llm.suspicious_output'),
-  MEMORY_RECALL_DROPPED: activityEvent(MEMORY_SECURITY_EVENTS.RECALL_DROPPED),
+  MEMORY_RECALL_DROPPED: activityEvent({ in: [...MEMORY_DROPPED_EVENTS] }),
   MEMORY_WRITE_REFUSED: activityEvent({ in: [...MEMORY_WRITE_REFUSED_EVENTS] }),
   SHELL_BLOCK: { error: { startsWith: SECURITY_TRACE_ERRORS.SHELL_BLOCK } },
 };
@@ -68,7 +68,11 @@ function classifyEvent(trace: {
   if (trace.type === 'activity_event' && trace.toolName === 'channel.suspicious_input') {
     return 'CHANNEL_SUSPICIOUS';
   }
-  if (trace.type === 'activity_event' && trace.toolName === MEMORY_SECURITY_EVENTS.RECALL_DROPPED) {
+  if (
+    trace.type === 'activity_event' &&
+    trace.toolName !== null &&
+    MEMORY_DROPPED_EVENTS.includes(trace.toolName)
+  ) {
     return 'MEMORY_RECALL_DROPPED';
   }
   if (

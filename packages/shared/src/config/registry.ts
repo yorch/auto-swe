@@ -406,6 +406,18 @@ export const SETTING_DEFINITIONS = {
     schema: z.number().int().min(0).max(36_500),
     unit: 'days',
   }),
+  'memory.lessonTranscriptEvidence': defineSetting({
+    defaultValue: true,
+    description:
+      "Whether the lesson writer is given a digest of the implementer's own transcripts: the shell commands that failed, the other tool calls that failed, the files written three or more times, and each session's last notes. Extracted by code from the run's latest three implementer transcripts, bounded to 4,000 characters, and screened by the memory gate's injection scan. Off, the transcripts are not read.",
+    group: 'memory',
+    label: 'Transcript evidence for lessons',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'memory.orgSimilarityThreshold': defineSetting({
     defaultValue: 0.7,
     description:
