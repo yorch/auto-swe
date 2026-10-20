@@ -255,7 +255,11 @@ describe.skipIf(!enabled)('registry proxy against real package managers', () => 
    * CI (the runner is uid 1001, the image's `node` is 1000; locally both are
    * often 1000, which hides it). Each side therefore opens up what it wrote:
    * the host before a run (it can only chmod its own files — the rest were
-   * opened by the container), the container after every command.
+   * opened by the container), the container after every command — through
+   * `find -user`, because busybox `chmod -R` gives up on a whole tree once it
+   * fails on its host-owned top directory. `REGISTRY_PROXY_TEST_USER` overrides
+   * the container user (default `node`), which reproduces CI's mismatch
+   * locally (e.g. `1234`).
    */
   function openUp(...paths: string[]) {
     for (const p of paths) {
@@ -269,7 +273,7 @@ describe.skipIf(!enabled)('registry proxy against real package managers', () => 
       'run',
       '--rm',
       '-u',
-      'node',
+      process.env.REGISTRY_PROXY_TEST_USER ?? 'node',
       '-w',
       '/workspace/target-repo',
       '-v',
@@ -278,11 +282,15 @@ describe.skipIf(!enabled)('registry proxy against real package managers', () => 
       `${mounts.ws}:/workspace`,
       '-v',
       `${mounts.home}:/home/node`,
+      // `node`'s own HOME; explicit so an overriding uid with no passwd entry
+      // gets the same layout instead of HOME=/.
+      '-e',
+      'HOME=/home/node',
       ...envPairs.flatMap((e) => ['-e', e]),
       IMAGE,
       'sh',
       '-c',
-      '"$@"; s=$?; chmod -R a+rwX /workspace/target-repo /workspace /home/node 2>/dev/null; exit $s',
+      '"$@"; s=$?; find /workspace /home/node -user "$(id -u)" -exec chmod a+rwX {} + 2>/dev/null; exit $s',
       'sh',
       ...command,
     ]);
