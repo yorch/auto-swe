@@ -38,6 +38,8 @@ Every content or export stream ends with a `{"kind":"eof","complete":true}` sent
 
 `workflow.transcriptRetentionDays` (default 365) bounds storage. A daily Temporal schedule (`AGENT_TRANSCRIPT_PRUNE_ENABLED`, `AGENT_TRANSCRIPT_PRUNE_CRON`, default `57 4 * * *`) runs `pruneAgentTranscripts`: expired non-held transcripts are deleted (transcript row first — the part's `artifactId` is `Restrict`, so the artifacts cannot go first — then the artifacts; a leftover artifact is reaped by the orphan pass), `open` transcripts with no update in 24 h become `abandoned`, and orphaned `agent-transcript-part` artifacts older than 24 h are deleted. `workflow.transcriptCaptureEnabled` (default `true`) turns recording off without touching existing rows.
 
+The lesson writer reads a run's newest implementer transcripts for a code-built digest of failed tools and commands, churned files and final notes ([memory.md §2](./memory.md#2-writing-lessons)).
+
 The run page's Transcripts section lists each attempt's transcript with a download link (raw or normalized) and an ADMIN-only legal-hold toggle that asks for a reason.
 
 ## Limitations

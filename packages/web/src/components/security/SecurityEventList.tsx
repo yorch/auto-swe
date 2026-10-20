@@ -1,6 +1,7 @@
 'use client';
 
 import {
+  MEMORY_DROPPED_EVENTS,
   MEMORY_SECURITY_EVENTS,
   MEMORY_WRITE_REFUSED_EVENTS,
   SECURITY_TRACE_ERRORS,
@@ -117,7 +118,9 @@ function extractDetail(event: SecurityEvent): { primary: string; secondary?: str
       const patterns = (output?.patterns as string[]) ?? [];
       const what =
         event.eventType === 'MEMORY_RECALL_DROPPED'
-          ? `${Number(output?.count ?? 0)} recalled item(s) dropped`
+          ? event.toolName === MEMORY_SECURITY_EVENTS.TRANSCRIPT_DIGEST_DROPPED
+            ? `${Number(output?.count ?? 0)} transcript digest ${Number(output?.count) === 1 ? 'entry' : 'entries'} dropped`
+            : `${Number(output?.count ?? 0)} recalled item(s) dropped`
           : `${MEMORY_WRITE_LABELS[event.toolName ?? ''] ?? 'Memory write'} refused`;
       return {
         primary: what,
@@ -354,7 +357,11 @@ export function classifyTraceAsSecurityEvent(trace: {
   if (trace.type === 'activity_event' && trace.toolName === 'channel.suspicious_input') {
     return 'CHANNEL_SUSPICIOUS';
   }
-  if (trace.type === 'activity_event' && trace.toolName === MEMORY_SECURITY_EVENTS.RECALL_DROPPED) {
+  if (
+    trace.type === 'activity_event' &&
+    trace.toolName !== null &&
+    MEMORY_DROPPED_EVENTS.includes(trace.toolName)
+  ) {
     return 'MEMORY_RECALL_DROPPED';
   }
   if (

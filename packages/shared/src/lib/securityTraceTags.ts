@@ -54,7 +54,15 @@ export const MEMORY_SECURITY_EVENTS = {
   LESSON_REFUSED: 'memory.lesson_refused',
   /** A stored item matched on recall and was left out of the prompt. */
   RECALL_DROPPED: 'memory.recall_dropped',
+  /** An entry of the lesson writer's transcript digest matched and was left out of the prompt. */
+  TRANSCRIPT_DIGEST_DROPPED: 'memory.transcript_digest_dropped',
 } as const;
+
+/** The event names that mean the memory gate kept text out of a prompt. */
+export const MEMORY_DROPPED_EVENTS: readonly string[] = [
+  MEMORY_SECURITY_EVENTS.RECALL_DROPPED,
+  MEMORY_SECURITY_EVENTS.TRANSCRIPT_DIGEST_DROPPED,
+];
 
 /** The event names that mean the memory gate refused a write. */
 export const MEMORY_WRITE_REFUSED_EVENTS: readonly string[] = [
