@@ -9,7 +9,7 @@
  *
  * No internet is required: every URL the clients see points at the proxy.
  */
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -250,7 +250,21 @@ describe.skipIf(!enabled)('registry proxy against real package managers', () => 
     return allow;
   }
 
+  /**
+   * Bind mounts keep host ownership, and the host and container users differ on
+   * CI (the runner is uid 1001, the image's `node` is 1000; locally both are
+   * often 1000, which hides it). Each side therefore opens up what it wrote:
+   * the host before a run (it can only chmod its own files — the rest were
+   * opened by the container), the container after every command.
+   */
+  function openUp(...paths: string[]) {
+    for (const p of paths) {
+      spawnSync('chmod', ['-R', 'a+rwX', p]);
+    }
+  }
+
   async function client(dir: string, command: string[], opts?: { ignore?: boolean }) {
+    openUp(dir, mounts.ws, mounts.home);
     const r = await docker([
       'run',
       '--rm',
@@ -266,6 +280,10 @@ describe.skipIf(!enabled)('registry proxy against real package managers', () => 
       `${mounts.home}:/home/node`,
       ...envPairs.flatMap((e) => ['-e', e]),
       IMAGE,
+      'sh',
+      '-c',
+      '"$@"; s=$?; chmod -R a+rwX /workspace/target-repo /workspace /home/node 2>/dev/null; exit $s',
+      'sh',
       ...command,
     ]);
     if (r.code !== 0 && !opts?.ignore) {
