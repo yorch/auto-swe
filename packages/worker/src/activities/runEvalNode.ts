@@ -228,6 +228,7 @@ async function evaluateScorer(
           existingBranch: true,
           gate: scorer.gate as GateName,
           image: repo.executorImage ?? undefined,
+          teamId: repo.teamId,
         });
         return {
           kind: 'gate',

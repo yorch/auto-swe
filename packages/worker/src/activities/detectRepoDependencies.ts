@@ -213,13 +213,29 @@ export async function detectRepoDependencies(
   // fetched above for its script names. A listing failure must not fail the
   // scan, and must not overwrite a previous detection with an empty one.
   let rootEntries: string[] | null = null;
+  let treeTruncated = false;
   try {
-    rootEntries = await provider.listDirectory(repoRef, '');
+    // Full tree first (monorepo components); the root listing is the fallback.
+    const tree = await provider.listTree(repoRef);
+    if (tree !== null) {
+      rootEntries = tree.paths;
+      treeTruncated = tree.truncated;
+    }
   } catch (err) {
     console.error(
-      `detectRepoDependencies: failed to list ${repoRef.organizationName}/${repoRef.repoName} root`,
+      `detectRepoDependencies: failed to list ${repoRef.organizationName}/${repoRef.repoName} tree`,
       err
     );
+  }
+  if (rootEntries === null) {
+    try {
+      rootEntries = await provider.listDirectory(repoRef, '');
+    } catch (err) {
+      console.error(
+        `detectRepoDependencies: failed to list ${repoRef.organizationName}/${repoRef.repoName} root`,
+        err
+      );
+    }
   }
   if (rootEntries !== null) {
     // Root package.json was already fetched by the manifest loop when present.
@@ -239,6 +255,7 @@ export async function detectRepoDependencies(
       data: {
         detectedStack: detectStack(rootEntries, {
           packageJsonScripts: scripts,
+          treeTruncated,
         }) as unknown as Prisma.InputJsonValue,
         detectedStackAt: new Date(),
       },

@@ -181,6 +181,7 @@ async function defaultLoadCases(datasetId: string): Promise<ScreenCaseRow[]> {
     orderBy: { createdAt: 'asc' },
     select: {
       baselineSha: true,
+      dataset: { select: { teamId: true } },
       flakeScreenInfraErrors: true,
       goldenTest: true,
       id: true,
@@ -195,9 +196,10 @@ async function defaultLoadCases(datasetId: string): Promise<ScreenCaseRow[]> {
       quarantined: false,
     },
   });
-  return rows.map(({ flakeScreenInfraErrors, ...rest }) => ({
+  return rows.map(({ dataset, flakeScreenInfraErrors, ...rest }) => ({
     ...rest,
     infraErrors: flakeScreenInfraErrors,
+    teamId: dataset?.teamId ?? null,
   }));
 }
 

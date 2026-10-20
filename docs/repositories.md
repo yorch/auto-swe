@@ -248,16 +248,38 @@ Maven, daemons off). `build-executor.yml` builds one of them per run: the
 `stack` input (`node`|`python`|`jvm`, default `node`) selects it, unless
 `use_repo_dockerfile` builds the repository's own Dockerfile instead.
 
+**Recording the build.** A build writes the image back to the connection together with
+`executorImageBuild` (`{ stack, useRepoDockerfile }`), the settings it was built with. Like the
+image, only a platform admin may set the record; anyone may clear it. Clearing or changing the
+image without a new record clears it too. Re-saving the connection with its current image keeps
+it.
+
+**Weekly rebuild.** Every Monday a scheduled run lists the active repositories and rebuilds each
+one that has an `executorImageBuild`, using the recorded settings, so its image picks up
+base-image fixes. Each stored value is validated before it is used. Rebuilds run four at a time,
+and one repository's failure doesn't stop the others.
+
 ### Detected stack
 
-The scheduled dependency scan also probes the repository's root for stack
-signals and records the result on the connection (`detectedStack`, with
-`detectedStackAt`): the detected stack(s) (`node`/`python`/`jvm`/`go`), a
-primary by fixed precedence (node, then python, then jvm, then go), a suggested
-curated Dockerfile, and conservative suggested gate commands. The repository
-edit form shows it as a suggestion — detected stacks, the suggested
-`defaults/Dockerfile.<stack>` for `build-executor.yml`, and a **Use suggested
-gate commands** button that fills (but does not save) the gate fields.
+The scheduled dependency scan also records the repository's stacks on the connection
+(`detectedStack`, with `detectedStackAt`). It reads the repository tree recursively.
+
+- **What it scans.** Stack signals (`package.json`, `pyproject.toml`, `requirements.txt`,
+  `setup.py`, `pom.xml`, `build.gradle[.kts]`, `go.mod`) up to four directories deep. Paths under
+  `node_modules`, `vendor`, `.git`, `dist`, `build` and `target` are ignored.
+- **What it records:**
+  - `components`: every directory with a signal and its stacks, capped at 50
+  - `stacks`: the union of the components' stacks
+  - `primary`: the root's stack when the root has one. Otherwise it is the stack with the most
+    components. Ties are broken by the fixed precedence node, then python, then jvm, then go.
+  - a suggested curated Dockerfile
+  - conservative suggested gate commands, read from the root `package.json` scripts only
+- **Fallback.** When the tree cannot be listed, the scan falls back to the root directory. When
+  neither listing works, the previous detection is kept.
+
+The repository edit form shows the detection as a suggestion: the detected stacks and components,
+the suggested `defaults/Dockerfile.<stack>` for `build-executor.yml`, and a **Use suggested gate
+commands** button that fills the gate fields without saving them.
 
 ---
 
@@ -373,14 +395,16 @@ longer fit.
   run lets anyone who can merge to that repository's default branch decide what the rebuilt image
   runs, and that image receives the run's GitHub credential, so opt in only for repositories whose
   merge access is trusted at that level.
-- **Executor images are not rebuilt on a schedule.** `build-executor.yml` builds one repository per
-  run and only when dispatched with that repository's id (`workflow_dispatch` or a
-  `build-executor` `repository_dispatch`); a run without one fails. Nothing lists the repositories
-  and dispatches a periodic rebuild, so an image picks up base-image fixes only when someone
-  triggers it.
-- **Stack detection reads root files only.** `detectedStack` comes from filenames at the repository
-  root — a monorepo whose manifests live in subdirectories reports the root's stacks, and nested
-  components are invisible to it.
+- **Only images built by `build-executor.yml` are rebuilt on the schedule.** A repository whose
+  image was set by hand, or built before `executorImageBuild` was recorded, has no record and is
+  skipped until one dispatched build records it. A scheduled rebuild of an opted-in
+  `use_repo_dockerfile` repository builds whatever its default branch holds at that moment, so the
+  merge-trust caveat above applies to every scheduled run, not only the first one.
+- **Stack detection is bounded.** It ignores signals deeper than four directories, and anything
+  under the ignored build/vendor directories. It records at most 50 components
+  (`componentsTruncated`). When the provider truncates a very large tree (`treeTruncated`), it
+  only sees part of the repository. Gate-command suggestions come from the root `package.json`
+  only, so a repository with no root stack gets none.
 - **Overrides must be base URLs on one host each.** A GitHub Enterprise server served under a path
   prefix rather than at the root of its host cannot be expressed: the web base is stored as an
   origin.

@@ -147,6 +147,16 @@ jobs:
           AGENT_RUN_DOCKER_TEST: '1'
         run: yarn test packages/worker/src/activities/agentRunFinalize.docker.test.ts
 
+      # Real npm/pnpm/yarn clients against the registry proxy through the
+      # executor image — lockfile-mode installs and denial messages, end to end.
+      - name: Registry proxy client tests (Docker-backed)
+        env:
+          REGISTRY_PROXY_DOCKER_TEST: '1'
+          REGISTRY_PROXY_TEST_IMAGE: asw-executor-node:ci
+        run: |
+          docker build -f defaults/Dockerfile.node -t asw-executor-node:ci defaults
+          yarn test packages/worker/src/lib/registryProxy/clients.docker.test.ts
+
       # The same suites through the socket proxy the worker uses in compose, with
       # the same config: the suites cover `run -d`, `exec -i`, `cp`, `pause` and
       # `rm`, and the start step covers volumes, a foreground `run --rm` and `port`.

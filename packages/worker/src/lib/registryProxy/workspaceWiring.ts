@@ -9,6 +9,7 @@ import { decryptSecret } from '@auto-swe/shared/lib/crypto';
 import {
   buildAllowlist,
   LOCKFILE_NAMES,
+  packageManagerPins,
   parseLockfile,
 } from '@auto-swe/shared/lib/lockfileAllowlist';
 import { resolvePackageRegistries } from '@auto-swe/shared/lib/packageRegistry';
@@ -62,11 +63,13 @@ export async function beginWorkspaceRegistries(
   if (resolved.length === 0) {
     return null;
   }
-  const registries: ResolvedRegistry[] = resolved.map(({ registry }) => ({
+  const registries: ResolvedRegistry[] = resolved.map(({ isDefault, registry, scopes }) => ({
     allowPrivateNetwork: registry.allowPrivateNetwork,
     authKind: registry.authKind === 'basic' ? 'basic' : 'bearer',
     id: registry.id,
+    isDefault,
     name: registry.name,
+    scopes,
     token: registry.tokenCiphertext
       ? decryptSecret({
           authTag: registry.tokenAuthTag as Buffer,
@@ -116,16 +119,14 @@ export async function beginWorkspaceRegistries(
 export async function buildRegistryAllowlist(
   access: WorkspaceRegistryAccess,
   ref: string,
-  exec: (command: string, maxOutputBytes?: number) => Promise<{ stdout: string }>
+  exec: (command: string, maxOutputBytes?: number) => Promise<{ stdout: string }>,
+  repoDir = '/workspace/target-repo'
 ): Promise<Map<string, Map<string, Set<string>> | null>> {
   const map = new Map<string, Map<string, Set<string>> | null>();
   const combined = new Map<string, Set<string>>();
-  const listOut = await exec(
-    `cd /workspace/target-repo && git ls-tree -r --name-only -z ${shellQuote(ref)}`
-  );
-  const all = listOut.stdout
-    .split('\0')
-    .filter((p) => LOCKFILE_NAMES.has(p.split('/').pop() ?? ''));
+  const listOut = await exec(`cd ${repoDir} && git ls-tree -r --name-only -z ${shellQuote(ref)}`);
+  const allPaths = listOut.stdout.split('\0').filter(Boolean);
+  const all = allPaths.filter((p) => LOCKFILE_NAMES.has(p.split('/').pop() ?? ''));
   if (all.length > LOCKFILE_MAX_FILES) {
     logWarn('registry allowlist: more lockfiles than the cap, keeping the first', {
       count: all.length,
@@ -136,16 +137,14 @@ export async function buildRegistryAllowlist(
   for (const path of paths) {
     // Size first: an oversized lockfile is skipped before it is read — and a
     // truncated body is never parsed, since a prefix parses as nothing.
-    const sizeOut = await exec(
-      `cd /workspace/target-repo && git cat-file -s ${shellQuote(`${ref}:${path}`)}`
-    );
+    const sizeOut = await exec(`cd ${repoDir} && git cat-file -s ${shellQuote(`${ref}:${path}`)}`);
     const size = Number(sizeOut.stdout.trim());
     if (!Number.isFinite(size) || size > LOCKFILE_MAX_BYTES) {
       logWarn('registry allowlist: skipping oversized lockfile', { path, ref, size });
       continue;
     }
     const show = await exec(
-      `cd /workspace/target-repo && git show ${shellQuote(`${ref}:${path}`)}`,
+      `cd ${repoDir} && git show ${shellQuote(`${ref}:${path}`)}`,
       LOCKFILE_MAX_BYTES + 1
     );
     if (Buffer.byteLength(show.stdout) > LOCKFILE_MAX_BYTES) {
@@ -168,6 +167,36 @@ export async function buildRegistryAllowlist(
         path,
         ref,
       });
+    }
+  }
+  // Corepack pins: package.json files at the root or in a directory that holds
+  // one of the lockfiles found above get their packageManager field added to
+  // the allowlist, so the proxy can serve the pinned package-manager binaries.
+  const lockfileDirs = new Set(
+    all.map((p) => (p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : ''))
+  );
+  const manifestPaths = allPaths.filter(
+    (p) =>
+      p.split('/').pop() === 'package.json' &&
+      lockfileDirs.has(p.includes('/') ? p.slice(0, p.lastIndexOf('/')) : '')
+  );
+  for (const path of manifestPaths) {
+    const sizeOut = await exec(`cd ${repoDir} && git cat-file -s ${shellQuote(`${ref}:${path}`)}`);
+    const size = Number(sizeOut.stdout.trim());
+    if (!Number.isFinite(size) || size > LOCKFILE_MAX_BYTES) {
+      continue;
+    }
+    const show = await exec(
+      `cd ${repoDir} && git show ${shellQuote(`${ref}:${path}`)}`,
+      LOCKFILE_MAX_BYTES + 1
+    );
+    if (Buffer.byteLength(show.stdout) > LOCKFILE_MAX_BYTES) {
+      continue;
+    }
+    for (const pin of packageManagerPins(show.stdout)) {
+      const set = combined.get(pin.name) ?? new Set<string>();
+      set.add(pin.version);
+      combined.set(pin.name, set);
     }
   }
   for (const r of access.registries) {

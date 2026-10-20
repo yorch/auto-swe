@@ -709,6 +709,38 @@ export class GitHubScmProvider implements ScmProvider {
     }
   }
 
+  async listTree(
+    repo: RepoRef,
+    ref?: string
+  ): Promise<{ paths: string[]; truncated: boolean } | null> {
+    const octokit = await octokitFor(repo);
+    try {
+      let treeRef = ref;
+      if (!treeRef) {
+        const { data: repoData } = await octokit.repos.get({
+          owner: repo.organizationName,
+          repo: repo.repoName,
+        });
+        treeRef = repoData.default_branch ?? 'HEAD';
+      }
+      const { data } = await octokit.git.getTree({
+        owner: repo.organizationName,
+        recursive: '1',
+        repo: repo.repoName,
+        tree_sha: treeRef,
+      });
+      return {
+        paths: data.tree.filter((e) => e.type === 'blob').flatMap((e) => (e.path ? [e.path] : [])),
+        truncated: data.truncated ?? false,
+      };
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
   async findBranchWork(
     repo: RepoRef,
     branch: string,

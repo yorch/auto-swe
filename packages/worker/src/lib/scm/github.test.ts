@@ -130,6 +130,66 @@ describe('GitHubScmProvider.listDirectory', () => {
   });
 });
 
+describe('GitHubScmProvider.listTree', () => {
+  const repo = {
+    installationHost: 'github.com',
+    organizationName: 'acme',
+    repoName: 'payments-api',
+  };
+  const provider = new GitHubScmProvider();
+  const json = (body: unknown, status = 200) => {
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify(body), {
+        headers: { 'content-type': 'application/json' },
+        status,
+      }) as never
+    );
+  };
+  const TREE = {
+    tree: [
+      { path: 'package.json', type: 'blob' },
+      { path: 'src', type: 'tree' },
+      { path: 'apps/api/package.json', type: 'blob' },
+    ],
+    truncated: false,
+  };
+
+  it('requests the recursive tree and returns blob paths only', async () => {
+    json(TREE);
+    expect(await provider.listTree(repo, 'main')).toEqual({
+      paths: ['package.json', 'apps/api/package.json'],
+      truncated: false,
+    });
+    expect(lastFetch().url).toContain('/repos/acme/payments-api/git/trees/main');
+    expect(lastFetch().url).toContain('recursive=1');
+  });
+
+  it('resolves the default branch when ref is omitted', async () => {
+    json({ default_branch: 'trunk' });
+    json(TREE);
+    expect(await provider.listTree(repo)).toEqual({
+      paths: ['package.json', 'apps/api/package.json'],
+      truncated: false,
+    });
+    expect(lastFetch().url).toContain('/git/trees/trunk');
+  });
+
+  it('returns null on a 404', async () => {
+    json({ message: 'Not Found' }, 404);
+    expect(await provider.listTree(repo, 'gone')).toBeNull();
+  });
+
+  it('throws on other errors', async () => {
+    json({ message: 'Internal Server Error' }, 500);
+    await expect(provider.listTree(repo, 'main')).rejects.toThrow();
+  });
+
+  it('passes the truncated flag through', async () => {
+    json({ ...TREE, truncated: true });
+    expect((await provider.listTree(repo, 'main'))?.truncated).toBe(true);
+  });
+});
+
 describe('resolveCiLogsTarget', () => {
   const trusted = ['https://github.com', 'https://api.github.com'];
 

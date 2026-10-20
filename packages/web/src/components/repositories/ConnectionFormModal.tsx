@@ -375,6 +375,20 @@ export function ConnectionFormModal({
                   {initial.detectedStack.suggestedDockerfile &&
                     ` — suggested executor build: defaults/Dockerfile.${initial.detectedStack.suggestedDockerfile}`}
                 </p>
+                {initial.detectedStack.components &&
+                  initial.detectedStack.components.length > 1 && (
+                    <p className="mt-1">
+                      {initial.detectedStack.components
+                        .map((c) => `${c.path || '(root)'}: ${c.stacks.join(', ')}`)
+                        .join('; ')}
+                    </p>
+                  )}
+                {(initial.detectedStack.componentsTruncated ||
+                  initial.detectedStack.treeTruncated) && (
+                  <p className="mt-1 text-xs">
+                    Detection is partial: the repository tree or component list was truncated.
+                  </p>
+                )}
                 {Object.keys(initial.detectedStack.suggestedGateCommands).length > 0 && (
                   <button
                     className="mt-1 text-xs text-accent-400"

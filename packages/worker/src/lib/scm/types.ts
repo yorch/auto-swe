@@ -226,6 +226,12 @@ export interface ScmProvider {
    */
   listDirectory(repo: RepoRef, path: string, ref?: string): Promise<string[] | null>;
   /**
+   * Every blob path in the repo tree at `ref` (the default branch when
+   * omitted). `truncated` is true when the provider cut the listing. `null`
+   * when the tree cannot be listed (404); other errors propagate.
+   */
+  listTree(repo: RepoRef, ref?: string): Promise<{ paths: string[]; truncated: boolean } | null>;
+  /**
    * Whether `branch` exists on the host, how many commits it has that `baseBranch`
    * lacks (null when it does not exist), and the open PR from it if any. Lets a run
    * that would reuse a fixed branch (a schedule) stop before it spends a workspace on

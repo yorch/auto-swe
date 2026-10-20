@@ -706,11 +706,22 @@ export async function createWorkspace(
           stdin: npmrc,
         }
       );
+      // The same npmrc lands in the exec user's home: Yarn classic reads
+      // `~/.npmrc` (it never honours NPM_CONFIG_USERCONFIG), and npm/pnpm pick
+      // it up too — the project .npmrc a repo might carry cannot weaken it.
+      const home = (await rootExec('echo $HOME')).trim();
+      await backend.exec(
+        handle,
+        ['sh', '-c', `cat > ${shellQuote(home)}/.npmrc && chmod 600 ${shellQuote(home)}/.npmrc`],
+        {
+          heartbeatLabel: 'workspace: writing registry config',
+          stdin: npmrc,
+        }
+      );
       // Berry scope overrides live in the exec user's home rc — a project
       // .yarnrc.yml scope entry wins over it, which fails closed.
       const yarnrc = renderYarnrc(registry.registries, registry.baseUrl);
       if (yarnrc) {
-        const home = (await rootExec('echo $HOME')).trim();
         await backend.exec(handle, ['sh', '-c', `cat >> ${shellQuote(home)}/.yarnrc.yml`], {
           heartbeatLabel: 'workspace: writing yarn registry config',
           stdin: yarnrc,

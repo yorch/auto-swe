@@ -55,23 +55,70 @@ function nodeGateCommands(present: Set<string>, scripts: Set<string>): RepoGateC
  * Suggestions are deliberately conservative — lint/typecheck commands are only
  * suggested where the ecosystem names them unambiguously; tests always are.
  */
+const IGNORED_SEGMENTS = new Set(['node_modules', 'vendor', '.git', 'dist', 'build', 'target']);
+const MAX_DEPTH = 4;
+const MAX_COMPONENTS = 50;
+
+/** Whether a repo path can carry a stack signal: shallow, outside vendored/generated trees. */
+function usable(path: string): boolean {
+  const segments = path.split('/');
+  return segments.length <= MAX_DEPTH + 1 && !segments.some((seg) => IGNORED_SEGMENTS.has(seg));
+}
+
 export function detectStack(
   presentFiles: string[],
-  opts?: { packageJsonScripts?: string[] }
+  opts?: { packageJsonScripts?: string[]; treeTruncated?: boolean }
 ): DetectedStack {
-  const present = new Set(presentFiles);
-  const stacks = PRECEDENCE.filter((stack) => SIGNALS[stack].some((f) => present.has(f)));
-  const primary = stacks[0] ?? null;
+  const filtered = presentFiles.filter(usable);
+  // Group by containing directory: '' for root files, 'a/b' for nested.
+  const byDir = new Map<string, Set<string>>();
+  for (const path of filtered) {
+    const dir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
+    const base = path.split('/').pop() ?? path;
+    const set = byDir.get(dir) ?? new Set<string>();
+    set.add(base);
+    byDir.set(dir, set);
+  }
+  const dirs = [...byDir.keys()].sort();
+  const componentsTruncated = dirs.length > MAX_COMPONENTS;
+  const components = dirs
+    .slice(0, MAX_COMPONENTS)
+    .map((dir) => ({
+      path: dir,
+      stacks: PRECEDENCE.filter((stack) => SIGNALS[stack].some((f) => byDir.get(dir)?.has(f))),
+    }))
+    .filter((c) => c.stacks.length > 0);
 
-  const evidence = stacks.flatMap((stack) => SIGNALS[stack].filter((f) => present.has(f)));
+  const present = new Set(byDir.get('') ?? []);
+  const stacks = PRECEDENCE.filter((stack) => components.some((c) => c.stacks.includes(stack)));
+  // Root's own primary when the root has signals; otherwise the stack with
+  // the most components, ties broken by the fixed precedence.
+  const rootStacks = PRECEDENCE.filter((s) => SIGNALS[s].some((f) => present.has(f)));
+  const primary =
+    rootStacks[0] ??
+    (components.length === 0
+      ? null
+      : (PRECEDENCE.map((s) => ({
+          count: components.filter((c) => c.stacks.includes(s)).length,
+          stack: s,
+        })).sort(
+          (a, b) => b.count - a.count || PRECEDENCE.indexOf(a.stack) - PRECEDENCE.indexOf(b.stack)
+        )[0]?.stack ?? null));
+
+  const evidence = stacks.flatMap((stack) =>
+    filtered.filter((f) => SIGNALS[stack].includes(f.split('/').pop() ?? ''))
+  );
   for (const { file } of NODE_LOCKFILES) {
-    if (present.has(file)) {
-      evidence.push(file);
+    for (const f of filtered) {
+      if (f.split('/').pop() === file) {
+        evidence.push(f);
+      }
     }
   }
 
   const suggestedGateCommands: RepoGateCommands = {};
-  switch (primary) {
+  // Suggestions stay root-only: a repo with no root stack gets none.
+  switch (rootStacks[0] ?? null) {
     case 'node':
       Object.assign(
         suggestedGateCommands,
@@ -97,10 +144,13 @@ export function detectStack(
   }
 
   return {
+    ...(components.length > 0 ? { components } : {}),
+    ...(componentsTruncated ? { componentsTruncated } : {}),
     evidence,
     primary,
     stacks,
     suggestedDockerfile: primary === 'go' || primary === null ? null : primary,
     suggestedGateCommands,
+    ...(opts?.treeTruncated ? { treeTruncated: true } : {}),
   };
 }

@@ -33,10 +33,12 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 
 const fetchFileContent = vi.fn();
 const listDirectory = vi.fn();
+const listTree = vi.fn();
 vi.mock('../lib/scm/index.js', () => ({
   getScmProvider: () => ({
     fetchFileContent: (...args: unknown[]) => fetchFileContent(...args),
     listDirectory: (...args: unknown[]) => listDirectory(...args),
+    listTree: (...args: unknown[]) => listTree(...args),
   }),
   toRepoRef: (repo: { organizationName: string; repoName: string }) => ({
     apiUrl: null,
@@ -76,6 +78,7 @@ beforeEach(() => {
   repoDependencyDelete.mockResolvedValue({ id: 'edge-stale' });
   fetchFileContent.mockResolvedValue(null);
   listDirectory.mockResolvedValue([]);
+  listTree.mockResolvedValue(null);
 });
 
 describe('detectRepoDependencies', () => {

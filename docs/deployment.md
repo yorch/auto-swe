@@ -33,6 +33,10 @@ repository's own `.auto-swe/Dockerfile` instead. `defaults/` also carries `Docke
 `Dockerfile.jvm`; the `stack` input (`node`|`python`|`jvm`, default `node`) selects which curated
 Dockerfile is built.
 
+Each build also records its settings on the connection (`executorImageBuild`). A weekly schedule
+(`cron: '0 6 * * 1'`) rebuilds every active repository that has such a record, so the workflow's
+`GATEWAY_TOKEN` must be able to list repositories as well as update them.
+
 The workspace image tracks its own major, not the services'. It stays on `node:24-alpine` while the gateway, worker and web images run Node 26, because that image puts `yarn`, `pnpm` and `corepack` on `PATH` and the Node 26 image puts none of them there — Corepack is no longer bundled with the Node distribution.
 
 This is a harder constraint than "some target repos use Yarn". Every built-in quality gate is unconditionally a `yarn` command — `DEFAULT_COMMANDS` in `activities/qualityGates.ts` defines `runBuild`, `runLint`, `runTests`, `runTypecheck` and `runVulnScan` that way — and they run with `docker exec` inside this container. On an image without `yarn` all five exit `127`, for every repo regardless of its stack, and the failure reads as the agent producing broken code rather than as a missing tool. A per-connection `gateCommands` override sidesteps it, but that is opt-in and unset is the normal case.

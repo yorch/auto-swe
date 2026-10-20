@@ -9,7 +9,9 @@ const REG = {
   allowPrivateNetwork: false,
   authKind: 'bearer' as const,
   id: 'reg-1',
+  isDefault: true,
   name: 'npmjs',
+  scopes: [] as string[],
   token: 'up-token',
   upstreamUrl: 'http://upstream.test',
 };
@@ -155,6 +157,134 @@ describe('path validation', () => {
   }
 });
 
+describe('name-based routing and prefixed tarball paths', () => {
+  const SCOPED = {
+    ...REG,
+    id: 'reg-scoped',
+    isDefault: false,
+    name: 'acme',
+    scopes: ['@acme'],
+    upstreamUrl: 'http://acme.test',
+  };
+  const getTarball = async (path: string, reg: { token: string }, base: string) =>
+    get(base, path, reg.token);
+
+  const start = async (upstream: (url: string) => Promise<Response>) => {
+    const { base, proxy } = await startProxy(upstream);
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG, SCOPED] });
+    reg.setAllowlist(
+      new Map([
+        [REG.id, null],
+        [SCOPED.id, null],
+      ])
+    );
+    return { base, proxy, reg };
+  };
+
+  it('serves an Artifactory-prefixed unscoped tarball through the default registry', async () => {
+    const seen: string[] = [];
+    const { base, proxy, reg } = await start(async (url) => {
+      seen.push(url);
+      return new Response('TARBALL');
+    });
+    const res = await getTarball(
+      `/npm/${REG.id}/artifactory/api/npm/npm-remote/left-pad/-/left-pad-1.3.0.tgz`,
+      reg,
+      base
+    );
+    expect(res.status).toBe(200);
+    expect(seen).toEqual(['http://upstream.test/left-pad/-/left-pad-1.3.0.tgz']);
+    await proxy.close();
+  });
+
+  it('serves an Artifactory-prefixed scoped tarball with the @scope/ file form', async () => {
+    const seen: string[] = [];
+    const { base, proxy, reg } = await start(async (url) => {
+      seen.push(url);
+      return new Response('TARBALL');
+    });
+    const res = await getTarball(
+      `/npm/${SCOPED.id}/artifactory/api/npm/npm-remote/@acme/lib/-/@acme/lib-1.0.0.tgz`,
+      reg,
+      base
+    );
+    expect(res.status).toBe(200);
+    expect(seen).toEqual(['http://acme.test/@acme/lib/-/lib-1.0.0.tgz']);
+    await proxy.close();
+  });
+
+  it('routes a scoped tarball addressed to the default id to the scoped registry', async () => {
+    const seen: string[] = [];
+    const { base, proxy, reg } = await start(async (url) => {
+      seen.push(url);
+      return new Response('TARBALL');
+    });
+    const res = await getTarball(`/npm/${REG.id}/@acme/lib/-/lib-1.0.0.tgz`, reg, base);
+    expect(res.status).toBe(200);
+    expect(seen).toEqual(['http://acme.test/@acme/lib/-/lib-1.0.0.tgz']);
+    await proxy.close();
+  });
+
+  it('routes an unscoped request on the scoped id to the default registry', async () => {
+    const seen: string[] = [];
+    const { base, proxy, reg } = await start(async (url) => {
+      seen.push(url);
+      return new Response(JSON.stringify({ versions: {} }));
+    });
+    const res = await getTarball(`/npm/${SCOPED.id}/left-pad`, reg, base);
+    expect(res.status).toBe(200);
+    expect(seen).toEqual(['http://upstream.test/left-pad']);
+    await proxy.close();
+  });
+
+  it('answers 404 when no default registry is registered', async () => {
+    const { base, proxy } = await startProxy(async () => new Response('x'));
+    const reg = await proxy.register({ onDenied: () => {}, registries: [SCOPED] });
+    reg.setAllowlist(new Map([[SCOPED.id, null]]));
+    const res = await get(base, `/npm/${SCOPED.id}/left-pad`, reg.token);
+    expect(res.status).toBe(404);
+    expect(res.body).toContain('no registry serves left-pad');
+    await proxy.close();
+  });
+
+  it('rejects prefix dot-segments with 404 and zero upstream calls', async () => {
+    let calls = 0;
+    const { base, proxy, reg } = await start(async () => {
+      calls += 1;
+      return new Response('x');
+    });
+    for (const path of [
+      `/npm/${REG.id}/../left-pad/-/left-pad-1.3.0.tgz`,
+      `/npm/${REG.id}/%2e%2e/left-pad/-/left-pad-1.3.0.tgz`,
+    ]) {
+      expect((await get(base, path, reg.token)).status).toBe(404);
+    }
+    expect(calls).toBe(0);
+    await proxy.close();
+  });
+
+  it('still denies lockfile-mode tarballs after routing', async () => {
+    const denials: { name: string; registryId: string }[] = [];
+    const { base, proxy } = await startProxy(async () => new Response('x'));
+    const reg = await proxy.register({
+      onDenied: (d) => denials.push(d),
+      registries: [REG, SCOPED],
+    });
+    reg.setAllowlist(
+      new Map([
+        [REG.id, new Map([['left-pad', new Set(['1.0.0'])]])],
+        [SCOPED.id, null],
+      ])
+    );
+    const res = await get(base, `/npm/${REG.id}/left-pad/-/left-pad-1.3.0.tgz`, reg.token);
+    expect(res.status).toBe(403);
+    expect(denials).toEqual([
+      { name: 'left-pad', reason: 'not-in-lockfile', registryId: REG.id, version: '1.3.0' },
+    ]);
+    await proxy.close();
+  });
+});
+
 describe('tarballVersion', () => {
   it('parses unscoped and scoped names', () => {
     expect(tarballVersion('left-pad', 'left-pad-1.3.0.tgz')).toBe('1.3.0');
@@ -181,5 +311,11 @@ describe('npmrc rendering', () => {
     expect(env.join(' ')).toContain('NPM_CONFIG_USERCONFIG=/workspace/.auto-swe/npmrc');
     expect(env.join(' ')).toContain('NPM_CONFIG_REGISTRY=http://h:1/npm/r1');
     expect(env.join(' ')).toContain('YARN_NPM_AUTH_TOKEN=tok');
+  });
+  it('whitelists the http proxy for Berry even with only a default registry', () => {
+    const y = renderYarnrc([regs[0] as (typeof regs)[number]], 'http://h:1');
+    expect(y).toContain('unsafeHttpWhitelist:\n  - "h"');
+    expect(y).not.toContain('npmScopes');
+    expect(renderYarnrc([], 'http://h:1')).toBeNull();
   });
 });

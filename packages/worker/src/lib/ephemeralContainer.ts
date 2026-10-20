@@ -22,12 +22,9 @@ import path from 'node:path';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { activityCancellationSignal } from './cancellation.js';
-import {
-  type CapturedResult,
-  execShellAsync,
-  spawnCaptureAsync,
-  withHeartbeat,
-} from './execUtils.js';
+import { type CapturedResult, withHeartbeat } from './execUtils.js';
+import { workspaceBackend } from './workspaceBackend/index.js';
+import type { EphemeralContainerSpec } from './workspaceBackend/types.js';
 
 export type EphemeralRunResult = CapturedResult;
 
@@ -66,6 +63,12 @@ export interface EphemeralRunInput {
    * the JSON input payload (the value is shell-quoted by the caller).
    */
   env?: Record<string, string>;
+  /**
+   * Extra `--add-host` entries (`name:ip`), spliced in before the image like
+   * the egress-allowlist resolutions — used for the docker-host alias a shell
+   * step needs to reach the package-registry proxy.
+   */
+  extraAddHosts?: string[];
   /**
    * Optional per-line stdout callback (P5): the NDJSON containerStep transport
    * consumes the container's output line-by-line as it streams. stdout is still
@@ -250,34 +253,6 @@ export function buildSidecarDockerArgs(
   ];
 }
 
-/**
- * DNS-based egress filtering: resolve each allowlisted hostname and splice an
- * `--add-host` flag in before the `--` image separator so name lookups succeed
- * only for allowlisted hosts (non-allowlisted names fail against the
- * unreachable DNS). Mutates `args` in place. Wildcards are informational only;
- * IP-direct connections are not blocked.
- */
-async function injectEgressAddHosts(
-  input: Pick<EphemeralRunInput, 'network' | 'egressAllowlist'>,
-  args: string[]
-): Promise<void> {
-  if (!(input.network === 'egress' && input.egressAllowlist && input.egressAllowlist.length > 0)) {
-    return;
-  }
-  for (const hostname of input.egressAllowlist) {
-    if (hostname.startsWith('*')) {
-      continue;
-    }
-    try {
-      const { address } = await dnsPromises.lookup(hostname);
-      const imageIdx = args.indexOf('--');
-      args.splice(imageIdx, 0, `--add-host=${hostname}:${address}`);
-    } catch {
-      console.warn(`[egress-allowlist] DNS lookup failed for ${hostname}; skipping --add-host`);
-    }
-  }
-}
-
 /** A step's command wall clock when its node sets no `timeoutMs`. */
 const DEFAULT_COMMAND_TIMEOUT_MS = 600_000;
 
@@ -307,28 +282,67 @@ export function sandboxCommandTimeoutMs(requested: number | undefined): number {
  */
 export async function runEphemeralContainer(input: EphemeralRunInput): Promise<EphemeralRunResult> {
   const containerName = `shellstep-${crypto.randomBytes(8).toString('hex')}`;
-  const args = buildDockerArgs(input, containerName);
+  const spec = await ephemeralSpec(input, containerName);
   const timeoutMs = sandboxCommandTimeoutMs(input.timeoutMs);
-
-  await injectEgressAddHosts(input, args);
-
+  const backend = workspaceBackend();
   try {
-    return await spawnCaptureAsync('docker', args, {
+    return await backend.runEphemeral(spec, {
       heartbeatLabel: 'shell-step: command running',
       ...(input.onStdoutLine ? { onStdoutLine: input.onStdoutLine } : {}),
       timeoutMs,
     });
   } finally {
-    // Defensive cleanup — docker run --rm already removes the container on
-    // exit, but if the host process was killed mid-spawn the container may
-    // linger. `docker rm -f` is a no-op when the container is already gone.
-    try {
-      await execShellAsync(`docker rm -f ${containerName}`);
-    } catch {
-      /* already removed */
-    }
+    // `docker run --rm` removes the container on exit; this only covers a
+    // host-process kill mid-run. remove() is a no-op when already gone.
+    await backend.remove(containerName);
   }
 }
+
+/**
+ * The EphemeralRunInput → EphemeralContainerSpec mapping. Every lockdown flag
+ * is the driver's; what is left here is validation plus the caller-chosen
+ * knobs (mount, env, resource caps, network mode, resolved egress hosts).
+ */
+async function ephemeralSpecFromInput(
+  input: EphemeralRunInput,
+  containerName: string
+): Promise<EphemeralContainerSpec> {
+  // lockdownFlags still does all the input validation (and its return value's
+  // network mode feeds the spec); the flag block itself is the driver's.
+  const { network } = lockdownFlags(input);
+  const dockerNetwork = network === 'egress' ? 'bridge' : 'none';
+  const addHosts: string[] = [];
+  if (network === 'egress' && input.egressAllowlist) {
+    for (const hostname of input.egressAllowlist) {
+      if (hostname.startsWith('*')) {
+        continue;
+      }
+      try {
+        const { address } = await dnsPromises.lookup(hostname);
+        addHosts.push(`${hostname}:${address}`);
+      } catch {
+        console.warn(`[egress-allowlist] DNS lookup failed for ${hostname}; skipping --add-host`);
+      }
+    }
+  }
+  return {
+    addHosts: [...addHosts, ...(input.extraAddHosts ?? [])],
+    argv: input.command ? ['sh', '-c', input.command] : undefined,
+    cpus: input.cpus,
+    dns:
+      network === 'egress' && input.egressAllowlist && input.egressAllowlist.length > 0
+        ? ['127.0.0.2']
+        : [],
+    env: Object.entries(input.env ?? {}).map(([k, v]) => `${k}=${v}`),
+    image: input.image,
+    memory: input.memory,
+    name: containerName,
+    network: dockerNetwork,
+    volumes: [{ source: input.workspaceMount, target: '/workspace' }],
+    workdir: input.workdir ?? '/workspace',
+  };
+}
+const ephemeralSpec = ephemeralSpecFromInput;
 
 export interface SidecarRunInput extends Omit<EphemeralRunInput, 'command'> {
   /** Optional command override; absent, the image's own entrypoint serves HTTP. */
@@ -350,17 +364,6 @@ export interface SidecarRunResult {
   result: unknown;
 }
 
-/** Discover the loopback host port Docker published for `containerPort`. */
-async function resolvePublishedPort(containerName: string, containerPort: number): Promise<number> {
-  const out = await execShellAsync(`docker port ${containerName} ${containerPort}/tcp`);
-  // e.g. "127.0.0.1:49162" (possibly multiple lines); take the first host port.
-  const m = /:(\d{1,5})\s*$/m.exec(out.trim());
-  if (!m) {
-    throw new Error(`could not resolve published port for ${containerName}:${containerPort}`);
-  }
-  return Number(m[1]);
-}
-
 /**
  * Run an image as a detached HTTP **sidecar** (P5 sidecar transport): start it
  * with the full ephemeral lockdown + a loopback-only published port, poll its
@@ -369,16 +372,16 @@ async function resolvePublishedPort(containerName: string, containerPort: number
  */
 export async function runSidecarContainer(input: SidecarRunInput): Promise<SidecarRunResult> {
   const containerName = `sidecar-${crypto.randomBytes(8).toString('hex')}`;
-  const args = buildSidecarDockerArgs(input, containerName);
-  await injectEgressAddHosts(input, args);
+  const backend = workspaceBackend();
   const requestPath = input.requestPath ?? '/';
   const readinessPath = input.readinessPath ?? requestPath;
   const readyTimeoutMs = input.readyTimeoutMs ?? 30_000;
 
   try {
-    // `docker run -d` prints the container id; failure (non-zero) means it
-    // never started — surface stderr.
-    const started = await spawnCaptureAsync('docker', args, {
+    // A non-zero exit means the sidecar never started — surface stderr.
+    const spec = await ephemeralSpecFromInput({ ...input, command: input.command }, containerName);
+    spec.publishPort = input.port;
+    const started = await backend.startDetached(spec, {
       heartbeatLabel: 'sidecar: starting',
       timeoutMs: 60_000,
     });
@@ -387,7 +390,7 @@ export async function runSidecarContainer(input: SidecarRunInput): Promise<Sidec
         `sidecar failed to start: ${(started.stderr || started.stdout).slice(0, 500)}`
       );
     }
-    const hostPort = await resolvePublishedPort(containerName, input.port);
+    const hostPort = await backend.publishedPort(containerName, input.port);
     const baseUrl = `http://127.0.0.1:${hostPort}`;
 
     await waitForReady(`${baseUrl}${readinessPath}`, readyTimeoutMs);
@@ -421,11 +424,7 @@ export async function runSidecarContainer(input: SidecarRunInput): Promise<Sidec
     }
     return { result, status: res.status };
   } finally {
-    try {
-      await execShellAsync(`docker rm -f ${containerName}`);
-    } catch {
-      /* already removed */
-    }
+    await backend.remove(containerName);
   }
 }
 
