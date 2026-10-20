@@ -2,6 +2,7 @@ import type { InputSchema } from '../../lib/inputSchema.js';
 import type { WorkspaceProviderType } from '../../lib/workspaceProviders.js';
 import { BUDGET_TIERS } from '../../types/workflow.js';
 import type { WorkflowSpec } from '../spec.js';
+import { ADDRESS_PR_FEEDBACK_SPEC, PR_FEEDBACK_INPUT_SCHEMA } from './addressPrFeedback.js';
 import { AGENT_REVIEWED_PR_SPEC } from './agentReviewedPr.js';
 import { APPROVE_BEFORE_PR_SPEC } from './approveBeforePr.js';
 import { CI_TRIAGE_AND_FIX_SPEC, CI_TRIAGE_INPUT_SCHEMA } from './ciTriageAndFix.js';
@@ -97,6 +98,13 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     inputSchema: CI_TRIAGE_INPUT_SCHEMA,
     name: CI_TRIAGE_AND_FIX_SPEC.name,
     spec: CI_TRIAGE_AND_FIX_SPEC,
+  },
+  {
+    // Started by a pull-request feedback trigger (a repository's review/comment webhook).
+    description: ADDRESS_PR_FEEDBACK_SPEC.description,
+    inputSchema: PR_FEEDBACK_INPUT_SCHEMA,
+    name: ADDRESS_PR_FEEDBACK_SPEC.name,
+    spec: ADDRESS_PR_FEEDBACK_SPEC,
   },
   {
     description: AGENT_REVIEWED_PR_SPEC.description,

@@ -189,6 +189,15 @@ export {
   submitPrdWorkRequests,
 } from './prdWorkflow.js';
 export { prepareScheduledEvalRun } from './prepareScheduledEvalRun.js';
+export type { ExecutePrFeedbackInput, GatherResult } from './prFeedback.js';
+export {
+  executePrFeedbackImplementation,
+  finishPrFeedbackPush,
+  gatherPrFeedback,
+  pushPrFeedbackToPullRequest,
+  respondToPrFeedback,
+  runAgentPrFeedbackTask,
+} from './prFeedback.js';
 export { probeExecutorImage } from './probeExecutorImage.js';
 export type { PruneAgentTranscriptsResult } from './pruneAgentTranscripts.js';
 export { pruneAgentTranscripts } from './pruneAgentTranscripts.js';
@@ -201,6 +210,7 @@ export type {
   PublishOutcomeResult,
 } from './publishOutcome.js';
 export { publishOutcome } from './publishOutcome.js';
+export type { PushToPullRequestResult } from './pushToPullRequest.js';
 // Phase 2 quality gates
 export type { GateFixInput, GateInput, GateName, GateResult } from './qualityGates.js';
 export {

@@ -59,6 +59,7 @@ export const agentActivities = proxyActivities<
     typeof activitiesType,
     | 'executeImplementation'
     | 'executeCIFixImplementation'
+    | 'executePrFeedbackImplementation'
     | 'executeReviewFixImplementation'
     | 'executeGateFixImplementation'
     | 'planDecomposition'
@@ -235,6 +236,32 @@ export const agentNodeWorkspaceActivities = proxyActivities<
 // maximum plus a documented headroom for the clone, export, scan and push around
 // the loop (see `T_AGENT_RUN_ACTIVITY` in proxyOptions.ts).
 export const agentTaskActivities = proxyActivities<Pick<typeof activitiesType, 'runAgentTask'>>({
+  heartbeatTimeout: T_5M,
+  retry: RETRY_SINGLE_ATTEMPT,
+  startToCloseTimeout: T_AGENT_RUN_ACTIVITY,
+});
+
+// Pull-request feedback: a few host reads plus one structured LLM call each; retried like
+// the CI triage steps. `pushPrFeedbackToPullRequest` is idempotent through the fire row's
+// produced commit. `runAgentPrFeedbackTask` is single-attempt like `runAgentTask`: a retry
+// would re-spend the model and could re-push.
+export const prFeedbackActivities = proxyActivities<
+  Pick<
+    typeof activitiesType,
+    | 'gatherPrFeedback'
+    | 'pushPrFeedbackToPullRequest'
+    | 'respondToPrFeedback'
+    | 'finishPrFeedbackPush'
+  >
+>({
+  heartbeatTimeout: T_2M,
+  retry: RETRY_STANDARD,
+  startToCloseTimeout: T_10M,
+});
+
+export const prFeedbackAgentTaskActivities = proxyActivities<
+  Pick<typeof activitiesType, 'runAgentPrFeedbackTask'>
+>({
   heartbeatTimeout: T_5M,
   retry: RETRY_SINGLE_ATTEMPT,
   startToCloseTimeout: T_AGENT_RUN_ACTIVITY,

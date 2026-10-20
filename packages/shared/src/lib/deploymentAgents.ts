@@ -61,13 +61,18 @@ export const STEP_REQUIRED_AGENTS: Record<string, readonly string[] | null> = {
   executeCIFixImplementation: ['ciFixer', 'implementer', 'securityReview'],
   executeGateFixImplementation: ['gateFixer', 'implementer', 'securityReview'],
   executeImplementation: ['implementer', 'securityReview'],
+  executePrFeedbackImplementation: ['reviewFixer', 'implementer', 'securityReview'],
   executeReviewFixImplementation: ['reviewFixer', 'implementer', 'securityReview'],
   // The `ticketContextGatherer` persona, on the `planner` model it inherits.
   gatherTicketContext: ['ticketContextGatherer', 'planner'],
   planChannelTask: ['channelAssistant'],
   planDecomposition: ['decomposer', 'planner'],
   resolveMergeConflict: ['mergeConflictResolver', 'implementer', 'securityReview'],
+  // The `prFeedbackResponder` persona, on the `planner` model it inherits.
+  respondToPrFeedback: ['prFeedbackResponder', 'planner'],
   runAgentNode: null,
+  // The agent comes from the original agent run, but the gate is still fixed.
+  runAgentPrFeedbackTask: ['securityReview'],
   // The agent comes from the launch payload, but the post-diff gate is fixed.
   runAgentTask: ['securityReview'],
   runChannelSubtasks: ['channelAssistant'],

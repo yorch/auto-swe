@@ -281,6 +281,82 @@ register({
   name: 'finishCiFixPush',
 });
 
+// ── Pull-request feedback (the address-pr-feedback template) ─────────────────
+
+register({
+  category: 'control',
+  configFields: [],
+  description:
+    'Gather one round of pull-request feedback: re-read the trigger and the pull request ' +
+    "from the host by id, re-derive the pull request's origin from the database, keep the " +
+    "threads a repo member wrote, screen every comment for injection, count this source's " +
+    "rounds, and create the work branch at the pull request's head. output.decision decides.",
+  label: 'Gather pull-request feedback',
+  name: 'gatherPrFeedback',
+});
+
+register({
+  category: 'agent',
+  configFields: [SYSTEM_PROMPT_FIELD],
+  costHint: { role: 'implementer', tokensIn: 15000, tokensOut: 5000 },
+  description: 'Re-run the implementer with the fenced feedback brief as context.',
+  label: 'Address pull-request feedback',
+  name: 'executePrFeedbackImplementation',
+});
+
+register({
+  category: 'agent',
+  configFields: [SYSTEM_PROMPT_FIELD],
+  costHint: { role: 'implementer', tokensIn: 20000, tokensOut: 8000 },
+  description:
+    'Follow up on a pull request an agent run opened, with the same agent: the original ' +
+    'task plus the fenced brief (and fenced CI logs on a follow-up) as the prompt, a fresh ' +
+    'trusted container to commit and gate, and a non-force push to the work branch.',
+  label: 'Agent-run feedback task',
+  name: 'runAgentPrFeedbackTask',
+});
+
+register({
+  category: 'vcs',
+  configFields: [
+    {
+      description:
+        'Keep the work branch after the push, for a follow-up that watches the pushed commit.',
+      key: 'keepWorkBranch',
+      label: 'Keep work branch',
+      type: 'boolean',
+    },
+  ],
+  description:
+    "Push a feedback fix onto the pull request's own branch as a fast-forward. Only for a run " +
+    'the feedback automation started with the built-in template, onto a branch that is not ' +
+    'the default, protected or listed; output.pushed is false with the reason otherwise.',
+  label: 'Push a feedback fix to the pull request',
+  name: 'pushPrFeedbackToPullRequest',
+});
+
+register({
+  category: 'agent',
+  configFields: [SYSTEM_PROMPT_FIELD],
+  costHint: { role: 'planner', tokensIn: 6000, tokensOut: 1000 },
+  description:
+    'Report a feedback round on the pull request: one marked summary comment it edits, and a ' +
+    'reply on each answered thread. Best-effort; a skip mode posts only the reason.',
+  label: 'Respond to pull-request feedback',
+  name: 'respondToPrFeedback',
+});
+
+register({
+  category: 'vcs',
+  configFields: [],
+  description:
+    "Delete a feedback round's work branch once the round is done with it: after a push its " +
+    'head is the pushed commit; after a refused push or a dead end it is still the pull ' +
+    "request's head. Anything else keeps it. The pull request's branch is never touched.",
+  label: 'Finish a feedback round',
+  name: 'finishPrFeedbackPush',
+});
+
 // ── CI wait strategy ─────────────────────────────────────────────────────────
 
 register({
