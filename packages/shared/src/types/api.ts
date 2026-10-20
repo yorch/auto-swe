@@ -163,6 +163,16 @@ export interface DetectedStack {
   suggestedDockerfile: 'node' | 'python' | 'jvm' | null;
   /** The root filenames the detection read as signals. */
   evidence: string[];
+  /**
+   * Per-directory stack signals for monorepos: `path` is the directory
+   * ('' = root), `stacks` what its marker files indicate. Sorted by path,
+   * capped at 50.
+   */
+  components?: Array<{ path: string; stacks: Array<'node' | 'python' | 'jvm' | 'go'> }>;
+  /** More than 50 directories had stack signals. */
+  componentsTruncated?: boolean;
+  /** The tree listing itself was truncated by the provider. */
+  treeTruncated?: boolean;
 }
 
 /** Shape returned by GET /api/v1/repositories */
@@ -180,6 +190,8 @@ export interface RepositorySummary {
   isActive: boolean;
   consolidationEnabled: boolean;
   executorImage: string | null;
+  /** How the executor image was built (for scheduled rebuilds); null when unset. */
+  executorImageBuild?: { stack: 'node' | 'python' | 'jvm'; useRepoDockerfile: boolean } | null;
   /** Per-gate command overrides; null when the repository overrides none. */
   gateCommands?: RepoGateCommands | null;
   /** Stack detected from root manifests by the dependency scan; null until one ran. */

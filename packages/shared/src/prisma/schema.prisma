@@ -418,6 +418,9 @@ model Connection {
   /// pin and silently shadows the `workspaceImage` Tier-2 default the worker
   /// resolves at /admin/workflow.
   executorImage        String?             @map("executor_image")
+  /// How the executor image was built, for the scheduled rebuild workflow:
+  /// { stack: 'node'|'python'|'jvm', useRepoDockerfile: boolean }.
+  executorImageBuild   Json?               @map("executor_image_build")
   isActive             Boolean             @default(true) @map("is_active")
   consolidationEnabled Boolean             @default(true) @map("consolidation_enabled")
   /// Optional per-connection overrides for phase-2 quality-gate commands. Shape:

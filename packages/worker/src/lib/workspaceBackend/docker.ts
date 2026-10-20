@@ -10,6 +10,9 @@ import {
 } from '../execUtils.js';
 import { shellQuote } from '../shellQuote.js';
 import type {
+  EphemeralContainerSpec,
+  EphemeralRunOptions,
+  HelperContainerSpec,
   WorkspaceBackend,
   WorkspaceContainerSpec,
   WorkspaceExecOptions,
@@ -309,6 +312,115 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       /* already gone */
     }
   }
+
+  async createVolume(name: string): Promise<void> {
+    await execShellAsync(`docker volume create ${shellQuote(name)}`, {
+      heartbeatLabel: 'workspace: creating volume',
+    }).then(() => undefined);
+  }
+
+  async removeVolume(name: string): Promise<void> {
+    try {
+      await execShellAsync(`docker volume rm -f ${shellQuote(name)}`);
+    } catch {
+      /* already gone */
+    }
+  }
+
+  async runEphemeral(
+    spec: EphemeralContainerSpec,
+    opts: EphemeralRunOptions
+  ): Promise<CapturedResult> {
+    return spawnCaptureAsync('docker', ephemeralArgs(spec, false), {
+      heartbeatLabel: opts.heartbeatLabel,
+      ...(opts.onStdoutLine ? { onStdoutLine: opts.onStdoutLine } : {}),
+      timeoutMs: opts.timeoutMs,
+    });
+  }
+
+  async startDetached(
+    spec: EphemeralContainerSpec,
+    opts: EphemeralRunOptions
+  ): Promise<CapturedResult> {
+    return spawnCaptureAsync('docker', ephemeralArgs(spec, true), {
+      heartbeatLabel: opts.heartbeatLabel,
+      timeoutMs: opts.timeoutMs ?? 60_000,
+    });
+  }
+
+  async runHelper(spec: HelperContainerSpec, opts: EphemeralRunOptions): Promise<CapturedResult> {
+    return spawnCaptureAsync('docker', helperArgs(spec), {
+      heartbeatLabel: opts.heartbeatLabel,
+      ...(opts.maxOutputBytes ? { maxBuffer: opts.maxOutputBytes } : {}),
+      timeoutMs: opts.timeoutMs,
+    });
+  }
+
+  async publishedPort(name: string, containerPort: number): Promise<number> {
+    const out = await execShellAsync(`docker port ${shellQuote(name)} ${containerPort}/tcp`, {
+      heartbeatLabel: 'workspace: resolving published port',
+    });
+    const m = /:(\d{1,5})\s*$/m.exec(out.trim());
+    if (!m) {
+      throw new Error(`could not resolve published port for ${name}:${containerPort}`);
+    }
+    return Number(m[1]);
+  }
+}
+
+/**
+ * `docker run` argv for one platform-authored helper container (the shell
+ * step's git clone/finalize), byte-identical to what `shellStep.ts` emitted
+ * inline: no lockdown flags, no name and no `--` separator. Author commands
+ * never reach this path — they go through `runEphemeral`, which always applies
+ * the lockdown.
+ */
+function helperArgs(spec: HelperContainerSpec): string[] {
+  return [
+    'run',
+    '--rm',
+    ...(spec.volumes ?? []).flatMap((v) => [
+      '-v',
+      `${v.source}:${v.target}:${v.readOnly ? 'ro' : 'rw'}`,
+    ]),
+    ...(spec.env ?? []).flatMap((pair) => ['-e', pair]),
+    ...(spec.entrypoint ? ['--entrypoint', spec.entrypoint] : []),
+    spec.image,
+    ...(spec.argv ?? []),
+  ];
+}
+
+function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): string[] {
+  const volumeArgs = (spec.volumes ?? []).flatMap((v) => [
+    '-v',
+    `${v.source}:${v.target}:${v.readOnly ? 'ro' : 'rw'}`,
+  ]);
+  const flags = [
+    `--network=${spec.network ?? 'none'}`,
+    ...(spec.dns ?? []).map((d) => `--dns=${d}`),
+    `--memory=${spec.memory ?? '512m'}`,
+    `--cpus=${spec.cpus ?? 1}`,
+    `--pids-limit=${spec.pidsLimit ?? 256}`,
+    '--read-only',
+    '--tmpfs=/tmp:size=64m,mode=1777',
+    '--security-opt=no-new-privileges',
+    '--cap-drop=ALL',
+    ...(spec.addHosts ?? []).map((h) => `--add-host=${h}`),
+    ...(spec.env ?? []).flatMap((pair) => ['-e', pair]),
+    ...volumeArgs,
+    ...(spec.workdir ? ['-w', spec.workdir] : []),
+  ];
+  return [
+    'run',
+    ...(detached ? ['-d'] : []),
+    '--rm',
+    ...(spec.name ? ['--name', spec.name] : []),
+    ...flags,
+    ...(spec.publishPort ? ['-p', `127.0.0.1::${spec.publishPort}/tcp`] : []),
+    '--',
+    spec.image,
+    ...(spec.argv ?? []),
+  ];
 }
 
 const driver = new DockerWorkspaceBackend();

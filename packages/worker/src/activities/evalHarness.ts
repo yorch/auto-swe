@@ -50,6 +50,8 @@ export interface EvalCaseRow {
   goldenTest: string;
   tags: string[];
   input: unknown; // EvalCase.input (Json) — task/prompt payload for the implementer
+  /** The owning dataset's team; null for a GLOBAL dataset. */
+  teamId?: string | null;
 }
 
 /** A case as the harness loads it: with its flake-screen state, which decides whether it is scored. */
@@ -119,19 +121,22 @@ async function defaultLoadCases(datasetId: string): Promise<HarnessCaseRow[]> {
   // Quarantined cases (stale references — see re-validation in docs/evals.md) are excluded from the
   // gate so a dataset that has rotted doesn't fail candidates for non-agent reasons. Unscreened
   // cases are loaded so the run can report them; `runEvalHarness` skips them.
-  return prisma.evalCase.findMany({
-    select: {
-      baselineSha: true,
-      flakeRuns: true,
-      flakeScreened: true,
-      goldenTest: true,
-      id: true,
-      input: true,
-      repoUrl: true,
-      tags: true,
-    },
-    where: { datasetId, quarantined: false },
-  });
+  return prisma.evalCase
+    .findMany({
+      select: {
+        baselineSha: true,
+        dataset: { select: { teamId: true } },
+        flakeRuns: true,
+        flakeScreened: true,
+        goldenTest: true,
+        id: true,
+        input: true,
+        repoUrl: true,
+        tags: true,
+      },
+      where: { datasetId, quarantined: false },
+    })
+    .then((rows) => rows.map(({ dataset, ...r }) => ({ ...r, teamId: dataset?.teamId ?? null })));
 }
 
 /** Split loaded cases into the scored (flake-screened) ones and the report of the rest. */
@@ -246,7 +251,9 @@ export async function runCaseDefault(
       'eval-candidate',
       'main',
       EVAL_WORKSPACE_IMAGE,
-      caseRow.baselineSha
+      caseRow.baselineSha,
+      undefined,
+      { teamId: scope.teamId ?? caseRow.teamId ?? null }
     );
 
     // Built exactly as production builds it (`buildImplementerTurnRunner`), so the

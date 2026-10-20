@@ -18,43 +18,93 @@ on:
   # client_payload: { repo_id, use_repo_dockerfile?, stack? } — stack defaults to node.
   repository_dispatch:
     types: [build-executor]
-  # No schedule: a scheduled run carries no repo_id, and fanning a schedule out
-  # over every repository needs a caller that lists them. A trigger without an
-  # id fails rather than passing as a no-op.
+  # Weekly rebuild so executor images pick up base-image security fixes; each
+  # entry comes from the repository's stored executorImageBuild settings.
+  schedule:
+    - cron: '0 6 * * 1'
 
 jobs:
+  # Produce the build matrix: one entry for dispatch triggers, one per
+  # repository that recorded how its executor image was built on schedule.
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions: {}
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      # Inputs/payload reach the script through env only — `${{ }}` in `run:`
+      # would expand before bash parses the line, which is an injection vector.
+      - name: Plan build entries
+        id: plan
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_REPO_ID: ${{ github.event.inputs.repo_id }}
+          PAYLOAD_REPO_ID: ${{ github.event.client_payload.repo_id }}
+          INPUT_USE_REPO_DOCKERFILE: ${{ github.event.inputs.use_repo_dockerfile }}
+          PAYLOAD_USE_REPO_DOCKERFILE: ${{ github.event.client_payload.use_repo_dockerfile }}
+          INPUT_STACK: ${{ github.event.inputs.stack }}
+          PAYLOAD_STACK: ${{ github.event.client_payload.stack }}
+          GATEWAY_TOKEN: ${{ secrets.GATEWAY_TOKEN }}
+          GATEWAY_URL: ${{ secrets.GATEWAY_URL }}
+        run: |
+          set -euo pipefail
+          if [ "${EVENT_NAME}" = "schedule" ]; then
+            # Page the repository list and emit one entry per repo that stored
+            # build settings. Stored values are validated before emission.
+            LIMIT=500
+            OFFSET=0
+            ENTRIES='[]'
+            while :; do
+              PAGE=$(curl -sf -H "Authorization: Bearer ${GATEWAY_TOKEN}" \
+                "${GATEWAY_URL}/api/v1/repositories?includeInactive=false&limit=${LIMIT}&offset=${OFFSET}")
+              NEW=$(echo "$PAGE" | jq -c \
+                '[.data[] | select(.executorImageBuild != null) |
+                  {repo_id: .id,
+                   stack: .executorImageBuild.stack,
+                   use_repo_dockerfile: .executorImageBuild.useRepoDockerfile} |
+                  select(.stack as $s | ["node","python","jvm"] | index($s) != null) |
+                  select(.use_repo_dockerfile | type == "boolean")]')
+              ENTRIES=$(jq -c --argjson a "$ENTRIES" --argjson b "$NEW" '$a + $b' <<< '{}')
+              TOTAL=$(echo "$PAGE" | jq -r '.meta.total // 0')
+              OFFSET=$((OFFSET + LIMIT))
+              if [ "$OFFSET" -ge "$TOTAL" ]; then break; fi
+            done
+          else
+            REPO_ID="${INPUT_REPO_ID:-${PAYLOAD_REPO_ID}}"
+            if [ -z "$REPO_ID" ]; then
+              echo "::error::No repo_id provided (workflow_dispatch input or client_payload.repo_id)"
+              exit 1
+            fi
+            STACK="${INPUT_STACK:-${PAYLOAD_STACK:-node}}"
+            case "${STACK}" in node|python|jvm) ;; *) echo "::error::Unknown stack '${STACK}'"; exit 1;; esac
+            USE_REPO="${INPUT_USE_REPO_DOCKERFILE:-${PAYLOAD_USE_REPO_DOCKERFILE:-false}}"
+            case "${USE_REPO}" in true|false) ;; *) echo "::error::use_repo_dockerfile must be true or false"; exit 1;; esac
+            ENTRIES=$(jq -cn --arg id "$REPO_ID" --arg s "$STACK" --argjson u "${USE_REPO}" \
+              '[{repo_id: $id, stack: $s, use_repo_dockerfile: $u}]')
+          fi
+          echo "matrix=${ENTRIES}" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: plan
+    if: ${{ needs.plan.outputs.matrix != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
       contents: read # actions/checkout and the default-Dockerfile fetch
       id-token: write # For OIDC -> ECR auth
-
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     steps:
-      # Inputs are passed through `env:` rather than interpolated into the
-      # script body, so a crafted repo_id (or client_payload) cannot inject
-      # shell — `${{ }}` expands before bash parses the line.
-      - name: Determine repo ID
-        id: repo
-        env:
-          INPUT_REPO_ID: ${{ github.event.inputs.repo_id }}
-          PAYLOAD_REPO_ID: ${{ github.event.client_payload.repo_id }}
-        run: |
-          if [ -n "${INPUT_REPO_ID}" ]; then
-            echo "id=${INPUT_REPO_ID}" >> "$GITHUB_OUTPUT"
-          elif [ -n "${PAYLOAD_REPO_ID}" ]; then
-            echo "id=${PAYLOAD_REPO_ID}" >> "$GITHUB_OUTPUT"
-          else
-            echo "::error::No repo_id provided (workflow_dispatch input or client_payload.repo_id)"
-            exit 1
-          fi
-
       - name: Fetch repo config from Gateway API
         id: config
         env:
           GATEWAY_TOKEN: ${{ secrets.GATEWAY_TOKEN }}
           GATEWAY_URL: ${{ secrets.GATEWAY_URL }}
-          REPO_ID: ${{ steps.repo.outputs.id }}
+          REPO_ID: ${{ matrix.repo_id }}
         # The gateway has no single-repository GET, so page through the list
         # endpoint (which returns only what the token's user may reach) and pick
         # the row by id. includeInactive lets the token rebuild a paused repo. The token must be
@@ -91,22 +141,21 @@ jobs:
       # The image receives the run's GitHub credential, so by default it is built
       # only from the platform's own defaults/Dockerfile.node: anyone who can merge
       # to the target repository must not choose the code that runs next to that
-      # credential. The repository's own .auto-swe/Dockerfile is used only when this
-      # run opts in (use_repo_dockerfile). The default Dockerfile is written outside
-      # the checkout so a file in the repository cannot shadow it.
+      # credential. The repository's own .auto-swe/Dockerfile is used only when the
+      # stored build settings (or the dispatch input) say so. The default
+      # Dockerfile is written outside the checkout so a file in the repository
+      # cannot shadow it.
       - name: Resolve Dockerfile
         id: dockerfile
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CONTROL_PLANE_REPO: ${{ github.repository }}
-          INPUT_USE_REPO_DOCKERFILE: ${{ github.event.inputs.use_repo_dockerfile }}
-          PAYLOAD_USE_REPO_DOCKERFILE: ${{ github.event.client_payload.use_repo_dockerfile }}
-          INPUT_STACK: ${{ github.event.inputs.stack }}
-          PAYLOAD_STACK: ${{ github.event.client_payload.stack }}
+          USE_REPO_DOCKERFILE: ${{ matrix.use_repo_dockerfile }}
+          STACK: ${{ matrix.stack }}
           RUNNER_TEMP_DIR: ${{ runner.temp }}
         run: |
           set -euo pipefail
-          if [ "${INPUT_USE_REPO_DOCKERFILE}" = "true" ] || [ "${PAYLOAD_USE_REPO_DOCKERFILE}" = "true" ]; then
+          if [ "${USE_REPO_DOCKERFILE}" = "true" ]; then
             if [ ! -f ".auto-swe/Dockerfile" ]; then
               echo "::error::use_repo_dockerfile was requested but the repository has no .auto-swe/Dockerfile"
               exit 1
@@ -115,7 +164,6 @@ jobs:
             echo "path=.auto-swe/Dockerfile" >> "$GITHUB_OUTPUT"
             echo "context=." >> "$GITHUB_OUTPUT"
           else
-            STACK="${INPUT_STACK:-${PAYLOAD_STACK:-node}}"
             case "${STACK}" in
               node|python|jvm) ;;
               *)
@@ -169,20 +217,24 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           # Scoped per repository: the default shared scope lets each repo's
           # build evict and overwrite the others' cache.
-          cache-from: type=gha,scope=executor-${{ steps.repo.outputs.id }}
-          cache-to: type=gha,mode=max,scope=executor-${{ steps.repo.outputs.id }}
+          cache-from: type=gha,scope=executor-${{ matrix.repo_id }}
+          cache-to: type=gha,mode=max,scope=executor-${{ matrix.repo_id }}
 
       - name: Update repository executor image in Gateway
         env:
           GATEWAY_TOKEN: ${{ secrets.GATEWAY_TOKEN }}
           GATEWAY_URL: ${{ secrets.GATEWAY_URL }}
-          REPO_ID: ${{ steps.repo.outputs.id }}
+          REPO_ID: ${{ matrix.repo_id }}
           IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
+          USE_REPO_DOCKERFILE: ${{ matrix.use_repo_dockerfile }}
+          STACK: ${{ matrix.stack }}
         run: |
-          # Use the first tag (date-sha) as the pinned image reference
+          # Use the first tag (date-sha) as the pinned image reference; record
+          # the build settings so the schedule can reproduce this build.
           IMAGE_TAG=$(echo "${IMAGE_TAGS}" | head -1)
           curl -sf -X PATCH \
             -H "Authorization: Bearer ${GATEWAY_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "$(jq -cn --arg image "${IMAGE_TAG}" '{executorImage: $image}')" \
+            -d "$(jq -cn --arg image "${IMAGE_TAG}" --arg s "${STACK}" --argjson u "${USE_REPO_DOCKERFILE}" \
+              '{executorImage: $image, executorImageBuild: {stack: $s, useRepoDockerfile: $u}}')" \
             "${GATEWAY_URL}/api/v1/repositories/${REPO_ID}"

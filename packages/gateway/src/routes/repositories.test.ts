@@ -5,11 +5,11 @@ import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// repositories.ts only uses `Prisma.DbNull` and connection token helpers at
+// repositories.ts only uses `DB_NULL` and connection token helpers at
 // runtime; mocking the barrel avoids instantiating the real PrismaClient
 // singleton (which requires DATABASE_URL at import) — same pattern as
 // humanSteps.test.ts / slack.test.ts.
-const DB_NULL = vi.hoisted(() => ({ __sentinel: 'Prisma.DbNull' }));
+const DB_NULL = vi.hoisted(() => ({ __sentinel: 'DB_NULL' }));
 vi.mock('@auto-swe/shared', () => ({
   ConnectionTypeSchema,
   encryptConnectionApiToken: (token: string) => ({
@@ -169,6 +169,30 @@ describe('repositoryRoutes', () => {
       expect(body.data).toHaveLength(2);
       // Defaults from paginationQuery({ defaultLimit: 200, maxLimit: 500 }).
       expect(body.meta).toEqual({ limit: 200, offset: 0, total: 2 });
+    });
+
+    it('passes executorImageBuild through on list rows', async () => {
+      ctx.mockPrisma.connection.findMany.mockResolvedValueOnce([
+        {
+          executorImageBuild: { stack: 'node', useRepoDockerfile: true },
+          id: 'repo-1',
+          repoName: 'alpha',
+          teamId: TEAM_ID,
+        },
+      ]);
+      ctx.mockPrisma.connection.count.mockResolvedValueOnce(1);
+
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'GET',
+        url: '/api/v1/repositories',
+      });
+
+      expect(res.statusCode).toBe(200);
+      expect(JSON.parse(res.payload).data[0].executorImageBuild).toEqual({
+        stack: 'node',
+        useRepoDockerfile: true,
+      });
     });
 
     it('honors explicit limit/offset query params', async () => {
@@ -765,6 +789,61 @@ describe('repositoryRoutes', () => {
         data: { executorImage: unknown };
       };
       expect(cleared.data.executorImage).toBeNull();
+    });
+
+    it('lets an admin set image + build together, and clears it on image/build changes', async () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        executorImage: 'registry.acme.dev/custom:1',
+        executorImageBuild: { stack: 'node', useRepoDockerfile: false },
+        id: REPO_ID,
+        teamId: TEAM_ID,
+      });
+      ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+      const BUILD = { stack: 'python', useRepoDockerfile: true };
+      const lastData = () =>
+        (
+          ctx.mockPrisma.connection.update.mock.calls.at(-1) as unknown as [
+            { data: Record<string, unknown> },
+          ]
+        )[0].data;
+
+      const set = await patch({
+        executorImage: 'registry.acme.dev/new:1',
+        executorImageBuild: BUILD,
+      });
+      expect(set.statusCode).toBe(200);
+      expect(lastData().executorImageBuild).toEqual(BUILD);
+
+      await patch({ executorImageBuild: null });
+      expect(lastData().executorImageBuild).toBe(DB_NULL);
+
+      await patch({ executorImage: null });
+      expect(lastData().executorImageBuild).toBe(DB_NULL);
+
+      await patch({ executorImage: 'registry.acme.dev/other:1' });
+      expect(lastData().executorImageBuild).toBe(DB_NULL);
+
+      await patch({ executorImage: 'registry.acme.dev/custom:1' });
+      expect('executorImageBuild' in lastData()).toBe(false);
+    });
+
+    it('refuses a non-admin setting a build, but allows clearing one', async () => {
+      asTeamLead();
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        executorImage: null,
+        id: REPO_ID,
+        teamId: TEAM_ID,
+      });
+      ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+
+      const denied = await patch({
+        executorImageBuild: { stack: 'node', useRepoDockerfile: false },
+      });
+      expect(denied.statusCode).toBe(403);
+      expect(JSON.parse(denied.payload).error.code).toBe('EXECUTOR_IMAGE_NOT_ALLOWED');
+
+      const cleared = await patch({ executorImageBuild: null });
+      expect(cleared.statusCode).toBe(200);
     });
 
     it('lets a platform admin set any image reference, but not a malformed one', async () => {

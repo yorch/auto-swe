@@ -137,6 +137,14 @@ const UpdateRepoSchema = z.object({
     .transform((v) => v || null)
     .nullable()
     .optional(),
+  /** How the executor image was built; only platform admins may set it, anyone may clear. */
+  executorImageBuild: z
+    .object({
+      stack: z.enum(['node', 'python', 'jvm']),
+      useRepoDockerfile: z.boolean(),
+    })
+    .nullable()
+    .optional(),
   /**
    * The repository's gate commands, replacing the stored set: a gate left out, null or blank
    * falls back to the built-in default, and null clears them all. Commands an author writes, so
@@ -248,6 +256,31 @@ function rejectsInstallationChange(
   installationId: string | null | undefined
 ): boolean {
   return installationId !== undefined && user.role !== Role.ADMIN;
+}
+
+/**
+ * What the PATCH writes for `executorImageBuild`, or {} for no change. The
+ * record says how `build-executor.yml` built the current image, so it goes
+ * with that image: an explicit null clears it, and so does any change to the
+ * image the body did not pair with a new record (a cleared or hand-set image
+ * was not built by the workflow). Re-sending the image the row already holds
+ * — which the settings form does on every save — keeps it.
+ */
+function executorImageBuildUpdate(
+  body: {
+    executorImage?: string | null;
+    executorImageBuild?: { stack: string; useRepoDockerfile: boolean } | null;
+  },
+  currentImage: string | null
+): { executorImageBuild?: Prisma.InputJsonValue | typeof Prisma.DbNull } {
+  if (body.executorImageBuild != null) {
+    return { executorImageBuild: body.executorImageBuild as Prisma.InputJsonValue };
+  }
+  const imageChanged = body.executorImage !== undefined && body.executorImage !== currentImage;
+  if (body.executorImageBuild === null || imageChanged) {
+    return { executorImageBuild: Prisma.DbNull };
+  }
+  return {};
 }
 
 /**
@@ -848,6 +881,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
           apiKeyCiphertext: true,
           config: true,
           executorImage: true,
+          executorImageBuild: true,
           gateCommands: true,
           githubApiUrl: true,
           githubUrl: true,
@@ -893,6 +927,16 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       );
       if (imageProblem) {
         return sendError(reply, imageProblem.status, imageProblem.code, imageProblem.message);
+      }
+      // executorImageBuild records how an image was built; the same authority
+      // applies (admins set, anyone may clear), and clearing the image clears it.
+      if (request.body.executorImageBuild != null && user.role !== Role.ADMIN) {
+        return sendError(
+          reply,
+          403,
+          'EXECUTOR_IMAGE_NOT_ALLOWED',
+          'Only a platform admin may set executorImageBuild'
+        );
       }
 
       const nextGateCommands =
@@ -1083,6 +1127,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
             defaultBranch,
             description,
             executorImage,
+            ...executorImageBuildUpdate(request.body, repo.executorImage),
             ...(gateCommandsChange
               ? {
                   gateCommands:

@@ -4,8 +4,8 @@ import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { runEphemeralContainer, runSidecarContainer } from '../lib/ephemeralContainer.js';
-import { execShellAsync } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
+import { workspaceBackend } from '../lib/workspaceBackend/index.js';
 
 /**
  * Container-contract coded step with three result transports. Runs `image` in the
@@ -112,9 +112,8 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
 
   // Stateless step → a throwaway empty volume for /workspace (no repo clone).
   const volume = `cstep-${randomUUID()}`;
-  await execShellAsync(`docker volume create ${volume}`, {
-    heartbeatLabel: 'container-step: volume',
-  });
+  const backend = workspaceBackend();
+  await backend.createVolume(volume);
   try {
     const res = await runEphemeralContainer({
       ...(command !== undefined ? { command } : {}),
@@ -146,11 +145,7 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
     }
     return { result };
   } finally {
-    await execShellAsync(`docker volume rm -f ${volume}`, {
-      heartbeatLabel: 'container-step: cleanup',
-    }).catch(() => {
-      // best-effort cleanup; a leaked empty volume is harmless
-    });
+    await backend.removeVolume(volume);
   }
 }
 
@@ -169,9 +164,8 @@ async function runSidecarTransport(
     throw new Error("containerStep transport 'sidecar' requires a sidecar config (port)");
   }
   const volume = `cstep-${randomUUID()}`;
-  await execShellAsync(`docker volume create ${volume}`, {
-    heartbeatLabel: 'container-step: volume',
-  });
+  const backend = workspaceBackend();
+  await backend.createVolume(volume);
   try {
     const res = await runSidecarContainer({
       ...(input.command ? { command: input.command } : {}),
@@ -194,11 +188,7 @@ async function runSidecarTransport(
     });
     return { result: res.result };
   } finally {
-    await execShellAsync(`docker volume rm -f ${volume}`, {
-      heartbeatLabel: 'container-step: cleanup',
-    }).catch(() => {
-      // best-effort cleanup; a leaked empty volume is harmless
-    });
+    await backend.removeVolume(volume);
   }
 }
 

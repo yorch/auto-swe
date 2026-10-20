@@ -1089,9 +1089,16 @@ the Docker driver's one-shot probe does); secret env travels by *name* only, nev
 a command line (`docker exec -e NAME` reads from the daemon-side environment — a Kubernetes exec
 API takes argv only, so a value there would be readable in `/proc` and the audit log); and
 `remove()` is idempotent. `createWorkspace`, the harness exec/spawn paths and agent-run finalize
-sit on this seam; the ephemeral shell/container-step sandbox
-(`lib/ephemeralContainer.ts`, `shellStep.ts`, `containerStep.ts`, `agents/pi/smoke.ts`) still
-calls Docker directly and is outside it.
+sit on this seam, and so does the ephemeral shell/container-step sandbox:
+- `runEphemeral` and `startDetached` run author commands. They always apply the sandbox lockdown:
+  `--read-only`, a `/tmp` tmpfs, `--cap-drop=ALL`, `no-new-privileges` and a PID cap. The caller
+  only chooses the mount, env, resource caps, network mode and resolved egress hosts.
+- `runHelper` runs the shell step's own git clone and finalize containers. These are
+  platform-authored scripts, kept on a separate method so that no flag on a shared spec can drop
+  the lockdown from an author command.
+- `createVolume` and `removeVolume` manage the step volumes.
+
+The dev smoke script `agents/pi/smoke.ts` is the only Docker caller outside the seam.
 
 Package installs go through a second seam: when `REGISTRY_PROXY_PORT` is set the worker runs a
 read-only npm registry proxy ([package-registries.md](./package-registries.md)) — the workspace

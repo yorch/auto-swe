@@ -129,4 +129,93 @@ export interface WorkspaceBackend {
   pause(h: WorkspaceHandle): Promise<void>;
   /** Remove the container; never throws — it may already be gone. */
   remove(idOrHandle: string | WorkspaceHandle): Promise<void>;
+
+  /** Create a workspace volume (`docker volume create`). */
+  createVolume(name: string): Promise<void>;
+  /** Remove a volume; never throws — it may already be gone. */
+  removeVolume(name: string): Promise<void>;
+  /**
+   * Foreground `run --rm`: resolves to the captured result. The caller owns
+   * cleanup — `docker run --rm` removes on exit; `remove` in a finally covers
+   * a host-process kill mid-run.
+   */
+  runEphemeral(spec: EphemeralContainerSpec, opts: EphemeralRunOptions): Promise<CapturedResult>;
+  /**
+   * Detached `run -d --rm` (sidecar transport): resolves to the captured
+   * start result — a non-zero exitCode means it never started.
+   */
+  startDetached(spec: EphemeralContainerSpec, opts: EphemeralRunOptions): Promise<CapturedResult>;
+  /**
+   * The platform's own helper containers (shellStep's git clone/finalize
+   * runs): `docker run --rm -v … --entrypoint … image argv` with no lockdown,
+   * no name, no `--` separator. Deliberately separate from `runEphemeral` so
+   * no flag on the sandbox spec can ever turn the lockdown off.
+   */
+  runHelper(spec: HelperContainerSpec, opts: EphemeralRunOptions): Promise<CapturedResult>;
+  /** The host port a `publishPort` mapping landed on (`docker port`). */
+  publishedPort(name: string, containerPort: number): Promise<number>;
+}
+
+/** A volume mount on an ephemeral container (`-v source:target[:ro]`). */
+export interface EphemeralVolumeMount {
+  source: string;
+  target: string;
+  readOnly?: boolean;
+}
+
+/**
+ * What it takes to run a throwaway container — the shell/container-step
+ * sandbox and shellStep's git-helper prep/finalize runs. Two modes:
+ *
+ * - the sandbox lockdown is applied by the driver (read-only root,
+ *   tmpfs /tmp, cap-drop ALL, no-new-privileges) — a caller cannot weaken it,
+ *   the same principle as `create()`'s workspace hardening. Platform helper
+ *   containers (the git clone/finalize runs) go through `runHelper` instead.
+ *
+ * Validation of image refs, mount sources and env keys happens in the caller
+ * (`lib/ephemeralContainer.ts`) before a spec reaches the driver.
+ */
+export interface EphemeralContainerSpec {
+  /** Container name (`--name`); only meaningful for sandboxed runs. */
+  name?: string;
+  image: string;
+  /** `--entrypoint` override. */
+  entrypoint?: string;
+  /** argv appended after the image (e.g. `['sh','-c',cmd]` or `['-c',script]`). */
+  argv?: string[];
+  volumes?: EphemeralVolumeMount[];
+  /** Literal driver network mode: `none` or `bridge` for Docker. */
+  network?: string;
+  dns?: string[];
+  /** `host:ip` entries (`--add-host`), already resolved by the caller. */
+  addHosts?: string[];
+  /** Non-secret `NAME=value` pairs. */
+  env?: string[];
+  memory?: string;
+  cpus?: number;
+  pidsLimit?: number;
+  workdir?: string;
+  /** Publish this container port on an ephemeral loopback host port (sidecars). */
+  publishPort?: number;
+}
+
+/**
+ * shellStep's git prep/finalize runs: platform code, no lockdown flags and no
+ * caller knobs beyond the mount, env, entrypoint and argv.
+ */
+export interface HelperContainerSpec {
+  image: string;
+  entrypoint?: string;
+  argv?: string[];
+  volumes?: EphemeralVolumeMount[];
+  env?: string[];
+}
+
+export interface EphemeralRunOptions {
+  timeoutMs?: number;
+  heartbeatLabel?: string;
+  /** Per-line stdout callback (NDJSON transport). */
+  onStdoutLine?: (line: string) => void;
+  /** Capture cap for stdout/stderr (the capture helper's default otherwise). */
+  maxOutputBytes?: number;
 }

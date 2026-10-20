@@ -30,6 +30,8 @@ export interface StandaloneGateInput {
   gate: GateName;
   /** Command override; falls back to the gate's built-in default. */
   command?: string;
+  /** The run's team, for team-scoped workspace wiring (package registries). */
+  teamId?: string | null;
   image?: string;
   timeoutMs?: number;
 }
@@ -63,7 +65,8 @@ export async function runGateStandalone(input: StandaloneGateInput): Promise<Gat
     input.defaultBranch,
     input.image,
     input.checkoutSha,
-    input.existingBranch
+    input.existingBranch,
+    { teamId: input.teamId ?? null }
   );
   try {
     const result = await workspace.execCapture(command, { timeoutMs: input.timeoutMs });

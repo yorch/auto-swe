@@ -93,6 +93,7 @@ export function runCaseReference(c: EvalCaseRow): Promise<GateResult> {
     defaultBranch: 'main',
     gate: 'runTests',
     image: EVAL_WORKSPACE_IMAGE,
+    teamId: c.teamId,
   });
 }
 

@@ -16,9 +16,13 @@ vi.mock('@auto-swe/shared/db', () => ({
     connection: { findUniqueOrThrow: vi.fn() },
   },
 }));
-vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
-  resolveWorkflowDefaults: vi.fn().mockResolvedValue({ branchPrefix: 'auto' }),
-}));
+vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@auto-swe/shared/lib/systemConfig')>();
+  return {
+    ...actual,
+    resolveWorkflowDefaults: vi.fn().mockResolvedValue({ branchPrefix: 'auto' }),
+  };
+});
 vi.mock('@auto-swe/shared/workflow', async () => {
   const actual = await vi.importActual<typeof import('@auto-swe/shared/workflow')>(
     '@auto-swe/shared/workflow'
@@ -44,8 +48,33 @@ vi.mock('../lib/artifactStore.js', () => ({
 vi.mock('../lib/ephemeralContainer.js', () => ({
   runEphemeralContainer: vi.fn(),
 }));
-vi.mock('../lib/execUtils.js', () => ({
-  execShellAsync: vi.fn(),
+const { backendRunHelper, backendCreateVolume, backendRemoveVolume } = vi.hoisted(() => ({
+  backendCreateVolume: vi.fn(),
+  backendRemoveVolume: vi.fn(),
+  backendRunHelper: vi.fn(),
+}));
+vi.mock('../lib/workspaceBackend/index.js', () => ({
+  workspaceBackend: () => ({
+    createVolume: backendCreateVolume,
+    removeVolume: backendRemoveVolume,
+    runEphemeral: backendRunEphemeral,
+    runHelper: backendRunHelper,
+  }),
+}));
+const { backendRunEphemeral, workerRegistryProxyMock, beginRegistries, buildAllowlistMock } =
+  vi.hoisted(() => ({
+    backendRunEphemeral: vi.fn(),
+    beginRegistries: vi.fn(),
+    buildAllowlistMock: vi.fn(),
+    workerRegistryProxyMock: vi.fn(),
+  }));
+vi.mock('../lib/registryProxy/index.js', () => ({
+  workerRegistryProxy: workerRegistryProxyMock,
+}));
+vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
+vi.mock('../lib/registryProxy/workspaceWiring.js', () => ({
+  beginWorkspaceRegistries: beginRegistries,
+  buildRegistryAllowlist: buildAllowlistMock,
 }));
 vi.mock('../lib/scm/index.js', () => ({
   getScmProvider: vi.fn(),
@@ -63,14 +92,33 @@ vi.mock('./commitToMemory.js', () => ({
 import { prisma } from '@auto-swe/shared/db';
 import { putArtifact } from '../lib/artifactStore.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
-import { execShellAsync } from '../lib/execUtils.js';
+
 import { getScmProvider } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { finalizeScript, runShellStep } from './shellStep.js';
 import { shellQuote } from './workspace.js';
 
 const findUniqueOrThrow = vi.mocked(prisma.connection.findUniqueOrThrow);
-const mockedExec = vi.mocked(execShellAsync);
+/**
+ * Trusted helper calls (clone / finalize / volume ops) arrive at the backend as
+ * `runEphemeral` specs: `argv` is `['-c', <script>]`, so the script text — the
+ * thing the old tests matched inside a `docker …` command — is `argv[1]`.
+ */
+const helperScripts = (): string[] =>
+  backendRunHelper.mock.calls.map((c) => (c[0] as { argv?: string[] }).argv?.[1] ?? '');
+const runHelpersMatching = (
+  impl: (
+    script: string
+  ) => Promise<string | { exitCode: number; stderr?: string; stdout?: string } | undefined>
+) =>
+  backendRunHelper.mockImplementation(async (spec: { argv?: string[] }) => {
+    const r = await impl(spec.argv?.[1] ?? '');
+    if (typeof r === 'string' || r === undefined) {
+      return { exitCode: 0, stderr: '', stdout: r ?? '' };
+    }
+    return r;
+  });
+const mockedExec = { mock: { calls: [] as never[] }, mockImplementation: runHelpersMatching };
 const mockedRunEphemeral = vi.mocked(runEphemeralContainer);
 const mockedGetScmProvider = vi.mocked(getScmProvider);
 const mockedPutArtifact = vi.mocked(putArtifact);
@@ -294,8 +342,8 @@ describe('runShellStep — the command text it persists is masked', () => {
     expect(lesson?.lessonSummary).not.toContain(TOKEN);
     expect(lesson?.lessonSummary).not.toContain('npm_abcdef123456');
 
-    const finalize = mockedExec.mock.calls
-      .map(([command]) => command as string)
+    const finalize = backendRunHelper.mock.calls
+      .map(([spec]) => (spec as { argv?: string[] }).argv?.[1] ?? '')
       .find((command) => command.includes('push --no-verify'));
     expect(finalize).toContain('auto: shell step NPM_TOKEN=***');
     expect(finalize?.split('commit -m')[1]?.split('\n')[0]).not.toContain('npm_abcdef123456');
@@ -312,7 +360,7 @@ describe('runShellStep — clone credential is never persisted in the workspace 
     mockedExec.mockImplementation(async () => '');
   });
 
-  const dockerCommands = (): string[] => mockedExec.mock.calls.map((c) => String(c[0]));
+  const dockerCommands = helperScripts;
 
   const requireCommand = (label: string, match: (c: string) => boolean): string => {
     const found = dockerCommands().find(match);
@@ -323,14 +371,11 @@ describe('runShellStep — clone credential is never persisted in the workspace 
   };
 
   /**
-   * `runDocker` shell-quotes every docker argument, so the `sh -c` script
-   * reaches `execShellAsync` with each inner `'` escaped as `'\''`. Escaping
-   * is per-character and context-free, so a fragment escaped on its own is a
-   * substring of the escaped whole — which lets these assertions be written
-   * against the script as authored while still proving both quoting levels
-   * survived intact.
+   * The helper script reaches the backend verbatim (spec.argv), so a fragment
+   * that interpolated `shellQuote(x)` appears with exactly one level of
+   * quoting — the assertion sees the script as authored.
    */
-  const escaped = (fragment: string): string => shellQuote(fragment).slice(1, -1);
+  const escaped = (fragment: string): string => fragment;
 
   it('resets origin to the credential-free URL in the same script as the clone', async () => {
     await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
@@ -513,5 +558,116 @@ describe('finalizeScript against a real git repository', () => {
     expect(() => run(work, good)).toThrow(/not a valid repository/);
     expect(existsSync(loot)).toBe(false);
     expect(git(good, 'branch', '--list', 'auto/T-1')).toBe('');
+  });
+});
+
+describe('runShellStep — registry wiring', () => {
+  const released = vi.fn();
+  const setAllowlist = vi.fn();
+  const access = {
+    baseUrl: 'http://host.docker.internal:8791',
+    env: [
+      'NPM_CONFIG_USERCONFIG=/workspace/.auto-swe/npmrc',
+      'NPM_CONFIG_REGISTRY=http://host.docker.internal:8791/npm/r1',
+    ],
+    registration: { release: released, setAllowlist },
+    registries: [],
+    token: 'tok',
+  };
+
+  beforeEach(() => {
+    released.mockReset().mockResolvedValue(undefined);
+    setAllowlist.mockReset();
+    beginRegistries.mockResolvedValue(access);
+    buildAllowlistMock.mockResolvedValue(new Map());
+    workerRegistryProxyMock.mockReturnValue({ listen: vi.fn() });
+    backendRunEphemeral.mockResolvedValue({ exitCode: 0, stderr: '', stdout: 'ok' });
+  });
+
+  it('wires egress steps through the proxy', async () => {
+    const res = await runShellStep({
+      command: 'npm i',
+      image: 'alpine/git:latest',
+      network: 'egress',
+      request: REQUEST,
+    });
+    expect(res.exitCode).toBe(0);
+    // Command ran through the backend ephemeral spec with the alias + env.
+    expect(backendRunEphemeral).not.toHaveBeenCalled(); // command uses lib/ephemeralContainer (mocked)
+    const input = vi.mocked(runEphemeralContainer).mock.calls.at(-1)?.[0] as {
+      env: Record<string, string>;
+      extraAddHosts: string[];
+    };
+    expect(input.env.HOME).toBe('/workspace/.auto-swe/home');
+    expect(input.env.NPM_CONFIG_USERCONFIG).toBe('/workspace/.auto-swe/home/.npmrc');
+    expect(input.env.NPM_CONFIG_REGISTRY).toContain('npm/r1');
+    expect(input.extraAddHosts).toEqual(['host.docker.internal:host-gateway']);
+    // Allowlist built from the base branch via helper exec in /workspace/repo.
+    expect(buildAllowlistMock).toHaveBeenCalledWith(
+      access,
+      'refs/remotes/origin/main',
+      expect.any(Function),
+      '/workspace/repo'
+    );
+    expect(setAllowlist).toHaveBeenCalled();
+    // The clone script fetched the base branch before scrubbing origin.
+    expect(helperScripts().some((c) => c.includes('refs/remotes/origin/main'))).toBe(true);
+    expect(released).toHaveBeenCalled();
+  });
+
+  it('releases on command failure', async () => {
+    vi.mocked(runEphemeralContainer).mockRejectedValueOnce(new Error('boom'));
+    await expect(
+      runShellStep({
+        command: 'x',
+        image: 'alpine/git:latest',
+        network: 'egress',
+        request: REQUEST,
+      })
+    ).rejects.toThrow('boom');
+    expect(released).toHaveBeenCalled();
+  });
+
+  it('does not wire a network:none step', async () => {
+    await runShellStep({
+      command: 'x',
+      image: 'alpine/git:latest',
+      network: 'none',
+      request: REQUEST,
+    });
+    expect(beginRegistries).not.toHaveBeenCalled();
+    const input = vi.mocked(runEphemeralContainer).mock.calls.at(-1)?.[0] as {
+      env?: Record<string, string>;
+    };
+    expect(input.env?.HOME).toBeUndefined();
+  });
+
+  it('warns and skips when the proxy is not on the docker alias', async () => {
+    beginRegistries.mockResolvedValue({ ...access, baseUrl: 'http://10.1.2.3:8791' });
+    const res = await runShellStep({
+      command: 'x',
+      image: 'alpine/git:latest',
+      network: 'egress',
+      request: REQUEST,
+    });
+    expect(res.exitCode).toBe(0);
+    expect(released).toHaveBeenCalled(); // resolved registration released
+    expect(buildAllowlistMock).not.toHaveBeenCalled();
+    const input = vi.mocked(runEphemeralContainer).mock.calls.at(-1)?.[0] as {
+      env?: Record<string, string>;
+    };
+    expect(input.env?.HOME).toBeUndefined();
+  });
+
+  it('does nothing when no registries resolve', async () => {
+    beginRegistries.mockResolvedValue(null);
+    await runShellStep({
+      command: 'x',
+      image: 'alpine/git:latest',
+      network: 'egress',
+      request: REQUEST,
+    });
+    expect(buildAllowlistMock).not.toHaveBeenCalled();
+    expect(released).not.toHaveBeenCalled();
   });
 });

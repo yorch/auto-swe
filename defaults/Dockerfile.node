@@ -13,6 +13,17 @@ RUN apk add --no-cache git ripgrep
 # repo hits `yarn: not found` on its first install command.
 RUN npm install -g typescript corepack && corepack enable
 
+# Pre-install package managers so a workspace with no `packageManager` pin (or
+# a pin matching these versions) needs no Corepack download at run time — and
+# so the registry proxy never sees an unauthenticated bootstrap fetch. The
+# versions are pinned because Corepack caches by exact version.
+ENV COREPACK_HOME=/usr/local/share/corepack
+RUN mkdir -p "$COREPACK_HOME" && \
+    corepack prepare yarn@1.22.22 --activate && \
+    corepack prepare pnpm@10.34.7 --activate && \
+    corepack prepare yarn@4.18.1 && \
+    chown -R node:node "$COREPACK_HOME"
+
 WORKDIR /workspace/target-repo
 
 # Hand ownership of the workspace tree to `node` so the executor can write files

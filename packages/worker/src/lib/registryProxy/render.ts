@@ -12,7 +12,9 @@ export function renderNpmrc(
 ): string {
   const url = new URL(baseUrl);
   const hostport = url.port ? `${url.hostname}:${url.port}` : url.hostname;
-  const lines: string[] = [];
+  // Yarn classic nerf-darts auth by host only and skips auth headers
+  // entirely without always-auth — both lines exist for it.
+  const lines: string[] = [`//${hostport}/:_authToken=${token}`, 'always-auth=true'];
   for (const r of registries) {
     lines.push(`//${hostport}/npm/${r.id}/:_authToken=${token}`);
     for (const scope of r.scopes) {
@@ -22,16 +24,26 @@ export function renderNpmrc(
   return `${lines.join('\n')}\n`;
 }
 
-/** Berry `.yarnrc.yml` content: npmScopes for each scoped registry. */
+/**
+ * Berry `.yarnrc.yml` content: the proxy host on `unsafeHttpWhitelist` (Yarn 4
+ * refuses an http:// registry not named there, and the proxy is always http on
+ * the container network — the default registry reaches Berry through
+ * `YARN_NPM_REGISTRY_SERVER`, so this is needed even with no scopes), plus
+ * `npmScopes` for each scoped registry. Null only when there are no registries.
+ */
 export function renderYarnrc(
   registries: { id: string; isDefault?: boolean; scopes: string[] }[],
   baseUrl: string
 ): string | null {
-  const scoped = registries.filter((r) => r.scopes.length > 0);
-  if (scoped.length === 0) {
+  if (registries.length === 0) {
     return null;
   }
-  const lines = ['npmScopes:'];
+  const host = new URL(baseUrl).hostname;
+  const lines = ['unsafeHttpWhitelist:', `  - ${JSON.stringify(host)}`];
+  const scoped = registries.filter((r) => r.scopes.length > 0);
+  if (scoped.length > 0) {
+    lines.push('npmScopes:');
+  }
   for (const r of scoped) {
     for (const scope of r.scopes) {
       const key = scope.startsWith('@') ? scope.slice(1) : scope;
@@ -61,6 +73,11 @@ export function registryWorkspaceEnv(
   if (def) {
     env.push(`NPM_CONFIG_REGISTRY=${baseUrl}/npm/${def.id}`);
     env.push(`YARN_NPM_REGISTRY_SERVER=${baseUrl}/npm/${def.id}`);
+    // Corepack downloads pinned package-manager binaries over npm; without
+    // these it would reach the public registry (or fail with no egress).
+    env.push(`COREPACK_NPM_REGISTRY=${baseUrl}/npm/${def.id}`);
+    env.push(`COREPACK_NPM_TOKEN=${token}`);
+    env.push('COREPACK_ENABLE_DOWNLOAD_PROMPT=0');
   }
   env.push(`YARN_NPM_AUTH_TOKEN=${token}`, 'YARN_NPM_ALWAYS_AUTH=true');
   return env;

@@ -28,24 +28,32 @@
 import crypto from 'node:crypto';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
-import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { DOCKER_HOST_ALIAS, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed, ShellImageNotAllowedError } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.js';
+import { logWarn } from '../lib/activityLog.js';
 import { putArtifact } from '../lib/artifactStore.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
-import { execShellAsync } from '../lib/execUtils.js';
 import {
   maskCredentialShapes,
   redactExecError,
   redactSecrets,
   redactToken,
 } from '../lib/redactToken.js';
+import { workerRegistryProxy } from '../lib/registryProxy/index.js';
+import { renderNpmrc, renderYarnrc } from '../lib/registryProxy/render.js';
+import {
+  beginWorkspaceRegistries,
+  buildRegistryAllowlist,
+  type WorkspaceRegistryAccess,
+} from '../lib/registryProxy/workspaceWiring.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
+import { workspaceBackend } from '../lib/workspaceBackend/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { truncate } from './qualityGates.js';
 import {
@@ -112,30 +120,46 @@ async function gitHelperImage(): Promise<string> {
   return resolveSetting('workspace.gitHelperImage', await currentRequestContext());
 }
 
-async function runDocker(args: string[], tokenForRedact?: string | null): Promise<string> {
-  // We shell-quote each arg before joining into a single shell command. The
-  // inputs to this helper are either hard-coded literals or identifiers that
-  // have already been validated upstream (volume names, images checked
-  // against DOCKER_IMAGE_REF_RE, branch names quoted by the caller) — never
-  // raw user input from a spec.
-  const quoted = args.map(shellQuote).join(' ');
+/**
+ * Run one trusted git-helper container (`docker run --rm -v vol:/workspace:rw
+ * --entrypoint sh <helper-image> -c <script>`) through the workspace backend
+ * and resolve to stdout, throwing with the captured output on a non-zero exit.
+ */
+async function runHelper(
+  script: string,
+  volumeName: string,
+  image: string,
+  tokenForRedact?: string | null,
+  maxOutputBytes?: number
+): Promise<string> {
+  const backend = workspaceBackend();
   try {
-    return await execShellAsync(`docker ${quoted}`, { heartbeatLabel: 'shell-step: docker' });
+    const res = await backend.runHelper(
+      {
+        argv: ['-c', script],
+        entrypoint: 'sh',
+        image,
+        volumes: [{ source: volumeName, target: '/workspace' }],
+      },
+      { heartbeatLabel: 'shell-step: helper', ...(maxOutputBytes ? { maxOutputBytes } : {}) }
+    );
+    if (res.exitCode !== 0) {
+      const err = new Error(
+        `helper exited ${res.exitCode}: ${(res.stderr ?? res.stdout ?? '').slice(0, 500)}`
+      ) as Error & {
+        stdout?: string;
+        stderr?: string;
+      };
+      err.stdout = res.stdout;
+      err.stderr = res.stderr;
+      throw err;
+    }
+    return res.stdout;
   } catch (err) {
-    // `runDocker` invokes `git clone` with the token embedded in the URL (see
-    // `loadRepoMeta`), and `promisify(exec)` throws with the full command in
-    // `error.message` / `.stdout` / `.stderr` / `.cmd`. Without this, a failed
-    // clone would leak the token into the Temporal workflow history.
+    // The clone runs with the token embedded in the URL (see `loadRepoMeta`),
+    // so a failure could leak it into Temporal history without this.
     redactExecError(err, [tokenForRedact]);
     throw err;
-  }
-}
-
-async function safeRunDocker(args: string[]): Promise<void> {
-  try {
-    await runDocker(args);
-  } catch {
-    /* best-effort */
   }
 }
 
@@ -218,23 +242,22 @@ async function cloneIntoVolume(
   volumeName: string,
   meta: RepoMeta,
   branch: string,
-  image: string
+  image: string,
+  forRegistry = false
 ): Promise<void> {
+  // Every interpolated value stays `shellQuote`d — this string is the
+  // injection boundary for the branch name and the remote URL.
+  // When registry wiring applies the allowlist is built from the base branch,
+  // which the shallow clone never fetched — fetch it before the origin scrub,
+  // while the URL still carries the credential.
+  const fetchBase = forRegistry
+    ? `git fetch --depth=50 origin ${shellQuote(meta.defaultBranch)}:${shellQuote(`refs/remotes/origin/${meta.defaultBranch}`)} && `
+    : '';
   const tryClone = (refspec: string): Promise<string> =>
-    runDocker(
-      [
-        'run',
-        '--rm',
-        '-v',
-        `${volumeName}:/workspace:rw`,
-        '--entrypoint',
-        'sh',
-        image,
-        '-c',
-        // Every interpolated value stays `shellQuote`d — this string is the
-        // injection boundary for the branch name and the remote URL.
-        `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && git remote set-url origin ${shellQuote(meta.cleanUrl)} && git config user.name 'auto-swe' && git config user.email 'auto-swe@localhost'`,
-      ],
+    runHelper(
+      `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && ${fetchBase}git remote set-url origin ${shellQuote(meta.cleanUrl)} && git config user.name 'auto-swe' && git config user.email 'auto-swe@localhost'`,
+      volumeName,
+      image,
       meta.token
     );
   try {
@@ -343,10 +366,9 @@ async function finalizeWorkspaceVolume(
   // that logs the extraheader, or an operator-supplied URL we failed to
   // parse) — pass the token through so `runDocker`'s catch redacts it before
   // it ever reaches the caller. Defense in depth on top of the scrub.
-  const out = await runDocker(
-    ['run', '--rm', '-v', `${volumeName}:/workspace:rw`, '--entrypoint', 'sh', image, '-c', script],
-    token
-  );
+  // `runHelper`'s catch redacts the token before a failure can reach the
+  // caller — defense in depth on top of the origin scrub.
+  const out = await runHelper(script, volumeName, image, token);
   if (out.includes('NO_CHANGES')) {
     return { filesChanged: [] };
   }
@@ -394,24 +416,108 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   const helperImage = await gitHelperImage();
 
   const volumeName = `shellvol-${crypto.randomBytes(8).toString('hex')}`;
-  await runDocker(['volume', 'create', volumeName]);
+  const backend = workspaceBackend();
+  await backend.createVolume(volumeName);
+  // Registry wiring only when the step opted into egress: 'none' gets
+  // nothing, and a proxy advertised at a host other than the Docker alias is
+  // unreachable on this network — warn and run without it.
+  let registry: WorkspaceRegistryAccess | null = null;
+  if (input.network === 'egress' && workerRegistryProxy()) {
+    const access = await beginWorkspaceRegistries(meta.teamId, volumeName);
+    if (access) {
+      if (new URL(access.baseUrl).hostname !== DOCKER_HOST_ALIAS) {
+        logWarn('registry proxy is not on the docker host alias; skipping registry wiring', {
+          baseUrl: access.baseUrl,
+          volume: volumeName,
+        });
+        await access.registration.release();
+      } else {
+        registry = access;
+      }
+    }
+  }
   try {
     heartbeat('shell-step: cloning branch into workspace volume');
-    await cloneIntoVolume(volumeName, meta, branch, helperImage);
+    await cloneIntoVolume(volumeName, meta, branch, helperImage, registry !== null);
 
-    heartbeat('shell-step: running command');
-    const effectiveEgressAllowlist = meta.teamEgressAllowlist;
-    const result = await runEphemeralContainer({
-      command: input.command,
-      cpus: input.cpus,
-      egressAllowlist: effectiveEgressAllowlist,
-      image: input.image,
-      memory: input.memory,
-      network: input.network ?? 'none',
-      timeoutMs: input.timeoutMs,
-      workdir: '/workspace/repo',
-      workspaceMount: volumeName,
-    });
+    let result: Awaited<ReturnType<typeof runEphemeralContainer>>;
+    try {
+      if (registry) {
+        const allowlist = await buildRegistryAllowlist(
+          registry,
+          `refs/remotes/origin/${meta.defaultBranch}`,
+          async (command, maxOutputBytes) => ({
+            stdout: await runHelper(command, volumeName, helperImage, meta.token, maxOutputBytes),
+          }),
+          '/workspace/repo'
+        );
+        registry.registration.setAllowlist(allowlist);
+        const npmrc = renderNpmrc(registry.registries, registry.baseUrl, registry.token);
+        const yarnrc = renderYarnrc(registry.registries, registry.baseUrl);
+        // The content reaches the files through env, never through the
+        // container's command line, so the author command cannot read it from
+        // /proc. It does pass through the worker's docker client arguments,
+        // like every other step env value; it is the per-step proxy token.
+        const writeRes = await backend.runHelper(
+          {
+            argv: [
+              '-c',
+              'mkdir -p /workspace/.auto-swe/home && ' +
+                'printf \'%s\' "$AUTO_SWE_NPMRC" > /workspace/.auto-swe/home/.npmrc && ' +
+                'chmod 644 /workspace/.auto-swe/home/.npmrc && ' +
+                'if [ -n "$AUTO_SWE_YARNRC" ]; then ' +
+                'printf \'%s\' "$AUTO_SWE_YARNRC" > /workspace/.auto-swe/home/.yarnrc.yml && ' +
+                'chmod 644 /workspace/.auto-swe/home/.yarnrc.yml; fi',
+            ],
+            entrypoint: 'sh',
+            env: [`AUTO_SWE_NPMRC=${npmrc}`, `AUTO_SWE_YARNRC=${yarnrc ?? ''}`],
+            image: helperImage,
+            volumes: [{ source: volumeName, target: '/workspace' }],
+          },
+          { heartbeatLabel: 'shell-step: registry config' }
+        );
+        if (writeRes.exitCode !== 0) {
+          throw new Error(
+            `registry config helper exited ${writeRes.exitCode}: ${(writeRes.stderr ?? writeRes.stdout ?? '').slice(0, 500)}`
+          );
+        }
+      }
+
+      heartbeat('shell-step: running command');
+      const effectiveEgressAllowlist = meta.teamEgressAllowlist;
+      result = await runEphemeralContainer({
+        command: input.command,
+        cpus: input.cpus,
+        egressAllowlist: effectiveEgressAllowlist,
+        ...(registry
+          ? {
+              env: {
+                HOME: '/workspace/.auto-swe/home',
+                ...Object.fromEntries(
+                  registry.env
+                    .filter((e) => !e.startsWith('NPM_CONFIG_USERCONFIG='))
+                    .map((e) => {
+                      const i = e.indexOf('=');
+                      return [e.slice(0, i), e.slice(i + 1)] as [string, string];
+                    })
+                ),
+                NPM_CONFIG_USERCONFIG: '/workspace/.auto-swe/home/.npmrc',
+              },
+              extraAddHosts: [`${DOCKER_HOST_ALIAS}:host-gateway`],
+            }
+          : {}),
+        image: input.image,
+        memory: input.memory,
+        network: input.network ?? 'none',
+        timeoutMs: input.timeoutMs,
+        workdir: '/workspace/repo',
+        workspaceMount: volumeName,
+      });
+    } finally {
+      // Revoke the step's proxy token as soon as the command is done; the
+      // outer finally covers a failure before this point (clone, allowlist).
+      await registry?.registration.release().catch(() => {});
+    }
 
     // Defense in depth. `cloneIntoVolume` now scrubs the credential out of
     // `origin`, so `/workspace/repo/.git/config` no longer holds it and a
@@ -540,6 +646,8 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       summary: redactToken(summary, meta.token),
     };
   } finally {
-    await safeRunDocker(['volume', 'rm', '-f', volumeName]);
+    // Idempotent: a second release after the inner one is a no-op.
+    await registry?.registration.release().catch(() => {});
+    await backend.removeVolume(volumeName);
   }
 }
