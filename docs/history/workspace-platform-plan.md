@@ -94,41 +94,53 @@ The driver contract has to carry obligations a Kubernetes driver must meet:
 
 | # | Item | PR | State |
 |---|---|---|---|
-| 1 | Replace the Alpine-only git bootstrap; image-contract probe (activity + workflow + admin route + settings button) | A (#473) | in review |
-| 4 | `Dockerfile.python` / `Dockerfile.jvm`, `build-executor.yml` `stack` input, stack detection with suggested image and gate commands | A (#473) | in review |
-| 5 | `WorkspaceBackend` interface + Docker driver for the agent workspace (`createWorkspace`, harness exec, agent-run finalize); keeper PID recorded at creation | A (#473) | in review |
-| 2 | `PackageRegistry` model (admin-managed, encrypted token), worker-side npm registry proxy, workspace npm/pnpm/yarn config, proxy-side tarball cache | B | in review |
-| 3 | Lockfile-scoped allowlist (`package-lock.json`, `yarn.lock` classic and Berry, `pnpm-lock.yaml`), refusal message and recorded denials | B | in review |
-| 2a | Verify pnpm, Yarn classic and Yarn Berry end to end through the proxy (only npm is verified: `npm ci` succeeds, and an unlisted package gets the 403) | — | not started |
-| 2b | Package-manager bootstrap: allowlist the root `package.json` `packageManager` pin and pass `COREPACK_NPM_REGISTRY` / `COREPACK_NPM_TOKEN`, or pre-install pnpm/yarn in the curated image | — | not started |
-| 2c | Check how npm routes scoped tarballs under `replace-registry-host=always` when the scope's upstream differs from the default registry | — | not started |
-| 6 | Kubernetes workspace driver (pods, NetworkPolicy egress, runtimeClass) | — | not started |
+| 1 | Replace the Alpine-only git bootstrap; image-contract probe (activity + workflow + admin route + settings button) | #473 | merged |
+| 4 | `Dockerfile.python` / `Dockerfile.jvm`, `build-executor.yml` `stack` input, stack detection with suggested image and gate commands | #473 | merged |
+| 5 | `WorkspaceBackend` interface + Docker driver for the agent workspace (`createWorkspace`, harness exec, agent-run finalize); keeper PID recorded at creation | #473 | merged |
+| 2 | `PackageRegistry` model (admin-managed, encrypted token), worker-side npm registry proxy, workspace npm/pnpm/yarn config, proxy-side tarball cache | #474 | merged |
+| 3 | Lockfile-scoped allowlist (`package-lock.json`, `yarn.lock` classic and Berry, `pnpm-lock.yaml`), refusal message and recorded denials | #474 | merged |
+| 2a | All four clients end to end: `clients.docker.test.ts` (npm, pnpm, Yarn classic, Yarn Berry; frozen install in lockfile mode, plus denial of an unlisted package) runs in the CI `docker-tests` job. Found and fixed along the way: the Yarn classic host-level auth line, `always-auth` and `$HOME/.npmrc`; Berry's `unsafeHttpWhitelist`; the denial message as the reason phrase for pnpm | C | in review |
+| 2b | Package-manager bootstrap: pnpm, Yarn classic and Yarn Berry pre-installed in `Dockerfile.node`; `COREPACK_NPM_REGISTRY` / `COREPACK_NPM_TOKEN` env; `packageManager` pins added to the allowlist | C | in review |
+| 2b-verify | Corepack downloading a pin that is not pre-installed, through the proxy, against a real upstream. Configured but not exercised end to end; Corepack's signature check against a non-npmjs upstream is unknown | — | not started |
+| 2c | npm swaps only the origin of a lockfile `resolved` URL, and uses the default registry even for scopes (npm 11.19 `@npmcli/arborist` `#registryResolved`). The proxy now validates and ignores a tarball path prefix, strips the Artifactory `@scope/` file form, and routes by package name to the scope's or the default registry. Covered by unit tests and the npm e2e case | C | in review |
+| G1 | Ephemeral sandbox behind `WorkspaceBackend` (`runEphemeral` / `startDetached` always apply lockdown; `runHelper` for the platform's git helpers; volumes); registry wiring for `network: 'egress'` shell steps | C | in review |
+| G2 | `teamId` for the eval harness and `runGateStandalone` (both eval callers), so they get registries too | C | in review |
+| G3 | Weekly scheduled executor-image rebuilds from the stored `Connection.executorImageBuild` | C | in review |
+| G4 | Stack detection over the recursive tree (`ScmProvider.listTree`), with per-directory `components` | C | in review |
+| 6 | Kubernetes workspace driver: pods per workspace, for autoscaling and isolation | — | not started |
 | 7 | Further ecosystems through the proxy (PyPI, Maven, Docker registry v2) | — | not started |
-| 8 | Publish / push (remote BuildKit, gated by human approval) | — | not started |
+| 8 | Publish / push, opt-in per flow, gated by human approval | — | not started |
 
-PR A is based on `main`. PR B is stacked on PR A.
+## 5. Decisions
 
-## 5. Assumptions made without an answer
+These replace the earlier stricter-by-default assumptions, now that the questions are answered.
 
-These were asked as open questions. The work goes ahead on the stricter assumption in each case,
-so loosening one later is a configuration change, not a redesign.
-
-- **Threat model.** The agent is treated as a possible adversary (prompt injection), not only as a
-  source of accidental leaks. Hence lockfile scoping by default.
-- **Write access.** Out of scope: the proxy only resolves dependencies.
-- **Kubernetes.** Only the backend seam is built. No driver yet.
-- **Mirror.** No pull-through mirror is assumed. The proxy works against Artifactory or any npm
-  registry as its upstream.
+- **Threat model.** Mainly accidental leakage, but still protected against prompt injection and
+  similar attacks. Lockfile mode stays the default, and `open` mode is the per-registry escape
+  hatch.
+- **Kubernetes.** Run workspaces as pods, for autoscaling and isolation; workers stay Temporal
+  workers. Item 6 therefore means a pod driver behind `WorkspaceBackend`, plus a stateless worker
+  Deployment that autoscales on task-queue backlog. Obligations already recorded for it:
+  - the driver supplies the keeper PID
+  - secret env is passed by name only
+  - egress control moves to NetworkPolicy, since PodSecurity `restricted` forbids the
+    `NET_ADMIN` metadata blackhole
+  - there is no per-pod `--pids-limit`
+- **Write access.** Needed in some cases but not most. Item 8 stays opt-in per flow and gated by
+  human approval, never a default capability of a workspace.
+- **Mirror.** No pull-through mirror for now. The proxy fronts Artifactory or any npm registry
+  directly.
 
 ## 6. Known gaps carried forward
 
-- The ephemeral shell / container-step sandbox (`lib/ephemeralContainer.ts`, `shellStep.ts`,
-  `containerStep.ts`) still calls Docker directly. It is outside the `WorkspaceBackend` seam until a
-  second driver needs it.
 - A Kubernetes driver loses `--pids-limit` (there is only a kubelet-wide `podPidsLimit`). The
   metadata-IP blackhole would need `NET_ADMIN`, which PodSecurity `restricted` forbids. The Docker
   version of that blackhole has never been validated against a real daemon.
 - The registry proxy refuses upstream redirects, so an Artifactory configured to redirect downloads
   to object storage is not supported.
-- `build-executor.yml` is still never run on a schedule, so images pick up base-image fixes only
-  when someone rebuilds them.
+- Yarn classic fetches non-default-host `yarn.lock` URLs (Artifactory) directly, without the
+  proxy. Only lockfiles resolved against `registry.yarnpkg.com` / `registry.npmjs.org` work.
+- Container-contract steps get no registry access (no repository, no lockfile). Shell steps need
+  `network: 'egress'` and the proxy at the Docker host alias.
+- The scheduled rebuild covers only images built by the workflow after `executorImageBuild`
+  existed.
