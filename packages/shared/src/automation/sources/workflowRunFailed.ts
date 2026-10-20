@@ -12,6 +12,7 @@ import {
 import { isPlatformWorkBranch } from '../../lib/gitRef.js';
 import { type InputSchema, validateInputPayload } from '../../lib/inputSchema.js';
 import type { EventSource } from '../types.js';
+import { PR_FEEDBACK } from './prFeedback.js';
 
 /** The source key stored on an automation that reacts to failed GitHub Actions runs. */
 export const WORKFLOW_RUN_FAILED = 'github.workflow_run.failed';
@@ -153,6 +154,10 @@ export const workflowRunFailedSource: EventSource<
     }
     return null;
   },
+  // A commit a feedback run pushed is the platform's output too: the CI failure it causes
+  // must not start a fix of the fix, exactly like one a CI fix pushed. Platform branches are
+  // already ignored by prefix; this matters for pushes to a person's branch.
+  ownOutputFrom: [PR_FEEDBACK],
   precondition: (x) =>
     x.event === 'pull_request' && x.pullRequestNumber === null
       ? 'no open pull request from this branch'
