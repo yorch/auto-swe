@@ -385,6 +385,19 @@ hidden template's own link is not shown.
 
 ---
 
+## 10. Feedback follow-ups
+
+A pull request an agent run opened is a pull-request feedback target like any platform pull
+request: a changes-requested review or an `/auto-swe fix` command on it can start a round of
+the `address-pr-feedback` template ([pr-feedback.md](./pr-feedback.md)). On that path the
+round follows up with *the same agent*: the original task plus the fenced feedback brief as
+the prompt, resolved at GLOBAL and ORGANIZATION scope, run in a container it cannot push
+from, gated in a fresh trusted container and pushed to the pull request's branch. The
+agent-run ceilings and kill switch apply; the concurrency admission does not — a follow-up
+takes no new slot.
+
+---
+
 ## Limitations
 
 - **Only a failure with a recognised type is explained.** The viewer names a refusal when the

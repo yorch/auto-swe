@@ -41,6 +41,7 @@ never for a run nobody launched. This is the property the rest of this document 
 | Slack — the `/auto-swe run` modal | the linked platform user who submitted it |
 | Slack — a channel-assistant code task | the linked platform user who asked for it |
 | Webhooks, the issue-tracker auto-trigger | nobody |
+| Event automations — CI-failure, issue-label and pull-request feedback triggers | nobody |
 
 A run launched by nobody uses only the platform credential of the repository's host.
 

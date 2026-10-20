@@ -142,6 +142,7 @@ Top-level files that matter:
 | Agent-run workflow ID / branch | `agent-<repo8>-<hex8>` (with an `Idempotency-Key`: `agent-<repo8>-<user8>-<digest>`) / `<BRANCH_PREFIX>/agent-<id8>` | `agent-1a2b3c4d-9f8e7d6c` / `auto/agent-0a1b2c3d` |
 | In-app assistant conversation workflow ID | `assistant-<conversationId>` | `assistant-0b1c2d3e-…` |
 | CI-failure automation workflow ID / branch | `ci-<automation8>-<runId12>-<attempt>` / `<BRANCH_PREFIX>/ci-<runId>-<attempt>` | `ci-1a2b3c4d-123456789012-1` / `auto/ci-123456789012-1` |
+| PR-feedback automation workflow ID / branch | `prfb-<automation8>-<pr>-<eventId>` / `<BRANCH_PREFIX>/prfb-<pr>-<eventId>` | `prfb-1a2b3c4d-9-777` / `auto/prfb-9-777` |
 | Docker workspace container    | `workspace-<random-hex>`          | `workspace-a1b2c3d4`                      |
 | Prisma table mapping          | `snake_case` via `@@map`          | `active_workflows`                        |
 | Team slug                     | `lowercase-kebab-case`            | `payments`, `platform-eng`                |
@@ -509,9 +510,9 @@ are added as data, not code. Seeded built-ins split by how they bind a model:
   conversations. The rest exist because the
   platform is not only for engineering teams: `contentWriter`, `brandReviewer` (content and comms),
   `supportResponder` (support and ops), `productAnalyst`, `prdWriter`, `issueDrafter` (product).
-- **Sub-role personas** (`inheritsModelFrom`), 13 of them: `securityReviewer` /
+- **Sub-role personas** (`inheritsModelFrom`), 14 of them: `securityReviewer` /
   `domainLogicReviewer` / `performanceReviewer` (← `reviewer`); `decomposer` / `prdAnalyst` /
-  `prdDecomposer` / `ciTriager` / `ticketContextGatherer` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
+  `prdDecomposer` / `ciTriager` / `ticketContextGatherer` / `prFeedbackResponder` (← `planner`); `ciFixer` / `reviewFixer` / `gateFixer` /
   `mergeConflictResolver` (← `implementer`); `lessonConsolidator` (← `commitToMemory`).
 
 Both lists are complete as written, and `yarn docs:check` fails if one stops being — see

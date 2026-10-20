@@ -162,6 +162,19 @@ export const USE_CASES = {
       'instead be pushed onto its own branch. Never changes workflow files and never merges.',
     title: 'CI failure triage and fix',
   },
+  'address-pr-feedback': {
+    group: 'engineering',
+    maturity: 'composed',
+    source: 'packages/shared/src/workflow/templates/addressPrFeedback.ts',
+    summary:
+      'Started when a pull request gets review feedback a pull-request feedback trigger ' +
+      'selects — a changes-requested review or an explicit /auto-swe fix comment. The round ' +
+      'is re-read from the host and the member threads screened, fixed by the review fixer ' +
+      'or by the agent that opened the pull request, pushed onto the pull request’s branch ' +
+      'as a fast-forward, reported back on the pull request, and followed up once when the ' +
+      'pushed commit fails CI. Never changes workflow files and never merges.',
+    title: 'Pull-request feedback',
+  },
   'agent-reviewed-pr': {
     group: 'engineering',
     maturity: 'composed',

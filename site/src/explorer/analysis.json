@@ -4965,7 +4965,7 @@
       "title": "Declarative agent executor"
     },
     {
-      "anchor": "if (payload.deliver === 'none') {",
+      "anchor": "if (deliver === 'none') {",
       "before": 0,
       "id": "agentRun",
       "lines": 150,
