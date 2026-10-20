@@ -118,6 +118,11 @@ services:
       # Workspaces join the `workspaces` network, where they reach this worker
       # by its own hostname; nothing is published on the host. Set
       # HARNESS_MODEL_PROXY_PORT empty to turn the proxy off.
+      - REGISTRY_PROXY_PORT=${REGISTRY_PROXY_PORT-}
+      - REGISTRY_PROXY_URL=${REGISTRY_PROXY_URL:-http://{hostname}:${REGISTRY_PROXY_PORT:-8791}}
+      - REGISTRY_PROXY_BIND=${REGISTRY_PROXY_BIND:-0.0.0.0}
+      - REGISTRY_PROXY_CACHE_DIR=${REGISTRY_PROXY_CACHE_DIR-}
+      - REGISTRY_PROXY_CACHE_MAX_BYTES=${REGISTRY_PROXY_CACHE_MAX_BYTES-}
       - HARNESS_MODEL_PROXY_PORT=${HARNESS_MODEL_PROXY_PORT-8790}
       - HARNESS_MODEL_PROXY_URL=${HARNESS_MODEL_PROXY_URL:-http://{hostname}:${HARNESS_MODEL_PROXY_PORT:-8790}}
       - WORKSPACE_NETWORK=${WORKSPACE_NETWORK:-auto-swe-workspaces}

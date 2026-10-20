@@ -413,7 +413,10 @@ describe('runAgentNode', () => {
         'https://x-access-token:T@h/o/r.git',
         'auto/JIRA-1-sub',
         'main',
-        undefined
+        undefined,
+        undefined,
+        undefined,
+        { teamId: undefined }
       );
       expect(workspace.gitAuthed).toHaveBeenCalledWith('fetch origin auto/JIRA-1-sub');
       expect(workspace.exec).toHaveBeenCalledWith("git reset --hard origin/'auto/JIRA-1-sub'");

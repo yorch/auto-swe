@@ -730,6 +730,38 @@ model GitHubHostCredential {
   @@map("github_host_credentials")
 }
 
+
+/// An npm package registry the workspace proxy fronts, with its upstream
+/// credential. The agent never sees `token*`: the worker injects it upstream
+/// at the proxy and the container holds only a per-workspace proxy token.
+/// `teamId` null means the registry is visible to every team. `npmScopes`
+/// empty marks the default registry for unscoped packages.
+model PackageRegistry {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String   @unique
+  ecosystem           String   @default("npm")
+  upstreamUrl         String   @map("upstream_url")
+  npmScopes           String[] @default([]) @map("npm_scopes")
+  accessMode          String   @default("lockfile") @map("access_mode")
+  allowPrivateNetwork Boolean  @default(false) @map("allow_private_network")
+  authKind            String   @default("bearer") @map("auth_kind")
+  teamId              String?  @map("team_id") @db.Uuid
+  team                Team?    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  isActive            Boolean  @default(true) @map("is_active")
+
+  tokenCiphertext Bytes?  @map("token_ciphertext")
+  tokenNonce      Bytes?  @map("token_nonce")
+  tokenAuthTag    Bytes?  @map("token_auth_tag")
+  tokenKeyVersion Int?    @map("token_key_version")
+  tokenLastFour   String? @map("token_last_four")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([teamId])
+  @@map("package_registries")
+}
+
 /// A GitHub App installation on one GitHub account (organization or user).
 ///
 /// The singleton `GitHubConfig` carries the App's own credentials, which are
@@ -910,6 +942,7 @@ model Team {
   ownedKnowledgeItems   KnowledgeItem[]         @relation("KnowledgeOwnerTeam")
   originKnowledgeItems  KnowledgeItem[]         @relation("KnowledgeOriginTeam")
   knowledgeGrants       KnowledgeItemTeamGrant[]
+  packageRegistries     PackageRegistry[]
 
   @@index([orgId])
   @@map("teams")

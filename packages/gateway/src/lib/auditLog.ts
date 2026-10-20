@@ -29,6 +29,7 @@ export type AuditEntityType =
   | 'Organization'
   | 'OrganizationMembership'
   | 'OutboundDelivery'
+  | 'PackageRegistry'
   | 'PersonalAccessToken'
   | 'ProviderCredential'
   | 'ScannerPattern'

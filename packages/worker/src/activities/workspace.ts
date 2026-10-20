@@ -3,6 +3,13 @@ import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { CapturedResult, OnTimeout } from '../lib/execUtils.js';
 import { redactExecError } from '../lib/redactToken.js';
+import {
+  beginWorkspaceRegistries,
+  buildRegistryAllowlist,
+  renderNpmrc,
+  renderYarnrc,
+  type WorkspaceRegistryAccess,
+} from '../lib/registryProxy/workspaceWiring.js';
 import { shellQuote } from '../lib/shellQuote.js';
 import { workspaceBackend } from '../lib/workspaceBackend/index.js';
 import { agentWorkspaceSpec } from '../lib/workspaceBackend/spec.js';
@@ -548,7 +555,8 @@ export async function createWorkspace(
    * candidate's already-pushed branch — not a fresh branch off main. Ignored
    * when `checkoutSha` is set (the pinned-fixture path takes precedence).
    */
-  existingBranch?: boolean
+  existingBranch?: boolean,
+  options?: { teamId?: string | null }
 ): Promise<Workspace> {
   // Container caps, default base image and metadata-blocking policy all come
   // from the environment. A caller-supplied `image` still wins (executor-image
@@ -603,9 +611,25 @@ export async function createWorkspace(
   // leaking it. The driver adds the hardening (init, cap-drop, keeper PID,
   // metadata sidecar); `agentWorkspaceSpec` carries the deployment's caps,
   // resolvers, network and host aliases.
+  // Registry wiring registers before the container exists: the token goes in
+  // as env on `docker run`, and the registration answers 503 until the
+  // lockfile allowlist is set — a state the agent never reaches.
+  let registry: WorkspaceRegistryAccess | null = null;
+  try {
+    registry = await beginWorkspaceRegistries(options?.teamId ?? null, containerName);
+  } catch (err) {
+    // A resolution/registration failure fails workspace creation — a workspace
+    // with the wrong registries (or none, when some should apply) is not safe
+    // to hand the agent.
+    throw redactExecError(err instanceof Error ? err : new Error(String(err)), cloneSecrets);
+  }
   let handle: WorkspaceHandle = backend.attach(containerName);
   try {
-    handle = await backend.create(agentWorkspaceSpec(containerName, effectiveImage, infra));
+    const spec = agentWorkspaceSpec(containerName, effectiveImage, infra);
+    if (registry) {
+      spec.env = [...(spec.env ?? []), ...registry.env];
+    }
+    handle = await backend.create(spec);
 
     // Initial exec function (root of container)
     const rootExec = (command: string, timeoutMs?: number): Promise<string> => {
@@ -669,7 +693,61 @@ export async function createWorkspace(
     await rootExec(
       `cd /workspace/target-repo && git remote set-url origin ${shellQuote(cleanUrl)}`
     );
+
+    if (registry) {
+      // npmrc via stdin: the token lands in a file, never on a command line.
+      const npmrc = renderNpmrc(registry.registries, registry.baseUrl, registry.token);
+      await rootExec('mkdir -p /workspace/.auto-swe');
+      await backend.exec(
+        handle,
+        ['sh', '-c', 'cat > /workspace/.auto-swe/npmrc && chmod 600 /workspace/.auto-swe/npmrc'],
+        {
+          heartbeatLabel: 'workspace: writing registry config',
+          stdin: npmrc,
+        }
+      );
+      // Berry scope overrides live in the exec user's home rc — a project
+      // .yarnrc.yml scope entry wins over it, which fails closed.
+      const yarnrc = renderYarnrc(registry.registries, registry.baseUrl);
+      if (yarnrc) {
+        const home = (await rootExec('echo $HOME')).trim();
+        await backend.exec(handle, ['sh', '-c', `cat >> ${shellQuote(home)}/.yarnrc.yml`], {
+          heartbeatLabel: 'workspace: writing yarn registry config',
+          stdin: yarnrc,
+        });
+      }
+      // The allowlist comes from the ref the workspace was cut from, never the
+      // working tree: HEAD after clone, the pinned SHA, or — for an existing
+      // branch clone that has no local default — the fetched origin/defaultBranch.
+      let ref = 'HEAD';
+      if (checkoutSha) {
+        ref = checkoutSha;
+      } else if (existingBranch) {
+        const fetchScript = [
+          killStrayProcessesScript(handle.keeperPid),
+          authedGitScript('/workspace/target-repo', fetchBranchesSubcommand([defaultBranch]), {
+            cleanUrl,
+            gitAuthHeader,
+          }),
+        ].join('\n');
+        const tag = newExecTag();
+        await backend.execShell(handle, ['sh', '-c', fetchScript], {
+          env: [tag.env],
+          heartbeatLabel: 'workspace: fetching base for registry allowlist',
+          onTimeout: tag.onTimeout,
+        });
+        ref = `origin/${defaultBranch}`;
+      }
+      const execCapture = (command: string, maxOutputBytes?: number) =>
+        backend.exec(handle, ['sh', '-c', command], {
+          heartbeatLabel: 'workspace: building registry allowlist',
+          ...(maxOutputBytes !== undefined ? { maxOutputBytes } : {}),
+          timeoutMs: 60_000,
+        });
+      registry.registration.setAllowlist(await buildRegistryAllowlist(registry, ref, execCapture));
+    }
   } catch (err) {
+    await registry?.registration.release().catch(() => {});
     await backend.remove(containerName);
     // A failed git command rejects with the full command line in
     // `error.message` (and stdout/stderr/cmd) — scrub the credential before
@@ -680,7 +758,10 @@ export async function createWorkspace(
 
   return {
     containerId: containerName,
-    destroy: () => backend.remove(containerName),
+    destroy: async () => {
+      await registry?.registration.release().catch(() => {});
+      await backend.remove(containerName);
+    },
     exec: (command: string, options) => {
       const tag = newExecTag();
       return backend.execShell(handle, ['sh', '-c', command], {

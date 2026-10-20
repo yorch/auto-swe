@@ -156,10 +156,11 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       ...spec.addHosts.map((h) => `--add-host=${h}`),
     ].join(' ');
     const network = spec.network ? ` --network=${shellQuote(spec.network)}` : '';
+    const env = (spec.env ?? []).map((pair) => ` -e ${shellQuote(pair)}`).join('');
     // `memory` is a config string, so shell-quote it (the numeric caps can't
     // carry shell metacharacters); '--' separates docker flags from the image.
     await execShellAsync(
-      `docker run -d --name ${spec.name} --init ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network} -- ${shellQuote(spec.image)} sleep infinity`,
+      `docker run -d --name ${spec.name} --init ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
       { heartbeatLabel: 'workspace: starting container' }
     );
 
@@ -221,6 +222,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     const args = execArgv(h, argv, { ...opts, stdin: opts.stdin !== undefined });
     const runOpts = {
       heartbeatLabel: opts.heartbeatLabel,
+      ...(opts.maxOutputBytes !== undefined ? { maxBuffer: opts.maxOutputBytes } : {}),
       onTimeout: opts.onTimeout,
       timeoutMs: opts.timeoutMs ?? 600_000,
     };

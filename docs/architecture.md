@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 93 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 94 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | The consolidated `20260618000000_init` baseline (generated from `schema.prisma`) plus the hand-written `20260618000001_custom_constraints_and_indexes` beside it; new changes append their own migration once the schema is deployed |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -728,7 +728,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 93 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 94 models.
 
 ```mermaid
 erDiagram
@@ -1092,6 +1092,11 @@ API takes argv only, so a value there would be readable in `/proc` and the audit
 sit on this seam; the ephemeral shell/container-step sandbox
 (`lib/ephemeralContainer.ts`, `shellStep.ts`, `containerStep.ts`, `agents/pi/smoke.ts`) still
 calls Docker directly and is outside it.
+
+Package installs go through a second seam: when `REGISTRY_PROXY_PORT` is set the worker runs a
+read-only npm registry proxy ([package-registries.md](./package-registries.md)) — the workspace
+gets a per-workspace token, the real upstream credential never enters the container, and in
+`lockfile` mode only the committed lockfile's `name@version` pairs resolve.
 
 `shellQuote()` wraps every `docker exec … sh -c` and every clone/checkout argument. It is the
 injection boundary for agent-generated commands; treat any change to it, or any caller that

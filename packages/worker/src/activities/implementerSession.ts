@@ -148,7 +148,10 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     authedCloneUrl,
     previousCodeResult.branch,
     baseBranch,
-    repo.executorImage ?? undefined
+    repo.executorImage ?? undefined,
+    undefined,
+    undefined,
+    { teamId: repo.teamId }
   );
 
   const tracer = new AgentTracer();
