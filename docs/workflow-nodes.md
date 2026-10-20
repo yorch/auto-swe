@@ -1029,7 +1029,7 @@ timeout writes nothing.
 | `onRequestChanges` | no | When set, the gate offers a third action — request changes — which needs a written note and routes here. |
 | `onTimeout` | yes | The node to run when nobody answers in time. |
 
-**Edges.** `onApprove`, `onReject`, `onTimeout`.
+**Edges.** `onApprove`, `onReject`, `onRequestChanges` (optional), `onTimeout`.
 
 **Output.** The response at `nodes.<id>.output`: `nodes.<id>.output.action` is `"approve"`,
 `"reject"` or — on a gate with `onRequestChanges` — `"request_changes"`, and
@@ -1074,8 +1074,8 @@ There is no `storeAs`.
 **Pitfalls.**
 
 - A rejection or change request requires a written reason. A rejection's reason is shown to the requester but is not part of
-  the output.
-- With `approverCount` above 1, a single rejection still rejects.
+  the output; a change request's note is — the workflow reads it at `nodes.<id>.output.comment`.
+- With `approverCount` above 1, a single rejection still rejects, and a single change request resolves the step the same way.
 
 **See also.** [hitl-workflows.md](./hitl-workflows.md).
 

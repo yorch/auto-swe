@@ -46,16 +46,7 @@ export const APPROVE_BEFORE_PR_SPEC: WorkflowSpec = {
         group: 'implement',
         review: false,
       }),
-      runTests: qualityGate('runTests', 'storeCodeResult', { group: 'verify' }),
-      // Reads context.currentCodeResult rather than nodes.implement.output: after a
-      // change request the gate re-tests and re-presents the fix session's output.
-      storeCodeResult: {
-        group: 'verify',
-        next: 'approve',
-        title: 'Keep the implementation',
-        type: 'set',
-        values: { 'context.currentCodeResult': { from: 'context.currentCodeResult' } },
-      },
+      runTests: qualityGate('runTests', 'approve', { group: 'verify' }),
       approve: {
         description:
           'Tests passed. Approve to open the PR, request changes (with a note) to send it ' +

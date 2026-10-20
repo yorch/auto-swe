@@ -414,10 +414,8 @@ function approveBeforePrRequestChanges(g: WorkflowSpec): WorkflowSpec {
       'context.currentCodeResult': { from: 'nodes.implement.output' },
     },
   };
-  nodes.storeCodeResult = {
-    ...nodes.storeCodeResult,
-    values: { 'context.currentCodeResult': { from: 'context.currentCodeResult' } },
-  };
+  delete nodes.storeCodeResult;
+  (nodes.runTests as Record<string, unknown>).next = 'approve';
   const approve = nodes.approve as Record<string, unknown>;
   approve.onRequestChanges = 'incApprovalRetries';
   approve.description =
@@ -923,7 +921,8 @@ const INTENDED_CHANGES: Record<
     reason:
       'the finalizer already writes COMPLETED on SUCCESS; the gate offers request changes, ' +
       'which counts a round, fixes the code with the note and re-runs the tests before the ' +
-      'gate — a third request fails the run',
+      'gate — a third request fails the run; the storeCodeResult node is gone because ' +
+      'initCounters and the fix set node keep context.currentCodeResult current',
   },
   'four-eyes': {
     apply: (g: WorkflowSpec) =>

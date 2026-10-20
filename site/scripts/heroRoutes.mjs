@@ -102,8 +102,8 @@ export const HERO_ROUTES = [
         label: 'Second sign-off',
       },
       {
-        detail: 'Asked only if a sign-off is rejected',
-        label: 'If rejected',
+        detail: 'Fixed with the note, CI again, then both sign off again',
+        label: 'If changes are requested',
       },
     ],
     tab: 'Four-eyes change',

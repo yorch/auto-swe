@@ -347,7 +347,7 @@ The spec supports 15 node types.
 | `fanOut` | Run a subgraph once per item in an array | `over`, `subgraph`, `join`, `itemKey`, `concurrency`, `onBranchFail`, `exports`, `pluck` |
 | `shell` | Run a user-authored command in an ephemeral container | `image`, `command`, `network`, `timeoutMs`, `memory`, `cpus`, `onFail` |
 | `containerStep` | Coded capability — an image with a JSON in/out contract | `image`, `command`, `inputs`, `transport` (`stdout`/`ndjson`/`sidecar`), `sidecar`, `onFail` |
-| `humanApproval` | Pause for a binary approve/reject | `title`, `description`, `approverCount`, `contextFrom`, `onApprove`, `onReject`, `onTimeout`, `timeout` |
+| `humanApproval` | Pause for a binary approve/reject | `title`, `description`, `approverCount`, `contextFrom`, `onApprove`, `onReject`, `onRequestChanges` (optional), `onTimeout`, `timeout` |
 | `humanDecision` | Pause for a 2–10 option branch | `options`, `description`, `contextFrom`, `storeAs`, `timeout`, `onTimeout` |
 | `humanInput` | Pause for a typed form, written back into context | `fields`, `description`, `onSubmit`, `timeout`, `onTimeout`, `storeAs` |
 | `humanReview` | Pause for an annotated review of displayed content | `contentFrom`, `description`, `onSubmit`, `timeout`, `onTimeout`, `storeAs` |
@@ -431,16 +431,13 @@ green and identical to the pull request head. Both open the pull request (ready 
 step has no draft option) and run CI with the fix loop first. `four-eyes` then asks two people, who
 see the head commit, the pull request URL, how many rejections came before, whether the code
 changed since, and whether the last fix made no change; `consensus-review` then runs its two
-reviewers. A rejection goes to a fix (the fix session pushes), CI again with a fresh two-attempt
-budget, and the gate again. Nothing carries over between rounds: each round creates new pending
-human steps, so an approval never covers different code. The agent-review attempts and the sign-off
-rejections of `four-eyes` are separate budgets of three; in `consensus-review` the consensus attempts
-are the one review budget, shared across CI rounds.
-
-A `four-eyes` rejection first asks the reviewer what should change, in a one-hour text question. The
-answer becomes the fix session's rejection summary; an empty answer or a timeout falls back to a
-generic "rejected, no written reason" text. `consensus-review` has no such question because its
-reviewers are agents whose rejection text already feeds the fix.
+reviewers. In `four-eyes` a change request — which needs a written note — goes to a fix (the fix
+session pushes, and is told the note), CI again with a fresh two-attempt budget, and both gates
+again; a rejection stops the run, and a third change request fails it. In `consensus-review` a
+rejecting reviewer does the same through its own loop. Nothing carries over between rounds: each
+round creates new pending human steps, so an approval never covers different code. The agent-review
+attempts and the sign-off change requests of `four-eyes` are separate budgets of three; in
+`consensus-review` the consensus attempts are the one review budget, shared across CI rounds.
 
 A fix that changes nothing makes no commit, so the head stays the one CI already judged and no CI
 event can follow. These two templates never wait for one:
