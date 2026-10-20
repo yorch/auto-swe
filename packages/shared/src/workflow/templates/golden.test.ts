@@ -333,6 +333,187 @@ function fourEyesAfterCiFirst(g: WorkflowSpec): WorkflowSpec {
 }
 
 /**
+ * four-eyes: `request changes` replaces the ask-why `humanInput` — each sign-off
+ * gate routes it to a set node that keeps the required note for the fix, and the
+ * note lives in the response (`nodes.<gate>.output.comment`) rather than a second
+ * human step. `onReject` stops the run directly again.
+ */
+function fourEyesRequestChanges(g: WorkflowSpec): WorkflowSpec {
+  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
+  delete nodes.askRejectionReason;
+  delete nodes.checkRejectionReason;
+  delete nodes.keepRejectionReason;
+  for (const id of ['storeSignoffContext', 'storeSignoffContextUnchanged']) {
+    const values = nodes[id]?.values as Record<string, unknown>;
+    delete values['context.signoffRejection'];
+    delete values['context.signoffRejectionSummary'];
+  }
+  const first = nodes.firstSignoff as Record<string, unknown>;
+  first.onReject = 'terminateRejected';
+  first.onRequestChanges = 'noteFirstSignoffChanges';
+  first.description =
+    'CI has passed on the head commit in the context, and the pull request is open. ' +
+    'Confirm you have read the implementation and are satisfied it meets the requirements. ' +
+    'If rejectedBefore is above 0 this is a repeat round and both people sign off again: ' +
+    'changedSinceLastSignoff says whether the code changed, and noChangeMade means the ' +
+    'fix made no change and this is the code that was sent back before. Approve to move to ' +
+    'the second sign-off, request changes (with a note) to send it back for a fix, or ' +
+    'reject to stop the run.';
+  const second = nodes.secondSignoff as Record<string, unknown>;
+  second.onReject = 'terminateRejected';
+  second.onRequestChanges = 'noteSecondSignoffChanges';
+  second.description =
+    'You are a second, independent reviewer. CI has passed on the head commit in the ' +
+    'context. Confirm the change is safe to merge. If rejectedBefore is above 0 this is a ' +
+    'repeat round and the first reviewer has signed off again: changedSinceLastSignoff ' +
+    'says whether the code changed, and noChangeMade means the fix made no change. ' +
+    'Approve to finish, request changes (with a note) to send it back for a fix, or ' +
+    'reject to stop the run.';
+  nodes.noteFirstSignoffChanges = {
+    next: 'incSignoffRetries',
+    type: 'set',
+    values: {
+      'context.signoffRejectionSummary': { from: 'nodes.firstSignoff.output.comment' },
+    },
+  };
+  nodes.noteSecondSignoffChanges = {
+    next: 'incSignoffRetries',
+    type: 'set',
+    values: {
+      'context.signoffRejectionSummary': { from: 'nodes.secondSignoff.output.comment' },
+    },
+  };
+  return {
+    ...g,
+    description:
+      'Implement, run the agent review loop, open the PR and wait for CI (a failing CI is ' +
+      'fixed by the agent: 2 fix attempts, and a third failure fails the run), then require two ' +
+      'sequential human approvals (e.g. author sign-off followed by independent reviewer ' +
+      'sign-off) on the code that passed CI. Requesting changes — with a required note — sends ' +
+      'the change back for a fix and through CI again (2 fix attempts, a third change request ' +
+      'fails the run), and both people sign off again; rejecting stops the run. A fix that ' +
+      'changes nothing goes straight back to the two people, marked as unchanged. Models a ' +
+      'four-eyes / two-person-rule change-management requirement.',
+    nodes: nodes as WorkflowSpec['nodes'],
+  };
+}
+
+/**
+ * approve-before-pr: the gate gains `request changes`, which counts a round,
+ * fixes the code with the note as `rejectionSummary`, and re-runs the tests
+ * before the gate. A third request fails the run; rejecting still stops it.
+ */
+function approveBeforePrRequestChanges(g: WorkflowSpec): WorkflowSpec {
+  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
+  nodes.implement = { ...nodes.implement, next: 'initCounters' };
+  nodes.initCounters = {
+    next: 'runTests',
+    type: 'set',
+    values: {
+      'context.approvalRetries': { literal: 0 },
+      'context.currentCodeResult': { from: 'nodes.implement.output' },
+    },
+  };
+  nodes.storeCodeResult = {
+    ...nodes.storeCodeResult,
+    values: { 'context.currentCodeResult': { from: 'context.currentCodeResult' } },
+  };
+  const approve = nodes.approve as Record<string, unknown>;
+  approve.onRequestChanges = 'incApprovalRetries';
+  approve.description =
+    'Tests passed. Approve to open the PR, request changes (with a note) to send it ' +
+    'back for a fix, or reject to discard.';
+  nodes.incApprovalRetries = {
+    next: 'checkApprovalLimit',
+    type: 'set',
+    values: { 'context.approvalRetries': { expr: 'context.approvalRetries + 1' } },
+  };
+  nodes.checkApprovalLimit = {
+    expr: 'context.approvalRetries >= 3',
+    onFalse: 'approvalFix',
+    onTrue: 'terminateRejected',
+    type: 'cond',
+  };
+  nodes.approvalFix = {
+    inputs: {
+      previousCodeResult: { from: 'context.currentCodeResult' },
+      rejectionSummary: { from: 'nodes.approve.output.comment' },
+    },
+    next: 'updateCodeAfterApprovalFix',
+    step: 'executeReviewFixImplementation',
+    type: 'step',
+  };
+  nodes.updateCodeAfterApprovalFix = {
+    next: 'runTests',
+    type: 'set',
+    values: { 'context.currentCodeResult': { from: 'nodes.approvalFix.output' } },
+  };
+  return {
+    ...g,
+    description:
+      'Implement, run tests, then require explicit human approval before the pull request is ' +
+      'opened. Requesting changes — with a required note — sends the code back for a fix that ' +
+      'is tested and approved again (a third change request fails the run); rejecting stops ' +
+      'it. Useful when a person must sign off on every change before reviewers can see it.',
+    nodes: nodes as WorkflowSpec['nodes'],
+  };
+}
+
+/**
+ * fully-supervised: the final gate gains `request changes`, fixed by the same
+ * session that applies review notes and sent straight back to the gate, capped
+ * at three rounds.
+ */
+function fullySupervisedRequestChanges(g: WorkflowSpec): WorkflowSpec {
+  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
+  const store = nodes.storeCodeResult as { values: Record<string, unknown> };
+  store.values = {
+    'context.approvalRetries': { literal: 0 },
+    ...store.values,
+  };
+  const approve = nodes.finalApproval as Record<string, unknown>;
+  approve.onRequestChanges = 'incApprovalRetries';
+  approve.description =
+    'Approve to open a pull request that reviewers can see, request changes ' +
+    '(with a note) to send the code back for a fix, or reject to stop the run.';
+  nodes.incApprovalRetries = {
+    next: 'checkApprovalLimit',
+    type: 'set',
+    values: { 'context.approvalRetries': { expr: 'context.approvalRetries + 1' } },
+  };
+  nodes.checkApprovalLimit = {
+    expr: 'context.approvalRetries >= 3',
+    onFalse: 'addressApprovalChanges',
+    onTrue: 'terminateRejected',
+    type: 'cond',
+  };
+  nodes.addressApprovalChanges = {
+    inputs: {
+      previousCodeResult: { from: 'context.currentCodeResult' },
+      rejectionSummary: { from: 'nodes.finalApproval.output.comment' },
+    },
+    next: 'updateCodeAfterApprovalChanges',
+    step: 'executeReviewFixImplementation',
+    type: 'step',
+  };
+  nodes.updateCodeAfterApprovalChanges = {
+    next: 'finalApproval',
+    type: 'set',
+    values: { 'context.currentCodeResult': { from: 'nodes.addressApprovalChanges.output' } },
+  };
+  return {
+    ...g,
+    description:
+      'The most hands-on workflow: collect requirements up front, implement, show the diff ' +
+      'for review, let the reviewer decide whether to apply their notes, then require final ' +
+      'approval before the pull request is opened — which can also send the code back ' +
+      'with a required note for a fix, up to three rounds. Every kind of human step ' +
+      'appears in sequence, so it doubles as a tour of what a person can be asked to do.',
+    nodes: nodes as WorkflowSpec['nodes'],
+  };
+}
+
+/**
  * Deliberate departures from the golden, keyed by template name. Anything not
  * listed here must match exactly.
  */
@@ -675,13 +856,7 @@ const INTENDED_CHANGES: Record<
   // (`finalizeWorkflowRun`) already writes COMPLETED on a SUCCESS run, so the node was a
   // second write of the same fact. Removing it retargets what pointed at it to `done`.
   ...Object.fromEntries(
-    [
-      'agent-reviewed-pr',
-      'code-and-ci',
-      'ticket-to-merge',
-      'dependency-update',
-      'approve-before-pr',
-    ].map((name) => [
+    ['agent-reviewed-pr', 'code-and-ci', 'ticket-to-merge', 'dependency-update'].map((name) => [
       name,
       {
         apply: (g: WorkflowSpec) => removePassThrough(g, 'setCompleted'),
@@ -743,14 +918,32 @@ const INTENDED_CHANGES: Record<
       },
     ])
   ),
+  'approve-before-pr': {
+    apply: (g: WorkflowSpec) => approveBeforePrRequestChanges(removePassThrough(g, 'setCompleted')),
+    reason:
+      'the finalizer already writes COMPLETED on SUCCESS; the gate offers request changes, ' +
+      'which counts a round, fixes the code with the note and re-runs the tests before the ' +
+      'gate — a third request fails the run',
+  },
   'four-eyes': {
     apply: (g: WorkflowSpec) =>
-      failureLessons(fourEyesAfterCiFirst(removePassThrough(g, 'setCompleted')), ['review', 'ci']),
+      failureLessons(
+        fourEyesRequestChanges(fourEyesAfterCiFirst(removePassThrough(g, 'setCompleted'))),
+        ['review', 'ci']
+      ),
     reason:
       'the finalizer already writes COMPLETED on SUCCESS; CI (with a 2-attempt fix loop) runs ' +
       'after the agent review and before the two sign-offs, which see the green code, and a ' +
       'rejection goes fix -> CI -> both sign-offs again instead of failing the run; the agent ' +
-      'review and CI loops store a lesson when they run out of attempts (the sign-off loop does not)',
+      'review and CI loops store a lesson when they run out of attempts (the sign-off loop ' +
+      'does not); request changes replaces the ask-why humanInput — the required note rides ' +
+      'in the gate answer — while a rejection stops the run directly',
+  },
+  'fully-supervised': {
+    apply: (g: WorkflowSpec) => fullySupervisedRequestChanges(g),
+    reason:
+      'the final approval offers request changes, fixed by the review-fix session and sent ' +
+      'straight back to the gate, capped at three rounds',
   },
   'model-catalog-refresh': {
     apply: (g: WorkflowSpec) => catalogRefreshPriceNoteCheck(catalogRefreshPriceListRule(g)),

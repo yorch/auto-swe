@@ -46,11 +46,12 @@ description: "Tests passed. Approve to open the PR or reject to discard."  # opt
 contextFrom: context.currentCodeResult.summary             # optional; workflow context path to display
 onApprove: setAwaitingCi                                   # required; node to route to on approval
 onReject: terminateRejected                                # required; node to route to on rejection
+onRequestChanges: fixAndReview                           # optional; node to route to when changes are requested
 onTimeout: terminateTimedOut                               # required; node to route to on timeout
 timeout: "24h"                                             # required; positive duration
 ```
 
-Valid API actions: `approve`, `reject`.
+Valid API actions: `approve`, `reject`, and — only when `onRequestChanges` is set — `request_changes`. Like a reject, a change request requires a written note (the `comment`), resolves the step at once even on a multi-approver gate, and is the one action whose comment is also sent to the workflow, readable at `nodes.<id>.output.comment`. A step created for a gate without the edge never offers the action.
 
 ### `humanDecision`
 
@@ -337,6 +338,9 @@ An `APPROVAL` response may carry an optional `comment` (up to 2000 characters):
 ```json
 { "action": "reject", "comment": "The migration drops a column the billing job still reads." }
 ```
+```json
+{ "action": "request_changes", "comment": "Handle the empty case before this merges." }
+```
 The comment is stored with the response, written to the audit log, and shown to the requester on the
 request panel and on the full run page, beside who decided. It is not part of the signal the workflow receives. A comment on any other kind
 returns `400` with `INVALID_VALUE`. A reject on an `APPROVAL` step requires a reason: the `comment`,
@@ -347,7 +351,7 @@ and need no reason.
 
 **Slack buttons.** An approval announcement carries Approve and Reject buttons. Clicking either
 opens a Slack modal, the same shape as the web dialog: Reject asks for a required reason (5 to 2000
-characters), Approve an optional comment. Submitting resolves the step through the same path as the
+characters), Approve an optional comment — and a gate that offers it gets a Request changes button whose modal asks what should change. Submitting resolves the step through the same path as the
 inbox route, with the text as the comment, so multi-approver counting, audit and the signal are
 identical. A failure (a too-short reason, a step already resolved, a run that has finished, access
 lost since the modal opened) shows inline in the modal rather than closing it. The modal opens only
@@ -367,7 +371,7 @@ Valid actions per kind:
 
 | Kind | Valid actions |
 | ---- | ------------- |
-| `APPROVAL` | `approve`, `reject` |
+| `APPROVAL` | `approve`, `reject`, `request_changes` (only on steps that offer it) |
 | `DECISION` | `select` |
 | `INPUT` | `submit` |
 | `REVIEW` | `submit` |
