@@ -103,12 +103,15 @@ at least 7), read on each sweep. See [automations.md](./automations.md#the-ledge
 The run-callback sweeps are environment-only for the same reason: `CALLBACK_DELIVERY_ENABLED` (default
 `true`) and `CALLBACK_DELIVERY_CRON` (default `* * * * *`) send due deliveries;
 `CALLBACK_DELIVERY_PRUNE_ENABLED` (default `true`) and `CALLBACK_DELIVERY_PRUNE_CRON` (default
+`47 4 * * *`) delete old ones, keeping them for `workflow.callbackDeliveryRetentionDays` (ADMIN, GLOBAL
+only, default 30 days). See [run-callbacks.md](./run-callbacks.md#5-delivery).
 
 The agent-transcript retention sweep is environment-only for the same reason: `AGENT_TRANSCRIPT_PRUNE_ENABLED`
 (default `true`) and `AGENT_TRANSCRIPT_PRUNE_CRON` (default `57 4 * * *`). How long transcripts keep
-is a setting (`workflow.transcriptRetentionDays`), read on each sweep. See [transcripts.md](./transcripts.md).
-`47 4 * * *`) delete old ones, keeping them for `workflow.callbackDeliveryRetentionDays` (ADMIN, GLOBAL
-only, default 30 days). See [run-callbacks.md](./run-callbacks.md#5-delivery).
+is a setting (`workflow.transcriptRetentionDays`), read on each sweep; so is how long the transcript
+access log keeps (`workflow.transcriptAccessLogRetentionDays`, ADMIN, GLOBAL only, default 2555 days,
+365 to 3650). The same sweep deletes artifacts left `pending` by an object-store upload that never
+completed. See [transcripts.md](./transcripts.md).
 
 This doc covers the third tier. For integration credentials see
 [model-configuration.md](./model-configuration.md) and the admin pages themselves; for the

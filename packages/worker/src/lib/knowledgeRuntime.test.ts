@@ -354,6 +354,11 @@ describe('knowledge execution scope', () => {
         temporalRunId: 'temporal-run',
       },
     });
+    // Only a stored (ready) artifact counts; a pending one has no payload yet.
+    expect(mocks.prisma.workflowArtifact.findMany).toHaveBeenCalledWith({
+      select: { id: true },
+      where: { id: { in: ['artifact-1'] }, runId: 'db-run', status: 'ready' },
+    });
   });
 
   it('does not accept a colliding PASSED signal payload as the gate step result', async () => {

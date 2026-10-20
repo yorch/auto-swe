@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetNavigation } from '@/test/mockNavigation';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
@@ -176,5 +176,115 @@ describe('GovernAuditPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Export CSV' }));
 
     expect(await screen.findByText(/only the newest 50,000 of them/)).toBeTruthy();
+  });
+
+  describe('transcript access tab', () => {
+    const TX = '22222222-2222-4222-8222-222222222222';
+    const RUN = '33333333-3333-4333-8333-333333333333';
+
+    function mockAccess(total: number) {
+      return setupFetchMock({
+        'GET /api/v1/platform/audit-log': () => ({
+          data: [],
+          meta: { entityTypes: [], limit: 50, offset: 0, total: 0 },
+        }),
+        'GET /api/v1/platform/transcripts/access-log': () => ({
+          data: [
+            {
+              action: 'content_read',
+              actor: { email: 'alice@example.com', name: 'Alice' },
+              actorId: ACTOR,
+              actorRole: 'ENGINEER',
+              completedAt: '2026-09-01T00:00:01.000Z',
+              createdAt: '2026-09-01T00:00:00.000Z',
+              id: 'acc-1',
+              ip: '10.0.0.1',
+              outcome: 'aborted',
+              params: { format: 'raw', scrubPii: false, via: 'download_link' },
+              runId: RUN,
+              scope: 'transcript',
+              transcriptId: TX,
+              userAgent: null,
+            },
+          ],
+          total,
+        }),
+      });
+    }
+
+    it('switches to the transcript access view and clears the other view’s filters', async () => {
+      resetNavigation('search=bob&entity=User', '/admin/audit');
+      const spy = mockAccess(1);
+      render(withQuery(<GovernAuditPage />));
+      fireEvent.click(await screen.findByRole('tab', { name: 'Transcript access' }));
+
+      await screen.findByText('alice@example.com');
+      expect(within(screen.getByRole('table')).getByText('Read')).toBeTruthy();
+      expect(screen.getByText('Client left')).toBeTruthy();
+      expect(screen.getByText(/via: download_link/)).toBeTruthy();
+      const accessUrls = urls(spy).filter((u) => u.includes('/transcripts/access-log'));
+      expect(accessUrls.length).toBeGreaterThan(0);
+      expect(accessUrls.every((u) => !u.includes('search=') && !u.includes('entity'))).toBe(true);
+    });
+
+    it('keeps focus on the tab that was activated, under a single page header', async () => {
+      const spy = mockAccess(1);
+      render(withQuery(<GovernAuditPage />));
+      const tab = await screen.findByRole('tab', { name: 'Transcript access' });
+      tab.focus();
+      fireEvent.click(tab);
+      await screen.findByText('alice@example.com');
+      await waitFor(() => expect(urls(spy).some((u) => u.includes('access-log'))).toBe(true));
+      // The same element, still focused: the bar was not remounted by the switch.
+      expect(screen.getByRole('tab', { name: 'Transcript access' })).toBe(tab);
+      expect(document.activeElement).toBe(tab);
+      expect(tab.getAttribute('aria-selected')).toBe('true');
+      expect(screen.getAllByRole('heading', { name: 'Audit log' })).toHaveLength(1);
+    });
+
+    it('filters from the URL and narrows by transcript, run or actor on click', async () => {
+      resetNavigation('tab=transcripts&action=content_read&offset=0', '/admin/audit');
+      const spy = mockAccess(1);
+      render(withQuery(<GovernAuditPage />));
+      await screen.findByText('alice@example.com');
+      expect(urls(spy).some((u) => u.includes('action=content_read'))).toBe(true);
+
+      fireEvent.click(screen.getByTitle(`${TX} — show only this transcript`));
+      await waitFor(() =>
+        expect(urls(spy).some((u) => u.includes(`transcriptId=${TX}`))).toBe(true)
+      );
+      fireEvent.click(screen.getByTitle(`${RUN} — show only this run`));
+      await waitFor(() => expect(urls(spy).some((u) => u.includes(`runId=${RUN}`))).toBe(true));
+      fireEvent.click(screen.getByRole('button', { name: 'alice@example.com' }));
+      await waitFor(() => expect(urls(spy).some((u) => u.includes(`actorId=${ACTOR}`))).toBe(true));
+      expect(screen.getByRole('button', { name: 'Remove the transcript filter' })).toBeTruthy();
+    });
+
+    it('sends a date range as whole UTC days', async () => {
+      resetNavigation('tab=transcripts&range=custom&from=2026-09-01&to=2026-09-30', '/admin/audit');
+      const spy = mockAccess(1);
+      render(withQuery(<GovernAuditPage />));
+      await screen.findByText('alice@example.com');
+      expect(
+        urls(spy).some(
+          (u) =>
+            u.includes(`from=${encodeURIComponent('2026-09-01T00:00:00.000Z')}`) &&
+            u.includes(`to=${encodeURIComponent('2026-10-01T00:00:00.000Z')}`)
+        )
+      ).toBe(true);
+    });
+
+    it('pages through the access log', async () => {
+      resetNavigation('tab=transcripts', '/admin/audit');
+      const spy = mockAccess(120);
+      render(withQuery(<GovernAuditPage />));
+      await screen.findByText('1–50 of 120');
+      fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+      await waitFor(() =>
+        expect(
+          urls(spy).some((u) => u.includes('/transcripts/access-log') && u.includes('offset=50'))
+        ).toBe(true)
+      );
+    });
   });
 });

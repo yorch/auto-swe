@@ -12,7 +12,22 @@ import { PinoInstrumentation } from '@opentelemetry/instrumentation-pino';
 import { UndiciInstrumentation } from '@opentelemetry/instrumentation-undici';
 import { BatchLogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics';
-import { redactRequestUrl } from './requestUrlRedaction.js';
+import { redactRequestUrl, SECRET_QUERY_PARAMS } from './requestUrlRedaction.js';
+
+/**
+ * The instrumentation's own default server-side redaction list. Setting
+ * `redactedQueryParamsServer` replaces the default rather than extending it, and the package
+ * does not export it, so it is restated here to keep those parameters redacted too.
+ */
+const DEFAULT_REDACTED_QUERY_PARAMS = [
+  'sig',
+  'Signature',
+  'AWSAccessKeyId',
+  'X-Goog-Signature',
+  'X-Amz-Signature',
+  'X-Amz-Credential',
+  'X-Amz-Security-Token',
+];
 
 export function initTelemetry(serviceName: string): { shutdown: () => Promise<void> } {
   const endpoint = resolveOtelExporterEndpoint();
@@ -22,6 +37,10 @@ export function initTelemetry(serviceName: string): { shutdown: () => Promise<vo
     // connectors); `http` never sees it.
     instrumentations: [
       new HttpInstrumentation({
+        // `url.query` is redacted by the instrumentation itself: its default list (pre-signed
+        // URL signatures), plus each credential parameter the gateway accepts — a transcript
+        // download link's `dl` token.
+        redactedQueryParamsServer: [...DEFAULT_REDACTED_QUERY_PARAMS, ...SECRET_QUERY_PARAMS],
         // The server span's `url.path` would otherwise carry a template webhook's token, which
         // is that webhook's credential. Hook attributes override the instrumentation's own.
         startIncomingSpanHook: (request) => {

@@ -678,6 +678,19 @@ export const SETTING_DEFINITIONS = {
   // ── Agent transcripts ─────────────────────────────────────────────────────
   // Read by the worker's activity interceptor and the daily retention sweep,
   // both of which have no team: GLOBAL only.
+  'workflow.transcriptAccessLogRetentionDays': defineSetting({
+    defaultValue: 2555,
+    description:
+      'How long the transcript access audit log (content reads, download links, exports, verifications, legal-hold changes and refused attempts) is kept before the daily transcript sweep deletes it. Independent of transcript retention: an access row outlives the transcript it names.',
+    group: 'workflow',
+    label: 'Transcript access log retention',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(365).max(3650),
+    unit: 'days',
+  }),
   'workflow.transcriptCaptureEnabled': defineSetting({
     defaultValue: true,
     description:

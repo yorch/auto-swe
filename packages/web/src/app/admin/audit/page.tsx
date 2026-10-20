@@ -1,7 +1,11 @@
 'use client';
 
 import Link from 'next/link';
-import { Suspense, useState } from 'react';
+import { type ReactNode, Suspense, useState } from 'react';
+import {
+  TRANSCRIPT_ACCESS_FILTER_KEYS,
+  TranscriptAccessLog,
+} from '@/components/audit/TranscriptAccessLog';
 import { Alert } from '@/components/ui/Alert';
 import { Badge, type BadgeTone } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -14,6 +18,7 @@ import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { RelativeTime } from '@/components/ui/RelativeTime';
 import { Select } from '@/components/ui/Select';
+import { TabBar, tabPanelProps } from '@/components/ui/TabBar';
 import { Table, Td, THead, Th, TRow } from '@/components/ui/Table';
 import { SearchInput, Toolbar } from '@/components/ui/Toolbar';
 import {
@@ -63,6 +68,16 @@ function rangeDays(range: DateRange | null): { since?: string; until?: string } 
   const { from, to } = dayRange(range);
   return { since: from, until: to };
 }
+
+type AuditTab = 'changes' | 'transcripts';
+
+const TABS: { id: AuditTab; label: string }[] = [
+  { id: 'changes', label: 'Changes' },
+  { id: 'transcripts', label: 'Transcript access' },
+];
+
+/** The changes view's URL filters; a tab switch clears both views' filters. */
+const CHANGE_FILTER_KEYS = ['action', 'actor', 'entity', 'from', 'offset', 'range', 'search', 'to'];
 
 function AuditWorkspace() {
   const { params, update } = useUrlFilters();
@@ -161,29 +176,28 @@ function AuditWorkspace() {
   };
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        actions={
-          <Button disabled={exporting || total === 0} onClick={handleExport} variant="secondary">
-            {exporting ? 'Exporting…' : 'Export CSV'}
-          </Button>
-        }
-        help={<p>Secret values and credential hashes are never stored here.</p>}
-        subtitle="Lifecycle changes to users, access tokens, sessions, and configuration, newest first."
-        title="Audit log"
-      />
-
+    <div className="space-y-6" {...tabPanelProps('audit', 'changes')}>
       {exportError && <Alert variant="error">{exportError}</Alert>}
       {exportNotice && <Alert variant="warning">{exportNotice}</Alert>}
 
       <Card className="fade-up stagger-1 p-4 sm:p-6">
         <Toolbar
           end={
-            total > 0 && (
-              <span className="text-xs text-paper-500 tabular-nums">
-                {total} {total === 1 ? 'entry' : 'entries'}
-              </span>
-            )
+            <div className="flex items-center gap-3">
+              {total > 0 && (
+                <span className="text-xs text-paper-500 tabular-nums">
+                  {total} {total === 1 ? 'entry' : 'entries'}
+                </span>
+              )}
+              <Button
+                disabled={exporting || total === 0}
+                onClick={handleExport}
+                size="sm"
+                variant="secondary"
+              >
+                {exporting ? 'Exporting…' : 'Export CSV'}
+              </Button>
+            </div>
           }
         >
           <SearchInput
@@ -314,10 +328,62 @@ function AuditWorkspace() {
   );
 }
 
+const HEADER: Record<AuditTab, { help: ReactNode; subtitle: string }> = {
+  changes: {
+    help: <p>Secret values and credential hashes are never stored here.</p>,
+    subtitle:
+      'Lifecycle changes to users, access tokens, sessions, and configuration, newest first.',
+  },
+  transcripts: {
+    help: (
+      <p>
+        A row is written before a transcript stream starts and completed when it ends, so an
+        interrupted download shows how it ended. Refused attempts are logged too.
+      </p>
+    ),
+    subtitle:
+      'Reads, download links, exports, integrity checks and legal holds on agent transcripts, newest first.',
+  },
+};
+
+function AuditPage() {
+  // `?tab=` picks the view, so each is linkable; the changes view is the default. The header
+  // and tab bar stay mounted across a switch, so the tab just activated keeps focus.
+  const { params, update } = useUrlFilters();
+  const active: AuditTab = params.get('tab') === 'transcripts' ? 'transcripts' : 'changes';
+  return (
+    <div className="space-y-6">
+      <PageHeader help={HEADER[active].help} subtitle={HEADER[active].subtitle} title="Audit log" />
+      <TabBar
+        active={active}
+        ariaLabel="Audit logs"
+        idPrefix="audit"
+        onChange={(tab) =>
+          update({
+            // The two views share some filter names with different meanings: start clean.
+            ...Object.fromEntries(
+              [...CHANGE_FILTER_KEYS, ...TRANSCRIPT_ACCESS_FILTER_KEYS].map((k) => [k, null])
+            ),
+            tab: tab === 'changes' ? null : tab,
+          })
+        }
+        tabs={TABS}
+      />
+      {active === 'transcripts' ? (
+        <div {...tabPanelProps('audit', 'transcripts')}>
+          <TranscriptAccessLog />
+        </div>
+      ) : (
+        <AuditWorkspace />
+      )}
+    </div>
+  );
+}
+
 export default function GovernAuditPage() {
   return (
     <Suspense fallback={null}>
-      <AuditWorkspace />
+      <AuditPage />
     </Suspense>
   );
 }

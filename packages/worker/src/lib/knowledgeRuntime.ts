@@ -453,6 +453,8 @@ export async function resolveWorkflowKnowledgeEvidence(
     where: {
       id: { in: records.map((record) => record.artifactId as string) },
       runId: principal.runId,
+      // A pending artifact has no stored payload yet; it is not evidence.
+      status: 'ready',
     },
   });
   if (attachedArtifacts.length !== records.length) {

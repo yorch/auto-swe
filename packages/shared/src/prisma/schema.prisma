@@ -1773,6 +1773,13 @@ model WorkflowArtifact {
   s3Bucket    String?      @map("s3_bucket")
   s3Key       String?      @map("s3_key")
   inlineBlob  Bytes?       @map("inline_blob")
+  /// "ready" once the payload is stored. An S3 artifact's row is written
+  /// "pending" before its PutObject so an object whose upload outlived its
+  /// writer is still findable; the transcript sweep deletes a day-old pending
+  /// row and its object (a failed upload leaves its row pending too).
+/// `getArtifact` refuses a row that is not ready; readers that treat a row as
+/// an available artifact filter on `status: 'ready'`.
+  status      String       @default("ready")
   createdAt   DateTime     @default(now()) @map("created_at") @db.Timestamptz
 
   transcriptParts AgentTranscriptPart[]
@@ -2377,6 +2384,36 @@ model AgentTranscriptPart {
   @@unique([transcriptId, seq])
   @@index([artifactId])
   @@map("agent_transcript_parts")
+}
+
+/// Audit trail of transcript access: content reads, download-link issues,
+/// exports, integrity verifications, legal-hold changes, and refused attempts. Deliberately no foreign keys — a row
+/// outlives the user, run and transcript it names — and no tenant columns: it
+/// is ADMIN-only and pruned by `workflow.transcriptAccessLogRetentionDays`.
+model TranscriptAccessLog {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// content_read | download_link | export | verify | legal_hold_set | legal_hold_cleared
+  action       String
+  /// transcript | run | export
+  scope        String
+  actorId      String?   @map("actor_id")
+  actorRole    String?   @map("actor_role")
+  transcriptId String?   @map("transcript_id") @db.Uuid
+  runId        String?   @map("run_id") @db.Uuid
+  /// format, scrubPii, from, to, agentKey, activityType, reason, via ('api' | 'download_link')
+  params       Json?
+  /// started | ok | integrity_error | stream_error | aborted | denied
+  outcome      String    @default("started")
+  ip           String?
+  userAgent    String?   @map("user_agent")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  completedAt  DateTime? @map("completed_at") @db.Timestamptz
+
+  @@index([createdAt])
+  @@index([transcriptId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([runId, createdAt])
+  @@map("transcript_access_log")
 }
 
 /// One node execution within a run. Recorded incrementally so the UI can show
