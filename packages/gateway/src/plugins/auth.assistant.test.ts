@@ -25,7 +25,9 @@ vi.mock('@auto-swe/shared/lib/repoAccessGate', () => ({
  */
 
 const seen: Array<FastifyRequest['assistant']> = [];
+const methods: Array<FastifyRequest['authMethod']> = [];
 const handler = async (request: FastifyRequest) => {
+  methods.push(request.authMethod);
   seen.push(request.assistant ? { ...request.assistant } : undefined);
   return { ok: true, user: request.user?.sub };
 };
@@ -67,6 +69,7 @@ describe('requireAuth — assistant tokens', () => {
   beforeEach(async () => {
     _resetAuthCachesForTests();
     seen.length = 0;
+    methods.length = 0;
     settings.resolveSetting.mockReset().mockResolvedValue(true);
     prisma = makeAssistantPrisma();
     app = await buildAssistantApp(prisma, routes);
@@ -93,6 +96,7 @@ describe('requireAuth — assistant tokens', () => {
       expect(res.statusCode).toBe(200);
       expect(res.json().user).toBe(USER_ID);
       expect(seen).toEqual([{ access: 'read', conversationId: CONVERSATION_ID }]);
+      expect(methods).toEqual(['assistant']);
       expect(prisma.assistantAction.updateMany).not.toHaveBeenCalled();
     });
 
@@ -104,6 +108,7 @@ describe('requireAuth — assistant tokens', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(seen).toEqual([undefined]);
+      expect(methods).toEqual(['jwt']);
     });
   });
 

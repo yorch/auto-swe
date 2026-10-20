@@ -45,6 +45,7 @@ import {
   mcpIssuerFor,
   mcpResourceFor,
 } from './mcpOAuth.js';
+import { recordSignInAudit } from './signInAudit.js';
 
 // Share the gateway's single Prisma client (one pool, tenant guard attached)
 // instead of opening a second, unguarded connection pool for auth.
@@ -452,6 +453,8 @@ function buildAuth() {
         // repository access.
         update: { after: async (account) => refreshGithubLogin(account) },
       },
+      // One audit row per sign-in; see `recordSignInAudit`, which never throws.
+      session: { create: { after: async (session) => recordSignInAudit(prisma, session) } },
       user: {
         create: {
           after: async (user) => {

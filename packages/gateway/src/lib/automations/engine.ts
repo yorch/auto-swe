@@ -534,6 +534,7 @@ export async function decideAndStart<F, X>(
           }
         },
         {
+          audit: { source: 'automation' },
           guard: async (tx) => {
             decided = await decideUnderLock(tx, { automation, ownerKey }, source, keys, now, (id) =>
               fastify.temporal.isWorkflowGone(id)

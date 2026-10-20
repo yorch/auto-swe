@@ -2100,6 +2100,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
                 }),
               }
             : {}),
+          audit: { actor: user ?? null, source: service ? 'service-token' : 'template-run' },
           log: fastify.log,
           sourceAuthorization: user ? { actor: user } : {},
         }

@@ -213,6 +213,7 @@ describe('requireAuth — Bearer JWT path', () => {
     await requireAuth()(request, reply as unknown as FastifyReply);
 
     expect(reply.statusCode).toBeUndefined();
+    expect(request.authMethod).toBe('jwt');
   });
 });
 
@@ -244,6 +245,7 @@ describe('requireAuth — PAT (ats_ prefix) path', () => {
       })
     );
     expect(request.user).toMatchObject({ role: 'ENGINEER', sub: 'user-9' });
+    expect(request.authMethod).toBe('pat');
     expect(reply.statusCode).toBeUndefined();
   });
 
@@ -413,6 +415,7 @@ describe('requireAuth — service principal tokens', () => {
     expect(errorCode(reply)).toBe('SERVICE_TOKEN_NOT_ALLOWED');
     expect(request.user).toBeUndefined();
     expect(request.principal).toBeUndefined();
+    expect(request.authMethod).toBeUndefined();
   });
 
   it('refuses it on an MCP-only route too: mcpScope is not an opt-in for machines', async () => {
@@ -425,6 +428,7 @@ describe('requireAuth — service principal tokens', () => {
     const { reply, request } = await call(serviceToken(), { serviceScopes: ['runs:launch'] });
     expect(reply.statusCode).toBeUndefined();
     expect(request.user).toBeUndefined();
+    expect(request.authMethod).toBe('service');
     expect(request.principal).toMatchObject({
       kind: 'service',
       scopes: ['runs:launch', 'runs:read'],

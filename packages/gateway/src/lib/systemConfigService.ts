@@ -15,6 +15,7 @@ import {
 } from '@auto-swe/shared/lib/systemConfig';
 import { WebClient } from '@slack/web-api';
 import type { FastifyBaseLogger } from 'fastify';
+import { auditContextData } from './auditContext.js';
 
 /**
  * Service for the singleton system-config tables (GitHub, Slack,
@@ -126,6 +127,7 @@ export async function writeSystemConfigAudit(
   try {
     await prisma.configAuditLog.create({
       data: {
+        ...auditContextData(),
         action: args.action,
         actorId: args.actorId,
         afterJson: args.afterJson as never,

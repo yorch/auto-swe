@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@auto-swe/shared';
+import { auditContextData } from './auditContext.js';
 
 /**
  * What a user has authorised MCP clients to do, and the one way to take it back.
@@ -111,6 +112,7 @@ export async function revokeMcpGrants(
     for (const consent of consents) {
       await tx.configAuditLog.create({
         data: {
+          ...auditContextData(),
           action: 'DELETE',
           actorId,
           afterJson: null as never,
@@ -131,6 +133,7 @@ export async function revokeMcpGrants(
       // the entity is the user whose access was revoked; the client is in the before-state.
       await tx.configAuditLog.create({
         data: {
+          ...auditContextData(),
           action: 'DELETE',
           actorId,
           afterJson: null as never,

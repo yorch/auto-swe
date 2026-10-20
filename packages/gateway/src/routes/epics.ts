@@ -211,7 +211,11 @@ export const epicRoutes: FastifyPluginAsync = async (fastify) => {
             requestPayload: JSON.stringify(request.body),
             workRequestId,
           }),
-        { log: fastify.log, sourceAuthorization: { actor: user } }
+        {
+          audit: { actor: user, source: 'epic' },
+          log: fastify.log,
+          sourceAuthorization: { actor: user },
+        }
       );
 
       if (!launch.ok) {

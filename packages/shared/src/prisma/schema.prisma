@@ -3148,6 +3148,9 @@ model ConfigAuditLog {
   actorId    String?           @map("actor_id") @db.Uuid
   beforeJson Json?             @map("before_json")
   afterJson  Json?             @map("after_json")
+  /// How the action arrived (`via`, truncated `ip`, request id, assistant or MCP client); null for
+  /// a row written outside a request. See docs/audit-log.md.
+  context    Json?             @map("context")
   createdAt  DateTime          @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([entityType, entityId])

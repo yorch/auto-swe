@@ -208,7 +208,11 @@ export const prdRunRoutes: FastifyPluginAsync = async (fastify) => {
           temporalWorkflowId: prdWorkflowId,
         },
         () => fastify.temporal.startRunnableWorkflow(prdWorkflowId, workflowInput),
-        { log: fastify.log, sourceAuthorization: { actor: user } }
+        {
+          audit: { actor: user, source: 'prd-run' },
+          log: fastify.log,
+          sourceAuthorization: { actor: user },
+        }
       );
       if (!launch.ok) {
         return sendError(

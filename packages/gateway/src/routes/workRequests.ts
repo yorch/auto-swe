@@ -731,6 +731,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             templateVersion: resolvedTemplate.version,
           }),
         {
+          audit: { actor: user, source: 'work-request' },
           guard: mcpWrite.launchGuard,
           log: fastify.log,
           sourceAuthorization: { actor: user },
@@ -1105,7 +1106,10 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             templateId: retryTemplateId,
             templateVersion: retryTemplateVersion,
           }),
-        { log: fastify.log }
+        {
+          audit: { actor: user, source: 'work-request-retry', templateId: retryTemplateId },
+          log: fastify.log,
+        }
       );
       if (!launch.ok) {
         return sendError(

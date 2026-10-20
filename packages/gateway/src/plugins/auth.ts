@@ -22,6 +22,9 @@ import { MCP_SCOPE_READ, MCP_SCOPE_WRITE } from '../lib/mcpOAuth.js';
 
 // ── JWT Configuration ──
 
+/** The credential path `requireAuth` admitted a request through. */
+export type AuthMethod = 'mcp' | 'assistant' | 'pat' | 'jwt' | 'session' | 'service';
+
 export interface JwtPayload {
   sub: string; // User UUID
   role: Role;
@@ -103,6 +106,12 @@ declare module 'fastify' {
      * to it, and only a route that declares `config.serviceScopes` is reached at all.
      */
     principal?: ServicePrincipalCaller;
+    /**
+     * How `requireAuth` admitted this request, for the audit log's `context.via`. Absent on a
+     * route that never ran `requireAuth`, and on a request authenticated some other way (a signed
+     * transcript link).
+     */
+    authMethod?: AuthMethod;
   }
   interface FastifyContextConfig {
     /**
@@ -968,6 +977,7 @@ async function admitServicePrincipal(
     });
   }
   request.principal = principal;
+  request.authMethod = 'service';
   // A principal's runs use the platform credential, so the gate has nothing of its own to judge;
   // it is resolved anyway so a handler shared with people reads the same value it would for them.
   const gate = await resolveRepoAccessGateOrLastKnown();
@@ -1185,6 +1195,7 @@ export function requireAuth(options: RBACOptions = {}) {
   const hook = async (request: FastifyRequest, reply: FastifyReply) => {
     const authHeader = request.headers.authorization;
     let payload: JwtPayload | null = null;
+    let method: AuthMethod = 'session';
 
     // Path 0: an MCP tool call made in-process by the bridge. Checked first, and by presence of
     // the header rather than by its value, so no malformed or wrong value can fall through to
@@ -1198,6 +1209,7 @@ export function requireAuth(options: RBACOptions = {}) {
           .send({ error: { code: outcome.code, message: outcome.message } });
       }
       payload = outcome.payload;
+      method = 'mcp';
     }
     // Path 1: Authorization: Bearer <assistant token, PAT or JWT>
     else if (authHeader?.startsWith('Bearer ')) {
@@ -1210,6 +1222,7 @@ export function requireAuth(options: RBACOptions = {}) {
             .send({ error: { code: outcome.code, message: outcome.message } });
         }
         payload = outcome.payload;
+        method = 'assistant';
       } else {
         try {
           if (token.startsWith(PAT_PREFIX)) {
@@ -1218,8 +1231,10 @@ export function requireAuth(options: RBACOptions = {}) {
               return admitServicePrincipal(request, reply, resolved.principal, options);
             }
             payload = resolved.user;
+            method = 'pat';
           } else {
             payload = await request.server.auth.verifyAccessToken(token);
+            method = 'jwt';
           }
         } catch (err: unknown) {
           if (err instanceof PatAuthError) {
@@ -1257,6 +1272,7 @@ export function requireAuth(options: RBACOptions = {}) {
       });
     }
     request.user = payload;
+    request.authMethod = method;
 
     // A failure to read the gate must not fail the request, but it must not
     // silently disable enforcement either — that would allow launches that were

@@ -52,7 +52,12 @@ describe('requireAuth and the MCP bridge', () => {
       }
     });
 
-    const probe = (request: { user?: { sub: string; role: string }; mcpBridge?: unknown }) => ({
+    const probe = (request: {
+      user?: { sub: string; role: string };
+      mcpBridge?: unknown;
+      authMethod?: string;
+    }) => ({
+      authMethod: request.authMethod,
       bridge: request.mcpBridge,
       role: request.user?.role,
       sub: request.user?.sub,
@@ -132,6 +137,7 @@ describe('requireAuth and the MCP bridge', () => {
       '/probe/read'
     );
     expect(res?.body).toEqual({
+      authMethod: 'mcp',
       bridge: { clientId: 'client-abc', consentId: 'consent-1', scopes: ['mcp:read'] },
       role: 'ENGINEER',
       sub: TEST_USER,
