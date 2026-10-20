@@ -1,4 +1,4 @@
-import { putArtifact } from '../lib/artifactStore.js';
+import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
 
 interface StoreContextOverflowInput {
   runId: string;

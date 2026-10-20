@@ -657,6 +657,8 @@ describe('systemConfig resolvers', () => {
       'SKILL_SOURCE_SYNC_CRON',
       'AUTOMATION_DECISION_PRUNE_ENABLED',
       'AUTOMATION_DECISION_PRUNE_CRON',
+      'AGENT_TRANSCRIPT_PRUNE_ENABLED',
+      'AGENT_TRANSCRIPT_PRUNE_CRON',
       'SLACK_CHANNEL_SYNC_ENABLED',
       'SLACK_CHANNEL_SYNC_CRON',
       'SLACK_CHANNEL_SYNC_STALE_HOURS',
@@ -669,6 +671,7 @@ describe('systemConfig resolvers', () => {
 
     it('defaults: the access sync is off, the dependency scan and model discovery are on', () => {
       expect(resolveScheduledSweeps()).toEqual({
+        agentTranscriptPrune: { cronExpression: '57 4 * * *', enabled: true },
         automationDecisionPrune: { cronExpression: '37 4 * * *', enabled: true },
         callbackDelivery: { cronExpression: '* * * * *', enabled: true },
         callbackDeliveryPrune: { cronExpression: '47 4 * * *', enabled: true },
@@ -698,10 +701,13 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('CALLBACK_DELIVERY_CRON', '*/2 * * * *');
       vi.stubEnv('CALLBACK_DELIVERY_PRUNE_ENABLED', 'false');
       vi.stubEnv('CALLBACK_DELIVERY_PRUNE_CRON', '3 3 * * *');
+      vi.stubEnv('AGENT_TRANSCRIPT_PRUNE_ENABLED', 'false');
+      vi.stubEnv('AGENT_TRANSCRIPT_PRUNE_CRON', '9 9 * * *');
       vi.stubEnv('SLACK_CHANNEL_SYNC_ENABLED', 'true');
       vi.stubEnv('SLACK_CHANNEL_SYNC_CRON', '4 */2 * * *');
       vi.stubEnv('SLACK_CHANNEL_SYNC_STALE_HOURS', '12');
       expect(resolveScheduledSweeps()).toEqual({
+        agentTranscriptPrune: { cronExpression: '9 9 * * *', enabled: false },
         automationDecisionPrune: { cronExpression: '1 2 * * *', enabled: false },
         callbackDelivery: { cronExpression: '*/2 * * * *', enabled: false },
         callbackDeliveryPrune: { cronExpression: '3 3 * * *', enabled: false },

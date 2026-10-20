@@ -132,3 +132,11 @@ auto-swe run --ticket=JIRA-1 --description="Add GET /health" --repo=acme/payment
 auto-swe runs tail <runId> --interval=5
 auto-swe agent run contentWriter "Fix the typos in the README" --repo=acme/docs --deliver=draft_pr --wait
 ```
+
+## `auto-swe transcripts`
+
+Inspect and export agent transcripts (the model calls each activity attempt made).
+
+- `auto-swe transcripts list <runId>` — a run's transcripts with status, runtime, call count and size.
+- `auto-swe transcripts get <transcriptId> [--format=raw|normalized] [--scrub-pii] [-o file]` — metadata plus the NDJSON content stream.
+- `auto-swe transcripts export --from=ISO --to=ISO [--agent=KEY] [--activity-type=TYPE] [--format=raw|normalized] [--scrub-pii] [-o file]` — admin export of `{transcript, record}` lines over a ≤31-day range, across all tenants.

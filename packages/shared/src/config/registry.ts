@@ -661,6 +661,7 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.boolean(),
   }),
+
   // Read by `validateContext` and `executeImplementation` when no step handed them a ticket.
   'workflow.ticketContextFallback': defineSetting({
     defaultValue: false,
@@ -673,6 +674,47 @@ export const SETTING_DEFINITIONS = {
     restartRequired: false,
     runPinned: false,
     schema: z.boolean(),
+  }),
+  // ── Agent transcripts ─────────────────────────────────────────────────────
+  // Read by the worker's activity interceptor and the daily retention sweep,
+  // both of which have no team: GLOBAL only.
+  'workflow.transcriptCaptureEnabled': defineSetting({
+    defaultValue: true,
+    description:
+      'Whether every activity attempt records its model traffic (request and response bodies, secrets redacted) as an agent transcript kept until retention expires. Off turns recording into a no-op without restarting the worker; transcripts already stored are kept and still swept by retention.',
+    group: 'workflow',
+    label: 'Agent transcript capture enabled',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'workflow.transcriptMaxBytes': defineSetting({
+    defaultValue: 67_108_864,
+    description:
+      'Largest one transcript may grow, in compressed bytes summed over its parts. A transcript that passes the cap gets a truncated marker, stops recording, and closes as truncated.',
+    group: 'workflow',
+    label: 'Max bytes per agent transcript',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1_048_576).max(1_073_741_824),
+    unit: 'bytes',
+  }),
+  'workflow.transcriptRetentionDays': defineSetting({
+    defaultValue: 365,
+    description:
+      'How long agent transcripts and their parts are kept before the daily sweep deletes them. Transcripts under a legal hold are never deleted; a transcript outlives the run it belongs to (run deletion clears only its link, not the transcript).',
+    group: 'workflow',
+    label: 'Agent transcript retention',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(3650),
+    unit: 'days',
   }),
   'workspace.agentMaxSteps': defineSetting({
     defaultValue: 50,

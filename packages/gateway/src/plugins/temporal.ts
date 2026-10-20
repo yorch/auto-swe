@@ -61,6 +61,7 @@ export const SKILL_SOURCE_SYNC_SCHEDULE_ID = 'auto-swe-skill-source-sync';
 export const SLACK_CHANNEL_SYNC_SCHEDULE_ID = 'auto-swe-slack-channel-sync';
 export const CALLBACK_DELIVERY_SCHEDULE_ID = 'auto-swe-callback-delivery';
 export const CALLBACK_DELIVERY_PRUNE_SCHEDULE_ID = 'auto-swe-callback-delivery-prune';
+export const AGENT_TRANSCRIPT_PRUNE_SCHEDULE_ID = 'auto-swe-agent-transcript-prune';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -224,6 +225,15 @@ export interface RunReaperScheduleConfig {
  * so the schedule carries no arguments.
  */
 export interface AutomationDecisionPruneScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
+/**
+ * The agent-transcript retention sweep. The workflow reads its retention
+ * setting itself, so the schedule carries no arguments.
+ */
+export interface AgentTranscriptPruneScheduleConfig {
   enabled: boolean;
   cronExpression: string;
 }
@@ -395,6 +405,9 @@ declare module 'fastify' {
       syncCallbackDeliveryPruneSchedule: (config: CallbackDeliveryScheduleConfig) => Promise<void>;
       syncAutomationDecisionPruneSchedule: (
         config: AutomationDecisionPruneScheduleConfig
+      ) => Promise<void>;
+      syncAgentTranscriptPruneSchedule: (
+        config: AgentTranscriptPruneScheduleConfig
       ) => Promise<void>;
       syncSkillSourceSyncSchedule: (config: SkillSourceSyncScheduleConfig) => Promise<void>;
       syncSlackChannelSyncSchedule: (config: SlackChannelSyncScheduleConfig) => Promise<void>;
@@ -1204,6 +1217,16 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         taskQueue: 'engineering-workflow',
         workflowExecutionTimeout: '6 minutes',
         workflowId,
+      });
+    },
+
+    async syncAgentTranscriptPruneSchedule(
+      config: AgentTranscriptPruneScheduleConfig
+    ): Promise<void> {
+      await upsertSchedule(AGENT_TRANSCRIPT_PRUNE_SCHEDULE_ID, {
+        action: makeSweepAction('ScheduledAgentTranscriptPruneWorkflow'),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
       });
     },
 

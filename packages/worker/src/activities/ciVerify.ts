@@ -13,6 +13,7 @@
  * stops one from being delivered.
  */
 import { prisma } from '@auto-swe/shared/db';
+import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
 import {
   type FailedJobSteps,
   failingStepRuns,
@@ -22,7 +23,6 @@ import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
-import { putArtifact } from '../lib/artifactStore.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';

@@ -18,7 +18,7 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
-vi.mock('../lib/artifactStore.js', () => ({
+vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
   putArtifact: vi.fn().mockResolvedValue({ id: 'art-1' }),
 }));
 

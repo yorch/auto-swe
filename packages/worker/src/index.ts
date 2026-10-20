@@ -15,6 +15,7 @@ import { startLivenessFile } from './lib/livenessFile.js';
 import { initMetrics } from './lib/metrics.js';
 import { OtelForwardingLogger } from './lib/otelLogger.js';
 import { initTemporalClient } from './lib/temporalClient.js';
+import { activityTranscriptInterceptor } from './lib/transcriptRecorder.js';
 import { createWorkflowSpanSinks } from './lib/workflowSpanSink.js';
 
 async function run() {
@@ -104,7 +105,13 @@ async function run() {
     // the workflow's starter was in; see lib/activitySpans.ts.
     // The node-tag pair attributes AgentTrace rows to the spec node that ran them.
     interceptors: {
-      activity: [activitySpanInterceptor, activityNodeTagInterceptor],
+      // The transcript recorder is last: it must run inside the node-tag ALS
+      // and the activity span to attribute its rows (see lib/transcriptRecorder.ts).
+      activity: [
+        activitySpanInterceptor,
+        activityNodeTagInterceptor,
+        activityTranscriptInterceptor,
+      ],
       workflowModules: [nodeTagInterceptorPath, traceContextInterceptorPath],
     },
     // Most activities hold a Docker workspace (clone + container) — an

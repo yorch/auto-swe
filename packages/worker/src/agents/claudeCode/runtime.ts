@@ -9,6 +9,7 @@ import type {
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ApplicationFailure } from '@temporalio/activity';
 import type { Workspace } from '../../activities/workspace.js';
+import { currentTranscriptRecorder } from '../../lib/transcriptRecorder.js';
 import {
   HARNESS_DIR,
   HARNESS_HOME,
@@ -430,6 +431,13 @@ export function claudeCodeAdapter(
     try {
       for await (const message of stream) {
         turn.heartbeat();
+        // Non-proxied turns expose no HTTP exchange to record, so each SDK
+        // stream message is the transcript's record. When proxied, the proxy's
+        // `http_call` records are authoritative and complete — recording these
+        // too would double-count the turn.
+        if (!endpoint.proxied) {
+          currentTranscriptRecorder()?.addHarnessMessage(message);
+        }
         if (message.type === 'system' && message.subtype === 'init') {
           sessionId = message.session_id;
         } else if (message.type === 'assistant') {
@@ -516,10 +524,35 @@ export function claudeCodeAdapter(
       // credential, and every call — the small-model side calls the harness
       // makes without streaming a message included — is metered as it ends.
       const proxy = modelProxy === undefined ? workerModelProxy() : modelProxy;
+      // Whatever runtime this attempt's transcript may otherwise assume, a
+      // Claude Code turn is 'claude-code'. When proxied, the exchanges the
+      // proxy reports are the transcript's authoritative model records.
+      const recorder = currentTranscriptRecorder();
+      recorder?.setRuntime('claude-code');
       const registration = proxy
         ? await proxy.register({
             apiKey: access.apiKey,
             onCall: (call) => turn.callSpent(call.id, `anthropic/${call.model}`, call.usage),
+            onExchange: (exchange) => {
+              const tryJson = (text: string): unknown => {
+                try {
+                  return JSON.parse(text);
+                } catch {
+                  return text;
+                }
+              };
+              recorder?.addHttpCall({
+                durationMs: exchange.durationMs,
+                error: exchange.error,
+                host: new URL(baseUrl).host,
+                method: 'POST',
+                path: exchange.path,
+                request: tryJson(exchange.requestBody),
+                response: { body: tryJson(exchange.responseText), contentType: null },
+                responseTruncated: exchange.responseTruncated,
+                status: exchange.status,
+              });
+            },
             signal: turn.abort.signal,
             upstreamBaseUrl: baseUrl,
           })

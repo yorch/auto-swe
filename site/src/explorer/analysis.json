@@ -7207,7 +7207,7 @@
       "title": "The GitHub test pins a typed URL; the saved URL keeps a plain fetch"
     },
     {
-      "anchor": "const modelFetch = modelCallFetch();",
+      "anchor": "const modelFetch = recordingFetch(modelCallFetch());",
       "before": 9,
       "id": "modelRuntimeFetch",
       "lines": 40,

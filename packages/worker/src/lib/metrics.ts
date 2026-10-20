@@ -73,6 +73,13 @@ function createInstruments() {
         'dashboard cancel). Each run counts once.',
       unit: '{run}',
     }),
+    transcriptPersistFailures: meter.createCounter('transcript.persist_failures', {
+      description:
+        'Agent-transcript writes that failed, by stage (create | part | close). ' +
+        'Persistence is best-effort: the activity still succeeds, so this counter ' +
+        'is the only signal that transcripts are being lost.',
+      unit: '{write}',
+    }),
   };
   // Prometheus `increase()` reads a series' first sample as its baseline, so a
   // counter born at 1 shows no increase: the first budget breach after a
@@ -146,6 +153,11 @@ export function recordRunFinalized(status: string, source: RunFinalizedSource): 
 
 export function recordBudgetExceeded(tier: string): void {
   instruments().budgetExceeded.add(1, { tier });
+}
+
+/** A transcript write failed; `stage` names where ('create' | 'part' | 'close'). */
+export function recordTranscriptPersistFailure(stage: 'create' | 'part' | 'close'): void {
+  instruments().transcriptPersistFailures.add(1, { stage });
 }
 
 export function recordActivityDuration(

@@ -27,6 +27,7 @@ const SYNCS = [
   'syncAutomationDecisionPruneSchedule',
   'syncCallbackDeliverySchedule',
   'syncCallbackDeliveryPruneSchedule',
+  'syncAgentTranscriptPruneSchedule',
   'syncSkillSourceSyncSchedule',
   'syncSlackChannelSyncSchedule',
   'syncEvalSchedule',
