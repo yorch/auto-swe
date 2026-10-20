@@ -15,6 +15,17 @@ const RUN_SOURCES = {
 } as const;
 type RunSource = keyof typeof RUN_SOURCES;
 
+/** What a transcript access-log row records (`TranscriptAccessLog.action`). */
+export const TRANSCRIPT_ACCESS_ACTIONS = [
+  'content_read',
+  'download_link',
+  'export',
+  'verify',
+  'legal_hold_set',
+  'legal_hold_cleared',
+] as const;
+export type TranscriptAccessAction = (typeof TRANSCRIPT_ACCESS_ACTIONS)[number];
+
 function createInstruments() {
   const runsFinalized = metrics
     .getMeter('auto-swe-gateway')
@@ -31,7 +42,18 @@ function createInstruments() {
       runsFinalized.add(0, { source, status });
     }
   }
-  return { runsFinalized };
+  const transcriptAccessLogFailures = metrics
+    .getMeter('auto-swe-gateway')
+    .createCounter('transcript.access_log_failures', {
+      description:
+        'Transcript access-log writes that failed, by action. The read or change itself still ' +
+        'went ahead (allow + alert), so a non-zero rate means the audit table is missing rows.',
+      unit: '{write}',
+    });
+  for (const action of TRANSCRIPT_ACCESS_ACTIONS) {
+    transcriptAccessLogFailures.add(0, { action });
+  }
+  return { runsFinalized, transcriptAccessLogFailures };
 }
 
 let cached: ReturnType<typeof createInstruments> | undefined;
@@ -62,4 +84,9 @@ export function _resetMetricsForTests(): void {
 /** Call only from the write that actually ended the run, so a race cannot count it twice. */
 export function recordRunFinalized(status: string, source: RunSource): void {
   instruments().runsFinalized.add(1, { source, status });
+}
+
+/** A transcript access-log insert or outcome update failed; the access itself was allowed. */
+export function recordTranscriptAccessLogFailure(action: TranscriptAccessAction): void {
+  instruments().transcriptAccessLogFailures.add(1, { action });
 }

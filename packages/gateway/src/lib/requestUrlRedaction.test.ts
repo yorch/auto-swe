@@ -114,3 +114,48 @@ describe('redactedRequestSerializer', () => {
     expect(all).not.toContain(TOKEN);
   });
 });
+
+describe('transcript download-link token (dl query parameter)', () => {
+  const DL = 'eyJ2IjoxfQ.c2lnbmF0dXJl';
+  const PATH = '/api/v1/transcripts/6f1c2a9e-0b7d-4c55-9a1e-3d2f8b7c6a51/content';
+
+  it.each([
+    [
+      `${PATH}?format=raw&scrubPii=false&dl=${DL}`,
+      `${PATH}?format=raw&scrubPii=false&dl=[redacted]`,
+    ],
+    [`${PATH}?dl=${DL}&format=raw`, `${PATH}?dl=[redacted]&format=raw`],
+    // An encoded key the query parser still reads as `dl`.
+    [`${PATH}?%64l=${DL}`, `${PATH}?%64l=[redacted]`],
+    [`${PATH}?dl=${DL}#frag`, `${PATH}?dl=[redacted]#frag`],
+  ])('redacts the token in %s', (url, expected) => {
+    expect(redactRequestUrl(url)).toBe(expected);
+  });
+
+  it('leaves other parameters, including ones that merely contain "dl", alone', () => {
+    const url = `${PATH}?format=raw&handle=x&dlx=1`;
+    expect(redactRequestUrl(url)).toBe(url);
+  });
+
+  it('keeps the token out of the request log line and the not-found line', async () => {
+    const lines: string[] = [];
+    const app = Fastify({
+      logger: {
+        hooks: { logMethod: redactingLogMethod },
+        level: 'info',
+        serializers: { req: redactedRequestSerializer },
+        stream: { write: (line: string) => lines.push(line) },
+      },
+    });
+    app.get('/api/v1/transcripts/:id/content', async () => ({ ok: true }));
+    await app.ready();
+    await app.inject({ method: 'GET', url: `${PATH}?format=raw&dl=${DL}` });
+    await app.inject({ method: 'GET', url: `/api/v1/nope?dl=${DL}` });
+    await app.close();
+
+    const all = lines.join('\n');
+    expect(all).toContain('dl=[redacted]');
+    expect(all).toContain('not found');
+    expect(all).not.toContain(DL);
+  });
+});

@@ -4,6 +4,7 @@ import { Readable } from 'node:stream';
 import { promisify } from 'node:util';
 import { gunzip } from 'node:zlib';
 import { getArtifact } from '@auto-swe/shared/lib/artifactStore';
+import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { normalizeTranscriptRecord } from '@auto-swe/shared/lib/transcripts/normalize';
 import { scrubPii } from '@auto-swe/shared/lib/transcripts/piiScrub';
@@ -11,12 +12,30 @@ import type { FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { sendError } from '../lib/httpErrors.js';
+import {
+  recordTranscriptAccessLogFailure,
+  TRANSCRIPT_ACCESS_ACTIONS,
+  type TranscriptAccessAction,
+} from '../lib/metrics.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import {
   buildWorkflowRunControlFilter,
   buildWorkflowRunVisibilityFilter,
 } from '../lib/runVisibility.js';
-import { requireAuth, requireCaller } from '../plugins/auth.js';
+import {
+  type DownloadLinkClaims,
+  signDownloadLink,
+  verifyDownloadLink,
+} from '../lib/transcriptDownloadLink.js';
+import {
+  hasRole,
+  type JwtPayload,
+  loadTokenUser,
+  RBAC_OPTIONS,
+  type RBACOptions,
+  requireAuth,
+  requireCaller,
+} from '../plugins/auth.js';
 
 /**
  * Agent transcripts — the recorded model traffic of activity attempts
@@ -32,6 +51,15 @@ import { requireAuth, requireCaller } from '../plugins/auth.js';
  * Every content/export stream ends with a `{"kind":"eof","complete":true}`
  * sentinel; a corruption or store failure ends it with an `integrity_error` /
  * `stream_error` line and a destroyed socket instead.
+ *
+ * Every content read, export, verification and legal-hold change writes a
+ * `TranscriptAccessLog` row (before a stream starts; its outcome is filled in
+ * when the stream ends). A failed write never blocks the access: it is logged
+ * and counted (`transcript.access_log_failures`) — allow + alert.
+ *
+ * The content route alone also accepts a signed download link (`?dl=`) instead
+ * of a credential, so a browser can stream it natively; the link's user is
+ * re-loaded and re-authorized when it is used (lib/transcriptDownloadLink.ts).
  */
 
 const gunzipAsync = promisify(gunzip);
@@ -63,9 +91,46 @@ const TranscriptMetaSchema = z.object({
 });
 
 const ContentQuery = z.object({
+  /** A signed download link token; see `contentAuthHook`. */
+  dl: z.string().optional(),
   format: z.enum(['raw', 'normalized']).default('raw'),
   scrubPii: booleanQueryParam(false),
 });
+
+const DownloadLinkBody = z.object({
+  format: z.enum(['raw', 'normalized']),
+  scrubPii: z.boolean(),
+});
+
+const AccessLogQuery = z.object({
+  action: z.enum(TRANSCRIPT_ACCESS_ACTIONS).optional(),
+  actorId: z.string().min(1).max(200).optional(),
+  from: z.string().datetime().optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+  runId: z.string().uuid().optional(),
+  to: z.string().datetime().optional(),
+  transcriptId: z.string().uuid().optional(),
+});
+
+const AccessLogRowSchema = z.object({
+  action: z.string(),
+  actor: z.object({ email: z.string(), name: z.string().nullable() }).nullable(),
+  actorId: z.string().nullable(),
+  actorRole: z.string().nullable(),
+  completedAt: z.string().nullable(),
+  createdAt: z.string(),
+  id: z.string(),
+  ip: z.string().nullable(),
+  outcome: z.string(),
+  params: z.record(z.string(), z.unknown()).nullable(),
+  runId: z.string().nullable(),
+  scope: z.string(),
+  transcriptId: z.string().nullable(),
+  userAgent: z.string().nullable(),
+});
+
+type AccessOutcome = 'started' | 'ok' | 'integrity_error' | 'stream_error' | 'aborted' | 'denied';
 
 const LegalHoldBody = z.object({ reason: z.string().min(1).max(500) });
 
@@ -177,6 +242,70 @@ function mapRecord(record: unknown, format: 'raw' | 'normalized', doScrubPii: bo
   return doScrubPii ? scrubPii(record) : record;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** The verified download link a content request presented, if any. */
+const downloadLinks = new WeakMap<FastifyRequest, DownloadLinkClaims>();
+
+/**
+ * The content route's authentication: `requireAuth(fallback)` as usual, unless
+ * the request carries `dl` — then the signed link is the credential. It must
+ * verify, be unexpired and name this transcript; its user must still exist,
+ * be active (as `requireAuth` checks a bearer token's user) and meet the
+ * fallback's role. The handler then re-runs the same authorization as for any
+ * caller and checks the link's format and PII choice against the query. Only
+ * a route using this hook accepts `dl`; everywhere else it is an ignored
+ * query parameter.
+ *
+ * The hook carries `fallback` under {@link RBAC_OPTIONS}, so the registration
+ * check that refuses `serviceScopes` behind an unreachable role sees it exactly
+ * as it would see the `requireAuth` hook itself.
+ */
+export function contentAuthHook(fallback: RBACOptions) {
+  const authenticate = requireAuth(fallback);
+  const requiredRole = fallback.requiredRole ?? 'ENGINEER';
+  const hook = async (request: FastifyRequest, reply: FastifyReply) => {
+    const dl = (request.query as Record<string, unknown> | undefined)?.dl;
+    if (dl === undefined) {
+      return authenticate(request, reply);
+    }
+    const verified = typeof dl === 'string' ? verifyDownloadLink(dl) : null;
+    if (verified?.ok === false && verified.reason === 'expired') {
+      // Genuine but stale: its subject is identified, so the refusal is logged.
+      downloadLinks.set(request, verified.claims);
+      return sendError(reply, 401, 'DOWNLOAD_LINK_EXPIRED', 'This download link has expired');
+    }
+    if (!verified?.ok) {
+      return sendError(reply, 401, 'DOWNLOAD_LINK_INVALID', 'This download link is not valid');
+    }
+    const { claims } = verified;
+    downloadLinks.set(request, claims);
+    if (claims.tid !== (request.params as { id?: string }).id) {
+      return sendError(reply, 401, 'DOWNLOAD_LINK_INVALID', 'This download link is not valid');
+    }
+    const user = await loadTokenUser(request.server.prisma, claims.sub);
+    if (!user?.isActive || !hasRole(user.role, requiredRole)) {
+      return sendError(
+        reply,
+        401,
+        'DOWNLOAD_LINK_INVALID',
+        'The user this download link was issued to can no longer use it'
+      );
+    }
+    request.user = {
+      exp: claims.exp,
+      iat: Math.floor(Date.now() / 1000),
+      role: user.role,
+      ...(user.slackId ? { slackId: user.slackId } : {}),
+      sub: claims.sub,
+    };
+    // As `requireAuth` does: the run filters read the gate off the request.
+    const gate = await resolveRepoAccessGateOrLastKnown();
+    request.repoAccessGate = gate ?? { mode: 'off', staleAfterHours: 0 };
+  };
+  return Object.assign(hook, { [RBAC_OPTIONS]: fallback });
+}
+
 export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
 
@@ -187,6 +316,189 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
       'TRANSCRIPTS_NOT_AVAILABLE',
       'Service principals cannot read transcripts'
     );
+
+  /**
+   * Write one access-log row and return its id, or null when the write failed.
+   * Never throws: the access goes ahead regardless (allow + alert), and the
+   * failure is logged and counted instead.
+   */
+  async function writeAccessLog(
+    request: FastifyRequest,
+    actor: { sub: string; role: string | null } | null,
+    entry: {
+      action: TranscriptAccessAction;
+      scope: 'transcript' | 'run' | 'export';
+      transcriptId?: string | null;
+      runId?: string | null;
+      params: Record<string, unknown>;
+      outcome?: AccessOutcome;
+    }
+  ): Promise<string | null> {
+    const finished = entry.outcome !== undefined && entry.outcome !== 'started';
+    try {
+      const row = await fastify.prisma.transcriptAccessLog.create({
+        data: {
+          action: entry.action,
+          actorId: actor?.sub ?? null,
+          actorRole: actor?.role ?? null,
+          completedAt: finished ? new Date() : null,
+          ip: request.ip ?? null,
+          outcome: entry.outcome ?? 'started',
+          params: entry.params as object,
+          runId: entry.runId ?? null,
+          scope: entry.scope,
+          transcriptId: entry.transcriptId ?? null,
+          userAgent: request.headers['user-agent']?.slice(0, 1000) ?? null,
+        },
+        select: { id: true },
+      });
+      return row.id;
+    } catch (err) {
+      request.log.warn(
+        { action: entry.action, err, transcriptId: entry.transcriptId ?? null },
+        'transcript access log write failed; the access is allowed'
+      );
+      recordTranscriptAccessLogFailure(entry.action);
+      return null;
+    }
+  }
+
+  /** Record how an access ended. Never throws, like {@link writeAccessLog}. */
+  async function completeAccessLog(
+    request: FastifyRequest,
+    id: string | null,
+    action: TranscriptAccessAction,
+    outcome: Exclude<AccessOutcome, 'started'>
+  ): Promise<void> {
+    if (!id) {
+      return;
+    }
+    try {
+      await fastify.prisma.transcriptAccessLog.update({
+        data: { completedAt: new Date(), outcome },
+        where: { id },
+      });
+    } catch (err) {
+      request.log.warn(
+        { action, err, outcome },
+        'transcript access log outcome update failed; the access is allowed'
+      );
+      recordTranscriptAccessLogFailure(action);
+    }
+  }
+
+  /**
+   * Track one streamed access from before its log row is written to the end of
+   * the response. The response listeners are registered first, so a client
+   * that leaves while the row is still being inserted is recorded too, and the
+   * outcome is settled by the response alone — whether or not the stream's
+   * generator ever runs:
+   *
+   * - `ok` once the response has finished (every byte handed to the socket);
+   * - `integrity_error` / `stream_error` when the source reported one;
+   * - `aborted` when the response closed before it finished.
+   */
+  function accessTracker(
+    request: FastifyRequest,
+    reply: FastifyReply,
+    action: TranscriptAccessAction
+  ) {
+    let reported: 'integrity_error' | 'stream_error' | null = null;
+    let logId: Promise<string | null> = Promise.resolve(null);
+    let settled = false;
+    const settle = (outcome: Exclude<AccessOutcome, 'started'>) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      void logId.then((id) => completeAccessLog(request, id, action, outcome));
+    };
+    reply.raw.once('finish', () => settle(reported ?? 'ok'));
+    reply.raw.once('close', () =>
+      settle(reported ?? (reply.raw.writableFinished ? 'ok' : 'aborted'))
+    );
+    return {
+      integrityError: () => {
+        reported = 'integrity_error';
+      },
+      /** Write the `started` row; the returned promise never rejects. */
+      open: (actor: JwtPayload, entry: Omit<Parameters<typeof writeAccessLog>[2], 'action'>) => {
+        logId = writeAccessLog(request, actor, { ...entry, action });
+        return logId;
+      },
+      streamError: () => {
+        reported = 'stream_error';
+      },
+    };
+  }
+
+  /**
+   * An NDJSON line source as a response body. A thrown source error ends the
+   * stream with a `stream_error` line and a destroyed socket. The source calls
+   * `integrityError()` when it emitted an `integrity_error` line, and
+   * `destroy()` to cut the transfer short.
+   */
+  function ndjsonBody(
+    reply: FastifyReply,
+    tracker: ReturnType<typeof accessTracker>,
+    source: (signals: { integrityError: () => void; destroy: () => void }) => AsyncGenerator<string>
+  ): Readable {
+    const destroySocket = () => {
+      if (reply.raw.socket instanceof Socket) {
+        reply.raw.socket.destroy();
+      }
+    };
+    return Readable.from(
+      (async function* () {
+        try {
+          yield* source({ destroy: destroySocket, integrityError: tracker.integrityError });
+        } catch (err) {
+          tracker.streamError();
+          yield `${JSON.stringify({ error: String(err), kind: 'stream_error' })}\n`;
+          destroySocket();
+        }
+      })()
+    );
+  }
+
+  /**
+   * A 401 or 404 on a route naming a transcript is recorded as `denied`
+   * (after the response, so the answer itself reveals nothing) when the actor
+   * is identified: the authenticated user, or the subject of a download link
+   * whose signature verified. An unidentified caller's refusal writes no row.
+   */
+  const logDenied =
+    (action: TranscriptAccessAction) => async (request: FastifyRequest, reply: FastifyReply) => {
+      if (reply.statusCode !== 401 && reply.statusCode !== 404) {
+        return;
+      }
+      const id = (request.params as { id?: unknown } | undefined)?.id;
+      if (typeof id !== 'string' || !UUID_RE.test(id)) {
+        return;
+      }
+      const link = downloadLinks.get(request);
+      const actor = request.user
+        ? { role: request.user.role, sub: request.user.sub }
+        : link
+          ? { role: null, sub: link.sub }
+          : null;
+      // Only an identified caller's refusal is recorded: an anonymous one would
+      // let anyone grow the table. The request log still has it.
+      if (!actor) {
+        return;
+      }
+      const query = request.query as Record<string, unknown> | undefined;
+      await writeAccessLog(request, actor, {
+        action,
+        outcome: 'denied',
+        params: {
+          status: reply.statusCode,
+          via: query?.dl !== undefined ? 'download_link' : 'api',
+        },
+        scope: 'transcript',
+        transcriptId: id,
+      });
+    };
 
   /**
    * Load a transcript the caller may read at the requested level.
@@ -370,40 +682,45 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
     '/api/v1/transcripts/:id/content',
     {
       config: { serviceScopes: ['runs:read'] },
-      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onRequest: contentAuthHook({ requiredRole: 'ENGINEER' }),
+      onResponse: logDenied('content_read'),
       schema: { params: TranscriptIdParam, querystring: ContentQuery },
     },
     async (request, reply) => {
+      const link = downloadLinks.get(request);
+      const { format, scrubPii: doScrubPii } = request.query;
+      if (link && (link.fmt !== format || link.pii !== doScrubPii)) {
+        return sendError(
+          reply,
+          401,
+          'DOWNLOAD_LINK_INVALID',
+          'This download link was issued for a different format or PII setting'
+        );
+      }
       const caller = requireCaller(request);
       const transcript = await readableTranscript(request, reply, request.params.id, 'control');
-      if (!transcript) {
+      if (!transcript || caller.kind !== 'user') {
         return;
       }
-      const { format, scrubPii: doScrubPii } = request.query;
+      const via = link ? 'download_link' : 'api';
       request.log.info(
         {
           action: 'transcript_content_read',
-          actorId: caller.kind === 'user' ? caller.user.sub : null,
+          actorId: caller.user.sub,
           format,
           scrubPii: doScrubPii,
           transcriptId: transcript.id,
+          via,
         },
         'transcript content read'
       );
-      const lines = contentLines(
-        request,
-        transcript,
-        format,
-        doScrubPii,
-        (record) => record,
-        () => {
-          // Destroy the transport so the transfer visibly ends short — the
-          // missing eof line is the signal for clients that see the write.
-          if (reply.raw.socket instanceof Socket) {
-            reply.raw.socket.destroy();
-          }
-        }
-      );
+      const tracker = accessTracker(request, reply, 'content_read');
+      await tracker.open(caller.user, {
+        params: { format, scrubPii: doScrubPii, via },
+        runId: transcript.runId,
+        scope: 'transcript',
+        transcriptId: transcript.id,
+      });
       return reply
         .header('Content-Type', 'application/x-ndjson; charset=utf-8')
         .header(
@@ -411,19 +728,64 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
           `attachment; filename="transcript-${transcript.id}-${format}.ndjson"`
         )
         .send(
-          Readable.from(
-            (async function* () {
-              try {
-                yield* lines;
-              } catch (err) {
-                yield `${JSON.stringify({ error: String(err), kind: 'stream_error' })}\n`;
-                if (reply.raw.socket instanceof Socket) {
-                  reply.raw.socket.destroy();
-                }
+          ndjsonBody(reply, tracker, ({ destroy, integrityError }) =>
+            contentLines(
+              request,
+              transcript,
+              format,
+              doScrubPii,
+              (record) => record,
+              () => {
+                integrityError();
+                destroy();
               }
-            })()
+            )
           )
         );
+    }
+  );
+
+  // ── Signed download link for the content stream (run control or ADMIN) ──
+  app.post(
+    '/api/v1/transcripts/:id/download-link',
+    {
+      config: { serviceScopes: ['runs:read'] },
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onResponse: logDenied('download_link'),
+      schema: {
+        body: DownloadLinkBody,
+        params: TranscriptIdParam,
+        response: { 200: z.object({ expiresAt: z.string(), url: z.string() }) },
+      },
+    },
+    async (request, reply) => {
+      const caller = requireCaller(request);
+      // The same bar as the content route itself, so a link is never issued
+      // for a stream its holder could not read directly.
+      const transcript = await readableTranscript(request, reply, request.params.id, 'control');
+      if (!transcript || caller.kind !== 'user') {
+        return;
+      }
+      const { format, scrubPii: doScrubPii } = request.body;
+      const { expiresAt, token } = signDownloadLink({
+        fmt: format,
+        pii: doScrubPii,
+        sub: caller.user.sub,
+        tid: transcript.id,
+      });
+      await writeAccessLog(request, caller.user, {
+        action: 'download_link',
+        outcome: 'ok',
+        params: { format, scrubPii: doScrubPii, via: 'api' },
+        runId: transcript.runId,
+        scope: 'transcript',
+        transcriptId: transcript.id,
+      });
+      const qs = `format=${format}&scrubPii=${doScrubPii}&dl=${encodeURIComponent(token)}`;
+      return {
+        expiresAt: expiresAt.toISOString(),
+        url: `/api/v1/transcripts/${transcript.id}/content?${qs}`,
+      };
     }
   );
 
@@ -447,24 +809,34 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
       if (!transcript) {
         return sendError(reply, 404, 'TRANSCRIPT_NOT_FOUND', 'Transcript not found');
       }
+      const logId = await writeAccessLog(request, caller.user, {
+        action: 'verify',
+        params: { via: 'api' },
+        runId: transcript.runId,
+        scope: 'transcript',
+        transcriptId: transcript.id,
+      });
       const partResults: { ok: boolean; seq: number }[] = [];
       const hashes: string[] = [];
-      for (const part of await transcriptParts(transcript.id)) {
-        const { body } = await getArtifact(part.artifactId);
-        const ok = createHash('sha256').update(body).digest('hex') === part.sha256;
-        partResults.push({ ok, seq: part.seq });
-        if (ok) {
-          hashes.push(part.sha256);
+      try {
+        for (const part of await transcriptParts(transcript.id)) {
+          const { body } = await getArtifact(part.artifactId);
+          const ok = createHash('sha256').update(body).digest('hex') === part.sha256;
+          partResults.push({ ok, seq: part.seq });
+          if (ok) {
+            hashes.push(part.sha256);
+          }
         }
+      } catch (err) {
+        await completeAccessLog(request, logId, 'verify', 'stream_error');
+        throw err;
       }
       const sha256Matches =
         transcript.sha256 !== null &&
         createHash('sha256').update(hashes.join('\n')).digest('hex') === transcript.sha256;
-      return {
-        ok: partResults.every((p) => p.ok) && sha256Matches,
-        parts: partResults,
-        sha256Matches,
-      };
+      const ok = partResults.every((p) => p.ok) && sha256Matches;
+      await completeAccessLog(request, logId, 'verify', ok ? 'ok' : 'integrity_error');
+      return { ok, parts: partResults, sha256Matches };
     }
   );
 
@@ -531,6 +903,13 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
         },
         'transcript legal hold change'
       );
+      await writeAccessLog(request, user, {
+        action: held ? 'legal_hold_set' : 'legal_hold_cleared',
+        outcome: 'ok',
+        params: { reason },
+        runId: run.id,
+        scope: 'run',
+      });
     } else {
       const transcript = (await runUnscoped(
         'transcript legal hold is admin-only',
@@ -552,6 +931,14 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
         },
         'transcript legal hold change'
       );
+      await writeAccessLog(request, user, {
+        action: held ? 'legal_hold_set' : 'legal_hold_cleared',
+        outcome: 'ok',
+        params: { reason },
+        runId: transcript.runId,
+        scope: 'transcript',
+        transcriptId: transcript.id,
+      });
     }
     return { legalHold: held, reason };
   };
@@ -630,7 +1017,22 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
         },
         'transcript export'
       );
-      async function* lines(): AsyncGenerator<string> {
+      const tracker = accessTracker(request, reply, 'export');
+      await tracker.open(caller.user, {
+        params: {
+          activityType: activityType ?? null,
+          agentKey: agentKey ?? null,
+          format,
+          from,
+          scrubPii: doScrubPii,
+          to,
+          via: 'api',
+        },
+        scope: 'export',
+      });
+      // Export carries on past a corrupt transcript (its integrity_error line
+      // names it), so the stream still ends with eof; the log records it.
+      async function* lines(integrityError: () => void): AsyncGenerator<string> {
         let cursor: { createdAt: Date; id: string } | null = null;
         for (;;) {
           const batch = (await runUnscoped(
@@ -666,6 +1068,7 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
                   { partSeq: part.seq, reason: outcome.reason, transcriptId: transcript.id },
                   'transcript part failed integrity verification during export'
                 );
+                integrityError();
                 yield `${JSON.stringify({
                   kind: 'integrity_error',
                   partSeq: part.seq,
@@ -695,20 +1098,75 @@ export const transcriptRoutes: FastifyPluginAsync = async (fastify) => {
           'Content-Disposition',
           `attachment; filename="transcripts-export-${from}-${to}.ndjson"`
         )
-        .send(
-          Readable.from(
-            (async function* () {
-              try {
-                yield* lines();
-              } catch (err) {
-                yield `${JSON.stringify({ error: String(err), kind: 'stream_error' })}\n`;
-                if (reply.raw.socket instanceof Socket) {
-                  reply.raw.socket.destroy();
-                }
-              }
-            })()
-          )
-        );
+        .send(ndjsonBody(reply, tracker, ({ integrityError }) => lines(integrityError)));
+    }
+  );
+
+  // ── Access audit log (ADMIN) ──
+  app.get(
+    '/api/v1/platform/transcripts/access-log',
+    {
+      onRequest: requireAuth({ requiredRole: 'ADMIN' }),
+      schema: {
+        querystring: AccessLogQuery,
+        response: { 200: z.object({ data: z.array(AccessLogRowSchema), total: z.number() }) },
+      },
+    },
+    async (request) => {
+      const { action, actorId, from, limit, offset, runId, to, transcriptId } = request.query;
+      const where = {
+        ...(action ? { action } : {}),
+        ...(actorId ? { actorId } : {}),
+        ...(runId ? { runId } : {}),
+        ...(transcriptId ? { transcriptId } : {}),
+        ...(from || to
+          ? {
+              createdAt: {
+                ...(from ? { gte: new Date(from) } : {}),
+                ...(to ? { lt: new Date(to) } : {}),
+              },
+            }
+          : {}),
+      };
+      const [rows, total] = await Promise.all([
+        fastify.prisma.transcriptAccessLog.findMany({
+          // `id` breaks ties so an offset page boundary cannot repeat or skip rows.
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          skip: offset,
+          take: limit,
+          where,
+        }),
+        fastify.prisma.transcriptAccessLog.count({ where }),
+      ]);
+      // A second lookup rather than a relation: the log has no foreign key to
+      // User, so a deleted actor's rows keep their id and render without an email.
+      const actorIds = [...new Set(rows.flatMap((r) => (r.actorId ? [r.actorId] : [])))];
+      const actors = actorIds.length
+        ? await fastify.prisma.user.findMany({
+            select: { email: true, id: true, name: true },
+            where: { id: { in: actorIds } },
+          })
+        : [];
+      const actorById = new Map(actors.map((a) => [a.id, { email: a.email, name: a.name }]));
+      return {
+        data: rows.map((row) => ({
+          action: row.action,
+          actor: row.actorId ? (actorById.get(row.actorId) ?? null) : null,
+          actorId: row.actorId,
+          actorRole: row.actorRole,
+          completedAt: row.completedAt?.toISOString() ?? null,
+          createdAt: row.createdAt.toISOString(),
+          id: row.id,
+          ip: row.ip,
+          outcome: row.outcome,
+          params: (row.params as Record<string, unknown> | null) ?? null,
+          runId: row.runId,
+          scope: row.scope,
+          transcriptId: row.transcriptId,
+          userAgent: row.userAgent,
+        })),
+        total,
+      };
     }
   );
 };

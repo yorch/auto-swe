@@ -1,6 +1,6 @@
 'use client';
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { API_BASE } from '@/lib/config';
 
@@ -51,24 +51,92 @@ export function useTranscriptLegalHold(runId: string) {
 }
 
 /**
- * Download a transcript's content stream. A plain <a href> navigation does not
- * carry the Authorization bearer the gateway needs, so the body is fetched
- * through the same credentials path as `api` and handed to the browser as a
- * blob — the same pattern as the audit-log export.
+ * Download a transcript's content stream. The gateway issues a short-lived
+ * signed link (a plain navigation carries no Authorization bearer), and the
+ * browser then fetches it natively: the attachment's Content-Disposition makes
+ * it a download that streams straight to disk, however large the transcript —
+ * nothing is buffered in the page.
  */
-export async function downloadTranscript(id: string, format: 'raw' | 'normalized'): Promise<void> {
-  const token = api.getToken();
-  const res = await fetch(`${API_BASE}/api/v1/transcripts/${id}/content?format=${format}`, {
-    credentials: 'include',
-    ...(token ? { headers: { Authorization: `Bearer ${token}` } } : {}),
-  });
-  if (!res.ok) {
-    throw new Error(`Transcript download failed: HTTP ${res.status}`);
-  }
-  const href = URL.createObjectURL(await res.blob());
+export async function downloadTranscript(
+  id: string,
+  format: 'raw' | 'normalized',
+  { scrubPii = false }: { scrubPii?: boolean } = {}
+): Promise<void> {
+  const { url } = await api.post<{ url: string; expiresAt: string }>(
+    `/api/v1/transcripts/${id}/download-link`,
+    { format, scrubPii }
+  );
   const a = document.createElement('a');
-  a.download = `transcript-${id}-${format}.ndjson`;
-  a.href = href;
+  a.href = `${API_BASE}${url}`;
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
   a.click();
-  setTimeout(() => URL.revokeObjectURL(href), 10_000);
+  a.remove();
+}
+
+// ── Transcript access audit log (ADMIN) ──
+
+export type TranscriptAccessAction =
+  | 'content_read'
+  | 'download_link'
+  | 'export'
+  | 'verify'
+  | 'legal_hold_set'
+  | 'legal_hold_cleared';
+
+export type TranscriptAccessOutcome =
+  | 'started'
+  | 'ok'
+  | 'integrity_error'
+  | 'stream_error'
+  | 'aborted'
+  | 'denied';
+
+export interface TranscriptAccessRow {
+  id: string;
+  action: TranscriptAccessAction;
+  scope: 'transcript' | 'run' | 'export';
+  actorId: string | null;
+  /** Null when the actor's user row no longer exists. */
+  actor: { email: string; name: string | null } | null;
+  actorRole: string | null;
+  transcriptId: string | null;
+  runId: string | null;
+  params: Record<string, unknown> | null;
+  outcome: TranscriptAccessOutcome;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface TranscriptAccessFilters {
+  action?: TranscriptAccessAction;
+  actorId?: string;
+  transcriptId?: string;
+  runId?: string;
+  /** ISO instants: `from` inclusive, `to` exclusive. */
+  from?: string;
+  to?: string;
+}
+
+export function useTranscriptAccessLog(
+  filters: TranscriptAccessFilters & { limit: number; offset: number }
+) {
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') {
+      qs.set(key, String(value));
+    }
+  }
+  return useQuery({
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      api.get<{ data: TranscriptAccessRow[]; total: number }>(
+        `/api/v1/platform/transcripts/access-log?${qs}`
+      ),
+    queryKey: ['transcript-access-log', filters],
+    refetchInterval: 30_000,
+  });
 }

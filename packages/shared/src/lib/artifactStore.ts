@@ -135,7 +135,11 @@ export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef>
     const prefix = storageCfg.s3Prefix ?? 'workflow-artifacts';
     const key = `${prefix}/${input.runId ?? 'global'}/${input.kind}/${crypto.randomUUID()}`;
     const client = await s3Client();
-    await client.putObject(key, body, contentType);
+    // Write-ahead: the row (with its key) exists before the object does, so an
+    // object whose writer died between the two is still named by a `pending`
+    // row the transcript sweep can find and delete. A failed upload leaves its
+    // row pending too — the store may have committed the object even though
+    // the call failed — and the sweep reaps object, then row.
     const row = await prisma.workflowArtifact.create({
       data: {
         backend: 's3',
@@ -145,8 +149,11 @@ export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef>
         s3Bucket: bucket,
         s3Key: key,
         sizeBytes: body.byteLength,
+        status: 'pending',
       },
     });
+    await client.putObject(key, body, contentType);
+    await prisma.workflowArtifact.update({ data: { status: 'ready' }, where: { id: row.id } });
     return { backend: 's3', contentType, id: row.id, kind: input.kind, sizeBytes: body.byteLength };
   }
 
@@ -167,6 +174,9 @@ export async function putArtifact(input: PutArtifactInput): Promise<ArtifactRef>
 
 export async function getArtifact(id: string): Promise<{ ref: ArtifactRef; body: Buffer }> {
   const row = await prisma.workflowArtifact.findUniqueOrThrow({ where: { id } });
+  if (row.status !== 'ready') {
+    throw new Error(`artifact ${id} is not ready (status=${row.status})`);
+  }
   const ref: ArtifactRef = {
     backend: row.backend as ArtifactBackend,
     contentType: row.contentType,
@@ -204,6 +214,47 @@ export async function deleteArtifact(id: string): Promise<void> {
     await client.deleteObject(row.s3Key);
   }
   await prisma.workflowArtifact.delete({ where: { id } });
+}
+
+/** True for the "no such key" answers an S3-compatible store gives. */
+function isMissingObject(err: unknown): boolean {
+  const e = err as { name?: string; Code?: string; $metadata?: { httpStatusCode?: number } };
+  return (
+    e?.name === 'NoSuchKey' ||
+    e?.name === 'NotFound' ||
+    e?.Code === 'NoSuchKey' ||
+    e?.$metadata?.httpStatusCode === 404
+  );
+}
+
+/**
+ * Delete a `pending` artifact: an S3 upload that never completed. The object
+ * goes first and a missing one counts as deleted (the upload may never have
+ * landed); then the row, only while it is still pending. Returns whether a row
+ * was removed.
+ */
+export async function deletePendingArtifact(id: string): Promise<boolean> {
+  const row = await prisma.workflowArtifact.findUnique({
+    select: { backend: true, s3Key: true, status: true },
+    where: { id },
+  });
+  if (row?.status !== 'pending') {
+    return false;
+  }
+  if (row.backend === 's3' && row.s3Key) {
+    const client = await s3Client();
+    try {
+      await client.deleteObject(row.s3Key);
+    } catch (err) {
+      if (!isMissingObject(err)) {
+        throw err;
+      }
+    }
+  }
+  const { count } = await prisma.workflowArtifact.deleteMany({
+    where: { id, status: 'pending' },
+  });
+  return count > 0;
 }
 
 /** Convenience: fetch artifact body as a UTF-8 string. */

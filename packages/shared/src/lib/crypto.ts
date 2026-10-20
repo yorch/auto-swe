@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { createCipheriv, createDecipheriv, hkdfSync, randomBytes } from 'node:crypto';
 
 /// Envelope-encryption helpers for secret material stored in
 /// `provider_credentials.api_key_ciphertext`. AES-256-GCM with a per-record
@@ -99,6 +99,32 @@ function loadKeys(): { version: number; keys: Map<number, Buffer> } {
  */
 export function assertEncryptionKeyConfigured(): void {
   loadKeys();
+}
+
+function hkdf(master: Buffer, info: string): Buffer {
+  return Buffer.from(hkdfSync('sha256', master, Buffer.alloc(0), info, KEY_BYTES));
+}
+
+/**
+ * A 32-byte key for one purpose, derived (HKDF-SHA256) from the current
+ * `CONFIG_ENCRYPTION_KEY`, with that key's version. `info` names the purpose,
+ * so keys for different uses never coincide and none of them is the
+ * encryption key itself. Stamp the version beside whatever the key signs, so
+ * {@link deriveSubkeyForVersion} can find it again across a rotation.
+ */
+export function deriveSubkey(info: string): { version: number; key: Buffer } {
+  const { keys, version } = loadKeys();
+  return { key: hkdf(keys.get(version) as Buffer, info), version };
+}
+
+/**
+ * The {@link deriveSubkey} key for one key version — the current one or, during
+ * a rotation, `CONFIG_ENCRYPTION_KEY_PREVIOUS`'s — or null when this process
+ * holds no key of that version.
+ */
+export function deriveSubkeyForVersion(info: string, version: number): Buffer | null {
+  const master = loadKeys().keys.get(version);
+  return master ? hkdf(master, info) : null;
 }
 
 export interface EncryptedSecret {

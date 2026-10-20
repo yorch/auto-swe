@@ -1,7 +1,12 @@
 import { metrics } from '@opentelemetry/api';
 import { MeterProvider, MetricReader } from '@opentelemetry/sdk-metrics';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { _resetMetricsForTests, initMetrics, recordRunFinalized } from './metrics.js';
+import {
+  _resetMetricsForTests,
+  initMetrics,
+  recordRunFinalized,
+  recordTranscriptAccessLogFailure,
+} from './metrics.js';
 
 class TestReader extends MetricReader {
   protected async onForceFlush() {}
@@ -41,5 +46,17 @@ describe('gateway metrics', () => {
   it('binds to a provider registered after import', async () => {
     recordRunFinalized('CANCELLED', 'gateway');
     expect(await finalized()).toContainEqual(['gateway', 'CANCELLED', 1]);
+  });
+
+  it('counts transcript access-log failures by action, seeded at zero', async () => {
+    initMetrics();
+    recordTranscriptAccessLogFailure('content_read');
+    const { resourceMetrics } = await reader.collect();
+    const metric = resourceMetrics.scopeMetrics
+      .flatMap((s) => s.metrics)
+      .find((m) => m.descriptor.name === 'transcript.access_log_failures');
+    const points = (metric?.dataPoints ?? []).map((d) => [d.attributes.action, d.value]);
+    expect(points).toContainEqual(['content_read', 1]);
+    expect(points).toContainEqual(['export', 0]);
   });
 });

@@ -262,7 +262,7 @@ describe('gate workspace provisioning', () => {
     });
     expect(prisma.workflowArtifact.findFirst).toHaveBeenCalledWith({
       select: { id: true },
-      where: { id: 'artifact-1', runId: 'db-run' },
+      where: { id: 'artifact-1', runId: 'db-run', status: 'ready' },
     });
   });
 

@@ -26,9 +26,13 @@ const agentTranscriptFindMany = async ({
     .map((t) => ({ id: t.id, parts: t.parts }));
 
 const h = vi.hoisted(() => ({
+  accessLog: [] as { createdAt: Date; id: string; outcome?: string; completedAt?: Date }[],
   deletedArtifacts: [] as string[],
+  deletedPending: [] as string[],
   deletedTranscripts: [] as string[],
+  failingPending: new Set<string>(),
   orphanArtifacts: [] as { id: string }[],
+  pendingArtifacts: [] as { createdAt: Date; id: string }[],
   transcripts: [] as {
     createdAt: Date;
     id: string;
@@ -70,8 +74,56 @@ vi.mock('@auto-swe/shared/db', () => ({
       ),
     },
     configSetting: { findMany: vi.fn(async () => []) },
+    transcriptAccessLog: {
+      deleteMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) => {
+        const before = h.accessLog.length;
+        h.accessLog = h.accessLog.filter((r) => !where.id.in.includes(r.id));
+        return { count: before - h.accessLog.length };
+      }),
+      findMany: vi.fn(
+        async ({ take, where }: { take: number; where: { createdAt: { lt: Date } } }) =>
+          h.accessLog
+            .filter((r) => r.createdAt < where.createdAt.lt)
+            .slice(0, take)
+            .map((r) => ({ id: r.id }))
+      ),
+      updateMany: vi.fn(
+        async ({
+          data,
+          where,
+        }: {
+          data: { completedAt: Date; outcome: string };
+          where: { createdAt: { lt: Date }; outcome: string };
+        }) => {
+          let count = 0;
+          for (const r of h.accessLog) {
+            if ((r.outcome ?? 'ok') === where.outcome && r.createdAt < where.createdAt.lt) {
+              Object.assign(r, data);
+              count += 1;
+            }
+          }
+          return { count };
+        }
+      ),
+    },
     workflowArtifact: {
-      findMany: vi.fn(async () => h.orphanArtifacts),
+      findMany: vi.fn(
+        async ({
+          take,
+          where,
+        }: {
+          take: number;
+          where: { status?: string; createdAt: { lt: Date }; id?: { gt: string } };
+        }) =>
+          where.status === 'pending'
+            ? h.pendingArtifacts
+                .filter((a) => a.createdAt < where.createdAt.lt)
+                .filter((a) => !where.id || a.id > where.id.gt)
+                .sort((a, b) => a.id.localeCompare(b.id))
+                .slice(0, take)
+                .map((a) => ({ id: a.id }))
+            : h.orphanArtifacts
+      ),
     },
   },
 }));
@@ -79,6 +131,13 @@ vi.mock('@auto-swe/shared/db', () => ({
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
   deleteArtifact: vi.fn(async (id: string) => {
     h.deletedArtifacts.push(id);
+  }),
+  deletePendingArtifact: vi.fn(async (id: string) => {
+    if (h.failingPending.has(id)) {
+      throw new Error('store down');
+    }
+    h.deletedPending.push(id);
+    return true;
   }),
 }));
 
@@ -106,7 +165,11 @@ const DAY = 86_400_000;
 const ago = (days: number) => new Date(NOW.getTime() - days * DAY);
 
 beforeEach(() => {
+  h.accessLog = [];
+  h.failingPending.clear();
   h.deletedArtifacts.length = 0;
+  h.deletedPending.length = 0;
+  h.pendingArtifacts.length = 0;
   h.deletedTranscripts.length = 0;
   h.orphanArtifacts.length = 0;
   h.transcripts.length = 0;
@@ -247,6 +310,108 @@ describe('pruneAgentTranscripts', () => {
 
     expect(h.deletedArtifacts.sort()).toEqual(['orphan-1', 'orphan-2']);
     expect(result.orphanArtifacts).toBe(2);
+  });
+
+  it('deletes day-old pending artifacts through the write-ahead cleanup and reports the count', async () => {
+    h.pendingArtifacts.push(
+      { createdAt: ago(2), id: 'pending-old' },
+      { createdAt: new Date(NOW.getTime() - DAY / 4), id: 'pending-fresh' }
+    );
+
+    const result = await pruneAgentTranscripts(NOW);
+
+    // A fresh pending row may be an upload still in flight; only the stale one goes.
+    expect(h.deletedPending).toEqual(['pending-old']);
+    expect(result.pendingArtifacts).toBe(1);
+    const pendingQuery = vi
+      .mocked(prisma.workflowArtifact.findMany)
+      .mock.calls.map((c) => c[0] as { where: Record<string, unknown> })
+      .find((a) => a.where.status === 'pending');
+    expect(pendingQuery?.where.createdAt).toEqual({ lt: ago(1) });
+  });
+
+  it('keeps sweeping after one pending artifact fails, and counts the failure', async () => {
+    h.pendingArtifacts.push(
+      { createdAt: ago(2), id: 'p-1' },
+      { createdAt: ago(2), id: 'p-2' },
+      { createdAt: ago(2), id: 'p-3' }
+    );
+    h.failingPending.add('p-2');
+    h.orphanArtifacts.push({ id: 'orphan-1' });
+
+    const result = await pruneAgentTranscripts(NOW);
+
+    expect(h.deletedPending).toEqual(['p-1', 'p-3']);
+    expect(result.pendingArtifacts).toBe(2);
+    expect(result.pendingArtifactFailures).toBe(1);
+    // The passes after it still ran.
+    expect(h.deletedArtifacts).toEqual(['orphan-1']);
+  });
+
+  it('walks pending artifacts in batches by id and reports more at the limit', async () => {
+    const total = PRUNE_BATCH + 3;
+    for (let i = 0; i < total; i++) {
+      h.pendingArtifacts.push({ createdAt: ago(2), id: `p-${String(i).padStart(6, '0')}` });
+    }
+    const result = await pruneAgentTranscripts(NOW);
+    expect(result.pendingArtifacts).toBe(total);
+    expect(result.more).toBe(false);
+  });
+
+  it('leaves pending parts to the pending pass, not the orphan pass', async () => {
+    await pruneAgentTranscripts(NOW);
+    const orphanQuery = vi
+      .mocked(prisma.workflowArtifact.findMany)
+      .mock.calls.map((c) => c[0] as { where: Record<string, unknown> })
+      .find((a) => a.where.kind === 'agent-transcript-part');
+    expect(orphanQuery?.where.status).toBe('ready');
+  });
+
+  it('marks access rows still started after an hour as aborted', async () => {
+    h.accessLog.push(
+      { createdAt: new Date(NOW.getTime() - 2 * 3_600_000), id: 'stale', outcome: 'started' },
+      { createdAt: new Date(NOW.getTime() - 10 * 60_000), id: 'live', outcome: 'started' },
+      { createdAt: new Date(NOW.getTime() - 2 * 3_600_000), id: 'done', outcome: 'ok' }
+    );
+
+    const result = await pruneAgentTranscripts(NOW);
+
+    expect(result.accessLogReconciled).toBe(1);
+    expect(h.accessLog.find((r) => r.id === 'stale')).toMatchObject({
+      completedAt: NOW,
+      outcome: 'aborted',
+    });
+    expect(h.accessLog.find((r) => r.id === 'live')?.outcome).toBe('started');
+    expect(h.accessLog.find((r) => r.id === 'done')?.outcome).toBe('ok');
+  });
+
+  it('prunes access-log rows past their own retention, keeping younger ones', async () => {
+    // Default retention is 2555 days.
+    h.accessLog.push(
+      { createdAt: ago(2600), id: 'old' },
+      { createdAt: ago(2000), id: 'kept' },
+      { createdAt: ago(1), id: 'new' }
+    );
+
+    const result = await pruneAgentTranscripts(NOW);
+
+    expect(result.accessLogRetentionDays).toBe(2555);
+    expect(result.accessLogDeleted).toBe(1);
+    expect(h.accessLog.map((r) => r.id)).toEqual(['kept', 'new']);
+  });
+
+  it('prunes the access log in batches', async () => {
+    h.accessLog = Array.from({ length: PRUNE_BATCH + 5 }, (_, i) => ({
+      createdAt: ago(3000),
+      id: `a-${i}`,
+    }));
+    vi.mocked(prisma.transcriptAccessLog.deleteMany).mockClear();
+
+    const result = await pruneAgentTranscripts(NOW);
+
+    expect(result.accessLogDeleted).toBe(PRUNE_BATCH + 5);
+    expect(prisma.transcriptAccessLog.deleteMany).toHaveBeenCalledTimes(2);
+    expect(result.more).toBe(false);
   });
 
   it('stops at its batch limit and reports more', async () => {

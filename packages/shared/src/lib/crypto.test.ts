@@ -1,6 +1,12 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { _resetKeyCacheForTests, decryptSecret, encryptSecret } from './crypto.js';
+import {
+  _resetKeyCacheForTests,
+  decryptSecret,
+  deriveSubkey,
+  deriveSubkeyForVersion,
+  encryptSecret,
+} from './crypto.js';
 
 describe('crypto', () => {
   const previousKey = process.env.CONFIG_ENCRYPTION_KEY;
@@ -23,6 +29,29 @@ describe('crypto', () => {
     delete process.env.CONFIG_ENCRYPTION_KEY_VERSION;
     delete process.env.CONFIG_ENCRYPTION_KEY_PREVIOUS;
     _resetKeyCacheForTests();
+  });
+
+  it('derives a stable 32-byte subkey per purpose and version, distinct from the key itself', () => {
+    const a = deriveSubkey('purpose/a');
+    expect(a.version).toBe(1);
+    expect(a.key).toHaveLength(32);
+    expect(deriveSubkey('purpose/a').key.equals(a.key)).toBe(true);
+    expect(deriveSubkey('purpose/b').key.equals(a.key)).toBe(false);
+    expect(a.key.equals(Buffer.from(process.env.CONFIG_ENCRYPTION_KEY as string, 'base64'))).toBe(
+      false
+    );
+    expect(deriveSubkeyForVersion('purpose/a', 1)?.equals(a.key)).toBe(true);
+    expect(deriveSubkeyForVersion('purpose/a', 2)).toBeNull();
+  });
+
+  it('finds the previous version’s subkey during a rotation', () => {
+    const old = deriveSubkey('purpose/a');
+    process.env.CONFIG_ENCRYPTION_KEY_PREVIOUS = process.env.CONFIG_ENCRYPTION_KEY;
+    process.env.CONFIG_ENCRYPTION_KEY = randomBytes(32).toString('base64');
+    process.env.CONFIG_ENCRYPTION_KEY_VERSION = '2';
+    _resetKeyCacheForTests();
+    expect(deriveSubkey('purpose/a').version).toBe(2);
+    expect(deriveSubkeyForVersion('purpose/a', 1)?.equals(old.key)).toBe(true);
   });
 
   it('round-trips a plaintext secret', () => {

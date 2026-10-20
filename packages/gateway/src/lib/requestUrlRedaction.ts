@@ -10,6 +10,9 @@
  *
  * The named routes under the same prefix carry no secret in their path and are
  * left readable, so a log line still says which provider called.
+ *
+ * The same applies to a transcript download link: its signed token rides in the
+ * `dl` query parameter, so that parameter's value is redacted wherever a URL is.
  */
 
 /** Path segments under the prefix that name a route, not a token. */
@@ -25,6 +28,46 @@ const NAMED_WEBHOOK_ROUTES: ReadonlySet<string> = new Set([
 ]);
 
 export const REDACTED_SEGMENT = '[redacted]';
+
+/**
+ * Query parameters that carry a credential: `dl` is a transcript download link's
+ * signed token (`lib/transcriptDownloadLink.ts`), which authenticates the
+ * request it rides on for its lifetime.
+ */
+export const SECRET_QUERY_PARAMS: ReadonlySet<string> = new Set(['dl']);
+
+function decodeQueryKey(key: string): string {
+  try {
+    return decodeURIComponent(key.replace(/\+/g, ' '));
+  } catch {
+    return key;
+  }
+}
+
+/**
+ * `query` (starting at `?` or `#`, or empty) with the value of every
+ * {@link SECRET_QUERY_PARAMS} entry replaced by `[redacted]`. A key is matched
+ * in its decoded form, as the query parser would read it. The fragment is kept.
+ */
+function redactQuery(query: string): string {
+  if (!query.startsWith('?')) {
+    return query;
+  }
+  const hash = query.indexOf('#');
+  const search = hash === -1 ? query.slice(1) : query.slice(1, hash);
+  const fragment = hash === -1 ? '' : query.slice(hash);
+  let redacted = false;
+  const pairs = search.split('&').map((pair) => {
+    const eq = pair.indexOf('=');
+    const key = eq === -1 ? pair : pair.slice(0, eq);
+    if (!SECRET_QUERY_PARAMS.has(decodeQueryKey(key).toLowerCase())) {
+      return pair;
+    }
+    redacted = true;
+    return `${key}=${REDACTED_SEGMENT}`;
+  });
+  return redacted ? `?${pairs.join('&')}${fragment}` : query;
+}
 
 /**
  * Percent-decode every escape except `%2F` (an encoded slash is not a path separator to the
@@ -63,15 +106,16 @@ function normalisePath(path: string): string {
  * `url` with a webhook token in its path replaced by `[redacted]`: the segment after any
  * `webhooks` segment, unless it names a route. The path is percent-decoded and normalised first,
  * and when something is redacted that form is returned — an encoded or un-normalised spelling of
- * the token is as much a credential as the plain one. The query string is kept; a path with no
- * token is returned unchanged.
+ * the token is as much a credential as the plain one. The query string is kept, except that the
+ * value of a {@link SECRET_QUERY_PARAMS} entry is redacted; a URL with no token is returned
+ * unchanged.
  */
 export function redactRequestUrl(url: string): string {
   const cut = url.search(/[?#]/);
   const path = cut === -1 ? url : url.slice(0, cut);
-  const rest = cut === -1 ? '' : url.slice(cut);
+  const rest = redactQuery(cut === -1 ? '' : url.slice(cut));
   if (!/webhooks/i.test(decodePath(path))) {
-    return url;
+    return `${path}${rest}`;
   }
   const segments = normalisePath(decodePath(path)).split('/');
   let redacted = false;
@@ -86,7 +130,7 @@ export function redactRequestUrl(url: string): string {
       redacted = true;
     }
   }
-  return redacted ? `${segments.join('/')}${rest}` : url;
+  return redacted ? `${segments.join('/')}${rest}` : `${path}${rest}`;
 }
 
 /**
@@ -95,7 +139,7 @@ export function redactRequestUrl(url: string): string {
  * the request serializer never sees those.
  */
 export function redactLogText(text: string): string {
-  if (!/webhooks|%/i.test(text)) {
+  if (!/webhooks|%|dl=/i.test(text)) {
     return text;
   }
   return text.replace(/\S+/g, (word) => redactRequestUrl(word));

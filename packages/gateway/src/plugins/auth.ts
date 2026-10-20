@@ -889,8 +889,12 @@ export function serviceAdmissible(options: RBACOptions): boolean {
   );
 }
 
-/** The options a `requireAuth` hook was built with, so route registration can read them. */
-const RBAC_OPTIONS = Symbol('requireAuth options');
+/**
+ * The options a `requireAuth` hook was built with, so route registration can read them. A hook
+ * that wraps `requireAuth` must carry the options it falls back to under this key too, or the
+ * registration check below cannot see the role it enforces.
+ */
+export const RBAC_OPTIONS = Symbol('requireAuth options');
 
 /**
  * Refuse, at registration, a route that opts in to service tokens behind a role a principal

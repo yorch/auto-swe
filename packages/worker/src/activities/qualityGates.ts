@@ -363,7 +363,8 @@ async function runGateCommand({
     ) {
       const attachedArtifact = await prisma.workflowArtifact.findFirst({
         select: { id: true },
-        where: { id: artifact.id, runId: exactRunId },
+        // A pending artifact has no stored payload yet; it is not evidence.
+        where: { id: artifact.id, runId: exactRunId, status: 'ready' },
       });
       if (attachedArtifact) {
         // SAFETY: the schema and generated Prisma client define this worker-only evidence model.
