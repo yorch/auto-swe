@@ -1164,6 +1164,11 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
+- **`WorkspaceBackend` has only a Docker driver.** A Kubernetes pod driver would also lose two
+  Docker protections that have no per-pod equivalent:
+  - `--pids-limit`: Kubernetes has only the kubelet-wide `podPidsLimit`.
+  - the metadata blackhole's `NET_ADMIN` sidecar: PodSecurity `restricted` forbids it, so egress
+    would have to be controlled by NetworkPolicy instead.
 - **A run fails permanently on any non-Temporal error from workflow code.** `RunnableWorkflow`
   turns every such error into a non-retryable `WORKFLOW_SPEC_FAILED`, because the spec failures that
   produce them are deterministic. A bug in the workflow code itself is therefore not retried by a

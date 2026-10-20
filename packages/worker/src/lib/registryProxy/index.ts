@@ -8,8 +8,9 @@
  * the package@version pairs committed on the base ref. GET and HEAD only.
  *
  * URL layout: `<baseUrl>/npm/<registryId>/<npm path>`, where the npm path is
- * either a packument `/<name>` (`pkg`, `@scope/pkg`, `@scope%2fpkg`) or a
- * tarball `/<name>/-/<file>.tgz`. Everything else is a JSON 404; other methods
+ * either a packument `/<name>` (`pkg`, `@scope/pkg`, `@scope%2fpkg`), a
+ * per-version manifest `/<name>/<version>` (Corepack), or a tarball
+ * `/<name>/-/<file>.tgz`. Everything else is a JSON 404; other methods
  * are 405; an unknown token is 401; until the registration's allowlist is set
  * it answers 503 ("not ready"), a state `createWorkspace` never lets the agent
  * reach because it returns only once the allowlist is in place.
@@ -32,6 +33,8 @@ const MAX_PACKUMENT_BYTES = 64 * 1024 * 1024;
 /** npm's own package-name shape; nothing here can start with `.` or `_` or carry a separator. */
 const NAME_RE = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/i;
 const TARBALL_RE = /^[a-z0-9~-][a-z0-9._~-]*\.tgz$/i;
+/** A semver-ish version or dist-tag segment (Corepack also asks for tags in open mode). */
+const VERSION_RE = /^[a-z0-9][a-z0-9.+_-]*$/i;
 /** A path-prefix segment (a non-registry directory like Artifactory's `api/npm/npm-remote`). */
 const PREFIX_SEGMENT_RE = /^[A-Za-z0-9._~-]+$/;
 const MAX_PREFIX_SEGMENTS = 8;
@@ -138,9 +141,15 @@ function denyMessage(name: string, version: string | undefined): string {
  * at most 8) and then discarded. The file may carry a `@scope/` prefix
  * (literal or `%40s%2f`); it is stripped here.
  *
- * `name` is returned decoded (`@s/p`); `tarball` decoded and unscoped.
+ * `name` is returned decoded (`@s/p`); `tarball` decoded and unscoped. A
+ * third form is the per-version manifest `/<name>/<version>` that Corepack
+ * reads when resolving a `packageManager` pin — the scoped name may occupy
+ * two literal segments (`@yarnpkg/cli-dist/4.5.0`), and the version must
+ * match VERSION_RE (a leading dot is refused, so `..` cannot smuggle).
  */
-function packageNameOf(urlPath: string): { name: string; tarball: string | null } | null {
+function packageNameOf(
+  urlPath: string
+): { name: string; tarball: string | null; version: string | null } | null {
   const decode = (seg: string): string | null => {
     // A malformed escape (`%zz`) throws URIError — an agent can send one on
     // purpose, and it must be a 404, not an uncaught exception in the listener.
@@ -159,16 +168,39 @@ function packageNameOf(urlPath: string): { name: string; tarball: string | null 
   // Tarball: `…/<name>/-/<file>` — the last bare '-' segment is the boundary.
   const dash = segs.lastIndexOf('-');
   if (dash < 0) {
-    // Packument: exactly `/<name>`.
-    if (segs.length !== 1) {
+    // Packument `/<name>` or version manifest `/<name>/<version>`: the name
+    // takes one segment (unscoped, or a scope encoded into it) or two when
+    // the scope separator is a literal slash (`@s/p`).
+    let nameSegs = 1;
+    const first = decode(segs[0] ?? '');
+    if (first === null) {
       return null;
     }
-    const raw = decode(segs[0] ?? '');
-    if (raw === null) {
+    if ((first.startsWith('@') || first.startsWith('%40')) && !first.slice(1).includes('/')) {
+      nameSegs = 2;
+      if (segs.length < 2) {
+        return null;
+      }
+    }
+    const rawName = decode(segs.slice(0, nameSegs).join('/'));
+    if (rawName === null) {
       return null;
     }
-    const name = raw.startsWith('%40') ? `@${raw.slice(3)}` : raw;
-    return NAME_RE.test(name) ? { name, tarball: null } : null;
+    const name = rawName.startsWith('%40') ? `@${rawName.slice(3)}` : rawName;
+    if (!NAME_RE.test(name)) {
+      return null;
+    }
+    if (segs.length === nameSegs) {
+      return { name, tarball: null, version: null };
+    }
+    if (segs.length !== nameSegs + 1) {
+      return null;
+    }
+    const version = decode(segs[nameSegs] ?? '');
+    if (version === null || !VERSION_RE.test(version)) {
+      return null;
+    }
+    return { name, tarball: null, version };
   }
   if (dash === 0) {
     return null;
@@ -228,7 +260,7 @@ function packageNameOf(urlPath: string): { name: string; tarball: string | null 
       return null;
     }
   }
-  return { name, tarball: fileRaw };
+  return { name, tarball: fileRaw, version: null };
 }
 
 /**
@@ -312,18 +344,24 @@ export function filterPackument(
     }
   }
   for (const v of Object.values(versions)) {
-    const tarball = v.dist?.tarball;
-    if (typeof tarball === 'string') {
-      const file = tarball.split('/').pop();
-      if (file) {
-        v.dist = {
-          ...v.dist,
-          tarball: `${opts.baseUrl}/npm/${opts.registryId}/${opts.name}/-/${file}`,
-        };
-      }
-    }
+    rewriteDistTarball(v.dist, opts);
   }
   return { body: Buffer.from(JSON.stringify(doc)), denied: undefined };
+}
+
+/** Point a `dist.tarball` back at this proxy's canonical tarball path. */
+function rewriteDistTarball(
+  dist: { tarball?: string } | undefined,
+  opts: { baseUrl: string; name: string; registryId: string }
+): void {
+  const tarball = dist?.tarball;
+  if (typeof tarball !== 'string') {
+    return;
+  }
+  const file = tarball.split('/').pop();
+  if (file && dist) {
+    dist.tarball = `${opts.baseUrl}/npm/${opts.registryId}/${opts.name}/-/${file}`;
+  }
 }
 
 export function createRegistryProxy(options: {
@@ -346,7 +384,8 @@ export function createRegistryProxy(options: {
     res: http.ServerResponse,
     registry: ResolvedRegistry,
     name: string,
-    tarballFile: string | null
+    tarballFile: string | null,
+    versionSeg: string | null
   ): Promise<void> {
     const allowlist = reg.allowlists?.get(registry.id);
     // In lockfile mode a tarball's version is on the file name.
@@ -359,7 +398,21 @@ export function createRegistryProxy(options: {
         return;
       }
     }
-    if (reg.allowlists && allowlist !== null && !tarballFile) {
+    // In lockfile mode a version manifest's version is on the path — tags
+    // like `latest` are never allowlisted and so are denied too.
+    if (reg.allowlists && allowlist !== null && versionSeg !== null) {
+      if (!allowlist?.get(name)?.has(versionSeg)) {
+        reg.onDenied({
+          name,
+          reason: 'not-in-lockfile',
+          registryId: registry.id,
+          version: versionSeg,
+        });
+        sendJson(res, 403, denyMessage(name, versionSeg), denyMessage(name, versionSeg));
+        return;
+      }
+    }
+    if (reg.allowlists && allowlist !== null && !tarballFile && versionSeg === null) {
       // Packument filtering happens after the fetch — the upstream answer
       // decides what survives — but a name absent from the allowlist can be
       // denied without asking.
@@ -375,7 +428,7 @@ export function createRegistryProxy(options: {
     // registry stores.
     const upstreamPath = `${registry.upstreamUrl}/${
       tarballFile ? name : name.replace('/', '%2f')
-    }${tarballFile ? `/-/${tarballFile}` : ''}`;
+    }${tarballFile ? `/-/${tarballFile}` : versionSeg !== null ? `/${encodeURIComponent(versionSeg)}` : ''}`;
 
     // A cached tarball answers from disk and never reaches the upstream.
     if (tarballFile && req.method === 'GET' && options.cache) {
@@ -458,7 +511,9 @@ export function createRegistryProxy(options: {
       return;
     }
 
-    // Packument: buffered (64 MiB cap), tarball URLs rewritten, allowlist applied.
+    // Packument or version manifest: buffered (64 MiB cap), tarball URLs
+    // rewritten, allowlist applied (packuments only — a manifest's version
+    // already passed the per-version check above).
     const chunks: Buffer[] = [];
     let size = 0;
     try {
@@ -479,6 +534,26 @@ export function createRegistryProxy(options: {
     if (upstream.status !== 200) {
       res.writeHead(upstream.status, { 'content-type': 'application/json' });
       res.end(Buffer.concat(chunks));
+      return;
+    }
+    if (versionSeg !== null) {
+      // A version manifest is one document: rewrite dist.tarball, keep
+      // signatures/integrity/… untouched.
+      let doc: { dist?: { tarball?: string } } | undefined;
+      try {
+        doc = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      } catch {
+        doc = undefined;
+      }
+      const rewritable = doc && typeof doc === 'object' && doc.dist;
+      if (rewritable) {
+        rewriteDistTarball(doc?.dist, { baseUrl: advertised(), name, registryId: registry.id });
+      }
+      res.writeHead(200, {
+        'cache-control': 'no-store',
+        'content-type': upstream.headers.get('content-type') ?? 'application/json',
+      });
+      res.end(rewritable ? JSON.stringify(doc) : Buffer.concat(chunks));
       return;
     }
     const filtered = filterPackument(Buffer.concat(chunks), {
@@ -560,9 +635,11 @@ export function createRegistryProxy(options: {
       sendJson(res, 404, `no registry serves ${parsed.name}`);
       return;
     }
-    const call = serve(reg, req, res, registry, parsed.name, parsed.tarball).catch(() => {
-      sendJson(res, 502, 'the upstream registry could not be reached');
-    });
+    const call = serve(reg, req, res, registry, parsed.name, parsed.tarball, parsed.version).catch(
+      () => {
+        sendJson(res, 502, 'the upstream registry could not be reached');
+      }
+    );
     reg.inFlight.add(call);
     void call.finally(() => reg.inFlight.delete(call));
   }

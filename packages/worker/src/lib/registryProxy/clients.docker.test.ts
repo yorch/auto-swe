@@ -10,7 +10,7 @@
  * No internet is required: every URL the clients see points at the proxy.
  */
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign as signSync } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
@@ -60,7 +60,12 @@ interface FakeUpstream {
 
 /** An npm-shaped upstream gated on `token`, serving packument + tarball. */
 function startUpstream(
-  packages: { name: string; version: string; tgz: Buffer }[],
+  packages: {
+    name: string;
+    version: string;
+    tgz: Buffer;
+    signatures?: { keyid: string; sig: string }[];
+  }[],
   token: string
 ): Promise<FakeUpstream> {
   const requests: FakeUpstream['requests'] = [];
@@ -72,13 +77,32 @@ function startUpstream(
       return;
     }
     const port = (server.address() as { port: number }).port;
+    const nameUrl = (n: string) => [
+      `/${n}`,
+      `/${n.replace('/', '%2f')}`,
+      `/${n.replace('/', '%2F')}`,
+    ];
+    const nameVersionUrl = (n: string, v: string) =>
+      nameUrl(n).map((u) => `${u}/${encodeURIComponent(v)}`);
+    const distOf = (p: (typeof packages)[number]) => ({
+      dist: {
+        integrity: `sha512-${createHash('sha512').update(p.tgz).digest('base64')}`,
+        ...(p.signatures !== undefined ? { signatures: p.signatures } : {}),
+        shasum: createHash('sha1').update(p.tgz).digest('hex'),
+        tarball: `http://127.0.0.1:${port}/${p.name}/-/${p.name.split('/').pop()}-${p.version}.tgz`,
+      },
+      name: p.name,
+      version: p.version,
+    });
     for (const p of packages) {
       const unscoped = p.name.split('/').pop() ?? '';
-      if (
-        req.url === `/${p.name}` ||
-        req.url === `/${p.name.replace('/', '%2f')}` ||
-        req.url === `/${p.name.replace('/', '%2F')}`
-      ) {
+      // Version manifest — what Corepack fetches for a packageManager pin.
+      if (nameVersionUrl(p.name, p.version).includes(req.url ?? '')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(distOf(p)));
+        return;
+      }
+      if (nameUrl(p.name).includes(req.url ?? '')) {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(
           JSON.stringify({
@@ -473,6 +497,226 @@ describe.skipIf(!enabled)('registry proxy against real package managers', () => 
     const denied = await client(dir, ['yarn', 'add', 'asw-fixture-c'], { ignore: true });
     expect(denied.code).not.toBe(0);
     expect(`${denied.err}${denied.out}`).toContain(DENIED);
+    await reg.release();
+  }, 300_000);
+});
+
+describe.skipIf(!enabled)('Corepack bootstrap through the proxy', () => {
+  const work = mkdtempSync(path.join(tmpdir(), 'rp-corepack-'));
+  let gatewayIp = '';
+  let upstream: FakeUpstream;
+  let proxy: RegistryProxy;
+  let envPairs: string[] = [];
+  let mounts: { home: string; ws: string } = { home: '', ws: '' };
+  const denials: { name: string; version?: string }[] = [];
+
+  // A fake `pnpm@9.15.9` whose bin prints a marker — version deliberately not
+  // pre-installed in the image (which carries 10.34.7), so a hit means the
+  // proxy's download path worked.
+  const PIN_VERSION = '9.15.9';
+  const tgz = (() => {
+    const stage = mkdtempSync(path.join(work, 'pkg-'));
+    mkdirSync(path.join(stage, 'package/bin'), { recursive: true });
+    writeFileSync(
+      path.join(stage, 'package/package.json'),
+      JSON.stringify({
+        bin: { pnpm: 'bin/pnpm.cjs' },
+        name: 'pnpm',
+        version: PIN_VERSION,
+      })
+    );
+    writeFileSync(
+      path.join(stage, 'package/bin/pnpm.cjs'),
+      `#!/usr/bin/env node\nconsole.log('fake-pnpm ${PIN_VERSION}');\n`
+    );
+    execFileSync('chmod', ['+x', path.join(stage, 'package/bin/pnpm.cjs')]);
+    const out = path.join(work, 'pnpm.tgz');
+    execFileSync('tar', ['czf', out, '-C', stage, 'package']);
+    return readFileSync(out);
+  })();
+  const integrity = `sha512-${createHash('sha512').update(tgz).digest('base64')}`;
+  const integrityHex = createHash('sha512').update(tgz).digest('hex');
+
+  // Test signing key — production never sets COREPACK_INTEGRITY_KEYS.
+  const { privateKey, publicKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+  const sign = (over: string) =>
+    signSync('sha256', Buffer.from(over), privateKey).toString('base64');
+  const goodSig = sign(`pnpm@${PIN_VERSION}:${integrity}`);
+  const integrityKeys = JSON.stringify({
+    npm: [
+      {
+        expires: null,
+        key: publicKey.export({ format: 'der', type: 'spki' }).toString('base64'),
+        keyid: 'SHA256:test',
+        keytype: 'ecdsa-sha2-nistp256',
+        scheme: 'ecdsa-sha2-nistp256',
+      },
+    ],
+  });
+
+  const regView = [{ id: 'rA', isDefault: true, scopes: [] as string[] }];
+
+  async function activate(allow: Map<string, Set<string>> | null) {
+    denials.length = 0;
+    const reg = await proxy.register({
+      onDenied: (d) => denials.push(d),
+      registries: [
+        {
+          allowPrivateNetwork: true,
+          authKind: 'bearer',
+          id: 'rA',
+          isDefault: true,
+          name: 'a',
+          scopes: [],
+          token: 'up-A',
+          upstreamUrl: `http://${gatewayIp}:${upstream.port}`,
+        },
+      ],
+    });
+    reg.setAllowlist(allow ? new Map([['rA', allow]]) : new Map([['rA', null]]));
+    const proxyUrl = `http://${gatewayIp}:${await proxy.listen()}`;
+    const home = mkdtempSync(path.join(work, 'home-'));
+    const ws = mkdtempSync(path.join(work, 'ws-'));
+    const npmrc = renderNpmrc(regView, proxyUrl, reg.token);
+    mkdirSync(path.join(ws, '.auto-swe'), { recursive: true });
+    writeFileSync(path.join(ws, '.auto-swe/npmrc'), npmrc);
+    writeFileSync(path.join(home, '.npmrc'), npmrc);
+    mounts = { home, ws };
+    // Production env + a scratch COREPACK_HOME so the pre-installed cache can
+    // never mask a download, + the test integrity keys.
+    envPairs = [
+      ...registryWorkspaceEnv(regView, proxyUrl, reg.token),
+      'COREPACK_HOME=/tmp/corepack-home',
+      `COREPACK_INTEGRITY_KEYS=${integrityKeys}`,
+    ];
+    return reg;
+  }
+
+  function allowFromPin(pin: string): Map<string, Set<string>> {
+    const allow = new Map<string, Set<string>>();
+    for (const p of packageManagerPins(JSON.stringify({ packageManager: pin }))) {
+      allow.set(p.name, new Set([p.version]));
+    }
+    return allow;
+  }
+
+  async function client(dir: string, command: string[], opts?: { ignore?: boolean }) {
+    spawnSync('chmod', ['-R', 'a+rwX', dir]);
+    spawnSync('chmod', ['-R', 'a+rwX', mounts.ws]);
+    spawnSync('chmod', ['-R', 'a+rwX', mounts.home]);
+    const r = await docker([
+      'run',
+      '--rm',
+      '-u',
+      process.env.REGISTRY_PROXY_TEST_USER ?? 'node',
+      '-w',
+      '/workspace/target-repo',
+      '-v',
+      `${dir}:/workspace/target-repo`,
+      '-v',
+      `${mounts.ws}:/workspace`,
+      '-v',
+      `${mounts.home}:/home/node`,
+      '-e',
+      'HOME=/home/node',
+      ...envPairs.flatMap((e) => ['-e', e]),
+      IMAGE,
+      'sh',
+      '-c',
+      '"$@"; s=$?; find /workspace /home/node -user "$(id -u)" -exec chmod a+rwX {} + 2>/dev/null; exit $s',
+      'sh',
+      ...command,
+    ]);
+    if (r.code !== 0 && !opts?.ignore) {
+      throw new Error(`${command.join(' ')} failed:\n${r.err}\n${r.out}`);
+    }
+    return r;
+  }
+
+  function writeProject(dir: string, pin: string) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({ name: 'it-proj', packageManager: pin, private: true })
+    );
+  }
+
+  beforeAll(async () => {
+    gatewayIp =
+      process.env.CLAUDE_CODE_TEST_HOST_ADDRESS ??
+      (
+        await docker([
+          'network',
+          'inspect',
+          'bridge',
+          '--format',
+          '{{(index .IPAM.Config 0).Gateway}}',
+        ])
+      ).out.trim();
+    proxy = createRegistryProxy({
+      advertisedUrl: (p) => `http://${gatewayIp}:${p}`,
+      listenHost: '0.0.0.0',
+      listenPort: 0,
+    });
+  }, 120_000);
+
+  afterAll(async () => {
+    await proxy?.close();
+    upstream?.close();
+    rmSync(work, { force: true, recursive: true });
+  });
+
+  function startPinUpstream(signatures: { keyid: string; sig: string }[] | undefined) {
+    upstream?.close();
+    return startUpstream([{ name: 'pnpm', signatures, tgz, version: PIN_VERSION }], 'up-A');
+  }
+
+  it('downloads a signed pin through the proxy (signature verified)', async () => {
+    upstream = await startPinUpstream([{ keyid: 'SHA256:test', sig: goodSig }]);
+    const dir = path.join(work, 'cp-signed');
+    writeProject(dir, `pnpm@${PIN_VERSION}`);
+    const reg = await activate(allowFromPin(`pnpm@${PIN_VERSION}`));
+    const r = await client(dir, ['pnpm', '--version']);
+    expect(r.out.trim()).toBe(`fake-pnpm ${PIN_VERSION}`);
+    expect(upstream.requests.some((q) => q.path === `/pnpm/${PIN_VERSION}`)).toBe(true);
+    expect(upstream.requests.some((q) => q.path.includes('.tgz'))).toBe(true);
+    expect(upstream.requests.every((q) => q.auth === 'Bearer up-A')).toBe(true);
+    expect(upstream.requests.every((q) => !q.auth?.includes(reg.token))).toBe(true);
+    await reg.release();
+  }, 300_000);
+
+  it('rejects a wrong signature', async () => {
+    upstream = await startPinUpstream([
+      { keyid: 'SHA256:test', sig: sign('pnpm@0.0.0:sha512-AAAA') },
+    ]);
+    const dir = path.join(work, 'cp-badsig');
+    writeProject(dir, `pnpm@${PIN_VERSION}`);
+    const reg = await activate(allowFromPin(`pnpm@${PIN_VERSION}`));
+    const r = await client(dir, ['pnpm', '--version'], { ignore: true });
+    expect(r.code).not.toBe(0);
+    expect(`${r.err}${r.out}`).toMatch(/Signature does not match|not signed by any trusted keys/);
+    await reg.release();
+  }, 300_000);
+
+  it('downloads a hash pin with no signatures served', async () => {
+    upstream = await startPinUpstream(undefined);
+    const dir = path.join(work, 'cp-hash');
+    writeProject(dir, `pnpm@${PIN_VERSION}+sha512.${integrityHex}`);
+    const reg = await activate(allowFromPin(`pnpm@${PIN_VERSION}`));
+    const r = await client(dir, ['pnpm', '--version']);
+    expect(r.out.trim()).toBe(`fake-pnpm ${PIN_VERSION}`);
+    await reg.release();
+  }, 300_000);
+
+  it('denies a pin absent from the allowlist', async () => {
+    upstream = await startPinUpstream([{ keyid: 'SHA256:test', sig: goodSig }]);
+    const dir = path.join(work, 'cp-denied');
+    writeProject(dir, 'pnpm@9.15.8');
+    // Allowlist built from a different package.json — pins 9.15.9 only.
+    const reg = await activate(allowFromPin(`pnpm@${PIN_VERSION}`));
+    const r = await client(dir, ['pnpm', '--version'], { ignore: true });
+    expect(r.code).not.toBe(0);
+    expect(denials).toContainEqual(expect.objectContaining({ name: 'pnpm', version: '9.15.8' }));
     await reg.release();
   }, 300_000);
 });

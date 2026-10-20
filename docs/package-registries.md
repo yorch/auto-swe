@@ -88,10 +88,20 @@ by Corepack from the default registry through the proxy. The allowlist admits it
 lockfile) are added to it: `pnpm@v` and `npm@v` as themselves, `yarn@1.x` as `yarn`, and
 `yarn@2+` as `@yarnpkg/cli-dist`.
 
+Corepack reads the version manifest `/<package>/<version>` and downloads the tarball it names.
+Unless the pin carries a hash (`pnpm@9.15.9+sha512.<hex>`), it then verifies the manifest's
+`dist.signatures` against npm's public signing keys. The proxy passes signatures through
+untouched, so a pin resolved against `registry.npmjs.org`, or a mirror that preserves them,
+verifies. A hash-pinned `packageManager` is checked against its hash instead and needs no
+signatures.
+
 **All four clients are tested end to end.** `npm ci`, `pnpm install --frozen-lockfile`, Yarn
 classic `--frozen-lockfile` and Yarn Berry `--immutable` each install through the proxy in
 lockfile mode, and each shows the denial message when a package outside the lockfile is added.
 The suite is `registryProxy/clients.docker.test.ts`, run in CI against the curated Node image.
+It also has Corepack download a pin that the image doesn't have, through the proxy. The cases
+cover a valid signature, a forged one (refused), a hash pin with no signatures, and a pin outside
+the allowlist (denied).
 
 **Shell steps.** A `network: 'egress'` shell step gets the same wiring, with these differences:
 - Its container's root filesystem is read-only, so its `HOME` is `/workspace/.auto-swe/home` in
@@ -105,9 +115,13 @@ The suite is `registryProxy/clients.docker.test.ts`, run in CI against the curat
 
 ## 5. The proxy
 
-**URL layout.** `<baseUrl>/npm/<registryId>/<npm path>`. Only two npm path shapes exist:
+**URL layout.** `<baseUrl>/npm/<registryId>/<npm path>`. Only three npm path shapes exist:
 - packument: `/<name>`
+- version manifest: `/<name>/<version>`, which Corepack reads. In lockfile mode the version must
+  be allowlisted, so a dist-tag such as `latest` is denied.
 - tarball: `…/<name>/-/<file>.tgz`
+
+A scoped name may be written `@scope/pkg`, `@scope%2fpkg` or `%40scope%2fpkg`.
 
 Anything else, including search, audit and `/-/…` endpoints, is a JSON 404.
 
@@ -141,9 +155,10 @@ SSRF-guarded fetch, which honours each registry's `allowPrivateNetwork`.
 - the same message as the HTTP reason phrase, because pnpm prints only the reason phrase
 - logged through the activity logger (`logWarn`) with the container, registry and package
 
-**Packuments** are buffered (64 MiB cap) and never cached. They are rewritten so every
-`dist.tarball` points back at the proxy, under the routed registry's id. In lockfile mode,
-versions that aren't allowed are filtered out, along with their `dist-tags` and `time` entries.
+**Packuments and version manifests** are buffered (64 MiB cap) and never cached. They are
+rewritten so every `dist.tarball` points back at the proxy, under the routed registry's id;
+nothing else in them changes. In a lockfile-mode packument, versions that aren't allowed are
+filtered out, along with their `dist-tags` and `time` entries.
 
 **Tarballs** stream with backpressure.
 
@@ -176,6 +191,10 @@ under 90%. Cache errors fall through to the upstream.
 - **Berry scoped registries live in the exec user's home rc**, and a project `.yarnrc.yml` scope
   entry overrides them. That fails closed: the scope resolves against the real registry without
   the proxy credential.
+- **A Corepack pin needs signatures or a hash.** An upstream that strips `dist.signatures` from
+  version manifests fails Corepack's verification for a pin without a `+sha512.` hash. The fix
+  is to hash-pin `packageManager`; the workspace never sets `COREPACK_INTEGRITY_KEYS` to disable
+  the check.
 - **A dependency the agent adds cannot be installed in lockfile mode**, gates included, until it
   is committed on the base branch and a fresh workspace is cut.
 - **Shell steps need egress and the default proxy address.** A `network: 'none'` step gets no
