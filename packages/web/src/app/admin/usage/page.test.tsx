@@ -47,6 +47,39 @@ const usage: PlatformUsage = {
     { ...bucket, orgId: 'org-1', teamId: 'team-a', teamName: 'Payments' },
     { ...bucket, orgId: null, teamId: null, teamName: null },
   ],
+  byUser: [
+    {
+      calls: 3,
+      costUsd: 1.5,
+      email: 'ada@example.com',
+      inputTokens: 800,
+      name: 'Ada Lovelace',
+      outputTokens: 80,
+      outsideScope: false,
+      userId: 'user-ada',
+    },
+    {
+      calls: 1,
+      costUsd: 0.2,
+      email: null,
+      inputTokens: 50,
+      name: null,
+      outputTokens: 5,
+      outsideScope: false,
+      userId: 'user-nameless',
+    },
+    {
+      calls: 2,
+      costUsd: 0.3,
+      email: null,
+      inputTokens: 100,
+      name: null,
+      outputTokens: 10,
+      outsideScope: true,
+      userId: null,
+    },
+  ],
+  byUserUnattributed: { calls: 2, costUsd: 0.4 },
   daily: [],
   previous: { calls: 2, costUsd: 2 },
   scope: {},
@@ -106,6 +139,57 @@ describe('UsagePage', () => {
     expect(screen.getByText('Payments')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Activity' }));
     expect(screen.getByText('Execute implementation')).toBeTruthy();
+  });
+
+  describe('top users', () => {
+    it('is titled as a top 10 and shows names, with an email only when the API sent one', () => {
+      render(<UsagePage />);
+
+      // The literal mirrors TOP_USERS in the gateway's usage route; the web package does not
+      // import gateway code, so a change there needs this heading changed with it.
+      expect(screen.getByRole('heading', { name: 'Top 10 users' })).toBeTruthy();
+      expect(screen.getByText('Ada Lovelace')).toBeTruthy();
+      expect(screen.getByText('ada@example.com')).toBeTruthy();
+    });
+
+    it('calls a launcher without a name an unknown user, and shows no email for it', () => {
+      render(<UsagePage />);
+
+      expect(screen.getByText('Unknown user')).toBeTruthy();
+      expect(screen.getAllByText(/@example\.com/)).toHaveLength(1);
+    });
+
+    it('shows the folded launchers as one row outside the scope, with no identity', () => {
+      render(<UsagePage />);
+
+      expect(screen.getByText('Outside this scope')).toBeTruthy();
+    });
+
+    it('states the unattributed spend under the table', () => {
+      render(<UsagePage />);
+
+      expect(screen.getByText(/Not attributed to a user: 2 calls, \$0\.40/)).toBeTruthy();
+    });
+
+    it('omits the unattributed line when everything is attributed', () => {
+      usePlatformUsage.mockReturnValue({
+        data: { ...usage, byUserUnattributed: { calls: 0, costUsd: 0 } },
+        isLoading: false,
+      });
+      render(<UsagePage />);
+
+      expect(screen.queryByText(/Not attributed to a user/)).toBeNull();
+    });
+
+    it('says so when no spend is attributed to a user', () => {
+      usePlatformUsage.mockReturnValue({
+        data: { ...usage, byUser: [], byUserUnattributed: { calls: 0, costUsd: 0 } },
+        isLoading: false,
+      });
+      render(<UsagePage />);
+
+      expect(screen.getByText('No spend attributed to a user in this window')).toBeTruthy();
+    });
   });
 
   it('shows one page-level empty state instead of empty tables', () => {

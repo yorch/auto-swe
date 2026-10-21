@@ -6,8 +6,10 @@
  * worker (which starts the run) and the gateway (which signals it on a thread
  * reply — `steer`) reconstruct the EXACT same id without a DB lookup.
  */
+export const CHANNEL_TASK_WORKFLOW_PREFIX = 'chantask-';
+
 export function channelTaskWorkflowId(channelId: string, threadTs: string): string {
-  return `chantask-${sanitizeIdPart(channelId)}-${sanitizeIdPart(threadTs)}`;
+  return `${CHANNEL_TASK_WORKFLOW_PREFIX}${sanitizeIdPart(channelId)}-${sanitizeIdPart(threadTs)}`;
 }
 
 function sanitizeIdPart(s: string): string {

@@ -108,6 +108,8 @@ vi.mock('@auto-swe/shared/db', () => {
     autonomyDecision: {
       findMany: vi.fn(async () => []),
     },
+    // The launch audit of a run the worker started from workflow code.
+    configAuditLog: { create: vi.fn(async () => ({})), findFirst: vi.fn(async () => null) },
     // Backs the config registry: no rows means every setting resolves to its
     // definition default, i.e. the constant it replaced.
     configSetting: { findMany: vi.fn(async () => []) },
@@ -297,6 +299,130 @@ describe('createWorkflowRun', () => {
       workRequestId: 'wr-1',
     });
     expect(upsertRun.mock.calls.at(-1)?.[0].create).not.toHaveProperty('connectionId');
+  });
+
+  describe('launch audit of a run started from workflow code', () => {
+    const auditCreate = vi.mocked(prisma.configAuditLog.create);
+    const auditFind = vi.mocked(prisma.configAuditLog.findFirst);
+
+    beforeEach(() => {
+      findVersion.mockResolvedValue({ spec: validSpec } as never);
+      auditCreate.mockClear();
+      auditFind.mockReset().mockResolvedValue(null);
+    });
+
+    it('writes one row keyed by the run for an epic child, without a second WorkRequest row', async () => {
+      await createWorkflowRun({
+        launchedById: 'user-1',
+        parentWorkflowId: 'epic-T-1',
+        repoId: 'repo-b',
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'epic-T-1-repo-b',
+        workRequestId: 'wr-epic',
+      });
+      expect(auditCreate).toHaveBeenCalledTimes(1);
+      expect(auditCreate.mock.calls[0]?.[0].data).toMatchObject({
+        action: 'CREATE',
+        actorId: 'user-1',
+        afterJson: {
+          parentWorkflowId: 'epic-T-1',
+          source: 'epic-child',
+          temporalWorkflowId: 'epic-T-1-repo-b',
+          workRequestId: 'wr-epic',
+        },
+        entityId: 'run-1',
+        entityType: 'WorkflowRun',
+      });
+      expect(auditCreate.mock.calls[0]?.[0].data).not.toHaveProperty('context');
+    });
+
+    it('names the person who asked for a repo-less channel task, which has no launcher', async () => {
+      vi.mocked(prisma.runInput.findUnique).mockImplementation((async () => ({
+        requestedById: 'user-requester',
+      })) as never);
+      try {
+        await createWorkflowRun({
+          templateId: 'tpl-1',
+          templateVersion: 1,
+          workflowId: 'chantask-C1-3.4',
+          workRequestId: 'wr-chan',
+        });
+      } finally {
+        vi.mocked(prisma.runInput.findUnique).mockImplementation((async () => null) as never);
+      }
+      expect(auditCreate.mock.calls[0]?.[0].data).toMatchObject({ actorId: 'user-requester' });
+    });
+
+    it('prefers the launcher over the requester', async () => {
+      await createWorkflowRun({
+        launchedById: 'user-launcher',
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'chantask-C1-5.6',
+        workRequestId: 'wr-chan',
+      });
+      expect(auditCreate.mock.calls[0]?.[0].data).toMatchObject({ actorId: 'user-launcher' });
+    });
+
+    it('names a channel task, deferred or not', async () => {
+      for (const workflowId of ['chantask-C1-1.2', 'chantask-C1-1.2-run']) {
+        auditCreate.mockClear();
+        await createWorkflowRun({
+          templateId: 'tpl-1',
+          templateVersion: 1,
+          workflowId,
+          workRequestId: 'wr-chan',
+        });
+        expect(auditCreate.mock.calls[0]?.[0].data).toMatchObject({
+          afterJson: { source: 'channel-task' },
+          entityType: 'WorkflowRun',
+        });
+      }
+    });
+
+    it('writes nothing for a retry that finds the row already recorded', async () => {
+      auditFind.mockResolvedValue({ id: 'audit-1' } as never);
+      await createWorkflowRun({
+        parentWorkflowId: 'epic-T-1',
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'epic-T-1-repo-b',
+        workRequestId: 'wr-epic',
+      });
+      expect(auditCreate).not.toHaveBeenCalled();
+    });
+
+    it('writes nothing for a gateway launch or a scheduled fire, and still creates the run', async () => {
+      upsertRun.mockClear();
+      await createWorkflowRun({
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-plain',
+        workRequestId: 'wr-1',
+      });
+      await createWorkflowRun({
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'sched-row-1-2026-09-24T14:00:00Z',
+        workRequestId: 'wr-sched',
+      });
+      expect(upsertRun).toHaveBeenCalledTimes(2);
+      expect(auditCreate).not.toHaveBeenCalled();
+    });
+
+    it('never fails the launch when the audit write fails', async () => {
+      auditCreate.mockRejectedValueOnce(new Error('db down'));
+      await expect(
+        createWorkflowRun({
+          parentWorkflowId: 'epic-T-1',
+          templateId: 'tpl-1',
+          templateVersion: 1,
+          workflowId: 'epic-T-1-repo-b',
+          workRequestId: 'wr-epic',
+        })
+      ).resolves.toMatchObject({ runId: 'run-1' });
+    });
   });
 
   describe('retired installation', () => {

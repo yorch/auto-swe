@@ -468,10 +468,11 @@ export interface PlatformUsage {
     teamName: string | null;
   })[];
   /**
-   * The users whose launched runs spent most, by cost. An `outsideScope` row (null `userId`) folds
-   * in launchers outside the report's team or organization; `email` is set for ADMINs only.
+   * The top 10 users whose launched runs spent most, by cost: the rows do not add up to the total.
+   * An `outsideScope` row (null `userId`) folds in all launchers outside the report's team or
+   * organization; `email` is set for ADMINs only and `name` can be null.
    */
-  byUser?: {
+  byUser: {
     calls: number;
     costUsd: number;
     email: string | null;
@@ -482,7 +483,7 @@ export interface PlatformUsage {
     userId: string | null;
   }[];
   /** Spend with no launcher (runless, webhook or scheduled launches, pre-attribution traces). */
-  byUserUnattributed?: { calls: number; costUsd: number };
+  byUserUnattributed: { calls: number; costUsd: number };
   /** Days each `daily` entry covers: 1, or 7 for a range over 90 days. */
   bucketDays?: 1 | 7;
   daily: {

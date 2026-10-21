@@ -8,6 +8,7 @@ import {
   SCHEDULE_FIRE_SOURCE,
 } from '@auto-swe/shared/lib/automationLedger';
 import { billedOrgId, currentYearMonth } from '@auto-swe/shared/lib/billing';
+import { CHANNEL_TASK_WORKFLOW_PREFIX } from '@auto-swe/shared/lib/channelTask';
 import { isInputSchema, runAuthorizedConnectionIds } from '@auto-swe/shared/lib/inputSchema';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -25,6 +26,7 @@ import {
 } from '../lib/callbackOutbox.js';
 import { backfillPinnedSettings } from '../lib/config/pinnedSettings.js';
 import { type EndRunOutcome, endWorkflowRun } from '../lib/endRun.js';
+import { recordWorkerLaunchAudit, type WorkerLaunchSource } from '../lib/launchAudit.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import {
   snapshotAgentRuntimes,
@@ -650,6 +652,25 @@ export async function createWorkflowRun(
         })
       : await prisma.workflowRun.upsert(runUpsert);
 
+  // An epic child and a channel task start from workflow code, where no gateway request writes
+  // their launch row; this activity is their first and the run row now exists. A scheduled fire
+  // is recorded in the decision ledger below instead.
+  const workerLaunchSource = workerLaunchSourceOf(input);
+  if (workerLaunchSource) {
+    await recordWorkerLaunchAudit({
+      actorId: await launchAuditActor(input),
+      details: {
+        parentWorkflowId: input.parentWorkflowId ?? null,
+        templateId: input.templateId,
+        temporalWorkflowId: input.workflowId,
+        workRequestId: input.workRequestId ?? null,
+      },
+      entityId: run.id,
+      entityType: 'WorkflowRun',
+      source: workerLaunchSource,
+    });
+  }
+
   // The ledger row only has to exist before the run's first LLM call, which is
   // after this activity returns.
   if (scheduledAnchor) {
@@ -698,6 +719,37 @@ export async function createWorkflowRun(
     // SAFETY: persisted specSnapshot was validated on initial create from the parsed spec.
     spec: (run.specSnapshot as unknown as WorkflowSpec) ?? spec,
   };
+}
+
+/// The launch door of a run the worker started from workflow code, or null for every run whose
+/// launch the gateway already audited. A PRD child starts inside an activity, which audits it.
+function workerLaunchSourceOf(
+  input: Pick<CreateWorkflowRunInput, 'parentWorkflowId' | 'workflowId'>
+): WorkerLaunchSource | null {
+  if (input.parentWorkflowId) {
+    return 'epic-child';
+  }
+  return input.workflowId.startsWith(CHANNEL_TASK_WORKFLOW_PREFIX) ? 'channel-task' : null;
+}
+
+/// Who the launch audit names. A repo-less channel task carries no `launchedById` (that field is
+/// the identity a user credential is keyed on, set only for a code task), but its work request
+/// records who asked, and that person is who launched it. For the AUDIT ACTOR only: never use
+/// this as a credential key, which stays `launchedById`.
+async function launchAuditActor(input: CreateWorkflowRunInput): Promise<string | null> {
+  if (input.launchedById || !input.workRequestId) {
+    return input.launchedById ?? null;
+  }
+  try {
+    const request = await prisma.runInput.findUnique({
+      select: { requestedById: true },
+      where: { id: input.workRequestId },
+    });
+    return request?.requestedById ?? null;
+  } catch {
+    // Attribution is best-effort; the row is still worth writing without an actor.
+    return null;
+  }
 }
 
 /// The tenant whose skills a run can see. Normally the settings context's team and

@@ -233,6 +233,7 @@ yarn test                # Run all tests (Vitest)
 yarn lint                # Lint + format check (Biome)
 yarn lint:fix            # Auto-fix safe lint issues + format
 yarn docs:check          # Fail on stale doc claims or broken doc links
+yarn migrations:check    # Apply migrations to a throwaway Postgres (needs Docker) and diff against schema.prisma
 yarn db:deploy           # Apply the committed Prisma migrations
 yarn db:migrate          # Create a new migration from a schema.prisma change (dev only)
 yarn db:generate         # Regenerate Prisma client
