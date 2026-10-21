@@ -352,6 +352,12 @@ const NO_PROGRAMS = [
   'core.untrackedCache=false',
   '-c',
   'protocol.ext.allow=never',
+  // No automatic maintenance: it can run in the background after a commit and
+  // hold `objects/maintenance.lock` while the baseline's `.git` is being copied.
+  '-c',
+  'maintenance.auto=false',
+  '-c',
+  'gc.auto=0',
 ];
 
 /** Every host git call is bounded. */
