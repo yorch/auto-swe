@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { csvCell } from '../lib/csv.js';
 import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { safePatAuditFields, tokenAuditEntity } from '../lib/patAuditFields.js';
@@ -52,17 +53,6 @@ const AuditLogExportQuery = AuditLogQuery.omit({ limit: true, offset: true });
 const AUDIT_EXPORT_MAX_ROWS = 50_000;
 const AUDIT_EXPORT_BATCH = 500;
 
-/** A CSV cell. A leading `= + - @` would run as a formula in a spreadsheet, so it is defused. */
-export function csvCell(value: unknown): string {
-  if (value === null || value === undefined) {
-    return '';
-  }
-  let text = typeof value === 'string' ? value : JSON.stringify(value);
-  if (/^[=+\-@\t\r]/.test(text)) {
-    text = `'${text}`;
-  }
-  return /[",\n\r]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-}
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AuditJsonSchema = z.json();
 const AuditLogResponseSchema = z.object({

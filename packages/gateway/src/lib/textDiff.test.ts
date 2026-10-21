@@ -104,26 +104,22 @@ describe('unifiedDiff', () => {
     expect(unifiedDiff('x\ny', 'x\nz', { budget }).tooLarge).toBe(true);
   });
 
-  it('worst-case input is bounded by work, with a generous wall-clock cap', () => {
+  it('worst-case input is bounded by counted work, not by the clock', () => {
     // Long same-length lines, every line different: the quadratic worst case of the old LCS.
     const a = lines(1998, 'aaaaaaaaaaaaaaaaaaaaaaaaa').join('\n');
     const b = lines(1998, 'bbbbbbbbbbbbbbbbbbbbbbbbb').join('\n');
     const budget = { left: DIFF_WORK_BUDGET };
-    const t0 = performance.now();
     const result = unifiedDiff(a, b, { budget });
-    const ms = performance.now() - t0;
     expect(result.tooLarge).toBe(true);
-    // Deterministic bound: the edit cap stops it long before the budget is spent.
-    expect(DIFF_WORK_BUDGET - budget.left).toBeLessThanOrEqual(DIFF_WORK_BUDGET);
-    // The old code needed ~280 ms per skill and seconds per request; this is far inside
-    // two seconds even on a slow CI box.
-    expect(ms).toBeLessThan(2000);
+    // The edit cap stops the search within one skill's share of the request's work. The
+    // work count is the bound this module guarantees; a wall-clock assertion on it only
+    // measured how busy the machine was.
+    expect(DIFF_WORK_BUDGET - budget.left).toBeLessThanOrEqual(DIFF_WORK_PER_SKILL);
   });
 
   it('a hundred 18 KB skills in one request cost a bounded total', () => {
     const budget = { left: DIFF_WORK_BUDGET };
     const base = lines(400, 'a-fairly-long-line-of-text');
-    const t0 = performance.now();
     for (let i = 0; i < 100; i++) {
       unifiedDiff(
         base.join('\n'),
@@ -133,7 +129,8 @@ describe('unifiedDiff', () => {
         { budget }
       );
     }
-    expect(performance.now() - t0).toBeLessThan(3000);
+    // Counted work, not wall time: all hundred fit inside the request budget.
+    expect(budget.left).toBeGreaterThanOrEqual(0);
     expect(budget.left).toBeLessThan(DIFF_WORK_BUDGET);
   });
 });
@@ -143,8 +140,16 @@ describe('per-skill budget', () => {
     const a = lines(500, 'a-fairly-long-line-of-text');
     const b = alternate(a);
     const alone = unifiedDiff(a.join('\n'), b.join('\n'));
-    for (let i = 0; i < 150; i++) {
-      unifiedDiff(lines(12000, 'p').join('\n'), alternate(lines(12000, 'q')).join('\n'));
+    // Built once: rebuilding two 12000-line texts per round made the fixtures, not the diffs,
+    // the cost of this test (about 1.4 s alone, several times that on a loaded runner).
+    const bigOld = lines(12000, 'p').join('\n');
+    const bigNew = alternate(lines(12000, 'q')).join('\n');
+    // Each rewrite spends about 180,000 of work, so this many rounds spend more than the whole
+    // request budget: if calls without a `budget` shared one pool, it would be empty by now and
+    // the last diff below would come back `tooLarge`.
+    const rounds = Math.ceil(DIFF_WORK_BUDGET / 180_000) + 1;
+    for (let i = 0; i < rounds; i++) {
+      unifiedDiff(bigOld, bigNew);
     }
     expect(unifiedDiff(a.join('\n'), b.join('\n'))).toEqual(alone);
     expect(alone.tooLarge).toBe(false);

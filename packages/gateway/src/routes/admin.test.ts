@@ -1,7 +1,7 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { adminRoutes, csvCell } from './admin.js';
+import { adminRoutes } from './admin.js';
 
 async function buildApp(role: 'ADMIN' | 'ENGINEER' = 'ADMIN') {
   const app = Fastify();
@@ -675,14 +675,6 @@ describe('adminRoutes', () => {
       });
       expect(res.statusCode).toBe(403);
       await app.close();
-    });
-  });
-
-  describe('csvCell', () => {
-    it('quotes separators and neutralises a leading formula character', () => {
-      expect(csvCell('a,b')).toBe('"a,b"');
-      expect(csvCell('=SUM(A1)')).toBe("'=SUM(A1)");
-      expect(csvCell(null)).toBe('');
     });
   });
 });

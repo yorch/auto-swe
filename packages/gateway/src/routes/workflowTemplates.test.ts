@@ -49,6 +49,14 @@ function buildApp(state: {
   versions: Map<string, { spec: unknown; createdAt: Date; createdBy: string | null }>;
   /** Step rows the analytics route rolls up. Seeded per test that needs them. */
   steps?: Array<{ nodeId: string; status: string }>;
+  /** Human steps the analytics route reads wait times from; `where` clauses are recorded. */
+  humanSteps?: Array<{
+    requestedAt: Date;
+    resolvedAt: Date | null;
+    status: string;
+    run: { templateId: string; template: { name: string } };
+  }>;
+  humanStepWheres?: Mutable[];
   runs: Array<{
     id: string;
     templateId: string;
@@ -171,6 +179,12 @@ function buildApp(state: {
           return composite
             ? { role: teamRole, teamId: composite.teamId, userId: composite.userId }
             : null;
+        },
+      },
+      workflowHumanStep: {
+        findMany: async ({ where, take }: { where: Mutable; take?: number }) => {
+          state.humanStepWheres?.push(where);
+          return (state.humanSteps ?? []).slice(0, take ?? Number.POSITIVE_INFINITY);
         },
       },
       workflowRun: {
@@ -2419,6 +2433,92 @@ describe('GET /workflow-templates/analytics', () => {
     expect(over.statusCode).toBe(200);
     expect(over.json().data.totalRuns).toBe(10_000);
     expect(over.json().data.isTruncated).toBe(true);
+  });
+});
+
+describe('GET /workflow-templates/analytics approval latency', () => {
+  const t0 = new Date('2026-01-01T00:00:00Z');
+  const step = (status: string, waitMs: number | null, templateId = 'tpl-a', name = 'A') => ({
+    requestedAt: t0,
+    resolvedAt: waitMs === null ? null : new Date(t0.getTime() + waitMs),
+    run: { template: { name }, templateId },
+    status,
+  });
+  const get = (app: FastifyInstance) =>
+    app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: '/api/v1/workflow-templates/analytics?window=30',
+    });
+
+  it('reports answered waits, the other outcomes apart, and a per-template split', async () => {
+    const state: Parameters<typeof buildApp>[0] = {
+      humanSteps: [
+        step('RESOLVED', 60_000),
+        step('RESOLVED', 120_000),
+        step('RESOLVED', 600_000, 'tpl-b', 'B'),
+        step('TIMED_OUT', 86_400_000),
+        step('CANCELLED', null),
+        step('PENDING', null),
+      ],
+      runs: [],
+      templates: [],
+      versions: new Map(),
+    };
+    const app = buildApp(state);
+    await app.ready();
+    const body = (await get(app)).json().data.approvalLatency;
+    expect(body.resolved).toEqual({ count: 3, p50Ms: 120_000, p95Ms: 600_000 });
+    expect([body.timedOut, body.cancelled, body.pending]).toEqual([1, 1, 1]);
+    expect(body.isTruncated).toBe(false);
+    expect(body.perTemplate.map((t: { templateName: string }) => t.templateName)).toEqual([
+      'A',
+      'B',
+    ]);
+    await app.close();
+  });
+
+  it("is scoped by the caller's run visibility and the window, and flags a capped read", async () => {
+    const state: Parameters<typeof buildApp>[0] = {
+      humanSteps: Array.from({ length: 10_001 }, () => step('RESOLVED', 1000)),
+      humanStepWheres: [],
+      runs: [],
+      templates: [],
+      userRole: 'ENGINEER',
+      versions: new Map(),
+    };
+    const app = buildApp(state);
+    await app.ready();
+    const body = (await get(app)).json().data.approvalLatency;
+    expect(body.isTruncated).toBe(true);
+    expect(body.resolved.count).toBe(10_000);
+    const where = state.humanStepWheres?.[0] as { requestedAt: object; run: object };
+    expect(where.requestedAt).toHaveProperty('gte');
+    expect(where.requestedAt).toHaveProperty('lt');
+    // Exactly the predicate the runs list uses for this caller, not merely some restriction.
+    const caller = { exp: 9999999999, iat: 0, role: 'ENGINEER', sub: 'user-1' };
+    const expected = buildWorkflowRunVisibilityFilter(caller as never, undefined);
+    expect(Object.keys(expected)).toEqual(['OR']);
+    expect(where.run).toEqual(expected);
+    await app.close();
+  });
+
+  it('reads every step for an ADMIN', async () => {
+    const state: Parameters<typeof buildApp>[0] = {
+      humanStepWheres: [],
+      runs: [],
+      templates: [],
+      userRole: 'ADMIN',
+      versions: new Map(),
+    };
+    const app = buildApp(state);
+    await app.ready();
+    await get(app);
+    // `run: {}` is the ADMIN visibility predicate: no restriction.
+    expect(state.humanStepWheres).toEqual([
+      { requestedAt: { gte: expect.any(Date), lt: expect.any(Date) }, run: {} },
+    ]);
+    await app.close();
   });
 });
 

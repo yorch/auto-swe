@@ -30,6 +30,8 @@ import { templateHref } from '@/lib/entityLinks';
 import { outcomeTypeLabel } from '@/lib/govLabels';
 import { successTone } from '@/lib/tone';
 import { formatCost, formatDuration, formatPercent } from '@/lib/utils';
+import { ApprovalLatencyCard } from './ApprovalLatencyCard';
+import { PullRequestOutcomesCard } from './PullRequestOutcomesCard';
 
 type TemplateSort = 'name' | 'runs' | 'successRate' | 'totalCost' | 'avgCost';
 type DomainSort =
@@ -286,6 +288,10 @@ function AnalyticsWorkspace() {
                 />
               </div>
             </Card>
+
+            <PullRequestOutcomesCard range={range} windowDays={windowDays} />
+
+            {data.approvalLatency && <ApprovalLatencyCard latency={data.approvalLatency} />}
 
             <Card>
               <CardHeader>

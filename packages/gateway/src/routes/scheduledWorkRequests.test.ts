@@ -17,6 +17,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 
+import '../test/warmAuthImports.js';
 import type { WorkRequestScheduleInput } from '../plugins/temporal.js';
 import { CRON_5_FIELD_RE, scheduledWorkRequestRoutes } from './scheduledWorkRequests.js';
 

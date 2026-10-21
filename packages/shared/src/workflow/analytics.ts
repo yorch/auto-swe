@@ -14,6 +14,8 @@
  */
 
 import {
+  type ApprovalLatencyStats,
+  type ApprovalLatencySummary,
   isTerminalWorkflowRunStatus,
   WORKFLOW_RUN_FAILURE_STATUSES,
   type WorkflowRunStatus,
@@ -630,4 +632,60 @@ function normalCdf(x: number): number {
       t *
       Math.exp(-ax * ax);
   return 0.5 * (1 + sign * y);
+}
+
+/** A human step as the latency rollup reads it. */
+export interface ApprovalLatencyRow {
+  status: string;
+  requestedAt: Date;
+  resolvedAt: Date | null;
+  templateId: string;
+  templateName: string;
+}
+
+/** Most templates the per-template breakdown lists. */
+export const APPROVAL_LATENCY_TEMPLATE_LIMIT = 50;
+
+function approvalStats(rows: ApprovalLatencyRow[]): ApprovalLatencyStats {
+  // Only an answered step has a wait: a pending one is still running (right-censored), and a
+  // timed-out or cancelled one was closed by the system, so its "wait" is the deadline, not a
+  // person's response time.
+  const waitsMs = rows
+    .filter((r) => r.status === 'RESOLVED' && r.resolvedAt !== null)
+    .map((r) => (r.resolvedAt as Date).getTime() - r.requestedAt.getTime())
+    .filter((ms) => ms >= 0)
+    .sort((a, b) => a - b);
+  const count = (status: string) => rows.filter((r) => r.status === status).length;
+  return {
+    cancelled: count('CANCELLED'),
+    pending: count('PENDING'),
+    resolved: {
+      count: waitsMs.length,
+      p50Ms: percentile(waitsMs, 0.5),
+      p95Ms: percentile(waitsMs, 0.95),
+    },
+    timedOut: count('TIMED_OUT'),
+  };
+}
+
+/** Wait-time figures for the human steps requested in a window, overall and per template. */
+export function computeApprovalLatency(
+  rows: ApprovalLatencyRow[],
+  isTruncated: boolean
+): ApprovalLatencySummary {
+  const byTemplate = new Map<string, { name: string; rows: ApprovalLatencyRow[] }>();
+  for (const row of rows) {
+    const group = byTemplate.get(row.templateId) ?? { name: row.templateName, rows: [] };
+    group.rows.push(row);
+    byTemplate.set(row.templateId, group);
+  }
+  const perTemplate = [...byTemplate.entries()]
+    .sort(([, a], [, b]) => b.rows.length - a.rows.length || a.name.localeCompare(b.name))
+    .slice(0, APPROVAL_LATENCY_TEMPLATE_LIMIT)
+    .map(([templateId, group]) => ({
+      ...approvalStats(group.rows),
+      templateId,
+      templateName: group.name,
+    }));
+  return { ...approvalStats(rows), isTruncated, perTemplate };
 }

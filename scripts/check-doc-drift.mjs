@@ -18,6 +18,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { walkMarkdown } from './walkMarkdown.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => readFileSync(join(ROOT, p), 'utf8');
@@ -907,40 +908,7 @@ for (const file of targets) {
 // scans the whole tree, frozen docs included — a dead link is wrong everywhere.
 // ---------------------------------------------------------------------------
 
-/**
- * Build output copies the docs to a different depth, so their relative links
- * legitimately do not resolve there. Skipping these mirrors `biome.json`'s
- * ignore list — without it the check passes in CI (which runs before any build)
- * and fails for anyone who runs it after one.
- */
-const SKIP_DIRS = new Set([
-  '.git',
-  '.next',
-  '.yarn',
-  'build',
-  'coverage',
-  'dist',
-  'node_modules',
-  'out',
-  'output',
-  'tmp',
-]);
-
-const walk = (dir) => {
-  const out = [];
-  for (const entry of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
-    if (SKIP_DIRS.has(entry.name)) {
-      continue;
-    }
-    const p = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      out.push(...walk(p));
-    } else if (entry.name.endsWith('.md')) {
-      out.push(p);
-    }
-  }
-  return out;
-};
+const walk = (dir) => walkMarkdown(ROOT, dir);
 
 /**
  * GitHub-style heading slug: lowercase, drop everything but letters, digits,
