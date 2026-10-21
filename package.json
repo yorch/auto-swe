@@ -36,6 +36,7 @@
     "docs:check": "node scripts/check-doc-drift.mjs",
     "docs:inventory": "yarn workspace @auto-swe/shared docs:inventory",
     "invariants:check": "node scripts/check-invariants.mjs",
+    "wiki:check": "node scripts/check-wiki.mjs",
     "env:setup": "node scripts/env-setup.mjs",
     "test": "vitest run",
     "test:watch": "vitest",

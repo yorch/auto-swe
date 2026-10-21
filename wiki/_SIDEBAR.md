@@ -1,0 +1,57 @@
+# auto-swe Wiki
+
+> Commit `d0a90fb5` (snapshot, does not track `main`)
+
+- [Overview](./README.md)
+
+## 1. Repository
+
+- [1. Repository Structure](./1-repository-structure.md)
+
+## 2. @auto-swe/shared
+
+- [2. @auto-swe/shared](./2-shared-library.md)
+  - [2.1 Data Model](./2.1-data-model.md)
+  - [2.2 Workflow Spec and Interpreter](./2.2-workflow-spec-and-interpreter.md)
+  - [2.3 Configuration and Settings](./2.3-configuration-and-settings.md)
+  - [2.4 Skills and Security Scanners](./2.4-skills-and-security-scanners.md)
+
+## 3. @auto-swe/gateway
+
+- [3. @auto-swe/gateway](./3-gateway-api.md)
+  - [3.1 HTTP Routes](./3.1-http-routes.md)
+  - [3.2 Authentication and RBAC](./3.2-authentication-and-rbac.md)
+  - [3.3 GitHub and Webhooks](./3.3-github-and-webhooks.md)
+  - [3.4 Repository Access and Credentials](./3.4-repository-access-and-credentials.md)
+  - [3.5 MCP Server and OAuth](./3.5-mcp-server-and-oauth.md)
+  - [3.6 Work Views and Pull-Request Lifecycle](./3.6-work-views-and-pr-lifecycle.md)
+
+## 4. @auto-swe/worker
+
+- [4. @auto-swe/worker](./4-temporal-worker.md)
+  - [4.1 Temporal Workflows](./4.1-temporal-workflows.md)
+  - [4.2 Activities](./4.2-activities.md)
+  - [4.3 Agent Layer](./4.3-agent-layer.md)
+  - [4.4 Docker Workspaces](./4.4-docker-workspaces.md)
+  - [4.5 Observability and Cost](./4.5-observability-and-cost.md)
+  - [4.6 Agent Runs and Implementer Runtimes](./4.6-agent-runs-and-implementer-runtimes.md)
+  - [4.7 Model Catalog and Pricing](./4.7-model-catalog-and-pricing.md)
+  - [4.8 Agent Memory](./4.8-agent-memory.md)
+
+## 5. @auto-swe/web
+
+- [5. @auto-swe/web](./5-web-dashboard.md)
+  - [5.1 App Routes and Pages](./5.1-app-routes-and-pages.md)
+  - [5.2 Components and State](./5.2-components-and-state.md)
+
+## 6. @auto-swe/cli
+
+- [6. @auto-swe/cli](./6-cli.md)
+
+## 7. @auto-swe/sdk
+
+- [7. @auto-swe/sdk](./7-bundle-sdk.md)
+
+## Reference
+
+- [Glossary](./glossary.md)
