@@ -618,12 +618,14 @@ describe('POST /webhooks/:token — signatures', () => {
       webhookRequireSignature: true,
     };
     // Distinct timestamps: each is a distinct signed call, not a replay of the last.
-    expect((await send(signed(OLD_SECRET, BODY, nowSec()))).statusCode).toBe(201);
-    expect((await send(signed(SECRET, BODY, nowSec() - 1))).statusCode).toBe(201);
+    // One clock read: re-reading it can cross a second and repeat an earlier timestamp.
+    const t = nowSec();
+    expect((await send(signed(OLD_SECRET, BODY, t))).statusCode).toBe(201);
+    expect((await send(signed(SECRET, BODY, t - 1))).statusCode).toBe(201);
 
     h.template = { ...h.template, webhookPreviousSigningSecretExpiresAt: new Date(Date.now() - 1) };
-    expect((await send(signed(OLD_SECRET, BODY, nowSec() - 2))).statusCode).toBe(401);
-    expect((await send(signed(SECRET, BODY, nowSec() - 3))).statusCode).toBe(201);
+    expect((await send(signed(OLD_SECRET, BODY, t - 2))).statusCode).toBe(401);
+    expect((await send(signed(SECRET, BODY, t - 3))).statusCode).toBe(201);
   });
 
   it('enforces the policy setting, resolved with the template’s team and organization', async () => {
@@ -650,7 +652,8 @@ describe('POST /webhooks/:token — signatures', () => {
       ...sealed('webhookSigningSecret', SECRET),
       webhookRequireSignature: true,
     };
-    const headers = signed(SECRET);
+    const t = nowSec();
+    const headers = signed(SECRET, BODY, t);
     const first = await send({ ...headers, 'idempotency-key': 'first-key' });
     expect(first.statusCode).toBe(201);
     for (const key of ['another-key', undefined]) {
@@ -661,7 +664,7 @@ describe('POST /webhooks/:token — signatures', () => {
     expect(h.started).toHaveLength(1);
     expect(h.decisions.at(-1)).toMatchObject({ outcome: 'SUPPRESSED_SAME_SUBJECT' });
     // A fresh signature (new timestamp) is a new call.
-    const next = await send(signed(SECRET, BODY, nowSec() - 1));
+    const next = await send(signed(SECRET, BODY, t - 1));
     expect(next.statusCode).toBe(201);
   });
 
