@@ -964,10 +964,15 @@ status, source, tier — never a run or ticket:
 | `workflow_runs_finalized_total` | `status`, `source` | Once per run, by whichever write ended it: `worker` (`finalizeWorkflowRun`), `channel` (`finalizeChannelRun`), `eval` (an `EvalRun` verdict, or the gateway marking a run whose workflow failed to start), `gateway` (a dashboard cancel), `reaper` (the run reaper, below). The worker, channel and eval-verdict writes are conditional on `endedAt` still being null and the dashboard cancel on `status` still being `RUNNING`, so a retried activity or a cancel racing the workflow's own finalisation counts once. A run the dashboard cancelled is counted by the cancel; the worker or channel write that later sets its `endedAt` keeps it `CANCELLED` and does not count it again. The gateway's eval start-failure write is unconditional: no workflow exists to finalise that row, so nothing else writes it |
 | `workflow_budget_exceeded_total` | `tier` | `recordLlmUsage`, on each call that ends over the tier |
 | `activity_duration_seconds` (histogram) | `activity`, `outcome` (`success` / `failure` / `cancelled`) | the activity interceptor |
+| `transcript_persist_failures_total` | `stage` (`create` / `part` / `close`) | `recordTranscriptPersistFailure` in the worker's transcript recorder |
+| `transcript_access_log_failures_total` | `action` | the gateway's transcript-access logging |
 
 Temporal Core's own runtime metrics export beside them. The bundled `otel-lgtm` container provisions
 an **auto-swe — LLM & workflow overview** dashboard from `infra/grafana/` — spend, calls, and tokens
-by model and agent, run outcomes, activity p95 latency and failure rate, and recent activity traces.
+by model and agent, run outcomes, activity p95 latency and failure rate, recent activity traces, and
+the two transcript failure counters. The same container also provisions two transcript alert rules
+from `infra/grafana/provisioning/auto-swe-alerts.yaml` — they fire in Grafana → Alerting only, with
+no contact point, until an operator adds one.
 
 **Budget tiers.** Every run carries a tier, set at submission (default `STANDARD`).
 `recordLlmUsage` accrues tokens and cost onto `ActiveWorkflow` *before* checking the limit, so the

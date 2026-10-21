@@ -1,0 +1,100 @@
+# Grafana alert rules for the bundled otel-lgtm container. Mounted into its
+# provisioning/alerting directory by docker-compose.app.yml. No contact point or
+# notification policy is provisioned — the rules fire in Grafana → Alerting
+# only, until an operator adds a contact point in the UI.
+apiVersion: 1
+
+groups:
+  - folder: auto-swe
+    interval: 1m
+    name: transcripts
+    orgId: 1
+    rules:
+      - condition: C
+        annotations:
+          __dashboardUid__: auto-swe-overview
+          __panelId__: '12'
+          description: >-
+            Agent-transcript writes (create, part or close; see the stage label
+            on the dashboard panel) are failing, so model traffic is being lost.
+            Persistence is best-effort: the activities carried on, but their
+            transcripts are missing or incomplete. Check the worker logs and the
+            transcript.persist_failed trace events.
+          summary: Transcript writes are failing — model traffic is being lost
+        data:
+          - datasourceUid: prometheus
+            model:
+              expr: sum(increase(transcript_persist_failures_total[10m]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+            queryType: ''
+            refId: A
+            relativeTimeRange: {from: 600, to: 0}
+          - datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [C]}
+                  reducer: {params: [], type: last}
+                  type: query
+              datasource: {type: __expr__, uid: __expr__}
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+            refId: C
+        execErrState: Error
+        for: 0s
+        labels:
+          component: transcripts
+          severity: warning
+        noDataState: OK
+        title: Transcript write failures
+        uid: auto-swe-transcript-persist-failures
+      - condition: C
+        annotations:
+          __dashboardUid__: auto-swe-overview
+          __panelId__: '13'
+          description: >-
+            TranscriptAccessLog writes are failing, so the audit trail has
+            gaps. The failed read or export still went ahead — only its audit
+            row is missing. Check the gateway logs for the warning it emits.
+          summary: Transcript access-log writes are failing — audit rows lost
+        data:
+          - datasourceUid: prometheus
+            model:
+              expr: sum(increase(transcript_access_log_failures_total[10m]))
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+            queryType: ''
+            refId: A
+            relativeTimeRange: {from: 600, to: 0}
+          - datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator: {params: [0], type: gt}
+                  operator: {type: and}
+                  query: {params: [C]}
+                  reducer: {params: [], type: last}
+                  type: query
+              datasource: {type: __expr__, uid: __expr__}
+              expression: A
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: C
+              type: threshold
+            refId: C
+        execErrState: Error
+        for: 0s
+        labels:
+          component: transcripts
+          severity: warning
+        noDataState: OK
+        title: Transcript access-log failures
+        uid: auto-swe-transcript-access-log-failures
