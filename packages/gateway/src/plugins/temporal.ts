@@ -62,6 +62,7 @@ export const SLACK_CHANNEL_SYNC_SCHEDULE_ID = 'auto-swe-slack-channel-sync';
 export const CALLBACK_DELIVERY_SCHEDULE_ID = 'auto-swe-callback-delivery';
 export const CALLBACK_DELIVERY_PRUNE_SCHEDULE_ID = 'auto-swe-callback-delivery-prune';
 export const AGENT_TRANSCRIPT_PRUNE_SCHEDULE_ID = 'auto-swe-agent-transcript-prune';
+export const AGENT_TRACE_ROLLUP_SCHEDULE_ID = 'auto-swe-agent-trace-rollup';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -239,6 +240,15 @@ export interface AgentTranscriptPruneScheduleConfig {
 }
 
 /**
+ * The usage rollup sweep. The activity reads its backfill window from the worker's environment,
+ * so the schedule carries no arguments.
+ */
+export interface AgentTraceRollupScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
+/**
  * The run-callback sweeps: one sends due deliveries, one deletes old ones. Each
  * workflow reads the outbox (and its retention setting) itself, so the
  * schedules carry no arguments.
@@ -409,6 +419,7 @@ declare module 'fastify' {
       syncAgentTranscriptPruneSchedule: (
         config: AgentTranscriptPruneScheduleConfig
       ) => Promise<void>;
+      syncAgentTraceRollupSchedule: (config: AgentTraceRollupScheduleConfig) => Promise<void>;
       syncSkillSourceSyncSchedule: (config: SkillSourceSyncScheduleConfig) => Promise<void>;
       syncSlackChannelSyncSchedule: (config: SlackChannelSyncScheduleConfig) => Promise<void>;
       getRepoDependencyScanScheduleStatus: () => Promise<RepoDependencyScanScheduleStatus>;
@@ -1217,6 +1228,14 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         taskQueue: 'engineering-workflow',
         workflowExecutionTimeout: '6 minutes',
         workflowId,
+      });
+    },
+
+    async syncAgentTraceRollupSchedule(config: AgentTraceRollupScheduleConfig): Promise<void> {
+      await upsertSchedule(AGENT_TRACE_ROLLUP_SCHEDULE_ID, {
+        action: makeSweepAction('ScheduledAgentTraceRollupWorkflow'),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
       });
     },
 

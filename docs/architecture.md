@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 97 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 98 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | The consolidated `20260618000000_init` baseline (generated from `schema.prisma`) plus the hand-written `20260618000001_custom_constraints_and_indexes` beside it; new changes append their own migration once the schema is deployed |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -725,7 +725,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 97 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 98 models.
 
 ```mermaid
 erDiagram
@@ -1055,6 +1055,38 @@ as the report. The page, its layout, and the sidebar entry all gate on that list
 rather than on the platform role, so a team LEAD or ORG_ADMIN whose platform role is ENGINEER reaches
 it; the report route still checks every request.
 
+A daily rollup keeps the report fast on a long history. The `ScheduledAgentTraceRollupWorkflow`
+sweep sums each UTC day of `llm_response` traces into `agent_trace_daily_usage`, keyed by team,
+organization, run, agent, model, activity and the user who launched the run, rewriting the last two
+completed days on every pass (a trace is stamped at transaction start, so it can land after
+midnight) and, with `AGENT_TRACE_ROLLUP_BACKFILL_DAYS` set, building older days that have none.
+Each day is replaced in one transaction, so a reader never sees it half written. The report reads a
+day from the rollup only when it is older than those two days and has rollup rows; every other
+day, and the whole report when the sweep is off or has not run, comes from `agent_traces`. The
+rollup is therefore an optimization with two documented exceptions (see Limitations): the totals, breakdowns, daily series, previous period, mean
+latency of successful calls, error counts, unattributed spend and top runs equal the live figures up
+to floating-point tolerance (the rollup stores cost to ten decimals and sums are added in a
+different order). The one deliberate difference from earlier reports is in `topRuns`: a run's token
+counts are now summed over every `llm_response` row of the run in the window, including unpriced and
+zero-cost calls, where they used to cover only calls with a cost above zero; a run is still listed
+only if its cost is positive, and the costs are unchanged. When both sources contribute, each
+keeps its 100 costliest runs, the other source's sums for those runs are fetched, and the ranking is
+accepted only if it passes a threshold test (no run outside both lists can beat the tenth); otherwise
+the lists are widened once to 5,000. Runs that no longer exist are dropped before the list is cut to
+ten. The sweep is environment-gated
+(`AGENT_TRACE_ROLLUP_ENABLED`, default `true`; `AGENT_TRACE_ROLLUP_CRON`; see
+[configuration.md](./configuration.md)), and `AGENT_TRACE_ROLLUP_BACKFILL_DAYS` is read by the
+worker that runs it.
+
+The report's `byUser` ranks the ten users whose launched runs spent most, with a trace attributed to
+`WorkflowRun.launchedById` only when its Temporal run id is the one that wrote the run row (a
+workflow id that is started again does not inherit the earlier launcher's spend). Spend with no
+launcher — runless workflows, webhook and scheduled launches, traces that predate the Temporal run
+id — is reported in `byUserUnattributed`. An ADMIN sees every launcher with name and email. A team
+LEAD or ORG_ADMIN sees names only, and only for launchers who belong to the team or organization the
+report is scoped to; every other launcher is folded into one unnamed `outsideScope` row so a scoped
+report does not reveal who else spends elsewhere.
+
 Workflow analytics read the same whole-UTC-day windows. `GET /api/v1/workflow-templates/analytics`
 and `GET /api/v1/workflow-templates/:id/analytics` turn `window=<days>` into the last that many UTC
 days, closed at the end of today (`resolveWindow()` in `gateway/src/lib/dateWindow.ts`), so a preset
@@ -1173,6 +1205,34 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
+- **The usage top-runs ranking is exact only up to a 5,000-run list per source.** With the live
+  traces and the rollup both in play, a run is missed only if it ranks below 5,000 in both
+  sources and still places in the top ten by the two added, after the threshold test has already
+  forced the widening. Rollup rows have no foreign key to a run, so a deleted run keeps its rollup
+  spend in the totals and breakdowns but is omitted from `topRuns`; the lookup considers the 200
+  costliest ranked runs, so more than 190 deleted runs ahead of the live ones would shorten the list.
+- **`byUser` scans per run while the sweep is off.** Days without a rollup are grouped by
+  (run, Temporal run id) and each run's launcher is read from `workflow_runs`, in chunks, so a long
+  window with no rollup costs a scan proportional to the number of runs. Rolled-up days read a
+  stored launcher instead. The backfill builds ten missing days per sweep, so a long history takes
+  several sweeps to become fast.
+- **The usage rollup can differ from the live figures in two cases.**
+  - *Deleted spend.* A rollup row has no foreign key, so spend of a run that was deleted (directly,
+    or by the cascade from its team or request) stays in every rolled day, while the same spend
+    vanishes from days still read from `agent_traces`. Totals, breakdowns by team, organization,
+    agent and model, and unattributed spend therefore shrink for a day only as it is rebuilt, and
+    `topRuns` omits the run.
+  - *Late commits.* A trace committed after its day's last rewrite but stamped with that day
+    (the stamp is the transaction start) is missed once the day passes the two-day horizon, for
+    example when the sweep stops running for a while. Rebuild the day (delete its rollup rows and
+    let the backfill rebuild it) to include it.
+- **The usage rollup does not see late traces older than two days, or runs it cannot attribute.**
+  The sweep rewrites only the last two completed UTC days, so a trace written into an older day
+  after its rollup was built is missing from the rollup until that day is rebuilt (a backfill
+  skips days that already have rollup rows; delete a day's rows to force it). Days the sweep has not
+  reached are read from the live traces and are exact. `byUser` counts a trace only when its run row
+  and Temporal run id identify the launcher: assistant turns and other runless traces have no
+  launcher, and a run launched before the Temporal run id was recorded is unattributed.
 - **`WorkspaceBackend` has only a Docker driver.** A Kubernetes pod driver would also lose two
   Docker protections that have no per-pod equivalent:
   - `--pids-limit`: Kubernetes has only the kubelet-wide `podPidsLimit`.

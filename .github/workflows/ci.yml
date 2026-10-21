@@ -467,6 +467,15 @@ jobs:
           PINNED_SETTINGS_PG_TEST: '1'
         run: yarn test packages/worker/src/lib/config/pinnedSettings.pg.test.ts
 
+      # The usage report read from the daily rollup must equal the report read from
+      # the traces: the rollup sums a Float column into a Decimal one and BigInt
+      # sums come back as another JavaScript type, which an in-memory stand-in
+      # for Prisma cannot show.
+      - name: Usage rollup equivalence (database-backed tests)
+        env:
+          USAGE_ROLLUP_PG_TEST: '1'
+        run: yarn test packages/gateway/src/routes/usage.rollup.pg.test.ts
+
       # Password sign-in for an admin-created user, through the real better-auth
       # handler: it looks an account up by the lower-cased email, so a route that
       # stores the address as typed makes an account nobody can sign in to.

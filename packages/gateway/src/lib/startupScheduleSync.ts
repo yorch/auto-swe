@@ -60,6 +60,11 @@ export async function syncSchedulesOnceConnected(
   app.temporal
     .syncAgentTranscriptPruneSchedule(sweeps.agentTranscriptPrune)
     .catch(warn('agent transcript prune'));
+  // Sums completed UTC days of LLM traces for the usage report; it only derives a summary of rows
+  // that stay, and the report falls back to the live rows without it. On by default.
+  app.temporal
+    .syncAgentTraceRollupSchedule(sweeps.agentTraceRollup)
+    .catch(warn('agent trace rollup'));
   // One cheap request per tracked source; it only flags. On by default.
   app.temporal.syncSkillSourceSyncSchedule(sweeps.skillSourceSync).catch(warn('skill source sync'));
   // Re-checks channel privacy and records private channels' members. Paused unless enabled:

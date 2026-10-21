@@ -659,6 +659,9 @@ describe('systemConfig resolvers', () => {
       'AUTOMATION_DECISION_PRUNE_CRON',
       'AGENT_TRANSCRIPT_PRUNE_ENABLED',
       'AGENT_TRANSCRIPT_PRUNE_CRON',
+      'AGENT_TRACE_ROLLUP_ENABLED',
+      'AGENT_TRACE_ROLLUP_CRON',
+      'AGENT_TRACE_ROLLUP_BACKFILL_DAYS',
       'SLACK_CHANNEL_SYNC_ENABLED',
       'SLACK_CHANNEL_SYNC_CRON',
       'SLACK_CHANNEL_SYNC_STALE_HOURS',
@@ -671,6 +674,7 @@ describe('systemConfig resolvers', () => {
 
     it('defaults: the access sync is off, the dependency scan and model discovery are on', () => {
       expect(resolveScheduledSweeps()).toEqual({
+        agentTraceRollup: { backfillDays: 0, cronExpression: '13 1 * * *', enabled: true },
         agentTranscriptPrune: { cronExpression: '57 4 * * *', enabled: true },
         automationDecisionPrune: { cronExpression: '37 4 * * *', enabled: true },
         callbackDelivery: { cronExpression: '* * * * *', enabled: true },
@@ -703,10 +707,14 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('CALLBACK_DELIVERY_PRUNE_CRON', '3 3 * * *');
       vi.stubEnv('AGENT_TRANSCRIPT_PRUNE_ENABLED', 'false');
       vi.stubEnv('AGENT_TRANSCRIPT_PRUNE_CRON', '9 9 * * *');
+      vi.stubEnv('AGENT_TRACE_ROLLUP_ENABLED', 'false');
+      vi.stubEnv('AGENT_TRACE_ROLLUP_CRON', '2 2 * * *');
+      vi.stubEnv('AGENT_TRACE_ROLLUP_BACKFILL_DAYS', '90');
       vi.stubEnv('SLACK_CHANNEL_SYNC_ENABLED', 'true');
       vi.stubEnv('SLACK_CHANNEL_SYNC_CRON', '4 */2 * * *');
       vi.stubEnv('SLACK_CHANNEL_SYNC_STALE_HOURS', '12');
       expect(resolveScheduledSweeps()).toEqual({
+        agentTraceRollup: { backfillDays: 90, cronExpression: '2 2 * * *', enabled: false },
         agentTranscriptPrune: { cronExpression: '9 9 * * *', enabled: false },
         automationDecisionPrune: { cronExpression: '1 2 * * *', enabled: false },
         callbackDelivery: { cronExpression: '*/2 * * * *', enabled: false },
@@ -770,6 +778,18 @@ describe('systemConfig resolvers', () => {
         expect(problems).toHaveLength(2);
         expect(problems.join('\n')).toContain('SKILL_SOURCE_SYNC_ENABLED="off"');
         expect(problems.join('\n')).toContain('SKILL_SOURCE_SYNC_CRON="daily"');
+      });
+
+      it('rejects an unusable usage rollup flag, cron or backfill', () => {
+        vi.stubEnv('AGENT_TRACE_ROLLUP_ENABLED', 'on');
+        vi.stubEnv('AGENT_TRACE_ROLLUP_CRON', 'nightly');
+        vi.stubEnv('AGENT_TRACE_ROLLUP_BACKFILL_DAYS', '-1');
+        const problems = validateScheduledSweepsEnv().join('\n');
+        expect(problems).toContain('AGENT_TRACE_ROLLUP_ENABLED="on"');
+        expect(problems).toContain('AGENT_TRACE_ROLLUP_CRON="nightly"');
+        expect(problems).toContain('AGENT_TRACE_ROLLUP_BACKFILL_DAYS="-1"');
+        vi.stubEnv('AGENT_TRACE_ROLLUP_BACKFILL_DAYS', 'abc');
+        expect(resolveScheduledSweeps().agentTraceRollup.backfillDays).toBe(0);
       });
 
       it('rejects an unusable Slack channel sync flag, cron or staleness', () => {

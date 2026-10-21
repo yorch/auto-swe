@@ -994,7 +994,7 @@ model OrgMonthlyUsage {
   organization   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   /// Calendar month as 'YYYY-MM', e.g. '2026-06'.
   yearMonth      String       @map("year_month")
-  costUsdAccrued Decimal      @default(0) @map("cost_usd_accrued") @db.Decimal(12, 6)
+  costUsdAccrued Decimal      @default(0) @map("cost_usd_accrued") @db.Decimal(18, 10)
   runsCompleted  Int          @default(0) @map("runs_completed")
   tokensInput    BigInt       @default(0) @map("tokens_input")
   tokensOutput   BigInt       @default(0) @map("tokens_output")
@@ -1278,7 +1278,7 @@ model ChannelMonthlyUsage {
   channelId      String       @map("channel_id") @db.Uuid
   channel        SlackChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
   yearMonth      String       @map("year_month")
-  costUsdAccrued Decimal      @default(0) @map("cost_usd_accrued") @db.Decimal(12, 6)
+  costUsdAccrued Decimal      @default(0) @map("cost_usd_accrued") @db.Decimal(18, 10)
   runsCompleted  Int          @default(0) @map("runs_completed")
   updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -1305,7 +1305,7 @@ model ChannelBudgetHold {
   /// The ledger row this hold was added to — pinned, so a turn spanning a month
   /// boundary settles against the row it claimed from.
   yearMonth String       @map("year_month")
-  amountUsd Decimal      @map("amount_usd") @db.Decimal(12, 6)
+  amountUsd Decimal      @map("amount_usd") @db.Decimal(18, 10)
   /// After this instant the hold is presumed abandoned and is swept.
   expiresAt DateTime     @map("expires_at") @db.Timestamptz
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
@@ -2291,6 +2291,42 @@ model AgentTrace {
   @@index([orgId, createdAt])
   @@index([assistantMessageId])
   @@map("agent_traces")
+}
+
+/// One UTC day of `llm_response` traces, summed per
+/// (team, org, run, agent, model, activity, launcher). The usage report reads completed days from
+/// here and the current days from `agent_traces`; the rollup sweep rewrites a whole day in one
+/// transaction (delete the day, insert its groups), so a day is either fully present or absent.
+/// Plain columns, no relations: rollup rows are derived data and must survive the deletion of the
+/// team, run or user they name. There is deliberately no unique index — most key columns are
+/// nullable, and Postgres treats NULLs as distinct in one.
+model AgentTraceDailyUsage {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  /// The UTC calendar day of `agent_traces.created_at`.
+  day             DateTime @db.Date
+  teamId          String?  @map("team_id") @db.Uuid
+  orgId           String?  @map("org_id") @db.Uuid
+  runId           String?  @map("run_id") @db.Uuid
+  agentKey        String   @map("agent_key")
+  model           String?
+  nodeId          String   @map("node_id")
+  /// `WorkflowRun.launchedById`, taken only when the trace's Temporal run id is the one the run
+  /// row was written by; null otherwise and for runless traces.
+  launcherId      String?  @map("launcher_id") @db.Uuid
+  calls           Int
+  errors          Int
+  inputTokens     BigInt   @map("input_tokens")
+  outputTokens    BigInt   @map("output_tokens")
+  costUsd         Decimal  @map("cost_usd") @db.Decimal(18, 10)
+  /// Summed duration of the calls that did not fail, and how many of them recorded one.
+  okDurationMs    BigInt   @map("ok_duration_ms")
+  okDurationCount Int      @map("ok_duration_count")
+
+  @@index([day, teamId])
+  @@index([day, orgId])
+  @@index([launcherId, day])
+  @@index([runId])
+  @@map("agent_trace_daily_usage")
 }
 
 /// A full-fidelity record of one activity attempt's model traffic: every
