@@ -18,21 +18,16 @@ export function agentWorkspaceSpec(
   image: string,
   infra: WorkspaceInfraConfig = resolveWorkspaceInfra()
 ): WorkspaceContainerSpec {
-  const addHosts: string[] = [];
   // With the harness model proxy advertised at the Docker host alias, the alias
   // resolves to the host gateway, so a harness turn can reach the worker's
   // proxy (and never needs the provider credential itself). A deployment can
   // instead put workspaces on a network the worker joins (`WORKSPACE_NETWORK`),
   // which needs no port published on the host.
-  if (
+  const reachWorker =
     (infra.harnessModelProxy &&
       new URL(infra.harnessModelProxy.url).hostname === DOCKER_HOST_ALIAS) ||
-    (infra.registryProxy && new URL(infra.registryProxy.url).hostname === DOCKER_HOST_ALIAS)
-  ) {
-    addHosts.push(`${DOCKER_HOST_ALIAS}:host-gateway`);
-  }
+    (infra.registryProxy && new URL(infra.registryProxy.url).hostname === DOCKER_HOST_ALIAS);
   return {
-    addHosts,
     cpus: infra.cpus,
     dns: infra.dns,
     image,
@@ -40,5 +35,6 @@ export function agentWorkspaceSpec(
     name,
     ...(infra.network ? { network: infra.network } : {}),
     pidsLimit: infra.pidsLimit,
+    reachWorker: Boolean(reachWorker),
   };
 }

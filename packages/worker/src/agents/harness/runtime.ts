@@ -280,7 +280,7 @@ export function harnessRuntime<Report>(
         });
       },
       heartbeat: () => heartbeat(adapter.kind),
-      spawn({ args, env, leadingEnvArgs = [], secretEnv, signal }) {
+      spawn({ args, env, leadingEnv = [], secretEnv, signal }) {
         if (!provisioning) {
           throw new Error(`${adapter.label} runs in the worker; it has no binary to start.`);
         }
@@ -289,8 +289,7 @@ export function harnessRuntime<Report>(
           backend.attach(workspace.containerId),
           [provisioning.containerPath, ...args],
           {
-            env: [`${EXEC_TAG_ENV}=${tag}`, ...env],
-            leadingArgs: leadingEnvArgs,
+            env: [...leadingEnv, `${EXEC_TAG_ENV}=${tag}`, ...env],
             // Named without a value: docker reads it from its own environment below,
             // so a secret never appears on a command line or in `ps`.
             secretEnv,

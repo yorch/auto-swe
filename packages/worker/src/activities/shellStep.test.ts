@@ -55,6 +55,7 @@ const { backendRunHelper, backendCreateVolume, backendRemoveVolume } = vi.hoiste
 }));
 vi.mock('../lib/workspaceBackend/index.js', () => ({
   workspaceBackend: () => ({
+    canReachWorkerProxy: (url: string) => new URL(url).hostname === 'host.docker.internal',
     createVolume: backendCreateVolume,
     removeVolume: backendRemoveVolume,
     runEphemeral: backendRunEphemeral,
@@ -596,12 +597,12 @@ describe('runShellStep — registry wiring', () => {
     expect(backendRunEphemeral).not.toHaveBeenCalled(); // command uses lib/ephemeralContainer (mocked)
     const input = vi.mocked(runEphemeralContainer).mock.calls.at(-1)?.[0] as {
       env: Record<string, string>;
-      extraAddHosts: string[];
+      reachWorker: boolean;
     };
     expect(input.env.HOME).toBe('/workspace/.auto-swe/home');
     expect(input.env.NPM_CONFIG_USERCONFIG).toBe('/workspace/.auto-swe/home/.npmrc');
     expect(input.env.NPM_CONFIG_REGISTRY).toContain('npm/r1');
-    expect(input.extraAddHosts).toEqual(['host.docker.internal:host-gateway']);
+    expect(input.reachWorker).toBe(true);
     // Allowlist built from the base branch via helper exec in /workspace/repo.
     expect(buildAllowlistMock).toHaveBeenCalledWith(
       access,

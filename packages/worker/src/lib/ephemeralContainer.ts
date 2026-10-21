@@ -64,11 +64,10 @@ export interface EphemeralRunInput {
    */
   env?: Record<string, string>;
   /**
-   * Extra `--add-host` entries (`name:ip`), spliced in before the image like
-   * the egress-allowlist resolutions — used for the docker-host alias a shell
-   * step needs to reach the package-registry proxy.
+   * The container must reach the worker's package-registry proxy at the
+   * address the deployment advertises (the driver wires the alias).
    */
-  extraAddHosts?: string[];
+  reachWorker?: boolean;
   /**
    * Optional per-line stdout callback (P5): the NDJSON containerStep transport
    * consumes the container's output line-by-line as it streams. stdout is still
@@ -310,7 +309,6 @@ async function ephemeralSpecFromInput(
   // lockdownFlags still does all the input validation (and its return value's
   // network mode feeds the spec); the flag block itself is the driver's.
   const { network } = lockdownFlags(input);
-  const dockerNetwork = network === 'egress' ? 'bridge' : 'none';
   const addHosts: string[] = [];
   if (network === 'egress' && input.egressAllowlist) {
     for (const hostname of input.egressAllowlist) {
@@ -326,7 +324,7 @@ async function ephemeralSpecFromInput(
     }
   }
   return {
-    addHosts: [...addHosts, ...(input.extraAddHosts ?? [])],
+    addHosts,
     argv: input.command ? ['sh', '-c', input.command] : undefined,
     cpus: input.cpus,
     dns:
@@ -337,7 +335,8 @@ async function ephemeralSpecFromInput(
     image: input.image,
     memory: input.memory,
     name: containerName,
-    network: dockerNetwork,
+    network,
+    reachWorker: input.reachWorker,
     volumes: [{ source: input.workspaceMount, target: '/workspace' }],
     workdir: input.workdir ?? '/workspace',
   };
@@ -390,8 +389,7 @@ export async function runSidecarContainer(input: SidecarRunInput): Promise<Sidec
         `sidecar failed to start: ${(started.stderr || started.stdout).slice(0, 500)}`
       );
     }
-    const hostPort = await backend.publishedPort(containerName, input.port);
-    const baseUrl = `http://127.0.0.1:${hostPort}`;
+    const baseUrl = await backend.sidecarBaseUrl(containerName, input.port);
 
     await waitForReady(`${baseUrl}${readinessPath}`, readyTimeoutMs);
 
