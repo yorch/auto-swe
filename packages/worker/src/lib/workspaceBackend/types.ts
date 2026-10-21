@@ -89,7 +89,7 @@ export interface WorkspaceSpawnOptions {
  *  - remove() is idempotent.
  */
 export interface WorkspaceBackend {
-  readonly kind: 'docker';
+  readonly kind: 'docker' | 'kubernetes';
   /**
    * Start the container, run the metadata-block sidecar when configured
    * (non-fatal as today) and record the keeper PID. Throws on failure; a

@@ -1127,14 +1127,14 @@ anything else in the system. `createWorkspace()` (`activities/workspace.ts`) app
 
 Everything the worker does to a workspace goes through `WorkspaceBackend`
 (`lib/workspaceBackend/`): create, attach, exec (capture and throwing variants), spawn, copy
-out/in, pause, remove. The Docker driver is the only implementation — there is no backend
-selector — but the interface carries the obligations a Kubernetes driver would have to meet:
-`create()` applies the hardening itself (`--init`, `--cap-drop=ALL`, `no-new-privileges`, the
-metadata add-hosts, `sleep infinity`) and records the keeper's in-container PID once, right
-after start (a pod has no `--init`, so "the only child of PID 1" cannot be found later the way
-the Docker driver's one-shot probe does); secret env travels by *name* only, never as a value on
-a command line (`docker exec -e NAME` reads from the daemon-side environment — a Kubernetes exec
-API takes argv only, so a value there would be readable in `/proc` and the audit log); and
+out/in, pause, remove. `WORKSPACE_BACKEND` picks the driver for the whole worker process: Docker
+(the default) or Kubernetes (`kubernetes`, any other value is Docker). Both meet the same
+obligations: `create()` applies the hardening itself (Docker: `--init`, `--cap-drop=ALL`,
+`no-new-privileges`, the metadata add-hosts, `sleep infinity`; Kubernetes: the pod spec below) and
+records the keeper's in-container PID once, right after start ("the only child of PID 1" cannot
+be found reliably later); secret env travels by *name* only, never as a value on a command line
+(`docker exec -e NAME` reads from the daemon-side environment; a Kubernetes exec takes argv only,
+so a value there would be readable in `/proc` and the apiserver audit log — see below); and
 `remove()` is idempotent. `createWorkspace`, the harness exec/spawn paths and agent-run finalize
 sit on this seam, and so does the ephemeral shell/container-step sandbox:
 - `runEphemeral` and `startDetached` run author commands. They always apply the sandbox lockdown:
@@ -1146,6 +1146,28 @@ sit on this seam, and so does the ephemeral shell/container-step sandbox:
 - `createVolume` and `removeVolume` manage the step volumes.
 
 The dev smoke script `agents/pi/smoke.ts` is the only Docker caller outside the seam.
+
+#### Kubernetes backend
+
+With `WORKSPACE_BACKEND=kubernetes` an agent workspace is a Pod in one namespace
+(`K8S_WORKSPACE_NAMESPACE`), reached with `kubectl exec` (the worker image carries a pinned
+`kubectl`; `spawn()` returns a real `ChildProcess`, and in-cluster or kubeconfig credentials work
+unchanged). Reference manifests for the namespace, NetworkPolicy, quota and RBAC are in
+`infra/kubernetes/workspace-namespace.yaml`; [`deployment.md`](./deployment.md#kubernetes) is the
+runbook.
+
+| Concern | What the Kubernetes driver does |
+|---|---|
+| Pod hardening | `buildWorkspacePod` (`lib/workspaceBackend/kubernetes/podSpec.ts`): PodSecurity `restricted` — `runAsNonRoot` with an explicit `runAsUser` (`K8S_WORKSPACE_RUN_AS_UID`, default 1000: Kubernetes cannot prove a named image `USER` is non-root), all capabilities dropped, no privilege escalation, `RuntimeDefault` seccomp, no service-account token, no host namespaces or paths. Requests equal limits (Guaranteed QoS). `K8S_WORKSPACE_RUNTIME_CLASS` selects an optional sandboxed runtime |
+| Lifetime | `activeDeadlineSeconds` (`K8S_WORKSPACE_MAX_LIFETIME_SEC`, default 24 h) is a hard limit the kubelet enforces even if the worker dies. `remove()` deletes the pod and is idempotent |
+| Keeper PID | `shareProcessNamespace` makes the pod's `pause` process PID 1 (it reaps orphans, the role `--init` plays), leaving `sleep infinity` as its only child, which the same keeper probe finds. Zero or several candidates fail creation |
+| Secret env | Values travel on the exec's **stdin**: a shell wrapper reads `NAME=value` lines up to a blank line, exports them and `exec`s the command. Nothing secret is in argv (so not in the apiserver audit log or the worker's process table) or in a file in the pod. Non-secret env goes through `env(1)` in argv |
+| Working tree | An `emptyDir` at `/workspace` with a size limit; it dies with the pod |
+| Copy | `copyOut` streams the pod's own `tar` to a file, capped while streaming. Because the agent could have replaced that binary, `copyIn` runs `assertSafeArchive` on the archive first and refuses absolute paths, `..`, hard links, devices, entries below a symlink the archive created, and symlinks that are absolute or climb above the root. `copyFileIn` keeps the file mode so the harness binary stays executable |
+| Pause | `kill -STOP -1` in the pod: SIGSTOP cannot be caught, and the tree is quiescent for the copy |
+| Cloud metadata and egress | The namespace's NetworkPolicy, not a sidecar (`NET_ADMIN` is forbidden under `restricted`). The GCP metadata hostnames also resolve to `0.0.0.0` through `hostAliases` |
+| Start-up check | A worker refuses to start unless it holds the RBAC it needs and a probe pod cannot reach the metadata endpoint or the cluster API address, which proves the CNI enforces the policy. `K8S_REQUIRE_NETWORK_POLICY=false` skips only the second check, for a local cluster |
+| Proxies | Workspaces reach the worker's model and registry proxies at the URLs the deployment advertises (`HARNESS_MODEL_PROXY_URL`, `REGISTRY_PROXY_URL`): a Service name, not the Docker host alias |
 
 Package installs go through a second seam: when `REGISTRY_PROXY_PORT` is set the worker runs a
 read-only npm registry proxy ([package-registries.md](./package-registries.md)) — the workspace
@@ -1198,7 +1220,7 @@ The load-bearing ones, with rationale:
 | DB-backed model config | Per-team and per-template model overrides with no env vars and no redeploy |
 | AES-256-GCM for credentials | Keys encrypted at rest; `CONFIG_ENCRYPTION_KEY` is the only LLM-related env var |
 | Three auth paths | CLI and CI use PATs, browsers use session cookies, and the bridge issues short-lived JWTs for the API surface |
-| Docker-in-Docker, not K8s | Same isolation model with zero cluster dependency; runs under Docker Compose |
+| Docker by default, Kubernetes pods optional | Docker needs no cluster and runs under Compose; `WORKSPACE_BACKEND=kubernetes` runs agent workspaces as hardened pods on a cluster that enforces NetworkPolicy |
 | Temporal for orchestration | Durable execution — runs survive crashes, wait days for human and CI signals, and replay deterministically |
 | pgvector for memory | Semantic retrieval surfaces relevant past lessons into agent context |
 | Human-governed merges | Nothing shipped merges a PR; a signal bridges the merge webhook (see §10) |
@@ -1238,11 +1260,25 @@ Current constraints of the system as built. Deliberate product boundaries are in
   reached are read from the live traces and are exact. `byUser` counts a trace only when its run row
   and Temporal run id identify the launcher: assistant turns and other runless traces have no
   launcher, and a run launched before the Temporal run id was recorded is unattributed.
-- **`WorkspaceBackend` has only a Docker driver.** A Kubernetes pod driver would also lose two
-  Docker protections that have no per-pod equivalent:
-  - `--pids-limit`: Kubernetes has only the kubelet-wide `podPidsLimit`.
-  - the metadata blackhole's `NET_ADMIN` sidecar: PodSecurity `restricted` forbids it, so egress
-    would have to be controlled by NetworkPolicy instead.
+- **The Kubernetes backend runs agent workspaces only.** Shell steps, container steps and
+  sidecars need a volume shared by several containers in turn, which a pod's `emptyDir` cannot
+  provide; with `WORKSPACE_BACKEND=kubernetes` they fail with a non-retryable
+  `WORKSPACE_BACKEND_UNSUPPORTED` before touching anything. Run them on a Docker worker.
+- **A Kubernetes worker is a single replica.** The model proxy and the registry proxy keep their
+  token registrations (and the registry allowlist) in the worker's memory, so a pod whose request
+  reached another replica would be refused. There is no worker autoscaling until that state is
+  shared.
+- **Kubernetes workspaces lack two Docker protections that have no per-pod equivalent.**
+  `--pids-limit`: Kubernetes has only the kubelet-wide `podPidsLimit`, so set it on the node
+  pool; `WORKSPACE_PIDS_LIMIT` is not applied. The `NET_ADMIN` metadata sidecar: PodSecurity
+  `restricted` forbids it, so the NetworkPolicy does that job, and `WORKSPACE_DNS` is not applied
+  either (workspaces use cluster DNS so a Service name resolves).
+- **Kubernetes workspace pods are not reaped by the worker.** `activeDeadlineSeconds` makes the
+  kubelet terminate a pod that outlives its limit, but the terminated pod object stays until
+  something deletes it, and a worker that dies mid-run does not delete its workspaces.
+- **Kubernetes `copyOut` runs the agent's `tar`.** The archive is validated before it is
+  extracted anywhere, but the export itself is produced by a binary in the agent-controlled
+  container, so a hostile run can make it fail or produce an archive that is refused.
 - **A run fails permanently on any non-Temporal error from workflow code.** `RunnableWorkflow`
   turns every such error into a non-retryable `WORKFLOW_SPEC_FAILED`, because the spec failures that
   produce them are deterministic. A bug in the workflow code itself is therefore not retried by a

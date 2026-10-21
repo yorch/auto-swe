@@ -130,7 +130,9 @@ export async function importAgentTree(
       );
     }
     if (copied.exitCode !== 0) {
-      throw new Error(`docker cp failed (exit ${copied.exitCode}): ${copied.stderr}`);
+      throw new Error(
+        `copying the working tree out failed (exit ${copied.exitCode}): ${copied.stderr}`
+      );
     }
     const size = copied.bytes;
     await trusted.exec('rm -rf /stage && mkdir /stage');

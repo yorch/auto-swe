@@ -2,6 +2,11 @@
 # tag (it reads FROM lines, not COPY --from=<image>). Nothing runs in it.
 FROM docker:29-cli@sha256:6fae2214c3121a28d5aa639d09032f61310b7c9c75ffbad1025f261a1b621800 AS dockercli
 
+# kubectl, for WORKSPACE_BACKEND=kubernetes (the worker runs `kubectl exec` into workspace pods). Same
+# named-stage trick so Dependabot tracks the tag; the official image is distroless, so only the binary is
+# taken. A client within one minor of the API server is supported, which covers managed clusters either side.
+FROM registry.k8s.io/kubectl:v1.36.5@sha256:0667e3f3e6ef435d7cd4c16684244703ebd67314c17511c2a9f87ea44f6cdf6b AS kubectlcli
+
 # ── Stage 1: Build ──
 FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS builder
 WORKDIR /app
@@ -94,6 +99,7 @@ FROM node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce055
 # socket and no docker group. Taken from the official CLI image rather than apt, which keeps it pinned and avoids pulling
 # the whole docker.io package (daemon included) into the runtime.
 COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=kubectlcli /bin/kubectl /usr/local/bin/kubectl
 WORKDIR /app
 
 ARG APP_VERSION=unknown
