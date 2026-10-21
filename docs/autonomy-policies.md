@@ -111,6 +111,12 @@ something outside the platform — `writeOutcome`, `runTool` and `mcpCallTool`:
 - Before a mutation, the latest `publish` decision for the run **that required approval** is read. If
   no `approve` was recorded after it, the step is refused with a non-retryable `APPROVAL_REQUIRED`.
   A run that recorded no such decision is not gated — the policy exists where something asked for it.
+- **A write with no decision on the way in is ungated**, so `validateSpec` warns for it
+  (`WRITE_WITHOUT_POLICY`) on each `writeOutcome` step or `mcp` node that no `publishOutcome`
+  reaches. It is reachability, not dominance — a write that is also reachable by a route skipping
+  the decision passes the check — and `runTool` is left out because its tool name is normally a
+  binding, so a static check cannot tell a read from a write; the runtime guard classifies that one
+  at call time. `policyGatedWrite` emits the whole idiom, approval branch included.
 - The decision is matched to the **run**, not to the action: a run-wide requirement, from any risk
   class, holds every mutation until it is satisfied, and the guard cannot tell an approval for one
   human step from an approval for another. A template that gates one action and then performs an

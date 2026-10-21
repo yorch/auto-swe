@@ -1,5 +1,5 @@
 import { SPEC_SCHEMA_VERSION, type WorkflowSpec } from '../spec.js';
-import { mergeNodes, sourceHead, terminate } from './authoring/index.js';
+import { mergeNodes, policyGatedWrite, sourceHead, terminate } from './authoring/index.js';
 
 /**
  * Notion content draft workflow.
@@ -11,6 +11,12 @@ import { mergeNodes, sourceHead, terminate } from './authoring/index.js';
  * This is the first non-git template: it demonstrates the generic
  * resolveWorkspace → readSource → agent → writeOutcome pipeline for a document
  * workspace.
+ *
+ * The write is policy-gated like every other shipped template that writes: the
+ * appended paragraph lands in the operator's own Notion, so the class is
+ * `internal_write`, and `publishOutcome` records the decision the audit log and
+ * any later policy edit are held to. Skipping the step is not neutral — a run
+ * that records no decision is not gated at all.
  */
 export const NOTION_CONTENT_DRAFT_SPEC: WorkflowSpec = {
   description:
@@ -32,24 +38,37 @@ export const NOTION_CONTENT_DRAFT_SPEC: WorkflowSpec = {
           source: { from: 'nodes.readSource.output.data' },
           targetPageId: { from: 'request.payload.targetPageId' },
         },
-        next: 'writeOutcome',
+        next: 'publishOutcome',
         spanName: 'llm.notion_draft',
         title: 'Draft the update',
         type: 'agent',
       },
-      writeOutcome: {
+    },
+    policyGatedWrite({
+      action: 'internal_write',
+      approval: {
+        contextFrom: 'nodes.draftContent.output.text',
+        description:
+          'Approve appending the draft to the target Notion page, or reject to discard it.',
+        title: 'Approve write',
+      },
+      describeFrom: 'request.payload.instructions',
+      rejectedResult: {
+        approved: { literal: false },
+        targetPageId: { from: 'request.payload.targetPageId' },
+        written: { literal: false },
+      },
+      write: {
         config: {},
-        group: 'write',
         inputs: {
           connectionId: { from: 'request.payload.connectionId' },
           pageId: { from: 'request.payload.targetPageId' },
           text: { from: 'nodes.draftContent.output.text' },
         },
-        next: 'done',
-        step: 'writeOutcome',
-        title: 'Append to the target page',
-        type: 'step',
       },
+      writes: 'single',
+    }),
+    {
       done: terminate('SUCCESS', {
         group: 'write',
         result: {

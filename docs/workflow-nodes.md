@@ -386,8 +386,15 @@ instead of calling the tool again.
   "schemaVersion": 1,
   "name": "mcp-example",
   "description": "Call one search tool on an MCP server and return what it found.",
-  "entry": "lookup",
+  "entry": "checkPolicy",
   "nodes": {
+    "checkPolicy": {
+      "type": "step",
+      "step": "publishOutcome",
+      "config": { "action": "internal_read" },
+      "inputs": { "description": { "literal": "search the MCP server" } },
+      "next": "lookup"
+    },
     "lookup": {
       "type": "mcp",
       "connectionRef": "00000000-0000-4000-8000-000000000000",
@@ -406,7 +413,10 @@ instead of calling the tool again.
 }
 ```
 
-Replace the `connectionRef` with the id of one of your team's `mcp` Connections.
+Replace the `connectionRef` with the id of one of your team's `mcp` Connections. The
+`publishOutcome` step declares what this call is judged as — `internal_read` for a lookup — because
+the spec cannot know what a tool does: an unannotated tool is treated as a write at run time, and
+`validateSpec` warns (`WRITE_WITHOUT_POLICY`) when an `mcp` node is not reached through that step.
 
 **Pitfalls.**
 
