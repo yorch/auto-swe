@@ -21,6 +21,7 @@ describe('AgentTracer.persist', () => {
 
     expect(createManyMock).toHaveBeenCalledWith({
       data: [expect.objectContaining({ costUsd: 0.01, runId: null, workflowId: 'wf-author-1' })],
+      skipDuplicates: true,
     });
   });
 
@@ -32,6 +33,7 @@ describe('AgentTracer.persist', () => {
       'n',
       'r'
     );
+    tracer.addLlmResponse({ costUsd: 0.01, durationMs: 5, role: 'r' });
     await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'r');
     expect(createManyMock.mock.calls[0]?.[0].data[0]).toMatchObject({ orgId: 'o1', teamId: 't1' });
     expect(createManyMock.mock.calls[1]?.[0].data[0]).toMatchObject({ orgId: null, teamId: null });
@@ -45,6 +47,7 @@ describe('AgentTracer.persist', () => {
       'n',
       'r'
     );
+    tracer.addLlmResponse({ durationMs: 5, role: 'r' });
     await tracer.persist({ runId: undefined, workflowId: 'w' }, 'n', 'r');
     expect(createManyMock.mock.calls[0]?.[0].data[0]).toMatchObject({
       assistantMessageId: 'reply-1',
@@ -70,6 +73,7 @@ describe('AgentTracer.persist', () => {
           stepAttempt: 3,
         }),
       ],
+      skipDuplicates: true,
     });
   });
 
@@ -79,6 +83,7 @@ describe('AgentTracer.persist', () => {
     await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'a');
     expect(createManyMock).toHaveBeenCalledWith({
       data: [expect.objectContaining({ recordingId: null, specNodeId: null, stepAttempt: null })],
+      skipDuplicates: true,
     });
   });
 
@@ -90,6 +95,7 @@ describe('AgentTracer.persist', () => {
 
     expect(createManyMock).toHaveBeenCalledWith({
       data: [expect.objectContaining({ runId: 'run-1', workflowId: 'wf-1' })],
+      skipDuplicates: true,
     });
   });
 
@@ -106,6 +112,108 @@ describe('AgentTracer.persist', () => {
     await expect(tracer.persist({ runId: undefined, workflowId: 'wf-1' }, 'n', 'a')).resolves.toBe(
       false
     );
+  });
+
+  it('drops only what it wrote, so a second persist writes nothing twice', async () => {
+    const tracer = new AgentTracer();
+    tracer.addActivityEvent({ name: 'a' });
+    tracer.addActivityEvent({ name: 'b' });
+    await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'a');
+    expect(tracer.size).toBe(0);
+
+    tracer.addActivityEvent({ name: 'c' });
+    await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'a');
+    await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'a');
+
+    const names = createManyMock.mock.calls.flatMap(([arg]) =>
+      (arg.data as { toolName: string }[]).map((r) => r.toolName)
+    );
+    expect(names).toEqual(['a', 'b', 'c']);
+  });
+
+  it('keeps the records buffered when the write fails, and writes them next time', async () => {
+    createManyMock.mockRejectedValueOnce(new Error('db down'));
+    const tracer = new AgentTracer();
+    tracer.addActivityEvent({ name: 'a' });
+    await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'a');
+    expect(tracer.size).toBe(1);
+
+    tracer.addActivityEvent({ name: 'b' });
+    await expect(tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'a')).resolves.toBe(
+      true
+    );
+    expect(
+      createManyMock.mock.calls[1]?.[0].data.map((r: { toolName: string }) => r.toolName)
+    ).toEqual(['a', 'b']);
+    expect(tracer.size).toBe(0);
+  });
+
+  it('keeps a record added while a write is in flight', async () => {
+    let release: () => void = () => {};
+    createManyMock.mockImplementationOnce(
+      () => new Promise((resolve) => (release = () => resolve({ count: 1 })))
+    );
+    const tracer = new AgentTracer();
+    tracer.addActivityEvent({ name: 'a' });
+    const pending = tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'a');
+    tracer.addActivityEvent({ name: 'b' });
+    release();
+    await pending;
+
+    expect(tracer.size).toBe(1);
+    await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'a');
+    expect(createManyMock.mock.calls[1]?.[0].data[0].toolName).toBe('b');
+  });
+
+  it('numbers each batch from its seqOffset, whatever was flushed before', async () => {
+    const tracer = new AgentTracer();
+    tracer.addActivityEvent({ name: 'a' });
+    tracer.addActivityEvent({ name: 'b' });
+    await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'a', 1, undefined, 0);
+    tracer.addActivityEvent({ name: 'c' });
+    await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'a', 1, undefined, 2);
+
+    const seqs = createManyMock.mock.calls.flatMap(([arg]) =>
+      (arg.data as { seq: number }[]).map((r) => r.seq)
+    );
+    expect(seqs).toEqual([0, 1, 2]);
+  });
+
+  it('re-sends the same ids with skipDuplicates after an ambiguous failure', async () => {
+    // The first write may have committed although the client saw an error.
+    createManyMock.mockRejectedValueOnce(new Error('connection reset'));
+    const tracer = new AgentTracer();
+    tracer.addActivityEvent({ name: 'a' });
+    tracer.addActivityEvent({ name: 'b' });
+    await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'a');
+    await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'a');
+
+    const [first, second] = createManyMock.mock.calls.map(([arg]) => arg);
+    const ids = (arg: { data: { id: string }[] }) => arg.data.map((r) => r.id);
+    expect(first.skipDuplicates).toBe(true);
+    expect(second.skipDuplicates).toBe(true);
+    expect(ids(first)).toHaveLength(2);
+    expect(new Set(ids(first)).size).toBe(2);
+    expect(ids(second)).toEqual(ids(first));
+  });
+
+  it('notifies a listener for every record added', () => {
+    const tracer = new AgentTracer();
+    const listener = vi.fn();
+    tracer.onRecord(listener);
+    tracer.addToolCall({ durationMs: 1, inputJson: {}, toolName: 't' });
+    tracer.addLlmResponse({ durationMs: 1 });
+    tracer.addActivityEvent({ name: 'e' });
+    expect(listener).toHaveBeenCalledTimes(3);
+  });
+
+  it('a throwing listener never breaks recording', () => {
+    const tracer = new AgentTracer();
+    tracer.onRecord(() => {
+      throw new Error('boom');
+    });
+    expect(() => tracer.addActivityEvent({ name: 'e' })).not.toThrow();
+    expect(tracer.size).toBe(1);
   });
 
   it('reports whether a span context was attached', () => {
