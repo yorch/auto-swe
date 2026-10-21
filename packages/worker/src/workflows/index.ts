@@ -16,6 +16,7 @@ export { ReembedMemoryWorkflow, ReembedStaleMemoryWorkflow } from './reembedMemo
 export { RunnableWorkflow } from './runnable.js';
 export { ScheduledAgentTraceRollupWorkflow } from './scheduledAgentTraceRollup.js';
 export { ScheduledAgentTranscriptPruneWorkflow } from './scheduledAgentTranscriptPrune.js';
+export { ScheduledAuditActivityPruneWorkflow } from './scheduledAuditActivityPrune.js';
 export { ScheduledAutomationDecisionPruneWorkflow } from './scheduledAutomationDecisionPrune.js';
 export {
   ScheduledCallbackDeliveryPruneWorkflow,

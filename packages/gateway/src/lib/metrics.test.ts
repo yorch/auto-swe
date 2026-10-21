@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   _resetMetricsForTests,
   initMetrics,
+  recordActivityEventsDropped,
+  recordHttpDenied,
   recordRunFinalized,
   recordTranscriptAccessLogFailure,
 } from './metrics.js';
@@ -58,5 +60,20 @@ describe('gateway metrics', () => {
     const points = (metric?.dataPoints ?? []).map((d) => [d.attributes.action, d.value]);
     expect(points).toContainEqual(['content_read', 1]);
     expect(points).toContainEqual(['export', 0]);
+  });
+
+  it('counts denials by route template, status and whether an actor was known', async () => {
+    initMetrics();
+    recordHttpDenied('/api/v1/platform/audit-log', 403, false);
+    recordActivityEventsDropped(3);
+    const { resourceMetrics } = await reader.collect();
+    const all = resourceMetrics.scopeMetrics.flatMap((s) => s.metrics);
+    const denied = (all.find((m) => m.descriptor.name === 'http.denied')?.dataPoints ?? []).map(
+      (d) => [d.attributes.route, d.attributes.status, d.attributes.actor, d.value]
+    );
+    expect(denied).toContainEqual(['/api/v1/platform/audit-log', 403, 'none', 1]);
+    expect(denied).toContainEqual(['none', 401, 'known', 0]);
+    const dropped = all.find((m) => m.descriptor.name === 'activity.events.dropped');
+    expect(dropped?.dataPoints.map((d) => d.value)).toEqual([3]);
   });
 });

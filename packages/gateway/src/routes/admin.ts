@@ -53,6 +53,11 @@ const AuditLogExportQuery = AuditLogQuery.omit({ limit: true, offset: true });
 const AUDIT_EXPORT_MAX_ROWS = 50_000;
 const AUDIT_EXPORT_BATCH = 500;
 
+/** `ip`, `via` and `requestId` of a stored context, in that order; empty when there is none. */
+function contextCells(context: unknown): unknown[] {
+  const c = (context && typeof context === 'object' ? context : {}) as Record<string, unknown>;
+  return [c.ip, c.via, c.requestId];
+}
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AuditJsonSchema = z.json();
 const AuditLogResponseSchema = z.object({
@@ -377,6 +382,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/audit-log/export',
     {
+      config: { activity: 'export' },
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
       schema: { querystring: AuditLogExportQuery },
     },
@@ -385,7 +391,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
       // Known before streaming starts, so the header can say the file is cut short.
       const matching = await fastify.prisma.configAuditLog.count({ where });
       async function* lines() {
-        yield 'time,action,actor,entity_type,entity_id,before,after\n';
+        yield 'time,action,actor,entity_type,entity_id,before,after,ip,via,request_id\n';
         let cursor: string | undefined;
         let written = 0;
         while (written < AUDIT_EXPORT_MAX_ROWS) {
@@ -415,6 +421,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
               r.entityId,
               r.beforeJson,
               r.afterJson,
+              ...contextCells(r.context),
             ]
               .map(csvCell)
               .join(',')}\n`;
@@ -438,6 +445,7 @@ export const adminRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/audit-log',
     {
+      config: { activity: 'read' },
       onRequest: requireAuth({ requiredRole: 'ADMIN' }),
       schema: { querystring: AuditLogQuery, response: { 200: AuditLogResponseSchema } },
     },

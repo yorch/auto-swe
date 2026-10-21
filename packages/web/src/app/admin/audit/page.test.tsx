@@ -25,6 +25,7 @@ function row(i: number, actor: { email: string; name: string | null } | null) {
     entityId: `e${i}-0000-0000`,
     entityType: 'User',
     id: `row-${i}`,
+    ...(i === 1 ? { context: { ip: '198.51.100.0', requestId: 'req-abc', via: 'pat' } } : {}),
   };
 }
 
@@ -124,6 +125,18 @@ describe('GovernAuditPage', () => {
     fireEvent.click(screen.getAllByRole('button', { name: /Show details/ })[0] as HTMLElement);
     expect(screen.getByText('Before')).toBeTruthy();
     expect(screen.getByText(/"role": "ENGINEER"/)).toBeTruthy();
+  });
+
+  it('shows how an action arrived when the row opens', async () => {
+    mockLog(2);
+    render(withQuery(<GovernAuditPage />));
+    await screen.findByText('alice@example.com');
+
+    fireEvent.click(screen.getAllByRole('button', { name: /Show details/ })[0] as HTMLElement);
+    const context = screen.getByTestId('audit-context');
+    expect(within(context).getByText('pat')).toBeTruthy();
+    expect(within(context).getByText('198.51.100.0')).toBeTruthy();
+    expect(within(context).getByText('req-abc')).toBeTruthy();
   });
 
   it('exports the current filter as CSV', async () => {

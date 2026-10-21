@@ -201,6 +201,8 @@ export {
 export { probeExecutorImage } from './probeExecutorImage.js';
 export type { PruneAgentTranscriptsResult } from './pruneAgentTranscripts.js';
 export { pruneAgentTranscripts } from './pruneAgentTranscripts.js';
+export type { PruneAuditAndActivityResult } from './pruneAuditAndActivity.js';
+export { pruneAuditAndActivity } from './pruneAuditAndActivity.js';
 export type { PruneAutomationDecisionsResult } from './pruneAutomationDecisions.js';
 export { pruneAutomationDecisions } from './pruneAutomationDecisions.js';
 export type { PruneCallbackDeliveriesResult } from './pruneCallbackDeliveries.js';

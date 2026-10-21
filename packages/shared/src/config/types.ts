@@ -22,7 +22,9 @@ export type OverridableScope = Exclude<SettingScope, 'GLOBAL'>;
 /// Groups exist so the admin UI can render one form per subsystem and so a
 /// permission grant can name a whole area (`channel.*`) instead of every key.
 export const SETTING_GROUPS = [
+  'analytics',
   'assistant',
+  'audit',
   'channel',
   'evals',
   'github',

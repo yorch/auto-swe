@@ -44,7 +44,12 @@ export type NeverReason =
    * turns of its own, and one that read another user's failures would carry their error text into
    * this conversation.
    */
-  | 'assistantPanel';
+  | 'assistantPanel'
+  /**
+   * The record of what people were refused and which pages they opened. The assistant acts for one
+   * person; it does not read other people's behaviour, and a page view it posted would be its own.
+   */
+  | 'userActivity';
 
 export type RoutePolicyEntry = 'read' | 'confirm' | { read: string } | { never: NeverReason };
 
@@ -83,6 +88,8 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/me/mcp-grants': { never: 'secret' },
   'GET /api/v1/me/preferences': 'read',
   'GET /api/v1/platform/access-tokens': { never: 'secret' },
+  'GET /api/v1/platform/activity': { never: 'userActivity' },
+  'GET /api/v1/platform/activity/summary': { never: 'userActivity' },
   'GET /api/v1/platform/agent-library': 'read',
   'GET /api/v1/platform/agent-library/:id': 'read',
   'GET /api/v1/platform/agent-library/:id/versions': 'read',
@@ -234,6 +241,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PATCH /api/v1/teams/:teamId/service-principals/:id': { never: 'secret' },
   'PATCH /api/v1/users/:id': { never: 'identity' },
   'PATCH /api/v1/workflow-templates/:id': 'confirm',
+  'POST /api/v1/activity/ui': { never: 'userActivity' },
   'POST /api/v1/agent-runs': 'confirm',
   'POST /api/v1/agent-runs/:workRequestId/rerun': 'confirm',
   'POST /api/v1/assistant/actions': {

@@ -10,6 +10,7 @@ import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { otel } from './instrument.js';
+import { activityEvents } from './lib/activityEvents.js';
 import { registerAuditContext } from './lib/auditContext.js';
 import { configuredProviders, getAuth, initAuth } from './lib/betterAuth.js';
 import { createBetterAuthHandler, registerBetterAuthRoutes } from './lib/betterAuthHandler.js';
@@ -114,6 +115,8 @@ async function start() {
   await app.register(temporalPlugin);
   await app.register(authPlugin);
   registerAuditContext(app);
+  // After auth and before any route: the hook only reaches routes registered once it exists.
+  await app.register(activityEvents);
 
   // Sync built-in reference data (templates, skills, scanner patterns, tool
   // config) so every deploy automatically picks up new or updated built-ins.

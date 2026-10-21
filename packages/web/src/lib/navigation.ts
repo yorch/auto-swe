@@ -120,6 +120,13 @@ const ADMIN_PAGES: NavItem[] = [
     section: 'Security',
   },
   {
+    href: '/admin/activity',
+    icon: 'users',
+    label: 'User activity',
+    minRole: 'ADMIN',
+    section: 'Security',
+  },
+  {
     href: '/admin/analytics',
     icon: 'analytics',
     label: 'Analytics',

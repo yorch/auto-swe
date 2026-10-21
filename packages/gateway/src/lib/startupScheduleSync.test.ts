@@ -30,6 +30,7 @@ const SYNCS = [
   'syncCallbackDeliveryPruneSchedule',
   'syncAgentTranscriptPruneSchedule',
   'syncAgentTraceRollupSchedule',
+  'syncAuditActivityPruneSchedule',
   'syncSkillSourceSyncSchedule',
   'syncSlackChannelSyncSchedule',
   'syncEvalSchedule',

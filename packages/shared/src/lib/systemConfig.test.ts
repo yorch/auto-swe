@@ -662,6 +662,8 @@ describe('systemConfig resolvers', () => {
       'AGENT_TRACE_ROLLUP_ENABLED',
       'AGENT_TRACE_ROLLUP_CRON',
       'AGENT_TRACE_ROLLUP_BACKFILL_DAYS',
+      'AUDIT_ACTIVITY_PRUNE_ENABLED',
+      'AUDIT_ACTIVITY_PRUNE_CRON',
       'SLACK_CHANNEL_SYNC_ENABLED',
       'SLACK_CHANNEL_SYNC_CRON',
       'SLACK_CHANNEL_SYNC_STALE_HOURS',
@@ -676,6 +678,7 @@ describe('systemConfig resolvers', () => {
       expect(resolveScheduledSweeps()).toEqual({
         agentTraceRollup: { backfillDays: 0, cronExpression: '13 1 * * *', enabled: true },
         agentTranscriptPrune: { cronExpression: '57 4 * * *', enabled: true },
+        auditActivityPrune: { cronExpression: '7 5 * * *', enabled: true },
         automationDecisionPrune: { cronExpression: '37 4 * * *', enabled: true },
         callbackDelivery: { cronExpression: '* * * * *', enabled: true },
         callbackDeliveryPrune: { cronExpression: '47 4 * * *', enabled: true },
@@ -710,12 +713,15 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('AGENT_TRACE_ROLLUP_ENABLED', 'false');
       vi.stubEnv('AGENT_TRACE_ROLLUP_CRON', '2 2 * * *');
       vi.stubEnv('AGENT_TRACE_ROLLUP_BACKFILL_DAYS', '90');
+      vi.stubEnv('AUDIT_ACTIVITY_PRUNE_ENABLED', 'false');
+      vi.stubEnv('AUDIT_ACTIVITY_PRUNE_CRON', '8 8 * * *');
       vi.stubEnv('SLACK_CHANNEL_SYNC_ENABLED', 'true');
       vi.stubEnv('SLACK_CHANNEL_SYNC_CRON', '4 */2 * * *');
       vi.stubEnv('SLACK_CHANNEL_SYNC_STALE_HOURS', '12');
       expect(resolveScheduledSweeps()).toEqual({
         agentTraceRollup: { backfillDays: 90, cronExpression: '2 2 * * *', enabled: false },
         agentTranscriptPrune: { cronExpression: '9 9 * * *', enabled: false },
+        auditActivityPrune: { cronExpression: '8 8 * * *', enabled: false },
         automationDecisionPrune: { cronExpression: '1 2 * * *', enabled: false },
         callbackDelivery: { cronExpression: '*/2 * * * *', enabled: false },
         callbackDeliveryPrune: { cronExpression: '3 3 * * *', enabled: false },

@@ -759,6 +759,25 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         }
         return sendError(reply, 502, 'EVAL_START_FAILED', 'Could not start the eval run workflow');
       }
+      // After the start, like every launch row: a refused or failed start leaves none, and a
+      // failed audit write is logged rather than turned into an error for a run that is going.
+      try {
+        await writeAuditLog(fastify, {
+          action: 'CREATE',
+          actor: requireUser(request),
+          after: {
+            baselineRef,
+            candidateRef,
+            datasetId,
+            source: 'eval-run',
+            temporalWorkflowId: `eval-${run.id}`,
+          },
+          entityId: run.id,
+          entityType: 'EvalRun',
+        });
+      } catch (err) {
+        request.log.error({ err, evalRunId: run.id }, 'eval launch audit write failed');
+      }
       return reply.status(202).send({ data: toRunDto(run) });
     }
   );

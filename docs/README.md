@@ -54,6 +54,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 |-----|--------|
 | [configuration.md](./configuration.md) | Where every knob lives — the environment/integration/registry split, the setting registry and its cascade, who may change what, run pinning |
 | [deployment.md](./deployment.md) | Production runbook — environment, database, Temporal, images, service layout, smoke test, day-2 ops, hardening |
+| [user-activity.md](./user-activity.md) | First-party activity events — authenticated denials, sensitive reads and exports, and opt-in page views; what is recorded, retention, and the privacy stance |
 | [audit-log.md](./audit-log.md) | The append-only audit log — what is recorded, the `context` that says how a request arrived (credential path, truncated address, assistant or MCP client), launch and sign-in rows, and privacy |
 | [model-configuration.md](./model-configuration.md) | DB-backed model selection and provider credentials — the scope cascade, encryption, day-2 operations |
 | [oauth-setup.md](./oauth-setup.md) | GitHub, Google, and Okta sign-in; magic-link email |

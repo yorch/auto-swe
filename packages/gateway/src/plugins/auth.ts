@@ -115,6 +115,11 @@ declare module 'fastify' {
   }
   interface FastifyContextConfig {
     /**
+     * Record a successful `GET` of this route as a user-activity event (`read` or `export`). A tag
+     * on the route covers every mount of it, deprecated aliases included; see `activityEvents.ts`.
+     */
+    activity?: 'read' | 'export';
+    /**
      * Opt a route in to MCP tool calls. A bridged call is refused on a route that does not
      * declare this, and on one that declares `read` when the token has no `mcp:read`.
      */

@@ -9,6 +9,11 @@ describe('audit entities', () => {
     expect(entityHref('McpToolCall', 'x')).toBeNull();
   });
 
+  it('links a launch row to its request, or to the runs list when there was no request', () => {
+    expect(entityHref('WorkRequest', 'req 1')).toBe('/requests?request=req%201');
+    expect(entityHref('ActiveWorkflow', 'w1')).toBe('/runs');
+  });
+
   it('opens the request panel for a run whose request is known, else the run page', () => {
     expect(entityHref('WorkflowRun', 'r1', 'req 1')).toBe('/requests?request=req%201');
     expect(entityHref('WorkflowRun', 'r1', null)).toBe('/runs/r1');
