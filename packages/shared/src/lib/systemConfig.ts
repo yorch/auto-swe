@@ -831,6 +831,34 @@ export interface WorkspaceInfraConfig {
   /// reach. Set an internal one when the repositories live on a host only that
   /// resolver answers correctly (a split-horizon GitHub Enterprise name).
   dns: string[];
+  /// Which substrate runs agent workspaces (`WORKSPACE_BACKEND`). Only the
+  /// literal `kubernetes` selects pods; anything else is Docker.
+  backend: 'docker' | 'kubernetes';
+  /// Settings for the Kubernetes backend; read only when `backend` is `kubernetes`.
+  kubernetes: KubernetesWorkspaceConfig;
+}
+
+export interface KubernetesWorkspaceConfig {
+  /// The `kubectl` binary the worker shells out to (`K8S_KUBECTL`).
+  kubectl: string;
+  /// The one namespace workspace pods live in (`K8S_WORKSPACE_NAMESPACE`).
+  namespace: string;
+  /// `runtimeClassName` for every workspace pod (gVisor/Kata), or `null` for the cluster default.
+  runtimeClassName: string | null;
+  /// The uid/gid the workspace container runs as. Explicit because Kubernetes
+  /// cannot prove a named image `USER` is non-root (`runAsNonRoot` alone fails
+  /// the pod with CreateContainerConfigError). The curated images all use 1000.
+  runAsUser: number;
+  /// `ephemeral-storage` request and limit, and the size of the workspace volume.
+  storageLimit: string;
+  /// Hard lifetime of a workspace pod (`activeDeadlineSeconds`); the kubelet
+  /// terminates it afterwards, whatever the worker is doing.
+  maxLifetimeSec: number;
+  /// Names of image pull Secrets in the workspace namespace.
+  imagePullSecrets: string[];
+  /// Refuse to start unless a probe pod proves NetworkPolicy is enforced.
+  /// Only the literal `false` turns it off, so a typo cannot disable it.
+  requireNetworkPolicy: boolean;
 }
 
 export interface HarnessModelProxyConfig {
@@ -875,6 +903,10 @@ export const DOCKER_HOST_ALIAS = 'host.docker.internal';
 const HOSTNAME_PLACEHOLDER = '{hostname}';
 
 const DOCKER_NETWORK_RE = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
+/// A DNS-1123 label (namespace) and subdomain (most other object names).
+const K8S_LABEL_RE = /^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$/;
+const K8S_NAME_RE = /^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$/;
+const K8S_QUANTITY_RE = /^[1-9]\d{0,9}(Ki|Mi|Gi|Ti)?$/;
 
 const PORT_RE = /^\d{1,5}$/;
 const isPort = (raw: string) => PORT_RE.test(raw) && Number(raw) >= 1 && Number(raw) <= 65535;
@@ -1061,11 +1093,36 @@ const DOCKER_MEMORY_RE = /^\d+[bkmg]?$/i;
 export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
   const cpus = Number(process.env.WORKSPACE_CPUS);
   return {
+    backend: process.env.WORKSPACE_BACKEND === 'kubernetes' ? 'kubernetes' : 'docker',
     blockMetadata: process.env.WORKSPACE_BLOCK_METADATA !== 'false',
     cpus: Number.isFinite(cpus) && cpus > 0 ? cpus : 2,
     dns: workspaceDnsFromEnv(),
     harnessModelProxy: resolveHarnessModelProxy(),
     image: validatedEnv('WORKSPACE_IMAGE', 'node:24-alpine', DOCKER_IMAGE_REF_RE, IMAGE_HINT),
+    kubernetes: {
+      imagePullSecrets: (process.env.K8S_WORKSPACE_IMAGE_PULL_SECRETS ?? '')
+        .split(',')
+        .map((name) => name.trim())
+        .filter((name) => K8S_NAME_RE.test(name)),
+      kubectl: process.env.K8S_KUBECTL?.trim() || 'kubectl',
+      maxLifetimeSec: boundedEnvInt('K8S_WORKSPACE_MAX_LIFETIME_SEC', 86_400, 60, 604_800),
+      namespace: validatedEnv(
+        'K8S_WORKSPACE_NAMESPACE',
+        'auto-swe-workspaces',
+        K8S_LABEL_RE,
+        'a Kubernetes namespace name'
+      ),
+      requireNetworkPolicy: process.env.K8S_REQUIRE_NETWORK_POLICY !== 'false',
+      runAsUser: boundedEnvInt('K8S_WORKSPACE_RUN_AS_UID', 1000, 1, 2_147_483_647),
+      runtimeClassName:
+        validatedEnv('K8S_WORKSPACE_RUNTIME_CLASS', '', K8S_NAME_RE, 'a RuntimeClass name') || null,
+      storageLimit: validatedEnv(
+        'K8S_WORKSPACE_STORAGE_LIMIT',
+        '10Gi',
+        K8S_QUANTITY_RE,
+        'a Kubernetes quantity such as 10Gi'
+      ),
+    },
     maxConcurrentActivities: boundedEnvInt('WORKER_MAX_CONCURRENT_ACTIVITIES', 10, 1, 1000),
     memory: validatedEnv(
       'WORKSPACE_MEMORY',
@@ -1134,6 +1191,30 @@ export function validateWorkspaceInfraEnv(): string[] {
   check('REGISTRY_PROXY_CACHE_MAX_BYTES', positiveInt, 'a positive integer (bytes)');
   check('WORKSPACE_NETWORK', (raw) => DOCKER_NETWORK_RE.test(raw), 'a Docker network name');
   check('WORKSPACE_DNS', (raw) => parseDnsList(raw) !== null, DNS_HINT);
+  check(
+    'WORKSPACE_BACKEND',
+    (raw) => raw === 'docker' || raw === 'kubernetes',
+    "'docker' or 'kubernetes'"
+  );
+  check('K8S_WORKSPACE_NAMESPACE', (raw) => K8S_LABEL_RE.test(raw), 'a Kubernetes namespace name');
+  check('K8S_WORKSPACE_RUNTIME_CLASS', (raw) => K8S_NAME_RE.test(raw), 'a RuntimeClass name');
+  check('K8S_WORKSPACE_RUN_AS_UID', positiveInt, 'a positive integer');
+  check(
+    'K8S_WORKSPACE_STORAGE_LIMIT',
+    (raw) => K8S_QUANTITY_RE.test(raw),
+    'a Kubernetes quantity such as 10Gi'
+  );
+  check('K8S_WORKSPACE_MAX_LIFETIME_SEC', positiveInt, 'a positive integer (seconds)');
+  check(
+    'K8S_REQUIRE_NETWORK_POLICY',
+    (raw) => raw === 'true' || raw === 'false',
+    "'true' or 'false'"
+  );
+  check(
+    'K8S_WORKSPACE_IMAGE_PULL_SECRETS',
+    (raw) => raw.split(',').every((name) => K8S_NAME_RE.test(name.trim())),
+    'a comma-separated list of Secret names'
+  );
   if (process.env.WORKSPACE_BLOCK_METADATA !== 'false') {
     for (const entry of (process.env.WORKSPACE_DNS ?? '').split(',').map((e) => e.trim())) {
       if (METADATA_BLOCKED_ADDRESSES.includes(entry.toLowerCase())) {

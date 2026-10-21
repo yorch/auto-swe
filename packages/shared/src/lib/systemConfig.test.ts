@@ -426,6 +426,15 @@ describe('systemConfig resolvers', () => {
       'HARNESS_MODEL_PROXY_BIND',
       'WORKSPACE_NETWORK',
       'WORKSPACE_DNS',
+      'WORKSPACE_BACKEND',
+      'K8S_KUBECTL',
+      'K8S_WORKSPACE_NAMESPACE',
+      'K8S_WORKSPACE_RUNTIME_CLASS',
+      'K8S_WORKSPACE_RUN_AS_UID',
+      'K8S_WORKSPACE_STORAGE_LIMIT',
+      'K8S_WORKSPACE_MAX_LIFETIME_SEC',
+      'K8S_WORKSPACE_IMAGE_PULL_SECRETS',
+      'K8S_REQUIRE_NETWORK_POLICY',
     ];
     beforeEach(() => {
       for (const key of KEYS) {
@@ -435,11 +444,22 @@ describe('systemConfig resolvers', () => {
 
     it('returns the built-in defaults when nothing is set', () => {
       expect(resolveWorkspaceInfra()).toEqual({
+        backend: 'docker',
         blockMetadata: true,
         cpus: 2,
         dns: ['1.1.1.1', '8.8.8.8'],
         harnessModelProxy: null,
         image: 'node:24-alpine',
+        kubernetes: {
+          imagePullSecrets: [],
+          kubectl: 'kubectl',
+          maxLifetimeSec: 86_400,
+          namespace: 'auto-swe-workspaces',
+          requireNetworkPolicy: true,
+          runAsUser: 1000,
+          runtimeClassName: null,
+          storageLimit: '10Gi',
+        },
         maxConcurrentActivities: 10,
         memory: '4g',
         metadataBlockImage: 'alpine:3.20',
@@ -447,6 +467,62 @@ describe('systemConfig resolvers', () => {
         pidsLimit: 512,
         regexScanBudgetMs: 250,
         registryProxy: null,
+      });
+    });
+
+    describe('the Kubernetes backend', () => {
+      it('is selected only by the literal kubernetes, so a typo stays on Docker', () => {
+        vi.stubEnv('WORKSPACE_BACKEND', 'kubernetes');
+        expect(resolveWorkspaceInfra().backend).toBe('kubernetes');
+        for (const raw of ['Kubernetes', 'k8s', 'true', '']) {
+          vi.stubEnv('WORKSPACE_BACKEND', raw);
+          expect(resolveWorkspaceInfra().backend).toBe('docker');
+        }
+      });
+
+      it('reads its settings from the environment', () => {
+        vi.stubEnv('K8S_KUBECTL', '/opt/bin/kubectl');
+        vi.stubEnv('K8S_WORKSPACE_NAMESPACE', 'agents');
+        vi.stubEnv('K8S_WORKSPACE_RUNTIME_CLASS', 'gvisor');
+        vi.stubEnv('K8S_WORKSPACE_RUN_AS_UID', '2000');
+        vi.stubEnv('K8S_WORKSPACE_STORAGE_LIMIT', '20Gi');
+        vi.stubEnv('K8S_WORKSPACE_MAX_LIFETIME_SEC', '7200');
+        vi.stubEnv('K8S_WORKSPACE_IMAGE_PULL_SECRETS', 'regcred, other');
+        expect(resolveWorkspaceInfra().kubernetes).toEqual({
+          imagePullSecrets: ['regcred', 'other'],
+          kubectl: '/opt/bin/kubectl',
+          maxLifetimeSec: 7200,
+          namespace: 'agents',
+          requireNetworkPolicy: true,
+          runAsUser: 2000,
+          runtimeClassName: 'gvisor',
+          storageLimit: '20Gi',
+        });
+      });
+
+      it('turns the NetworkPolicy requirement off only with the literal false', () => {
+        for (const raw of ['0', 'no', 'False', 'off']) {
+          vi.stubEnv('K8S_REQUIRE_NETWORK_POLICY', raw);
+          expect(resolveWorkspaceInfra().kubernetes.requireNetworkPolicy).toBe(true);
+        }
+        vi.stubEnv('K8S_REQUIRE_NETWORK_POLICY', 'false');
+        expect(resolveWorkspaceInfra().kubernetes.requireNetworkPolicy).toBe(false);
+      });
+
+      it('falls back on a malformed namespace or quantity, and the strict check names them', () => {
+        vi.stubEnv('K8S_WORKSPACE_NAMESPACE', 'Not_A_Namespace');
+        vi.stubEnv('K8S_WORKSPACE_STORAGE_LIMIT', '10GB');
+        vi.stubEnv('WORKSPACE_BACKEND', 'k8s');
+        vi.stubEnv('K8S_REQUIRE_NETWORK_POLICY', 'no');
+        const { kubernetes } = resolveWorkspaceInfra();
+        expect(kubernetes.namespace).toBe('auto-swe-workspaces');
+        expect(kubernetes.storageLimit).toBe('10Gi');
+        expect(validateWorkspaceInfraEnv()).toEqual([
+          `WORKSPACE_BACKEND="k8s" is not 'docker' or 'kubernetes'`,
+          'K8S_WORKSPACE_NAMESPACE="Not_A_Namespace" is not a Kubernetes namespace name',
+          'K8S_WORKSPACE_STORAGE_LIMIT="10GB" is not a Kubernetes quantity such as 10Gi',
+          `K8S_REQUIRE_NETWORK_POLICY="no" is not 'true' or 'false'`,
+        ]);
       });
     });
 
