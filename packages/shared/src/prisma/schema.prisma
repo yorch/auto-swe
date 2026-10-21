@@ -994,7 +994,7 @@ model OrgMonthlyUsage {
   organization   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
   /// Calendar month as 'YYYY-MM', e.g. '2026-06'.
   yearMonth      String       @map("year_month")
-  costUsdAccrued Decimal      @default(0) @map("cost_usd_accrued") @db.Decimal(18, 10)
+  costUsdAccrued Decimal      @default(0) @map("cost_usd_accrued") @db.Decimal(12, 6)
   runsCompleted  Int          @default(0) @map("runs_completed")
   tokensInput    BigInt       @default(0) @map("tokens_input")
   tokensOutput   BigInt       @default(0) @map("tokens_output")
@@ -1278,7 +1278,7 @@ model ChannelMonthlyUsage {
   channelId      String       @map("channel_id") @db.Uuid
   channel        SlackChannel @relation(fields: [channelId], references: [id], onDelete: Cascade)
   yearMonth      String       @map("year_month")
-  costUsdAccrued Decimal      @default(0) @map("cost_usd_accrued") @db.Decimal(18, 10)
+  costUsdAccrued Decimal      @default(0) @map("cost_usd_accrued") @db.Decimal(12, 6)
   runsCompleted  Int          @default(0) @map("runs_completed")
   updatedAt      DateTime     @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
@@ -1305,7 +1305,7 @@ model ChannelBudgetHold {
   /// The ledger row this hold was added to — pinned, so a turn spanning a month
   /// boundary settles against the row it claimed from.
   yearMonth String       @map("year_month")
-  amountUsd Decimal      @map("amount_usd") @db.Decimal(18, 10)
+  amountUsd Decimal      @map("amount_usd") @db.Decimal(12, 6)
   /// After this instant the hold is presumed abandoned and is swept.
   expiresAt DateTime     @map("expires_at") @db.Timestamptz
   createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz
