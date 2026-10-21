@@ -56,6 +56,7 @@ import {
   parseTestOutput,
   TEST_RUN_TIMEOUT_MS,
   testRunCommand,
+  unrunnableTestCause,
 } from './utils.js';
 import { createWorkspace, fetchBranchesSubcommand, shellQuote } from './workspace.js';
 
@@ -322,6 +323,8 @@ export async function executeImplementation(
 
     // TDD loop — bound by the DB-backed workflow default (falls back to 5).
     const maxTddIterations = workflowDefaults.maxTddIterations;
+    // Set when the test command cannot run here: a later iteration cannot fix that.
+    let unrunnable: { command: string; cause: string } | undefined;
     for (let iteration = 0; iteration < maxTddIterations; iteration++) {
       heartbeat(`TDD iteration ${iteration + 1}/${maxTddIterations}`);
       // A cancelled run stops here rather than spending another iteration.
@@ -388,6 +391,21 @@ export async function executeImplementation(
           name: 'tdd.test_run',
           outputJson: { passed: false },
         });
+        const cause = unrunnableTestCause(err);
+        if (cause) {
+          const output = getExecErrorStdout(err).trim();
+          unrunnable = { cause, command: testCommand };
+          tracer.addActivityEvent({
+            inputJson: { iteration },
+            name: 'tdd.test_unrunnable',
+            outputJson: {
+              command: testCommand,
+              output: output.slice(-1000),
+              reason: cause,
+            },
+          });
+          break;
+        }
       }
     }
 
@@ -436,7 +454,9 @@ export async function executeImplementation(
       diff,
       filesChanged: parseDiffToFileChanges(diff),
       headSha,
-      implementationNotes: `Completed in ${testResult.passed ? `≤${maxTddIterations}` : `${maxTddIterations} (max)`} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      implementationNotes: unrunnable
+        ? `The test command \`${unrunnable.command}\` could not run in the workspace (${unrunnable.cause}), so the TDD loop stopped after the first test run.`
+        : `Completed in ${testResult.passed ? `≤${maxTddIterations}` : `${maxTddIterations} (max)`} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
       repoId: requireRepoId(request, 'executeImplementation'),
       testResults: testResult,
     };

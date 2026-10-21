@@ -212,6 +212,13 @@ section (when onboarding or editing), with `POST /repositories` / `PATCH /reposi
 `{ gateCommands }` — a PATCH replaces the stored set; a gate left out, null or blank falls back to
 the default, and `null` clears them all — or with the CLI's `auto-swe repos gate-commands`.
 
+The test loop runs `runTests` when set, else a command guessed from `package.json` that falls back to
+`npm test`. When the command cannot run in the workspace — exit status 127 or 126, or npm's
+`Missing script: "test"` — the loop ends after that test run instead of starting another agent
+pass, records a `tdd.test_unrunnable` event, still commits and pushes the work, and says so in the
+implementation notes. This holds for a configured `runTests` too. Set `runTests` to a command the
+workspace can run, or pin an `executorImage` that carries the repository's toolchain.
+
 A gate command runs in the agent workspace of every run on the repository, so changing the set takes
 the same role as writing a command into a template: a platform admin, or an admin of the team that
 will own the repository (`403 GATE_COMMANDS_FORBIDDEN` otherwise; see
@@ -381,6 +388,12 @@ longer fit.
 - **Onboarding access is checked once.** Losing access on GitHub afterwards does not remove the
   repository; only [`repoAccess.mode`](./repo-access-gating.md) gates later use. A platform ADMIN is
   never asked.
+- **An unrunnable test command ends the loop even when another pass might have fixed it.** Exit
+  status 127 also means a runner the platform never installed (for example `pytest` in an image
+  without it), and a further agent pass might have installed it. The implementer already runs the
+  tests itself in its first pass, and a wasted pass costs a whole budget, so the loop stops; the
+  diff is still committed and goes to review. A compound `runTests` that ran the tests and then hit
+  127 in a later tool is stopped the same way.
 - **Gate commands are checked when they are saved or moved, not when a run starts.** The worker runs
   whatever set the row holds, so a command stays in use after the admin who set it loses the role,
   and a value written to the column outside the API has no audit entry.
