@@ -1,4 +1,6 @@
+import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { dockerWorkspaceBackend } from './docker.js';
+import { kubernetesWorkspaceBackend } from './kubernetes/driver.js';
 import type { WorkspaceBackend } from './types.js';
 
 export type {
@@ -10,10 +12,13 @@ export type {
 } from './types.js';
 
 /**
- * The workspace execution substrate. Only the Docker driver exists — there is
- * deliberately no env var or config selecting a backend; the seam exists so a
- * second driver (Kubernetes pods) can land without unwiring call sites.
+ * The workspace execution substrate: the local Docker daemon unless
+ * `WORKSPACE_BACKEND=kubernetes`. Chosen per process from the environment, not
+ * per request — a worker has one substrate, and it is read where a worker
+ * would have to restart to use another anyway.
  */
 export function workspaceBackend(): WorkspaceBackend {
-  return dockerWorkspaceBackend();
+  return resolveWorkspaceInfra().backend === 'kubernetes'
+    ? kubernetesWorkspaceBackend()
+    : dockerWorkspaceBackend();
 }
