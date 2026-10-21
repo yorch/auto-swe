@@ -74,8 +74,8 @@ export interface HarnessExecResult {
 export interface HarnessSpawn {
   /** Arguments for the binary. */
   args: string[];
-  /** `docker exec -e` arguments placed first, so the runtime's own `-e` below win any clash. */
-  leadingEnvArgs?: string[];
+  /** `NAME=value` settings placed first, so the runtime's own `env` below win any clash. */
+  leadingEnv?: string[];
   /**
    * Secrets by name. Each is named on the `docker exec` command line without a
    * value, and docker reads it from its own environment, so the value never

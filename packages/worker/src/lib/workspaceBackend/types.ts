@@ -3,7 +3,7 @@ import type { CappedFileResult, CapturedResult, OnTimeout } from '../execUtils.j
 
 /**
  * What it takes to start an agent workspace container. The caller describes
- * the workload (name, image, resource caps, DNS, network, host aliases); the
+ * the workload (name, image, resource caps, DNS, network, worker reachability); the
  * hardening that makes a workspace safe to hand to an agent — `--init`,
  * `--cap-drop=ALL`, `no-new-privileges`, the metadata-IP add-hosts and the
  * `sleep infinity` keeper — is the driver's job and is not negotiable here.
@@ -15,8 +15,17 @@ export interface WorkspaceContainerSpec {
   cpus: number;
   pidsLimit: number;
   dns: string[];
+  /**
+   * A named network the workspace joins (`WORKSPACE_NETWORK`, a Docker
+   * network the worker is also on). A driver with no such concept ignores it.
+   */
   network?: string;
-  addHosts: string[];
+  /**
+   * The workspace must reach the worker's proxies (model, registry) at the
+   * address the deployment advertises. How that address resolves is the
+   * driver's business (Docker maps the host alias to the host gateway).
+   */
+  reachWorker: boolean;
   /** Non-secret `NAME=value` pairs, passed to the container as `docker run -e`. */
   env?: string[];
 }
@@ -63,11 +72,6 @@ export interface WorkspaceSpawnOptions {
   secretEnv?: Record<string, string>;
   /** Allocate a stdin pipe on the exec (Docker's `-i`); the caller writes to it. */
   stdin?: boolean;
-  /**
-   * Raw driver arguments placed before the driver's own env wiring, so the
-   * driver's `-e` entries win any name clash. Docker-only escape hatch.
-   */
-  leadingArgs?: string[];
   signal?: AbortSignal;
   stdio: StdioOptions;
 }
@@ -152,8 +156,19 @@ export interface WorkspaceBackend {
    * no flag on the sandbox spec can ever turn the lockdown off.
    */
   runHelper(spec: HelperContainerSpec, opts: EphemeralRunOptions): Promise<CapturedResult>;
-  /** The host port a `publishPort` mapping landed on (`docker port`). */
-  publishedPort(name: string, containerPort: number): Promise<number>;
+  /**
+   * The base URL (`http://host:port`, no trailing slash) at which the worker
+   * reaches a detached container's `publishPort` (Docker: the loopback port
+   * the mapping landed on).
+   */
+  sidecarBaseUrl(name: string, containerPort: number): Promise<string>;
+  /**
+   * Whether a workspace started with `reachWorker` can reach the worker's
+   * proxy at `url`, as the deployment advertises it. A caller that wires a
+   * workspace to a proxy checks this first and runs without the proxy when
+   * it is false.
+   */
+  canReachWorkerProxy(url: string): boolean;
 }
 
 /** A volume mount on an ephemeral container (`-v source:target[:ro]`). */
@@ -184,11 +199,13 @@ export interface EphemeralContainerSpec {
   /** argv appended after the image (e.g. `['sh','-c',cmd]` or `['-c',script]`). */
   argv?: string[];
   volumes?: EphemeralVolumeMount[];
-  /** Literal driver network mode: `none` or `bridge` for Docker. */
-  network?: string;
+  /** `none` (default) has no network; `egress` allows outbound traffic. */
+  network?: 'none' | 'egress';
   dns?: string[];
   /** `host:ip` entries (`--add-host`), already resolved by the caller. */
   addHosts?: string[];
+  /** The container must reach the worker's proxies; see {@link WorkspaceContainerSpec.reachWorker}. */
+  reachWorker?: boolean;
   /** Non-secret `NAME=value` pairs. */
   env?: string[];
   memory?: string;

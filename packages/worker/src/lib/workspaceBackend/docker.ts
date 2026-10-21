@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
+import { DOCKER_HOST_ALIAS, resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import {
   type CappedFileResult,
   type CapturedResult,
@@ -61,6 +61,9 @@ export function buildMetadataBlockArgs(containerName: string, image: string): st
   ].join('; ');
   return `docker run --rm --network container:${containerName} --cap-add=NET_ADMIN -- ${shellQuote(image)} sh -c ${shellQuote(routeCmd)}`;
 }
+
+/** The `--add-host` entry that makes the Docker host alias resolve to the host gateway. */
+const workerHostEntry = () => `--add-host=${DOCKER_HOST_ALIAS}:host-gateway`;
 
 /**
  * `sh` script that prints the PID of every direct child of PID 1, one per
@@ -156,7 +159,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     const addHosts = [
       '--add-host=metadata.google.internal:0.0.0.0',
       '--add-host=metadata.gke.internal:0.0.0.0',
-      ...spec.addHosts.map((h) => `--add-host=${h}`),
+      ...(spec.reachWorker ? [workerHostEntry()] : []),
     ].join(' ');
     const network = spec.network ? ` --network=${shellQuote(spec.network)}` : '';
     const env = (spec.env ?? []).map((pair) => ` -e ${shellQuote(pair)}`).join('');
@@ -247,7 +250,6 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       'exec',
       ...(opts.stdin ? ['-i'] : []),
       ...(opts.workdir ? ['-w', opts.workdir] : []),
-      ...(opts.leadingArgs ?? []),
       ...(opts.env ?? []).flatMap((pair) => ['-e', pair]),
       // Named without a value: docker reads it from its own environment below,
       // so a secret never appears on a command line or in `ps`.
@@ -356,7 +358,11 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     });
   }
 
-  async publishedPort(name: string, containerPort: number): Promise<number> {
+  canReachWorkerProxy(url: string): boolean {
+    return new URL(url).hostname === DOCKER_HOST_ALIAS;
+  }
+
+  async sidecarBaseUrl(name: string, containerPort: number): Promise<string> {
     const out = await execShellAsync(`docker port ${shellQuote(name)} ${containerPort}/tcp`, {
       heartbeatLabel: 'workspace: resolving published port',
     });
@@ -364,7 +370,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     if (!m) {
       throw new Error(`could not resolve published port for ${name}:${containerPort}`);
     }
-    return Number(m[1]);
+    return `http://127.0.0.1:${Number(m[1])}`;
   }
 }
 
@@ -390,13 +396,13 @@ function helperArgs(spec: HelperContainerSpec): string[] {
   ];
 }
 
-function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): string[] {
+export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): string[] {
   const volumeArgs = (spec.volumes ?? []).flatMap((v) => [
     '-v',
     `${v.source}:${v.target}:${v.readOnly ? 'ro' : 'rw'}`,
   ]);
   const flags = [
-    `--network=${spec.network ?? 'none'}`,
+    `--network=${spec.network === 'egress' ? 'bridge' : 'none'}`,
     ...(spec.dns ?? []).map((d) => `--dns=${d}`),
     `--memory=${spec.memory ?? '512m'}`,
     `--cpus=${spec.cpus ?? 1}`,
@@ -406,6 +412,7 @@ function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): string[
     '--security-opt=no-new-privileges',
     '--cap-drop=ALL',
     ...(spec.addHosts ?? []).map((h) => `--add-host=${h}`),
+    ...(spec.reachWorker ? [workerHostEntry()] : []),
     ...(spec.env ?? []).flatMap((pair) => ['-e', pair]),
     ...volumeArgs,
     ...(spec.workdir ? ['-w', spec.workdir] : []),

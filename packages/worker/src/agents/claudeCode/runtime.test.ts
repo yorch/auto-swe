@@ -103,7 +103,7 @@ import {
   POLICY_DECISION_MS,
   PRE_TOOL_USE_TIMEOUT_S,
   SESSION_FILE_MAX_BYTES,
-  sdkEnvArgs,
+  sdkEnvPairs,
 } from './runtime.js';
 
 const init = (session_id: string) => ({ session_id, subtype: 'init', type: 'system' });
@@ -429,7 +429,7 @@ describe('what the harness is started with', () => {
     const previous = process.env.CLAUDE_CODE_FROM_WORKER;
     process.env.CLAUDE_CODE_FROM_WORKER = 'worker-value';
     try {
-      const args = sdkEnvArgs({
+      const pairs = sdkEnvPairs({
         ...process.env,
         CLAUDE_AGENT_SDK_VERSION: 'test-version',
         CLAUDE_CODE_ENTRYPOINT: 'test-entrypoint',
@@ -437,7 +437,7 @@ describe('what the harness is started with', () => {
         claude_code_lower: 'x',
         DATABASE_URL: 'postgres://secret', // not a harness switch
       });
-      expect(args.filter((a) => a !== '-e').sort()).toEqual([
+      expect(pairs.sort()).toEqual([
         'CLAUDE_AGENT_SDK_VERSION=test-version',
         'CLAUDE_CODE_ENTRYPOINT=test-entrypoint',
       ]);

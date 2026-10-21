@@ -206,7 +206,7 @@ describe('harnessRuntime', () => {
       turn.spawn({
         args: ['--serve'],
         env: ['MODE=unattended'],
-        leadingEnvArgs: ['-e', 'FROM_CLIENT=1'],
+        leadingEnv: ['FROM_CLIENT=1'],
         secretEnv: { FAKE_API_KEY: 'secret-value' },
       });
       return { usage: {} };

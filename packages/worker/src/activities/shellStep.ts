@@ -29,7 +29,7 @@ import crypto from 'node:crypto';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
 import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
-import { DOCKER_HOST_ALIAS, resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed, ShellImageNotAllowedError } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
@@ -425,8 +425,8 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   if (input.network === 'egress' && workerRegistryProxy()) {
     const access = await beginWorkspaceRegistries(meta.teamId, volumeName);
     if (access) {
-      if (new URL(access.baseUrl).hostname !== DOCKER_HOST_ALIAS) {
-        logWarn('registry proxy is not on the docker host alias; skipping registry wiring', {
+      if (!backend.canReachWorkerProxy(access.baseUrl)) {
+        logWarn('registry proxy is not reachable from the sandbox; skipping registry wiring', {
           baseUrl: access.baseUrl,
           volume: volumeName,
         });
@@ -503,7 +503,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
                 ),
                 NPM_CONFIG_USERCONFIG: '/workspace/.auto-swe/home/.npmrc',
               },
-              extraAddHosts: [`${DOCKER_HOST_ALIAS}:host-gateway`],
+              reachWorker: true,
             }
           : {}),
         image: input.image,

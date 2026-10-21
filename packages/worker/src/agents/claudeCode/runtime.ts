@@ -68,7 +68,7 @@ export const PRE_TOOL_USE_TIMEOUT_S = 120;
 /**
  * Environment the SDK adds for the harness (`CLAUDE_CODE_ENTRYPOINT`,
  * `CLAUDE_AGENT_SDK_VERSION`, …). Only these names are forwarded into the
- * container, and only when the SDK set or changed them — see `sdkEnvArgs`.
+ * container, and only when the SDK set or changed them — see `sdkEnvPairs`.
  */
 const SDK_ENV_NAME = /^CLAUDE_(?:CODE|AGENT_SDK)_[A-Z0-9_]+$/;
 
@@ -238,7 +238,7 @@ async function prepareContainer(workspace: Workspace): Promise<void> {
 }
 
 /**
- * `docker exec -e` arguments for what the SDK added to the harness's
+ * `NAME=value` settings for what the SDK added to the harness's
  * environment. The SDK builds that environment from the worker's own
  * `process.env`, which holds the worker's secrets, so it is never forwarded
  * whole: only `CLAUDE_CODE_*` / `CLAUDE_AGENT_SDK_*` names whose value the SDK
@@ -246,14 +246,14 @@ async function prepareContainer(workspace: Workspace): Promise<void> {
  * with their value spelled out. Those are the SDK's own switches (entrypoint,
  * version, session-state flags), not credentials.
  */
-export function sdkEnvArgs(env: Record<string, string | undefined>): string[] {
-  const args: string[] = [];
+export function sdkEnvPairs(env: Record<string, string | undefined>): string[] {
+  const pairs: string[] = [];
   for (const [name, value] of Object.entries(env)) {
     if (value !== undefined && SDK_ENV_NAME.test(name) && process.env[name] !== value) {
-      args.push('-e', `${name}=${value}`);
+      pairs.push(`${name}=${value}`);
     }
   }
-  return args;
+  return pairs;
 }
 
 /** What `result` says went wrong, as a Temporal failure the retry policy can read. */
@@ -585,7 +585,7 @@ export function claudeCodeAdapter(
               'DISABLE_TELEMETRY=1',
               'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
             ],
-            leadingEnvArgs: sdkEnvArgs(spawnOptions.env),
+            leadingEnv: sdkEnvPairs(spawnOptions.env),
             secretEnv: { ANTHROPIC_API_KEY: endpoint.apiKey },
             signal: spawnOptions.signal,
           }),
