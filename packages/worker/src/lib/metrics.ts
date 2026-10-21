@@ -94,6 +94,9 @@ function createInstruments() {
   for (const tier of BUDGET_TIERS) {
     instruments.budgetExceeded.add(0, { tier });
   }
+  for (const stage of TRANSCRIPT_FAILURE_STAGES) {
+    instruments.transcriptPersistFailures.add(0, { stage });
+  }
   return instruments;
 }
 
@@ -155,8 +158,12 @@ export function recordBudgetExceeded(tier: string): void {
   instruments().budgetExceeded.add(1, { tier });
 }
 
+export const TRANSCRIPT_FAILURE_STAGES = ['close', 'create', 'part'] as const;
+
+export type TranscriptFailureStage = (typeof TRANSCRIPT_FAILURE_STAGES)[number];
+
 /** A transcript write failed; `stage` names where ('create' | 'part' | 'close'). */
-export function recordTranscriptPersistFailure(stage: 'create' | 'part' | 'close'): void {
+export function recordTranscriptPersistFailure(stage: TranscriptFailureStage): void {
   instruments().transcriptPersistFailures.add(1, { stage });
 }
 

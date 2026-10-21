@@ -166,6 +166,9 @@ services:
       # Provisions the "auto-swe — LLM & workflow overview" dashboard.
       - ./infra/grafana/provisioning/auto-swe-dashboards.yaml:/otel-lgtm/grafana/conf/provisioning/dashboards/auto-swe-dashboards.yaml:ro
       - ./infra/grafana/dashboards:/otel-lgtm/auto-swe-dashboards:ro
+      # Alert rules fire in Grafana → Alerting only; no contact point is
+      # provisioned — operators add one in the UI.
+      - ./infra/grafana/provisioning/auto-swe-alerts.yaml:/otel-lgtm/grafana/conf/provisioning/alerting/auto-swe-alerts.yaml:ro
 
   # Web dashboard
   web:

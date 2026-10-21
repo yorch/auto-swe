@@ -88,6 +88,16 @@ describe('worker metrics', () => {
     expect(
       (m.get('workflow.budget_exceeded')?.dataPoints ?? []).map((d) => d.attributes.tier)
     ).toEqual(['STANDARD', 'LARGE', 'EPIC']);
+    expect(
+      (m.get('transcript.persist_failures')?.dataPoints ?? []).map((d) => [
+        d.attributes.stage,
+        d.value,
+      ])
+    ).toEqual([
+      ['close', 0],
+      ['create', 0],
+      ['part', 0],
+    ]);
   });
 
   it('splits tokens by direction and keeps run identity out of attributes', async () => {
