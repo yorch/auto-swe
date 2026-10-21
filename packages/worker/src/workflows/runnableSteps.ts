@@ -43,6 +43,8 @@ import {
   memoryActivities,
   mergeActivities,
   prdActivities,
+  prFeedbackActivities,
+  prFeedbackAgentTaskActivities,
   stateActivities,
 } from './runnableActivities.js';
 
@@ -556,6 +558,108 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
           | undefined,
         request,
       }),
+  ],
+  ['gatherPrFeedback', ({ request }) => prFeedbackActivities.gatherPrFeedback({ request })],
+  [
+    'executePrFeedbackImplementation',
+    ({ ctx, config, inputs }) => {
+      const gather = (inputs.gather ?? lookupPath(ctx, 'context.prFeedback')) as
+        | activitiesType.GatherResult
+        | undefined;
+      const prev =
+        (inputs.previousCodeResult as CodeResult | undefined) ??
+        gather?.codeResult ??
+        (lookupPath(ctx, 'context.currentCodeResult') as CodeResult | undefined);
+      if (!gather || !prev) {
+        throw new Error('executePrFeedbackImplementation requires the gather result');
+      }
+      const guardOptions = guardOptionsConfig(config);
+      return agentActivities.executePrFeedbackImplementation({
+        brief: gather.brief,
+        ...(guardOptions ? { options: guardOptions } : {}),
+        previousCodeResult: prev,
+        systemPromptOverride: config.systemPrompt as string | undefined,
+      });
+    },
+  ],
+  [
+    'runAgentPrFeedbackTask',
+    ({ ctx, request, inputs }) => {
+      const gather = (inputs.gather ?? lookupPath(ctx, 'context.prFeedback')) as
+        | activitiesType.GatherResult
+        | undefined;
+      if (!gather) {
+        throw new Error('runAgentPrFeedbackTask requires the gather result');
+      }
+      const ciLogs = inputs.ciLogs as string | undefined;
+      return prFeedbackAgentTaskActivities.runAgentPrFeedbackTask({
+        gather,
+        request,
+        ...(ciLogs ? { ciLogs } : {}),
+      });
+    },
+  ],
+  [
+    'pushPrFeedbackToPullRequest',
+    ({ ctx, config, request, inputs }) => {
+      const gather = (inputs.gather ?? lookupPath(ctx, 'context.prFeedback')) as
+        | activitiesType.GatherResult
+        | undefined;
+      const codeResult = (inputs.codeResult ?? lookupPath(ctx, 'context.currentCodeResult')) as
+        | CodeResult
+        | undefined;
+      if (!gather || !codeResult) {
+        throw new Error('pushPrFeedbackToPullRequest requires the gather and the code result');
+      }
+      return prFeedbackActivities.pushPrFeedbackToPullRequest({
+        codeResult,
+        gather,
+        request,
+        ...(config.keepWorkBranch === true ? { keepWorkBranch: true } : {}),
+      });
+    },
+  ],
+  [
+    'finishPrFeedbackPush',
+    ({ ctx, request, inputs }) =>
+      prFeedbackActivities.finishPrFeedbackPush({
+        gather: (inputs.gather ??
+          lookupPath(ctx, 'context.prFeedback')) as activitiesType.GatherResult,
+        pushedCommitSha: (inputs.pushedCommitSha ?? lookupPath(ctx, 'context.pushedCommitSha')) as
+          | string
+          | null
+          | undefined,
+        request,
+      }),
+  ],
+  [
+    'respondToPrFeedback',
+    ({ ctx, request, inputs }) => {
+      const gather = (inputs.gather ?? lookupPath(ctx, 'context.prFeedback')) as
+        | activitiesType.GatherResult
+        | undefined;
+      if (!gather) {
+        throw new Error('respondToPrFeedback requires the gather result');
+      }
+      const skipReason = inputs.skipReason as string | undefined;
+      const diff = inputs.diff as string | undefined;
+      const fixerText = inputs.fixerText as string | undefined;
+      const push = inputs.push as activitiesType.PushToPullRequestResult | undefined;
+      const ci = inputs.ci as { verdict: string; detail?: string } | undefined;
+      const previous = inputs.previous as
+        | { summary: string; threads: { label: string; note: string; outcome: string }[] }
+        | undefined;
+      return prFeedbackActivities.respondToPrFeedback({
+        gather,
+        request,
+        ...(ci ? { ci } : {}),
+        ...(diff !== undefined ? { diff } : {}),
+        ...(fixerText !== undefined ? { fixerText } : {}),
+        ...(push ? { push } : {}),
+        ...(previous !== undefined ? { previous: previous as never } : {}),
+        ...(skipReason !== undefined ? { skipReason } : {}),
+      });
+    },
   ],
   [
     'verifyCiFix',

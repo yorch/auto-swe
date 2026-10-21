@@ -41,13 +41,18 @@ import {
   type CiStatusResult,
   type CloneCredentials,
   type CommitComparison,
+  type CreateBranchResult,
   type CreatePullRequestInput,
   DraftPullRequestUnsupportedError,
   ExistingPullRequestNotDraftError,
+  type IssueCommentInfo,
   type PermissionLookup,
   type PullRequestInfo,
   type PullRequestRef,
+  type PullRequestReview,
   type RepoRef,
+  type ReviewCommentInfo,
+  type ReviewThread,
   type ScmProvider,
   type WorkflowRunFailedJob,
   type WorkflowRunFailure,
@@ -1091,5 +1096,233 @@ export class GitHubScmProvider implements ScmProvider {
       token,
       username,
     });
+  }
+
+  async listReviewThreads(repo: RepoRef, prNumber: number): Promise<ReviewThread[]> {
+    const octokit = await octokitFor(repo);
+    // `octokit.graphql` derives its endpoint from the instance's baseUrl: github.com gets
+    // https://api.github.com/graphql, a GHES `…/api/v3` base gets `https://<host>/api/graphql`.
+    const data = await octokit.graphql<{
+      repository: {
+        pullRequest: {
+          reviewThreads: {
+            nodes: Array<{
+              id: string;
+              isResolved: boolean;
+              isOutdated: boolean;
+              path: string;
+              line: number | null;
+              comments: {
+                nodes: Array<{
+                  databaseId: number | null;
+                  body: string;
+                  createdAt: string;
+                  author: {
+                    login: string;
+                    __typename: string;
+                    databaseId?: number | null;
+                  } | null;
+                  pullRequestReview: { databaseId: number | null } | null;
+                } | null> | null;
+              };
+            } | null> | null;
+          };
+        } | null;
+      } | null;
+    }>(
+      `query($owner: String!, $name: String!, $number: Int!) {
+        repository(owner: $owner, name: $name) {
+          pullRequest(number: $number) {
+            reviewThreads(first: 100) {
+              nodes {
+                id
+                isResolved
+                isOutdated
+                path
+                line
+                comments(first: 50) {
+                  nodes {
+                    databaseId
+                    body
+                    createdAt
+                    author {
+                      __typename
+                      login
+                      ... on User { databaseId }
+                    }
+                    pullRequestReview { databaseId }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }`,
+      { name: repo.repoName, number: prNumber, owner: repo.organizationName }
+    );
+    const threads = data.repository?.pullRequest?.reviewThreads.nodes ?? [];
+    return threads.flatMap((t) => {
+      if (!t) {
+        return [];
+      }
+      return [
+        {
+          comments: (t.comments.nodes ?? []).flatMap((c) =>
+            c && c.databaseId !== null
+              ? [
+                  {
+                    authorId: c.author?.databaseId != null ? String(c.author.databaseId) : null,
+                    authorLogin: c.author?.login ?? '',
+                    authorType: c.author?.__typename ?? '',
+                    body: c.body,
+                    createdAt: c.createdAt,
+                    databaseId: c.databaseId,
+                    reviewDatabaseId: c.pullRequestReview?.databaseId ?? null,
+                  },
+                ]
+              : []
+          ),
+          isOutdated: t.isOutdated,
+          isResolved: t.isResolved,
+          line: t.line,
+          path: t.path,
+          threadId: t.id,
+        },
+      ];
+    });
+  }
+
+  async getPullRequestReview(
+    repo: RepoRef,
+    prNumber: number,
+    reviewId: string
+  ): Promise<PullRequestReview | null> {
+    const id = Number(reviewId);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return null;
+    }
+    const octokit = await octokitFor(repo);
+    try {
+      const { data } = await octokit.pulls.getReview({
+        owner: repo.organizationName,
+        pull_number: prNumber,
+        repo: repo.repoName,
+        review_id: id,
+      });
+      return {
+        authorId: data.user ? String(data.user.id) : null,
+        authorLogin: data.user?.login ?? '',
+        authorType: data.user?.type ?? '',
+        body: data.body ?? '',
+        state: data.state,
+      };
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async getIssueComment(repo: RepoRef, commentId: string): Promise<IssueCommentInfo | null> {
+    const id = Number(commentId);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return null;
+    }
+    const octokit = await octokitFor(repo);
+    try {
+      const { data } = await octokit.issues.getComment({
+        comment_id: id,
+        owner: repo.organizationName,
+        repo: repo.repoName,
+      });
+      const issueNumber = Number(data.issue_url?.split('/').pop());
+      return {
+        authorId: data.user ? String(data.user.id) : null,
+        authorLogin: data.user?.login ?? '',
+        authorType: data.user?.type ?? '',
+        body: data.body ?? '',
+        issueNumber: Number.isSafeInteger(issueNumber) ? issueNumber : 0,
+      };
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async getReviewComment(repo: RepoRef, commentId: string): Promise<ReviewCommentInfo | null> {
+    const id = Number(commentId);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      return null;
+    }
+    const octokit = await octokitFor(repo);
+    try {
+      const { data } = await octokit.pulls.getReviewComment({
+        comment_id: id,
+        owner: repo.organizationName,
+        repo: repo.repoName,
+      });
+      const pullRequestNumber = Number(data.pull_request_url?.split('/').pop());
+      return {
+        authorId: data.user ? String(data.user.id) : null,
+        authorLogin: data.user?.login ?? '',
+        authorType: data.user?.type ?? '',
+        body: data.body ?? '',
+        inReplyToId: data.in_reply_to_id ?? null,
+        pullRequestNumber: Number.isSafeInteger(pullRequestNumber) ? pullRequestNumber : 0,
+      };
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async replyToReviewComment(
+    repo: RepoRef,
+    prNumber: number,
+    commentId: number,
+    body: string
+  ): Promise<{ htmlUrl: string }> {
+    const octokit = await octokitFor(repo);
+    const { data } = await octokit.pulls.createReplyForReviewComment({
+      body,
+      comment_id: commentId,
+      owner: repo.organizationName,
+      pull_number: prNumber,
+      repo: repo.repoName,
+    });
+    return { htmlUrl: data.html_url };
+  }
+
+  async createBranch(repo: RepoRef, branch: string, sha: string): Promise<CreateBranchResult> {
+    const octokit = await octokitFor(repo);
+    const where = { owner: repo.organizationName, repo: repo.repoName };
+    try {
+      await octokit.git.createRef({ ...where, ref: `refs/heads/${branch}`, sha });
+      return 'created';
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      const message = (err as { message?: string }).message ?? '';
+      // Only a "Reference already exists" 422 means exists; any other 422 (validation, a
+      // rule on the ref) is a real failure.
+      if (!((status === 422 || status === 409) && /already exists/i.test(message))) {
+        throw err;
+      }
+    }
+    // Already there — fine when it points at the same commit (a retry), refused otherwise.
+    try {
+      const { data } = await octokit.git.getRef({ ...where, ref: `heads/${branch}` });
+      const existing = Array.isArray(data) ? data[0]?.object.sha : data.object.sha;
+      return existing === sha ? 'exists_same' : 'exists_other';
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return 'exists_other';
+      }
+      throw err;
+    }
   }
 }

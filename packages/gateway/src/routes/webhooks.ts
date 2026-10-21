@@ -3,6 +3,8 @@ import type { Prisma } from '@auto-swe/shared';
 import {
   type EventSource,
   issueLabeledSource,
+  type PrFeedbackFacts,
+  prFeedbackSource,
   workflowRunFailedSource,
 } from '@auto-swe/shared/automation';
 import {
@@ -38,6 +40,7 @@ import {
   type Occurrence,
 } from '../lib/automations/engine.js';
 import { normalizeIssueLabeledEvent } from '../lib/automations/issueLabeled.js';
+import { enrichPrFeedbackFacts, normalizePrFeedbackEvent } from '../lib/automations/prFeedback.js';
 import { normalizeWorkflowRunEvent } from '../lib/automations/workflowRunFailed.js';
 import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
 import { resolveWebhookSecret } from '../lib/githubWebhookSecret.js';
@@ -274,7 +277,19 @@ async function handleSourceDelivery<F, X>(
     | { type: 'unrecognized' }
     | { type: 'ignored'; reason: string },
   reply: FastifyReply,
-  verifiedHost: string | null
+  verifiedHost: string | null,
+  /**
+   * A source's one gateway-side enrichment pass over the normalized occurrence, before the
+   * engine sees it: ok replaces the facts, ignored acknowledges, failed answers 503 so the
+   * delivery can be sent again.
+   */
+  prepare?: (
+    event: Occurrence<X> & { type: string }
+  ) => Promise<
+    | { type: 'ok'; facts: X }
+    | { type: 'ignored'; reason: string }
+    | { type: 'failed'; reason: string }
+  >
 ) {
   if ('reason' in event) {
     return { data: { ignored: true, reason: event.reason } };
@@ -287,6 +302,21 @@ async function handleSourceDelivery<F, X>(
     (await claimsHostWithOwnSecret(fastify.prisma, verifiedHost, event.repoHtmlUrl))
   ) {
     return HOST_MISMATCH;
+  }
+  if (prepare) {
+    const prepared = await prepare(event);
+    if (prepared.type === 'ignored') {
+      return { data: { ignored: true, reason: prepared.reason } };
+    }
+    if (prepared.type === 'failed') {
+      return sendError(
+        reply,
+        503,
+        'AUTOMATION_START_FAILED',
+        `${prepared.reason} — retry the delivery`
+      );
+    }
+    event = { ...event, facts: prepared.facts };
   }
   try {
     return { data: await handleOccurrence(fastify, source, event, verifiedHost) };
@@ -571,6 +601,28 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
       // So do workflow runs: an App has one webhook URL.
       if (eventType === 'workflow_run') {
         return handleWorkflowRunDelivery(fastify, request.body, reply, verified.host);
+      }
+      // Pull-request review feedback: a review requesting changes or the `/auto-swe fix`
+      // command in a review body, an inline review comment, or a discussion comment.
+      if (
+        eventType === 'pull_request_review' ||
+        eventType === 'pull_request_review_comment' ||
+        eventType === 'issue_comment'
+      ) {
+        return handleSourceDelivery(
+          fastify,
+          prFeedbackSource,
+          normalizePrFeedbackEvent(eventType, request.body),
+          reply,
+          verified.host,
+          (event) =>
+            enrichPrFeedbackFacts(
+              fastify.prisma,
+              event as Occurrence<PrFeedbackFacts> & { repositoryId?: number },
+              verified.host,
+              request.log
+            )
+        );
       }
       // And issues, for issue-label automations.
       if (eventType === 'issues') {

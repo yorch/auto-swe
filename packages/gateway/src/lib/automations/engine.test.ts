@@ -234,6 +234,10 @@ function harness(
         if (f[key] === (want as { not: unknown }).not) {
           return false;
         }
+      } else if (want !== null && typeof want === 'object' && 'in' in want) {
+        if (!(want as { in: unknown[] }).in.includes(f[key])) {
+          return false;
+        }
       } else if (want !== undefined && f[key] !== want) {
         return false;
       }
@@ -511,6 +515,40 @@ describe('handleOccurrence (github.workflow_run.failed)', () => {
     const out = await handle(h, { ...failed, headSha: 'e'.repeat(40), runId: '901' });
     expect(out).toMatchObject({ outcome: 'SUPPRESSED_OWN_OUTPUT' });
     expect(h.started).toHaveLength(1);
+  });
+
+  it('never triages a commit a feedback run pushed either (ownOutputFrom)', async () => {
+    const h = harness();
+    h.fires.push({
+      automationId: 'a',
+      createdAt: new Date(),
+      dedupeKey: 'z',
+      id: 'fire-z',
+      outcome: 'STARTED',
+      ownerKey: 'github.com/acme/api',
+      producedKey: failed.headSha,
+      scopeKey: 'pr-9',
+      source: 'github.pull_request.feedback',
+      subjectKey: 'pr-9@review-1',
+    });
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'SUPPRESSED_OWN_OUTPUT' });
+  });
+
+  it('still ignores another source’s output it does not name', async () => {
+    const h = harness();
+    h.fires.push({
+      automationId: 'a',
+      createdAt: new Date(),
+      dedupeKey: 'z',
+      id: 'fire-z',
+      outcome: 'STARTED',
+      ownerKey: 'github.com/acme/api',
+      producedKey: failed.headSha,
+      scopeKey: 'issue-9',
+      source: 'github.issues.labeled',
+      subjectKey: 'issue-9@x',
+    });
+    await expect(handle(h)).resolves.toMatchObject({ outcome: 'STARTED' });
   });
 
   it('suppresses a second failure on the same commit', async () => {

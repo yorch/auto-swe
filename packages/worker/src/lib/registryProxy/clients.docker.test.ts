@@ -210,7 +210,7 @@ describe.skipIf(!enabled)('registry proxy against real package managers', () => 
 
   /** Register (open or with an allowlist) and render env + npmrc into `dir`. */
   async function activate(
-    dir: string,
+    _dir: string,
     allow: Map<string, Set<string>> | null
   ): Promise<RegistryRegistration> {
     const reg = await proxy.register({ onDenied: () => {}, registries: registries() });

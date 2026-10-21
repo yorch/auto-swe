@@ -25,7 +25,6 @@ import {
   type CiFixableCategory,
   type CiTriagePayload,
   CiTriagePayloadSchema,
-  matchesPatterns,
 } from '@auto-swe/shared/lib/ciTrigger';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -38,11 +37,12 @@ import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { getErrorMessage } from '../lib/errors.js';
-import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
+import { withHeartbeat } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import type { WorkflowRunFailure } from '../lib/scm/types.js';
 import { type CiVerification, MAX_REPRO_COMMAND_CHARS, verificationNote } from './ciVerify.js';
+import { deleteWorkedBranch, fastForwardPullRequestBranch } from './pushToPullRequest.js';
 import { runAgent } from './runAgent.js';
 
 export const CI_TRIAGE_CATEGORIES = [
@@ -661,9 +661,6 @@ function currentWorkflowId(): string | undefined {
   }
 }
 
-/** Paths a pushed fix may never touch: what a workflow run executes with the repo's secrets. */
-const WORKFLOW_PATH_RE = /^\.github\/(workflows|actions)(\/|$)/i;
-
 export interface PushCiFixInput {
   request: RepoWorkRequest;
   triage: CiTriageResult;
@@ -784,126 +781,28 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
     ) {
       return refuse('only a pull request failure is fixed on its own branch');
     }
-    // Compared without case: `Release/2.0` is a release branch too.
-    const neverPush = await resolveSetting('github.ciFixNeverPushBranches', ctx);
-    if (
-      matchesPatterns(
-        neverPush.map((p) => p.toLowerCase()),
-        branch.toLowerCase()
-      )
-    ) {
-      return refuse(`'${branch}' is listed as a branch fixes are never pushed to`);
-    }
-
-    const repoRef = toRepoRef(repo);
-    const scm = getScmProvider(repoRef);
-    const pr = await scm.pullRequestInfo(repoRef, triage.pullRequestNumber);
-    if (
-      pr?.state !== 'open' ||
-      pr.headRef !== branch ||
-      pr.headRepositoryFullName?.toLowerCase() !==
-        `${repo.organizationName}/${repo.repoName}`.toLowerCase()
-    ) {
-      return refuse('the pull request is no longer open from this branch');
-    }
-    if ((await scm.defaultBranch(repoRef)) === branch) {
-      return refuse("the pull request's branch is the repository's default branch");
-    }
-    const info = await scm.branchInfo(repoRef, branch);
-    if (!info) {
-      return refuse('the branch no longer exists');
-    }
-    if (info.protected) {
-      return refuse('the branch is protected');
-    }
-    const fixSha = codeResult.headSha;
-    if (!fixSha || !/^[0-9a-f]{40}$/i.test(fixSha)) {
-      return refuse('the fix has no commit to push');
-    }
     // The commit must be the one on this run's own work branch: what the built-in template's
     // implementer committed there, under the workflow-file refusal.
     const { branchPrefix } = await resolveWorkflowDefaults();
     const workBranch = `${branchPrefix}/${request.externalTicketId}`;
-    if (codeResult.branch !== workBranch || workBranch === branch) {
-      return refuse("the fix is not on this run's work branch");
-    }
-    const done = () => {
-      tracer.addActivityEvent({
-        name: 'ci_fix.pushed',
-        outputJson: { branch, commitSha: fixSha, prNumber: pr.number },
-      });
-      return { branch, commitSha: fixSha, pushed: true } as const;
-    };
-    // A retry after a push whose reply was lost: the branch is already at the recorded commit.
-    if (fire.producedKey === fixSha && info.sha === fixSha) {
-      if (!input.keepWorkBranch) {
-        await scm.deleteBranch(repoRef, workBranch);
-      }
-      return done();
-    }
-    if ((await scm.branchHeadSha(repoRef, workBranch)) !== fixSha) {
-      return refuse("the fix is not on this run's work branch");
-    }
-    const range = await scm.compareCommits(repoRef, info.sha, fixSha);
-    if (range.status !== 'ahead' || range.behindBy !== 0 || range.aheadBy < 1) {
-      return refuse('the branch has moved since the fix was made');
-    }
-    if (range.paths === null) {
-      return refuse('the fix is too large to check');
-    }
-    if (range.paths.some((p) => WORKFLOW_PATH_RE.test(p))) {
-      return refuse('the fix touches a workflow file');
-    }
-
-    // A follow-up replaces the run's produced commit, but the earlier one is still the
-    // platform's own: a slow workflow can fail on it after the run ended. It keeps a row of
-    // its own, which only the own-output guard reads (and retention keeps).
-    if (fire.producedKey && fire.producedKey !== fixSha) {
-      await prisma.automationFire
-        .create({
-          data: {
-            automationId: fire.automationId,
-            connectionId: fire.connectionId,
-            dedupeKey: `${fire.dedupeKey}~produced~${fire.producedKey}`,
-            facts: fire.facts ?? {},
-            outcome: 'SUPPRESSED_OWN_OUTPUT',
-            ownerKey: fire.ownerKey,
-            producedKey: fire.producedKey,
-            reason: 'an earlier fix this run pushed, followed up by another',
-            scopeKey: fire.scopeKey,
-            source: fire.source,
-            subjectKey: fire.producedKey,
-          },
-        })
-        .catch((err: unknown) => {
-          if ((err as { code?: string }).code !== 'P2002') {
-            throw err;
-          }
-        });
-    }
-    // Recorded first: if the push lands and nothing after it does, the commit's failure is
-    // still recognised as the platform's own.
-    await prisma.automationFire.update({
-      data: { producedKey: fixSha },
-      where: { id: fire.id },
+    const pushed = await fastForwardPullRequestBranch({
+      branch,
+      codeResult,
+      fire,
+      keepWorkBranch: input.keepWorkBranch === true,
+      onPushed: ({ branch: b, commitSha, prNumber }) =>
+        tracer.addActivityEvent({
+          name: 'ci_fix.pushed',
+          outputJson: { branch: b, commitSha, prNumber },
+        }),
+      onRefused: (reason) =>
+        tracer.addActivityEvent({ name: 'ci_fix.push_refused', outputJson: { reason } }),
+      prisma,
+      prNumber: triage.pullRequestNumber,
+      repo,
+      workBranch,
     });
-    throwIfActivityCancelled();
-    if (!(await scm.fastForwardBranch(repoRef, branch, fixSha))) {
-      // Not pushed after all: the commit becomes the draft's head, and an author who later
-      // takes it onto their branch must still have its failures triaged.
-      await prisma.automationFire.update({
-        data: { producedKey: null },
-        where: { id: fire.id },
-      });
-      return refuse('GitHub refused the push (the branch moved, or a rule protects it)');
-    }
-    // The work branch only carried the commit there; it is now on the pull request's branch.
-    // A template that watches the pushed commit keeps it for a follow-up, and removes it with
-    // `finishCiFixPush` when it is done.
-    if (!input.keepWorkBranch) {
-      await scm.deleteBranch(repoRef, workBranch);
-    }
-    return done();
+    return pushed;
   } catch (err) {
     tracer.addActivityEvent({ error: getErrorMessage(err), name: 'ci_fix.push_failed' });
     throw err;
@@ -934,14 +833,10 @@ export async function finishCiFixPush(input: {
   if (workBranch === payload.baseBranch) {
     return { deleted: false };
   }
-  const repoRef = toRepoRef(repo);
-  const scm = getScmProvider(repoRef);
-  const head = await scm.branchHeadSha(repoRef, workBranch);
-  if (head === null) {
-    return { deleted: false };
-  }
-  if (!input.pushedCommitSha || head !== input.pushedCommitSha) {
-    return { deleted: false };
-  }
-  return { deleted: await scm.deleteBranch(repoRef, workBranch) };
+  return deleteWorkedBranch({
+    prisma,
+    pushedCommitSha: input.pushedCommitSha,
+    repo,
+    workBranch,
+  });
 }

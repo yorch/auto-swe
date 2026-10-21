@@ -121,6 +121,7 @@ export const SIDEBAR = [
       'docs/run-callbacks',
       'docs/inbound-events',
       'docs/ci-failure-triggers',
+      'docs/pr-feedback',
       'docs/channel-assistant',
       'docs/memory',
       'docs/nl-workflow-authoring',

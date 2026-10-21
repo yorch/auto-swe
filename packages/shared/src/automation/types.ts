@@ -66,6 +66,16 @@ export interface GatedOption {
   disabledMessage: string;
 }
 
+/** A filter value refused at save while a setting is off. */
+export interface GatedFilter {
+  key: string;
+  values: readonly string[];
+  /** A boolean setting, resolved for the automation's team, that must be on. */
+  setting: SettingKey;
+  /** What the refusal says when the setting is off. */
+  disabledMessage: string;
+}
+
 /** One input of the "would this fire?" tester. */
 export interface TesterField {
   key: string;
@@ -202,4 +212,15 @@ export interface EventSource<Filters = unknown, Facts = unknown> {
    * template, and where a setting allows it. A save-time early error; the run decides again.
    */
   gatedOptions?: GatedOption[];
+  /**
+   * Filter values refused at save while a setting is off (a filter the occurrence carries,
+   * not an option: a save-time early error; the run decides again in `mismatch`).
+   */
+  gatedFilters?: GatedFilter[];
+  /**
+   * Other sources whose produced output also counts as this source's own output: a commit a
+   * feedback run pushed must not be triaged as a new failure, exactly like a commit a CI fix
+   * pushed. A source never lists itself — its own output already counts.
+   */
+  ownOutputFrom?: readonly string[];
 }

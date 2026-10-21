@@ -76,6 +76,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/pullRequest.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/prFeedback',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/prFeedback.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/guardedDispatcher',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/guardedDispatcher.ts'),
       },
@@ -150,6 +154,10 @@ export default defineConfig({
       {
         find: '@auto-swe/shared/lib/repoPermission',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoPermission.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/githubAccountId',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/githubAccountId.ts'),
       },
       {
         find: '@auto-swe/shared/lib/keyRotation',

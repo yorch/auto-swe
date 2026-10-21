@@ -14,6 +14,7 @@ const launch = vi.hoisted(() => ({
     | { ok: false; refusal: { status: 403; body: { error: { code: string; message: string } } } },
 }));
 const settings = vi.hoisted(() => ({
+  otherPrsAllowed: false,
   pushAllowed: false,
   signingPolicyTeams: [] as string[],
 }));
@@ -21,9 +22,11 @@ vi.mock('@auto-swe/shared/config', () => ({
   resolveSetting: vi.fn(async (key: string, ctx?: { teamId?: string }) =>
     key === 'github.ciFixPushToPullRequestEnabled'
       ? settings.pushAllowed
-      : key === 'workflow.templateWebhookRequireSignature'
-        ? settings.signingPolicyTeams.includes(ctx?.teamId ?? '')
-        : undefined
+      : key === 'github.prFeedbackOtherPullRequestsEnabled'
+        ? settings.otherPrsAllowed
+        : key === 'workflow.templateWebhookRequireSignature'
+          ? settings.signingPolicyTeams.includes(ctx?.teamId ?? '')
+          : undefined
   ),
 }));
 
@@ -49,8 +52,9 @@ vi.mock('../lib/launchAuthorization.js', () => ({
   ) => reply.status(r.status).send(r.body),
 }));
 
-import { WORKFLOW_RUN_FAILED } from '@auto-swe/shared/automation';
+import { PR_FEEDBACK, WORKFLOW_RUN_FAILED } from '@auto-swe/shared/automation';
 import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
+import { PR_FEEDBACK_INPUT_SCHEMA } from '@auto-swe/shared/lib/prFeedback';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { authorizeLaunch } from '../lib/launchAuthorization.js';
 import { automationRoutes } from './automations.js';
@@ -168,6 +172,7 @@ describe('automationRoutes (event automations)', () => {
     ctx.auth.sub = 'user-1';
     gateState.gate = undefined;
     launch.decision = { ok: true };
+    settings.otherPrsAllowed = false;
     settings.pushAllowed = false;
     vi.clearAllMocks();
     // The built-in template, unless a test says otherwise.
@@ -671,6 +676,26 @@ describe('automationRoutes (event automations)', () => {
       res = await post({ ...payload, templateId: TEMPLATE });
       expect(res.statusCode).toBe(400);
       expect(res.json().error.message).toMatch(/default template/);
+    });
+
+    it('refuses a pull-request filter value an admin has not allowed', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue({
+        activeVersion: 1,
+        id: BUILTIN.id,
+        inputSchema: PR_FEEDBACK_INPUT_SCHEMA,
+      });
+      const payload = {
+        ...VALID,
+        filters: { pullRequests: ['platform', 'others'], triggers: ['command'] },
+        source: PR_FEEDBACK,
+      };
+      const res = await post(payload);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('OPTION_DISABLED');
+      // The setting is checked for the repository's team, as a gated option's is.
+      settings.otherPrsAllowed = true;
+      expect((await post(payload)).statusCode).toBe(201);
     });
 
     it('checks a template requiring a pull request against push failures too', async () => {

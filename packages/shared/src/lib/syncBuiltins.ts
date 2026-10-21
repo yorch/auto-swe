@@ -25,6 +25,7 @@ import {
   MERGE_CONFLICT_RESOLVER_PROMPT,
   PERFORMANCE_REVIEWER_PROMPT,
   PLANNER_AGENT_PROMPT,
+  PR_FEEDBACK_RESPONDER_PROMPT,
   PRD_ANALYST_PROMPT,
   PRD_DECOMPOSER_PROMPT,
   PRD_WRITER_PROMPT,
@@ -757,6 +758,16 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
     key: 'ciTriager',
     name: 'CI Triager',
     systemPrompt: CI_TRIAGER_PROMPT,
+  },
+  // ── Pull-request feedback ──────────────────────────────────────────────────
+  {
+    // Writes the reply reviewers see for a feedback round (respondToPrFeedback): a summary
+    // and one outcome per labelled thread. No tools: it only reads what it is given.
+    description: 'Reports a pull-request feedback round to its reviewers.',
+    inheritsModelFrom: 'planner',
+    key: 'prFeedbackResponder',
+    name: 'PR Feedback Responder',
+    systemPrompt: PR_FEEDBACK_RESPONDER_PROMPT,
   },
 ];
 

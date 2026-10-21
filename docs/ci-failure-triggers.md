@@ -155,7 +155,8 @@ instead, and the comment says why:
 The fix commit is written to the decision row (`producedKey`) **before** the push, and cleared again
 if GitHub refuses it. A retry after a push whose reply was lost finds the branch at the recorded
 commit and reports it pushed. A failure of that commit is suppressed as `SUPPRESSED_OWN_OUTPUT`, so a
-fix is never fixed again by another run.
+fix is never fixed again by another run. A commit a pull-request feedback round pushed
+([pr-feedback.md](./pr-feedback.md)) counts as the platform's own output the same way.
 
 The run then **watches the pull request's CI on the pushed commit** itself, by polling (a webhook for
 an author's branch does not reach it), within the CI wait strategy's poll deadline:

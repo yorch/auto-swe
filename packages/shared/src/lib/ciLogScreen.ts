@@ -51,6 +51,44 @@ export async function ciLogInjectionMatches(
  * Whether a log may be used to change code: no injection pattern matched and the scan
  * completed. A scan that throws or is incomplete cannot say the log is clean, so it is not.
  */
+/**
+ * Screen many short texts (pull-request review comments) in ONE batch: each entry gets its
+ * own scan target so a match names the comment, not the concatenation. Returns the indices
+ * that are unusable — a match, or the whole set when the scan could not complete (a scan
+ * that cannot run every pattern cannot say a text is clean).
+ */
+export async function feedbackInjectionScreen(texts: string[]): Promise<Set<number>> {
+  const unusable = new Set<number>();
+  const present = texts.map((t, i) => ({ i, t })).filter((x) => x.t.length > 0);
+  if (present.length === 0) {
+    return unusable;
+  }
+  try {
+    const patterns = (await loadInjectionPatterns()).filter((p) => !NOT_FOR_LOGS.has(p.label));
+    const targets = present.flatMap((x) =>
+      chunkScanText(x.t).map((t, j) => ({ key: `c:${x.i}:${j}`, text: t }))
+    );
+    const { hits, incomplete, quarantinedPatternKeys } = await runRegexBatch(
+      toRegexSpecs(patterns, INJECTION_KEY_PREFIX),
+      targets,
+      { budgetMs: resolveRegexBudgetMs(), label: 'feedbackScreen' }
+    );
+    for (const h of hits) {
+      unusable.add(Number(h.targetKey.split(':')[1]));
+    }
+    if (incomplete || quarantinedPatternKeys.length > 0) {
+      for (const x of present) {
+        unusable.add(x.i);
+      }
+    }
+  } catch {
+    for (const x of present) {
+      unusable.add(x.i);
+    }
+  }
+  return unusable;
+}
+
 export async function ciLogIsUsable(text: string): Promise<boolean> {
   try {
     const scan = await ciLogInjectionMatches(text);

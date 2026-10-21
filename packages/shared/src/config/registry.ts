@@ -275,6 +275,30 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.boolean(),
   }),
+  'github.prFeedbackAutomationsEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether a repository's pull-request feedback automations may start runs. Off by default: a review requesting changes or an `/auto-swe fix` comment starts a template that edits a pull request, so an admin turns this on deliberately. Even when on, feedback starts a run only when the person who left it is an active platform user with a linked GitHub account and a member of the repository. Turning it off does not stop runs already started.",
+    group: 'github',
+    label: 'Pull-request feedback automations enabled',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'github.prFeedbackOtherPullRequestsEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether a pull-request feedback automation may act on a pull request the platform did not open — and then only through the explicit `/auto-swe fix` command, never a review requesting changes. Off by default: the fix is pushed to that person's pull request branch, so an admin grants it deliberately. Pushes stay fast-forward only, never to the default branch, a protected branch, a fork head, or one matching 'CI fixes are never pushed to'.",
+    group: 'github',
+    label: 'Feedback may act on any pull request',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'github.repositoryHosts': defineSetting({
     defaultValue: [],
     description:

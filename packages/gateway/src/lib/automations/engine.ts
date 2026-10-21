@@ -23,6 +23,7 @@ import {
 } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import type { AccessLog } from '@auto-swe/shared/lib/accessActor';
+import { linkedGithubAccountIds } from '@auto-swe/shared/lib/githubAccountId';
 import { type InputSchema, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
 import { resolveRepoAccessGateOrLastKnown } from '@auto-swe/shared/lib/repoAccessGate';
@@ -614,7 +615,7 @@ export async function decideUnderLock<F, X>(
     automation: Pick<AutomationRow, 'id' | 'cooldownMinutes' | 'maxRunsPerDay'>;
     ownerKey: string;
   },
-  source: Pick<EventSource<F, X>, 'inFlightLookbackMs' | 'key'>,
+  source: Pick<EventSource<F, X>, 'inFlightLookbackMs' | 'key' | 'ownOutputFrom'>,
   keys: { scope: string; subject: string },
   now: Date,
   /** Whether Temporal says an execution is over. Throws when Temporal cannot say. */
@@ -633,7 +634,9 @@ export async function decideUnderLock<F, X>(
     await tx.automationFire.findFirst({
       where: {
         producedKey: keys.subject,
-        source: source.key,
+        // The source's own output, plus the output of any source it names as its own (a
+        // feedback run's pushed commit must not be triaged as a new failure either).
+        source: { in: [source.key, ...(source.ownOutputFrom ?? [])] },
         ...(isRepositoryOwnerKey(ownerKey) ? {} : { ownerKey }),
       },
     })
@@ -738,8 +741,7 @@ export async function actorLaunchDecision(
     return ACTOR_NEEDS_REPOSITORY;
   }
   // How a linked account is recorded: a bare id on github.com, `<host>:<id>` elsewhere.
-  const linked =
-    host === 'github.com' ? [accountId, `github.com:${accountId}`] : [`${host}:${accountId}`];
+  const linked = linkedGithubAccountIds(host, accountId);
   const user = await prisma.user.findFirst({
     select: { id: true, role: true },
     where: { githubLoginAccountId: { in: linked }, isActive: true },

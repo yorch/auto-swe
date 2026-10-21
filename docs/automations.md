@@ -276,6 +276,7 @@ are environment-only ([configuration.md](./configuration.md)).
 |---|---|---|---|---|
 | `github.workflow_run.failed` | A GitHub Actions run of a `push`, `pull_request` or `schedule` workflow fails ([ci-failure-triggers.md](./ci-failure-triggers.md)) | the commit / the branch | `ci-triage-and-fix` | `github.ciFailureTriggersEnabled` |
 | `github.issues.labeled` | A person adds one of the automation's labels to an open issue (§3.1) | that labelling / the issue | `ticket-to-merge` | `github.issueLabelAutomationsEnabled` (off by default) |
+| `github.pull_request.feedback` | A changes-requested review or an `/auto-swe fix` command lands on a pull request ([pr-feedback.md](./pr-feedback.md)) | the review or comment / the pull request | `address-pr-feedback` | `github.prFeedbackAutomationsEnabled` (off by default) |
 | `inbound.event` | A verified event posted to one of the team's event endpoints is of a selected type and meets the automation's conditions ([inbound-events.md](./inbound-events.md)); targets a **team** | the event's subject / its scope (from pointers; by default the event id / its type) | none: the automation names one | `workflow.inboundEventsEnabled` (off by default) |
 
 A source is a pure descriptor (`EventSource` in `@auto-swe/shared/automation`) plus a webhook
@@ -339,7 +340,9 @@ up to 14 days. A closed issue and a pull request are ignored.
 ## 4. Permissions on the host
 
 What an occurrence needs from the host is the source's: for CI, the **Workflow run** event and
-**Actions: Read**; for issue labels, the **Issues** event and **Issues: Read**
+**Actions: Read**; for issue labels, the **Issues** event and **Issues: Read**; for pull-request
+feedback, the **Pull request review**, **Pull request review comment** and **Issue comment**
+events, with **Pull requests: Read & write** for the thread replies
 ([github-app-setup.md](./github-app-setup.md)).
 
 ## 5. Other kinds of automation
@@ -487,9 +490,9 @@ recorded as `FAILED_TO_START` with its code.
 
 ## Limitations
 
-- **Three event sources.** Failed GitHub Actions runs and issue labels start automations on a
-  repository, and events posted to a team's endpoints start automations on a team; a GitHub
-  comment, review or pull request label does not.
+- **Four event sources.** Failed GitHub Actions runs, issue labels and pull-request review
+  feedback start automations on a repository, and events posted to a team's endpoints start
+  automations on a team; a pull request label or a push does not.
 - **New event automation starts from a repository.** On the Automations page, **New event
   automation** asks for a repository; a team's automations open from the team's page or from an
   existing team automation's row.

@@ -138,6 +138,13 @@ vi.mock('@auto-swe/shared/db', () => ({
         return {};
       }),
     },
+    automation: {
+      // The enrichment's gating read: an enabled feedback automation that allows other
+      // pull requests by command, so a delivery can actually start a round.
+      findMany: vi.fn(async () => [
+        { filters: { pullRequests: ['others'], triggers: ['command'] } },
+      ]),
+    },
     connection: {
       findFirst: vi.fn(async () => jiraPrismaState.activeRepo),
       // The Jira auto-trigger lists up to two active repos to detect ambiguity.
@@ -216,6 +223,18 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
+vi.mock('@auto-swe/shared/config', async (orig) => {
+  const real = await orig<typeof import('@auto-swe/shared/config')>();
+  return {
+    ...real,
+    resolveSetting: vi.fn(async (key: string, ctx?: unknown) => {
+      if (key === 'github.prFeedbackAutomationsEnabled') {
+        return true;
+      }
+      return real.resolveSetting(key as never, ctx as never);
+    }),
+  };
+});
 vi.mock('../lib/automations/engine.js', async (orig) => ({
   ...(await orig<typeof import('../lib/automations/engine.js')>()),
   handleOccurrence: vi.fn(async () => ({ automationId: 'automation-1', outcome: 'STARTED' })),
@@ -1009,6 +1028,195 @@ describe('webhook routes', () => {
     it('acknowledges a label added by a bot without acting on it', async () => {
       const bot = labelled.replace('"type":"User"', '"type":"Bot"');
       const res = await inject('/api/v1/webhooks/git', bot, sign(bot), ISSUES);
+      expect(res.json().data).toMatchObject({ ignored: true });
+      expect(handleOccurrence).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('pull request feedback deliveries', () => {
+    const REPO = {
+      full_name: 'acme/payments-api',
+      html_url: 'https://github.com/acme/payments-api',
+      id: 7,
+    };
+    const PR_HEAD = { ref: 'auto/agent-0a1b2c3d', repo: { id: 7 } };
+    const SENDER = { id: 42, login: 'octocat', type: 'User' };
+    const review = JSON.stringify({
+      action: 'submitted',
+      pull_request: { head: PR_HEAD, number: 9, state: 'open' },
+      repository: REPO,
+      review: {
+        body: 'Please handle the null case.',
+        id: 777,
+        state: 'changes_requested',
+        submitted_at: '2026-10-01T00:00:00Z',
+      },
+      sender: SENDER,
+    });
+    const REVIEW = { 'x-github-event': 'pull_request_review' };
+    const reviewComment = JSON.stringify({
+      action: 'created',
+      comment: {
+        body: '/auto-swe fix the flaky test',
+        created_at: '2026-10-01T00:00:00Z',
+        id: 888,
+      },
+      pull_request: { head: PR_HEAD, number: 9, state: 'open' },
+      repository: REPO,
+      sender: SENDER,
+    });
+    const REVIEW_COMMENT = { 'x-github-event': 'pull_request_review_comment' };
+    const issueComment = JSON.stringify({
+      action: 'created',
+      comment: { body: '/auto-swe fix', created_at: '2026-10-01T00:00:00Z', id: 999 },
+      issue: { number: 9, pull_request: { url: 'x' }, state: 'open' },
+      repository: REPO,
+      sender: SENDER,
+    });
+    const ISSUE_COMMENT = { 'x-github-event': 'issue_comment' };
+
+    function feedbackPr(over: Record<string, unknown> = {}): Record<string, unknown> {
+      return {
+        id: 'pr-row-9',
+        repoId: 'repo-1',
+        status: 'OPEN',
+        workflow: {
+          assignedBranch: 'auto/agent-0a1b2c3d',
+          temporalWorkflowId: 'agent-1a2b3c4d-9f8e7d6c',
+        },
+        ...over,
+      };
+    }
+
+    beforeEach(() => {
+      vi.mocked(handleOccurrence).mockClear();
+      connectionHosts.rows = [
+        { githubApiUrl: null, githubUrl: null, id: 'repo-1', installation: null } as never,
+      ];
+      trackedPr = feedbackPr();
+      workflowRunRow = {
+        template: { name: 'ticket-to-merge', origin: null, teamId: 'team-1' },
+      } as never;
+    });
+
+    it('hands a signed review requesting changes to the feedback automations', async () => {
+      const res = await inject('/api/v1/webhooks/git', review, sign(review), REVIEW);
+      expect(res.statusCode).toBe(200);
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[1]).toMatchObject({
+        key: 'github.pull_request.feedback',
+      });
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[2]).toMatchObject({
+        facts: {
+          eventId: '777',
+          eventKind: 'review',
+          headRef: 'auto/agent-0a1b2c3d',
+          origin: 'workflow',
+          prNumber: 9,
+          senderId: '42',
+          trigger: 'changes_requested',
+        },
+      });
+    });
+
+    it('marks a pull request an agent run opened as origin agent_run', async () => {
+      workflowRunRow = {
+        template: { name: 'Agent Run', origin: 'system:agent-run', teamId: null },
+      } as never;
+      const res = await inject('/api/v1/webhooks/git', review, sign(review), REVIEW);
+      expect(res.statusCode).toBe(200);
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[2]).toMatchObject({
+        facts: { origin: 'agent_run' },
+      });
+    });
+
+    it('hands an inline review comment carrying the command to the engine', async () => {
+      const res = await inject(
+        '/api/v1/webhooks/git',
+        reviewComment,
+        sign(reviewComment),
+        REVIEW_COMMENT
+      );
+      expect(res.statusCode).toBe(200);
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[2]).toMatchObject({
+        facts: { eventKind: 'review_comment', notes: 'the flaky test', trigger: 'command' },
+      });
+    });
+
+    it('fills the head ref of a platform pull request from its run’s branch', async () => {
+      const res = await inject(
+        '/api/v1/webhooks/git',
+        issueComment,
+        sign(issueComment),
+        ISSUE_COMMENT
+      );
+      expect(res.statusCode).toBe(200);
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[2]).toMatchObject({
+        facts: {
+          eventKind: 'issue_comment',
+          headRef: 'auto/agent-0a1b2c3d',
+          origin: 'workflow',
+          trigger: 'command',
+        },
+      });
+    });
+
+    it('reads the head of a pull request the platform did not open from the host', async () => {
+      trackedPr = null;
+      fetchMock.mockImplementation(async () => ({
+        json: async () => ({
+          head: { ref: 'feature/login-fix', repo: { id: 7 } },
+          state: 'open',
+        }),
+        ok: true,
+      }));
+      const res = await inject(
+        '/api/v1/webhooks/git',
+        issueComment,
+        sign(issueComment),
+        ISSUE_COMMENT
+      );
+      expect(res.statusCode).toBe(200);
+      expect(vi.mocked(handleOccurrence).mock.calls[0]?.[2]).toMatchObject({
+        facts: { headRef: 'feature/login-fix', origin: 'other' },
+      });
+      expect(fetchMock).toHaveBeenCalledWith(
+        'https://api.github.com/repos/acme/payments-api/pulls/9',
+        expect.objectContaining({ redirect: 'error' })
+      );
+    });
+
+    it('answers 503 when that read fails, so the delivery can be retried', async () => {
+      trackedPr = null;
+      fetchMock.mockImplementation(async () => ({ ok: false, status: 500 }));
+      const res = await inject(
+        '/api/v1/webhooks/git',
+        issueComment,
+        sign(issueComment),
+        ISSUE_COMMENT
+      );
+      expect(res.statusCode).toBe(503);
+      expect(handleOccurrence).not.toHaveBeenCalled();
+    });
+
+    it('ignores a fork head the host read reports', async () => {
+      trackedPr = null;
+      fetchMock.mockImplementation(async () => ({
+        json: async () => ({ head: { ref: 'x', repo: { id: 8 } }, state: 'open' }),
+        ok: true,
+      }));
+      const res = await inject(
+        '/api/v1/webhooks/git',
+        issueComment,
+        sign(issueComment),
+        ISSUE_COMMENT
+      );
+      expect(res.json().data).toMatchObject({ ignored: true });
+      expect(handleOccurrence).not.toHaveBeenCalled();
+    });
+
+    it('acknowledges a review by a bot without acting on it', async () => {
+      const bot = review.replace('"type":"User"', '"type":"Bot"');
+      const res = await inject('/api/v1/webhooks/git', bot, sign(bot), REVIEW);
       expect(res.json().data).toMatchObject({ ignored: true });
       expect(handleOccurrence).not.toHaveBeenCalled();
     });

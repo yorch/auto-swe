@@ -183,6 +183,65 @@ export interface CiStatusResult {
   logsUrl?: string;
 }
 
+/** Who wrote a host comment or review: the numeric account id is null for bots and apps. */
+export interface FeedbackAuthor {
+  /** The account's numeric database id, or null for a bot or app (never trusted). */
+  authorId: string | null;
+  authorLogin: string;
+  /** The host's account type (`User`, `Bot`, …), lowercased by the caller when compared. */
+  authorType: string;
+}
+
+/** One comment of a pull-request review thread, as the host reports it. */
+export interface ReviewThreadComment extends FeedbackAuthor {
+  /** The comment's database id: what a reply names. */
+  databaseId: number;
+  body: string;
+  createdAt: string;
+  /** The review this comment belongs to, when it is part of one. */
+  reviewDatabaseId: number | null;
+}
+
+/** A pull-request review thread (an inline comment chain on a file). */
+export interface ReviewThread {
+  /** The thread's GraphQL node id (what replies and the responder cite). */
+  threadId: string;
+  isResolved: boolean;
+  isOutdated: boolean;
+  path: string;
+  line: number | null;
+  comments: ReviewThreadComment[];
+}
+
+/** A pull-request review, re-read from the host by id. */
+export interface PullRequestReview extends FeedbackAuthor {
+  body: string;
+  state: string;
+}
+
+/** An issue-style comment (a discussion comment on a pull request), by id. */
+export interface IssueCommentInfo extends FeedbackAuthor {
+  body: string;
+  issueNumber: number;
+}
+
+/** An inline review comment, by id. */
+export interface ReviewCommentInfo extends FeedbackAuthor {
+  body: string;
+  pullRequestNumber: number;
+  /** The comment it replies to, when it is not the thread's opening comment. */
+  inReplyToId: number | null;
+}
+
+/** What `createBranch` learned about the branch it was asked to create. */
+export type CreateBranchResult =
+  /** The branch did not exist and now points at `sha`. */
+  | 'created'
+  /** The branch already existed at exactly `sha` (a retry of this call). */
+  | 'exists_same'
+  /** The branch exists at another sha — never overwritten. */
+  | 'exists_other';
+
 /**
  * The seam between auto-swe's execution path and a source-control host.
  *
@@ -295,4 +354,36 @@ export interface ScmProvider {
    * "could not ask" must not be recorded as the same thing.
    */
   repoPermission(repo: RepoRef, username: string): Promise<PermissionLookup>;
+  /**
+   * The pull request's review threads, bounded: at most 100 threads and 50 comments each.
+   * Everything in them is untrusted host text — callers bound and screen before any of it
+   * reaches a model.
+   */
+  listReviewThreads(repo: RepoRef, prNumber: number): Promise<ReviewThread[]>;
+  /** A pull-request review, by its database id, or null when it does not exist. */
+  getPullRequestReview(
+    repo: RepoRef,
+    prNumber: number,
+    reviewId: string
+  ): Promise<PullRequestReview | null>;
+  /** An issue comment (a pull-request discussion comment), by its database id, or null. */
+  getIssueComment(repo: RepoRef, commentId: string): Promise<IssueCommentInfo | null>;
+  /** An inline review comment, by its database id, or null. */
+  getReviewComment(repo: RepoRef, commentId: string): Promise<ReviewCommentInfo | null>;
+  /**
+   * Reply in a review thread, naming the thread's TOP-LEVEL comment database id.
+   * Resolves the reply's URL.
+   */
+  replyToReviewComment(
+    repo: RepoRef,
+    prNumber: number,
+    commentId: number,
+    body: string
+  ): Promise<{ htmlUrl: string }>;
+  /**
+   * Create `branch` at `sha`, never forcing: `exists_same` when it already points there (a
+   * retry), `exists_other` when it exists elsewhere — which callers refuse non-retryably,
+   * because silently moving another run's branch is worse than failing.
+   */
+  createBranch(repo: RepoRef, branch: string, sha: string): Promise<CreateBranchResult>;
 }

@@ -9,7 +9,7 @@
 Agent identity is a **free-form string** — there is no enum, the DB columns are plain `TEXT`, and
 `AnySkillRole = string`. New agents are added as data, not code.
 
-`syncBuiltins` seeds 32 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
+`syncBuiltins` seeds 33 built-in agents, tagged `origin='swe-starter'`. The tag is the point: these
 are seed content for the flagship software-engineering use case, not a fixed roster. An agent a team
 adds resolves through exactly the same cascade as `implementer`, and nothing in the engine privileges
 the seeded set — `assertConfigReady` gates boot on what the deployment has *installed*, not on the
@@ -69,7 +69,7 @@ runs on a cheaper, different model from the agents it scores, to avoid self-pref
 > It complements the review network rather than being replaced by it: the network gives three
 > personas an opinion and routes on their verdicts, this one fails the activity outright.
 
-### Sub-role personas (13)
+### Sub-role personas (14)
 
 No `modelSpec`; each carries `inheritsModelFrom` so it runs on its parent's model. The activity that
 runs a persona resolves its `systemPrompt`, skills, `toolKeys`, and MCP binding from the persona's
@@ -101,6 +101,7 @@ own row, with three exceptions that keep an edit to the parent row in force:
 | `mergeConflictResolver` | `implementer` | `resolveMergeConflict` |
 | `lessonConsolidator` | `commitToMemory` | `consolidateLessons` |
 | `ciTriager` | `planner` | `triageCiFailure` ([ci-failure-triggers.md](./ci-failure-triggers.md)) |
+| `prFeedbackResponder` | `planner` | `respondToPrFeedback` ([pr-feedback.md](./pr-feedback.md)) |
 | `ticketContextGatherer` | `planner` | `gatherTicketContext` (§3.8) |
 
 `MODEL_BACKED_AGENT_KEYS` in `@auto-swe/shared/agentKeys` is a narrow convenience set used for cost

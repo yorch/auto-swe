@@ -36,7 +36,7 @@ import {
   type Workspace,
 } from './workspace.js';
 
-export type FixMode = 'CI_FIX' | 'REVIEW_FIX' | 'GATE_FIX';
+export type FixMode = 'CI_FIX' | 'REVIEW_FIX' | 'GATE_FIX' | 'PR_FEEDBACK';
 
 /**
  * Connection (git_repo) row shape (the shared index doesn't export Prisma model

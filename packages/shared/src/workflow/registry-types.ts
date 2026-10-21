@@ -66,6 +66,12 @@ export const BUILTIN_STEPS = [
   'reportCiTriage',
   'pushCiFixToPullRequest',
   'finishCiFixPush',
+  'gatherPrFeedback',
+  'executePrFeedbackImplementation',
+  'runAgentPrFeedbackTask',
+  'pushPrFeedbackToPullRequest',
+  'respondToPrFeedback',
+  'finishPrFeedbackPush',
   'verifyCiFix',
   // Live provider model ids for the catalog-refresh template (keys stay in the worker)
   'listProviderModels',

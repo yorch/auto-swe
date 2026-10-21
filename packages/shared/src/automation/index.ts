@@ -10,6 +10,7 @@
  */
 import { INBOUND_EVENT, inboundEventSource } from './sources/inboundEvent.js';
 import { ISSUE_LABELED, issueLabeledSource } from './sources/issueLabeled.js';
+import { PR_FEEDBACK, prFeedbackSource } from './sources/prFeedback.js';
 import { WORKFLOW_RUN_FAILED, workflowRunFailedSource } from './sources/workflowRunFailed.js';
 import type { EventSource } from './types.js';
 
@@ -19,6 +20,7 @@ export * from './jsonPointer.js';
 export * from './ownerKey.js';
 export * from './sources/inboundEvent.js';
 export * from './sources/issueLabeled.js';
+export * from './sources/prFeedback.js';
 export * from './sources/workflowRunFailed.js';
 export * from './types.js';
 
@@ -26,6 +28,7 @@ export * from './types.js';
 export const EVENT_SOURCES = {
   [WORKFLOW_RUN_FAILED]: workflowRunFailedSource,
   [ISSUE_LABELED]: issueLabeledSource,
+  [PR_FEEDBACK]: prFeedbackSource,
   [INBOUND_EVENT]: inboundEventSource,
 } as const;
 

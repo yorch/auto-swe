@@ -1,0 +1,680 @@
+{
+  "description": "Address review feedback on a pull request the platform (or an agent run) opened \u2014 and, where an admin allows it, on another open pull request after an explicit /auto-swe fix command. Re-reads the trigger and the pull request from the host, gathers the member threads, fixes on a work branch and pushes it onto the pull request\u2019s branch as a fast-forward, then reports the round on the pull request and follows up once when the pushed commit fails CI. Started by a pull-request feedback trigger.",
+  "entry": "gather",
+  "name": "address-pr-feedback",
+  "nodes": {
+    "agentFix": {
+      "inputs": {
+        "gather": {
+          "from": "context.prFeedback"
+        }
+      },
+      "next": "checkAgentFix",
+      "onFail": "warn",
+      "step": "runAgentPrFeedbackTask",
+      "type": "step"
+    },
+    "checkAgentFix": {
+      "expr": "nodes.agentFix.output == null",
+      "onFalse": "storeAgentFix",
+      "onTrue": "fixFailed",
+      "type": "cond"
+    },
+    "checkChanged": {
+      "expr": "context.currentCodeResult.filesChanged.length == 0",
+      "onFalse": "pushFix",
+      "onTrue": "respondNoChange",
+      "type": "cond"
+    },
+    "checkCi": {
+      "expr": "nodes.watchCi.output.ciPassed == false",
+      "onFalse": "respondCiOk",
+      "onTrue": "checkRetry",
+      "type": "cond"
+    },
+    "checkCiAgain": {
+      "expr": "nodes.watchCiAgain.output.ciPassed == false",
+      "onFalse": "respondCiOk",
+      "onTrue": "respondCiFailed",
+      "type": "cond"
+    },
+    "checkFix": {
+      "expr": "nodes.fix.output == null",
+      "onFalse": "storeFix",
+      "onTrue": "fixFailed",
+      "type": "cond"
+    },
+    "checkPushed": {
+      "expr": "nodes.pushFix.output == null || nodes.pushFix.output.pushed == true",
+      "onFalse": "respondPushRefused",
+      "onTrue": "checkPushThrew",
+      "type": "cond"
+    },
+    "checkPushedAgain": {
+      "expr": "nodes.pushAgain.output.pushed == true",
+      "onFalse": "respondCiFailed",
+      "onTrue": "storePushAgain",
+      "type": "cond"
+    },
+    "checkPushThrew": {
+      "expr": "nodes.pushFix.output == null",
+      "onFalse": "storePush",
+      "onTrue": "respondPushThrew",
+      "type": "cond"
+    },
+    "checkRetry": {
+      "expr": "context.ciRetries >= 1 || (request.payload.maxCiFixAttempts ?? 1) == 0",
+      "onFalse": "countRetry",
+      "onTrue": "respondCiFailed",
+      "type": "cond"
+    },
+    "checkRetryAgent": {
+      "expr": "nodes.retryAgentFix.output == null",
+      "onFalse": "storeRetryAgent",
+      "onTrue": "respondCiFailed",
+      "type": "cond"
+    },
+    "checkRetryFix": {
+      "expr": "nodes.retryFix.output == null || nodes.retryFix.output.headSha == context.currentCodeResult.headSha",
+      "onFalse": "storeRetryFix",
+      "onTrue": "respondCiFailed",
+      "type": "cond"
+    },
+    "checkWatchCi": {
+      "expr": "nodes.watchCi.output == null",
+      "onFalse": "checkCi",
+      "onTrue": "respondCiUnknown",
+      "type": "cond"
+    },
+    "checkWatchCiAgain": {
+      "expr": "nodes.watchCiAgain.output == null",
+      "onFalse": "checkCiAgain",
+      "onTrue": "respondCiUnknown",
+      "type": "cond"
+    },
+    "cleanupFixFailed": {
+      "inputs": {
+        "gather": {
+          "from": "context.prFeedback"
+        }
+      },
+      "next": "failedFix",
+      "onFail": "warn",
+      "step": "finishPrFeedbackPush",
+      "type": "step"
+    },
+    "cleanupNoChange": {
+      "inputs": {
+        "gather": {
+          "from": "context.prFeedback"
+        }
+      },
+      "next": "doneNoChange",
+      "onFail": "warn",
+      "step": "finishPrFeedbackPush",
+      "type": "step"
+    },
+    "cleanupRefused": {
+      "inputs": {
+        "gather": {
+          "from": "context.prFeedback"
+        },
+        "pushedCommitSha": {
+          "from": "context.pushedCommitSha"
+        }
+      },
+      "next": "failedPush",
+      "onFail": "warn",
+      "step": "finishPrFeedbackPush",
+      "type": "step"
+    },
+    "countRetry": {
+      "next": "fetchLogs",
+      "type": "set",
+      "values": {
+        "context.ciRetries": {
+          "expr": "context.ciRetries + 1"
+        }
+      }
+    },
+    "done": {
+      "result": {
+        "origin": {
+          "from": "context.prFeedback.origin"
+        },
+        "prNumber": {
+          "from": "context.prFeedback.prNumber"
+        },
+        "pushedCommitSha": {
+          "from": "context.pushedCommitSha"
+        },
+        "reason": {
+          "from": "context.prFeedback.reason"
+        },
+        "round": {
+          "from": "context.prFeedback.round"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "doneNoChange": {
+      "result": {
+        "origin": {
+          "from": "context.prFeedback.origin"
+        },
+        "prNumber": {
+          "from": "context.prFeedback.prNumber"
+        },
+        "reason": {
+          "from": "context.prFeedback.reason"
+        },
+        "round": {
+          "from": "context.prFeedback.round"
+        }
+      },
+      "status": "SUCCESS",
+      "type": "terminate"
+    },
+    "failed": {
+      "result": {
+        "origin": {
+          "from": "context.prFeedback.origin"
+        },
+        "prNumber": {
+          "from": "context.prFeedback.prNumber"
+        },
+        "reason": {
+          "from": "context.prFeedback.reason"
+        },
+        "round": {
+          "from": "context.prFeedback.round"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "failedFix": {
+      "result": {
+        "origin": {
+          "from": "context.prFeedback.origin"
+        },
+        "prNumber": {
+          "from": "context.prFeedback.prNumber"
+        },
+        "reason": {
+          "from": "context.prFeedback.reason"
+        },
+        "round": {
+          "from": "context.prFeedback.round"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "failedPush": {
+      "result": {
+        "origin": {
+          "from": "context.prFeedback.origin"
+        },
+        "prNumber": {
+          "from": "context.prFeedback.prNumber"
+        },
+        "reason": {
+          "from": "context.prFeedback.reason"
+        },
+        "round": {
+          "from": "context.prFeedback.round"
+        }
+      },
+      "status": "FAILED",
+      "type": "terminate"
+    },
+    "fetchLogs": {
+      "inputs": {
+        "logsUrl": {
+          "from": "nodes.watchCi.output.logsUrl"
+        }
+      },
+      "next": "routeRetry",
+      "onFail": "warn",
+      "step": "fetchCILogs",
+      "type": "step"
+    },
+    "finishPush": {
+      "inputs": {
+        "gather": {
+          "from": "context.prFeedback"
+        },
+        "pushedCommitSha": {
+          "from": "context.pushedCommitSha"
+        }
+      },
+      "next": "done",
+      "onFail": "warn",
+      "step": "finishPrFeedbackPush",
+      "type": "step"
+    },
+    "finishPushFailed": {
+      "inputs": {
+        "gather": {
+          "from": "context.prFeedback"
+        },
+        "pushedCommitSha": {
+          "from": "context.pushedCommitSha"
+        }
+      },
+      "next": "failed",
+      "onFail": "warn",
+      "step": "finishPrFeedbackPush",
+      "type": "step"
+    },
+    "fix": {
+      "config": {
+        "refuseWorkflowChanges": true
+      },
+      "inputs": {
+        "gather": {
+          "from": "context.prFeedback"
+        }
+      },
+      "next": "checkFix",
+      "onFail": "warn",
+      "step": "executePrFeedbackImplementation",
+      "type": "step"
+    },
+    "fixFailed": {
+      "next": "respondFixFailed",
+      "type": "set",
+      "values": {
+        "context.failReason": {
+          "literal": "a fix was attempted but failed before it could be pushed"
+        }
+      }
+    },
+    "gather": {
+      "next": "storeGather",
+      "step": "gatherPrFeedback",
+      "type": "step"
+    },
+    "pushAgain": {
+      "config": {
+        "keepWorkBranch": true
+      },
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "gather": {
+          "from": "context.prFeedback"
+        }
+      },
+      "next": "checkPushedAgain",
+      "onFail": "warn",
+      "step": "pushPrFeedbackToPullRequest",
+      "type": "step"
+    },
+    "pushFix": {
+      "config": {
+        "keepWorkBranch": true
+      },
+      "inputs": {
+        "codeResult": {
+          "from": "context.currentCodeResult"
+        },
+        "gather": {
+          "from": "context.prFeedback"
+        }
+      },
+      "next": "checkPushed",
+      "onFail": "warn",
+      "step": "pushPrFeedbackToPullRequest",
+      "type": "step"
+    },
+    "respondCiFailed": {
+      "inputs": {
+        "ci": {
+          "literal": {
+            "verdict": "failed"
+          }
+        },
+        "gather": {
+          "from": "context.prFeedback"
+        },
+        "previous": {
+          "from": "nodes.respondPushed.output.verdict"
+        },
+        "push": {
+          "from": "nodes.pushFix.output"
+        }
+      },
+      "next": "finishPushFailed",
+      "onFail": "warn",
+      "step": "respondToPrFeedback",
+      "type": "step"
+    },
+    "respondCiOk": {
+      "inputs": {
+        "ci": {
+          "literal": {
+            "verdict": "passed"
+          }
+        },
+        "gather": {
+          "from": "context.prFeedback"
+        },
+        "previous": {
+          "from": "nodes.respondPushed.output.verdict"
+        },
+        "push": {
+          "from": "nodes.pushFix.output"
+        }
+      },
+      "next": "finishPush",
+      "onFail": "warn",
+      "step": "respondToPrFeedback",
+      "type": "step"
+    },
+    "respondCiUnknown": {
+      "inputs": {
+        "ci": {
+          "literal": {
+            "verdict": "unknown"
+          }
+        },
+        "gather": {
+          "from": "context.prFeedback"
+        },
+        "previous": {
+          "from": "nodes.respondPushed.output.verdict"
+        }
+      },
+      "next": "finishPush",
+      "onFail": "warn",
+      "step": "respondToPrFeedback",
+      "type": "step"
+    },
+    "respondFixFailed": {
+      "inputs": {
+        "gather": {
+          "from": "context.prFeedback"
+        },
+        "skipReason": {
+          "from": "context.failReason"
+        }
+      },
+      "next": "cleanupFixFailed",
+      "onFail": "warn",
+      "step": "respondToPrFeedback",
+      "type": "step"
+    },
+    "respondNoChange": {
+      "inputs": {
+        "gather": {
+          "from": "context.prFeedback"
+        }
+      },
+      "next": "cleanupNoChange",
+      "onFail": "warn",
+      "step": "respondToPrFeedback",
+      "type": "step"
+    },
+    "respondPushed": {
+      "inputs": {
+        "diff": {
+          "from": "context.currentCodeResult.diff"
+        },
+        "fixerText": {
+          "from": "context.fixerText"
+        },
+        "gather": {
+          "from": "context.prFeedback"
+        },
+        "push": {
+          "from": "nodes.pushFix.output"
+        }
+      },
+      "next": "watchCi",
+      "onFail": "warn",
+      "step": "respondToPrFeedback",
+      "type": "step"
+    },
+    "respondPushRefused": {
+      "inputs": {
+        "gather": {
+          "from": "context.prFeedback"
+        },
+        "skipReason": {
+          "from": "nodes.pushFix.output.reason"
+        }
+      },
+      "next": "cleanupRefused",
+      "onFail": "warn",
+      "step": "respondToPrFeedback",
+      "type": "step"
+    },
+    "respondPushThrew": {
+      "inputs": {
+        "gather": {
+          "from": "context.prFeedback"
+        },
+        "skipReason": {
+          "literal": "the push could not be completed"
+        }
+      },
+      "next": "cleanupRefused",
+      "onFail": "warn",
+      "step": "respondToPrFeedback",
+      "type": "step"
+    },
+    "respondSkipped": {
+      "inputs": {
+        "gather": {
+          "from": "context.prFeedback"
+        },
+        "skipReason": {
+          "from": "nodes.gather.output.reason"
+        }
+      },
+      "next": "skipped",
+      "onFail": "warn",
+      "step": "respondToPrFeedback",
+      "type": "step"
+    },
+    "retryAgentFix": {
+      "inputs": {
+        "ciLogs": {
+          "from": "nodes.fetchLogs.output"
+        },
+        "gather": {
+          "from": "context.prFeedback"
+        }
+      },
+      "next": "checkRetryAgent",
+      "onFail": "warn",
+      "step": "runAgentPrFeedbackTask",
+      "type": "step"
+    },
+    "retryFix": {
+      "config": {
+        "refuseWorkflowChanges": true,
+        "untrustedCiLogs": true
+      },
+      "inputs": {
+        "failureContext": {
+          "from": "nodes.fetchLogs.output"
+        },
+        "previousCodeResult": {
+          "from": "context.currentCodeResult"
+        }
+      },
+      "next": "checkRetryFix",
+      "onFail": "warn",
+      "step": "executeCIFixImplementation",
+      "type": "step"
+    },
+    "routeDecision": {
+      "expr": "context.prFeedback.decision == 'fix'",
+      "onFalse": "respondSkipped",
+      "onTrue": "setAddressing",
+      "type": "cond"
+    },
+    "routeFixer": {
+      "expr": "context.prFeedback.fixer == 'agent'",
+      "onFalse": "fix",
+      "onTrue": "agentFix",
+      "type": "cond"
+    },
+    "routeRetry": {
+      "expr": "context.prFeedback.fixer == 'agent'",
+      "onFalse": "retryFix",
+      "onTrue": "retryAgentFix",
+      "type": "cond"
+    },
+    "runLint": {
+      "next": "runTypecheck",
+      "onFail": "warn",
+      "step": "runLint",
+      "type": "step"
+    },
+    "runTests": {
+      "next": "checkChanged",
+      "onFail": "warn",
+      "step": "runTests",
+      "type": "step"
+    },
+    "runTypecheck": {
+      "next": "runTests",
+      "onFail": "warn",
+      "step": "runTypecheck",
+      "type": "step"
+    },
+    "setAddressing": {
+      "config": {
+        "status": "ADDRESSING_FEEDBACK"
+      },
+      "next": "routeFixer",
+      "step": "updateDomainState",
+      "type": "step"
+    },
+    "skipped": {
+      "result": {
+        "origin": {
+          "from": "context.prFeedback.origin"
+        },
+        "prNumber": {
+          "from": "context.prFeedback.prNumber"
+        },
+        "reason": {
+          "from": "context.prFeedback.reason"
+        },
+        "round": {
+          "from": "context.prFeedback.round"
+        }
+      },
+      "status": "SKIPPED",
+      "type": "terminate"
+    },
+    "storeAgentFix": {
+      "next": "checkChanged",
+      "type": "set",
+      "values": {
+        "context.currentCodeResult": {
+          "from": "nodes.agentFix.output.codeResult"
+        },
+        "context.fixerText": {
+          "from": "nodes.agentFix.output.text"
+        }
+      }
+    },
+    "storeFix": {
+      "next": "runLint",
+      "type": "set",
+      "values": {
+        "context.currentCodeResult": {
+          "from": "nodes.fix.output"
+        },
+        "context.fixerText": {
+          "from": "nodes.fix.output.implementationNotes"
+        }
+      }
+    },
+    "storeGather": {
+      "next": "routeDecision",
+      "type": "set",
+      "values": {
+        "context.prFeedback": {
+          "from": "nodes.gather.output"
+        }
+      }
+    },
+    "storePush": {
+      "next": "respondPushed",
+      "type": "set",
+      "values": {
+        "context.ciRetries": {
+          "literal": 0
+        },
+        "context.pushedCommitSha": {
+          "from": "nodes.pushFix.output.commitSha"
+        }
+      }
+    },
+    "storePushAgain": {
+      "next": "watchCiAgain",
+      "type": "set",
+      "values": {
+        "context.pushedCommitSha": {
+          "from": "nodes.pushAgain.output.commitSha"
+        }
+      }
+    },
+    "storeRetryAgent": {
+      "next": "pushAgain",
+      "type": "set",
+      "values": {
+        "context.currentCodeResult": {
+          "from": "nodes.retryAgentFix.output.codeResult"
+        },
+        "context.fixerText": {
+          "from": "nodes.retryAgentFix.output.text"
+        }
+      }
+    },
+    "storeRetryFix": {
+      "next": "pushAgain",
+      "type": "set",
+      "values": {
+        "context.currentCodeResult": {
+          "from": "nodes.retryFix.output"
+        },
+        "context.fixerText": {
+          "from": "nodes.retryFix.output.implementationNotes"
+        }
+      }
+    },
+    "watchCi": {
+      "inputs": {
+        "ref": {
+          "from": "context.pushedCommitSha"
+        }
+      },
+      "next": "checkWatchCi",
+      "onError": "continue",
+      "step": "waitForCiByPolling",
+      "type": "step"
+    },
+    "watchCiAgain": {
+      "inputs": {
+        "ref": {
+          "from": "context.pushedCommitSha"
+        }
+      },
+      "next": "checkWatchCiAgain",
+      "onError": "continue",
+      "step": "waitForCiByPolling",
+      "type": "step"
+    }
+  },
+  "schemaVersion": 1
+}

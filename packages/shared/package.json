@@ -124,6 +124,8 @@
     "./lib/repoMembership": "./dist/lib/repoMembership.js",
     "./lib/pullRequest": "./dist/lib/pullRequest.js",
     "./lib/pullRequestOutcomes": "./dist/lib/pullRequestOutcomes.js",
+    "./lib/prFeedback": "./dist/lib/prFeedback.js",
+    "./lib/githubAccountId": "./dist/lib/githubAccountId.js",
     "./lib/keyRotation": "./dist/lib/keyRotation.js",
     "./lib/knowledge": "./dist/lib/knowledge.js",
     "./lib/knowledgeService": "./dist/lib/knowledgeService.js",
