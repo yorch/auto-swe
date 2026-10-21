@@ -83,6 +83,7 @@ vi.mock('@auto-swe/shared/lib/trackerWrite', () => ({
 
 vi.mock('../lib/config/agentSpec.js', () => ({ resolveAgentSpec: vi.fn() }));
 vi.mock('../lib/config/contextLookup.js', () => ({ currentRequestContext: vi.fn() }));
+vi.mock('../lib/activityLog.js', () => ({ logError: vi.fn(), logWarn: vi.fn() }));
 vi.mock('../lib/execUtils.js', () => ({ withHeartbeat: (_name: string, run: unknown) => run }));
 vi.mock('./runAgent.js', () => ({ runAgent: vi.fn() }));
 vi.mock('./templates.js', () => ({
@@ -105,6 +106,7 @@ vi.mock('../lib/workflowIdAllocation.js', () => ({
 
 vi.mock('@auto-swe/shared/db', () => {
   const prisma = {
+    $executeRaw: vi.fn(async () => 1),
     $queryRaw: vi.fn(async () => [{ id: 'locked-row' }]),
     $transaction: vi.fn((arg: unknown) => {
       if (typeof arg === 'function') {
@@ -153,6 +155,7 @@ vi.mock('@auto-swe/shared/db', () => {
         }
       ),
     },
+    configAuditLog: { create: vi.fn(async () => ({})), findFirst: vi.fn(async () => null) },
     connection: {
       findMany: vi.fn(async () => [
         {
@@ -568,6 +571,74 @@ describe('submitPrdWorkRequests child launcher propagation', () => {
     expect(state.start).not.toHaveBeenCalled();
   });
 
+  it('audits the launch of a child once its start succeeded', async () => {
+    vi.mocked(prisma.configAuditLog.create).mockClear();
+    await run();
+
+    expect(prisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(prisma.configAuditLog.create).mock.calls[0]?.[0].data).toMatchObject({
+      action: 'CREATE',
+      actorId: 'user-launcher',
+      afterJson: { source: 'prd-child' },
+      entityId: prdChildWorkRequestId(PRD_REQUEST, 1),
+      entityType: 'WorkRequest',
+    });
+  });
+
+  it('records the launch once when the worker died between the start and the audit', async () => {
+    // Attempt 1 starts the child, then its audit write is lost (the process died).
+    const rows: unknown[] = [];
+    vi.mocked(prisma.configAuditLog.findFirst).mockImplementation(
+      (async () => rows[0] ?? null) as never
+    );
+    vi.mocked(prisma.configAuditLog.create).mockReset();
+    vi.mocked(prisma.configAuditLog.create).mockRejectedValueOnce(new Error('died'));
+    vi.mocked(prisma.configAuditLog.create).mockImplementation((async (args: unknown) => {
+      rows.push(args);
+      return {};
+    }) as never);
+    await run();
+    expect(rows).toHaveLength(0);
+    state.start.mockClear();
+
+    // The retry finds the child under way and adopts it; that branch writes the row.
+    await run();
+    expect(state.start).not.toHaveBeenCalled();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      data: {
+        afterJson: { source: 'prd-child' },
+        entityId: prdChildWorkRequestId(PRD_REQUEST, 1),
+        entityType: 'WorkRequest',
+      },
+    });
+
+    // A further retry finds the row and adds nothing.
+    await run();
+    expect(rows).toHaveLength(1);
+    vi.mocked(prisma.configAuditLog.findFirst).mockImplementation((async () => null) as never);
+  });
+
+  it('audits a child that is already under way when a retry finds it', async () => {
+    await run();
+    state.runs.clear();
+    state.start.mockClear();
+    vi.mocked(prisma.configAuditLog.create).mockClear();
+    class WorkflowExecutionAlreadyStartedError extends Error {}
+    state.start.mockRejectedValueOnce(new WorkflowExecutionAlreadyStartedError('already used'));
+    // The execution is still open, so the reconciliation adopts it.
+    await run();
+
+    expect(vi.mocked(prisma.configAuditLog.create)).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the story submitted when the audit write fails', async () => {
+    vi.mocked(prisma.configAuditLog.create).mockRejectedValueOnce(new Error('db down'));
+    await expect(run()).resolves.toMatchObject({
+      workRequestIds: [prdChildWorkRequestId(PRD_REQUEST, 1)],
+    });
+  });
+
   it('fails loudly when a refused start leaves nothing running', async () => {
     // The id is used yet nothing materialized and nothing is still open: the child died
     // during setup under it. Crediting the story here would report work that never began.
@@ -647,6 +718,43 @@ describe('submitPrdWorkRequests child launcher propagation', () => {
     expect(state.start).not.toHaveBeenCalled();
     expect(vi.mocked(prisma.activeWorkflow.updateMany)).not.toHaveBeenCalled();
     expect(result.workRequestIds).toEqual([workRequestId]);
+  });
+
+  it('records the launch of a child credited by the recheck under the row lock', async () => {
+    // Attempt 1 starts the child and dies before its audit write; the retry finds the launch
+    // closed with no run row, and only the locked recheck sees the run that materialized.
+    const rows: unknown[] = [];
+    vi.mocked(prisma.configAuditLog.findFirst).mockImplementation(
+      (async () => rows[0] ?? null) as never
+    );
+    vi.mocked(prisma.configAuditLog.create).mockReset();
+    vi.mocked(prisma.configAuditLog.create).mockRejectedValueOnce(new Error('died'));
+    vi.mocked(prisma.configAuditLog.create).mockImplementation((async (args: unknown) => {
+      rows.push(args);
+      return {};
+    }) as never);
+    const workRequestId = prdChildWorkRequestId(PRD_REQUEST, 1);
+    await run();
+    expect(rows).toHaveLength(0);
+    const launchId = state.runs.get(workRequestId)?.workflowId ?? '';
+    state.runs.clear();
+    state.executions.clear();
+    state.closed.add(launchId);
+    state.start.mockClear();
+    vi.mocked(prisma.workflowRun.findFirst).mockResolvedValueOnce(null);
+    vi.mocked(prisma.workflowRun.findFirst).mockImplementationOnce((async () => {
+      state.runs.set(workRequestId, { workflowId: launchId });
+      return { id: 'materialized-late' };
+    }) as never);
+
+    await run();
+
+    expect(state.start).not.toHaveBeenCalled();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      data: { afterJson: { source: 'prd-child' }, entityId: workRequestId },
+    });
+    vi.mocked(prisma.configAuditLog.findFirst).mockImplementation((async () => null) as never);
   });
 
   it('adopts the launch a concurrent attempt recorded instead of its own stale allocation', async () => {

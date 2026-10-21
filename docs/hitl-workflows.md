@@ -151,7 +151,10 @@ Temporal timer fires
   └─ workflow routes to onTimeout
 ```
 
-The DB update is authoritative — even if the Temporal signal fails (e.g. a transient network error), the step is recorded as resolved and the workflow proceeds on its next heartbeat.
+The response is recorded before the signal is sent, and what a failed signal does depends on why it failed:
+
+- A **transient** failure is any signal error other than "the workflow does not exist". It rolls the step back to `PENDING`, because the workflow only unblocks through the signal and a step recorded as resolved would vanish from the inbox while the run stays stuck. The gateway answers `503 TEMPORAL_UNAVAILABLE` only when it has not connected to Temporal yet; every other signal failure, including Temporal being unreachable or timing out after the connection was made, answers `502 SIGNAL_FAILED`. Either way the human can retry. If the rollback itself fails, the step stays `RESOLVED` without a delivered signal and the error is logged.
+- A **terminal** failure (the execution never started, has completed, or was terminated) keeps the step `RESOLVED`: no retry could land the signal, and rolling back would leave a step in the inbox that can never be cleared. The response succeeds with `signalSent: false`.
 
 ---
 
@@ -239,9 +242,9 @@ approve: {
 
 When the `timeout` duration elapses:
 
-- The `WorkflowHumanStep` row is **not** automatically updated to `TIMED_OUT`. The DB row stays `PENDING` until manually cancelled or until the workflow terminates.
+- The interpreter marks the `WorkflowHumanStep` row `TIMED_OUT` and sets `resolvedAt` (`resolveHumanStep` in `worker/src/activities/state.ts`), only while the row is still `PENDING`. The write is best-effort: if it fails, the workflow still routes on, and the row stays `PENDING` until run finalization cancels it.
 - The workflow routes to `onTimeout` and continues normally.
-- If a human then tries to respond to the timed-out step, the gateway returns `409 RUN_NOT_RUNNING` (if the run finished) or `409 ALREADY_RESOLVED` (if the step was cancelled on workflow exit).
+- A response to a step that is no longer `PENDING` is refused with `409 ALREADY_RESOLVED`, which covers `TIMED_OUT`, `CANCELLED` and `RESOLVED`. A step that is still `PENDING` on a run that is no longer running gets `409 RUN_NOT_RUNNING`.
 
 ---
 

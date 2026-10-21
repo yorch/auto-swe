@@ -30,6 +30,7 @@ import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { withHeartbeat } from '../lib/execUtils.js';
+import { recordWorkerLaunchAudit } from '../lib/launchAudit.js';
 import { currentRunLauncherId } from '../lib/runLauncher.js';
 import { getTemporalClient } from '../lib/temporalClient.js';
 import { allocateTicketWorkflowId } from '../lib/workflowIdAllocation.js';
@@ -679,6 +680,17 @@ export async function submitPrdWorkRequests(
   // the per-user credential setting. Read from this execution's run row, never
   // the PRD's stored request, and keep null when the parent has no launcher.
   const launchedById = await currentRunLauncherId();
+  // The launch row of a child the platform has started. Called wherever a child is known to be
+  // started, including the branches that adopt a launch an earlier attempt made: that attempt may
+  // have died between the start and this write, and the helper writes once per request.
+  const auditChildLaunch = (workRequestId: string, temporalWorkflowId: string | null) =>
+    recordWorkerLaunchAudit({
+      actorId: launchedById ?? null,
+      details: { temporalWorkflowId, workRequestId },
+      entityId: workRequestId,
+      entityType: 'WorkRequest',
+      source: 'prd-child',
+    });
 
   const repoById = new Map(repos.map((r) => [r.id, r]));
 
@@ -770,6 +782,7 @@ export async function submitPrdWorkRequests(
           // Its run materialized, so this story is submitted. Reporting it here is
           // also what stops the allocator's `-rN` from re-running a child that has
           // already finished.
+          await auditChildLaunch(workRequestId, persisted.ledgerWorkflowId ?? null);
           workRequestIds.push(workRequestId);
           continue;
         }
@@ -785,6 +798,7 @@ export async function submitPrdWorkRequests(
         const state = await recordedLaunchState(recordedId);
         if (state === 'open') {
           // Accepted and still running: its `WorkflowRun` row simply has not landed yet.
+          await auditChildLaunch(workRequestId, recordedId);
           workRequestIds.push(workRequestId);
           continue;
         }
@@ -816,6 +830,7 @@ export async function submitPrdWorkRequests(
             return false;
           });
           if (materialized) {
+            await auditChildLaunch(workRequestId, recordedId);
             workRequestIds.push(workRequestId);
             continue;
           }
@@ -939,6 +954,7 @@ export async function submitPrdWorkRequests(
           }
           assertSamePrdChild(workRequestId, winner.requestPayload, requestPayload);
           if (winner.launched) {
+            await auditChildLaunch(workRequestId, winner.ledgerWorkflowId ?? null);
             workRequestIds.push(workRequestId);
             continue;
           }
@@ -985,6 +1001,7 @@ export async function submitPrdWorkRequests(
         // the retirement path above, which retires the dead launch and relaunches.
         const reconciled = await persistedPrdChild(workRequestId);
         if (reconciled?.launched || (await recordedLaunchState(launchId)) === 'open') {
+          await auditChildLaunch(workRequestId, launchId);
           workRequestIds.push(workRequestId);
           continue;
         }
@@ -994,6 +1011,7 @@ export async function submitPrdWorkRequests(
         );
       }
 
+      await auditChildLaunch(workRequestId, launchId);
       workRequestIds.push(workRequestId);
     }
   }

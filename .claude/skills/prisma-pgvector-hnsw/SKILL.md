@@ -39,6 +39,15 @@ schema.prisma") allows through. Do not extrapolate from that to a general promis
 treatment of a construct it cannot model is an implementation detail of the version installed, so
 read whatever it generates rather than assuming which constructs are safe.
 
+Run the same check locally with `yarn migrations:check` (`scripts/check-migrations.mjs`). It starts a
+throwaway `pgvector/pgvector:pg18` container on an ephemeral loopback port with no volume, applies
+every migration with `prisma migrate deploy`, runs the same `prisma migrate diff` and the same
+two-statement allowance, and removes the container on every exit path (a container left by a killed
+run is swept at the next start). Exit `0` means the migrations match, `1` drift or a migration that
+does not apply (the unexpected SQL is printed), `2` an environment problem such as Docker not
+running. It does not run the CI job's `db:generate`, seed or idempotent re-apply. When you add a
+hand-written statement to the allowance, add it to `EXPECTED` in that script as well as to `ci.yml`.
+
 ## Rules
 
 1. **Never run `prisma migrate dev` against production.** Use `prisma migrate deploy`, which applies

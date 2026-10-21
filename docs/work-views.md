@@ -263,8 +263,8 @@ http(s) address.
   deleted between two batches is the cursor for the next, and the file ends there early, with no
   error and `X-Export-Truncated` unchanged.
 - The outcomes read and its export filter on `openedAt` alone and no index leads with it (see the
-  `(status, openedAt)` note above); the analytics approval-latency read filters
-  `workflow_human_steps` on `requested_at`, which has no index either, so both scan on a large table.
+  `(status, openedAt)` note above), so on a large table they scan. The analytics
+  approval-latency read filters `workflow_human_steps` on `requested_at`, which is indexed.
 - The read filters on `openedAt` alone, and the only index that leads with a time column is
   `(status, openedAt)`, so on a large table it scans rather than seeks.
 - `scope` defaults to `TEAM` here and to `MINE` on the list, so the same caller sees different

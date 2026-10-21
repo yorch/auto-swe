@@ -258,6 +258,89 @@ function BreakdownTable({ dimension, data }: { dimension: Dimension; data: Platf
   );
 }
 
+type UserRow = PlatformUsage['byUser'][number];
+
+/**
+ * The launchers who spent most. The gateway returns only the top ten named users, so these rows
+ * plus the unattributed line do not add up to the headline spend.
+ */
+function UsersCard({ data }: { data: PlatformUsage }) {
+  const { byUser, byUserUnattributed } = data;
+  const hasUnattributed = byUserUnattributed.calls > 0 || byUserUnattributed.costUsd > 0;
+  return (
+    <Card className="overflow-hidden p-0">
+      <CardHeader className="px-4 pt-5">
+        <CardTitle>Top 10 users</CardTitle>
+        <span className="text-xs text-paper-500">By the launcher of the run</span>
+      </CardHeader>
+      <DataTable
+        className="max-sm:px-4"
+        columns={[
+          {
+            cell: (r: UserRow) =>
+              r.outsideScope ? (
+                <span className="text-sm text-paper-300">Outside this scope</span>
+              ) : (
+                <span className="flex flex-col">
+                  <span className="text-sm">{r.name ?? 'Unknown user'}</span>
+                  {r.email && <span className="text-xs text-paper-500">{r.email}</span>}
+                </span>
+              ),
+            header: 'User',
+            id: 'user',
+            primary: true,
+          },
+          {
+            align: 'right',
+            cell: (r: UserRow) => (
+              <span className="text-sm text-paper-300 tabular-nums">{formatCount(r.calls)}</span>
+            ),
+            header: 'Calls',
+            id: 'calls',
+          },
+          {
+            align: 'right',
+            cell: (r: UserRow) => (
+              <span className="text-sm text-paper-300 tabular-nums">
+                {formatTokens(r.inputTokens)} / {formatTokens(r.outputTokens)}
+              </span>
+            ),
+            header: 'Tokens in / out',
+            id: 'tokens',
+          },
+          {
+            align: 'right',
+            cell: (r: UserRow) => (
+              <span className="text-sm font-medium text-paper-100 tabular-nums">
+                {formatTotalCost(r.costUsd)}
+              </span>
+            ),
+            header: 'Cost',
+            id: 'cost',
+          },
+        ]}
+        density="compact"
+        empty={
+          <EmptyState
+            hint="Spend is attributed to the user who launched the run."
+            icon="filter"
+            title="No spend attributed to a user in this window"
+          />
+        }
+        getRowId={(r: UserRow) => r.userId ?? 'outside-scope'}
+        rows={byUser}
+      />
+      {hasUnattributed && (
+        <p className="border-t border-ink-600 px-4 py-2 text-xs text-paper-500">
+          Not attributed to a user: {formatCount(byUserUnattributed.calls)} calls,{' '}
+          {formatTotalCost(byUserUnattributed.costUsd)}. These are webhook, scheduled and other
+          launches with no launcher, and calls recorded before attribution.
+        </p>
+      )}
+    </Card>
+  );
+}
+
 function UsageWorkspace() {
   const { params, update } = useUrlFilters();
   const range = parseDateRange(params);
@@ -431,6 +514,8 @@ function UsageWorkspace() {
                     </CardHeader>
                     <BreakdownTable data={data} dimension={dimension} />
                   </Card>
+
+                  <UsersCard data={data} />
 
                   <Card className="overflow-hidden p-0">
                     <CardHeader className="px-4 pt-5">

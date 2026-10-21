@@ -1092,6 +1092,11 @@ LEAD or ORG_ADMIN sees names only, and only for launchers who belong to the team
 report is scoped to; every other launcher is folded into one unnamed `outsideScope` row so a scoped
 report does not reveal who else spends elsewhere.
 
+`/admin/usage` renders it as a "Top 10 users" table: the name, and the email only when the API sent
+one, with "Unknown user" for a launcher without a name, an "Outside this scope" row, and a line for
+the unattributed spend. Only the top ten are named, so the rows and that line do not add up to the
+headline spend.
+
 Workflow analytics read the same whole-UTC-day windows. `GET /api/v1/workflow-templates/analytics`
 and `GET /api/v1/workflow-templates/:id/analytics` turn `window=<days>` into the last that many UTC
 days, closed at the end of today (`resolveWindow()` in `gateway/src/lib/dateWindow.ts`), so a preset
@@ -1265,9 +1270,6 @@ Current constraints of the system as built. Deliberate product boundaries are in
   figures do not separate people from automation. On a multi-approver step the wait ends when the
   last needed approval arrives. The steps are grouped by the template of their run and by the
   window their request fell in, not by who was asked.
-- **The approval-latency read scans.** It filters `workflow_human_steps` on `requested_at`, which
-  has no index (only `run_id`, `(run_id, node_id)`, `status` and `resolved_by` are indexed), so on a
-  large table it scans before the 10,000-row cap applies.
 - **Per-agent-version comparison is not provided.** `WorkflowRun.agentVersions` is a snapshot of
   the GLOBAL active versions taken at run start, not a record of what ran: a TEAM, ORGANIZATION,
   CHANNEL or template override still resolves its own latest version, and a run that never used an

@@ -23,6 +23,27 @@ when the system acted, such as a webhook or a sweep), `beforeJson`, `afterJson`,
   `temporalWorkflowId` and `workRequestId`. The actor is the launching user, or null for a system
   launch. A launch that is refused, found to be a duplicate, or compensated after a failed start
   leaves no row. A failed audit write is logged and never fails the launch.
+- **Worker-started launches.** Three kinds of run start from worker code, where no gateway request
+  exists, and write their `CREATE` row there, after the start, with `source` in `afterJson` and no
+  `context` (see below). An epic child (`source: "epic-child"`) and a channel task
+  (`source: "channel-task"`, a run under a `chantask-` workflow id, deferred or not) start from
+  workflow code, so the row is written by `createWorkflowRun`, their first activity, once the run
+  row exists. Its entity is the `WorkflowRun` (`entityId` is the run id), not the `WorkRequest`:
+  an epic's children share the work request of the epic, which already has the launch row the
+  gateway wrote. `afterJson` also carries `templateId`, `temporalWorkflowId`, `workRequestId` and,
+  for a child, `parentWorkflowId`. A PRD child (`source: "prd-child"`) starts inside an activity;
+  its row is written under the child's `WorkRequest`, after the start succeeds and also on the
+  retry branches that find the child already started, because an attempt can die between the start
+  and the write. The actor is the launcher the run carries (`launchedById`); for a repo-less channel
+  task, which has none, it is the person recorded as having asked for the work. That fallback names
+  the actor of the row only and is never a credential key. At most one row exists per entity and
+  source, so the PRD-child row records the first accepted launch for the work request: if that
+  child dies in setup and a retry relaunches it under a new workflow id, the row still names the
+  first id. The check and the insert run in one transaction under an advisory lock, so overlapping
+  attempts cannot both write. A failed write is logged without failing the launch.
+- **Scheduled fires** write no audit row. A fire that starts is recorded in the schedule's decision
+  ledger ([automations.md](./automations.md)), once per workflow id; a refused fire writes a
+  `ScheduledWorkRequest` `UPDATE` row, at most one per reason per hour.
 - **Eval runs.** `POST /platform/evals/runs` writes one `CREATE` row of entity type `EvalRun` after
   the workflow has started, with `afterJson` `{ source: "eval-run", baselineRef, candidateRef,
   datasetId, temporalWorkflowId }`. A refused or failed start leaves no row, and a failed audit write
@@ -88,12 +109,15 @@ without it. The same sweep prunes user-activity events ([user-activity.md](./use
   outside a gateway request. The retention sweep's summary row is one of them. The MCP consent audit
   builds its context from the request itself, because it runs in an `onResponse` hook where the async
   store is unreliable, and names the path `session`.
-- A launch is recorded under `WorkRequest` (or `ActiveWorkflow`), not `WorkflowRun`: the run row is
-  created later by the worker, so its id does not exist when the launch is audited. A launch with
-  neither id writes no launch row.
-- Runs that do not start through `launchTrackedWorkflow` or the eval route get no launch row:
-  scheduled fires, epic and PRD children started by the worker, and channel-assistant composite runs.
-  The worker has no request, so a start there would need its own system-actor helper.
+- A launch through the gateway is recorded under `WorkRequest` (or `ActiveWorkflow`), not
+  `WorkflowRun`: the run row is created later by the worker, so its id does not exist when the launch
+  is audited. A gateway launch with neither id writes no launch row. Launches the worker writes are
+  keyed on the `WorkflowRun` (epic children and channel tasks) or the `WorkRequest` (PRD children).
+- A worker-started launch row has no `context`, because the worker has no request to describe;
+  its door is `afterJson.source`. A started scheduled fire is in the decision ledger, not here.
+- A worker-written launch row whose write fails is logged and not retried, so that launch has no row.
+- Channel turns (the assistant answering in a channel, with no task) are conversation runs, not
+  launches, and write no launch row.
 - `ip` is `request.ip`. With `TRUST_PROXY` enabled and a gateway that clients can reach directly, a
   client can choose the address that is logged.
 - Every session creation writes a `sign_in` row, including those made by `revokeOtherSessions` and
