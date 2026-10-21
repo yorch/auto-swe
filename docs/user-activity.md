@@ -27,7 +27,7 @@ a filter or a run id never reaches the table.
 
 A route opts in with `config: { activity: 'read' | 'export' }` on its definition, so every mount of
 it is covered, the deprecated `/api/v1/admin` aliases included. The tagged routes are the audit-log
-list and export and a run's detail. The activity views are not tagged, so reading this feature's own
+list and export, a run's detail and the pull-request outcomes export. The activity views are not tagged, so reading this feature's own
 pages records nothing, and neither is a run's traces or a transcript read (a transcript access
 already writes a fuller row to the transcript access log, [transcripts.md](./transcripts.md)).
 `activityEvents.test.ts` enumerates every route of every mount and fails unless the tagged set equals
@@ -122,8 +122,8 @@ days to clear.
 
 - A denial with no identified actor is a metric only, so the table cannot answer who tried it.
 - Reads on routes that are not tagged are not recorded. Tagging a route is a code change.
-- The BI exports and other bulk reads are recorded only once their route is tagged
-  `config: { activity }`.
+- Only the exports named above are recorded; any other bulk read is recorded only once its route is
+  tagged `config: { activity }`.
 - Dedupe means repeated reads collapse: the table shows that someone read a route in a ten-minute
   window, not how many times.
 - Page views are opt-in, and a browser that sends Do Not Track is invisible. The last few seconds of

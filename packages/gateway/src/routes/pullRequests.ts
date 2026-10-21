@@ -313,6 +313,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/outcomes/export',
     {
+      config: { activity: 'export' },
       onRequest: engineerOnly,
       schema: { querystring: OutcomesExportQuery },
     },
