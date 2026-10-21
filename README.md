@@ -268,7 +268,7 @@ See [AGENTS.md](./AGENTS.md) for full conventions, critical implementation notes
 
 | Decision                      | Rationale                                                                       |
 | ----------------------------- | ------------------------------------------------------------------------------- |
-| Docker-in-Docker (not K8s)    | No cluster required; same isolation, zero extra infra                           |
+| Docker, or Kubernetes pods    | Docker needs no cluster; `WORKSPACE_BACKEND=kubernetes` runs agent workspaces as pods |
 | Temporal.io for orchestration | Durable execution — workflows survive crashes and wait days for human signals   |
 | Human-governed merges         | Nothing the platform ships merges a PR; a human always merges                   |
 | PAT or GitHub App             | PAT for simplicity; GitHub App (short-lived installation tokens) for production — see [`docs/github-app-setup.md`](./docs/github-app-setup.md) |

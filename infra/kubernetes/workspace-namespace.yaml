@@ -1,0 +1,113 @@
+# Reference manifest for the namespace Kubernetes workspace pods run in
+# (WORKSPACE_BACKEND=kubernetes). Apply it, then adjust the three marked values:
+# the worker's namespace and labels (so workspaces can reach its proxies), the
+# proxy ports, and the quota. See docs/deployment.md.
+#
+# The worker refuses to start unless a probe pod proves the NetworkPolicy below is
+# enforced, so the cluster's CNI must implement NetworkPolicy (GKE Dataplane V2,
+# EKS VPC CNI with network policy enabled, AKS with Azure NPM/Cilium/Calico).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: auto-swe-workspaces
+  labels:
+    # Workspace pods are built to pass `restricted`; the namespace enforces it.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+# Default-deny, then allow exactly: DNS, the worker's proxies, and the public internet
+# minus every private and link-local range. The ipBlock exceptions are what keep a
+# workspace off the cloud metadata endpoint (169.254.169.254, the ECS endpoint 169.254.170.2
+# and the IPv6 IMDS address) and off cluster-internal addresses. Workspaces are reached
+# through the API server (kubectl exec), so no ingress is allowed at all.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: workspace-egress
+  namespace: auto-swe-workspaces
+spec:
+  podSelector:
+    matchLabels:
+      asw/role: workspace
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # ADJUST: the worker pods that serve the model and registry proxies.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auto-swe
+          podSelector:
+            matchLabels:
+              app: worker
+      ports:
+        - { protocol: TCP, port: 8790 } # HARNESS_MODEL_PROXY_PORT
+        - { protocol: TCP, port: 8791 } # REGISTRY_PROXY_PORT
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - fc00::/7
+              - fe80::/10
+---
+# ADJUST: caps what a janitor failure or a burst of runs can hold.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: workspaces
+  namespace: auto-swe-workspaces
+spec:
+  hard:
+    pods: "50"
+    requests.cpu: "100"
+    requests.memory: 200Gi
+    requests.ephemeral-storage: 500Gi
+---
+# What the worker needs in this namespace and nothing else: pods, and exec into them.
+# No secrets, no cluster-wide verbs. `pods/exec` is a shell in every workspace, so keep
+# anything else out of this namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: auto-swe-worker
+  namespace: auto-swe-workspaces
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, get, list, watch, delete]
+  - apiGroups: [""]
+    resources: [pods/exec]
+    verbs: [create]
+---
+# ADJUST: the ServiceAccount the worker pod runs as.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: auto-swe-worker
+  namespace: auto-swe-workspaces
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: auto-swe-worker
+subjects:
+  - kind: ServiceAccount
+    name: auto-swe-worker
+    namespace: auto-swe

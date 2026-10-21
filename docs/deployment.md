@@ -226,6 +226,15 @@ WEB_URL=https://app.example.com      # base URL for the "Open approvals" link (t
 # WORKSPACE_DNS=1.1.1.1,8.8.8.8                    # resolvers every workspace uses; set an internal one when the repository
 #                                                  # host (a split-horizon GHE name) resolves to an unreachable address on public DNS.
 #                                                  # Agent-run code can then resolve every name that resolver knows
+# WORKSPACE_BACKEND=docker                         # `kubernetes` runs agent workspaces as pods (see Kubernetes above); anything else is Docker
+# K8S_WORKSPACE_NAMESPACE=auto-swe-workspaces      # the one namespace workspace pods live in
+# K8S_WORKSPACE_RUN_AS_UID=1000                    # uid/gid of the workspace process; must be non-root and match the image
+# K8S_WORKSPACE_RUNTIME_CLASS=                     # optional RuntimeClass (gVisor/Kata); empty = the cluster default
+# K8S_WORKSPACE_STORAGE_LIMIT=10Gi                 # ephemeral-storage request/limit and the size of the /workspace volume
+# K8S_WORKSPACE_MAX_LIFETIME_SEC=86400             # hard pod lifetime the kubelet enforces (activeDeadlineSeconds)
+# K8S_WORKSPACE_IMAGE_PULL_SECRETS=                # comma-separated Secret names in the workspace namespace
+# K8S_REQUIRE_NETWORK_POLICY=true                  # only the literal `false` skips the start-up NetworkPolicy check
+# K8S_KUBECTL=kubectl                              # the kubectl binary the worker runs
 ```
 
 > **Magic-link transport gotcha.** `nodemailer.sendMail()` resolves on SMTP `2xx` (relay accepted) — *not* delivery. Always test end-to-end against a real inbox after configuring SMTP/Resend, and check the audit log for `accepted` vs `rejected` arrays.
@@ -487,7 +496,22 @@ https://api.example.com   →  gateway-*:8080
 https://temporal.example.com (optional, internal only)  →  temporal-1:8233
 ```
 
-For Kubernetes, the same images work — there's no shipped Helm chart yet. The worker is the only stateful pod (Docker socket); run it as a single-replica StatefulSet on a dedicated node pool with the socket mounted via `hostPath`. Everything else is a stock Deployment.
+### Kubernetes
+
+The same images run on Kubernetes; there is no shipped Helm chart. There are two ways to run the worker:
+
+- **Docker backend (default).** The worker is the only stateful pod (Docker socket): run it as a single-replica StatefulSet on a dedicated node pool with the socket mounted via `hostPath`. Everything else is a stock Deployment.
+- **Kubernetes backend** (`WORKSPACE_BACKEND=kubernetes`). Agent workspaces are pods in their own namespace, so the worker needs no Docker socket and no `docker-socket-proxy`. Shell steps, container steps and sidecars are not available on this backend (they fail with `WORKSPACE_BACKEND_UNSUPPORTED`), and the worker is a single replica (its proxies keep per-workspace state in memory). See [`architecture.md`](./architecture.md#kubernetes-backend) and its Limitations.
+
+To run the Kubernetes backend:
+
+1. Apply `infra/kubernetes/workspace-namespace.yaml` after adjusting the marked values: the namespace enforces PodSecurity `restricted`, a NetworkPolicy denies all ingress and allows egress only to DNS, the worker's proxy ports and the public internet (never the cloud metadata endpoint or a private range), and a Role/RoleBinding gives the worker's ServiceAccount `create`/`get`/`list`/`watch`/`delete` on pods and `create` on `pods/exec` in that namespace only.
+2. Run the cluster on a CNI that enforces NetworkPolicy (GKE Dataplane V2; EKS VPC CNI with network policy enabled; AKS with Azure NPM, Cilium or Calico). The worker checks this at start: it launches a probe pod and **refuses to start** if the pod can reach `169.254.169.254` or the cluster API address.
+3. Set `HARNESS_MODEL_PROXY_URL` and `REGISTRY_PROXY_URL` to a Service name pods can resolve (the `{hostname}` placeholder is the worker pod's name, which other pods cannot resolve; the default Docker host alias does not exist in a cluster), and the matching `*_BIND` to `0.0.0.0`.
+4. Set a node-pool `podPidsLimit`: Kubernetes has no per-pod PID cap, so `WORKSPACE_PIDS_LIMIT` is not applied.
+5. Make sure the executor image runs as a non-root user. The curated images use uid 1000; set `K8S_WORKSPACE_RUN_AS_UID` if yours differs.
+
+The environment variables are listed below. Unset ones take the defaults shown.
 
 ---
 
