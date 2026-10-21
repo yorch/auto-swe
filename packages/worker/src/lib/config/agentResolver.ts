@@ -28,6 +28,8 @@ import type { ResolveCtx, ResolvedModelConfig, ResolvedSkill } from './types.js'
  * override → all candidate tools).
  */
 export interface ResolvedAgent {
+  /** The resolved `Agent` row's id: version numbers count per lineage, so a version is only meaningful beside it. */
+  id: string;
   key: string;
   version: number;
   isVerified: boolean;
@@ -521,6 +523,7 @@ async function resolveAgentUncached(key: string, ctx?: ResolveCtx): Promise<Reso
   const { model, runtime } = await resolveModelForAgent(agent, ctx);
 
   return {
+    id: agent.id,
     isVerified: agent.isVerified,
     key,
     mcpConnectionId: agent.mcpConnectionId ?? null,

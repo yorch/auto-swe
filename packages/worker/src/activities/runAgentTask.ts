@@ -29,7 +29,7 @@ import { boundToolKeys } from '../lib/boundToolKeys.js';
 import { parseAgentRef } from '../lib/config/agentRef.js';
 import { type ResolvedAgent, resolveAgent } from '../lib/config/agentResolver.js';
 import { resolveAgentRuntime } from '../lib/config/agentRuntime.js';
-import { type AgentTools, resolveAgentSpec } from '../lib/config/agentSpec.js';
+import { type AgentTools, composeAgentPrompt, resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
@@ -630,10 +630,8 @@ async function runOnHarness(
   harness: BoundHarness
 ): Promise<AgentLoopResult> {
   const { agentCtx, key, resolved, tracer } = input;
-  const spec = await resolveAgentSpec(
-    { agentKey: key as ModelBackedAgentKey, basePrompt: '' },
-    agentCtx
-  );
+  // Prompt and skills come from `resolved`, the resolution the harness is bound to.
+  const systemPrompt = composeAgentPrompt(resolved);
   const runtime = harness.build({
     deadline: input.deadline,
     exactToolKeys: grantedWorkspaceToolIds(resolved.toolKeys),
@@ -649,10 +647,12 @@ async function runOnHarness(
     throwIfActivityCancelled();
     await assertBudgetAvailable(`agent.${key}`);
     const turn = await runImplementerTurn({
+      agent: { id: resolved.id, version: resolved.version },
+      boundModelSpec: resolved.model.spec,
       context: { agentRun: true },
       role: key,
       runtime,
-      system: `${spec.systemPrompt}\n\n${WORKSPACE_PREAMBLE}`.trim(),
+      system: `${systemPrompt}\n\n${WORKSPACE_PREAMBLE}`.trim(),
       tracer,
       usageEvent: 'llm.agent_run',
       user: input.prompt,

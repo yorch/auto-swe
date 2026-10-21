@@ -235,7 +235,7 @@ leave the harness's own default, since the harness chooses its thinking configur
 
 Returns `{ agent: Agent, mastra: Mastra, promptSuffix: string, closeMcp?: () => Promise<void> }`. `options.mcpServerRef` opts in to MCP tool loading (see 3.5); `closeMcp` is present whenever an MCP server was contacted (including a connect that returned zero tools) and **must** be called in a `finally` block.
 
-Activities don't call the factory directly — they use **`buildImplementerTurnRunner({ workspace, tracer, ctx, agentKey? })`** (`agents/implementerRuntimeSelect.ts`). It resolves the agent's runtime first (`resolveAgentRuntime`: a per-agent pin, else the Agent version's own `runtime`, else the run-pinned `workspace.implementerRuntime`; see [§3.7](#37-runtimes-mastra-and-the-harnesses)) and builds only what that runtime uses. For the Mastra loop it calls `buildImplementerForActivity(workspace, tracer, ctx, agentKey?)` (`agents/implementer.ts`), which loads `toolKeys` + skills at the current scope (`resolveImplementerConfig`), resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent; for a harness it takes the one the harness registry holds for that runtime ([§3.7](#37-runtimes-mastra-and-the-harnesses)), loads the same `toolKeys`, skills and step budget, binds the Agent's model and credential through that harness, hands it the same MCP connection to relay from the worker, and never binds a Mastra model. It returns `{ kind, kindSource, runtime, promptSuffix, systemPrompt(base), maxSteps, skills, toolKeys, close }`, where `kind` is the runtime it built and `kindSource` what chose it; `close` releases the MCP client (or the harness's relay) and **must** be called in a `finally` block. `agentKey` defaults to `implementer`; the fix sessions pass `ciFixer` / `reviewFixer` / `gateFixer`, `resolveMergeConflict` passes `mergeConflictResolver`, and the eval harness passes the ref's key (and steers the runtime only through pins, for a side with a runtime override — [evals.md §3](./evals.md#comparing-runtimes)), so each runs on its own row — tools bounded by the implementer's (`effectivePersonaToolKeys`) — and binds the implementer's model through `inheritsModelFrom`. `executeImplementation`, `implementerSession`, `resolveMergeConflict` and the eval harness all go through it, once per session rather than per turn, so the load + MCP-binding lifecycle lives in one place and a resumable runtime keeps its session across iterations and attempts.
+Activities don't call the factory directly — they use **`buildImplementerTurnRunner({ workspace, tracer, ctx, agentKey? })`** (`agents/implementerRuntimeSelect.ts`). It resolves the agent's runtime first (`resolveAgentRuntime`: a per-agent pin, else the Agent version's own `runtime`, else the run-pinned `workspace.implementerRuntime`; see [§3.7](#37-runtimes-mastra-and-the-harnesses)) and builds only what that runtime uses. For the Mastra loop it calls `buildImplementerForActivity(workspace, tracer, ctx, agentKey?)` (`agents/implementer.ts`), which loads `toolKeys` + skills at the current scope (`resolveImplementerConfig`), resolves the Agent's optional MCP server via `resolveAgentMcpUrl`, and builds the agent; for a harness it takes the one the harness registry holds for that runtime ([§3.7](#37-runtimes-mastra-and-the-harnesses)), loads the same `toolKeys`, skills and step budget, binds the Agent's model and credential through that harness, hands it the same MCP connection to relay from the worker, and never binds a Mastra model. It returns `{ agent, kind, kindSource, runtime, promptSuffix, systemPrompt(base), maxSteps, skills, toolKeys, close }`, where `kind` is the runtime it built and `kindSource` what chose it; `close` releases the MCP client (or the harness's relay) and **must** be called in a `finally` block. `agentKey` defaults to `implementer`; the fix sessions pass `ciFixer` / `reviewFixer` / `gateFixer`, `resolveMergeConflict` passes `mergeConflictResolver`, and the eval harness passes the ref's key (and steers the runtime only through pins, for a side with a runtime override — [evals.md §3](./evals.md#comparing-runtimes)), so each runs on its own row — tools bounded by the implementer's (`effectivePersonaToolKeys`) — and binds the implementer's model through `inheritsModelFrom`. `executeImplementation`, `implementerSession`, `resolveMergeConflict` and the eval harness all go through it, once per session rather than per turn, so the load + MCP-binding lifecycle lives in one place and a resumable runtime keeps its session across iterations and attempts.
 
 **Running a turn:** activities do not call `agent.generate` themselves. `runImplementerTurn` (`agents/implementerRuntime.ts`) runs one turn through an `ImplementerRuntime` — the Mastra tool loop (`mastraRuntime(agent, maxSteps)`) or the Claude Code harness, chosen per agent ([§3.7](#37-runtimes-mastra-and-the-harnesses)) — then accrues usage through `recordLlmUsage`, runs the advisory output scan, and records the LLM call on the tracer. `executeImplementation`, `implementerSession`, the eval harness, and the merge-conflict resolver all take this path, so a turn is metered and traced identically wherever it runs. The runtime only drives the loop and reports text, tool-call count, and usage; the caller still calls `assertBudgetAvailable` first and owns any failure row.
 
@@ -1336,6 +1336,7 @@ tracer.addToolCall({
 
 // 3. Record LLM responses — always include inputJson with the prompt sent to the model
 tracer.addLlmResponse({
+  agent: { id, version },     // the resolved Agent row, or null where none ran (§8.6)
   role: 'SECURITY',           // reviewer type or agent role
   inputJson: { systemPrompt, userMessage },   // capture what was sent
   outputJson: verdictObject,
@@ -1401,6 +1402,7 @@ content) to keep trace sizes manageable.
 | `nodeId` | Activity type (e.g. `executeImplementation`) — not a workflow node id |
 | `specNodeId` / `recordingId` / `stepAttempt` | The workflow-spec node the activity ran for, its recording id (branch-prefixed inside a fan-out: `fan[0]/impl`, equal to `WorkflowStep.nodeId`), and the interpreter's attempt at it. Null when the interpreter did not dispatch the activity, and on rows older than the columns — see §8.4 |
 | `agentKey` | Which agent key (identity) produced this trace |
+| `agentId` / `agentVersion` | On `llm_response` rows, the resolved `Agent` row and its `version`. `agentId` has no foreign key (Agent rows cascade-delete and a trace outlives them). Version numbers count per lineage (key, scope, team/org/channel/template), so a version is only meaningful beside its `agentId` — see §8.6 |
 | `attempt` | Temporal activity attempt number (for retries) |
 | `seq` | Insertion order within the activity attempt |
 | `type` | `tool_call` \| `llm_response` \| `activity_event` |
@@ -1462,6 +1464,71 @@ carries a `teamId`/`orgId` predicate or declares itself with `runUnscoped`.
 The run viewer (`web/src/lib/traceLinkage.ts`) filters on these fields: a node selects all its
 branches, a fan-out selects everything inside it, a step row selects exactly its execution.
 
+### 8.6 Agent version attribution
+
+`AgentTracer.addLlmResponse` takes a required `agent: { id, version } | null`, so every call site
+decides what to record. The value comes from the one resolution that bound the call's model, so a row's identity and its
+`model` always describe the same `Agent` version:
+`getBoundModel` returns it as `agent`, `resolveAgentSpec` as `AgentSpec.agent` (used by `runAgent`
+and so by workflow authoring, the eval judge, PRD workflows and channel task planning), and
+`buildImplementerTurnRunner` as `ImplementerTurnRunner.agent` together with
+`ImplementerTurnRunner.boundModelSpec`, the same resolution's model spec (on the Mastra loop the
+runner binds the model with `getBoundModel` and hands it to the implementer agent, so the model that
+runs is the model that is stamped). Every implementer turn
+(the TDD loop, the fix sessions, the merge-conflict resolver, the eval harness) passes both to
+`runImplementerTurn`, which prices the turn at that spec instead of re-resolving the role, so a
+version cut mid-session cannot pair one version's id with another's model. A harness agent run
+(`runAgentNode`, `runAgentTask`) stamps the resolution the harness was bound to and builds its
+prompt and skill text from that same resolution (`composeAgentPrompt`, the composition
+`resolveAgentSpec` uses). The reviewer personas use their own `getBoundModel`. The ids are the
+`Agent` row that actually resolved, so a scoped override or an explicit `key@version` reference is
+counted under its own row, not under the GLOBAL snapshot a run pins in `WorkflowRun.agentVersions`.
+Cost on the implementer paths is priced from the spec the session started with, which is what
+actually ran, rather than from a live re-lookup of the role on every turn.
+
+`agentKey` keeps its meaning: the review network still writes all three reviewer personas under
+`agentKey` `reviewer` with the persona in `toolName`, but each row carries the persona's own
+`agentId`/`agentVersion`. A persona that inherits its model from a parent keeps its own version
+when the parent's model changes, which is why the stats below group by model as well.
+
+`GET /api/v1/platform/agent-library/:id/version-stats` (`ADMIN`) reads these rows for the lineage
+of `:id` over `window=7|30|90` (or `since`/`until`, inclusive UTC days). Per `(agent version,
+model)` it returns calls, errors, input and output tokens, cost, the mean latency of calls that did
+not fail, and the number of distinct runs, plus an `unrecorded` bucket for the lineage's key. Days
+older than the rollup horizon come from `agent_trace_daily_usage` (which carries `agentId` in its
+key), the rest from `agent_traces`. The agent library shows the table in an agent's History view.
+
+**Limitations.**
+
+- **It describes usage; it does not compare versions.** The runs behind two versions differ in
+  template, repository and the agents around this one. No run-outcome or success-rate figure is
+  offered, because those would credit a run's result to whichever version happened to be in it.
+- **Some calls record no agent.** Embeddings (not an `Agent`), a call site that fails before it
+  resolves its agent (its failure row passes `null`), and every row written before the columns
+  existed have a null `agentId`. `resolveAgentSpec` can also build an inline agent with no row, but
+  no production caller does, so that source does not currently occur.
+- **The unrecorded bucket matches on `agentKey` alone.** It also holds other scopes of the key. For
+  a reviewer persona it is empty, because those rows are written under `reviewer`. For
+  `ticketContextGatherer` it is empty too: its traces persist under `gatherTicketContext`, so that
+  lineage's rows from before the columns match no bucket.
+- **Tools, skills, prompt and the MCP connection are separate lookups.** The stamped version and
+  the model are one resolution. On the Mastra implementer path the tool keys, skills and prompt are
+  read by their own cached lookups, and on both paths the MCP connection URL is read by
+  `resolveAgentMcpUrl`, which reads the Agent row again. When a key has no run-start version pin and
+  a version is cut within one cache window of the session starting, these can come from the newer
+  version while the row names the older one.
+- **Rows before the columns are never rewritten.** Traces written before `agentId` existed, and the
+  rollup days built from them, have no `agentId` and stay that way; the sweep rewrites only the
+  last two completed days.
+- **Reads are capped.** At most 2,000 `(version, model)` groups and 20,000 `(version, model, run)`
+  groups are read per source; past that the response sets `groupsTruncated` (rows, and so calls and cost, are missing) or
+  `runsTruncated` (only the distinct-run counts are lower bounds; the rest is complete), and
+  `isTruncated` is either. NULL agent ids sort first, so a cut drops versions, not the unrecorded
+  bucket, while fewer than 2,000 unrecorded groups exist.
+- **No index on `agent_id`.** An index on `agent_traces` would block writes while it builds, so a
+  live read filters the window by `created_at` and then by agent. A 90-day window is dominated by
+  rollup days; only the most recent days scan traces.
+
 **Embeddings** are recorded too: each `generateEmbedding` call inside an activity writes one
 `llm_response` row with `agentKey: 'embedding'`, its tokens, and its cost, and adds the cost (not the
 tokens) to the workflow's `ActiveWorkflow` ledger. Tokens stay off the ledger because the per-tier
@@ -1521,6 +1588,7 @@ template override is never badged, because it may use a different model or crede
 | `POST` | `/api/v1/platform/agent-library` | `ADMIN` | Create an Agent (or cut a new version) |
 | `PUT` | `/api/v1/platform/agent-library/:id` | `ADMIN` | Update an Agent → bumps `version` |
 | `GET` | `/api/v1/platform/agent-library/:id/versions` | `ADMIN` | Every version of the lineage `:id` belongs to, newest first, with skills and author |
+| `GET` | `/api/v1/platform/agent-library/:id/version-stats` | `ADMIN` | LLM usage per `(version, model)` of the lineage over a window, from the resolved `Agent` row each call recorded ([§8.6](#86-agent-version-attribution)) |
 | `POST` | `/api/v1/platform/agent-library/:id/restore` | `ADMIN` | Cut a new version from an older one (`{ versionId }`); never rewrites history |
 | `DELETE` | `/api/v1/platform/agent-library/:id` | `ADMIN` | Delete / deactivate an Agent override |
 | `POST` | `/api/v1/platform/agent-library/bulk-model/preview` | `ADMIN` | Preview a bulk model set or remap; writes nothing |

@@ -31,6 +31,7 @@ type ResolvedAgent = Awaited<ReturnType<typeof resolveAgent>>;
 
 function resolvedAgent(overrides: Partial<ResolvedAgent> = {}): ResolvedAgent {
   return {
+    id: 'agent-row-1',
     isVerified: true,
     key: 'validateContext',
     mcpConnectionId: null,
@@ -88,6 +89,18 @@ describe('resolveAgentSpec — role path', () => {
     await resolveAgentSpec({ agentKey: 'reviewer', basePrompt: 'B' });
 
     expect(resolveModel).toHaveBeenCalledWith('openrouter/foo', 'k2', 'https://base', 'low');
+  });
+
+  it('carries the resolved Agent row id and version, and null for an inline agent', async () => {
+    mockedResolveAgent.mockResolvedValue(resolvedAgent({ id: 'row-7', version: 7 }));
+    expect((await resolveAgentSpec({ agentKey: 'reviewer', basePrompt: 'B' })).agent).toEqual({
+      id: 'row-7',
+      version: 7,
+    });
+    const inline = await resolveAgentSpec({
+      inline: { apiKey: 'k', modelSpec: 'openrouter/foo', systemPrompt: 'S' },
+    });
+    expect(inline.agent).toBeNull();
   });
 
   it('returns the base prompt unchanged when there are no skills', async () => {

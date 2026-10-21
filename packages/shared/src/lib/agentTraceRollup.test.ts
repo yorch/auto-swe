@@ -8,13 +8,14 @@ const DAY = Date.parse('2026-10-10T00:00:00.000Z');
  * a real advisory-lock queue: a transaction's inserts become visible to others only at commit, and
  * `pg_advisory_xact_lock` waits for the holder to commit.
  */
-function fakeDb(traceDelayMs = 5) {
+function fakeDb(traceDelayMs = 5, groups?: Record<string, unknown>[]) {
   const committed: Record<string, unknown>[] = [];
   const events: string[] = [];
   const held = new Map<string, Promise<void>>();
   const trace = {
     _count: { _all: 1, durationMs: 1 },
     _sum: { costUsd: 0.1234567891, durationMs: 10, inputTokens: 3, outputTokens: 4 },
+    agentId: null,
     agentKey: 'a',
     model: 'm',
     nodeId: 'n',
@@ -40,7 +41,7 @@ function fakeDb(traceDelayMs = 5) {
         agentTrace: {
           groupBy: async (a: { where: { error?: unknown } }) => {
             await new Promise((r) => setTimeout(r, traceDelayMs));
-            return a.where.error ? [] : [trace];
+            return a.where.error ? [] : (groups ?? [trace]);
           },
         },
         agentTraceDailyUsage: {
@@ -91,6 +92,30 @@ describe('rollupUsageDay', () => {
 
   it('refuses a time that is not a UTC midnight', async () => {
     await expect(rollupUsageDay(fakeDb().prisma, DAY + 1)).rejects.toThrow(/UTC midnight/);
+  });
+});
+
+describe('rollupUsageDay — agent id', () => {
+  it('keeps two agent rows of one key as separate rollup rows', async () => {
+    const base = {
+      _count: { _all: 1, durationMs: 1 },
+      _sum: { costUsd: 1, durationMs: 10, inputTokens: 3, outputTokens: 4 },
+      agentKey: 'a',
+      model: 'm',
+      nodeId: 'n',
+      orgId: null,
+      runId: null,
+      teamId: null,
+      temporalRunId: null,
+    };
+    const db = fakeDb(5, [
+      { ...base, agentId: 'ag-1' },
+      { ...base, agentId: 'ag-2' },
+      { ...base, agentId: null },
+    ]);
+    await rollupUsageDay(db.prisma, DAY);
+    expect(db.committed).toHaveLength(3);
+    expect(new Set(db.committed.map((r) => r.agentId))).toEqual(new Set(['ag-1', 'ag-2', null]));
   });
 });
 

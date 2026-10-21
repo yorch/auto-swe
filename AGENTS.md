@@ -818,7 +818,9 @@ events. These persist as `AgentTrace` rows and power the `/runs/[id]` viewer.
 const tracer = new AgentTracer();
 try {
   tracer.addToolCall({ toolName, inputJson, outputJson, durationMs, error? });
-  tracer.addLlmResponse({ role, inputJson: { systemPrompt, userMessage }, outputJson, durationMs });
+  tracer.addLlmResponse({ agent, role, inputJson: { systemPrompt, userMessage }, outputJson, durationMs });
+  // `agent` is `{ id, version }` of the resolved Agent row (from getBoundModel / AgentSpec / the
+  // turn runner), or null where no Agent row ran — it is required so each site decides.
   tracer.addActivityEvent({ name, outputJson, durationMs?, error? });
   return result;
 } finally {

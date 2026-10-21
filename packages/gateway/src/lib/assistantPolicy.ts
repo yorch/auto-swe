@@ -92,6 +92,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/platform/activity/summary': { never: 'userActivity' },
   'GET /api/v1/platform/agent-library': 'read',
   'GET /api/v1/platform/agent-library/:id': 'read',
+  'GET /api/v1/platform/agent-library/:id/version-stats': 'read',
   'GET /api/v1/platform/agent-library/:id/versions': 'read',
   'GET /api/v1/platform/assistant/failures': { never: 'assistantPanel' },
   'GET /api/v1/platform/assistant/failures/:messageId': { never: 'assistantPanel' },

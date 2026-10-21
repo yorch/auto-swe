@@ -55,7 +55,9 @@ vi.mock('../lib/config/contextLookup.js', () => ({
   currentRequestContext: vi.fn().mockResolvedValue({ teamId: 'team-1' }),
 }));
 
-vi.mock('../lib/config/agentSpec.js', () => ({
+vi.mock('../lib/config/agentSpec.js', async (importOriginal) => ({
+  composeAgentPrompt: (await importOriginal<typeof import('../lib/config/agentSpec.js')>())
+    .composeAgentPrompt,
   resolveAgentSpec: vi.fn().mockResolvedValue({ agentKey: 'reviewer' }),
 }));
 
@@ -385,8 +387,9 @@ describe('runAgentNode', () => {
       });
       vi.mocked(createWorkspace).mockResolvedValue(workspace as never);
       vi.mocked(resolveAgent).mockResolvedValue({
-        model: { apiKey: 'k', spec: 'anthropic/claude-sonnet-5-5' },
+        model: { apiKey: 'k', spec: 'anthropic/claude-sonnet-5-5', systemPrompt: 'Review.' },
         runtime: null,
+        skills: [],
         toolKeys: null,
       } as never);
       mockedResolveSpec.mockResolvedValue({
@@ -469,9 +472,19 @@ describe('runAgentNode', () => {
         source: 'run',
       });
       vi.mocked(resolveAgent).mockResolvedValue({
-        model: { apiKey: 'k', spec: 'anthropic/claude-sonnet-5-5' },
+        id: 'row-3',
+        model: { apiKey: 'k', spec: 'anthropic/claude-sonnet-5-5', systemPrompt: 'Review.' },
         runtime: 'claude-code',
+        skills: [],
         toolKeys: ['readFile', 'bash', 'mcp'],
+        version: 3,
+      } as never);
+      // A version cut after the harness was bound: a second resolution would name v4 and its
+      // prompt. The turn must run the first resolution's prompt under the first's identity.
+      mockedResolveSpec.mockResolvedValue({
+        agent: { id: 'row-4', version: 4 },
+        agentKey: 'reviewer',
+        systemPrompt: 'Stale v4 prompt.',
       } as never);
 
       const result = await runAgentNode({
@@ -485,6 +498,7 @@ describe('runAgentNode', () => {
       expect(harness.bind).toHaveBeenCalledWith('reviewer', {
         apiKey: 'k',
         spec: 'anthropic/claude-sonnet-5-5',
+        systemPrompt: 'Review.',
       });
       // Bound before the clone: a model the harness cannot drive costs no container.
       expect(harness.bind.mock.invocationCallOrder[0]).toBeLessThan(
@@ -500,6 +514,8 @@ describe('runAgentNode', () => {
         workspace,
       });
       expect(vi.mocked(runImplementerTurn)).toHaveBeenCalledWith({
+        agent: { id: 'row-3', version: 3 },
+        boundModelSpec: 'anthropic/claude-sonnet-5-5',
         context: { agentNode: 'reviewer' },
         role: 'reviewer',
         runtime: expect.objectContaining({ close: harness.close }),
@@ -509,6 +525,7 @@ describe('runAgentNode', () => {
         user: 'audit the auth module',
       });
       expect(mockedRunAgent).not.toHaveBeenCalled();
+      expect(mockedResolveSpec).not.toHaveBeenCalled();
       // The harness session is closed before its container goes.
       expect(harness.close).toHaveBeenCalledTimes(1);
       expect(harness.close.mock.invocationCallOrder[0]).toBeLessThan(

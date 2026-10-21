@@ -121,6 +121,7 @@ async function runReviewerAgent(
         };
 
         tracer?.addLlmResponse({
+          agent: bound.agent,
           costUsd: attribution.costUsd,
           durationMs: Date.now() - start,
           inputJson: { systemPrompt: prompt, userMessage: llmUserMessage },
@@ -137,6 +138,7 @@ async function runReviewerAgent(
       } catch (e) {
         tracer?.addLlmResponse({
           ...failedCallAttribution(e, modelSpec, recorded),
+          agent: bound.agent,
           durationMs: Date.now() - start,
           error: (e as Error).message,
           inputJson: { systemPrompt: prompt, userMessage: llmUserMessage },

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * The planner, decomposer and security gate each ask the USD-cap guard before
@@ -27,6 +27,7 @@ vi.mock('../lib/config/contextLookup.js', () => ({
 }));
 vi.mock('../lib/models.js', () => ({
   getBoundModel: vi.fn(async () => ({
+    agent: { id: 'agent-row-1', version: 3 },
     model: {},
     spec: 'openrouter/unpriced',
     systemPrompt: null,
@@ -42,6 +43,7 @@ vi.mock('../lib/costTracking.js', () => ({
   })),
 }));
 
+import { AgentTracer } from '../lib/agentTracer.js';
 import { recordLlmUsage } from '../lib/costTracking.js';
 import { getBoundModel } from '../lib/models.js';
 import { planDecomposition } from './decomposer.js';
@@ -112,4 +114,55 @@ describe.each([
       'anthropic/model-a'
     );
   });
+});
+
+// One shared check for the three single-resolution agents: the trace row carries the Agent row
+// of the very resolution that bound the model, on the success path and on the failure path.
+describe.each([
+  ['decomposer', (t: AgentTracer) => planDecomposition(REQUEST, t)],
+  ['planner', (t: AgentTracer) => decomposeEpic('epic', [], t)],
+  ['security gate', () => scanDiffForSecurityIssues('diff --git a b')],
+])('%s stamps its Agent row on the trace', (_name, call) => {
+  beforeEach(() => {
+    // The single-resolution tests above leave their last mockResolvedValue behind.
+    vi.mocked(getBoundModel).mockResolvedValue({
+      agent: { id: 'agent-row-1', version: 3 },
+      model: {},
+      spec: 'openrouter/unpriced',
+      systemPrompt: null,
+    } as never);
+  });
+
+  it('on a failed call', async () => {
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
+    generateMock.mockRejectedValue(new Error('provider down'));
+    await call(new AgentTracer()).catch(() => undefined);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: { id: 'agent-row-1', version: 3 }, error: 'provider down' })
+    );
+  });
+
+  it('on a successful call', async () => {
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
+    generateMock.mockResolvedValue({
+      object: {
+        findings: [],
+        passed: true,
+        repos: [{ dependsOn: [], rationale: 'x', repoId: 'r' }],
+        subtasks: [],
+      },
+      usage: { inputTokens: 1, outputTokens: 1 },
+    });
+    await call(new AgentTracer()).catch(() => undefined);
+    const rows = addLlmResponse.mock.calls.map(([o]) => o);
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.agent).toEqual({ id: 'agent-row-1', version: 3 });
+    }
+  });
+});
+
+// A failing assertion must not leak a spy on AgentTracer into the next test.
+afterEach(() => {
+  vi.restoreAllMocks();
 });

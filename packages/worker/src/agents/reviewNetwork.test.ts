@@ -38,6 +38,7 @@ vi.mock('../lib/costTracking.js', () => ({
 
 vi.mock('../lib/models.js', () => ({
   getBoundModel: vi.fn(async (key: string) => ({
+    agent: { id: `${key}-row`, version: 3 },
     model: { sentinel: 'model' },
     spec: `anthropic/${key}-model`,
     systemPrompt: null,
@@ -135,6 +136,23 @@ describe('runReviewNetwork trace rows', () => {
       expect(row.outputJson).toMatchObject({ activityId: '5' });
     }
     activityIdMock.mockReturnValue(null);
+  });
+});
+
+describe('runReviewNetwork agent attribution', () => {
+  it("stamps each persona's own Agent row on its row, leaving the persona in toolName", async () => {
+    const tracer = new AgentTracer();
+    await runReviewNetwork(CODE_RESULT, { tracer });
+    const rows = (
+      tracer as unknown as {
+        records: Array<{ agent?: unknown; toolName?: string }>;
+      }
+    ).records;
+    expect(rows.map((r) => [r.toolName, r.agent]).sort()).toEqual([
+      ['DOMAIN_LOGIC', { id: 'domainLogicReviewer-row', version: 3 }],
+      ['PERFORMANCE', { id: 'performanceReviewer-row', version: 3 }],
+      ['SECURITY', { id: 'securityReviewer-row', version: 3 }],
+    ]);
   });
 });
 

@@ -108,7 +108,11 @@ beforeEach(() => {
   prismaMock.slackChannel.findUnique.mockResolvedValue(CHANNEL_ROW);
   prismaMock.slackChannel.update.mockResolvedValue({});
   isChannelOverBudgetNowMock.mockResolvedValue(false);
-  getBoundModelMock.mockResolvedValue({ model: {}, spec: CHANNEL_OVERRIDE_SPEC });
+  getBoundModelMock.mockResolvedValue({
+    agent: { id: 'agent-row-1', version: 3 },
+    model: {},
+    spec: CHANNEL_OVERRIDE_SPEC,
+  });
   recordLlmUsageMock.mockResolvedValue({
     costUsd: 0.01,
     inputTokens: 100,
@@ -196,6 +200,12 @@ describe('passiveIngestChannelMemory', () => {
       expect.objectContaining({ agentKey: 'commitToMemory', orgId: 'org-1', teamId: 'team-1' })
     );
     expect(result.messagesRead).toBe(2);
+    const llmTracer = vi.mocked(AgentTracer).mock.instances.at(-1) as unknown as {
+      addLlmResponse: ReturnType<typeof vi.fn>;
+    };
+    expect(llmTracer.addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: { id: 'agent-row-1', version: 3 } })
+    );
     expect(result.factsExtracted).toBe(1);
     expect(result.factsWritten).toBe(1);
     expect(insertMemoryItemMock).toHaveBeenCalledTimes(1);

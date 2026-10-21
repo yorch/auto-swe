@@ -16,7 +16,7 @@ import { parseAgentRef } from '../lib/config/agentRef.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import { type ResolvedAgentRuntime, resolveAgentRuntime } from '../lib/config/agentRuntime.js';
 import type { AgentTools } from '../lib/config/agentSpec.js';
-import { resolveAgentSpec } from '../lib/config/agentSpec.js';
+import { composeAgentPrompt, resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { withChannelScope } from '../lib/config/channelContext.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
@@ -308,10 +308,9 @@ async function runInCheckout(args: {
 
   const spanName = input.spanName ?? 'llm.agent_node';
   if (harness) {
-    const spec = await resolveAgentSpec(
-      { agentKey: key as ModelBackedAgentKey, basePrompt: '', promptOverride: input.systemPrompt },
-      resolveCtx
-    );
+    // Prompt and skills come from `resolved`, the resolution the harness is bound to, so the
+    // identity stamped on the turn and the prompt it runs are one version.
+    const systemPrompt = composeAgentPrompt(resolved, { promptOverride: input.systemPrompt });
     const runtime = harness.build({
       exactToolKeys: grantedWorkspaceToolIds(resolved.toolKeys),
       loadProjectSettings: true,
@@ -327,10 +326,12 @@ async function runInCheckout(args: {
     throwIfActivityCancelled();
     await assertBudgetAvailable(`agent.${key}`);
     const turn = await runImplementerTurn({
+      agent: { id: resolved.id, version: resolved.version },
+      boundModelSpec: resolved.model.spec,
       context: { agentNode: input.agentRef },
       role: key,
       runtime,
-      system: `${spec.systemPrompt}\n\n${CHECKOUT_PREAMBLE}`.trim(),
+      system: `${systemPrompt}\n\n${CHECKOUT_PREAMBLE}`.trim(),
       tracer,
       usageEvent: spanName,
       user: args.userMessage,

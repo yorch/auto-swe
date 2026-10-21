@@ -37,7 +37,8 @@ const row = (id: string, name: string, key: string): AgentRow => ({
   workflowTemplateId: null,
 });
 
-vi.mock('@/hooks/useAgentLibrary', () => ({
+vi.mock('@/hooks/useAgentLibrary', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/useAgentLibrary')>()),
   useAgentLibrary: () => ({
     data: state.agents,
     error: null,

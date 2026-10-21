@@ -85,6 +85,7 @@ const ok = createTool({
 
 function spec(): AgentSpec {
   return {
+    agent: { id: 'agent-row-1', version: 4 },
     agentKey: 'contentWriter',
     model: twoToolModel() as unknown as AgentSpec['model'],
     modelSpec: 'x/y',

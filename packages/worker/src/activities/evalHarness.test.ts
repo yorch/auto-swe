@@ -505,7 +505,8 @@ describe('runCaseDefault iteration cap', () => {
       expect.anything(),
       ctx,
       'ciFixer',
-      undefined
+      undefined,
+      expect.anything()
     );
     expect(resolveAgent).toHaveBeenCalledWith('ciFixer', ctx);
     expect(generate).toHaveBeenCalledTimes(2);

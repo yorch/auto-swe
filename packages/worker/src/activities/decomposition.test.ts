@@ -125,6 +125,7 @@ vi.mock('../lib/llmOutputScan.js', () => ({
 
 // The loop choice has its own tests (agentRuntime, implementerRuntimeSelect);
 // these drive the Mastra loop, the default.
+
 vi.mock('../lib/config/agentRuntime.js', () => ({
   resolveAgentRuntime: vi.fn(async () => ({ runtime: 'mastra', source: 'default' })),
 }));
@@ -140,6 +141,12 @@ vi.mock('../lib/config/agentSkills.js', () => ({
 // Per-role, like the real cascade — a mock that returns one prompt for every
 // key cannot tell the resolver's own row from the implementer's.
 vi.mock('../lib/models.js', () => ({
+  getBoundModel: vi.fn(async () => ({
+    agent: { id: 'agent-row-1', version: 4 },
+    model: {},
+    spec: 'anthropic/claude-opus-4-8',
+    systemPrompt: null,
+  })),
   getModel: vi.fn(),
   getModelSpec: vi.fn().mockResolvedValue('anthropic/claude-opus-4-8'),
   resolveSystemPrompt: vi.fn(async (role: string, fallback: string) =>
@@ -604,7 +611,8 @@ describe('resolveMergeConflict', () => {
       expect.anything(),
       expect.anything(),
       'mergeConflictResolver',
-      undefined
+      undefined,
+      expect.anything()
     );
     const [messages, options] = generateMock.mock.calls[0] as [
       Array<{ role: string; content: string }>,
@@ -636,6 +644,8 @@ describe('resolveMergeConflict', () => {
     };
     const llm = tracer.records.filter((r) => r.type === 'llm_response');
     expect(llm).toHaveLength(1);
+    // The resolver's turn carries the Agent row the session bound.
+    expect(llm[0]).toMatchObject({ agent: { id: 'agent-row-1', version: 4 } });
   });
 
   it('scans the resolved merge before pushing it', async () => {

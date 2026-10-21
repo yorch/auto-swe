@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: {} }));
 
@@ -63,6 +63,7 @@ const MockedAgent = vi.mocked(Agent);
 
 function makeSpec(overrides: Partial<AgentSpec> = {}): AgentSpec {
   return {
+    agent: { id: 'agent-row-1', version: 4 },
     agentKey: 'validateContext',
     model: { sentinel: 'model' } as unknown as AgentSpec['model'],
     modelSpec: 'anthropic/claude-x',
@@ -144,6 +145,33 @@ describe('runAgent', () => {
     expect(generateMock).toHaveBeenCalledWith([{ content: 'USER_MSG', role: 'user' }], {
       structuredOutput: { schema },
     });
+  });
+
+  it("stamps the spec's resolved Agent row on the call's llm_response row", async () => {
+    generateMock.mockResolvedValue({
+      object: { ok: true },
+      usage: { inputTokens: 1, outputTokens: 2 },
+    });
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
+
+    await runAgent(makeSpec(), 'M', { spanName: 'llm.context_validation' });
+    await runAgent(makeSpec({ agent: null }), 'M', { spanName: 'llm.context_validation' });
+
+    expect(addLlmResponse.mock.calls.map(([o]) => o.agent)).toEqual([
+      { id: 'agent-row-1', version: 4 },
+      null,
+    ]);
+  });
+
+  it('stamps the Agent row on the failure row too', async () => {
+    generateMock.mockRejectedValue(new Error('provider down'));
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
+
+    await expect(runAgent(makeSpec(), 'M')).rejects.toThrow('provider down');
+
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: { id: 'agent-row-1', version: 4 }, error: 'provider down' })
+    );
   });
 
   it('records usage under the agent key and span name', async () => {
@@ -324,7 +352,6 @@ describe('runAgent', () => {
       addLlmResponse.mock.invocationCallOrder[0] as number
     );
     addToolCall.mockRestore();
-    addLlmResponse.mockRestore();
   });
 
   it("records into a caller's tracer, leaves persisting to it, and skips only self-recording tools", async () => {
@@ -362,4 +389,9 @@ describe('runAgent', () => {
     await runAgent(makeSpec(), 'M');
     expect(resolveSettingMock).not.toHaveBeenCalled();
   });
+});
+
+// A failing assertion must not leak a spy on AgentTracer into the next test.
+afterEach(() => {
+  vi.restoreAllMocks();
 });

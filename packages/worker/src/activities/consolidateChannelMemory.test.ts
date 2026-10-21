@@ -41,7 +41,11 @@ vi.mock('@mastra/core/agent', () => ({
 }));
 
 vi.mock('../lib/models.js', () => ({
-  getBoundModel: vi.fn().mockResolvedValue({ model: {}, spec: 'openrouter/channel-override' }),
+  getBoundModel: vi.fn().mockResolvedValue({
+    agent: { id: 'agent-row-1', version: 3 },
+    model: {},
+    spec: 'openrouter/channel-override',
+  }),
 }));
 vi.mock('../lib/config/agentSkills.js', () => ({ loadAgentSkills: vi.fn().mockResolvedValue([]) }));
 vi.mock('../lib/activityContext.js', () => ({
@@ -225,6 +229,12 @@ describe('consolidateChannelMemory', () => {
       expect.anything(),
       'llm.consolidate_channel_memory',
       'openrouter/channel-override'
+    );
+    const llmTracer = vi.mocked(AgentTracer).mock.instances.at(-1) as unknown as {
+      addLlmResponse: ReturnType<typeof vi.fn>;
+    };
+    expect(llmTracer.addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: { id: 'agent-row-1', version: 3 } })
     );
   });
 

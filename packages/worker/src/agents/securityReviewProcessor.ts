@@ -2,7 +2,7 @@ import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
-import { AgentTracer } from '../lib/agentTracer.js';
+import { AgentTracer, type TracedAgent } from '../lib/agentTracer.js';
 import { loadAgentSkills } from '../lib/config/agentSkills.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
@@ -48,10 +48,12 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
     const start = Date.now();
     let modelSpec: string | undefined;
     let recorded: LlmAttribution | undefined;
+    let tracedAgent: TracedAgent | null = null;
     try {
       // Resolved once: the model called, the price checked and the cost recorded
       // all come from this one resolution.
-      const { model, spec } = await getBoundModel('securityReview');
+      const { agent: resolvedAgent, model, spec } = await getBoundModel('securityReview');
+      tracedAgent = resolvedAgent;
       modelSpec = spec;
       span.setAttribute('llm.model', modelSpec);
       const agent = new Agent({
@@ -97,6 +99,7 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
       };
 
       tracer.addLlmResponse({
+        agent: tracedAgent,
         costUsd: attribution.costUsd,
         durationMs: Date.now() - start,
         inputJson: { systemPrompt: instructions, userMessage: diff },
@@ -115,6 +118,7 @@ export async function scanDiffForSecurityIssues(diff: string): Promise<SecurityS
     } catch (e) {
       tracer.addLlmResponse({
         ...failedCallAttribution(e, modelSpec, recorded),
+        agent: tracedAgent,
         durationMs: Date.now() - start,
         error: (e as Error).message,
         inputJson: { systemPrompt: instructions, userMessage: diff },

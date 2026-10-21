@@ -71,6 +71,7 @@ vi.mock('./channelAssistant.js', () => ({
 }));
 
 import { prisma } from '@auto-swe/shared/db';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { sweepChannelOpenItems } from './channelOpenItems.js';
 
 const findChannel = vi.mocked(prisma.slackChannel.findUnique);
@@ -108,7 +109,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   settleMock.mockResolvedValue(undefined);
   reserveChannelTurnMock.mockResolvedValue({ overBudget: false, settle: settleMock });
-  getBoundModelMock.mockResolvedValue({ model: {}, spec: CHANNEL_OVERRIDE_SPEC });
+  getBoundModelMock.mockResolvedValue({
+    agent: { id: 'agent-row-1', version: 3 },
+    model: {},
+    spec: CHANNEL_OVERRIDE_SPEC,
+  });
   persistActivityTraceMock.mockResolvedValue(undefined);
   recordLlmUsageMock.mockResolvedValue({
     costUsd: 0.001,
@@ -218,6 +223,12 @@ describe('sweepChannelOpenItems', () => {
       expect.anything(),
       'llm.channel_open_items_sweep',
       CHANNEL_OVERRIDE_SPEC
+    );
+    const llmTracer = vi.mocked(AgentTracer).mock.instances.at(-1) as unknown as {
+      addLlmResponse: ReturnType<typeof vi.fn>;
+    };
+    expect(llmTracer.addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: { id: 'agent-row-1', version: 3 } })
     );
   });
 

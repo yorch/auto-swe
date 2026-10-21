@@ -309,6 +309,58 @@ export function useAgentVersions(id: string | null) {
   });
 }
 
+/** LLM usage of one (version, model) of an agent lineage over a window. */
+export interface AgentVersionStatsRow {
+  /** Null for the unrecorded bucket. */
+  agentId: string | null;
+  agentVersion: number | null;
+  scope: AgentScope | null;
+  model: string | null;
+  calls: number;
+  errors: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  /** Mean duration of the calls that did not fail. */
+  avgDurationMs: number | null;
+  distinctRuns: number;
+}
+
+export interface AgentVersionStats {
+  key: string;
+  scope: AgentScope;
+  /** Inclusive UTC days. */
+  since: string;
+  until: string;
+  windowDays: number;
+  rows: AgentVersionStatsRow[];
+  /** Calls with no recorded agent row: before the column existed, or from a site with none. */
+  unrecorded: AgentVersionStatsRow[];
+  /** A read hit its cap (either flag below). */
+  isTruncated: boolean;
+  /** The (version, model) list was cut: some groups, and so some calls and cost, are missing. */
+  groupsTruncated: boolean;
+  /** Only the distinct-run counts are lower bounds; calls, errors, tokens and cost are complete. */
+  runsTruncated: boolean;
+}
+
+export const VERSION_STATS_WINDOWS = [7, 30, 90] as const;
+
+/** Usage per (version, model) of the lineage `id` belongs to, over the last `days` UTC days. */
+export function useAgentVersionStats(id: string | null, days: number) {
+  return useQuery({
+    enabled: id !== null,
+    queryFn: () =>
+      api
+        .get<{ data: AgentVersionStats }>(
+          `/api/v1/platform/agent-library/${id}/version-stats?window=${days}`
+        )
+        .then((r) => r.data),
+    queryKey: [...KEY, 'version-stats', id, days],
+    staleTime: 60_000,
+  });
+}
+
 /** Cut a new version carrying the settings of an older one. */
 export function useRestoreAgentVersion() {
   const qc = useQueryClient();

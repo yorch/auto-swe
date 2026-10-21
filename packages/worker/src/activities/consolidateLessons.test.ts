@@ -122,7 +122,11 @@ const defaultTxMock = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockGetBoundModel.mockResolvedValue({ model: {}, spec: 'anthropic/claude-opus-5-5' } as never);
+  mockGetBoundModel.mockResolvedValue({
+    agent: { id: 'agent-row-1', version: 3 },
+    model: {},
+    spec: 'anthropic/claude-opus-5-5',
+  } as never);
   mockGenerateEmbedding.mockResolvedValue(makeEmbedding(0));
   mockTransaction.mockImplementation(async (fn) => fn(defaultTxMock as never));
 });
@@ -359,6 +363,12 @@ describe('consolidateLessons', () => {
     await consolidateLessons({ minClusterSize: 3, repoId: 'repo-1', similarityThreshold: 0.85 });
 
     expect(mockGetBoundModel).toHaveBeenCalledWith('lessonConsolidator');
+    const llmTracer = vi.mocked(AgentTracer).mock.instances.at(-1) as unknown as {
+      addLlmResponse: ReturnType<typeof vi.fn>;
+    };
+    expect(llmTracer.addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: { id: 'agent-row-1', version: 3 } })
+    );
     expect(vi.mocked(resolveSystemPrompt).mock.calls[0]?.[0]).toBe('lessonConsolidator');
     expect(MockAgent.mock.calls[0]?.[0]).toMatchObject({
       instructions: expect.stringContaining('Admin-edited consolidator prompt'),

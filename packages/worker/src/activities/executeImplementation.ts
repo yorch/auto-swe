@@ -221,7 +221,7 @@ export async function executeImplementation(
       tracer,
       workspace,
     });
-    const { runtime, skills } = turns;
+    const { agent: turnAgent, boundModelSpec, runtime, skills } = turns;
 
     tracer.addActivityEvent({
       name: 'skills.loaded',
@@ -352,6 +352,8 @@ export async function executeImplementation(
       });
       await assertBudgetAvailable(`implementer.iteration_${iteration}`);
       await runImplementerTurn({
+        agent: turnAgent,
+        boundModelSpec,
         context: { iteration },
         role: 'implementer',
         runtime,

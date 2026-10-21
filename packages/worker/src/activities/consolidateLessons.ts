@@ -201,6 +201,7 @@ async function consolidateLessonsImpl(
       const { lessons } = ConsolidatorOutputSchema.parse(result.object);
 
       tracer.addLlmResponse({
+        agent: bound.agent,
         costUsd: attribution.costUsd,
         durationMs: Date.now() - start,
         inputJson: { systemPrompt: consolidatorPrompt, userMessage: prompt },

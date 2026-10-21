@@ -93,6 +93,13 @@ const buildImplementerMock = vi.fn(async (..._args: unknown[]) => ({
   skills: [],
   toolKeys: null,
 }));
+const getBoundModelMock = vi.fn(async (..._args: unknown[]) => ({
+  agent: { id: 'agent-row-4', version: 4 },
+  model: {},
+  spec: 'anthropic/v4-model',
+  systemPrompt: null,
+}));
+
 vi.mock('../agents/implementer.js', () => ({
   buildImplementerForActivity: (...args: unknown[]) => buildImplementerMock(...args),
 }));
@@ -171,6 +178,7 @@ const SEEDED_PROMPTS: Record<string, string> = {
   reviewFixer: 'REVIEW FIXER ROW PROMPT',
 };
 vi.mock('../lib/models.js', () => ({
+  getBoundModel: (...args: unknown[]) => getBoundModelMock(...args),
   resolveSystemPrompt: vi.fn(
     async (role: string, fallback: string, override?: string) =>
       override || SEEDED_PROMPTS[role] || fallback
@@ -179,6 +187,7 @@ vi.mock('../lib/models.js', () => ({
 
 import { prisma } from '@auto-swe/shared/db';
 import type { CodeResult } from '@auto-swe/shared/types/workflow';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { runImplementerFixSession } from './implementerSession.js';
 
 const findRepo = vi.mocked(prisma.connection.findUniqueOrThrow);
@@ -476,7 +485,8 @@ describe('runImplementerFixSession', () => {
       expect.anything(),
       expect.anything(),
       'ciFixer',
-      'repo-1'
+      'repo-1',
+      expect.anything()
     );
     const messages = generateMock.mock.calls[0]?.[0] as Array<{ role: string; content: string }>;
     const system = messages.find((m) => m.role === 'system')?.content;
@@ -486,7 +496,31 @@ describe('runImplementerFixSession', () => {
       'ciFixer',
       expect.anything(),
       'llm.ci_fix',
-      undefined
+      // Priced at the spec the session bound, not re-resolved per turn.
+      'anthropic/v4-model'
+    );
+  });
+
+  it('stamps the trace row with the Agent row whose model it priced, even if a newer version is cut', async () => {
+    findRepo.mockResolvedValue(REPO as never);
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
+    // The session's one resolution is v3; any later resolution would return v4.
+    getBoundModelMock.mockResolvedValueOnce({
+      agent: { id: 'agent-row-3', version: 3 },
+      model: {},
+      spec: 'anthropic/v3-model',
+      systemPrompt: null,
+    });
+    await runImplementerFixSession(input());
+    expect(recordLlmUsageMock).toHaveBeenLastCalledWith(
+      'wf-1',
+      'ciFixer',
+      expect.anything(),
+      'llm.ci_fix',
+      'anthropic/v3-model'
+    );
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: { id: 'agent-row-3', version: 3 } })
     );
   });
 
@@ -521,4 +555,9 @@ describe('runImplementerFixSession', () => {
     );
     expect(out.implementationNotes).toBe('notes(true)');
   });
+});
+
+// A failing assertion must not leak a spy on AgentTracer into the next test.
+afterEach(() => {
+  vi.restoreAllMocks();
 });

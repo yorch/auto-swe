@@ -137,6 +137,12 @@ function sanitizeJsonValues(obj: unknown): unknown {
   );
 }
 
+/** The resolved `Agent` row (id + version) a traced LLM call ran as. */
+export interface TracedAgent {
+  id: string;
+  version: number;
+}
+
 export interface TraceRecord {
   /** Fixed when recorded, so a batch re-sent after an ambiguous failure inserts nothing twice. */
   id: string;
@@ -156,6 +162,8 @@ export interface TraceRecord {
   outputTokens?: number;
   /** USD cost rounded to micro-dollars — only set on llm_response records. */
   costUsd?: number;
+  /** The resolved `Agent` row that produced the call — only on llm_response records; null = not recorded. */
+  agent?: TracedAgent | null;
 }
 
 /**
@@ -240,6 +248,12 @@ export class AgentTracer {
    * return value of `recordLlmUsage()` to attach per-call attribution.
    */
   addLlmResponse(opts: {
+    /**
+     * The resolved `Agent` row (id + version) that produced the call, stamped on the row so a
+     * version's spend can be read back. Required so each call site decides: pass `null` only
+     * where no `Agent` row ran (an inline agent) or the site could not resolve one.
+     */
+    agent: TracedAgent | null;
     role?: string;
     inputJson?: unknown;
     outputJson?: unknown;
@@ -251,6 +265,7 @@ export class AgentTracer {
     costUsd?: number;
   }): void {
     this.records.push({
+      agent: opts.agent,
       costUsd: opts.costUsd,
       durationMs: opts.durationMs,
       error: opts.error,
@@ -339,7 +354,9 @@ export class AgentTracer {
       await prisma.agentTrace.createMany({
         data: batch.map((r, index) => ({
           ...node,
+          agentId: r.agent?.id ?? null,
           agentKey,
+          agentVersion: r.agent?.version ?? null,
           assistantMessageId: ids.assistantMessageId ?? null,
           attempt,
           costUsd: r.costUsd ?? null,

@@ -1,5 +1,5 @@
 import { ApplicationFailure } from '@temporalio/activity';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const m = vi.hoisted(() => ({
   agentWs: {
@@ -107,6 +107,7 @@ vi.mock('../lib/config/contextLookup.js', () => ({
 }));
 const { defaultResolveAgent } = vi.hoisted(() => ({
   defaultResolveAgent: async (key: string) => ({
+    id: 'row-3',
     key,
     mcpConnectionId: m.mcpConnectionId,
     model: { apiBase: undefined, apiKey: 'k', spec: m.modelSpec, systemPrompt: null },
@@ -130,7 +131,7 @@ vi.mock('../lib/llmOutputScan.js', () => ({ recordSuspiciousLlmOutput: vi.fn(asy
 vi.mock('../lib/config/agentSpec.js', async (orig) => {
   const actual = await orig<typeof import('../lib/config/agentSpec.js')>();
   m.resolveAgentSpec.mockImplementation(actual.resolveAgentSpec);
-  return { resolveAgentSpec: m.resolveAgentSpec };
+  return { composeAgentPrompt: actual.composeAgentPrompt, resolveAgentSpec: m.resolveAgentSpec };
 });
 vi.mock('../lib/models.js', () => ({ resolveModel: vi.fn(() => 'model') }));
 vi.mock('../lib/config/mcpConnection.js', () => ({ resolveAgentMcpUrl: vi.fn(async () => null) }));
@@ -172,6 +173,7 @@ vi.mock('./agentRunFinalize.js', () => ({
 }));
 
 import { __resetReconcileCacheForTests } from '@auto-swe/shared/lib/agentRunAdmission';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
@@ -787,6 +789,36 @@ describe('the Claude Code harness, for an agent that asks for it', () => {
     expect(result).toMatchObject({ costUsd: 0.25, steps: 6, text: 'harness done' });
   });
 
+  it('stamps the Agent row the harness was bound to, not a later resolution', async () => {
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
+    // The first resolution binds the harness; the spec's prompt is resolved again afterwards.
+    vi.mocked(resolveAgent).mockImplementationOnce(defaultResolveAgent as never);
+    vi.mocked(resolveAgent).mockImplementation((async (key: string) => ({
+      ...(await defaultResolveAgent(key)),
+      id: 'row-4',
+      model: {
+        apiBase: undefined,
+        apiKey: 'k',
+        spec: 'anthropic/newer',
+        systemPrompt: 'STALE V4 PROMPT',
+      },
+      version: 4,
+    })) as never);
+    await runAgentTask({ request: request() });
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: { id: 'row-3', version: 3 }, model: 'anthropic/x' })
+    );
+    // The prompt the turn ran is the first resolution's too.
+    expect(m.harnessTurn.mock.calls[0]?.[0].system).not.toContain('STALE V4 PROMPT');
+    expect(m.recordUsage).toHaveBeenCalledWith(
+      'wf-1',
+      'contentWriter',
+      expect.anything(),
+      'llm.agent_run',
+      'anthropic/x'
+    );
+  });
+
   it('checks the budget before the turn', async () => {
     m.assertBudget.mockImplementationOnce(async () => {
       expect(m.harnessTurn).not.toHaveBeenCalled();
@@ -907,4 +939,9 @@ describe('the Claude Code harness, for an agent that asks for it', () => {
     expect(m.agentWs.destroy).toHaveBeenCalled();
     expect(m.persist).toHaveBeenCalledTimes(1);
   });
+});
+
+// A failing assertion must not leak a spy on AgentTracer into the next test.
+afterEach(() => {
+  vi.restoreAllMocks();
 });

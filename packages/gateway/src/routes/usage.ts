@@ -20,7 +20,13 @@ import {
 import { sendError } from '../lib/httpErrors.js';
 import { mapLimited } from '../lib/mapLimited.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
-import { clipRanges, planWindow, timeWhere, type WindowPlan } from '../lib/usageWindows.js';
+import {
+  clipRanges,
+  coveredRollupDays,
+  planWindow,
+  timeWhere,
+  type WindowPlan,
+} from '../lib/usageWindows.js';
 import { hasRole, type JwtPayload, requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
@@ -455,32 +461,6 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
     };
   });
 
-  /**
-   * The UTC days in `[startMs, endMs)` that have rollup rows, as epoch ms. Unscoped on purpose: it
-   * reveals only which days the sweep has built, and a day is all-or-nothing, so a scope with no
-   * spend on a built day correctly reads zero from the rollup instead of re-scanning the traces.
-   */
-  async function coveredRollupDays(
-    startMs: number,
-    endMs: number,
-    nowMs: number
-  ): Promise<Set<number>> {
-    const horizon = rollupHorizonMs(nowMs);
-    if (startMs >= horizon) {
-      return new Set();
-    }
-    const rows = await runUnscoped(
-      'which UTC days the usage rollup has built, with no tenant data',
-      ['AgentTraceDailyUsage'],
-      () =>
-        prisma.agentTraceDailyUsage.groupBy({
-          by: ['day'],
-          where: { day: { gte: new Date(startMs), lt: new Date(Math.min(endMs, horizon)) } },
-        })
-    );
-    return new Set(rows.map((r) => r.day.getTime()));
-  }
-
   app.get(
     '/usage',
     {
@@ -512,7 +492,12 @@ export const usageRoutes: FastifyPluginAsync = async (fastify) => {
       // Completed days come from the daily rollup when the sweep has built it; every other day —
       // the trailing days the sweep still rewrites, and any day it has not reached — is read from
       // the traces, so the rollup is an optimization and never changes a number.
-      const covered = await coveredRollupDays(previousSince.getTime(), until.getTime(), now);
+      const covered = await coveredRollupDays(
+        prisma,
+        previousSince.getTime(),
+        until.getTime(),
+        now
+      );
       const horizon = rollupHorizonMs(now);
       const current = planWindow(since.getTime(), until.getTime(), covered, horizon);
       const previousPlan = planWindow(previousSince.getTime(), since.getTime(), covered, horizon);

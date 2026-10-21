@@ -75,10 +75,17 @@ export async function getModel(
 export async function getBoundModel(
   role: AnySkillRole,
   ctx?: Partial<ResolveCtx>
-): Promise<{ model: LanguageModel; spec: string; systemPrompt: string | null }> {
+): Promise<{
+  /** The resolved `Agent` row, for the trace rows of the calls made with `model`. */
+  agent: { id: string; version: number };
+  model: LanguageModel;
+  spec: string;
+  systemPrompt: string | null;
+}> {
   const resolveCtx = { ...(await currentRequestContext()), ...ctx };
-  const { model } = await resolveAgent(role, resolveCtx);
+  const { id, version, model } = await resolveAgent(role, resolveCtx);
   return {
+    agent: { id, version },
     model: buildModel(model.spec, model.apiKey, model.apiBase, model.reasoning),
     spec: model.spec,
     systemPrompt: model.systemPrompt ?? null,

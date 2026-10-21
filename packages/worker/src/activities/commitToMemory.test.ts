@@ -1,5 +1,5 @@
 import type { LessonEvidence } from '@auto-swe/shared/types/workflow';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
   generateMock,
@@ -50,7 +50,12 @@ vi.mock('../lib/costTracking.js', () => ({
 vi.mock('../lib/memoryStore.js', () => ({ insertMemoryItem: insertMock }));
 vi.mock('../lib/memorySecurityEvent.js', () => ({ recordMemorySecurityEvent: vi.fn() }));
 vi.mock('../lib/models.js', () => ({
-  getModel: vi.fn(async () => ({})),
+  getBoundModel: vi.fn(async () => ({
+    agent: { id: 'agent-row-1', version: 3 },
+    model: {},
+    spec: 'anthropic/claude-opus-5-5',
+    systemPrompt: null,
+  })),
   getModelSpec: vi.fn(async () => 'anthropic/claude-opus-5-5'),
   resolveSystemPrompt: vi.fn(async (_role: string, fallback: string) => fallback),
 }));
@@ -58,12 +63,14 @@ vi.mock('../lib/usdCapGuard.js', () => ({ assertRolePricedForUsdCap: vi.fn() }))
 
 import { MEMORY_SECURITY_EVENTS } from '@auto-swe/shared/lib/scannerCache';
 import { AgentTracer } from '../lib/agentTracer.js';
+import { recordLlmUsage } from '../lib/costTracking.js';
 import {
   MemoryContentRefusedError,
   MemoryScanUnavailableError,
   WRITE_SCAN_UNAVAILABLE,
 } from '../lib/memoryGuard.js';
 import { recordMemorySecurityEvent } from '../lib/memorySecurityEvent.js';
+import { getModelSpec } from '../lib/models.js';
 import {
   commitToMemory,
   lessonCitation,
@@ -138,6 +145,44 @@ describe('commitToMemory', () => {
         },
         repoId: 'repo-1',
         workflowRunId: 'run-1',
+      })
+    );
+  });
+
+  it('prices and stamps the call from the one resolution that bound the model', async () => {
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
+    // A version is cut after the model was bound: any later lookup would name another model.
+    vi.mocked(getModelSpec).mockResolvedValue('anthropic/cut-after-binding');
+    generateMock.mockResolvedValue({ object: LESSON, usage: { inputTokens: 1, outputTokens: 1 } });
+    vi.mocked(recordLlmUsage).mockResolvedValue({
+      costUsd: 0,
+      inputTokens: 1,
+      modelSpec: 'anthropic/claude-opus-5-5',
+      outputTokens: 1,
+    });
+    await commitToMemory('eng-acme-api-T-1', null, undefined, evidence);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: { id: 'agent-row-1', version: 3 }, role: 'commitToMemory' })
+    );
+    expect(recordLlmUsage).toHaveBeenCalledWith(
+      expect.anything(),
+      'commitToMemory',
+      expect.anything(),
+      'llm.commit_to_memory',
+      'anthropic/claude-opus-5-5'
+    );
+  });
+
+  it('puts the bound spec, not a later lookup, on the failure row', async () => {
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
+    vi.mocked(getModelSpec).mockResolvedValue('anthropic/cut-after-binding');
+    generateMock.mockRejectedValueOnce(new Error('provider down'));
+    await expect(commitToMemory('eng-acme-api-T-1', null, undefined, evidence)).rejects.toThrow();
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: { id: 'agent-row-1', version: 3 },
+        error: 'provider down',
+        model: 'anthropic/claude-opus-5-5',
       })
     );
   });
@@ -438,4 +483,9 @@ describe('memory gate refusals', () => {
     });
     warn.mockRestore();
   });
+});
+
+// A failing assertion must not leak a spy on AgentTracer into the next test.
+afterEach(() => {
+  vi.restoreAllMocks();
 });

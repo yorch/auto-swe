@@ -113,6 +113,7 @@ function toolLoopModel(opts: ModelOpts = {}) {
 
 function specFor(model: unknown): AgentSpec {
   return {
+    agent: { id: 'agent-row-1', version: 4 },
     agentKey: 'contentWriter',
     model: model as AgentSpec['model'],
     modelSpec: 'x/y',
