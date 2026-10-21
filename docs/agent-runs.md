@@ -367,7 +367,9 @@ A run of the "Agent Run" template shows an **outcome card** in the run's side ra
 (rendered as text), the files changed with line counts, the branch and, for `draft_pr`, the pull request
 link (only an `https` URL is linked), the gate verdict (`passed`, `no_changes`, or not published), a
 `diff verified` or `diff unverified` badge (section 4), and whether the run stopped at its step or time
-cap. The diff is behind a disclosure and says when it was cut at 100,000 characters.
+cap. The diff is behind a disclosure and says when it was cut at 100,000 characters. When the agent's
+text was spilled out of the run's stored context (a `[stored as artifact …]` placeholder), the card
+shows a **View full text** button that reads it on demand.
 
 A failed run names its refusal above the generic failure card: the security gate, the gate being
 unavailable, the push policy, a diff or working tree too large, an unsupported draft PR (the branch

@@ -212,6 +212,22 @@ export function useEvalResultsForRun(runId?: string) {
   });
 }
 
+/** The full text of a value the run spilled out of its context; fetched only while `enabled`. */
+export function useContextArtifact(runId: string, artifactId: string, enabled: boolean) {
+  return useQuery({
+    enabled: enabled && !!runId && !!artifactId,
+    queryFn: () =>
+      api
+        .get<{ data: { text: string; sizeBytes: number } }>(
+          `/api/v1/workflow-runs/${runId}/artifacts/${artifactId}`
+        )
+        .then((r) => r.data),
+    queryKey: ['context-artifact', runId, artifactId],
+    // A stored artifact never changes, so one read serves every reopen.
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+}
+
 /** P3 governance: autonomy decisions for a run. */
 export function useAutonomyDecisionsForRun(runId?: string) {
   return useQuery({

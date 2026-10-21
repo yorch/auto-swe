@@ -13,6 +13,7 @@ import { classifyAgentRunFailure } from '@/lib/agentRun';
 import { NEEDS_RESPONSE_ANCHOR } from '@/lib/runVerdict';
 import { cn, FOCUS_RING } from '@/lib/utils';
 import { AgentRunFailureNote } from './AgentRunOutcomeCard';
+import { ArtifactAwareText } from './ArtifactAwareText';
 import { FailureCard } from './FailureCard';
 import { RunOutcomeCard } from './RunOutcomeCard';
 
@@ -142,6 +143,7 @@ export function RunSummary({
           <RunOutcomeCard
             isAgentRun={isAgentRun}
             result={run.result}
+            runId={run.id}
             templateName={run.templateName ?? ''}
           />
         </div>
@@ -165,7 +167,12 @@ export function RunSummary({
             className="mt-3 whitespace-pre-wrap break-words rounded-md border border-ink-500/50 bg-ink-950/50 p-3 font-mono text-xs leading-relaxed text-paper-300"
             collapsedHeight="24rem"
           >
-            {typeof run.result === 'string' ? run.result : JSON.stringify(run.result, null, 2)}
+            <ArtifactAwareText
+              runId={run.id}
+              text={
+                typeof run.result === 'string' ? run.result : JSON.stringify(run.result, null, 2)
+              }
+            />
           </ExpandablePre>
         </details>
       )}

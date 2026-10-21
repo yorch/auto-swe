@@ -12,6 +12,7 @@ import {
   parseAgentRunOutcome,
 } from '@/lib/agentRun';
 import { cn, FOCUS_RING } from '@/lib/utils';
+import { ArtifactAwareText } from './ArtifactAwareText';
 
 function isHttpsUrl(value: string): boolean {
   try {
@@ -54,7 +55,7 @@ function OutcomeRow({ label, children }: { label: string; children: ReactNode })
  * was published. Everything here is text the agent influenced, rendered as text
  * (never HTML); the only link is a pull request URL, and only when it is https.
  */
-export function AgentRunOutcomeCard({ result }: { result: unknown }) {
+export function AgentRunOutcomeCard({ result, runId }: { result: unknown; runId: string }) {
   const o = parseAgentRunOutcome(result);
   if (!o) {
     return null;
@@ -80,7 +81,7 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
 
       {o.text ? (
         <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-paper-300">
-          {o.text}
+          <ArtifactAwareText runId={runId} text={o.text} />
         </p>
       ) : (
         <p className="text-sm text-paper-500">The agent returned no text.</p>
@@ -161,7 +162,7 @@ export function AgentRunOutcomeCard({ result }: { result: unknown }) {
             className="mt-2 rounded-md border border-ink-500/50 bg-ink-950/60 p-3 font-mono text-xs leading-relaxed text-paper-300"
             collapsedHeight="20rem"
           >
-            {o.diff}
+            <ArtifactAwareText runId={runId} text={o.diff} />
           </ExpandablePre>
           {o.diffTruncated && (
             <p className="mt-1.5 text-xs text-paper-500">

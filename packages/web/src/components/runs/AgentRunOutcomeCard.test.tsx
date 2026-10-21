@@ -23,7 +23,7 @@ const DELIVERED = {
 
 describe('AgentRunOutcomeCard', () => {
   it('shows the summary, files, branch, draft PR link and the verified/gate badges', () => {
-    render(<AgentRunOutcomeCard result={DELIVERED} />);
+    render(<AgentRunOutcomeCard result={DELIVERED} runId="run-1" />);
     expect(screen.getByText('Added a.md')).toBeTruthy();
     expect(screen.getByText('a.md')).toBeTruthy();
     expect(screen.getByText('auto/agent-abc')).toBeTruthy();
@@ -44,6 +44,7 @@ describe('AgentRunOutcomeCard', () => {
           gate: 'not_applicable',
           text: 'ok',
         }}
+        runId="run-1"
       />
     );
     expect(screen.getByText('Diff unverified')).toBeTruthy();
@@ -53,7 +54,9 @@ describe('AgentRunOutcomeCard', () => {
   });
 
   it('never links a non-https PR URL', () => {
-    render(<AgentRunOutcomeCard result={{ ...DELIVERED, prUrl: 'javascript:alert(1)' }} />);
+    render(
+      <AgentRunOutcomeCard result={{ ...DELIVERED, prUrl: 'javascript:alert(1)' }} runId="run-1" />
+    );
     expect(screen.queryByRole('link')).toBeNull();
   });
 
@@ -61,6 +64,7 @@ describe('AgentRunOutcomeCard', () => {
     render(
       <AgentRunOutcomeCard
         result={{ ...DELIVERED, diffTruncated: true, stoppedReason: 'wall_clock' }}
+        runId="run-1"
       />
     );
     expect(screen.getByText('Stopped at its time limit')).toBeTruthy();
@@ -69,17 +73,17 @@ describe('AgentRunOutcomeCard', () => {
 
   it('renders agent text as text, not markup', () => {
     const { container } = render(
-      <AgentRunOutcomeCard result={{ text: '<img src=x onerror=alert(1)>' }} />
+      <AgentRunOutcomeCard result={{ text: '<img src=x onerror=alert(1)>' }} runId="run-1" />
     );
     expect(container.querySelector('img')).toBeNull();
   });
 
   it('is what the generic outcome card renders for a run the gateway flags, never by name', () => {
     const { container, rerender } = render(
-      <RunOutcomeCard isAgentRun result={DELIVERED} templateName="Agent Run" />
+      <RunOutcomeCard isAgentRun result={DELIVERED} runId="run-1" templateName="Agent Run" />
     );
     expect(container.textContent).toContain('Agent run outcome');
-    rerender(<RunOutcomeCard result={DELIVERED} templateName="Agent Run" />);
+    rerender(<RunOutcomeCard result={DELIVERED} runId="run-1" templateName="Agent Run" />);
     expect(container.textContent).not.toContain('Agent run outcome');
     expect(container.textContent).toContain('Review PR #7');
   });
@@ -99,5 +103,30 @@ describe('AgentRunFailureNote', () => {
     expect(screen.getByText('Refused by the push policy')).toBeTruthy();
     expect(screen.getByText('AGENT_RUN_PUSH_POLICY')).toBeTruthy();
     expect(screen.getByRole('note')).toBeTruthy();
+  });
+});
+
+describe('a spilled agent result', () => {
+  it('turns the stored-artifact placeholder into a button to read the full text', () => {
+    const id = '7a9619ff-8b86-4a08-8b86-3e6f9619ffd2';
+    render(
+      <AgentRunOutcomeCard
+        result={{ text: `[stored as artifact ${id} — 9000 bytes]` }}
+        runId="run-1"
+      />
+    );
+    expect(screen.getByRole('button', { name: 'View full text (9,000 bytes)' })).toBeTruthy();
+  });
+
+  it('offers the full diff when the diff itself was spilled', () => {
+    const id = '8b9619ff-8b86-4a08-8b86-3e6f9619ffd3';
+    const { container } = render(
+      <AgentRunOutcomeCard
+        result={{ ...DELIVERED, diff: `[stored as artifact ${id} \u2014 60000 bytes]` }}
+        runId="run-1"
+      />
+    );
+    expect(screen.getByRole('button', { name: 'View full text (60,000 bytes)' })).toBeTruthy();
+    expect(container.querySelector('pre')?.textContent).toContain('View full text');
   });
 });

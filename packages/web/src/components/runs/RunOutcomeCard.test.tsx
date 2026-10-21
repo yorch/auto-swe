@@ -7,7 +7,7 @@ import { RunOutcomeCard } from './RunOutcomeCard';
 describe('RunOutcomeCard', () => {
   it('renders nothing for an unknown template', () => {
     const { container } = render(
-      <RunOutcomeCard result={{ text: 'hello' }} templateName="custom" />
+      <RunOutcomeCard result={{ text: 'hello' }} runId="run-1" templateName="custom" />
     );
     expect(container.firstChild).toBeNull();
   });
@@ -16,6 +16,7 @@ describe('RunOutcomeCard', () => {
     render(
       <RunOutcomeCard
         result={{ targetPageId: 'page-123', text: 'Draft content' }}
+        runId="run-1"
         templateName="notion-content-draft"
       />
     );
@@ -28,6 +29,7 @@ describe('RunOutcomeCard', () => {
     render(
       <RunOutcomeCard
         result={{ targetPageId: 'page-456', text: 'PRD body text' }}
+        runId="run-1"
         templateName="product-prd-draft"
       />
     );
@@ -38,6 +40,7 @@ describe('RunOutcomeCard', () => {
     render(
       <RunOutcomeCard
         result={{ channelId: 'C123', posted: true, text: 'Hello channel' }}
+        runId="run-1"
         templateName="send-slack-update"
       />
     );
@@ -54,6 +57,7 @@ describe('RunOutcomeCard', () => {
           issueUrl: 'https://linear.app/issue/TEAM-1',
           title: 'Bug',
         }}
+        runId="run-1"
         templateName="create-issue"
       />
     );
@@ -70,6 +74,7 @@ describe('RunOutcomeCard', () => {
           issueUrl: 'https://x.atlassian.net/browse/PROJ-9',
           title: 'Refactor auth',
         }}
+        runId="run-1"
         templateName="create-issue-from-brief"
       />
     );
@@ -86,10 +91,25 @@ describe('RunOutcomeCard', () => {
           issueUrl: 'javascript:alert(1)',
           title: 'Evil',
         }}
+        runId="run-1"
         templateName="create-issue"
       />
     );
     expect(container.querySelector('a')).toBeNull();
     expect(screen.getByText(/Should not be clickable/)).toBeTruthy();
+  });
+});
+
+describe('a spilled result text', () => {
+  it('offers the full text where a template shows its text output', () => {
+    const id = '7a9619ff-8b86-4a08-8b86-3e6f9619ffd2';
+    render(
+      <RunOutcomeCard
+        result={{ text: `[stored as artifact ${id} — 9000 bytes]`, ticketId: 'Z-1' }}
+        runId="run-1"
+        templateName="zendesk-ticket-reply"
+      />
+    );
+    expect(screen.getByRole('button', { name: 'View full text (9,000 bytes)' })).toBeTruthy();
   });
 });
