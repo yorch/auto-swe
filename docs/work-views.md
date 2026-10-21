@@ -134,6 +134,26 @@ reach (`reachableConnections`). The read takes at most 10,000 rows, newest first
 cuts into the window, `isTruncated` is true and `current` is computed from the rows read; when it
 cuts into the previous window only, `previousComplete` is false and `previous` is null.
 
+### 3.1 `GET /api/v1/pull-requests/outcomes/export`
+
+The same pull requests as a file for a spreadsheet or BI tool: one row per PR **opened in the
+window** (no previous window), newest first. It takes the outcomes read's `window`, `since`/`until`,
+`scope`, `teamId` and `repoId`, plus `format`: `csv` (default) or `ndjson`. Visibility is the
+outcomes read's, from the same filter function, so an export reaches no row the summary would not.
+ENGINEER and above may call it.
+
+Columns (CSV header, and the keys of each NDJSON object): `pull_request_id`, `repository_org`,
+`repository_name`, `pr_number`, `status`, `is_draft`, `ci_status`, `opened_at`, `merged_at`,
+`closed_at`, `time_to_merge_ms` (merged PRs only). Titles and tickets are not exported. A text cell
+that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed with `'` so a
+spreadsheet does not run it as a formula (`csvCell()` in `gateway/src/lib/csv.ts`, shared with the
+audit-log export); numbers and booleans are written as they are.
+
+The file stops at 50,000 rows. `X-Export-Row-Limit` carries the cap and `X-Export-Truncated` is
+`true` when more rows matched. The count and the first batch are read before any byte is sent, so a
+database failure at that point is a plain `500`. The assistant may not call it (`bulkExport` in the
+assistant policy).
+
 ---
 
 ## 4. `GET /api/v1/tickets`
@@ -211,6 +231,11 @@ reload.
 - **Pull requests** — a table with the state (Open, Draft, Merged, Closed) and CI badges, the ticket
   (linked to its request), the latest run, cost and age. Filters: scope, state (Open unless the
   address says otherwise), draft, repository, ticket. The PR links to the host in a new tab.
+- **Pull request outcomes** — a card on **Platform analytics** (`/admin/analytics`) for the page's
+  date range: merge rate, median and 95th-percentile time to merge, PRs opened (with merged, closed
+  unmerged, open and draft counts), each against the previous window, and the ten repositories with
+  the most PRs opened. A banner says when the row cap cut into the window, and when it cut into the
+  previous one so no comparison is shown. The card loads and fails on its own.
 - **Tickets** — a table with the tracker status, request and run counts, the latest run, PR count,
   cost and last activity. A "Hide automated runs" checkbox is on by default. A row expands to the
   latest request and its pull requests with their states.
@@ -226,7 +251,20 @@ http(s) address.
   under-reports merges that have not happened yet and its merge rate rises as its PRs resolve.
 - An outcomes read takes at most 10,000 PRs; beyond that the figures cover only the newest ones
   read, and `isTruncated` or `previousComplete` says so.
-- Outcomes are not grouped by workflow template or agent, and no dashboard page shows them.
+- Outcomes are not grouped by workflow template or agent. The only dashboard view is the card on
+  `/admin/analytics`, which follows that page's date range and shows no team, repository or scope
+  filter.
+- An export that fails after its first byte cannot change its status: the transfer is aborted and a
+  client sees a failed download, not a clean short file. Rows already sent are not marked.
+- The export is a snapshot read in batches of 500 by cursor, not a transaction, so a PR whose state
+  changes while it streams can appear in its old or new state.
+- The count behind `X-Export-Truncated` and the first batch are separate reads, not one transaction,
+  so the header can disagree with the body when rows are added or removed between them. A row
+  deleted between two batches is the cursor for the next, and the file ends there early, with no
+  error and `X-Export-Truncated` unchanged.
+- The outcomes read and its export filter on `openedAt` alone and no index leads with it (see the
+  `(status, openedAt)` note above); the analytics approval-latency read filters
+  `workflow_human_steps` on `requested_at`, which has no index either, so both scan on a large table.
 - The read filters on `openedAt` alone, and the only index that leads with a time column is
   `(status, openedAt)`, so on a large table it scans rather than seeks.
 - `scope` defaults to `TEAM` here and to `MINE` on the list, so the same caller sees different

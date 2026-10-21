@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import '../test/warmAuthImports.js';
 import { requireAuth } from '../plugins/auth.js';
 import { authorizeLaunch } from './launchAuthorization.js';
 import { retryTemplateRequest } from './retryTemplateRequest.js';

@@ -12,6 +12,7 @@ const { scanSkillContent } = vi.hoisted(() => ({
 }));
 vi.mock('@auto-swe/shared/lib/skillScanner', () => ({ scanSkillContent }));
 
+import '../test/warmAuthImports.js';
 import { skillsRoutes } from './skills.js';
 
 const CUSTOM_ID = '00000000-0000-4000-a000-0000000000c1';

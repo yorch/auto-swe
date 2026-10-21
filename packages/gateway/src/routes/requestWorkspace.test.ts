@@ -8,6 +8,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', async (orig) => ({
   resolveGitHubBaseUrl: vi.fn(async () => 'https://ghe.corp'),
 }));
 
+import '../test/warmAuthImports.js';
 import { requestWorkspaceRoutes } from './requestWorkspace.js';
 
 const USER = '11111111-1111-4111-8111-111111111111';

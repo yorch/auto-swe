@@ -566,6 +566,28 @@ export interface GlobalAnalyticsResponse {
   } | null;
   /** Runs started per UTC day in the window, oldest first. */
   daily?: Array<{ date: string; completed: number; failed: number; active: number }>;
+  /** Wait times of the human steps requested in the window. */
+  approvalLatency?: ApprovalLatencySummary;
+}
+
+/** How long people took to answer human steps requested in a window. */
+export interface ApprovalLatencyStats {
+  /** Steps answered by a person, request to answer; the percentiles are null when none was. */
+  resolved: { count: number; p50Ms: number | null; p95Ms: number | null };
+  /** Steps nobody answered before their deadline. Not in the latency figures. */
+  timedOut: number;
+  /** Steps closed without an answer (the run ended first). Not in the latency figures. */
+  cancelled: number;
+  /** Steps still waiting; excluded from the latency, so the figures read lower than the truth. */
+  pending: number;
+}
+
+/** Human-step wait times in the analytics window: overall, and per template. */
+export interface ApprovalLatencySummary extends ApprovalLatencyStats {
+  /** True when the row cap cut into the window, so every figure here is partial. */
+  isTruncated: boolean;
+  /** Templates with the most steps first; capped. */
+  perTemplate: Array<ApprovalLatencyStats & { templateId: string; templateName: string }>;
 }
 
 export interface SpecDiffResponse {

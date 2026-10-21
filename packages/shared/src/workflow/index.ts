@@ -5,13 +5,16 @@ export type {
   AnalyticsResult,
   AnalyticsRunRow,
   AnalyticsStepRow,
+  ApprovalLatencyRow,
   DailyRunCount,
   GlobalAnalyticsResult,
   GlobalAnalyticsTemplateRow,
   SignificanceHint,
 } from './analytics.js';
 export {
+  APPROVAL_LATENCY_TEMPLATE_LIMIT,
   computeAnalytics,
+  computeApprovalLatency,
   computeDailyRunSeries,
   computeGlobalAnalytics,
   MIN_SAMPLES_FOR_SIGNIFICANCE,

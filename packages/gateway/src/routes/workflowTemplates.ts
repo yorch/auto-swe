@@ -19,6 +19,7 @@ import {
 } from '@auto-swe/shared/types/workflow';
 import {
   computeAnalytics,
+  computeApprovalLatency,
   computeDailyRunSeries,
   computeGlobalAnalytics,
   diffSpecs,
@@ -605,6 +606,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         start: windowStart,
       } = resolveWindow(request.query, request.query.window);
       const ANALYTICS_ROW_CAP = 10_000;
+      const APPROVAL_STEP_ROW_CAP = 10_000;
       const rowsQuery = fastify.prisma.workflowRun.findMany({
         orderBy: { startedAt: 'desc' },
         select: {
@@ -639,13 +641,40 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
         },
       });
-      const [rows, baselines] = await Promise.all([
+      // Human-step wait times: the steps requested in the window, of the runs the caller may see
+      // (the step table carries no tenant column, so visibility comes from the run).
+      const stepsQuery = fastify.prisma.workflowHumanStep.findMany({
+        orderBy: { requestedAt: 'desc' },
+        select: {
+          requestedAt: true,
+          resolvedAt: true,
+          run: { select: { template: { select: { name: true } }, templateId: true } },
+          status: true,
+        },
+        take: APPROVAL_STEP_ROW_CAP + 1,
+        where: {
+          requestedAt: { gte: windowStart, lt: windowEnd },
+          run: buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+        },
+      });
+      const [rows, baselines, stepRows] = await Promise.all([
         rowsQuery,
         fastify.prisma.humanErrorBaseline.findMany({
           select: { domain: true, errorRate: true, outcomeType: true, sampleSize: true },
           where: { organization: memberOrgs(user) },
         }),
+        stepsQuery,
       ]);
+      const approvalLatency = computeApprovalLatency(
+        stepRows.slice(0, APPROVAL_STEP_ROW_CAP).map((s) => ({
+          requestedAt: s.requestedAt,
+          resolvedAt: s.resolvedAt,
+          status: s.status,
+          templateId: s.run.templateId,
+          templateName: s.run.template.name,
+        })),
+        stepRows.length > APPROVAL_STEP_ROW_CAP
+      );
       const capped = rows.length > ANALYTICS_ROW_CAP;
       const kept = rows.slice(0, ANALYTICS_ROW_CAP);
       // Newest first, so a capped read loses the previous window before it loses this one.
@@ -688,6 +717,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       return {
         data: {
           ...analytics,
+          approvalLatency,
           daily: computeDailyRunSeries(current, windowStart, new Date(windowEnd.getTime() - 1)),
           isTruncated,
           previous: prev && {

@@ -1062,6 +1062,15 @@ and a custom `since`/`until` span of the same days report the same numbers, and 
 period is the same number of days directly before. Weekly-bucketed charts (a usage or eval window
 above 90 days) say "week" in their summary, table and tooltips.
 
+The global analytics response also carries `approvalLatency`: how long people took to answer the
+human steps (`WorkflowHumanStep`) requested in the window, for the runs the caller may see, overall
+and per template (`computeApprovalLatency()` in `shared/src/workflow/analytics.ts`). The wait is
+`requestedAt` to `resolvedAt` and is measured for `RESOLVED` steps only, as `resolved.count`,
+`p50Ms` and `p95Ms`. `TIMED_OUT`, `CANCELLED` and `PENDING` steps are counted separately and are in
+no percentile. It reads at most 10,000 steps, newest first, and sets `isTruncated` when the cap cut
+into the window. `/admin/analytics` renders it as the Approval latency card, and its pull-request
+outcomes card reads `GET /api/v1/pull-requests/outcomes` ([work-views.md](./work-views.md)).
+
 ### Workspace hardening
 
 The agent workspace container executes LLM-generated commands, so its posture matters more than
@@ -1181,6 +1190,25 @@ Current constraints of the system as built. Deliberate product boundaries are in
   from the per-step table. Analytics also skips `PENDING`, `RUNNING` and `SKIPPED`, and a fan-out
   branch records under a prefixed id (`fan[0]/impl`), so one node's failure rate is split across its
   branches rather than aggregated.
+- **Approval latency reads shorter than the truth, and mixes every answerer.** A step still
+  waiting has no answer time and is left out, so the figures rise as such steps resolve. A timed-out
+  or cancelled step is closed by the system and is counted, not timed. In the policy-gated write
+  pattern (`policyGatedWrite`), an `auto` decision routes around the approval node, so no step is
+  created and that gate adds no near-zero wait; the interpreter does not enforce this, so a
+  workflow that wires its approval node unconditionally still creates a step per run. A step
+  answered by a script or service token through the API counts like any other, and the
+  figures do not separate people from automation. On a multi-approver step the wait ends when the
+  last needed approval arrives. The steps are grouped by the template of their run and by the
+  window their request fell in, not by who was asked.
+- **The approval-latency read scans.** It filters `workflow_human_steps` on `requested_at`, which
+  has no index (only `run_id`, `(run_id, node_id)`, `status` and `resolved_by` are indexed), so on a
+  large table it scans before the 10,000-row cap applies.
+- **Per-agent-version comparison is not provided.** `WorkflowRun.agentVersions` is a snapshot of
+  the GLOBAL active versions taken at run start, not a record of what ran: a TEAM, ORGANIZATION,
+  CHANNEL or template override still resolves its own latest version, and a run that never used an
+  agent is pinned to every one. Grouping runs by that map would credit results to versions that did
+  not produce them. A per-version figure needs a record of the version each call resolved, which no
+  table holds.
 - **A run's branch name is recomputed by every activity, not pinned.** `branchPrefix` lives on the
   `WorkflowDefaults` singleton, and `executeImplementation`, the quality gates, the CI steps and a
   shell step each resolve it when they run. An edit between two steps of one run makes the later step

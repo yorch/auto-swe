@@ -29,6 +29,11 @@ export type NeverReason =
   | 'destructive'
   /** Runs compute outside the request — starts a container or a workflow. */
   | 'runsWorkload'
+  /**
+   * A bulk file download: up to tens of thousands of rows streamed as an attachment, which a tool
+   * call cannot consume and which would put the whole file into the conversation.
+   */
+  | 'bulkExport'
   /** A long-lived event stream, which a tool call cannot consume. */
   | 'stream'
   /** Starts a browser OAuth redirect, which only a person in a browser can complete. */
@@ -154,6 +159,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/platform/usage/scopes': 'read',
   'GET /api/v1/pull-requests': 'read',
   'GET /api/v1/pull-requests/outcomes': 'read',
+  'GET /api/v1/pull-requests/outcomes/export': { never: 'bulkExport' },
   'GET /api/v1/repositories': 'read',
   'GET /api/v1/repositories/:id/dependencies': 'read',
   'GET /api/v1/repositories/:id/share-candidates': 'read',

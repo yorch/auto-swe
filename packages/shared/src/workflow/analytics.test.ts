@@ -8,7 +8,9 @@ import {
   WORKFLOW_RUN_TERMINAL_STATUSES,
 } from '../types/api.js';
 import {
+  APPROVAL_LATENCY_TEMPLATE_LIMIT,
   computeAnalytics,
+  computeApprovalLatency,
   computeDailyRunSeries,
   computeGlobalAnalytics,
   normalizeRecordingNodeId,
@@ -177,5 +179,83 @@ describe('per-step rollup across fan-out branches', () => {
     expect(result.perStepFailureRates).toEqual([
       { failed: 1, failureRate: 0.5, nodeId: 'impl', total: 2 },
     ]);
+  });
+});
+
+describe('computeApprovalLatency', () => {
+  const t0 = new Date('2026-01-01T00:00:00Z');
+  const after = (ms: number) => new Date(t0.getTime() + ms);
+  const step = (
+    status: string,
+    waitMs: number | null,
+    templateId = 'tplA',
+    templateName = 'A'
+  ) => ({
+    requestedAt: t0,
+    resolvedAt: waitMs === null ? null : after(waitMs),
+    status,
+    templateId,
+    templateName,
+  });
+
+  it('measures answered steps only, and counts the others apart', () => {
+    const out = computeApprovalLatency(
+      [
+        step('RESOLVED', 1000),
+        step('RESOLVED', 2000),
+        step('RESOLVED', 3000),
+        step('RESOLVED', 4000),
+        step('TIMED_OUT', 86_400_000),
+        step('CANCELLED', 5_000_000),
+        step('PENDING', null),
+      ],
+      false
+    );
+    expect(out.resolved).toEqual({ count: 4, p50Ms: 2000, p95Ms: 4000 });
+    expect(out.timedOut).toBe(1);
+    expect(out.cancelled).toBe(1);
+    expect(out.pending).toBe(1);
+    expect(out.isTruncated).toBe(false);
+  });
+
+  it('has null percentiles and zero counts with nothing answered', () => {
+    const out = computeApprovalLatency([step('PENDING', null), step('TIMED_OUT', 10)], true);
+    expect(out.resolved).toEqual({ count: 0, p50Ms: null, p95Ms: null });
+    expect(out.isTruncated).toBe(true);
+    expect(computeApprovalLatency([], false).perTemplate).toEqual([]);
+  });
+
+  it('drops an answered step with no answer time or a negative wait rather than skewing the figures', () => {
+    const out = computeApprovalLatency(
+      [step('RESOLVED', null), step('RESOLVED', -5), step('RESOLVED', 100)],
+      false
+    );
+    expect(out.resolved).toEqual({ count: 1, p50Ms: 100, p95Ms: 100 });
+  });
+
+  it('breaks the figures down per template, busiest first', () => {
+    const out = computeApprovalLatency(
+      [
+        step('RESOLVED', 10, 'b', 'Beta'),
+        step('RESOLVED', 30, 'a', 'Alpha'),
+        step('RESOLVED', 50, 'a', 'Alpha'),
+        step('TIMED_OUT', 1, 'a', 'Alpha'),
+      ],
+      false
+    );
+    expect(out.perTemplate.map((t) => [t.templateName, t.resolved.count, t.timedOut])).toEqual([
+      ['Alpha', 2, 1],
+      ['Beta', 1, 0],
+    ]);
+    expect(out.perTemplate[0]?.resolved.p50Ms).toBe(30);
+  });
+
+  it('lists at most the template limit', () => {
+    const rows = Array.from({ length: APPROVAL_LATENCY_TEMPLATE_LIMIT + 5 }, (_, i) =>
+      step('RESOLVED', 1, `t${i}`, `T${i}`)
+    );
+    expect(computeApprovalLatency(rows, false).perTemplate).toHaveLength(
+      APPROVAL_LATENCY_TEMPLATE_LIMIT
+    );
   });
 });

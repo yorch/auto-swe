@@ -49,6 +49,7 @@ vi.mock('@auto-swe/shared/lib/repoPermission', () => ({
   verifiedGithubLoginFor: (...a: unknown[]) => github.verifiedGithubLoginFor(...a),
 }));
 
+import '../test/warmAuthImports.js';
 import { repositoryRoutes } from './repositories.js';
 
 interface AuthState {

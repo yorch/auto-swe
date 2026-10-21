@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import type { Prisma } from '@auto-swe/shared';
 import {
   PULL_REQUEST_STATES,
@@ -11,9 +12,10 @@ import type {
   PullRequestOutcomesResponse,
   WorkflowRunStatus,
 } from '@auto-swe/shared/types/api';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { csvRow } from '../lib/csv.js';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
@@ -43,6 +45,62 @@ const OutcomesQuery = refineCustomRange(
 /** Most rows one outcomes read takes; one more is fetched to detect a cut. */
 const OUTCOMES_ROW_CAP = 10_000;
 const OUTCOMES_TOP_REPOSITORIES = 10;
+
+const OutcomesExportQuery = refineCustomRange(
+  z.object({
+    ...customRangeFields,
+    format: z.enum(['csv', 'ndjson']).default('csv'),
+    repoId: z.string().uuid().optional(),
+    scope: z.enum(['MINE', 'TEAM']).default('TEAM'),
+    teamId: z.string().uuid().optional(),
+    window: z.coerce.number().int().min(1).max(365).default(30),
+  })
+);
+/** An export is a file for a person, not a backup: it stops here and says so in a header. */
+const OUTCOMES_EXPORT_MAX_ROWS = 50_000;
+const OUTCOMES_EXPORT_BATCH = 500;
+const OUTCOMES_EXPORT_COLUMNS = [
+  'pull_request_id',
+  'repository_org',
+  'repository_name',
+  'pr_number',
+  'status',
+  'is_draft',
+  'ci_status',
+  'opened_at',
+  'merged_at',
+  'closed_at',
+  'time_to_merge_ms',
+] as const;
+
+/**
+ * The pull requests an outcomes read or export covers: the ones the caller may reach, opened in
+ * `[openedFrom, end)`, narrowed by the query. One definition, so the export can never reach a row
+ * the summary would not.
+ */
+function outcomesFilters(
+  user: ReturnType<typeof requireUser>,
+  gate: FastifyRequest['repoAccessGate'],
+  query: { repoId?: string | undefined; scope: 'MINE' | 'TEAM'; teamId?: string | undefined },
+  openedFrom: Date,
+  end: Date
+): Prisma.PullRequestWhereInput[] {
+  const filters: Prisma.PullRequestWhereInput[] = [
+    user.role === 'ADMIN' ? {} : { repository: reachableConnections(user, gate) },
+    { openedAt: { gte: openedFrom, lt: end } },
+  ];
+  if (query.repoId) {
+    filters.push({ repoId: query.repoId });
+  }
+  if (query.teamId) {
+    const { teamId } = query;
+    filters.push({ repository: { OR: [{ teamId }, { shares: { some: { teamId } } }] } });
+  }
+  if (query.scope === 'MINE') {
+    filters.push({ workflow: { workRequest: { requestedById: user.sub } } });
+  }
+  return filters;
+}
 
 /**
  * Pull requests the platform opened, newest first.
@@ -176,26 +234,17 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request) => {
       const user = requireUser(request);
-      const { repoId, scope, teamId } = request.query;
       const { days, end, previousStart, start } = resolveWindow(
         request.query,
         request.query.window
       );
-      const filters: Prisma.PullRequestWhereInput[] = [
-        user.role === 'ADMIN'
-          ? {}
-          : { repository: reachableConnections(user, request.repoAccessGate) },
-        { openedAt: { gte: previousStart, lt: end } },
-      ];
-      if (repoId) {
-        filters.push({ repoId });
-      }
-      if (teamId) {
-        filters.push({ repository: { OR: [{ teamId }, { shares: { some: { teamId } } }] } });
-      }
-      if (scope === 'MINE') {
-        filters.push({ workflow: { workRequest: { requestedById: user.sub } } });
-      }
+      const filters = outcomesFilters(
+        user,
+        request.repoAccessGate,
+        request.query,
+        previousStart,
+        end
+      );
       const rows = await fastify.prisma.pullRequest.findMany({
         orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
         select: {
@@ -256,6 +305,99 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         window: { days, end: end.toISOString(), start: start.toISOString() },
       };
       return { data };
+    }
+  );
+
+  // The window's pull requests as a file for a spreadsheet or BI tool: one row per PR opened in
+  // the window, newest first, the same rows `/outcomes` summarises (no previous window).
+  app.get(
+    '/outcomes/export',
+    {
+      onRequest: engineerOnly,
+      schema: { querystring: OutcomesExportQuery },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const { end, start } = resolveWindow(request.query, request.query.window);
+      const where: Prisma.PullRequestWhereInput = {
+        AND: outcomesFilters(user, request.repoAccessGate, request.query, start, end),
+      };
+      const { format } = request.query;
+      const select = {
+        ciStatus: true,
+        closedAt: true,
+        id: true,
+        isDraft: true,
+        mergedAt: true,
+        openedAt: true,
+        prNumber: true,
+        repository: { select: { organizationName: true, repoName: true } },
+        status: true,
+      } satisfies Prisma.PullRequestSelect;
+      const readBatch = (cursor: string | undefined) =>
+        fastify.prisma.pullRequest.findMany({
+          ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+          orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+          select,
+          take: OUTCOMES_EXPORT_BATCH,
+          where,
+        });
+      type Batch = Awaited<ReturnType<typeof readBatch>>;
+      const cells = (r: Batch[number]) => [
+        r.id,
+        r.repository?.organizationName ?? null,
+        r.repository?.repoName ?? null,
+        r.prNumber,
+        r.status,
+        r.isDraft,
+        r.ciStatus,
+        r.openedAt.toISOString(),
+        r.mergedAt?.toISOString() ?? null,
+        r.closedAt?.toISOString() ?? null,
+        r.mergedAt ? r.mergedAt.getTime() - r.openedAt.getTime() : null,
+      ];
+      const encode = (r: Batch[number]) => {
+        const values = cells(r);
+        return format === 'csv'
+          ? csvRow(values)
+          : `${JSON.stringify(Object.fromEntries(OUTCOMES_EXPORT_COLUMNS.map((c, i) => [c, values[i]])))}\n`;
+      };
+
+      // Everything that can fail before the first byte is awaited here, so a database error is a
+      // plain 500. Once streaming starts the headers are gone; see the Limitations of the doc.
+      const [matching, firstBatch] = await Promise.all([
+        fastify.prisma.pullRequest.count({ where }),
+        readBatch(undefined),
+      ]);
+      async function* lines() {
+        if (format === 'csv') {
+          yield csvRow(OUTCOMES_EXPORT_COLUMNS);
+        }
+        let rows = firstBatch;
+        let written = 0;
+        while (rows.length > 0) {
+          // Never write past the cap, even when it does not fall on a batch boundary.
+          const batch = rows.slice(0, OUTCOMES_EXPORT_MAX_ROWS - written);
+          yield batch.map(encode).join('');
+          written += batch.length;
+          if (rows.length < OUTCOMES_EXPORT_BATCH || written >= OUTCOMES_EXPORT_MAX_ROWS) {
+            return;
+          }
+          rows = await readBatch(rows[rows.length - 1]?.id);
+        }
+      }
+      return reply
+        .header(
+          'Content-Type',
+          format === 'csv' ? 'text/csv; charset=utf-8' : 'application/x-ndjson; charset=utf-8'
+        )
+        .header(
+          'Content-Disposition',
+          `attachment; filename="pull-request-outcomes.${format === 'csv' ? 'csv' : 'ndjson'}"`
+        )
+        .header('X-Export-Row-Limit', String(OUTCOMES_EXPORT_MAX_ROWS))
+        .header('X-Export-Truncated', String(matching > OUTCOMES_EXPORT_MAX_ROWS))
+        .send(Readable.from(lines()));
     }
   );
 };

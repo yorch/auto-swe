@@ -24,6 +24,23 @@ afterEach(() => {
 });
 
 const analytics = {
+  approvalLatency: {
+    cancelled: 1,
+    isTruncated: false,
+    pending: 2,
+    perTemplate: [
+      {
+        cancelled: 1,
+        pending: 2,
+        resolved: { count: 4, p50Ms: 120_000, p95Ms: 600_000 },
+        templateId: 't1',
+        templateName: 'Ticket to PR',
+        timedOut: 1,
+      },
+    ],
+    resolved: { count: 4, p50Ms: 120_000, p95Ms: 600_000 },
+    timedOut: 1,
+  },
   autonomyRate: 0.5,
   completedRuns: 9,
   daily: [{ active: 0, completed: 7, date: '2026-09-01', failed: 2 }],
@@ -73,8 +90,30 @@ const analytics = {
   windowDays: 30,
 };
 
+const summary = (over: Record<string, unknown> = {}) => ({
+  ciStatusCounts: {},
+  closedUnmerged: 1,
+  draftCount: 0,
+  merged: 3,
+  mergeRate: 0.75,
+  open: 2,
+  opened: 6,
+  timeToMergeMs: { count: 3, p50: 3_600_000, p95: 7_200_000 },
+  ...over,
+});
+
+const outcomes = {
+  byRepository: [{ repository: { id: 'r1', name: 'api', org: 'acme' }, summary: summary() }],
+  current: summary(),
+  isTruncated: false,
+  previous: summary({ merged: 2, mergeRate: 0.5, opened: 4 }),
+  previousComplete: true,
+  window: { days: 30, end: '2026-09-30T00:00:00.000Z', start: '2026-09-01T00:00:00.000Z' },
+};
+
 function mock() {
   return setupFetchMock({
+    'GET /api/v1/pull-requests/outcomes': () => ({ data: outcomes }),
     'GET /api/v1/workflow-templates/analytics': () => ({ data: analytics }),
   });
 }
@@ -93,6 +132,16 @@ describe('GlobalAnalyticsPage', () => {
     expect(screen.getByRole('link', { name: 'See all spend' }).getAttribute('href')).toBe(
       '/admin/usage'
     );
+  });
+
+  it('adds pull request outcomes and approval latency below the efficiency figures', async () => {
+    mock();
+    render(withQuery(<GlobalAnalyticsPage />));
+
+    expect(await screen.findByText('Pull request outcomes')).toBeTruthy();
+    expect(await screen.findByText('Time to merge, median')).toBeTruthy();
+    expect(screen.getByText('Approval latency')).toBeTruthy();
+    expect(screen.getByText('Wait, median')).toBeTruthy();
   });
 
   it('defines the jargon and charts runs over time', async () => {
@@ -136,5 +185,15 @@ describe('GlobalAnalyticsPage', () => {
     ).toBe(true);
     expect(screen.queryByText(/only offers 7, 30 and 90/)).toBeNull();
     expect(screen.getByLabelText('From date (UTC)')).toBeTruthy();
+    // The outcomes card follows the page's range, not its own default.
+    await waitFor(() =>
+      expect(
+        spy.mock.calls.some(
+          ([u]) =>
+            String(u).includes('/api/v1/pull-requests/outcomes') &&
+            String(u).includes('since=2026-09-01&until=2026-09-14')
+        )
+      ).toBe(true)
+    );
   });
 });

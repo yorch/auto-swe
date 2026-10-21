@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import '../test/warmAuthImports.js';
 import { slackChannelRoutes } from './slackChannels.js';
 
 // The forget walk is covered against real Postgres (memoryForget.pg.test.ts);

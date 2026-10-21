@@ -3,6 +3,7 @@
 import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
 import type {
   GlobalAnalyticsResponse,
+  PullRequestOutcomesResponse,
   SpecDiffResponse,
   StepRegistryEntry,
   WebhookSigningSummary,
@@ -252,6 +253,20 @@ export function useGlobalAnalytics(range: DateRange = { days: 30, kind: 'preset'
         )
         .then((r) => r.data),
     queryKey: ['global-analytics', rangeKey(range)],
+    refetchInterval: 30_000,
+  });
+}
+
+/** Delivery outcomes of the pull requests opened in the window (`/admin/analytics`). */
+export function usePullRequestOutcomes(range: DateRange = { days: 30, kind: 'preset' }) {
+  return useQuery({
+    queryFn: () =>
+      api
+        .get<{ data: PullRequestOutcomesResponse }>(
+          `/api/v1/pull-requests/outcomes?${new URLSearchParams(rangeQuery(range))}`
+        )
+        .then((r) => r.data),
+    queryKey: ['pull-request-outcomes', rangeKey(range)],
     refetchInterval: 30_000,
   });
 }
