@@ -2,10 +2,18 @@ import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { TemporalUnavailableError } from '../lib/temporalErrors.js';
-import { MAX_TRACES_PER_READ, workflowRunRoutes } from './workflowRuns.js';
+import {
+  MAX_CONTEXT_ARTIFACT_BYTES,
+  MAX_TRACES_PER_READ,
+  workflowRunRoutes,
+} from './workflowRuns.js';
 
-const { recordRunFinalized } = vi.hoisted(() => ({ recordRunFinalized: vi.fn() }));
+const { recordRunFinalized, getArtifact } = vi.hoisted(() => ({
+  getArtifact: vi.fn(),
+  recordRunFinalized: vi.fn(),
+}));
 vi.mock('../lib/metrics.js', () => ({ recordRunFinalized }));
+vi.mock('@auto-swe/shared/lib/artifactStore', () => ({ getArtifact }));
 
 function newMockPrisma() {
   return {
@@ -19,6 +27,9 @@ function newMockPrisma() {
     },
     configAuditLog: {
       create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
+    },
+    workflowArtifact: {
+      findFirst: vi.fn().mockResolvedValue(null),
     },
     workflowRun: {
       count: vi.fn().mockResolvedValue(0),
@@ -1035,6 +1046,18 @@ describe('workflowRunRoutes with a service principal token', () => {
     });
   });
 
+  it('cannot read a spilled artifact, because that route does not opt in', async () => {
+    const { app } = await buildServiceApp(['runs:read']);
+    const res = await app.inject({
+      headers: SERVICE,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${RUN}/artifacts/7a9619ff-8b86-4a08-8b86-3e6f9619ffd2`,
+    });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error.code).toBe('SERVICE_TOKEN_NOT_ALLOWED');
+    expect(getArtifact).not.toHaveBeenCalled();
+  });
+
   it('cannot reach a run route that does not opt in', async () => {
     const { app } = await buildServiceApp(['runs:read', 'runs:cancel', 'runs:launch']);
     const res = await app.inject({
@@ -1044,5 +1067,121 @@ describe('workflowRunRoutes with a service principal token', () => {
     });
     expect(res.statusCode).toBe(401);
     expect(res.json().error.code).toBe('SERVICE_TOKEN_NOT_ALLOWED');
+  });
+});
+
+describe('workflowRunRoutes GET /:id/artifacts/:artifactId (context overflow text)', () => {
+  const RUN = '6f9619ff-8b86-4a08-8b86-3e6f9619ffd1';
+  const ART = '7a9619ff-8b86-4a08-8b86-3e6f9619ffd2';
+  const url = `/api/v1/workflow-runs/${RUN}/artifacts/${ART}`;
+  const FIXED = 'Artifact not found';
+
+  async function buildReadable(sizeBytes = 11) {
+    const built = await buildApp('ENGINEER');
+    built.prisma.workflowRun.findFirst.mockResolvedValue({ id: RUN });
+    built.prisma.workflowArtifact.findFirst.mockResolvedValue({ id: ART, sizeBytes });
+    return built;
+  }
+
+  it('returns the text and its size for a ready context-overflow artifact of the run', async () => {
+    const { app, prisma } = await buildReadable();
+    getArtifact.mockResolvedValue({ body: Buffer.from('héllo world', 'utf8'), ref: {} });
+    const res = await app.inject({ headers: AUTH, method: 'GET', url });
+    expect(res.statusCode).toBe(200);
+    expect(res.json()).toEqual({ data: { sizeBytes: 12, text: 'héllo world' } });
+    expect(prisma.workflowArtifact.findFirst.mock.calls[0][0].where).toEqual({
+      id: ART,
+      kind: 'context-overflow',
+      runId: RUN,
+      status: 'ready',
+    });
+  });
+
+  it('answers 404 RUN_NOT_FOUND when the run is not visible, reading nothing', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    const res = await app.inject({ headers: AUTH, method: 'GET', url });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('RUN_NOT_FOUND');
+    expect(prisma.workflowRun.findFirst.mock.calls[0][0].where).toMatchObject({ id: RUN });
+    expect(prisma.workflowArtifact.findFirst).not.toHaveBeenCalled();
+    expect(getArtifact).not.toHaveBeenCalled();
+  });
+
+  // Ownership, kind and status are all part of one lookup, so a missing row, another run's
+  // artifact, a transcript part and a pending upload are the same answer.
+  it('answers one indistinguishable 404 when the artifact is missing, foreign, wrong kind or not ready', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    prisma.workflowRun.findFirst.mockResolvedValue({ id: RUN });
+    prisma.workflowArtifact.findFirst.mockResolvedValue(null);
+    const res = await app.inject({ headers: AUTH, method: 'GET', url });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error).toEqual({ code: 'ARTIFACT_NOT_FOUND', message: FIXED });
+    expect(getArtifact).not.toHaveBeenCalled();
+  });
+
+  it('answers 404 for another run’s artifact id, reading no bytes', async () => {
+    // The mock honours the where clause: only a row owned by RUN would match.
+    const { app, prisma } = await buildReadable();
+    prisma.workflowArtifact.findFirst.mockImplementation(
+      async ({ where }: { where: { runId: string } }) =>
+        where.runId === '99999999-9999-4999-8999-999999999999' ? { id: ART, sizeBytes: 3 } : null
+    );
+    const res = await app.inject({ headers: AUTH, method: 'GET', url });
+    expect(res.statusCode).toBe(404);
+    expect(res.json().error.code).toBe('ARTIFACT_NOT_FOUND');
+    expect(getArtifact).not.toHaveBeenCalled();
+  });
+
+  it('answers a fixed 502 without internals when the blob cannot be read', async () => {
+    const { app } = await buildReadable();
+    getArtifact.mockRejectedValue(new Error('connect ECONNREFUSED 10.0.0.5:9000 bucket=secret'));
+    const res = await app.inject({ headers: AUTH, method: 'GET', url });
+    expect(res.statusCode).toBe(502);
+    expect(res.json().error).toEqual({
+      code: 'ARTIFACT_READ_FAILED',
+      message: 'The artifact could not be read',
+    });
+    expect(res.body).not.toContain('ECONNREFUSED');
+  });
+
+  it('refuses an artifact larger than the cap, without reading its bytes', async () => {
+    const { app } = await buildReadable(MAX_CONTEXT_ARTIFACT_BYTES + 1);
+    const res = await app.inject({ headers: AUTH, method: 'GET', url });
+    expect(res.statusCode).toBe(413);
+    expect(res.json().error.code).toBe('ARTIFACT_TOO_LARGE');
+    expect(getArtifact).not.toHaveBeenCalled();
+  });
+
+  it('keeps a cap no legitimate spill can exceed (8M UTF-16 units at 3 UTF-8 bytes each)', () => {
+    expect(MAX_CONTEXT_ARTIFACT_BYTES).toBeGreaterThanOrEqual(8_000_000 * 3);
+  });
+
+  it('refuses an unauthenticated caller', async () => {
+    const { app } = await buildApp('ENGINEER');
+    const res = await app.inject({ method: 'GET', url });
+    expect(res.statusCode).toBe(401);
+  });
+
+  it('refuses a caller whose role is below ENGINEER', async () => {
+    const { app } = await buildApp('ENGINEER');
+    (app as unknown as { auth: { verifyAccessToken: unknown } }).auth.verifyAccessToken = () => ({
+      exp: 9999999999,
+      iat: 0,
+      role: 'VIEWER',
+      sub: 'u-1',
+    });
+    const res = await app.inject({ headers: AUTH, method: 'GET', url });
+    expect(res.statusCode).toBe(403);
+    expect(getArtifact).not.toHaveBeenCalled();
+  });
+
+  it('refuses a malformed artifact id', async () => {
+    const { app } = await buildApp('ENGINEER');
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/workflow-runs/${RUN}/artifacts/not-a-uuid`,
+    });
+    expect(res.statusCode).toBe(400);
   });
 });

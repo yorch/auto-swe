@@ -128,7 +128,7 @@ packages/
 | `src/workflows/runnable.ts` | **`RunnableWorkflow`** — the generic workflow; wires activity proxies to `Dispatcher` and calls `runSpec` |
 | `src/workflows/runnableSteps.ts` | `STEP_EXECUTORS` — one executor per step name, mapping a step node's `config` + `inputs` onto its activity |
 | `src/workflows/runnableActivities.ts` | The activity proxies (timeouts and retry policies) the dispatcher and step executors call |
-| `src/workflows/runnableContext.ts` | Bounds step records before they enter history; spills oversized run-context values to artifacts at finalization |
+| `src/workflows/runnableContext.ts` | Bounds step records before they enter history; spills oversized run-context values to artifacts at finalization (read back through `GET /workflow-runs/:id/artifacts/:artifactId`) |
 | `src/workflows/epicOrchestrator.ts` | **`EpicOrchestratorWorkflow`** — decomposes multi-repo epics, fans out children in dependency order |
 | `src/activities/executeImplementation.ts` | **Core agent loop** — DinD workspace, clone, implementer agent, TDD loop |
 | `src/activities/runReviewNetwork.ts` | Security / domain / performance reviewers in parallel via `Promise.allSettled` |
@@ -522,7 +522,13 @@ run recorded earlier still takes `onTimeout` at once), and `validateSpec` raises
 `SIGNAL_SHARED_ACROSS_BRANCHES` warning for a `signal` node reachable inside a fan-out whose
 `concurrency` is not 1. Step records carry each string input, output and error cut to 8,000 characters
 (activity inputs are written to the workflow history); the full values remain in the run context,
-which the final snapshot spills to artifacts.
+which the final snapshot spills to artifacts. A spilled string is replaced by a
+`[stored as artifact <id> — <n> bytes]` placeholder, and `GET /api/v1/workflow-runs/:id/artifacts/:artifactId`
+returns its text (`{ data: { text, sizeBytes } }`) to a signed-in user who can see the run. It answers
+`404 RUN_NOT_FOUND` when the run is not visible, one `404 ARTIFACT_NOT_FOUND` when the artifact is
+missing, belongs to another run, is not a `context-overflow` artifact, or is not `ready`,
+`413 ARTIFACT_TOO_LARGE` above 24,000,000 bytes (no genuine spill is larger), and
+`502 ARTIFACT_READ_FAILED` when the stored bytes cannot be read. The run page turns each placeholder in a result into a button that opens the full text.
 
 `validateSpec` reports `RESERVED_PATH_SEGMENT` as an error when a path the run writes — a `storeAs`,
 a `set` key, a fan-out `exports` entry, or a node id (outputs land at `nodes.<id>.output`) — contains
@@ -1286,6 +1292,12 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **Step records are cut, not spilled.** A string over 8,000 characters in a step's recorded inputs,
   outputs or error is truncated in `workflow_steps`; only the run's final context keeps the full
   value (as an artifact), so a value a later node overwrote survives only in its truncated record.
+  The run page offers the full text of a placeholder in a run's result, not of a cut step record.
+- **A spilled result is readable only by a signed-in user, and renders whole.** The artifact route
+  does not accept a service principal (`401 SERVICE_TOKEN_NOT_ALLOWED`) although
+  `GET /workflow-runs/:id` does with `runs:read`, so a principal sees the placeholder and not the
+  text behind it. The run page renders a fetched artifact, up to several megabytes, in full inside
+  its modal.
 - **Control-flow nodes are recorded only when they fail.** `set`, `cond` and `terminate` write no
   `workflow_steps` row on the happy path, so the nodes that decide a run's shape are largely absent
   from the per-step table. Analytics also skips `PENDING`, `RUNNING` and `SKIPPED`, and a fan-out

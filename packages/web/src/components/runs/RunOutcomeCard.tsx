@@ -7,9 +7,12 @@ import { Card } from '@/components/ui/Card';
 import { Icon, type IconName } from '@/components/ui/Icon';
 import { cn, FOCUS_RING, isRecord } from '@/lib/utils';
 import { AgentRunOutcomeCard } from './AgentRunOutcomeCard';
+import { ArtifactAwareText } from './ArtifactAwareText';
 
 interface RunOutcomeCardProps {
   result: unknown;
+  /** The run the result belongs to; a spilled value is read through it. */
+  runId: string;
   templateName: string;
   /** A run of the hidden Agent Run template, as the gateway reports it (not inferred from the name). */
   isAgentRun?: boolean;
@@ -77,23 +80,25 @@ function OutcomeShell({
 }
 
 /** A run's text output: preserved line breaks, cut to a preview. */
-function OutcomeText({ value }: { value: unknown }) {
+function OutcomeText({ runId, value }: { runId: string; value: unknown }) {
   const text = truncate(value);
   if (!text) {
     return null;
   }
   return (
-    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-paper-300">{text}</p>
+    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-paper-300">
+      <ArtifactAwareText runId={runId} text={text} />
+    </p>
   );
 }
 
-export function RunOutcomeCard({ result, templateName, isAgentRun }: RunOutcomeCardProps) {
+export function RunOutcomeCard({ result, runId, templateName, isAgentRun }: RunOutcomeCardProps) {
   if (!isRecord(result)) {
     return null;
   }
 
   if (isAgentRun) {
-    return <AgentRunOutcomeCard result={result} />;
+    return <AgentRunOutcomeCard result={result} runId={runId} />;
   }
 
   if (typeof result.prUrl === 'string' && isSafeWebUrl(result.prUrl)) {
@@ -122,7 +127,7 @@ export function RunOutcomeCard({ result, templateName, isAgentRun }: RunOutcomeC
     return (
       <OutcomeShell icon="docs">
         {pageId ? <OutcomeLink href={notionUrl(pageId)} label={`Notion page ${pageId}`} /> : null}
-        <OutcomeText value={result.text} />
+        <OutcomeText runId={runId} value={result.text} />
       </OutcomeShell>
     );
   }
@@ -136,7 +141,7 @@ export function RunOutcomeCard({ result, templateName, isAgentRun }: RunOutcomeC
             Ticket <span className="font-mono text-paper-200">{ticketId}</span>
           </div>
         ) : null}
-        <OutcomeText value={result.text} />
+        <OutcomeText runId={runId} value={result.text} />
       </OutcomeShell>
     );
   }
@@ -152,7 +157,7 @@ export function RunOutcomeCard({ result, templateName, isAgentRun }: RunOutcomeC
             {posted ? 'Posted' : 'Not posted'}
           </Badge>
         </div>
-        <OutcomeText value={result.text} />
+        <OutcomeText runId={runId} value={result.text} />
       </OutcomeShell>
     );
   }
@@ -164,7 +169,7 @@ export function RunOutcomeCard({ result, templateName, isAgentRun }: RunOutcomeC
     return (
       <OutcomeShell icon="ticket">
         {issueUrl ? <OutcomeLink href={issueUrl} label={title ?? issueUrl} /> : null}
-        <OutcomeText value={result.description} />
+        <OutcomeText runId={runId} value={result.description} />
       </OutcomeShell>
     );
   }

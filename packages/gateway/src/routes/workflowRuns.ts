@@ -1,5 +1,6 @@
 import type { Prisma } from '@auto-swe/shared';
 import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
+import { getArtifact } from '@auto-swe/shared/lib/artifactStore';
 import {
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
   CHANNEL_TASK_TEMPLATE_NAME,
@@ -38,6 +39,17 @@ import {
 } from './workflowProjections.js';
 
 const RunIdParam = z.object({ id: z.string().uuid() });
+const RunArtifactParams = z.object({ artifactId: z.string().uuid(), id: z.string().uuid() });
+
+/** The kind the worker gives a value it spills out of a finished run's context. */
+const CONTEXT_OVERFLOW_KIND = 'context-overflow';
+
+/**
+ * Largest context-overflow artifact the route serves, in bytes. A run spills at most 8,000,000
+ * UTF-16 code units in total, and a code unit encodes to at most 3 UTF-8 bytes, so no genuine
+ * spill is bigger; anything larger is not one of ours.
+ */
+export const MAX_CONTEXT_ARTIFACT_BYTES = 24_000_000;
 const RunDetailQuery = z.object({
   /** Skip server-side trace payload trimming (forensic deep-dive only). */
   fullTraces: booleanQueryParam(false),
@@ -62,6 +74,10 @@ const RunTracesQuery = z.object({
 
 const ErrorResponseSchema = z.object({
   error: z.object({ code: z.string(), message: z.string() }),
+});
+
+const ContextArtifactResponseSchema = z.object({
+  data: z.object({ sizeBytes: z.number(), text: z.string() }),
 });
 
 const RunListResponseSchema = z.object({
@@ -530,6 +546,62 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const data: EvalResultDto[] = rows.map(projectEvalResult);
       return { data };
+    }
+  );
+
+  // ── Full text of a value the run spilled out of its persisted context ──
+  // Visibility, not control: the same run's `contextSnapshot` and `result` are returned at
+  // that level, and this is the text they point at. Ownership, kind and status are one lookup,
+  // so another run's artifact, a transcript part and an unfinished upload are all the same 404.
+  app.get(
+    '/:id/artifacts/:artifactId',
+    {
+      onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      schema: {
+        params: RunArtifactParams,
+        response: {
+          200: ContextArtifactResponseSchema,
+          404: ErrorResponseSchema,
+          413: ErrorResponseSchema,
+          502: ErrorResponseSchema,
+        },
+      },
+    },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const run = await fastify.prisma.workflowRun.findFirst({
+        select: { id: true },
+        where: {
+          id: request.params.id,
+          ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+        },
+      });
+      if (!run) {
+        return sendError(reply, 404, 'RUN_NOT_FOUND', 'Workflow run not found');
+      }
+      const artifact = await fastify.prisma.workflowArtifact.findFirst({
+        select: { id: true, sizeBytes: true },
+        where: {
+          id: request.params.artifactId,
+          kind: CONTEXT_OVERFLOW_KIND,
+          runId: run.id,
+          status: 'ready',
+        },
+      });
+      if (!artifact) {
+        return sendError(reply, 404, 'ARTIFACT_NOT_FOUND', 'Artifact not found');
+      }
+      if (artifact.sizeBytes > MAX_CONTEXT_ARTIFACT_BYTES) {
+        return sendError(reply, 413, 'ARTIFACT_TOO_LARGE', 'The artifact is too large to display');
+      }
+      let body: Buffer;
+      try {
+        body = (await getArtifact(artifact.id)).body;
+      } catch (err) {
+        request.log.error({ artifactId: artifact.id, err }, 'context artifact read failed');
+        return sendError(reply, 502, 'ARTIFACT_READ_FAILED', 'The artifact could not be read');
+      }
+      return { data: { sizeBytes: body.byteLength, text: body.toString('utf8') } };
     }
   );
 
