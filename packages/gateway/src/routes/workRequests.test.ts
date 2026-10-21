@@ -225,6 +225,7 @@ describe('POST /api/v1/work-requests', () => {
         startedWorkflowIds.push(id);
       },
       startWorkflowAuthorJob: async () => {},
+      syncAgentTraceRollupSchedule: async () => {},
       syncAgentTranscriptPruneSchedule: async () => {},
       syncAutomationDecisionPruneSchedule: async () => {},
       syncCallbackDeliveryPruneSchedule: async () => {},

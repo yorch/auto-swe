@@ -16,6 +16,10 @@ function newMockPrisma() {
       aggregate: vi.fn().mockResolvedValue(EMPTY_AGG),
       groupBy: vi.fn().mockResolvedValue([]),
     },
+    agentTraceDailyUsage: {
+      aggregate: vi.fn().mockResolvedValue({ _sum: { calls: null, costUsd: null } }),
+      groupBy: vi.fn().mockResolvedValue([]),
+    },
     organization: { findMany: vi.fn().mockResolvedValue([]) },
     organizationMembership: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -26,6 +30,7 @@ function newMockPrisma() {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(null),
     },
+    user: { findMany: vi.fn().mockResolvedValue([]) },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
   };
 }
@@ -406,9 +411,10 @@ describe('usageRoutes GET /usage', () => {
     ]);
     const topCall = prisma.agentTrace.groupBy.mock.calls.find(([a]) => a.by[0] === 'runId')?.[0];
     expect(topCall).toMatchObject({
+      having: { costUsd: { _sum: { gt: 0 } } },
       orderBy: { _sum: { costUsd: 'desc' } },
       take: 10,
-      where: { costUsd: { gt: 0 }, runId: { not: null } },
+      where: { runId: { not: null } },
     });
   });
 

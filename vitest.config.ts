@@ -176,6 +176,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/systemConfig.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/agentTraceRollup',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/agentTraceRollup.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/billing',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/billing.ts'),
       },

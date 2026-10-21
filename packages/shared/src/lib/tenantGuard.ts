@@ -25,6 +25,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 export const TENANT_SCOPED_MODELS = new Set([
   'Agent',
   'AgentTrace',
+  'AgentTraceDailyUsage',
   'AgentTranscript',
   'Automation',
   'AutonomyPolicy',

@@ -169,6 +169,8 @@ export const T_15M: Duration = '15m';
 export const T_30M: Duration = '30m';
 /** `'60m'` — sandboxed shell / container steps. */
 export const T_60M: Duration = '60m';
+/** `'90m'` — the usage rollup sweep: twelve day-long transactions at their ceiling, plus headroom. */
+export const T_90M: Duration = '90m';
 
 /** `'2 minutes'` — scheduled/eval short config reads (long-form literal). */
 export const T_2_MINUTES: Duration = '2 minutes';

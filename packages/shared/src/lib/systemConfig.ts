@@ -1175,6 +1175,12 @@ export interface ScheduledSweepsConfig {
   automationDecisionPrune: SweepSchedule;
   /// Deletes agent transcripts past their retention (never those under legal hold).
   agentTranscriptPrune: SweepSchedule;
+  /// Sums each completed UTC day of LLM traces into `agent_trace_daily_usage` for the usage report.
+  agentTraceRollup: SweepSchedule & {
+    /// How many days back from today a sweep also builds rollups for days that have none (0 = only
+    /// the last two completed days, which every sweep rewrites).
+    backfillDays: number;
+  };
   /// Sends due run callbacks (docs/run-callbacks.md).
   callbackDelivery: SweepSchedule;
   /// Deletes delivered and dead run callbacks past their retention.
@@ -1204,6 +1210,14 @@ const HOURS_RE = /^[1-9]\d{0,3}$/;
 function envHours(name: string, fallback: number): number {
   const raw = process.env[name]?.trim();
   return raw && HOURS_RE.test(raw) ? Number(raw) : fallback;
+}
+
+const DAYS_RE = /^(0|[1-9]\d{0,3})$/;
+
+/// A whole number of days, 0–9999.
+function envDays(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  return raw && DAYS_RE.test(raw) ? Number(raw) : fallback;
 }
 
 function envCron(name: string, fallback: string): string {
@@ -1239,11 +1253,19 @@ function envCron(name: string, fallback: string): string {
 ///   CALLBACK_DELIVERY_PRUNE_CRON  default `47 4 * * *`
 ///   AGENT_TRANSCRIPT_PRUNE_ENABLED default true
 ///   AGENT_TRANSCRIPT_PRUNE_CRON   default `57 4 * * *`
+///   AGENT_TRACE_ROLLUP_ENABLED    default true — it only derives a summary of rows that stay
+///   AGENT_TRACE_ROLLUP_CRON       default `13 1 * * *`
+///   AGENT_TRACE_ROLLUP_BACKFILL_DAYS default 0 — read by the worker running the sweep
 ///
 /// Lenient, like `resolveWorkspaceInfra`: a bad value falls back to its default.
 /// `assertScheduledSweepsEnv()` is the strict check the gateway runs at boot.
 export function resolveScheduledSweeps(): ScheduledSweepsConfig {
   return {
+    agentTraceRollup: {
+      backfillDays: envDays('AGENT_TRACE_ROLLUP_BACKFILL_DAYS', 0),
+      cronExpression: envCron('AGENT_TRACE_ROLLUP_CRON', '13 1 * * *'),
+      enabled: envFlag('AGENT_TRACE_ROLLUP_ENABLED', true),
+    },
     agentTranscriptPrune: {
       cronExpression: envCron('AGENT_TRANSCRIPT_PRUNE_CRON', '57 4 * * *'),
       enabled: envFlag('AGENT_TRANSCRIPT_PRUNE_ENABLED', true),
@@ -1324,6 +1346,13 @@ export function validateScheduledSweepsEnv(): string[] {
   check('CALLBACK_DELIVERY_PRUNE_CRON', cron, 'a five-field cron expression such as "47 4 * * *"');
   check('AGENT_TRANSCRIPT_PRUNE_ENABLED', flag, "'true' or 'false'");
   check('AGENT_TRANSCRIPT_PRUNE_CRON', cron, 'a five-field cron expression such as "57 4 * * *"');
+  check('AGENT_TRACE_ROLLUP_ENABLED', flag, "'true' or 'false'");
+  check('AGENT_TRACE_ROLLUP_CRON', cron, 'a five-field cron expression such as "13 1 * * *"');
+  check(
+    'AGENT_TRACE_ROLLUP_BACKFILL_DAYS',
+    (raw) => DAYS_RE.test(raw.trim()),
+    'a whole number of days from 0 to 9999'
+  );
   check('SLACK_CHANNEL_SYNC_ENABLED', flag, "'true' or 'false'");
   check('SLACK_CHANNEL_SYNC_CRON', cron, 'a five-field cron expression such as "29 * * * *"');
   check(
