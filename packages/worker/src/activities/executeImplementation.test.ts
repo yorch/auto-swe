@@ -29,6 +29,7 @@ const { checkoutMock, generateMock, loadMock, prismaMock, ticketMock, workspaceM
 );
 
 const fallbackSetting = vi.hoisted(() => ({ on: false }));
+const tddSetting = vi.hoisted(() => ({ maxIterations: 1 }));
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: prismaMock }));
 
@@ -54,7 +55,9 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     branchPrefix: 'auto',
     lessonRetrievalLimit: 5,
     lessonRetrievalThreshold: 0.7,
-    maxTddIterations: 1,
+    get maxTddIterations() {
+      return tddSetting.maxIterations;
+    },
   })),
 }));
 
@@ -154,8 +157,10 @@ import {
   startTraceFlushing,
 } from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
+import { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { executeImplementation } from './executeImplementation.js';
+import { TEST_RUN_TIMEOUT_MS } from './utils.js';
 import { createWorkspace } from './workspace.js';
 
 const REQUEST: RepoWorkRequest = {
@@ -177,6 +182,7 @@ beforeEach(() => {
   loadMock.mockResolvedValue('');
   ticketMock.mockResolvedValue('');
   fallbackSetting.on = false;
+  tddSetting.maxIterations = 1;
   checkoutMock.mockResolvedValue('');
   generateMock.mockResolvedValue({ text: 'done', usage: { inputTokens: 1, outputTokens: 1 } });
   prismaMock.connection.findUniqueOrThrow.mockResolvedValue({
@@ -223,7 +229,8 @@ describe('executeImplementation agent turn', () => {
     });
     await executeImplementation(REQUEST);
     const testCall = workspaceMock.exec.mock.calls.find(
-      (c: unknown[]) => (c[1] as { timeoutMs?: number } | undefined)?.timeoutMs === 600_000
+      (c: unknown[]) =>
+        (c[1] as { timeoutMs?: number } | undefined)?.timeoutMs === TEST_RUN_TIMEOUT_MS
     );
     expect(testCall?.[0]).toBe('{ go test ./...\n} 2>&1');
   });
@@ -578,7 +585,9 @@ describe('executeImplementation retry safety', () => {
 
   it('gives the test run the long timeout instead of the 2-minute exec default', async () => {
     await executeImplementation(REQUEST);
-    const testCall = workspaceMock.exec.mock.calls.find((c) => c[1]?.timeoutMs === 600_000);
+    const testCall = workspaceMock.exec.mock.calls.find(
+      (c) => c[1]?.timeoutMs === TEST_RUN_TIMEOUT_MS
+    );
     expect(testCall).toBeDefined();
   });
 
@@ -598,5 +607,86 @@ describe('executeImplementation retry safety', () => {
     });
     expect(vi.mocked(persistActivityTrace)).toHaveBeenCalledTimes(1);
     expect(workspaceMock.destroy).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('executeImplementation unrunnable test command', () => {
+  const isTestRun = (c: unknown[]) =>
+    (c[1] as { timeoutMs?: number } | undefined)?.timeoutMs === TEST_RUN_TIMEOUT_MS;
+
+  /** Make the test run (and only it) reject like a failed `docker exec`. */
+  function failTestRun(fields: Record<string, unknown>) {
+    workspaceMock.exec.mockImplementation(
+      async (_command: string, options?: { timeoutMs?: number }) => {
+        if (options?.timeoutMs === TEST_RUN_TIMEOUT_MS) {
+          throw Object.assign(new Error('Command failed'), fields);
+        }
+        return '';
+      }
+    );
+  }
+
+  beforeEach(() => {
+    tddSetting.maxIterations = 3;
+  });
+
+  it('stops after the first unrunnable iteration instead of re-running the agent', async () => {
+    failTestRun({ code: 127, stdout: 'sh: bun: not found' });
+    await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect(workspaceMock.exec.mock.calls.filter(isTestRun)).toHaveLength(1);
+  });
+
+  it('records a tdd.test_unrunnable event with the iteration, command and trimmed output', async () => {
+    const eventSpy = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+    failTestRun({
+      code: 1,
+      stdout: `HEAD npm error Missing script: "test"${'x'.repeat(2000)}TAIL`,
+    });
+    await executeImplementation(REQUEST);
+    const events = eventSpy.mock.calls
+      .map(([e]) => e)
+      .filter((e) => e.name === 'tdd.test_unrunnable');
+    expect(events).toHaveLength(1);
+    expect(events[0].inputJson).toEqual({ iteration: 0 });
+    const out = events[0].outputJson as { command: string; output: string; reason: string };
+    expect(out.command).toBe('npm test');
+    expect(out.reason).toContain('Missing script');
+    expect(out.output).toHaveLength(1000);
+    expect(out.output.endsWith('TAIL')).toBe(true);
+    expect(out.output).not.toContain('HEAD');
+  });
+
+  it('says plainly that the test command could not run, with the command and cause', async () => {
+    failTestRun({ code: 127, stdout: 'sh: npm: not found' });
+    const result = await executeImplementation(REQUEST);
+    expect(result.implementationNotes).toContain('could not run in the workspace');
+    expect(result.implementationNotes).toContain('npm test');
+    expect(result.implementationNotes).toContain('127');
+    expect(result.implementationNotes).not.toContain('(max)');
+    expect(result.implementationNotes).not.toContain('not executed');
+    expect(result.testResults).toMatchObject({ failing: 1, passed: false });
+  });
+
+  it('still commits and pushes the work', async () => {
+    failTestRun({ code: 127, stdout: 'sh: bun: not found' });
+    await executeImplementation(REQUEST);
+    const commands = workspaceMock.exec.mock.calls.map((c) => c[0]);
+    expect(commands).toContain('git add -A');
+    expect(workspaceMock.gitAuthed).toHaveBeenCalledWith(expect.stringContaining('push origin'));
+  });
+
+  it('keeps iterating up to the maximum when tests ran and failed', async () => {
+    failTestRun({ code: 1, stdout: 'Tests: 2 failed, 5 passed' });
+    const result = await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalledTimes(3);
+    expect(result.implementationNotes).toContain('3 (max) TDD iterations');
+  });
+
+  it('stops as soon as the tests pass', async () => {
+    workspaceMock.exec.mockResolvedValue('Tests  4 passed (4)');
+    const result = await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect(result.implementationNotes).toContain('Tests passing');
   });
 });

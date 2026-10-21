@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { detectTestCommand, parseTestOutput, testRunCommand } from './utils.js';
+import {
+  detectTestCommand,
+  parseTestOutput,
+  testRunCommand,
+  unrunnableTestCause,
+} from './utils.js';
 
 describe('detectTestCommand', () => {
   it("prefers the repository's configured runTests gate command", () => {
@@ -143,5 +148,81 @@ describe('testRunCommand', () => {
     expect(testRunCommand('make build && go test ./... # all')).toBe(
       '{ make build && go test ./... # all\n} 2>&1'
     );
+  });
+});
+
+describe('unrunnableTestCause', () => {
+  const execError = (fields: Record<string, unknown>) => Object.assign(new Error('failed'), fields);
+
+  it('treats exit 127 (command not found) and 126 (not executable) as unrunnable', () => {
+    expect(
+      unrunnableTestCause(execError({ code: 127, stdout: 'sh: bun: not found' }))
+    ).toBeDefined();
+    expect(unrunnableTestCause(execError({ code: 126, stdout: 'sh: ./test.sh: Permission' }))).toBe(
+      'exit status 126: command not executable'
+    );
+  });
+
+  it('reads the exit status from either `code` (async exec) or `status` (execSync)', () => {
+    expect(unrunnableTestCause(execError({ status: 127 }))).toBe(
+      'exit status 127: command not found'
+    );
+  });
+
+  it("recognises npm's missing test script marker", () => {
+    const stdout = 'npm error Missing script: "test"\nnpm error\nnpm error To see a list';
+    expect(unrunnableTestCause(execError({ code: 1, stdout }))).toBeDefined();
+    expect(
+      unrunnableTestCause(execError({ code: 1, stdout: 'npm ERR! Missing script: "test"' }))
+    ).toBeDefined();
+  });
+
+  it('does not treat an ordinary failing run as unrunnable', () => {
+    expect(unrunnableTestCause(execError({ code: 1, stdout: 'Tests: 2 failed, 5 passed' }))).toBe(
+      undefined
+    );
+    expect(
+      unrunnableTestCause(execError({ code: 2, stdout: 'AssertionError: expected 1 to be 2' }))
+    ).toBeUndefined();
+  });
+
+  it('does not match "not found" text in runner output when the exit status is an ordinary failure', () => {
+    const stdout =
+      'FAIL spawn.test.ts\n  sh: foo: command not found\nexit code 127 expected\nTests: 1 failed';
+    expect(unrunnableTestCause(execError({ code: 1, stdout }))).toBeUndefined();
+  });
+
+  it('does not match other missing scripts or a different npm error', () => {
+    expect(
+      unrunnableTestCause(execError({ code: 1, stdout: 'npm error Missing script: "build"' }))
+    ).toBeUndefined();
+  });
+
+  it('is false for a timeout, a signal kill, or an error with no exit status', () => {
+    expect(unrunnableTestCause(execError({ code: 124, killed: true, signal: 'SIGTERM' }))).toBe(
+      undefined
+    );
+    expect(unrunnableTestCause(execError({ code: 'ETIMEDOUT' }))).toBeUndefined();
+    expect(unrunnableTestCause(new Error('boom'))).toBeUndefined();
+    expect(unrunnableTestCause('boom')).toBeUndefined();
+    expect(unrunnableTestCause(null)).toBeUndefined();
+  });
+
+  it('names the cause, so the notes and the classifier share one answer', () => {
+    expect(unrunnableTestCause(execError({ code: 127 }))).toBe(
+      'exit status 127: command not found'
+    );
+    expect(unrunnableTestCause(execError({ code: 126 }))).toBe(
+      'exit status 126: command not executable'
+    );
+    expect(
+      unrunnableTestCause(execError({ code: 1, stdout: 'npm error Missing script: "test"' }))
+    ).toBe('npm reports Missing script: "test"');
+  });
+
+  it('is undefined for neighbouring exit statuses 125, 128+ and 255', () => {
+    for (const code of [125, 128, 130, 137, 255]) {
+      expect(unrunnableTestCause(execError({ code, stdout: 'sh: x: not found' }))).toBeUndefined();
+    }
   });
 });

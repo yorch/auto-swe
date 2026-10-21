@@ -55,6 +55,44 @@ function detectTestCommandFromPackageJson(packageJsonStr: string): string {
   }
 }
 
+/** npm's one well-known "no such script" message, from either its `error` or `ERR!` prefix. */
+const NPM_MISSING_TEST_SCRIPT = /npm (?:error|ERR!) Missing script: "test"/;
+
+/**
+ * Why a rejected test run could not run in this workspace at all, or
+ * `undefined` for an ordinary failure (tests ran and failed, a timeout, an
+ * unknown error). The string is the classifier's truth and the text reported
+ * in the trace and notes, so the two cannot drift. Two signals, deliberately
+ * narrow:
+ *
+ * - exit status 127 (command not found) or 126 (found, not executable). The
+ *   status is read from `code` (what `child_process.exec` sets) or `status`
+ *   (the `execSync` shape). Output text is never searched for "not found",
+ *   because a runner's own output can say that about a test's subprocess.
+ * - npm's `Missing script: "test"` message, which npm reports with exit 1.
+ *
+ * A caller that stops on this accepts a trade-off: a missing local tool (a
+ * runner the platform never installed) also exits 127 and a further agent pass
+ * might have installed it. The implementer already runs the tests itself in
+ * its first pass, so a second pass rarely changes the outcome, while a wasted
+ * pass costs a whole budget and the diff is still committed and reviewed.
+ */
+export function unrunnableTestCause(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null) {
+    return undefined;
+  }
+  const e = err as { code?: unknown; status?: unknown; stdout?: unknown; stderr?: unknown };
+  const exitStatus = typeof e.code === 'number' ? e.code : e.status;
+  if (exitStatus === 127) {
+    return 'exit status 127: command not found';
+  }
+  if (exitStatus === 126) {
+    return 'exit status 126: command not executable';
+  }
+  const output = [e.stdout, e.stderr].filter((v): v is string => typeof v === 'string').join('\n');
+  return NPM_MISSING_TEST_SCRIPT.test(output) ? 'npm reports Missing script: "test"' : undefined;
+}
+
 /**
  * The shell text that runs `command` for the TDD loop and the fix sessions,
  * with stderr folded into stdout. `Workspace.exec` returns stdout only, and
