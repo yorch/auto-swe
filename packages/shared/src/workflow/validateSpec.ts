@@ -23,6 +23,10 @@
  *     - MISSING_CONFIG     a required step config field is absent
  *     - FANOUT_LEAK        a fan-out branch can walk into its own `join` node (or back into
  *                          the fan-out), so every branch would run what is meant to run once
+ *     - WRITE_WITHOUT_POLICY  a node that writes outside the platform (a `writeOutcome`
+ *                          step, an `mcp` node) is not reachable from a `publishOutcome`
+ *                          step, so the run records no autonomy decision and the write is
+ *                          not gated by any policy
  *     - SIGNAL_SHARED_ACROSS_BRANCHES  a `signal` node is reachable inside a fan-out whose
  *                          branches run concurrently (any `concurrency` but 1); they all wait
  *                          on the one name, and one delivery wakes exactly one branch
@@ -535,6 +539,51 @@ export function validateSpec(
         });
       }
     }
+  }
+
+  // ── Governance: an external write needs a recorded autonomy decision ──
+  // The worker's guard refuses a write only when the run recorded a decision that
+  // requires approval; a run that recorded none is not gated at all. So a template
+  // that writes without a `publishOutcome` step on the way in is ungated by
+  // construction, and that is invisible in the spec — hence this warning.
+  //
+  // A write counts as governed when it is reachable from *some* `publishOutcome`.
+  // One path is not proof: a node reachable through the decision and also by a
+  // route that skips it still passes here, because telling the two apart needs
+  // dominance rather than reachability. What this cannot see it also does not
+  // claim; it exists to catch the omission, which is how it actually happens.
+  //
+  // `runTool` is deliberately absent: its tool name is normally a binding, so a
+  // static check cannot tell a read from a write. The runtime guard classifies it
+  // at call time instead.
+  const policyReached = new Set<string>();
+  for (const [id, node] of Object.entries(spec.nodes)) {
+    if (node.type === 'step' && node.step === 'publishOutcome') {
+      for (const reached of reachableFrom(id, false)) {
+        policyReached.add(reached);
+      }
+    }
+  }
+  for (const [id, node] of Object.entries(spec.nodes)) {
+    const isWrite = node.type === 'step' && node.step === 'writeOutcome';
+    const isMcpCall = node.type === 'mcp';
+    if ((!isWrite && !isMcpCall) || policyReached.has(id)) {
+      continue;
+    }
+    // An `mcp` node is not certainly a write — the server may mark the tool read-only — so its
+    // message says what the runtime assumes and why the spec has to say it instead.
+    const what = isWrite
+      ? 'writes outside the platform'
+      : 'calls an MCP tool, which the run treats as a mutation unless the server marks it read-only';
+    warnings.push({
+      code: 'WRITE_WITHOUT_POLICY',
+      message:
+        `node '${id}' ${what} but is not reached through a \`publishOutcome\` step, so the run ` +
+        'records no autonomy decision and nothing gates it — declare the class in that step before ' +
+        'this node (the `policyGatedWrite` authoring helper emits the whole idiom)',
+      nodeId: id,
+      severity: 'warning',
+    });
   }
 
   // ── Termination: at least one terminate reachable; flag nodes that can't reach one ──

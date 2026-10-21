@@ -21,6 +21,7 @@ describe.each(BUILTIN_TEMPLATES.map((t) => [t.name, t.spec] as const))(
             'TERMINAL_IN_SUBGRAPH_ONLY',
             'IGNORED_FIELD',
             'GROUP_NOT_CONTIGUOUS',
+            'WRITE_WITHOUT_POLICY',
           ].includes(i.code)
         )
       ).toEqual([]);

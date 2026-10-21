@@ -644,3 +644,99 @@ describe('validateSpec: the publishOutcome risk class is declared, not bound', (
     ).toHaveLength(0);
   });
 });
+
+describe('an external write with no recorded autonomy decision', () => {
+  // The worker refuses a write only when the run recorded a decision requiring
+  // approval; a run that recorded none is not gated at all. A template that
+  // writes without a `publishOutcome` on the way in is therefore ungated by
+  // construction, and the spec alone never said so.
+  const warnFor = (id: string, report: ReturnType<typeof validateSpec>) =>
+    report.warnings.find((w) => w.code === 'WRITE_WITHOUT_POLICY' && w.nodeId === id);
+
+  it('warns on a writeOutcome that no publishOutcome reaches', () => {
+    const r = validateSpec(
+      spec(
+        {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          write: { next: 'done', step: 'writeOutcome', type: 'step' },
+        },
+        'write'
+      )
+    );
+    const warning = warnFor('write', r);
+    expect(warning).toBeDefined();
+    expect(warning?.severity).toBe('warning');
+    expect(warning?.message).toContain('writes outside the platform');
+    // Advisory: an ungated write still runs, so this is not an error.
+    expect(r.errors).toEqual([]);
+  });
+
+  it('warns on an mcp node, whose tools are as likely to write', () => {
+    const r = validateSpec(
+      spec(
+        {
+          call: { connectionRef: 'c1', next: 'done', tool: 't', type: 'mcp' },
+          done: { status: 'SUCCESS', type: 'terminate' },
+        },
+        'call'
+      )
+    );
+    const warning = warnFor('call', r);
+    expect(warning).toBeDefined();
+    // It says what the runtime assumes, not that this call certainly writes.
+    expect(warning?.message).toContain('treats as a mutation unless the server marks it read-only');
+  });
+
+  it('says nothing when the write is reached through a publishOutcome', () => {
+    const r = validateSpec(
+      spec(
+        {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          publish: {
+            config: { action: 'internal_write' },
+            next: 'write',
+            step: 'publishOutcome',
+            type: 'step',
+          },
+          write: { next: 'done', step: 'writeOutcome', type: 'step' },
+        },
+        'publish'
+      )
+    );
+    expect(r.warnings.filter((w) => w.code === 'WRITE_WITHOUT_POLICY')).toEqual([]);
+  });
+
+  it('warns when a publishOutcome exists on another branch, so it never sees the write', () => {
+    const r = validateSpec(
+      spec(
+        {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          fork: { expr: 'true', onFalse: 'publish', onTrue: 'write', type: 'cond' },
+          publish: {
+            config: { action: 'internal_write' },
+            next: 'done',
+            step: 'publishOutcome',
+            type: 'step',
+          },
+          write: { next: 'done', step: 'writeOutcome', type: 'step' },
+        },
+        'fork'
+      )
+    );
+    // Presence is not enough: the decision has to be on the way in.
+    expect(warnFor('write', r)).toBeDefined();
+  });
+
+  it('says nothing about a spec that does not write outside', () => {
+    const r = validateSpec(
+      spec(
+        {
+          done: { status: 'SUCCESS', type: 'terminate' },
+          lint: { next: 'done', step: 'runLint', type: 'step' },
+        },
+        'lint'
+      )
+    );
+    expect(r.warnings.filter((w) => w.code === 'WRITE_WITHOUT_POLICY')).toEqual([]);
+  });
+});
