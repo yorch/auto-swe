@@ -512,6 +512,51 @@ function fullySupervisedRequestChanges(g: WorkflowSpec): WorkflowSpec {
 }
 
 /**
+ * `notion-content-draft` appends to the operator's own Notion page through the same policy gate
+ * its sibling `notion-content-brand-review` uses: `publishOutcome` declares the class
+ * (`internal_write`), `checkAuto` branches on the decision, and a required approval waits on
+ * `humanApproval` before the write, with `doneRejected` when it is refused or times out.
+ */
+function withNotionDraftPolicyGate(g: WorkflowSpec): WorkflowSpec {
+  const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
+  nodes.draftContent = { ...(nodes.draftContent as object), next: 'publishOutcome' };
+  nodes.publishOutcome = {
+    config: { action: 'internal_write' },
+    inputs: { description: { from: 'request.payload.instructions' } },
+    next: 'checkAuto',
+    step: 'publishOutcome',
+    type: 'step',
+  };
+  nodes.checkAuto = {
+    expr: "nodes.publishOutcome.output.decision == 'require_approval'",
+    onFalse: 'writeOutcome',
+    onTrue: 'humanApproval',
+    type: 'cond',
+  };
+  nodes.humanApproval = {
+    approverCount: { from: 'nodes.publishOutcome.output.approverCount' },
+    contextFrom: 'nodes.draftContent.output.text',
+    description: 'Approve appending the draft to the target Notion page, or reject to discard it.',
+    onApprove: 'writeOutcome',
+    onReject: 'doneRejected',
+    onTimeout: 'doneRejected',
+    timeout: '24h',
+    title: 'Approve write',
+    type: 'humanApproval',
+  };
+  nodes.doneRejected = {
+    result: {
+      approved: { literal: false },
+      targetPageId: { from: 'request.payload.targetPageId' },
+      written: { literal: false },
+    },
+    status: 'SUCCESS',
+    type: 'terminate',
+  };
+  return { ...g, nodes } as WorkflowSpec;
+}
+
+/**
  * Deliberate departures from the golden, keyed by template name. Anything not
  * listed here must match exactly.
  */
@@ -862,6 +907,13 @@ const INTENDED_CHANGES: Record<
       },
     ])
   ),
+  'notion-content-draft': {
+    apply: withNotionDraftPolicyGate,
+    reason:
+      'the paragraph it appends is an internal write, so the template records the autonomy ' +
+      'decision the audit log and any later policy edit are held to, and waits for approval when ' +
+      'the policy asks for one, exactly as its brand-review sibling does',
+  },
   'agent-reviewed-pr': {
     apply: (g: WorkflowSpec) =>
       failureLessons(removePassThrough(g, 'setCompleted'), ['review', 'ci']),
