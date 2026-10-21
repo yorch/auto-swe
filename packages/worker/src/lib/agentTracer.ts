@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
 import type { NodeTag } from '../workflows/nodeTag.js';
 import { nodeTagColumns } from './activityNodeTag.js';
@@ -137,6 +138,8 @@ function sanitizeJsonValues(obj: unknown): unknown {
 }
 
 export interface TraceRecord {
+  /** Fixed when recorded, so a batch re-sent after an ambiguous failure inserts nothing twice. */
+  id: string;
   seq: number;
   type: 'tool_call' | 'llm_response' | 'activity_event';
   /** tool name for tool_call; agent role for llm_response; event name for activity_event */
@@ -157,7 +160,9 @@ export interface TraceRecord {
 
 /**
  * Collects tool-call, LLM-response, and activity events during a single agent
- * activity execution and persists them to `agent_traces` when done.
+ * activity execution and persists them to `agent_traces` — at the end, and
+ * optionally while it runs (see `startTraceFlushing`). `persist()` drops only
+ * the records it wrote, so repeated calls never write a record twice.
  *
  * Call `setSpanContext()` before `persist()` to attach W3C OTel trace/span IDs
  * so trace rows can be correlated with Grafana/Tempo spans.
@@ -169,6 +174,29 @@ export class AgentTracer {
   private seq = 0;
   private otelTraceId?: string;
   private otelSpanId?: string;
+  private recordListener?: () => void;
+
+  /**
+   * Called after every record is added. Single slot: a later call replaces the
+   * listener, so only one consumer (the live flusher) can watch a tracer.
+   * Returns a function that removes it. A throwing listener never breaks recording.
+   */
+  onRecord(listener: () => void): () => void {
+    this.recordListener = listener;
+    return () => {
+      if (this.recordListener === listener) {
+        this.recordListener = undefined;
+      }
+    };
+  }
+
+  private notifyRecord(): void {
+    try {
+      this.recordListener?.();
+    } catch {
+      // Recording must never fail because a flush could not be scheduled.
+    }
+  }
 
   /** Associate an OTel span with all records in this batch. */
   setSpanContext(traceId: string, spanId: string): void {
@@ -196,12 +224,14 @@ export class AgentTracer {
     this.records.push({
       durationMs: opts.durationMs,
       error: opts.error,
+      id: randomUUID(),
       inputJson: sanitizeJsonValues(opts.inputJson),
       outputJson: opts.outputJson !== undefined ? sanitizeJsonValues(opts.outputJson) : undefined,
       seq: this.seq++,
       toolName: opts.toolName,
       type: 'tool_call',
     });
+    this.notifyRecord();
   }
 
   /**
@@ -224,6 +254,7 @@ export class AgentTracer {
       costUsd: opts.costUsd,
       durationMs: opts.durationMs,
       error: opts.error,
+      id: randomUUID(),
       inputJson: opts.inputJson !== undefined ? sanitizeJsonValues(opts.inputJson) : undefined,
       inputTokens: opts.inputTokens,
       model: opts.model,
@@ -233,6 +264,7 @@ export class AgentTracer {
       toolName: opts.role,
       type: 'llm_response',
     });
+    this.notifyRecord();
   }
 
   /** Summed tokens of the LLM calls recorded so far. */
@@ -259,12 +291,14 @@ export class AgentTracer {
     this.records.push({
       durationMs: opts.durationMs ?? 0,
       error: opts.error,
+      id: randomUUID(),
       inputJson: opts.inputJson !== undefined ? sanitizeJsonValues(opts.inputJson) : undefined,
       outputJson: opts.outputJson !== undefined ? sanitizeJsonValues(opts.outputJson) : undefined,
       seq: this.seq++,
       toolName: opts.name,
       type: 'activity_event',
     });
+    this.notifyRecord();
   }
 
   /**
@@ -273,7 +307,9 @@ export class AgentTracer {
    * recorded somewhere rather than dropped. `teamId`/`orgId` name whose spend
    * the rows are (see `currentSpendOwner`); absent, the rows belong to nobody.
    *
-   * Never throws; resolves false when the write failed.
+   * Never throws; resolves false when the write failed, and the records stay
+   * buffered for the next call. Rows are numbered from `seqOffset` in the order
+   * written, so batches flushed at different times by one attempt never collide.
    */
   async persist(
     ids: {
@@ -290,16 +326,18 @@ export class AgentTracer {
     attempt = 1,
     /** The spec node the activity was dispatched for; absent outside the interpreter. */
     nodeTag?: NodeTag,
-    /** Added to every record's `seq`, so batches persisted by one attempt do not collide. */
+    /** `seq` of the first record written; the rest follow it, so batches of one attempt do not collide. */
     seqOffset = 0
   ): Promise<boolean> {
-    if (this.records.length === 0) {
+    // Records added while the write is in flight stay for the next call.
+    const batch = this.records.slice();
+    if (batch.length === 0) {
       return true;
     }
     const node = nodeTagColumns(nodeTag);
     try {
       await prisma.agentTrace.createMany({
-        data: this.records.map((r) => ({
+        data: batch.map((r, index) => ({
           ...node,
           agentKey,
           assistantMessageId: ids.assistantMessageId ?? null,
@@ -307,6 +345,7 @@ export class AgentTracer {
           costUsd: r.costUsd ?? null,
           durationMs: r.durationMs,
           error: r.error ?? null,
+          id: r.id,
           inputJson: r.inputJson as object | undefined,
           inputTokens: r.inputTokens ?? null,
           model: r.model ?? null,
@@ -317,14 +356,17 @@ export class AgentTracer {
           outputJson: r.outputJson as object | undefined,
           outputTokens: r.outputTokens ?? null,
           runId: ids.runId ?? null,
-          seq: r.seq + seqOffset,
+          seq: seqOffset + index,
           teamId: ids.teamId ?? null,
           temporalRunId: ids.temporalRunId ?? null,
           toolName: r.toolName ?? null,
           type: r.type,
           workflowId: ids.workflowId,
         })),
+        // A write the client saw fail may still have committed; the ids make a re-send a no-op.
+        skipDuplicates: true,
       });
+      this.records.splice(0, batch.length);
       return true;
     } catch {
       // Tracing is best-effort — never block the workflow

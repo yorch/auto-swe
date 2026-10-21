@@ -86,6 +86,7 @@ vi.mock('../lib/activityContext.js', () => ({
   currentAttempt: vi.fn(() => 1),
   currentWorkflowId: vi.fn(() => 'wf-1'),
   persistActivityTrace: vi.fn(async () => {}),
+  startTraceFlushing: vi.fn(() => () => {}),
 }));
 
 vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
@@ -147,7 +148,11 @@ vi.mock('./workspace.js', () => ({
 }));
 
 import { buildImplementerForActivity } from '../agents/implementer.js';
-import { currentAttempt, persistActivityTrace } from '../lib/activityContext.js';
+import {
+  currentAttempt,
+  persistActivityTrace,
+  startTraceFlushing,
+} from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { executeImplementation } from './executeImplementation.js';
@@ -221,6 +226,45 @@ describe('executeImplementation agent turn', () => {
       (c: unknown[]) => (c[1] as { timeoutMs?: number } | undefined)?.timeoutMs === 600_000
     );
     expect(testCall?.[0]).toBe('{ go test ./...\n} 2>&1');
+  });
+});
+
+describe('executeImplementation live trace flushing', () => {
+  it('flushes the activity tracer while it runs, and stops before the final persist', async () => {
+    const calls: string[] = [];
+    vi.mocked(startTraceFlushing).mockImplementationOnce(() => {
+      calls.push('start');
+      return () => calls.push('stop');
+    });
+    generateMock.mockImplementationOnce(async () => {
+      calls.push('generate');
+      return { text: 'done', usage: { inputTokens: 1, outputTokens: 1 } };
+    });
+    vi.mocked(persistActivityTrace).mockImplementationOnce(async () => {
+      calls.push('persist');
+      return true;
+    });
+
+    await executeImplementation(REQUEST);
+
+    expect(calls).toEqual(['start', 'generate', 'stop', 'persist']);
+    const [tracer, agentKey] = vi.mocked(startTraceFlushing).mock.calls[0] ?? [];
+    expect(agentKey).toBe('implementer');
+    expect(tracer).toBe(vi.mocked(persistActivityTrace).mock.calls[0]?.[0]);
+  });
+
+  it('still stops flushing and persists when the activity fails', async () => {
+    const calls: string[] = [];
+    vi.mocked(startTraceFlushing).mockReturnValueOnce(() => calls.push('stop'));
+    vi.mocked(persistActivityTrace).mockImplementationOnce(async () => {
+      calls.push('persist');
+      return true;
+    });
+    generateMock.mockRejectedValue(new Error('model down'));
+
+    await expect(executeImplementation(REQUEST)).rejects.toThrow();
+
+    expect(calls).toEqual(['stop', 'persist']);
   });
 });
 

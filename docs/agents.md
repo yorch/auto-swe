@@ -1356,9 +1356,13 @@ tracer.addActivityEvent({
 await persistActivityTrace(tracer, 'implementer');
 ```
 
+A long activity can also flush while it runs: `startTraceFlushing(tracer, role)` writes the records added so far at most once a second, so the run viewer's live tail sees them as they happen. It returns a stop function, called in the `finally` before the final `persistActivityTrace`, which stays and writes whatever remains. `executeImplementation` does this; other activities persist once, at the end.
+
 **`persistActivityTrace(tracer, role)`** in `packages/worker/src/lib/activityContext.ts` auto-resolves the workflow ID, `runId`, and `attempt` from Temporal context and calls `tracer.persist({ runId, workflowId }, nodeId, role, attempt, nodeTag)` (the tag is §8.4's). It attaches the OTel span active at that moment unless the caller already attached a more specific one with `tracer.setSpanContext()` — `runAgent` does, because it persists after its LLM span has ended. **Never omit this call** in new LLM-calling activities — the run viewer depends on it.
 
-An attempt can persist more than one tracer — its own and `runAgent`'s — and each numbers its records from 0, so `persistActivityTrace` reserves a block of `seq` values per attempt and offsets each batch into it. `seq` is therefore unique within an attempt, and batches order by when they were persisted.
+`persist` writes only the records not yet written and drops exactly those on success; on a failed write they stay buffered for the next call, and a record added while a write is in flight waits for the next one. So a tracer may be persisted any number of times without writing a row twice. Calls on one tracer run one at a time (a final persist waits for an in-flight flush), and the runless-spend accounting moves only the tokens of the batch being written, put back if that write fails.
+
+An attempt can persist more than one tracer — its own and `runAgent`'s — and more than once each, so `persistActivityTrace` reserves a block of `seq` values per attempt for every batch and numbers the batch's rows from its start. `seq` is therefore unique within an attempt, and batches order by when they were persisted.
 
 **`runAgent`** records a `tool_call` row for every tool call Mastra made inside its loop, then the call's `llm_response` row. Each tool it binds is wrapped so its `execute` records the row as the call happens — real duration, input, output or the thrown error's message — which also keeps the rows of calls made before a `generate` that then throws. A call that never reached `execute` (invalid input, an unknown tool) is read afterwards from the steps of the `generate` result, matched by call id so a wrapped call is not recorded twice; Mastra keeps only successful results in a step's `toolResults`, so such a call's error comes from the tool message the loop fed back to the model, and a call with no outcome anywhere is recorded as failed, never as a success with no output. A caller whose tools record themselves passes its own tracer as `RunAgentOptions.tracer` and names those tools in `RunAgentOptions.selfRecordingTools` — `runAgentNode` (MCP tools) and `runAgentTask` (workspace and MCP tools) do. `runAgent` then records into that tracer, leaves the named tools unwrapped and unread, and leaves persisting to the caller, so every row shares one sequence and persists once. Every row lands in call order as the calls happen; only the rows read from the steps are appended after the loop returns, just before the `llm_response`. A tool is named by identity, not key, so a self-recording tool displaced on a key collision does not take the winning tool's rows with it.
 
@@ -1631,6 +1635,12 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   `.claude` / `CLAUDE.md` / `.mcp.json` refusal applies to `Write` and `Edit`; a shell command is
   checked only by the shell-command scanner, whose write-target extraction is a heuristic over the
   command text and does not know the harness's current directory.
+
+- **Most activities write their traces only when they end.** Only `executeImplementation` flushes while
+  it runs, so the run page shows another activity's rows (reviewers, the fix sessions, `runAgent`
+  nodes, the PR step) once that activity finishes. A mid-run flush that fails leaves its rows
+  buffered until the next flush or the final persist, and a worker that dies mid-activity loses the
+  rows it had not yet written.
 
 - **The run page shows at most 5 000 traces of a run.** A read loads the newest
   `MAX_TRACES_PER_READ` rows, and on a run with more the page keeps a window of that size, sliding

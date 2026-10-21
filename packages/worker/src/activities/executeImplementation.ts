@@ -19,7 +19,12 @@ import {
 } from '../agents/implementerRuntimeSelect.js';
 import { IMPLEMENTER_SYSTEM_PROMPT } from '../agents/prompts.js';
 import { scanDiffForSecurityIssues } from '../agents/securityReviewProcessor.js';
-import { currentAttempt, currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
+import {
+  currentAttempt,
+  currentWorkflowId,
+  persistActivityTrace,
+  startTraceFlushing,
+} from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { throwIfActivityCancelled } from '../lib/cancellation.js';
@@ -158,6 +163,8 @@ export async function executeImplementation(
   );
 
   const tracer = new AgentTracer();
+  // The run viewer tails traces while this runs; the final persist in finally writes the rest.
+  const stopTraceFlushing = startTraceFlushing(tracer, 'implementer');
   // Holds the MCP client open under the Mastra loop — closed in finally.
   let turns: ImplementerTurnRunner | undefined;
 
@@ -447,6 +454,7 @@ export async function executeImplementation(
     } catch (err) {
       logWarn('implementer runtime failed to close', { error: getErrorMessage(err) });
     }
+    stopTraceFlushing();
     await persistActivityTrace(tracer, 'implementer');
     if (baseSha) {
       // Best-effort — the baseline SHA is an optional historical-replay aid. One
