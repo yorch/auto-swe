@@ -29,6 +29,7 @@ const tracer = { addLlmResponse } as unknown as AgentTracer;
 
 function turn(runtime: ImplementerRuntime, context?: Record<string, unknown>) {
   return {
+    agent: { id: 'agent-row-1', version: 4 },
     context,
     role: 'implementer',
     runtime,
@@ -86,6 +87,10 @@ describe('runImplementerTurn', () => {
         outputTokens: 4,
         role: 'implementer',
       })
+    );
+    // The turn's Agent row rides on the row, so a version's spend can be read back.
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: { id: 'agent-row-1', version: 4 } })
     );
     expect(result.text).toBe('done');
     expect(result.attribution.costUsd).toBe(0.5);

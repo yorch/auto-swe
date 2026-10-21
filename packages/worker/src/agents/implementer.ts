@@ -393,7 +393,9 @@ export async function buildImplementerForActivity(
   ctx?: ResolveCtx,
   agentKey = 'implementer',
   /** The repository whose lessons the memory tools read; omitted, there are none. */
-  lessonRepoId?: string
+  lessonRepoId?: string,
+  /** A model bound by the caller (see `getBoundModel`); omitted, the agent binds its own. */
+  modelOverride?: LanguageModel
 ): Promise<{
   agent: Agent;
   promptSuffix: string;
@@ -428,7 +430,8 @@ export async function buildImplementerForActivity(
       mcpListTimeoutMs: mcpTarget?.listTimeoutMs,
       mcpServerRef: mcpTarget?.url,
       resolveCtx: ctx,
-    }
+    },
+    modelOverride
   );
   return { agent, closeMcp, maxSteps, promptSuffix, skills, toolKeys };
 }

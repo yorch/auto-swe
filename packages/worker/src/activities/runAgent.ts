@@ -294,6 +294,7 @@ export async function runAgent<T = unknown>(
         const text = genResult?.text || accounting?.lastText() || undefined;
 
         tracer.addLlmResponse({
+          agent: spec.agent,
           costUsd: attribution.costUsd,
           durationMs: Date.now() - start,
           inputJson: { systemPrompt: spec.systemPrompt, userMessage },
@@ -322,6 +323,7 @@ export async function runAgent<T = unknown>(
         const paid = recorded ?? (accountingTotals ? accountingTotals() : undefined);
         tracer.addLlmResponse({
           ...failedCallAttribution(e, spec.modelSpec, paid),
+          agent: spec.agent,
           durationMs: Date.now() - start,
           error: (e as Error).message,
           inputJson: { systemPrompt: spec.systemPrompt, userMessage },

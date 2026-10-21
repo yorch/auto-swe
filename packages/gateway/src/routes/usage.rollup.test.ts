@@ -195,12 +195,16 @@ function newFake(f: Fixture, memberships: { team: Row[]; org: Row[] }, users: Ro
   return fake;
 }
 
+const AGENT_1 = '00000000-0000-4000-8000-0000000000a1';
+const AGENT_2 = '00000000-0000-4000-8000-0000000000a2';
+
 // ── fixture ───────────────────────────────────────────────────────────────────────────────────
 
 let seq = 0;
 function trace(over: Row): Row {
   seq += 1;
   return {
+    agentId: null,
     agentKey: 'implementer',
     costUsd: 0.1,
     createdAt: new Date(day(-5) + 3_600_000),
@@ -227,7 +231,9 @@ function buildFixture(): Fixture {
     // Priced calls across two teams / orgs, two models, run-backed and runless.
     traces.push(
       trace({ costUsd: 0.123457, createdAt: at(d, 1), runId: RUN_1, temporalRunId: 'tr-1' }),
+      // two versions of one key, so the rollup key must keep them apart
       trace({
+        agentId: AGENT_1,
         costUsd: 0.2,
         createdAt: at(d, 5),
         durationMs: 2500,
@@ -235,6 +241,7 @@ function buildFixture(): Fixture {
         temporalRunId: 'tr-1',
       }),
       trace({
+        agentId: AGENT_2,
         costUsd: 0.05,
         createdAt: at(d, 9),
         durationMs: 30_000,
@@ -478,6 +485,29 @@ describe('usage report: rollup path equals live path', () => {
     await rollupUsageDay(prisma as never, day(-5));
     expect(f.rollups).toHaveLength(first);
     expect(first).toBeGreaterThan(0);
+  });
+
+  it('keys the rollup by agent id and keeps the per-agent sums the live traces give', async () => {
+    const f = buildFixture();
+    const { prisma } = await build(f);
+    await rollUpCompletedDays(f, prisma, -12, -1);
+    const settled = (r: Row) => (r.day as Date).getTime() < day(0);
+    const liveByAgent = new Map<unknown, number>();
+    for (const t of f.traces) {
+      if (t.type === 'llm_response' && (t.createdAt as Date).getTime() < day(0)) {
+        liveByAgent.set(t.agentId, (liveByAgent.get(t.agentId) ?? 0) + 1);
+      }
+    }
+    const rolledByAgent = new Map<unknown, number>();
+    for (const r of f.rollups.filter(settled)) {
+      rolledByAgent.set(r.agentId, (rolledByAgent.get(r.agentId) ?? 0) + (r.calls as number));
+    }
+    expect([...rolledByAgent.keys()].sort()).toEqual([AGENT_1, AGENT_2, null].sort());
+    expect(rolledByAgent).toEqual(liveByAgent);
+    // Rows that differ only by agent id stay separate rows, as the stats read needs.
+    expect(
+      f.rollups.filter((r) => r.agentId === AGENT_1 && r.agentKey === 'implementer').length
+    ).toBeGreaterThan(0);
   });
 
   it('rolls a day with no LLM calls up to no rows', async () => {

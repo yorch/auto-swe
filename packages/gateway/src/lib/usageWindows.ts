@@ -1,4 +1,6 @@
-import { DAY_MS } from '@auto-swe/shared/lib/agentTraceRollup';
+import type { PrismaClient } from '@auto-swe/shared';
+import { DAY_MS, rollupHorizonMs } from '@auto-swe/shared/lib/agentTraceRollup';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 
 /** A half-open instant range, the shape of a Prisma `createdAt` filter. */
 export interface Range {
@@ -71,4 +73,31 @@ export function clipRanges(ranges: readonly Range[], startMs: number, endMs: num
     }
   }
   return out;
+}
+
+/**
+ * The UTC days in `[startMs, endMs)` that have rollup rows, as epoch ms. Unscoped on purpose: it
+ * reveals only which days the sweep has built, and a day is all-or-nothing, so a scope with no
+ * spend on a built day correctly reads zero from the rollup instead of re-scanning the traces.
+ */
+export async function coveredRollupDays(
+  prisma: Pick<PrismaClient, 'agentTraceDailyUsage'>,
+  startMs: number,
+  endMs: number,
+  nowMs: number
+): Promise<Set<number>> {
+  const horizon = rollupHorizonMs(nowMs);
+  if (startMs >= horizon) {
+    return new Set();
+  }
+  const rows = await runUnscoped(
+    'which UTC days the usage rollup has built, with no tenant data',
+    ['AgentTraceDailyUsage'],
+    () =>
+      prisma.agentTraceDailyUsage.groupBy({
+        by: ['day'],
+        where: { day: { gte: new Date(startMs), lt: new Date(Math.min(endMs, horizon)) } },
+      })
+  );
+  return new Set(rows.map((r) => r.day.getTime()));
 }

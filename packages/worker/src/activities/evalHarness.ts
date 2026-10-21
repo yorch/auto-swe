@@ -292,7 +292,8 @@ export async function runCaseDefault(
       const usageEvent = `llm.eval.${parsed.key}.iteration_${i}`;
       await assertBudgetAvailable(usageEvent);
       await runImplementerTurn({
-        boundModelSpec: resolved.model.spec,
+        agent: turns.agent,
+        boundModelSpec: turns.boundModelSpec,
         context: { caseId: caseRow.id, iteration: i, ref, runtime: turns.kind },
         role: parsed.key,
         runtime: turns.runtime,

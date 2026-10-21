@@ -1,5 +1,5 @@
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
  * Covers the cross-repo dependency block reaching the implementer's system
@@ -128,7 +128,15 @@ vi.mock('../lib/costTracking.js', () => ({
 
 vi.mock('../lib/lessonRetrieval.js', () => ({ retrieveSimilarLessons: vi.fn(async () => []) }));
 
-vi.mock('../lib/models.js', () => ({ resolveSystemPrompt: vi.fn(async () => 'BASE_PROMPT') }));
+vi.mock('../lib/models.js', () => ({
+  getBoundModel: vi.fn(async () => ({
+    agent: { id: 'agent-row-4', version: 4 },
+    model: {},
+    spec: 'anthropic/v4-model',
+    systemPrompt: null,
+  })),
+  resolveSystemPrompt: vi.fn(async () => 'BASE_PROMPT'),
+}));
 
 vi.mock('../lib/repoDependencyContext.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../lib/repoDependencyContext.js')>();
@@ -159,6 +167,7 @@ import {
 import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
+import { recordLlmUsage } from '../lib/costTracking.js';
 import { executeImplementation } from './executeImplementation.js';
 import { TEST_RUN_TIMEOUT_MS } from './utils.js';
 import { createWorkspace } from './workspace.js';
@@ -213,6 +222,21 @@ describe('USD-cap guard', () => {
 });
 
 describe('executeImplementation agent turn', () => {
+  it('prices each TDD turn at the bound model and stamps its Agent row on the trace row', async () => {
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
+    await executeImplementation(REQUEST);
+    expect(vi.mocked(recordLlmUsage)).toHaveBeenCalledWith(
+      expect.anything(),
+      'implementer',
+      expect.anything(),
+      expect.anything(),
+      'anthropic/v4-model'
+    );
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ agent: { id: 'agent-row-4', version: 4 } })
+    );
+  });
+
   it('passes the resolved step budget to every TDD iteration', async () => {
     await executeImplementation(REQUEST);
     expect(generateMock.mock.calls[0]?.[1]).toMatchObject({ maxSteps: 50, toolChoice: 'auto' });
@@ -689,4 +713,9 @@ describe('executeImplementation unrunnable test command', () => {
     expect(generateMock).toHaveBeenCalledTimes(1);
     expect(result.implementationNotes).toContain('Tests passing');
   });
+});
+
+// A failing assertion must not leak a spy on AgentTracer into the next test.
+afterEach(() => {
+  vi.restoreAllMocks();
 });

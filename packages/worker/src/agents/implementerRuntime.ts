@@ -110,6 +110,11 @@ export function mastraRuntime(
 
 export interface ImplementerTurn {
   /**
+   * The resolved `Agent` row (id + version) the turn runs as, stamped on its trace row. Null
+   * only where no `Agent` row ran.
+   */
+  agent: { id: string; version: number } | null;
+  /**
    * The `<provider>/<model>` spec the caller actually bound for this turn, priced
    * as-is. Omitted, `recordLlmUsage` re-resolves `role` from the activity context,
    * which cannot see a model the caller chose outside the role's own cascade.
@@ -241,6 +246,7 @@ export async function runImplementerTurn(turn: ImplementerTurn): Promise<{
   // on the tracer, and this is the row that carries the prompt, the cost and the
   // turn they belong to.
   turn.tracer.addLlmResponse({
+    agent: turn.agent,
     costUsd: attribution.costUsd,
     durationMs: Date.now() - start,
     inputJson: { ...turn.context, systemPrompt: turn.system, userMessage: turn.user },

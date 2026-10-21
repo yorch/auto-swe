@@ -42,6 +42,19 @@ afterEach(() => vi.unstubAllGlobals());
 describe('AgentHistoryModal', () => {
   it('lists versions and shows what changed from the previous one', async () => {
     setupFetchMock({
+      'GET /api/v1/platform/agent-library/v2/version-stats': () => ({
+        data: {
+          isTruncated: false,
+          key: 'reviewer',
+          rows: [],
+          runsTruncated: false,
+          scope: 'GLOBAL',
+          since: '2026-01-01',
+          unrecorded: [],
+          until: '2026-01-30',
+          windowDays: 30,
+        },
+      }),
       'GET /api/v1/platform/agent-library/v2/versions': () => ({
         data: [version(2), version(1)],
       }),
@@ -58,6 +71,19 @@ describe('AgentHistoryModal', () => {
   it('restores an older version as a new one after confirmation', async () => {
     const bodies: unknown[] = [];
     setupFetchMock({
+      'GET /api/v1/platform/agent-library/v2/version-stats': () => ({
+        data: {
+          isTruncated: false,
+          key: 'reviewer',
+          rows: [],
+          runsTruncated: false,
+          scope: 'GLOBAL',
+          since: '2026-01-01',
+          unrecorded: [],
+          until: '2026-01-30',
+          windowDays: 30,
+        },
+      }),
       'GET /api/v1/platform/agent-library/v2/versions': () => ({
         data: [version(2), version(1)],
       }),
@@ -78,6 +104,19 @@ describe('AgentHistoryModal', () => {
 
   it('shows the catalog and credential warnings a restore returns', async () => {
     setupFetchMock({
+      'GET /api/v1/platform/agent-library/v2/version-stats': () => ({
+        data: {
+          isTruncated: false,
+          key: 'reviewer',
+          rows: [],
+          runsTruncated: false,
+          scope: 'GLOBAL',
+          since: '2026-01-01',
+          unrecorded: [],
+          until: '2026-01-30',
+          windowDays: 30,
+        },
+      }),
       'GET /api/v1/platform/agent-library/v2/versions': () => ({
         data: [version(2), version(1)],
       }),

@@ -208,6 +208,7 @@ export async function passiveIngestChannelMemory(
       factsExtracted = facts.length;
 
       tracer.addLlmResponse({
+        agent: bound.agent,
         costUsd: attribution.costUsd,
         durationMs: Date.now() - start,
         inputJson: { systemPrompt: instructions, userMessage: transcript },

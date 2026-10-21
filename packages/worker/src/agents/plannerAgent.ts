@@ -4,7 +4,7 @@ import { trace } from '@opentelemetry/api';
 import { ApplicationFailure } from '@temporalio/activity';
 import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
-import type { AgentTracer } from '../lib/agentTracer.js';
+import type { AgentTracer, TracedAgent } from '../lib/agentTracer.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getBoundModel } from '../lib/models.js';
@@ -87,11 +87,18 @@ export async function decomposeEpic(
       let llmUserMessage = '';
       let modelSpec: string | undefined;
       let recorded: LlmAttribution | undefined;
+      let tracedAgent: TracedAgent | null = null;
       try {
         // Resolve the role once: the model called, the price checked, the cost
         // recorded and the prompt used all come from this one resolution, so a
         // config edit mid-call cannot bill a different model than the one called.
-        const { model, spec, systemPrompt: rowPrompt } = await getBoundModel('planner');
+        const {
+          agent: resolvedAgent,
+          model,
+          spec,
+          systemPrompt: rowPrompt,
+        } = await getBoundModel('planner');
+        tracedAgent = resolvedAgent;
         modelSpec = spec;
         span.setAttribute('llm.model', modelSpec);
         const basePrompt = rowPrompt ?? PLANNER_AGENT_PROMPT;
@@ -137,6 +144,7 @@ export async function decomposeEpic(
         }
 
         tracer?.addLlmResponse({
+          agent: tracedAgent,
           costUsd: attribution.costUsd,
           durationMs: Date.now() - start,
           inputJson: { systemPrompt, userMessage: llmUserMessage },
@@ -154,6 +162,7 @@ export async function decomposeEpic(
       } catch (e) {
         tracer?.addLlmResponse({
           ...failedCallAttribution(e, modelSpec, recorded),
+          agent: tracedAgent,
           durationMs: Date.now() - start,
           error: (e as Error).message,
           inputJson: { systemPrompt, userMessage: llmUserMessage },

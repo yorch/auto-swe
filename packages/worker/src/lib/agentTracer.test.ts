@@ -15,7 +15,13 @@ beforeEach(() => {
 describe('AgentTracer.persist', () => {
   it('writes runless traces keyed by workflowId instead of dropping them', async () => {
     const tracer = new AgentTracer();
-    tracer.addLlmResponse({ costUsd: 0.01, durationMs: 5, model: 'anthropic/x', role: 'r' });
+    tracer.addLlmResponse({
+      agent: null,
+      costUsd: 0.01,
+      durationMs: 5,
+      model: 'anthropic/x',
+      role: 'r',
+    });
 
     await tracer.persist({ runId: undefined, workflowId: 'wf-author-1' }, 'generateSpec', 'r', 1);
 
@@ -25,15 +31,37 @@ describe('AgentTracer.persist', () => {
     });
   });
 
+  it('stamps the resolved agent id and version on an LLM row, and NULL where none ran', async () => {
+    const tracer = new AgentTracer();
+    tracer.addLlmResponse({
+      agent: { id: 'agent-row-1', version: 7 },
+      durationMs: 5,
+      role: 'implementer',
+    });
+    tracer.addLlmResponse({ agent: null, durationMs: 5, role: 'embeddings' });
+    tracer.addToolCall({ durationMs: 1, inputJson: {}, toolName: 'bash' });
+
+    await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'implementer');
+
+    const rows = createManyMock.mock.calls[0]?.[0].data;
+    expect(rows[0]).toMatchObject({
+      agentId: 'agent-row-1',
+      agentKey: 'implementer',
+      agentVersion: 7,
+    });
+    expect(rows[1]).toMatchObject({ agentId: null, agentVersion: null });
+    expect(rows[2]).toMatchObject({ agentId: null, agentVersion: null });
+  });
+
   it('writes the spend owner it is given, and NULL when it is given none', async () => {
     const tracer = new AgentTracer();
-    tracer.addLlmResponse({ costUsd: 0.01, durationMs: 5, role: 'r' });
+    tracer.addLlmResponse({ agent: null, costUsd: 0.01, durationMs: 5, role: 'r' });
     await tracer.persist(
       { orgId: 'o1', runId: 'run-1', teamId: 't1', workflowId: 'wf-1' },
       'n',
       'r'
     );
-    tracer.addLlmResponse({ costUsd: 0.01, durationMs: 5, role: 'r' });
+    tracer.addLlmResponse({ agent: null, costUsd: 0.01, durationMs: 5, role: 'r' });
     await tracer.persist({ runId: 'run-1', workflowId: 'wf-1' }, 'n', 'r');
     expect(createManyMock.mock.calls[0]?.[0].data[0]).toMatchObject({ orgId: 'o1', teamId: 't1' });
     expect(createManyMock.mock.calls[1]?.[0].data[0]).toMatchObject({ orgId: null, teamId: null });
@@ -41,13 +69,13 @@ describe('AgentTracer.persist', () => {
 
   it('stamps the assistant reply it is given, and NULL when it is given none', async () => {
     const tracer = new AgentTracer();
-    tracer.addLlmResponse({ durationMs: 5, role: 'r' });
+    tracer.addLlmResponse({ agent: null, durationMs: 5, role: 'r' });
     await tracer.persist(
       { assistantMessageId: 'reply-1', runId: undefined, workflowId: 'w' },
       'n',
       'r'
     );
-    tracer.addLlmResponse({ durationMs: 5, role: 'r' });
+    tracer.addLlmResponse({ agent: null, durationMs: 5, role: 'r' });
     await tracer.persist({ runId: undefined, workflowId: 'w' }, 'n', 'r');
     expect(createManyMock.mock.calls[0]?.[0].data[0]).toMatchObject({
       assistantMessageId: 'reply-1',
@@ -202,7 +230,7 @@ describe('AgentTracer.persist', () => {
     const listener = vi.fn();
     tracer.onRecord(listener);
     tracer.addToolCall({ durationMs: 1, inputJson: {}, toolName: 't' });
-    tracer.addLlmResponse({ durationMs: 1 });
+    tracer.addLlmResponse({ agent: null, durationMs: 1 });
     tracer.addActivityEvent({ name: 'e' });
     expect(listener).toHaveBeenCalledTimes(3);
   });

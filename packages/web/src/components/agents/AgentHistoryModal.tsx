@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { AgentVersionStats } from '@/components/agents/AgentVersionStats';
 import { ModelSaveWarnings } from '@/components/agents/ModelSaveWarnings';
 import { VersionDiff } from '@/components/agents/VersionDiff';
 import { Alert } from '@/components/ui/Alert';
@@ -161,6 +162,7 @@ export function AgentHistoryModal({
               </section>
             )}
           </QueryBoundary>
+          <AgentVersionStats agentId={agent.id} />
         </div>
       </Modal>
       <ConfirmModal

@@ -229,6 +229,7 @@ export async function sweepChannelOpenItems(
         );
         totalCostUsd += attribution.costUsd;
         tracer.addLlmResponse({
+          agent: bound.agent,
           costUsd: attribution.costUsd,
           durationMs: Date.now() - start,
           inputJson: { systemPrompt: CHANNEL_OPEN_ITEM_SWEEPER_PROMPT, userMessage: prompt },

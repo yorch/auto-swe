@@ -94,6 +94,7 @@ interface DayRow {
   orgId: string | null;
   runId: string | null;
   agentKey: string;
+  agentId: string | null;
   model: string | null;
   nodeId: string;
   launcherId: string | null;
@@ -132,12 +133,33 @@ export async function rollupUsageDay(
     createdAt: { gte: day, lt: new Date(dayStartMs + DAY_MS) },
     type: 'llm_response',
   };
-  const by = ['teamId', 'orgId', 'runId', 'temporalRunId', 'agentKey', 'model', 'nodeId'] as const;
-  type Key = Pick<DayRow, 'teamId' | 'orgId' | 'runId' | 'agentKey' | 'model' | 'nodeId'> & {
+  const by = [
+    'teamId',
+    'orgId',
+    'runId',
+    'temporalRunId',
+    'agentKey',
+    'agentId',
+    'model',
+    'nodeId',
+  ] as const;
+  type Key = Pick<
+    DayRow,
+    'teamId' | 'orgId' | 'runId' | 'agentKey' | 'agentId' | 'model' | 'nodeId'
+  > & {
     temporalRunId: string | null;
   };
   const keyOf = (g: Key) =>
-    JSON.stringify([g.teamId, g.orgId, g.runId, g.temporalRunId, g.agentKey, g.model, g.nodeId]);
+    JSON.stringify([
+      g.teamId,
+      g.orgId,
+      g.runId,
+      g.temporalRunId,
+      g.agentKey,
+      g.agentId,
+      g.model,
+      g.nodeId,
+    ]);
 
   const rows = await runUnscoped(
     'the usage rollup sweep reads and rewrites every tenant’s day',
@@ -182,11 +204,13 @@ export async function rollupUsageDay(
               g.orgId,
               g.runId,
               g.agentKey,
+              g.agentId,
               g.model,
               g.nodeId,
               launcherId,
             ]);
             const row = merged.get(k) ?? {
+              agentId: g.agentId,
               agentKey: g.agentKey,
               calls: 0,
               costUsd: 0,

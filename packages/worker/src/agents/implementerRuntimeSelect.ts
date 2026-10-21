@@ -5,6 +5,7 @@ import { resolveAgent } from '../lib/config/agentResolver.js';
 import { type AgentRuntimeSource, resolveAgentRuntime } from '../lib/config/agentRuntime.js';
 import { type ResolvedSkill, skillsToPromptSuffix } from '../lib/config/agentSkills.js';
 import type { ResolveCtx } from '../lib/config/types.js';
+import { getBoundModel } from '../lib/models.js';
 import { HARNESSES } from './harnessRegistry.js';
 import {
   buildImplementerForActivity,
@@ -16,6 +17,14 @@ import { isMcpToolEnabled } from './mcpTools.js';
 
 /** One implementer session's loop, built for the runtime the agent resolved to. */
 export interface ImplementerTurnRunner {
+  /** The resolved `Agent` row the session runs as; pass it to `runImplementerTurn`. */
+  agent: { id: string; version: number };
+  /**
+   * The `<provider>/<model>` spec of that same resolution. Pass it as `boundModelSpec` so the
+   * turn is priced and traced at the model of the version named by `agent`; left out, usage
+   * re-resolves the role every turn and a version cut mid-session pairs one id with another's model.
+   */
+  boundModelSpec: string;
   /** Drives each turn; pass it to `runImplementerTurn`. */
   runtime: ImplementerRuntime;
   /** Which loop `runtime` is — what the session actually ran on. */
@@ -93,14 +102,20 @@ export async function buildImplementerTurnRunner(input: {
   });
 
   if (kind === 'mastra') {
+    // One resolution binds the model that runs and names the Agent row that is stamped on its
+    // trace rows, so a version cut mid-session cannot pair one version's id with another's model.
+    const bound = await getBoundModel(agentKey, input.ctx);
     const built = await buildImplementerForActivity(
       input.workspace,
       input.tracer,
       input.ctx,
       agentKey,
-      input.repoId
+      input.repoId,
+      bound.model
     );
     return runner({
+      agent: bound.agent,
+      boundModelSpec: bound.spec,
       close: built.closeMcp,
       kind,
       kindSource,
@@ -112,10 +127,13 @@ export async function buildImplementerTurnRunner(input: {
     });
   }
 
+  const resolvedAgent = await resolveAgent(agentKey, input.ctx);
+  const agent = { id: resolvedAgent.id, version: resolvedAgent.version };
+  const boundModelSpec = resolvedAgent.model.spec;
   const harness = HARNESSES.select(kind);
-  const [config, { model }, mcpTarget] = await Promise.all([
+  const { model } = resolvedAgent;
+  const [config, mcpTarget] = await Promise.all([
     resolveImplementerConfig(input.ctx, agentKey),
-    resolveAgent(agentKey, input.ctx),
     resolveImplementerMcpTarget(agentKey, input.ctx, input.tracer),
   ]);
   const runtime = harness.bind(agentKey, model).build({
@@ -135,6 +153,8 @@ export async function buildImplementerTurnRunner(input: {
     workspace: input.workspace,
   });
   return runner({
+    agent,
+    boundModelSpec,
     close: runtime.close,
     kind: harness.kind,
     kindSource,
@@ -147,6 +167,8 @@ export async function buildImplementerTurnRunner(input: {
 }
 
 function runner(parts: {
+  agent: { id: string; version: number };
+  boundModelSpec: string;
   close?: () => Promise<void>;
   kind: ImplementerRuntimeKind;
   kindSource: AgentRuntimeSource;

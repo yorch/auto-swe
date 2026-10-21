@@ -5,6 +5,7 @@ const h = vi.hoisted(() => ({
   claudeCodeRuntime: vi.fn((..._args: unknown[]) => ({ runTurn: vi.fn() })),
   closeMcp: vi.fn(async () => {}),
   generate: vi.fn(async (..._args: unknown[]) => ({ text: 'mastra says hi', usage: undefined })),
+  getBoundModel: vi.fn(),
   piRuntime: vi.fn((..._args: unknown[]) => ({ runTurn: vi.fn() })),
   resolveAgent: vi.fn(),
   resolveAgentRuntime: vi.fn(),
@@ -14,6 +15,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock('@auto-swe/shared/config', () => ({ resolveSetting: h.resolveSetting }));
+vi.mock('../lib/models.js', () => ({ getBoundModel: h.getBoundModel }));
 vi.mock('../lib/config/agentResolver.js', () => ({ resolveAgent: h.resolveAgent }));
 vi.mock('../lib/config/agentRuntime.js', () => ({ resolveAgentRuntime: h.resolveAgentRuntime }));
 vi.mock('./claudeCode/runtime.js', () => ({ claudeCodeRuntime: h.claudeCodeRuntime }));
@@ -55,12 +57,20 @@ beforeEach(() => {
     source: 'default',
   }));
   h.resolveAgent.mockResolvedValue({
+    id: 'agent-row-9',
     model: {
       apiBase: 'https://gw.example/v1',
       apiKey: 'k',
       reasoning: 'high',
       spec: 'anthropic/claude-opus-5-5',
     },
+    version: 6,
+  });
+  h.getBoundModel.mockResolvedValue({
+    agent: { id: 'agent-row-9', version: 6 },
+    model: { sentinel: 'bound-model' },
+    spec: 'anthropic/claude-opus-5-5',
+    systemPrompt: null,
   });
   h.buildImplementerForActivity.mockResolvedValue({
     agent: { generate: h.generate },
@@ -102,7 +112,11 @@ describe('buildImplementerTurnRunner', () => {
     const turns = await buildImplementerTurnRunner(given);
     expect(h.claudeCodeRuntime).toHaveBeenCalledTimes(1);
     expect(h.buildImplementerForActivity).not.toHaveBeenCalled();
-    expect(turns).toMatchObject({ kind: 'claude-code', kindSource: 'agent' });
+    expect(turns).toMatchObject({
+      agent: { id: 'agent-row-9', version: 6 },
+      kind: 'claude-code',
+      kindSource: 'agent',
+    });
     expect(given.tracer.addActivityEvent).toHaveBeenCalledWith({
       name: 'agent.runtime',
       outputJson: { agentKey: 'implementer', runtime: 'claude-code', source: 'agent' },
@@ -125,7 +139,8 @@ describe('buildImplementerTurnRunner', () => {
       given.tracer,
       given.ctx,
       'ciFixer',
-      'repo-9'
+      'repo-9',
+      { sentinel: 'bound-model' }
     );
   });
 
@@ -138,7 +153,9 @@ describe('buildImplementerTurnRunner', () => {
       given.tracer,
       given.ctx,
       'ciFixer',
-      undefined
+      undefined,
+      // The model that runs is the one the stamped Agent row resolved to.
+      { sentinel: 'bound-model' }
     );
     expect(turns.promptSuffix).toBe(MENU);
     expect(turns.systemPrompt('BASE')).toBe(`BASE\n\n${MENU}`);
@@ -148,8 +165,31 @@ describe('buildImplementerTurnRunner', () => {
     expect(outcome.text).toBe('mastra says hi');
     expect(h.generate.mock.calls[0]?.[1]).toMatchObject({ maxSteps: 42 });
     expect(h.claudeCodeRuntime).not.toHaveBeenCalled();
+    expect(h.getBoundModel).toHaveBeenCalledWith('ciFixer', given.ctx);
     expect(h.resolveAgent).not.toHaveBeenCalled();
+    expect(turns.agent).toEqual({ id: 'agent-row-9', version: 6 });
     expect(turns.kind).toBe('mastra');
+  });
+
+  it('binds no harness on the Mastra branch', async () => {
+    await buildImplementerTurnRunner(input());
+    expect(h.claudeCodeRuntime).not.toHaveBeenCalled();
+    expect(h.piRuntime).not.toHaveBeenCalled();
+  });
+
+  it('keeps the identity and the model of one resolution, whatever is cut afterwards', async () => {
+    const turns = await buildImplementerTurnRunner(input());
+    // A newer version is cut mid-session: later resolutions name another row and model.
+    h.getBoundModel.mockResolvedValue({
+      agent: { id: 'agent-row-10', version: 7 },
+      model: { sentinel: 'newer-model' },
+      spec: 'openai/newer',
+      systemPrompt: null,
+    });
+    await buildImplementerTurnRunner(input());
+    expect(turns.agent).toEqual({ id: 'agent-row-9', version: 6 });
+    expect(turns.boundModelSpec).toBe('anthropic/claude-opus-5-5');
+    expect(h.buildImplementerForActivity.mock.calls[0]?.[5]).toEqual({ sentinel: 'bound-model' });
   });
 
   it('reports the runtime it built, so a caller can record what actually ran', async () => {

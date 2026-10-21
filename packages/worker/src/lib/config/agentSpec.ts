@@ -2,7 +2,7 @@ import type { ReasoningLevel } from '@auto-swe/shared/types/api';
 import type { Agent } from '@mastra/core/agent';
 import type { z } from 'zod';
 import { resolveModel } from '../models.js';
-import { resolveAgent } from './agentResolver.js';
+import { type ResolvedAgent, resolveAgent } from './agentResolver.js';
 import { type ResolvedSkill, skillsToPromptSuffix } from './agentSkills.js';
 import type { ModelBackedAgentKey, ResolveCtx } from './types.js';
 
@@ -24,6 +24,11 @@ export interface AgentSpec {
   agentKey: string;
   /** Resolved `<provider>/<model>` spec, for OTel attribution. */
   modelSpec: string;
+  /**
+   * The resolved `Agent` row (id + version) the spec was composed from; stamped on the trace
+   * rows of its LLM calls. `null` for an inline agent, which is not an `Agent` row.
+   */
+  agent: { id: string; version: number } | null;
   /** Bound language model, ready to hand to a Mastra `Agent`. */
   model: LanguageModel;
   /** Fully composed system prompt: base prompt followed by the skill suffix. */
@@ -111,6 +116,21 @@ function selectTools(available: AgentTools | undefined, enabled: string[] | null
 }
 
 /**
+ * The system prompt of a resolved Agent: explicit override → the version's prompt → `basePrompt`
+ * (the priority of `resolveSystemPrompt`), then the skill suffix joined by a blank line. Exported
+ * so a caller that already holds the resolution it binds a model from (a harness run) builds the
+ * prompt from that same resolution instead of resolving the Agent a second time.
+ */
+export function composeAgentPrompt(
+  agent: Pick<ResolvedAgent, 'model' | 'skills'>,
+  opts: { basePrompt?: string; promptOverride?: string } = {}
+): string {
+  const base = opts.promptOverride ?? agent.model.systemPrompt ?? opts.basePrompt ?? '';
+  const suffix = skillsToPromptSuffix(agent.skills);
+  return suffix ? `${base}\n\n${suffix}` : base;
+}
+
+/**
  * Compose model + skills + tools + prompt into a single {@link AgentSpec}.
  *
  * For the role path this returns byte-identical model/skills/prompt to the
@@ -126,6 +146,7 @@ export async function resolveAgentSpec(
   if ('inline' in input) {
     const i = input.inline;
     return {
+      agent: null,
       agentKey: i.agentKey ?? 'inlineAgent',
       memoryScope: i.memoryScope,
       model: resolveModel(i.modelSpec, i.apiKey, i.apiBase, i.reasoning),
@@ -151,11 +172,8 @@ export async function resolveAgentSpec(
   // from the resolved Agent.
   const agent = await resolveAgent(agentKey, ctx);
 
-  // Mirror resolveSystemPrompt's priority: explicit override → DB prompt → base.
-  const base = promptOverride ?? agent.model.systemPrompt ?? basePrompt;
-  const suffix = skillsToPromptSuffix(agent.skills);
-
   return {
+    agent: { id: agent.id, version: agent.version },
     agentKey,
     memoryScope,
     model: resolveModel(
@@ -167,7 +185,7 @@ export async function resolveAgentSpec(
     modelSpec: agent.model.spec,
     outputSchema,
     skills: agent.skills,
-    systemPrompt: suffix ? `${base}\n\n${suffix}` : base,
+    systemPrompt: composeAgentPrompt(agent, { basePrompt, promptOverride }),
     tools: selectTools(availableTools, agent.toolKeys),
   };
 }

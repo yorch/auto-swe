@@ -26,7 +26,7 @@ import { Agent } from '@mastra/core/agent';
 import { trace } from '@opentelemetry/api';
 import { z } from 'zod';
 import { currentWorkflowId } from '../lib/activityContext.js';
-import type { AgentTracer } from '../lib/agentTracer.js';
+import type { AgentTracer, TracedAgent } from '../lib/agentTracer.js';
 import { assertBudgetAvailable, type LlmAttribution, recordLlmUsage } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { getBoundModel } from '../lib/models.js';
@@ -65,12 +65,19 @@ export async function planDecomposition(
       let llmUserMessage = '';
       let modelSpec: string | undefined;
       let recorded: LlmAttribution | undefined;
+      let tracedAgent: TracedAgent | null = null;
       try {
         // The decomposer persona: its own prompt row, and the planner's model
         // through `inheritsModelFrom` unless the row overrides it.
         // Resolved once: the model called, the price checked, the cost recorded
         // and the prompt used all come from this one resolution.
-        const { model, spec, systemPrompt: rowPrompt } = await getBoundModel('decomposer');
+        const {
+          agent: resolvedAgent,
+          model,
+          spec,
+          systemPrompt: rowPrompt,
+        } = await getBoundModel('decomposer');
+        tracedAgent = resolvedAgent;
         modelSpec = spec;
         span.setAttribute('llm.model', modelSpec);
         const basePrompt = systemPromptOverride || (rowPrompt ?? DECOMPOSER_AGENT_PROMPT);
@@ -118,6 +125,7 @@ export async function planDecomposition(
           tracer?.addLlmResponse({
             // The call was made and paid for even though its output was unusable.
             ...failedCallAttribution(undefined, modelSpec, recorded),
+            agent: tracedAgent,
             durationMs: Date.now() - start,
             error: result.object
               ? 'invalid structured output — used singleton fallback'
@@ -138,6 +146,7 @@ export async function planDecomposition(
 
         span.setAttribute('decomposer.subtask_count', subtasks.length);
         tracer?.addLlmResponse({
+          agent: tracedAgent,
           costUsd: attribution.costUsd,
           durationMs: Date.now() - start,
           inputJson: { systemPrompt, userMessage: llmUserMessage },
@@ -156,6 +165,7 @@ export async function planDecomposition(
       } catch (e) {
         tracer?.addLlmResponse({
           ...failedCallAttribution(e, modelSpec, recorded),
+          agent: tracedAgent,
           durationMs: Date.now() - start,
           error: (e as Error).message,
           inputJson: { systemPrompt, userMessage: llmUserMessage },

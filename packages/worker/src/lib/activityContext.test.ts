@@ -158,13 +158,13 @@ describe('persistActivityTrace — repeated flushes of one tracer', () => {
 
   it('moves only the tokens written in each flush, and restores a failed one', async () => {
     const t = new AgentTracer();
-    t.addLlmResponse({ durationMs: 1, inputTokens: 10, outputTokens: 1 });
+    t.addLlmResponse({ agent: null, durationMs: 1, inputTokens: 10, outputTokens: 1 });
     await persistActivityTrace(t, 'k');
-    t.addLlmResponse({ durationMs: 1, inputTokens: 20, outputTokens: 2 });
+    t.addLlmResponse({ agent: null, durationMs: 1, inputTokens: 20, outputTokens: 2 });
     h.writeFails.value = true;
     await persistActivityTrace(t, 'k');
     h.writeFails.value = false;
-    t.addLlmResponse({ durationMs: 1, inputTokens: 40, outputTokens: 4 });
+    t.addLlmResponse({ agent: null, durationMs: 1, inputTokens: 40, outputTokens: 4 });
     await persistActivityTrace(t, 'k');
 
     expect(h.takePersistingUsage.mock.calls.map((c) => [c[2], c[3]])).toEqual([
@@ -284,8 +284,20 @@ describe('persistActivityTrace — spend owner', () => {
   it('writes the execution and spend owner, then hands the persisted tokens to the runless sum', async () => {
     h.runId.value = null;
     const tracer = new AgentTracer();
-    tracer.addLlmResponse({ durationMs: 1, inputTokens: 120, outputTokens: 30, role: 'r' });
-    tracer.addLlmResponse({ durationMs: 1, inputTokens: 80, outputTokens: 20, role: 'r' });
+    tracer.addLlmResponse({
+      agent: null,
+      durationMs: 1,
+      inputTokens: 120,
+      outputTokens: 30,
+      role: 'r',
+    });
+    tracer.addLlmResponse({
+      agent: null,
+      durationMs: 1,
+      inputTokens: 80,
+      outputTokens: 20,
+      role: 'r',
+    });
     tracer.addActivityEvent({ name: 'e' });
 
     await persistActivityTrace(tracer, 'workflowAuthor');
@@ -310,7 +322,13 @@ describe('persistActivityTrace — spend owner', () => {
       return h.restore;
     });
     const tracer = new AgentTracer();
-    tracer.addLlmResponse({ durationMs: 1, inputTokens: 120, outputTokens: 30, role: 'r' });
+    tracer.addLlmResponse({
+      agent: null,
+      durationMs: 1,
+      inputTokens: 120,
+      outputTokens: 30,
+      role: 'r',
+    });
 
     await persistActivityTrace(tracer, 'workflowAuthor');
 

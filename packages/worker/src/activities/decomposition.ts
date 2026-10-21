@@ -39,7 +39,7 @@ import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage, getExecErrorOutput } from '../lib/errors.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
-import { getModelSpec, resolveSystemPrompt } from '../lib/models.js';
+import { resolveSystemPrompt } from '../lib/models.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
@@ -539,6 +539,8 @@ async function mergeOneWithResolver(
       await assertBudgetAvailable('decomposition');
       calledModel = true;
       await runImplementerTurn({
+        agent: turns.agent,
+        boundModelSpec: turns.boundModelSpec,
         context: { attempt, source },
         role: 'mergeConflictResolver',
         runtime: turns.runtime,
@@ -551,10 +553,8 @@ async function mergeOneWithResolver(
       // No row when the model was never called (payload read or budget gate).
       if (calledModel) {
         opts.tracer.addLlmResponse({
-          ...failedCallAttribution(
-            err,
-            await getModelSpec('mergeConflictResolver').catch(() => undefined)
-          ),
+          ...failedCallAttribution(err, turns.boundModelSpec),
+          agent: turns.agent,
           durationMs: Date.now() - start,
           error: getErrorMessage(err),
           inputJson: { attempt, source, systemPrompt: fullSystemPrompt, userMessage },

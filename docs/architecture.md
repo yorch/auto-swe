@@ -1068,7 +1068,7 @@ it; the report route still checks every request.
 
 A daily rollup keeps the report fast on a long history. The `ScheduledAgentTraceRollupWorkflow`
 sweep sums each UTC day of `llm_response` traces into `agent_trace_daily_usage`, keyed by team,
-organization, run, agent, model, activity and the user who launched the run, rewriting the last two
+organization, run, agent, resolved `Agent` row, model, activity and the user who launched the run, rewriting the last two
 completed days on every pass (a trace is stamped at transaction start, so it can land after
 midnight) and, with `AGENT_TRACE_ROLLUP_BACKFILL_DAYS` set, building older days that have none.
 Each day is replaced in one transaction, so a reader never sees it half written. The report reads a
@@ -1318,12 +1318,14 @@ Current constraints of the system as built. Deliberate product boundaries are in
   figures do not separate people from automation. On a multi-approver step the wait ends when the
   last needed approval arrives. The steps are grouped by the template of their run and by the
   window their request fell in, not by who was asked.
-- **Per-agent-version comparison is not provided.** `WorkflowRun.agentVersions` is a snapshot of
-  the GLOBAL active versions taken at run start, not a record of what ran: a TEAM, ORGANIZATION,
-  CHANNEL or template override still resolves its own latest version, and a run that never used an
-  agent is pinned to every one. Grouping runs by that map would credit results to versions that did
-  not produce them. A per-version figure needs a record of the version each call resolved, which no
-  table holds.
+- **Per-agent-version figures describe usage, not outcomes.** Each `llm_response` row records the
+  `Agent` row (`agent_id`, `agent_version`) that resolved for the call, and
+  `GET /api/v1/platform/agent-library/:id/version-stats` sums them per version and model. The
+  figures are not a controlled comparison and carry no run-outcome rate: the runs behind two
+  versions differ in more than the version. `WorkflowRun.agentVersions` is still only a snapshot of
+  the GLOBAL active versions at run start, not a record of what ran. Embeddings and
+  every row written before the columns have a null `agent_id`, and the rollup days built from
+  those rows carry none and are not rewritten. See [agents.md §8.6](./agents.md#86-agent-version-attribution).
 - **A run's branch name is recomputed by every activity, not pinned.** `branchPrefix` lives on the
   `WorkflowDefaults` singleton, and `executeImplementation`, the quality gates, the CI steps and a
   shell step each resolve it when they run. An edit between two steps of one run makes the later step

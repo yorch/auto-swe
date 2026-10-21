@@ -34,7 +34,7 @@ import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { MemoryContentRefusedError, WRITE_SCAN_UNAVAILABLE } from '../lib/memoryGuard.js';
 import { recordMemorySecurityEvent } from '../lib/memorySecurityEvent.js';
 import { insertMemoryItem } from '../lib/memoryStore.js';
-import { getModel, getModelSpec, resolveSystemPrompt } from '../lib/models.js';
+import { getBoundModel, resolveSystemPrompt } from '../lib/models.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 
 const LessonOutputSchema = z.object({
@@ -348,10 +348,11 @@ export async function commitToMemory(
   );
   const systemPrompt = skillSuffix ? `${basePrompt}\n\n${skillSuffix}` : basePrompt;
 
+  const bound = await getBoundModel('commitToMemory');
   const memoryAgent = new Agent({
     id: 'memory-summarizer',
     instructions: systemPrompt,
-    model: await getModel('commitToMemory'),
+    model: bound.model,
     name: 'memory-summarizer',
   });
 
@@ -405,14 +406,14 @@ export async function commitToMemory(
     transcriptDigest: digest,
   });
 
-  // Only for the failure row; a lookup error must not fail the activity.
-  const modelSpec = await getModelSpec('commitToMemory').catch(() => undefined);
+  // The failure row is priced at the spec the model was bound with, like the success row.
+  const modelSpec = bound.spec;
   let recorded: LlmAttribution | undefined;
   // Set once the success row is written: a later failure (the memory write)
   // must not add a second, priced row for the same call.
   let llmTraced = false;
   try {
-    await assertRolePricedForUsdCap('commitToMemory');
+    await assertRolePricedForUsdCap('commitToMemory', bound.spec);
     await assertBudgetAvailable('commitToMemory');
     const result = await memoryAgent.generate([{ content: llmUserMessage, role: 'user' }], {
       structuredOutput: { schema: LessonOutputSchema },
@@ -424,7 +425,8 @@ export async function commitToMemory(
         temporalWorkflowId,
         'commitToMemory',
         result.usage,
-        'llm.commit_to_memory'
+        'llm.commit_to_memory',
+        bound.spec
       );
     }
 
@@ -434,6 +436,7 @@ export async function commitToMemory(
     const lesson = result.object as z.infer<typeof LessonOutputSchema>;
 
     agentTracer.addLlmResponse({
+      agent: bound.agent,
       costUsd: attribution.costUsd,
       durationMs: Date.now() - start,
       inputJson: { systemPrompt, userMessage: llmUserMessage },
@@ -535,6 +538,7 @@ export async function commitToMemory(
     if (!llmTraced) {
       agentTracer.addLlmResponse({
         ...failedCallAttribution(e, modelSpec, recorded),
+        agent: bound.agent,
         durationMs: Date.now() - start,
         error: (e as Error).message,
         inputJson: { systemPrompt, userMessage: llmUserMessage },

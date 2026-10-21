@@ -24,6 +24,7 @@ type ResolvedAgent = Awaited<ReturnType<typeof resolveAgent>>;
 
 function resolvedAgent(modelOverrides: Record<string, unknown> = {}): ResolvedAgent {
   return {
+    id: 'agent-row-1',
     isVerified: true,
     key: 'implementer',
     mcpConnectionId: null,
@@ -345,6 +346,11 @@ describe('getBoundModel', () => {
     const bound = await getBoundModel('commitToMemory');
     expect(bound.spec).toBe('anthropic/claude-haiku-4-5-20251001');
     expect(bound.model.modelId).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('returns the id and version of the resolved Agent row, for the trace rows it writes', async () => {
+    mockedResolveAgent.mockResolvedValue(resolvedAgent());
+    expect((await getBoundModel('implementer')).agent).toEqual({ id: 'agent-row-1', version: 1 });
   });
 
   it('returns the prompt of the same resolution, null when the row sets none', async () => {

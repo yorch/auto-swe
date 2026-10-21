@@ -226,6 +226,8 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
 
     await assertBudgetAvailable(input.usageEventName);
     await runImplementerTurn({
+      agent: turns.agent,
+      boundModelSpec: turns.boundModelSpec,
       context: { mode },
       role: input.agentKey,
       runtime: turns.runtime,

@@ -2242,6 +2242,14 @@ model AgentTrace {
   stepAttempt   Int?          @map("step_attempt")
   /// The agent key (identity) that produced this trace, e.g. "implementer".
   agentKey      String        @map("agent_key")
+  /// The resolved `Agent` row that produced an LLM call. No foreign key: Agent rows
+  /// cascade-delete and a trace outlives them. Version numbers count per lineage (key,
+  /// scope, team/org/channel/template), so `agentVersion` is only meaningful beside this id.
+  /// Null on non-LLM rows, on rows that predate the column, and where the call site has no
+  /// `Agent` row (embeddings).
+  agentId       String?       @map("agent_id") @db.Uuid
+  /// The resolved `Agent.version` (display) of `agentId`; null in the same cases.
+  agentVersion  Int?          @map("agent_version")
   /// Temporal activity attempt number (1-based). Lets the UI group traces by retry attempt.
   attempt       Int           @default(1)
   seq           Int
@@ -2308,6 +2316,9 @@ model AgentTraceDailyUsage {
   orgId           String?  @map("org_id") @db.Uuid
   runId           String?  @map("run_id") @db.Uuid
   agentKey        String   @map("agent_key")
+  /// `AgentTrace.agentId`: null for traces recorded without a resolved `Agent` row and for days
+  /// rolled up from rows that predate the column (never rewritten). No foreign key.
+  agentId         String?  @map("agent_id") @db.Uuid
   model           String?
   nodeId          String   @map("node_id")
   /// `WorkflowRun.launchedById`, taken only when the trace's Temporal run id is the one the run
