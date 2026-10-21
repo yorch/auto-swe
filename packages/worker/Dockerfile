@@ -1,6 +1,6 @@
 # Docker CLI source, as a named stage so Dependabot's docker ecosystem tracks the
 # tag (it reads FROM lines, not COPY --from=<image>). Nothing runs in it.
-FROM docker:29-cli@sha256:1a4c7cb63513f349bdad01fcc6e0f3f2f67d37b9da86f14dc0d4a0942eecda00 AS dockercli
+FROM docker:29-cli@sha256:6fae2214c3121a28d5aa639d09032f61310b7c9c75ffbad1025f261a1b621800 AS dockercli
 
 # ── Stage 1: Build ──
 FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS builder
