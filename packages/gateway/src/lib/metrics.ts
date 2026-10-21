@@ -26,6 +26,8 @@ export const TRANSCRIPT_ACCESS_ACTIONS = [
 ] as const;
 export type TranscriptAccessAction = (typeof TRANSCRIPT_ACCESS_ACTIONS)[number];
 
+const DENIED_STATUSES = [401, 403] as const;
+
 function createInstruments() {
   const runsFinalized = metrics
     .getMeter('auto-swe-gateway')
@@ -53,7 +55,28 @@ function createInstruments() {
   for (const action of TRANSCRIPT_ACCESS_ACTIONS) {
     transcriptAccessLogFailures.add(0, { action });
   }
-  return { runsFinalized, transcriptAccessLogFailures };
+  const httpDenied = metrics.getMeter('auto-swe-gateway').createCounter('http.denied', {
+    description:
+      'Requests answered 401 or 403, by route template and status, and whether an actor was ' +
+      'known. Denials with no actor are only counted here; those with one also write an ' +
+      'activity event (docs/user-activity.md).',
+    unit: '{request}',
+  });
+  for (const status of DENIED_STATUSES) {
+    for (const actor of ['known', 'none']) {
+      httpDenied.add(0, { actor, route: 'none', status });
+    }
+  }
+  const activityEventsDropped = metrics
+    .getMeter('auto-swe-gateway')
+    .createCounter('activity.events.dropped', {
+      description:
+        'User-activity events dropped instead of stored: the in-memory queue was full, or a ' +
+        'batch write failed. Recording never blocks or fails a request.',
+      unit: '{event}',
+    });
+  activityEventsDropped.add(0);
+  return { activityEventsDropped, httpDenied, runsFinalized, transcriptAccessLogFailures };
 }
 
 let cached: ReturnType<typeof createInstruments> | undefined;
@@ -89,4 +112,14 @@ export function recordRunFinalized(status: string, source: RunSource): void {
 /** A transcript access-log insert or outcome update failed; the access itself was allowed. */
 export function recordTranscriptAccessLogFailure(action: TranscriptAccessAction): void {
   instruments().transcriptAccessLogFailures.add(1, { action });
+}
+
+/** A 401 or 403 was sent. `route` is the matched route template, never the URL. */
+export function recordHttpDenied(route: string, status: number, actorKnown: boolean): void {
+  instruments().httpDenied.add(1, { actor: actorKnown ? 'known' : 'none', route, status });
+}
+
+/** `count` activity events were dropped rather than stored. */
+export function recordActivityEventsDropped(count: number): void {
+  instruments().activityEventsDropped.add(count);
 }

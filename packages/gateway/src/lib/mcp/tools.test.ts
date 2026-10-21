@@ -845,6 +845,7 @@ describe('which routes an MCP token may reach', () => {
       'prismaPlugin',
       'temporalPlugin',
       'authPlugin',
+      'activityEvents',
       'mcpOAuthGate',
       'mcpConsentAudit',
       'mcpBridgePlugin',

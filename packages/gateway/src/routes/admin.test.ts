@@ -617,6 +617,7 @@ describe('adminRoutes', () => {
           actorId: '11111111-1111-4111-8111-111111111111',
           afterJson: { name: '=HYPERLINK("x")', role: 'ADMIN' },
           beforeJson: { role: 'ENGINEER' },
+          context: { ip: '198.51.100.0', requestId: 'req-1', via: 'jwt' },
           createdAt: new Date('2026-09-02T10:00:00.000Z'),
           entityId: 'e1',
           entityType: 'User',
@@ -635,7 +636,10 @@ describe('adminRoutes', () => {
       expect(res.headers['content-type']).toContain('text/csv');
       expect(res.headers['content-disposition']).toContain('audit-log.csv');
       const lines = res.payload.trim().split('\n');
-      expect(lines[0]).toBe('time,action,actor,entity_type,entity_id,before,after');
+      expect(lines[0]).toBe(
+        'time,action,actor,entity_type,entity_id,before,after,ip,via,request_id'
+      );
+      expect(lines[1]).toMatch(/,198\.51\.100\.0,jwt,req-1$/);
       expect(lines[1]).toContain('2026-09-02T10:00:00.000Z,UPDATE,alice@example.com,User,e1');
       // The JSON cell is quoted; a formula inside it is data, not a leading `=`.
       expect(lines[1]).toContain('"{""role"":""ENGINEER""}"');

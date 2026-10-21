@@ -459,6 +459,30 @@ function diffKeys(
   return parts;
 }
 
+/** How the action arrived: credential path, truncated address and request id, when stored. */
+function AuditContextLine({ context }: { context: AuditLogRow['context'] }) {
+  const fields = (['via', 'ip', 'requestId'] as const).flatMap((key) => {
+    const value = context?.[key];
+    return typeof value === 'string' && value ? [[key, value] as const] : [];
+  });
+  if (fields.length === 0) {
+    return null;
+  }
+  return (
+    <dl
+      className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-paper-400"
+      data-testid="audit-context"
+    >
+      {fields.map(([key, value]) => (
+        <div className="flex gap-1" key={key}>
+          <dt>{key === 'requestId' ? 'Request' : key === 'ip' ? 'Address' : 'Via'}</dt>
+          <dd className="font-mono text-paper-300">{value}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 /** The full values of one change: every key that differs, then the stored before and after. */
 function AuditExpanded({ row }: { row: AuditLogRow }) {
   const b = (row.beforeJson ?? {}) as Record<string, unknown>;
@@ -466,6 +490,7 @@ function AuditExpanded({ row }: { row: AuditLogRow }) {
   const changes = diffKeys([...new Set([...Object.keys(b), ...Object.keys(a)])].sort(), b, a);
   return (
     <div className="space-y-3 px-4 py-3">
+      <AuditContextLine context={row.context} />
       {changes.length > 0 && (
         <ul className="space-y-1 font-mono text-xs text-paper-300">
           {changes.map((c) => (

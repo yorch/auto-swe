@@ -65,6 +65,11 @@ export async function syncSchedulesOnceConnected(
   app.temporal
     .syncAgentTraceRollupSchedule(sweeps.agentTraceRollup)
     .catch(warn('agent trace rollup'));
+  // Deletes audit-log rows past their (opt-in) retention and activity events past theirs. On by
+  // default; with no audit retention set it only prunes activity events.
+  app.temporal
+    .syncAuditActivityPruneSchedule(sweeps.auditActivityPrune)
+    .catch(warn('audit activity prune'));
   // One cheap request per tracked source; it only flags. On by default.
   app.temporal.syncSkillSourceSyncSchedule(sweeps.skillSourceSync).catch(warn('skill source sync'));
   // Re-checks channel privacy and records private channels' members. Paused unless enabled:

@@ -2790,7 +2790,7 @@
     {
       "body": "Filter and page the configuration audit log and runtime security events.",
       "category": "Governance",
-      "detail": "Audit rows name actors by email, and a deleted actor keeps its id. Security events page on the server. A separate summary route returns per-type counts: all time when no window is given, otherwise for the window plus the equal-length window before it. The dashboard always sends its selected date range (30 days by default), shows each count against the previous window, and filters the list when a type is selected. Both views are ADMIN-only. The audit search box matches the actor’s email or name and the entity type as substrings; an entity id (or actor id) matches only when the whole uuid is typed, because a partial id is not matched at all, and a search that matches more than 200 people considers only 200 of them. The CSV export applies the same filter as the list, writes newest first in batches, and holds at most a fixed number of rows: when more match, the response says so in a header and the dashboard tells the admin the file holds only the newest rows and states the limit, so a larger history needs narrower filters or a shorter date range. On the audit route, a WorkflowRun row also carries the id of the request it belongs to. Template, team and organization administration is recorded in the same log: template create (including a generated draft), edit, new version, promote and webhook enable or revoke; team create, update, deactivation, memberships and the shell-image and egress allowlists; organization rename and membership changes. Agent library create, version update and deletion are recorded at platform and team scope; an update entry holds the model, runtime and version before and after (the team entry also its key, scope and team), not the prompt. Refining a template into a new version, a draft saved by an asynchronous generation job, and the review mark that gates promoting an AI-generated version write no audit row. A template entry holds identity, status, version and routing fields, never the spec text, and a webhook entry records only whether one exists, never the token. Template, team, organization and agent entries are written after the change as a separate statement, not in its transaction, so a failed audit insert errors after the change has applied. A repository’s gate commands (on onboarding and on change), service principals and their tokens, and callback and event endpoints are recorded too, never with a token or secret; governed-knowledge actions have their own event table instead.",
+      "detail": "Audit rows name actors by email, and a deleted actor keeps its id. Security events page on the server. A separate summary route returns per-type counts: all time when no window is given, otherwise for the window plus the equal-length window before it. The dashboard always sends its selected date range (30 days by default), shows each count against the previous window, and filters the list when a type is selected. Both views are ADMIN-only. The audit search box matches the actor’s email or name and the entity type as substrings; an entity id (or actor id) matches only when the whole uuid is typed, because a partial id is not matched at all, and a search that matches more than 200 people considers only 200 of them. The CSV export applies the same filter as the list, writes newest first in batches, and holds at most a fixed number of rows: when more match, the response says so in a header and the dashboard tells the admin the file holds only the newest rows and states the limit, so a larger history needs narrower filters or a shorter date range. On the audit route, a WorkflowRun row also carries the id of the request it belongs to. Template, team and organization administration is recorded in the same log: template create (including a generated draft), edit, new version, promote and webhook enable or revoke; team create, update, deactivation, memberships and the shell-image and egress allowlists; organization rename and membership changes. Agent library create, version update and deletion are recorded at platform and team scope; an update entry holds the model, runtime and version before and after (the team entry also its key, scope and team), not the prompt. Refining a template into a new version, a draft saved by an asynchronous generation job, and the review mark that gates promoting an AI-generated version write no audit row. A template entry holds identity, status, version and routing fields, never the spec text, and a webhook entry records only whether one exists, never the token. Template, team, organization and agent entries are written after the change as a separate statement, not in its transaction, so a failed audit insert errors after the change has applied. A repository’s gate commands (on onboarding and on change), service principals and their tokens, and callback and event endpoints are recorded too, never with a token or secret; governed-knowledge actions have their own event table instead. Each row can also carry a context saying how the action arrived (credential path, a truncated address, the request id); the dashboard shows those three when a row is opened and the CSV export appends them as ip, via and request_id. An eval run started through the platform route writes one launch row after its workflow has started, and the MCP consent audit builds its context from the request itself. Audit rows are kept forever unless an operator sets a retention of at least a year (a stored value below that is ignored and nothing is deleted). When set, a scheduled sweep that an environment switch can turn off deletes older rows in batches, at most a fixed number per run so a large backlog takes several runs, never selects registry setting changes or its own summary rows (other entity types are pruned), and writes one summary row when it deleted something (if that write fails it is logged and the deletion stands); runs started by a schedule, by the worker (epic and PRD children) or by a channel assistant still write no launch row.",
       "id": "reviewViews",
       "refs": [
         "auditLog",
@@ -2805,10 +2805,35 @@
         "auditSearch",
         "auditExportCap",
         "auditExportHeaders",
-        "auditExportNotice"
+        "auditExportNotice",
+        "auditExportContext",
+        "evalLaunchAudit",
+        "consentAuditContext",
+        "auditRetentionSetting",
+        "auditRetentionSweep",
+        "auditPruneExempt"
       ],
       "status": "Implemented",
       "title": "Audit and security-event review"
+    },
+    {
+      "body": "Record who was refused and who read something sensitive, first-party, with an opt-in page-view stream.",
+      "category": "Governance",
+      "detail": "A response hook builds a row from the request object, not from request-scoped storage, and stores the route template that matched, never the URL, a query string or a body. A signed-in person answered 403 produces a denied row. A successful GET of a route that carries an activity tag (the audit log list and export and a run’s detail) produces a read or export row on every mount of that route, deprecated aliases included; the activity views themselves, a run’s traces and transcript reads (which write their own access-log row) are not tagged. A 401, or a 403 with no identified person, writes no row and is only counted, by route template and status, in an OpenTelemetry counter. Authenticated callers are bounded, not unlimited: a read or export is written at most once per person and route every ten minutes, a denial once per person, route and status every minute, a page view once per person and page every five seconds, and each person has a separate per-minute budget for each kind (120 denials, 60 each of exports, reads and page views), so a flood of one kind cannot use up the budget that records an export; the excess is dropped and counted, and a dropped event does not mark its dedupe key. Rows pass through a bounded in-memory queue flushed in batches; when it is full a denial or export evicts the oldest page view, then read, before it would be dropped (it can still be dropped if the queue holds only denials and exports), and a failed write drops the batch, so events can be lost and the count is per gateway process. Recording never delays or fails a request, and shutdown waits only a few seconds for a flush. Page views are off unless an ADMIN switches on a registry setting; the dashboard then sends only the pathname, in batches of at most 20, never when the browser sends Do Not Track, and the gateway reduces it to one of a fixed list of page route templates (a test keeps the list equal to the page tree) or drops it. Events are kept for a configurable number of days (90 by default, at least 7); a scheduled sweep that an environment switch can turn off deletes older ones in batches, at most a fixed number per run, so a backlog clears over several runs. The ADMIN-only activity page and routes show exact per-day counts by kind (queried at most three days at a time), the most-denied routes, recent events and this process’s drop count; the in-app assistant may not call them.",
+      "id": "activityEvents",
+      "refs": [
+        "activityHook",
+        "activityDeniedMetric",
+        "activityQueueBound",
+        "activityUiRoute",
+        "activityUiAllowlist",
+        "activityRoutes",
+        "activityDedupe",
+        "activityRateBucket",
+        "auditRetentionSweep"
+      ],
+      "status": "Implemented",
+      "title": "First-party user-activity events"
     },
     {
       "body": "Launch scheduled repository work, template webhook calls and GitHub-event automations, and run maintenance sweeps.",
@@ -4066,6 +4091,22 @@
       "title": "Built-in input schemas move forward only from a schema a release shipped"
     },
     {
+      "body": "A denial with no identified person is a metric, and a read off the allowlist is not recorded at all.",
+      "category": "Governance",
+      "detail": "The activity table cannot say who attempted a request that failed authentication or that a service token was refused, only how often and on which route template. Sensitive reads are recorded only for routes tagged for activity, so a new read or export stays unrecorded until its route is tagged, and repeated reads collapse to one row per window, so the table shows that a read happened, not how often. The queue, dedupe memory, per-person rate budget and drop counter live in each gateway process, so events still queued when a process is killed are lost, the budgets and bounds apply per replica, and the dashboard shows the drop count of whichever replica answered. Page views are opt-in, invisible for a browser that sends Do Not Track, batched on a timer so the last few seconds before a tab closes are lost, and a browser told they are off stays quiet until it reloads.",
+      "id": "activityBounds",
+      "refs": [
+        "activityHook",
+        "activityDeniedMetric",
+        "activityQueueBound",
+        "activityUiRoute",
+        "activityDedupe",
+        "activityRateBucket"
+      ],
+      "status": "Confirmed boundary",
+      "title": "User-activity events are bounded and partly opt-in"
+    },
+    {
       "body": "STARTED rows and rows naming something the platform produced are kept for good.",
       "category": "Operations",
       "detail": "Event-automation rows that started a run grow at most by each automation’s daily cap; every schedule fire or template webhook call that started a run adds one permanent row, with no cap. The sweep deletes the rest in batches of 2,000, up to 50 batches a run, and continues the next day; it covers every source, so old schedule and webhook refusals go with the event suppressions.",
@@ -4320,6 +4361,7 @@
     "TeamMembership": "Schema entity; inspect fields and relationship declarations below.",
     "TrustedKnowledgeEvidence": "Worker-written provenance of a passed quality gate in one execution, the only evidence a learning may cite.",
     "User": "Platform identity with role, team/org memberships and authentication relations; a recorded GitHub login also records the linked account it was read from. approvedAt and approvalSource record when and how a waiting sign-up was approved: by an admin, or on a first GitHub sign-in by membership of an organization the github.signInAutoApproveOrgs setting lists.",
+    "UserActivityEvent": "First-party record of a signed-in person's refusals, allowlisted sensitive reads and exports, and (when enabled) page views: a route template, method, status, credential path and truncated address, never a URL, body or query string. No relation to User, so a row outlives the person; pruned by a scheduled, switchable sweep after a configurable number of days.",
     "Verification": "Schema entity; inspect fields and relationship declarations below.",
     "WorkflowArtifact": "Large blob in PostgreSQL or S3-compatible storage.",
     "WorkflowDefaults": "Schema entity; inspect fields and relationship declarations below.",
@@ -4433,7 +4475,8 @@
       "WorkflowShellAudit",
       "Automation",
       "AutomationFire",
-      "EventEndpoint"
+      "EventEndpoint",
+      "UserActivityEvent"
     ]
   },
   "reviewedCommit": "16c53a463d2c581eae9448dba102b298319c4902",
@@ -8565,6 +8608,118 @@
       "lines": 6,
       "path": "packages/web/src/app/admin/audit/page.tsx",
       "title": "The dashboard states the export limit when the file was cut"
+    },
+    {
+      "anchor": "yield 'time,action,actor,entity_type,entity_id,before,after,ip,via,request_id\\n';",
+      "before": 2,
+      "id": "auditExportContext",
+      "lines": 12,
+      "path": "packages/gateway/src/routes/admin.ts",
+      "title": "The audit export appends the row’s context as ip, via and request_id"
+    },
+    {
+      "anchor": "source: 'eval-run',",
+      "before": 8,
+      "id": "evalLaunchAudit",
+      "lines": 16,
+      "path": "packages/gateway/src/routes/evals.ts",
+      "title": "An eval run writes one launch audit row after its workflow has started"
+    },
+    {
+      "anchor": "...auditContextData({ ...auditContextOf(request), via: 'session' }),",
+      "before": 4,
+      "id": "consentAuditContext",
+      "lines": 10,
+      "path": "packages/gateway/src/lib/mcpConsentAudit.ts",
+      "title": "The MCP consent audit builds its context from the request object"
+    },
+    {
+      "anchor": "'audit.configLogRetentionDays': defineSetting({",
+      "before": 3,
+      "id": "auditRetentionSetting",
+      "lines": 28,
+      "path": "packages/shared/src/config/registry.ts",
+      "title": "Audit retention is off by default and floored at a year when set"
+    },
+    {
+      "anchor": "if (auditRetentionDays > 0) {",
+      "before": 2,
+      "id": "auditRetentionSweep",
+      "lines": 36,
+      "path": "packages/worker/src/activities/pruneAuditAndActivity.ts",
+      "title": "The retention sweep deletes old audit rows and writes one summary row"
+    },
+    {
+      "anchor": "const tagged = request.routeOptions.config?.activity;",
+      "before": 18,
+      "id": "activityHook",
+      "lines": 28,
+      "path": "packages/gateway/src/lib/activityEvents.ts",
+      "title": "Only a refusal with a known actor, or a successful GET of a route tagged for activity, becomes an event row"
+    },
+    {
+      "anchor": "recordHttpDenied(route, status, Boolean(request.user));",
+      "before": 4,
+      "id": "activityDeniedMetric",
+      "lines": 8,
+      "path": "packages/gateway/src/lib/activityEvents.ts",
+      "title": "Every 401 and 403 is counted by route template; actorless ones are not stored"
+    },
+    {
+      "anchor": "this.rows.length >= this.maxQueue && !this.makeRoomFor(row)",
+      "before": 3,
+      "id": "activityQueueBound",
+      "lines": 12,
+      "path": "packages/gateway/src/lib/activityEvents.ts",
+      "title": "A full queue evicts page views and reads for denials and exports, else drops and counts"
+    },
+    {
+      "anchor": "const template = uiRouteTemplate(route);",
+      "before": 16,
+      "id": "activityUiRoute",
+      "lines": 16,
+      "path": "packages/gateway/src/routes/activity.ts",
+      "title": "Page views are reduced to a route template or dropped, and only stored when enabled"
+    },
+    {
+      "anchor": "export function uiRouteTemplate(path: string): string | null {",
+      "before": 6,
+      "id": "activityUiAllowlist",
+      "lines": 18,
+      "path": "packages/gateway/src/lib/uiRoutes.ts",
+      "title": "A page path that matches no known template is refused"
+    },
+    {
+      "anchor": "'/activity/summary',",
+      "before": 3,
+      "id": "activityRoutes",
+      "lines": 40,
+      "path": "packages/gateway/src/routes/activity.ts",
+      "title": "ADMIN-only activity list and summary"
+    },
+    {
+      "anchor": "queue.enqueue(event, {",
+      "before": 8,
+      "id": "activityDedupe",
+      "lines": 10,
+      "path": "packages/gateway/src/lib/activityEvents.ts",
+      "title": "A polled read or repeated denial writes one row per window"
+    },
+    {
+      "anchor": "private takeToken(actor: string, kind: ActivityKind): boolean {",
+      "before": 2,
+      "id": "activityRateBucket",
+      "lines": 22,
+      "path": "packages/gateway/src/lib/activityEvents.ts",
+      "title": "Each person has a per-minute event budget for each kind; the excess is dropped and counted"
+    },
+    {
+      "anchor": "entityType: { notIn: AUDIT_PRUNE_EXEMPT_ENTITY_TYPES }",
+      "before": 6,
+      "id": "auditPruneExempt",
+      "lines": 12,
+      "path": "packages/worker/src/activities/pruneAuditAndActivity.ts",
+      "title": "The audit prune never selects retention summaries or setting changes"
     },
     {
       "anchor": "// The embedding model counts toward its provider only when the provider is what is wrong:",

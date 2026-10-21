@@ -54,6 +54,35 @@ export const DEFAULT_MODEL_PRICE_LIST_URL =
   'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
 
 export const SETTING_DEFINITIONS = {
+  // ── First-party activity events ────────────────────────────────────────────
+  // Read by the gateway (the UI-event route) and the daily retention sweep, neither of
+  // which has a team: GLOBAL only.
+  'analytics.activityRetentionDays': defineSetting({
+    defaultValue: 90,
+    description:
+      'How long recorded user-activity events (denied requests, sensitive reads and exports, page views) are kept before the daily retention sweep deletes them.',
+    group: 'analytics',
+    label: 'Activity event retention',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(7).max(3650),
+    unit: 'days',
+  }),
+  'analytics.uiEventsEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      'Whether the dashboard reports which page a signed-in person opens (the route pattern only: no ids, no query string). Off, the endpoint accepts nothing and the browser stops sending. Browsers that send Do Not Track never report.',
+    group: 'analytics',
+    label: 'Page-view events enabled',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+
   // ── In-app assistant ───────────────────────────────────────────────────────
   // The kill switch for the dashboard assistant. Read by `requireAuth` on every
   // request that carries an assistant token, so turning it off refuses the
@@ -96,6 +125,28 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: positiveInt.max(50),
     unit: 'steps',
+  }),
+
+  // ── Audit log ──────────────────────────────────────────────────────────────
+  // Read by the daily retention sweep, which has no team: GLOBAL only. `0` keeps the log
+  // forever (the settings form edits numbers, booleans and lists, so "unset" is a number).
+  // A non-zero value is held to at least a year: the log is the record of who changed what.
+  'audit.configLogRetentionDays': defineSetting({
+    defaultValue: 0,
+    description:
+      'How long administrative audit-log rows are kept before the daily retention sweep deletes them. 0 keeps them forever; otherwise at least 365 days. The sweep records one summary row of its own.',
+    group: 'audit',
+    label: 'Audit log retention',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z
+      .number()
+      .int()
+      .max(3650)
+      .refine((days) => days === 0 || days >= 365, 'must be 0 (keep forever) or at least 365'),
+    unit: 'days (0 = forever)',
   }),
 
   // ── Channel assistant ──────────────────────────────────────────────────────

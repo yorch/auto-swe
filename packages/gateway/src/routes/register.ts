@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { ApiCatalog } from '../lib/apiCatalog.js';
+import { activityAdminRoutes, activityUiRoutes } from './activity.js';
 import { adminRoutes } from './admin.js';
 import { agentLibraryRoutes, teamAgentLibraryRoutes } from './agentLibrary.js';
 import { agentRunRoutes } from './agentRuns.js';
@@ -111,6 +112,8 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(epicRoutes, { prefix: '/api/v1/epics' });
   await app.register(prdRunRoutes, { prefix: '/api/v1/prd-runs' });
   await app.register(adminRoutes, { prefix: '/api/v1/platform' });
+  await app.register(activityAdminRoutes, { prefix: '/api/v1/platform' });
+  await app.register(activityUiRoutes, { prefix: '/api/v1/activity' });
   // Deprecated alias — kept for one release.
   await app.register(adminRoutes, { prefix: '/api/v1/admin' });
   await app.register(modelConfigRoutes, { prefix: '/api/v1/platform' });

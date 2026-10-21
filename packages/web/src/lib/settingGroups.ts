@@ -1,6 +1,8 @@
 /** Titles and one-line explanations for each setting group on the platform settings page. */
 export const GROUP_TITLES: Record<string, string> = {
+  analytics: 'Product analytics',
   assistant: 'In-app assistant',
+  audit: 'Audit log',
   channel: 'Channel assistant',
   evals: 'Eval benchmark',
   github: 'GitHub access',
@@ -15,7 +17,10 @@ export const GROUP_TITLES: Record<string, string> = {
 };
 
 export const GROUP_BLURBS: Record<string, string> = {
+  analytics:
+    'First-party activity events: whether the dashboard reports page views, and how long recorded events are kept.',
   assistant: 'Whether the dashboard assistant may act on behalf of the person using it.',
+  audit: 'How long the administrative audit log is kept. The default keeps it forever.',
   channel:
     'How proactive the Slack assistant is and how much context it reads per turn. Overridable per channel, so one noisy channel can be tuned without touching the rest.',
   evals:

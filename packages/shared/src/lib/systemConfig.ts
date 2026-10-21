@@ -1181,6 +1181,9 @@ export interface ScheduledSweepsConfig {
     /// the last two completed days, which every sweep rewrites).
     backfillDays: number;
   };
+  /// Deletes audit-log rows past `audit.configLogRetentionDays` and activity events past
+  /// `analytics.activityRetentionDays`.
+  auditActivityPrune: SweepSchedule;
   /// Sends due run callbacks (docs/run-callbacks.md).
   callbackDelivery: SweepSchedule;
   /// Deletes delivered and dead run callbacks past their retention.
@@ -1256,6 +1259,8 @@ function envCron(name: string, fallback: string): string {
 ///   AGENT_TRACE_ROLLUP_ENABLED    default true — it only derives a summary of rows that stay
 ///   AGENT_TRACE_ROLLUP_CRON       default `13 1 * * *`
 ///   AGENT_TRACE_ROLLUP_BACKFILL_DAYS default 0 — read by the worker running the sweep
+///   AUDIT_ACTIVITY_PRUNE_ENABLED  default true — a no-op for the audit log until a retention is set
+///   AUDIT_ACTIVITY_PRUNE_CRON     default `7 5 * * *`
 ///
 /// Lenient, like `resolveWorkspaceInfra`: a bad value falls back to its default.
 /// `assertScheduledSweepsEnv()` is the strict check the gateway runs at boot.
@@ -1269,6 +1274,10 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
     agentTranscriptPrune: {
       cronExpression: envCron('AGENT_TRANSCRIPT_PRUNE_CRON', '57 4 * * *'),
       enabled: envFlag('AGENT_TRANSCRIPT_PRUNE_ENABLED', true),
+    },
+    auditActivityPrune: {
+      cronExpression: envCron('AUDIT_ACTIVITY_PRUNE_CRON', '7 5 * * *'),
+      enabled: envFlag('AUDIT_ACTIVITY_PRUNE_ENABLED', true),
     },
     automationDecisionPrune: {
       cronExpression: envCron('AUTOMATION_DECISION_PRUNE_CRON', '37 4 * * *'),
@@ -1353,6 +1362,8 @@ export function validateScheduledSweepsEnv(): string[] {
     (raw) => DAYS_RE.test(raw.trim()),
     'a whole number of days from 0 to 9999'
   );
+  check('AUDIT_ACTIVITY_PRUNE_ENABLED', flag, "'true' or 'false'");
+  check('AUDIT_ACTIVITY_PRUNE_CRON', cron, 'a five-field cron expression such as "7 5 * * *"');
   check('SLACK_CHANNEL_SYNC_ENABLED', flag, "'true' or 'false'");
   check('SLACK_CHANNEL_SYNC_CRON', cron, 'a five-field cron expression such as "29 * * * *"');
   check(

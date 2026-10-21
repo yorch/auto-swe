@@ -10,11 +10,13 @@ interface EntityTarget {
 }
 
 const TARGETS: Record<string, EntityTarget> = {
+  ActiveWorkflow: { list: '/runs' },
   Agent: { list: '/agents' },
   Automation: { list: '/admin/automations' },
   AutonomyPolicy: { list: '/admin/policies' },
   ConfigPermission: { list: '/admin/config-grants' },
   ConfigSetting: { list: '/admin/platform-settings' },
+  EvalRun: { byId: (id) => `/admin/evals/runs/${id}` },
   Organization: { byId: (id) => `/admin/organizations/${id}` },
   PersonalAccessToken: { list: '/admin/api-tokens' },
   ScannerPattern: { list: '/admin/scanner' },
@@ -26,6 +28,7 @@ const TARGETS: Record<string, EntityTarget> = {
   User: { list: '/admin/users' },
   WorkflowDefaults: { list: '/admin/workflow-defaults' },
   WorkflowRun: { byId: (id) => `/runs/${id}` },
+  WorkRequest: { byId: (id) => requestHref(id) },
 };
 
 /** A plain name for an entity type: `PersonalAccessToken` → "Personal access token". */

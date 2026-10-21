@@ -602,7 +602,7 @@ export const workflowRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/:id',
     {
-      config: { mcpScope: 'read', serviceScopes: ['runs:read'] },
+      config: { activity: 'read', mcpScope: 'read', serviceScopes: ['runs:read'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
         params: RunIdParam,

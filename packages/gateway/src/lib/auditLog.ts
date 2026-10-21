@@ -15,6 +15,7 @@ export type AuditEntityType =
   | 'ConnectionCredential'
   | 'EmbeddingConfig'
   | 'EvalDataset'
+  | 'EvalRun'
   | 'EvalRubric'
   | 'EventEndpoint'
   | 'GitHubConfig'

@@ -63,6 +63,7 @@ export const CALLBACK_DELIVERY_SCHEDULE_ID = 'auto-swe-callback-delivery';
 export const CALLBACK_DELIVERY_PRUNE_SCHEDULE_ID = 'auto-swe-callback-delivery-prune';
 export const AGENT_TRANSCRIPT_PRUNE_SCHEDULE_ID = 'auto-swe-agent-transcript-prune';
 export const AGENT_TRACE_ROLLUP_SCHEDULE_ID = 'auto-swe-agent-trace-rollup';
+export const AUDIT_ACTIVITY_PRUNE_SCHEDULE_ID = 'auto-swe-audit-activity-prune';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -235,6 +236,12 @@ export interface AutomationDecisionPruneScheduleConfig {
  * setting itself, so the schedule carries no arguments.
  */
 export interface AgentTranscriptPruneScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
+/** The audit-log and activity-event retention sweep; the workflow reads its settings itself. */
+export interface AuditActivityPruneScheduleConfig {
   enabled: boolean;
   cronExpression: string;
 }
@@ -420,6 +427,7 @@ declare module 'fastify' {
         config: AgentTranscriptPruneScheduleConfig
       ) => Promise<void>;
       syncAgentTraceRollupSchedule: (config: AgentTraceRollupScheduleConfig) => Promise<void>;
+      syncAuditActivityPruneSchedule: (config: AuditActivityPruneScheduleConfig) => Promise<void>;
       syncSkillSourceSyncSchedule: (config: SkillSourceSyncScheduleConfig) => Promise<void>;
       syncSlackChannelSyncSchedule: (config: SlackChannelSyncScheduleConfig) => Promise<void>;
       getRepoDependencyScanScheduleStatus: () => Promise<RepoDependencyScanScheduleStatus>;
@@ -1244,6 +1252,14 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
     ): Promise<void> {
       await upsertSchedule(AGENT_TRANSCRIPT_PRUNE_SCHEDULE_ID, {
         action: makeSweepAction('ScheduledAgentTranscriptPruneWorkflow'),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    async syncAuditActivityPruneSchedule(config: AuditActivityPruneScheduleConfig): Promise<void> {
+      await upsertSchedule(AUDIT_ACTIVITY_PRUNE_SCHEDULE_ID, {
+        action: makeSweepAction('ScheduledAuditActivityPruneWorkflow'),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

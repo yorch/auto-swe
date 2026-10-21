@@ -3195,6 +3195,32 @@ model ConfigAuditLog {
   @@map("config_audit_log")
 }
 
+/// First-party record of who was refused or looked at something sensitive, and which dashboard
+/// pages were opened (opt-in). Plain columns, no relations: a row outlives the user it names, and
+/// `route` is a route template (`/api/v1/runs/:id`), never a URL. See docs/user-activity.md.
+model UserActivityEvent {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  actorId   String?  @map("actor_id") @db.Uuid
+  /// The credential path (`jwt`, `pat`, ...); null when the request carried no recorded credential path.
+  via       String?
+  /// denied | read | export | ui
+  kind      String
+  route     String
+  method    String
+  status    Int?
+  requestId String?  @map("request_id")
+  /// Truncated: /24 for IPv4, /48 for IPv6.
+  ip        String?
+  props     Json?
+
+  @@index([createdAt])
+  @@index([kind, createdAt])
+  @@index([actorId, createdAt])
+  @@index([route, createdAt])
+  @@map("user_activity_events")
+}
+
 /// A reusable prompt-fragment skill injected into an agent's system prompt.
 /// Skills are assigned to Agents via `AgentSkillRef` (see `agentResolver.ts`).
 /// Tool access is a separate concern (`Agent.toolKeys`).

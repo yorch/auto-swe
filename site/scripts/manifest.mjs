@@ -144,6 +144,7 @@ export const SIDEBAR = [
       'docs/configuration',
       'docs/deployment',
       'docs/audit-log',
+      'docs/user-activity',
       'docs/model-configuration',
       'docs/oauth-setup',
       'docs/mcp-server',

@@ -71,7 +71,8 @@ function expandIpv6(ip: string): string[] | undefined {
   return groups.map((g) => Number.parseInt(g, 16).toString(16));
 }
 
-function contextOf(request: FastifyRequest): AuditContext {
+/** The context of a request, built from the request object itself (usable from `onResponse`). */
+export function auditContextOf(request: FastifyRequest): AuditContext {
   const via = request.authMethod;
   const context: AuditContext = { requestId: request.id };
   if (via) {
@@ -104,7 +105,7 @@ function contextOf(request: FastifyRequest): AuditContext {
 /** The context of the request being handled, or `undefined` outside one. */
 export function currentAuditContext(): AuditContext | undefined {
   const store = storage.getStore();
-  return store ? contextOf(store.request) : undefined;
+  return store ? auditContextOf(store.request) : undefined;
 }
 
 /** `{ context }` to spread into a `configAuditLog.create` `data`, or `{}` outside a request. */

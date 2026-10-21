@@ -161,6 +161,8 @@ export interface AuditLogRow {
   beforeJson: unknown;
   afterJson: unknown;
   createdAt: string;
+  /** How the action arrived (`via`, truncated `ip`, `requestId`, ...). Null on older rows. */
+  context?: Record<string, unknown> | null;
   /** Only on a `WorkflowRun` row: the request that run belongs to, when it has one. */
   workRequestId?: string | null;
 }
@@ -308,6 +310,62 @@ export function useSecurityEventSummary(window: SecurityEventWindow = {}) {
     // and on focus only once stale (the default), not every minute per open tab.
     refetchInterval: 5 * 60_000,
     staleTime: 5 * 60_000,
+  });
+}
+
+// ── User activity events ──
+
+export type ActivityKind = 'denied' | 'read' | 'export' | 'ui';
+
+export interface ActivityEventRow {
+  id: string;
+  createdAt: string;
+  kind: ActivityKind;
+  /** A route template, never a URL. */
+  route: string;
+  method: string;
+  status: number | null;
+  via: string | null;
+  requestId: string | null;
+  ip: string | null;
+  actorId: string | null;
+  actor: { email: string; name: string | null } | null;
+}
+
+export interface ActivitySummary {
+  days: number;
+  daily: Array<{ day: string } & Record<ActivityKind, number>>;
+  totals: Record<ActivityKind, number>;
+  topDenied: Array<{ route: string; count: number }>;
+  /** Events this gateway process dropped since it started. */
+  dropped: number;
+  retentionDays: number;
+  uiEventsEnabled: boolean;
+}
+
+export function useActivityEvents(params: { kind?: ActivityKind; limit: number; offset: number }) {
+  const qs = new URLSearchParams({ limit: String(params.limit), offset: String(params.offset) });
+  if (params.kind) {
+    qs.set('kind', params.kind);
+  }
+  return useQuery({
+    placeholderData: keepPreviousData,
+    queryFn: () =>
+      api.get<{
+        data: ActivityEventRow[];
+        meta: { limit: number; offset: number; total: number };
+      }>(`/api/v1/platform/activity?${qs}`),
+    queryKey: ['activity', 'events', params],
+    refetchInterval: 30_000,
+  });
+}
+
+export function useActivitySummary(days: number) {
+  return useQuery({
+    placeholderData: keepPreviousData,
+    queryFn: () => api.get<ActivitySummary>(`/api/v1/platform/activity/summary?days=${days}`),
+    queryKey: ['activity', 'summary', days],
+    refetchInterval: 60_000,
   });
 }
 

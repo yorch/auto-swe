@@ -23,6 +23,10 @@ when the system acted, such as a webhook or a sweep), `beforeJson`, `afterJson`,
   `temporalWorkflowId` and `workRequestId`. The actor is the launching user, or null for a system
   launch. A launch that is refused, found to be a duplicate, or compensated after a failed start
   leaves no row. A failed audit write is logged and never fails the launch.
+- **Eval runs.** `POST /platform/evals/runs` writes one `CREATE` row of entity type `EvalRun` after
+  the workflow has started, with `afterJson` `{ source: "eval-run", baselineRef, candidateRef,
+  datasetId, temporalWorkflowId }`. A refused or failed start leaves no row, and a failed audit write
+  is logged without failing the run.
 - **Sign-ins.** Each session created by better-auth writes a `CREATE` row of entity type `Session`
   with `afterJson` `{ "event": "sign_in" }`, the user as actor, and a context of `via: "session"`
   plus the request id and truncated address. The address is the request's (`request.ip`), not the
@@ -61,26 +65,46 @@ runs, because some routes authenticate in their own `preHandler`: an earlier sna
   person. `ip` is omitted and the conversation (and confirmed action) is recorded instead. An `mcp`
   call is bridged in-process with the outer request's client address as its remote address, so its
   truncated `ip` is the client's, recorded beside the MCP client id.
-- There is no retention sweep: audit rows are kept until an operator removes them.
+
+## 4. Retention
+
+Audit rows are kept forever by default. The registry setting `audit.configLogRetentionDays` (ADMIN,
+GLOBAL only) turns on a sweep: `0` (the default) keeps everything, otherwise the value must be at
+least 365 days. A stored value below that floor fails the setting's schema, is ignored, and the
+default applies, so nothing is deleted. The sweep runs on the `AUDIT_ACTIVITY_PRUNE_*` schedule
+([configuration.md](./configuration.md)) and deletes rows older than the cutoff in batches, at most
+100,000 per run; the next run continues.
+
+Two kinds of row are never deleted by the sweep, whatever their age: registry setting changes
+(`ConfigSetting` rows, so the record of who set a retention stays) and the retention summary rows
+(`AuditLogRetention`). Rows of every other entity type are pruned.
+When a run deleted anything it writes one `AuditLogRetention` summary row: system actor, `afterJson`
+`{ deleted, cutoff, retentionDays, more }`. If that write fails it is logged and the deletion stands
+without it. The same sweep prunes user-activity events ([user-activity.md](./user-activity.md)).
 
 ## Limitations
 
-- Some writers do not carry a context: the MCP consent audit (written from an `onResponse` hook,
-  where the async store is unreliable), and every writer in the worker and in `shared` code, which
-  run outside a gateway request.
+- Some writers do not carry a context: every writer in the worker and in `shared` code, which run
+  outside a gateway request. The retention sweep's summary row is one of them. The MCP consent audit
+  builds its context from the request itself, because it runs in an `onResponse` hook where the async
+  store is unreliable, and names the path `session`.
 - A launch is recorded under `WorkRequest` (or `ActiveWorkflow`), not `WorkflowRun`: the run row is
   created later by the worker, so its id does not exist when the launch is audited. A launch with
   neither id writes no launch row.
-- Runs that do not start through `launchTrackedWorkflow` get no launch row: scheduled fires,
-  epic and PRD children started by the worker, eval runs, and channel-assistant composite runs.
+- Runs that do not start through `launchTrackedWorkflow` or the eval route get no launch row:
+  scheduled fires, epic and PRD children started by the worker, and channel-assistant composite runs.
+  The worker has no request, so a start there would need its own system-actor helper.
 - `ip` is `request.ip`. With `TRUST_PROXY` enabled and a gateway that clients can reach directly, a
   client can choose the address that is logged.
 - Every session creation writes a `sign_in` row, including those made by `revokeOtherSessions` and
   by automatic sign-in after email verification, so the log holds sign-ins the person did not
   start by typing credentials.
-- Denied requests and reads are not logged; only actions that change state are.
+- Denied requests and reads are not in the audit log; only actions that change state are. Refusals
+  and sensitive reads are recorded separately, with their own retention
+  ([user-activity.md](./user-activity.md)).
 - A signed transcript download link authenticates outside `requireAuth` and carries no `via`.
-- The `context` field is returned by the API but is not shown in the dashboard and is not in the CSV
-  export.
-- There is no retention sweep, so the table grows without bound.
+- The dashboard shows only `via`, the truncated address and the request id of a row's `context`;
+  the other fields (service principal, assistant conversation, MCP client) are in the API response.
+  The CSV export carries the same three as `ip`, `via` and `request_id`, at the end of each row.
+- Retention is off by default, so the table grows without bound until an operator sets it.
 - Test apps built without the hook produce rows with no context.

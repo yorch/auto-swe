@@ -355,6 +355,64 @@ describe('evalRoutes', () => {
     });
   });
 
+  it('writes one launch audit row once the workflow has started, none when the start fails', async () => {
+    const started = vi.fn(async (..._args: unknown[]) => {});
+    const { app, prisma } = await buildApp('ADMIN', started);
+    prisma.evalDataset.findUnique.mockResolvedValue({ id: 'd1' });
+    prisma.evalRun.create.mockResolvedValue({
+      baselineRef: 'b',
+      candidateRef: 'c',
+      datasetId: 'd1',
+      endedAt: null,
+      id: 'run-13',
+      startedAt: new Date('2026-06-24T00:00:00Z'),
+      status: 'RUNNING',
+      summary: null,
+    });
+    prisma.configAuditLog.create.mockClear();
+    const payload = {
+      baselineRef: 'b',
+      candidateRef: 'c',
+      datasetId: '11111111-1111-4111-8111-111111111111',
+    };
+    const res = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload,
+      url: '/api/v1/platform/evals/runs',
+    });
+    expect(res.statusCode).toBe(202);
+    expect(prisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+    expect(prisma.configAuditLog.create.mock.calls[0][0].data).toMatchObject({
+      action: 'CREATE',
+      afterJson: { source: 'eval-run', temporalWorkflowId: 'eval-run-13' },
+      entityId: 'run-13',
+      entityType: 'EvalRun',
+    });
+
+    // A failed audit write never fails the launched run.
+    prisma.configAuditLog.create.mockRejectedValueOnce(new Error('db down'));
+    const again = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload,
+      url: '/api/v1/platform/evals/runs',
+    });
+    expect(again.statusCode).toBe(202);
+
+    // A failed start leaves no launch row.
+    prisma.configAuditLog.create.mockClear();
+    started.mockRejectedValueOnce(new Error('boom'));
+    const failed = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload,
+      url: '/api/v1/platform/evals/runs',
+    });
+    expect(failed.statusCode).toBe(502);
+    expect(prisma.configAuditLog.create).not.toHaveBeenCalled();
+  });
+
   it('leaves both runtimes to the setting when the request names none', async () => {
     const started = vi.fn(async (..._args: unknown[]) => {});
     const { app, prisma } = await buildApp('ADMIN', started);

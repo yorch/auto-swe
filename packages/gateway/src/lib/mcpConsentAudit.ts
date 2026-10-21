@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
+import { auditContextData, auditContextOf } from './auditContext.js';
 import { MCP_GRANT_ENTITY } from './mcpGrants.js';
 import { AUTH_BASE_PATH } from './mcpOAuth.js';
 
@@ -57,6 +58,10 @@ export const mcpConsentAudit = fp<McpConsentAuditOptions>(
         }
         await prisma.configAuditLog.create({
           data: {
+            // Built from the request itself: this runs in `onResponse`, where the async store
+            // is unreliable. The consent is given on a session cookie, which `requireAuth`
+            // never saw, so the path is named here.
+            ...auditContextData({ ...auditContextOf(request), via: 'session' }),
             action: 'CREATE',
             actorId: userId,
             afterJson: { clientId, scopes: consent.scopes, userId } as never,
