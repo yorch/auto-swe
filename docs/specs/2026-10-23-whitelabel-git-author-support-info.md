@@ -100,7 +100,9 @@ characters and angle brackets from the launcher name before it reaches a trailer
 2. The hardened paths ignore global config on purpose. `allowedPaths.ts` and `shellStep.ts` replace
    their literal `-c user.name=… -c user.email=…` strings with the same flags built from the
    workspace identity. A shared `gitIdentityFlags(identity)` builds both forms.
-3. The trailer is appended through `git commit --trailer` at each platform commit site.
+3. A helper appends the trailer to the commit message text at each platform commit site:
+   `commitStaged`, `finalizeScript`, `decomposition.ts` and `commitTrustedTree`. It does not use
+   `git commit --trailer`, which needs git 2.32 or newer, and executor images vary.
 
 If a caller passes a workspace-like object without `gitIdentity`, such as a test fake, the sites fall
 back to the default identity.
@@ -246,11 +248,11 @@ three as optional.
   both sites. A repository search for `auto-swe@localhost` must find only the default constant.
 - **Detection by author.** A search found no code that recognises platform commits by author name or
   email. Resolved.
-- **Group registration.** A new setting group may need an entry in web label maps and in the docs
-  drift check. Needs a spike during planning.
-- **`git commit --trailer`.** Needs git 2.32 or newer in the workspace image. Needs a spike: check the
-  default image and the git bootstrap script. If a base image is older, build the trailer into the
-  message instead.
+- **Group registration.** Resolved: no web label map names the groups. The group is added to
+  `SETTING_GROUPS` and the drift check confirms it.
+- **Trailer and author support in old git.** Resolved: the trailer is part of the message text, so it
+  needs no git feature. The `author.name` and `author.email` config keys need git 2.22 or newer.
+  Criterion 13 is checked on the default executor image by the Docker-backed test.
 - **Feature flag.** Not warranted. Defaults reproduce today's behavior exactly, and support info is
   hidden until set.
 
