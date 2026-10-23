@@ -47,3 +47,32 @@ export async function currentRunLauncherId(): Promise<string | null> {
   }
   return run.launchedById;
 }
+
+/**
+ * The template and launcher of the execution the current activity belongs to,
+ * or null outside a workflow run that keeps a row for THIS execution. Same
+ * `temporalRunId` check and the same throw-on-database-failure rule as
+ * `currentRunLauncherId`; `launchedById` is null for a webhook or schedule run.
+ */
+export async function currentRunLaunchContext(): Promise<{
+  workflowTemplateId: string;
+  launchedById: string | null;
+} | null> {
+  let execution: { workflowId: string; runId: string } | undefined;
+  try {
+    execution = activityInfo().workflowExecution;
+  } catch {
+    return null;
+  }
+  if (!execution) {
+    return null;
+  }
+  const run = await prisma.workflowRun.findUnique({
+    select: { launchedById: true, templateId: true, temporalRunId: true },
+    where: { workflowId: execution.workflowId },
+  });
+  if (!run?.temporalRunId || run.temporalRunId !== execution.runId) {
+    return null;
+  }
+  return { launchedById: run.launchedById, workflowTemplateId: run.templateId };
+}
