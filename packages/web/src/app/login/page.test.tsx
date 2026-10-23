@@ -46,6 +46,30 @@ function renderWithQuery(query: string) {
   return render(<LoginPage />);
 }
 
+describe('login page: support contact', () => {
+  afterEach(() => {
+    (window as unknown as { __APP_CONFIG__?: unknown }).__APP_CONFIG__ = undefined;
+  });
+
+  it('shows the configured support contact below the sign-in card', async () => {
+    (window as unknown as { __APP_CONFIG__?: unknown }).__APP_CONFIG__ = {
+      support: { email: 'help@example.com' },
+    };
+    renderWithQuery('');
+    expect(await screen.findByRole('link', { name: 'help@example.com' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Support' })).toBeTruthy();
+  });
+
+  it('adds no support element when nothing is configured', async () => {
+    renderWithQuery('');
+    await screen.findByText(
+      'auto-swe turns a ticket into a pull request for you to review and merge.'
+    );
+    expect(screen.queryByRole('group', { name: 'Support' })).toBeNull();
+    expect(screen.queryByText('Support')).toBeNull();
+  });
+});
+
 describe('login page: what it is and how to get in', () => {
   it('says what auto-swe does and points a new user to an administrator', async () => {
     renderWithQuery('');
