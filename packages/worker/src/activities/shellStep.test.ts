@@ -184,6 +184,19 @@ describe('runShellStep — git identity', () => {
     );
     expect(finalize).not.toContain("user.name='auto-swe'");
   });
+
+  it("clones the volume under the team's resolved identity, not the literal one", async () => {
+    await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
+
+    const clone = helperScripts().find((s) => s.includes('git clone')) ?? '';
+    expect(clone).toContain(`git config -- user.name ${shellQuote(BOT.name)}`);
+    expect(clone).toContain(`git config -- user.email ${shellQuote(BOT.email)}`);
+    expect(clone).toContain(
+      `git config -- author.name ${shellQuote(RESOLVED_IDENTITY.author.name)}`
+    );
+    expect(clone).not.toContain("user.name 'auto-swe'");
+    expect(clone).not.toContain('auto-swe@localhost');
+  });
 });
 
 describe('runShellStep — token redaction', () => {

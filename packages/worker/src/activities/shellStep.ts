@@ -39,6 +39,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import {
   type GitIdentity,
+  gitIdentityEntries,
   gitIdentityFlags,
   resolveGitIdentity,
   withCoAuthorTrailer,
@@ -249,6 +250,7 @@ async function cloneIntoVolume(
   meta: RepoMeta,
   branch: string,
   image: string,
+  identity: GitIdentity,
   forRegistry = false
 ): Promise<void> {
   // Every interpolated value stays `shellQuote`d — this string is the
@@ -259,9 +261,14 @@ async function cloneIntoVolume(
   const fetchBase = forRegistry
     ? `git fetch --depth=50 origin ${shellQuote(meta.defaultBranch)}:${shellQuote(`refs/remotes/origin/${meta.defaultBranch}`)} && `
     : '';
+  // Repo-local, so the author command's own commits carry the resolved identity. `--` ends
+  // option parsing: the `git.*` settings allow a name that starts with a dash.
+  const identityConfig = gitIdentityEntries(identity)
+    .map(([key, value]) => `git config -- ${key} ${shellQuote(value)}`)
+    .join(' && ');
   const tryClone = (refspec: string): Promise<string> =>
     runHelper(
-      `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && ${fetchBase}git remote set-url origin ${shellQuote(meta.cleanUrl)} && git config user.name 'auto-swe' && git config user.email 'auto-swe@localhost'`,
+      `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && ${fetchBase}git remote set-url origin ${shellQuote(meta.cleanUrl)} && ${identityConfig}`,
       volumeName,
       image,
       meta.token
@@ -455,7 +462,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   }
   try {
     heartbeat('shell-step: cloning branch into workspace volume');
-    await cloneIntoVolume(volumeName, meta, branch, helperImage, registry !== null);
+    await cloneIntoVolume(volumeName, meta, branch, helperImage, gitIdentity, registry !== null);
 
     let result: Awaited<ReturnType<typeof runEphemeralContainer>>;
     try {
