@@ -40,12 +40,16 @@ import {
   type RawChange,
   SYMLINK_MODE,
 } from '../lib/agentRunPolicy.js';
+import {
+  DEFAULT_GIT_IDENTITY,
+  type GitIdentity,
+  gitIdentityFlags,
+  withCoAuthorTrailer,
+} from '../lib/gitIdentity.js';
 import { gitWithAuthHeader, shellQuote, type Workspace } from './workspace.js';
 
-type Exec = Pick<Workspace, 'exec'>;
-
-/** Commit identity, passed explicitly because the global config is ignored here. */
-const IDENTITY = "-c user.name='auto-swe' -c user.email='auto-swe@localhost'";
+/** `gitIdentity` is optional so a fake workspace need not carry one. */
+type Exec = Pick<Workspace, 'exec'> & { gitIdentity?: GitIdentity };
 
 /** A hardened, replace-proof git call. */
 const guardedGit = (subcommand: string): string =>
@@ -142,15 +146,20 @@ export async function commitStaged(
   message: string,
   guard: PathGuard | undefined
 ): Promise<string | undefined> {
+  const identity = workspace.gitIdentity ?? DEFAULT_GIT_IDENTITY;
+  const text = shellQuote(withCoAuthorTrailer(message, identity));
   if (!guard) {
-    await workspace.exec(`git diff --cached --quiet || git commit -m ${shellQuote(message)}`);
+    await workspace.exec(`git diff --cached --quiet || git commit -m ${text}`);
     return undefined;
   }
   // Hooks off (the hardening sets `core.hooksPath=/dev/null`; `--no-verify` as well), so a
   // `pre-commit` hook cannot add a file after the staged tree was looked at.
   await workspace.exec(
     `${guardedGit('diff --cached --quiet')} || ` +
-      guardedGit(`${IDENTITY} -c commit.gpgsign=false commit --no-verify -m ${shellQuote(message)}`)
+      guardedGit(
+        // The global config is ignored here, so the identity is passed explicitly.
+        `${gitIdentityFlags(identity)} -c commit.gpgsign=false commit --no-verify -m ${text}`
+      )
   );
   const sha = await readSha(workspace, 'HEAD');
   if (!sha) {
