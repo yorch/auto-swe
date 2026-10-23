@@ -425,6 +425,7 @@ function LoginPageInner() {
           <Icon name="arrowLeft" size={15} />
           Back to sign in
         </Button>
+        <SupportContact className="mt-6 text-center" />
       </AuthLayout>
     );
   }
