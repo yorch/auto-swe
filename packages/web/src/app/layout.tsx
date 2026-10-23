@@ -8,7 +8,7 @@ import { Providers } from '@/components/Providers';
 import { ThemeSync } from '@/components/ThemeSync';
 import { PATHNAME_HEADER } from '@/lib/config';
 import { routeDocumentTitle } from '@/lib/documentTitle';
-import { publicApiUrl, temporalUiUrl } from '@/lib/env';
+import { publicApiUrl, supportInfo, temporalUiUrl } from '@/lib/env';
 import { THEME_INIT_SCRIPT } from '@/lib/theme';
 
 // Served from the repository, not fetched from Google Fonts at build time: a
@@ -52,9 +52,11 @@ export async function generateMetadata(): Promise<Metadata> {
 export const dynamic = 'force-dynamic';
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  const support = supportInfo();
   const appConfig = JSON.stringify({
     apiUrl: publicApiUrl(),
     temporalUiUrl: temporalUiUrl(),
+    ...(support ? { support } : {}),
   })
     .replace(/</g, '\\u003c')
     .replace(/>/g, '\\u003e')
