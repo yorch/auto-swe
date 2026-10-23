@@ -1,3 +1,4 @@
+import { SupportContact } from '@/components/SupportContact';
 import { ButtonLink } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 
@@ -24,6 +25,7 @@ export default function NotFound() {
             Browse the docs
           </ButtonLink>
         </div>
+        <SupportContact className="mt-8" />
       </div>
     </div>
   );
