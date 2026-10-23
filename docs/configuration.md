@@ -362,7 +362,72 @@ from the definition.
 
 ---
 
+## 7. Git commit identity
+
+Every commit the platform makes in a workspace carries an identity, and three registry settings choose
+it. They are in the `git` group, overridable at `WORKFLOW_TEMPLATE`, `TEAM` and `ORGANIZATION`, and
+a team lead can change them for their own team.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `git.authorName` | `auto-swe` | Name on the commit. 1–100 characters, no control characters, no `<` or `>`. |
+| `git.authorEmail` | `auto-swe@localhost` | Address on the commit. Up to 254 characters, one `@`, no whitespace. |
+| `git.launcherAttribution` | `none` | Whether the person who launched the run is credited: `none`, `co-author-trailer` or `author`. |
+
+The defaults give the identity commits carried before these settings existed, so a deployment that
+sets nothing changes nothing. The address `auto-swe@localhost` is not a real address, so GitHub links
+the commits to no account. Set a real address, such as a bot account's no-reply address, to have
+GitHub attribute them.
+
+The identity resolves once, when a workspace is created, from the run's workflow template, the
+repository's team and that team's organization. A run that has no team, such as an eval or a
+standalone gate run, resolves from the global value.
+
+`git.launcherAttribution` changes who is credited:
+
+| Mode | Author | Committer | Message |
+|---|---|---|---|
+| `none` | configured identity | configured identity | unchanged |
+| `co-author-trailer` | configured identity | configured identity | ends with `Co-authored-by: <name> <email>` for the launcher |
+| `author` | the launcher | configured identity | unchanged |
+
+The launcher is credited only when their account email is verified, because GitHub credits a commit
+to the account that owns the author address. A run with no launcher, such as one started by a
+webhook or a schedule, uses the configured identity in every mode. Both credited modes write the
+launcher's account email into the target repository's history, where it stays, so the default is
+`none`.
+
+## 8. Support contact
+
+Three optional environment variables on the web container show a way to reach whoever runs the
+deployment. They are read on each request and passed to the browser with the rest of
+`window.__APP_CONFIG__`, so changing one needs a restart of the web container and no rebuild.
+
+| Variable | Shown as | Rule |
+|---|---|---|
+| `NEXT_PUBLIC_SUPPORT_URL` | a link | Must parse as an `https:` URL. |
+| `NEXT_PUBLIC_SUPPORT_EMAIL` | a `mailto:` link | One `@`, no whitespace, no `<`, `>` or quotes. |
+| `NEXT_PUBLIC_SUPPORT_SLACK` | text, or a link when it is an `https:` URL | Up to 80 characters. |
+
+A value that fails its rule is dropped with one warning in the web container's log, and the rest
+still show. With none set, nothing is rendered. The contact appears on the sign-in screen, including
+the awaiting-approval screen, on the error and not-found pages, and in the sidebar footer. The
+compose files pass the three variables through, because the web container does not receive `.env`.
+
+---
+
 ## Limitations
+
+- **Git identity is not pinned to a run.** The identity resolves when each workspace is created. A
+  setting edited during a long run can give one pull request commits from two identities.
+- **There is no per-agent git identity.** Agents never run `git commit`; platform code does, so the
+  identity follows the workflow template, team and organization, not the agent. A run that wants to
+  show which agent produced a change has no identity to carry that.
+- **Launcher attribution uses the account email.** There is no GitHub no-reply address option, and an
+  account whose email is not verified is never credited.
+- **The support contact is global.** It does not vary by team or organization. The fallback screen
+  that replaces the whole page after a fatal error shows it only when the page's config script had
+  already loaded, and it checks the values less strictly than the server does.
 
 - **The audit log's entity-id search is exact.** Only a complete UUID matches an entity or actor id;
   a prefix or fragment returns nothing. The CSV export stops at 50,000 rows, newest first, and the
