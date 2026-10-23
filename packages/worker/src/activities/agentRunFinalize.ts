@@ -17,6 +17,7 @@ import {
 import type { AgentTracer } from '../lib/agentTracer.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { throwIfActivityCancelled } from '../lib/execUtils.js';
+import { withCoAuthorTrailer } from '../lib/gitIdentity.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { checkSensitiveFilePath } from '../lib/sensitiveFileScanner.js';
 import { workspaceBackend } from '../lib/workspaceBackend/index.js';
@@ -177,7 +178,9 @@ export async function commitTrustedTree(
   }
   // The squash is by construction: one engine-authored commit on the base, so a
   // secret the agent committed and then deleted never reaches the remote.
-  await trusted.exec(`${GIT} commit -q --no-verify -m ${shellQuote(message)}`);
+  await trusted.exec(
+    `${GIT} commit -q --no-verify -m ${shellQuote(withCoAuthorTrailer(message, trusted.gitIdentity))}`
+  );
   const sha = (await trusted.exec(`${GIT} rev-parse HEAD`)).trim();
   if (!SHA_RE.test(sha)) {
     throw new Error('unexpected commit id');

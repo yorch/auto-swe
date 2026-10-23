@@ -54,7 +54,14 @@ interface FakeWorkspace {
   exec: ReturnType<typeof vi.fn>;
   execCapture: ReturnType<typeof vi.fn>;
   gitAuthed: ReturnType<typeof vi.fn>;
+  gitIdentity: {
+    author: { email: string; name: string };
+    committer: { email: string; name: string };
+    coAuthorTrailer?: string;
+  };
 }
+
+const BOT = { email: 'auto-swe@localhost', name: 'auto-swe' };
 
 const execMock = vi.fn();
 // Mirrors the real gitAuthed: injects a (fake) credential header per-call and
@@ -70,6 +77,7 @@ const fakeWorkspace: FakeWorkspace = {
   exec: execMock,
   execCapture: vi.fn(),
   gitAuthed: gitAuthedMock,
+  gitIdentity: { author: BOT, committer: BOT },
 };
 
 vi.mock('./workspace.js', () => ({
@@ -208,6 +216,7 @@ const mockedFindUnique = vi.mocked(prisma.connection.findUniqueOrThrow);
 const mockedRecordLesson = vi.mocked(recordLessonBackground);
 
 afterEach(() => {
+  fakeWorkspace.gitIdentity = { author: BOT, committer: BOT };
   mockedFindUnique.mockReset();
   fakeWorkspace.exec.mockReset();
   fakeWorkspace.gitAuthed.mockClear();
@@ -285,6 +294,27 @@ describe('mergeBranches', () => {
     );
     expect(cmds.some((c) => c.includes('git merge --no-ff'))).toBe(true);
     expect(cmds.some((c) => c.includes('push origin'))).toBe(true);
+  });
+
+  it('adds the co-author trailer to each merge commit in co-author-trailer mode', async () => {
+    fakeWorkspace.gitIdentity = {
+      author: BOT,
+      coAuthorTrailer: 'Co-authored-by: Ada Lovelace <ada@example.com>',
+      committer: BOT,
+    };
+    primeRepo();
+    fakeWorkspace.exec.mockImplementation(() => '');
+    await mergeBranches({
+      request: baseRequest,
+      sourceBranches: ['auto/TICK-1/auth'],
+      targetBranch: 'auto/TICK-1',
+    });
+    const merge = fakeWorkspace.exec.mock.calls
+      .map((c) => c[0] as string)
+      .find((c) => c.startsWith('git merge --no-ff'));
+    expect(merge).toContain(
+      " -m 'auto-merge: merge auto/TICK-1/auth into auto/TICK-1\n\nCo-authored-by: Ada Lovelace <ada@example.com>' "
+    );
   });
 
   it('aborts on the first conflict, reports the branch, and skips the push', async () => {
@@ -480,6 +510,45 @@ describe('resolveMergeConflict', () => {
     expect(buildImplementerMock).not.toHaveBeenCalled();
     expect(scanSecurityMock).not.toHaveBeenCalled();
     expect(execCommands().some((c) => c.includes('push origin'))).toBe(true);
+  });
+
+  const TRAILER = 'Co-authored-by: Ada Lovelace <ada@example.com>';
+  const SUBJECT = 'auto-merge: merge auto/TICK-1/db into auto/TICK-1';
+  const resolveAndGetCommit = async (): Promise<string> => {
+    primeRepo();
+    const git = conflictingGit();
+    installFakeGit(git);
+    resolverThatFixes(git);
+    await resolveMergeConflict({
+      request: baseRequest,
+      sourceBranches: ['auto/TICK-1/db'],
+      targetBranch: 'auto/TICK-1',
+    });
+    return execCommands().find((c) => c.startsWith('git commit')) ?? '';
+  };
+
+  it('adds the co-author trailer to the resolver commit in co-author-trailer mode', async () => {
+    fakeWorkspace.gitIdentity = { author: BOT, coAuthorTrailer: TRAILER, committer: BOT };
+    const commit = await resolveAndGetCommit();
+    expect(commit).toBe(`git commit -m '${SUBJECT}\n\n${TRAILER}'`);
+  });
+
+  it('commits the resolver commit with the bare message when there is no trailer', async () => {
+    const commit = await resolveAndGetCommit();
+    expect(commit).toBe(`git commit -m '${SUBJECT}'`);
+  });
+
+  it('adds the co-author trailer to a clean merge commit too', async () => {
+    fakeWorkspace.gitIdentity = { author: BOT, coAuthorTrailer: TRAILER, committer: BOT };
+    primeRepo();
+    installFakeGit({ conflictOn: () => false, files: {} });
+    await resolveMergeConflict({
+      request: baseRequest,
+      sourceBranches: ['auto/TICK-1/db'],
+      targetBranch: 'auto/TICK-1',
+    });
+    const merge = execCommands().find((c) => c.startsWith('git merge --no-ff')) ?? '';
+    expect(merge).toContain(` -m '${SUBJECT}\n\n${TRAILER}' `);
   });
 
   it('stages the resolved files itself, commits, and pushes', async () => {

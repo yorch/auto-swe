@@ -38,6 +38,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage, getExecErrorOutput } from '../lib/errors.js';
+import { withCoAuthorTrailer } from '../lib/gitIdentity.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
@@ -137,7 +138,10 @@ export async function mergeBranches(input: MergeBranchesInput): Promise<MergeBra
     for (let idx = 0; idx < sourceBranches.length; idx++) {
       const source = sourceBranches[idx] as string;
       heartbeat(`mergeBranches: merging ${source}`);
-      const message = `${messagePrefix}: merge ${source} into ${targetBranch}`;
+      const message = withCoAuthorTrailer(
+        `${messagePrefix}: merge ${source} into ${targetBranch}`,
+        workspace.gitIdentity
+      );
       try {
         await workspace.exec(
           `git merge --no-ff --no-edit -m ${shellQuote(message)} origin/${shellQuote(source)}`
@@ -476,7 +480,10 @@ async function mergeOneWithResolver(
     turns: () => Promise<ImplementerTurnRunner>;
   }
 ): Promise<{ passed: boolean; output: string; resolution?: ResolverCommit }> {
-  const commitMessage = `${opts.messagePrefix}: merge ${source} into ${targetBranch}`;
+  const commitMessage = withCoAuthorTrailer(
+    `${opts.messagePrefix}: merge ${source} into ${targetBranch}`,
+    workspace.gitIdentity
+  );
 
   try {
     await workspace.exec(

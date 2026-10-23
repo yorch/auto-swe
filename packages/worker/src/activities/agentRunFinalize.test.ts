@@ -92,6 +92,10 @@ function fakeWorkspace(id: string, opts: FakeOpts = {}) {
       log.push(cmd);
       return '';
     }),
+    gitIdentity: {
+      author: { email: 'auto-swe@localhost', name: 'auto-swe' },
+      committer: { email: 'auto-swe@localhost', name: 'auto-swe' },
+    },
   };
   return { log, ws: ws as unknown as Workspace & typeof ws };
 }
@@ -299,6 +303,37 @@ describe('commitTrustedTree', () => {
     expect(commit).toContain('core.hooksPath=/dev/null');
     expect(commit).toContain('--no-verify');
     expect(commit).toContain(`'auto: it'\\''s a run'`);
+  });
+
+  describe('the committed message', () => {
+    const bot = { email: 'auto-swe@localhost', name: 'auto-swe' };
+    const commitFor = async (gitIdentity: Workspace['gitIdentity']): Promise<string> => {
+      const { ws, log } = fakeWorkspace('t', { stagedExit: 1 });
+      ws.gitIdentity = gitIdentity;
+      ws.exec.mockImplementation(async (cmd: string) => {
+        log.push(cmd);
+        if (cmd.endsWith('rev-parse HEAD')) {
+          return log.some((c) => c.includes('commit -q')) ? `${SHA}\n` : `${BASE}\n`;
+        }
+        return '';
+      });
+      await commitTrustedTree(ws, BASE, 'auto: run');
+      return log.find((c) => c.includes('commit -q')) as string;
+    };
+
+    it('ends with the co-author trailer in co-author-trailer mode', async () => {
+      const commit = await commitFor({
+        author: bot,
+        coAuthorTrailer: 'Co-authored-by: Ada Lovelace <ada@example.com>',
+        committer: bot,
+      });
+      expect(commit).toContain(" -m 'auto: run\n\nCo-authored-by: Ada Lovelace <ada@example.com>'");
+    });
+
+    it('is the bare message when the identity carries no trailer', async () => {
+      const commit = await commitFor({ author: bot, committer: bot });
+      expect(commit).toMatch(/ -m 'auto: run'$/);
+    });
   });
 
   it('refuses when the trusted checkout is not at the agent’s base commit', async () => {
