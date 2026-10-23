@@ -93,6 +93,34 @@ describe('Sidebar data-tour anchors', () => {
     }
   );
 
+  describe('support footer', () => {
+    afterEach(() => {
+      (window as unknown as { __APP_CONFIG__?: unknown }).__APP_CONFIG__ = undefined;
+    });
+
+    it('shows the configured support contact after the navigation', () => {
+      (window as unknown as { __APP_CONFIG__?: unknown }).__APP_CONFIG__ = {
+        support: { email: 'help@example.com' },
+      };
+      resetNavigation('', '/');
+      const { container } = render(<Sidebar onClose={() => undefined} open />);
+      const support = screen.getByRole('group', { name: 'Support' });
+      expect(support.textContent).toContain('help@example.com');
+      const nav = container.querySelector('nav') as HTMLElement;
+      expect(nav.contains(support)).toBe(false);
+      expect(nav.compareDocumentPosition(support) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+
+    it('adds no support element or heading when nothing is configured', () => {
+      resetNavigation('', '/');
+      const { container } = render(<Sidebar onClose={() => undefined} open />);
+      expect(screen.queryByRole('group', { name: 'Support' })).toBeNull();
+      expect(screen.queryByText('Support')).toBeNull();
+      // The nav stays the last child: no empty footer container follows it.
+      expect(container.querySelector('aside')?.lastElementChild?.tagName).toBe('NAV');
+    });
+  });
+
   it('has no Agents anchor for an ENGINEER, and one for an ADMIN', () => {
     useRole('ENGINEER');
     resetNavigation('', '/');
