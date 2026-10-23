@@ -919,6 +919,19 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.string().min(1).max(200).regex(DOCKER_IMAGE_REF_RE),
   }),
+  'workspace.harnessApiRetries': defineSetting({
+    defaultValue: 4,
+    description:
+      "How many times the Claude Code harness retries a failed model API call before it gives up, with the harness's exponential backoff between tries. The harness's own default is 10, which holds a turn for about three minutes when the API keeps refusing it (a rejected key is retried like any other error); 4 gives up after about 20 seconds of backoff, which still absorbs a brief overload without losing the conversation in progress. A turn that gives up fails and the activity's own retry policy decides what happens next, from a fresh workspace. Applies to the Claude Code runtime; the Mastra loop and Pi make their own retries.",
+    group: 'workspace',
+    label: 'Harness API retries',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(10),
+    unit: 'retries',
+  }),
   'workspace.harnessContextTokens': defineSetting({
     defaultValue: 120_000,
     description:

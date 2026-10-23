@@ -385,6 +385,27 @@ describe('what the harness is started with', () => {
     expect(h.queryCalls[1]?.options).not.toHaveProperty('effort');
   });
 
+  it('limits the harness’s own API retries, so a rejected key surfaces in seconds, not minutes', async () => {
+    // The harness retries a 401 like any error, with exponential backoff: left at its
+    // default of 10, a turn with a bad key took about three minutes to fail.
+    const retriesOf = async (overrides: Record<string, unknown>) => {
+      const ctx = setup(overrides);
+      h.script.push([[init('s'), success('ok')]]);
+      await ctx.runtime.runTurn({ system: 'S', user: 'U' });
+      h.queryCalls.at(-1)?.options.spawnClaudeCodeProcess({
+        args: [],
+        env: {},
+        signal: new AbortController().signal,
+      });
+      const args = h.spawn.mock.calls.at(-1)?.[1] as string[];
+      return args.filter((a) => a.startsWith('CLAUDE_CODE_MAX_RETRIES='));
+    };
+
+    expect(await retriesOf({})).toEqual(['CLAUDE_CODE_MAX_RETRIES=4']);
+    expect(await retriesOf({ harnessApiRetries: 7 })).toEqual(['CLAUDE_CODE_MAX_RETRIES=7']);
+    expect(await retriesOf({ harnessApiRetries: 0 })).toEqual(['CLAUDE_CODE_MAX_RETRIES=0']);
+  });
+
   it('can be told to ignore the repository’s own settings', async () => {
     const ctx = setup({ loadProjectSettings: false });
     h.script.push([[init('s1'), success('ok')]]);

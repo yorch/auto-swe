@@ -7,6 +7,7 @@ import type {
   PreToolUseHookInput,
   SDKResultMessage,
 } from '@anthropic-ai/claude-agent-sdk';
+import { getSettingDefinition } from '@auto-swe/shared/config';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ApplicationFailure } from '@temporalio/activity';
 import type { Workspace } from '../../activities/workspace.js';
@@ -348,6 +349,8 @@ export function claudeCodeAdapter(
   options: Omit<ClaudeCodeRuntimeOptions, 'tracer'> & { tracer?: McpTracer }
 ): HarnessAdapter<ClaudeUsageReport> {
   const { access, loadProjectSettings, maxTurns, mcp, modelProxy, workspace } = options;
+  const apiRetries =
+    options.harnessApiRetries ?? getSettingDefinition('workspace.harnessApiRetries').defaultValue;
   // The Agent's MCP connection, opened once from the worker and served to each
   // turn; `null` once opening it failed (the agent then works without it).
   let relay: Promise<McpRelay | null> | undefined;
@@ -579,6 +582,10 @@ export function claudeCodeAdapter(
             args: spawnOptions.args,
             env: [
               `ANTHROPIC_BASE_URL=${endpoint.baseUrl}`,
+              // The harness retries a rejected key like any other error, with exponential
+              // backoff: its default of 10 holds a turn for about three minutes before a
+              // bad key surfaces.
+              `CLAUDE_CODE_MAX_RETRIES=${apiRetries}`,
               `HOME=${HARNESS_HOME}`,
               'SHELL=/bin/bash',
               'DISABLE_AUTOUPDATER=1',

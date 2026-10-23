@@ -35,6 +35,7 @@ vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@auto-swe/shared/config')>()),
   resolveSettings: vi.fn(async () => ({
     'workspace.agentMaxSteps': 77,
+    'workspace.harnessApiRetries': 6,
     'workspace.maxToolOutputChars': 20_000,
   })),
 }));
@@ -328,6 +329,7 @@ describe('resolveImplementerConfig', () => {
     );
     const config = await resolveImplementerConfig({ teamId: 't' }, 'reviewFixer');
     expect(config).toMatchObject({
+      harnessApiRetries: 6,
       maxSteps: 77,
       maxToolOutputChars: 20_000,
       toolKeys: ['readFile', 'mcp'],

@@ -141,6 +141,7 @@ export async function buildImplementerTurnRunner(input: {
     // `.claude` settings) applies, so a flow ported from a developer machine
     // behaves as it did there. Its hooks run in the container; the worker-side
     // policy still decides every tool call.
+    harnessApiRetries: config.harnessApiRetries,
     harnessContextTokens: config.harnessContextTokens,
     loadProjectSettings: true,
     maxToolOutputChars: config.maxToolOutputChars,

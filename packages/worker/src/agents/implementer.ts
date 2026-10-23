@@ -319,6 +319,7 @@ export async function resolveImplementerConfig(
   ctx?: ResolveCtx,
   agentKey = 'implementer'
 ): Promise<{
+  harnessApiRetries: number;
   harnessContextTokens: number;
   maxSteps: number;
   maxToolOutputChars: number;
@@ -331,7 +332,12 @@ export async function resolveImplementerConfig(
     isPersona ? loadAgentToolConfig('implementer', ctx) : null,
     loadAgentSkills(agentKey, ctx),
     resolveSettings(
-      ['workspace.maxToolOutputChars', 'workspace.agentMaxSteps', 'workspace.harnessContextTokens'],
+      [
+        'workspace.maxToolOutputChars',
+        'workspace.agentMaxSteps',
+        'workspace.harnessContextTokens',
+        'workspace.harnessApiRetries',
+      ],
       ctx
     ),
   ]);
@@ -341,6 +347,7 @@ export async function resolveImplementerConfig(
   const skills =
     ownSkills.length === 0 && isPersona ? await loadAgentSkills('implementer', ctx) : ownSkills;
   return {
+    harnessApiRetries: settings['workspace.harnessApiRetries'],
     harnessContextTokens: settings['workspace.harnessContextTokens'],
     maxSteps: settings['workspace.agentMaxSteps'],
     maxToolOutputChars: settings['workspace.maxToolOutputChars'],
