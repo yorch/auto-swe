@@ -38,6 +38,12 @@ import { logWarn } from '../lib/activityLog.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 import {
+  type GitIdentity,
+  gitIdentityFlags,
+  resolveGitIdentity,
+  withCoAuthorTrailer,
+} from '../lib/gitIdentity.js';
+import {
   maskCredentialShapes,
   redactExecError,
   redactSecrets,
@@ -306,10 +312,16 @@ function isBranchNotFoundError(err: unknown): boolean {
  */
 export function finalizeScript(
   repoDir: string,
-  opts: { branch: string; commandSummary: string; cleanUrl: string; gitAuthHeader?: string }
+  opts: {
+    branch: string;
+    commandSummary: string;
+    cleanUrl: string;
+    gitAuthHeader?: string;
+    identity: GitIdentity;
+  }
 ): string {
   const git = (sub: string) => gitWithAuthHeader(sub);
-  const identity = "-c user.name='auto-swe' -c user.email='auto-swe@localhost'";
+  const message = withCoAuthorTrailer(`auto: shell step ${opts.commandSummary}`, opts.identity);
   return [
     'set -e',
     `cd ${shellQuote(repoDir)}`,
@@ -319,7 +331,7 @@ export function finalizeScript(
     '  exit 0',
     'fi',
     git('add -A'),
-    git(`${identity} commit -m ${shellQuote(`auto: shell step ${opts.commandSummary}`)}`),
+    git(`${gitIdentityFlags(opts.identity)} commit -m ${shellQuote(message)}`),
     // `gitWithAuthHeader` shell-quotes the header; the branch is quoted here.
     // Pushed to the scrubbed URL explicitly, not through the `origin` name.
     gitWithAuthHeader(
@@ -354,6 +366,7 @@ async function finalizeWorkspaceVolume(
   image: string,
   token: string,
   cleanUrl: string,
+  identity: GitIdentity,
   gitAuthHeader?: string
 ): Promise<FinalizeResult> {
   const script = finalizeScript('/workspace/repo', {
@@ -361,6 +374,7 @@ async function finalizeWorkspaceVolume(
     cleanUrl,
     commandSummary,
     gitAuthHeader,
+    identity,
   });
   // `git push` failures can still echo credential material (e.g. a git build
   // that logs the extraheader, or an operator-supplied URL we failed to
@@ -414,6 +428,9 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   const { branchPrefix } = await resolveWorkflowDefaults();
   const branch = input.branch ?? `${branchPrefix}/${input.request.externalTicketId}`;
   const helperImage = await gitHelperImage();
+  // Resolved before the author command runs: a failure here retries the
+  // activity, which is safe only while the command has not yet executed.
+  const gitIdentity = await resolveGitIdentity({ teamId: meta.teamId || null });
 
   const volumeName = `shellvol-${crypto.randomBytes(8).toString('hex')}`;
   const backend = workspaceBackend();
@@ -563,6 +580,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
           helperImage,
           meta.token,
           meta.cleanUrl,
+          gitIdentity,
           meta.gitAuthHeader
         );
       } catch (err) {

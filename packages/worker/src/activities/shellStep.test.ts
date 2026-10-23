@@ -89,11 +89,22 @@ vi.mock('../lib/scm/index.js', () => ({
 vi.mock('./commitToMemory.js', () => ({
   recordLessonBackground: vi.fn().mockResolvedValue(undefined),
 }));
+const BOT = { email: 'bot@example.com', name: "Acme 'Bot'; touch pwned" };
+const RESOLVED_IDENTITY = {
+  author: BOT,
+  coAuthorTrailer: 'Co-authored-by: Ada Lovelace <ada@example.com>',
+  committer: BOT,
+};
+vi.mock('../lib/gitIdentity.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../lib/gitIdentity.js')>()),
+  resolveGitIdentity: vi.fn(),
+}));
 
 import { prisma } from '@auto-swe/shared/db';
 import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
 
+import { type GitIdentity, resolveGitIdentity } from '../lib/gitIdentity.js';
 import { getScmProvider } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { finalizeScript, runShellStep } from './shellStep.js';
@@ -131,6 +142,7 @@ const REQUEST = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(resolveGitIdentity).mockResolvedValue(RESOLVED_IDENTITY);
   findUniqueOrThrow.mockResolvedValue({
     defaultBranch: 'main',
     team: { egressAllowlist: [], id: 'team-1', shellImageAllowlist: ['alpine/git:latest'] },
@@ -157,6 +169,20 @@ beforeEach(() => {
       throw err;
     }
     return '';
+  });
+});
+
+describe('runShellStep — git identity', () => {
+  it("finalizes under the team's resolved identity", async () => {
+    await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
+
+    expect(resolveGitIdentity).toHaveBeenCalledWith({ teamId: 'team-1' });
+    const finalize = helperScripts().find((s) => s.includes('push --no-verify')) ?? '';
+    expect(finalize).toContain(`user.name=${shellQuote(BOT.name)}`);
+    expect(finalize).toContain(
+      shellQuote(`auto: shell step echo hi\n\n${RESOLVED_IDENTITY.coAuthorTrailer}`)
+    );
+    expect(finalize).not.toContain("user.name='auto-swe'");
   });
 });
 
@@ -525,7 +551,7 @@ describe('finalizeScript against a real git repository', () => {
     const loot = join(root, 'loot');
     return { good, loot, root, work };
   };
-  const run = (work: string, good: string) =>
+  const run = (work: string, good: string, identity: GitIdentity = RESOLVED_IDENTITY) =>
     execFileSync(
       '/bin/sh',
       [
@@ -534,10 +560,41 @@ describe('finalizeScript against a real git repository', () => {
           branch: 'auto/T-1',
           cleanUrl: `file://${good}`,
           commandSummary: 'build',
+          identity,
         }),
       ],
       { encoding: 'utf8', stdio: 'pipe' }
     );
+
+  it('commits under the given identity and appends its co-author trailer', () => {
+    const { good, work } = setup();
+    const launcher = { email: 'ada@example.com', name: 'Ada Lovelace' };
+
+    run(work, good, { ...RESOLVED_IDENTITY, author: launcher });
+
+    const fmt = '--format=%an|%ae|%cn|%ce|%B';
+    expect(git(good, 'log', '-1', fmt, 'auto/T-1').trim()).toBe(
+      `${launcher.name}|${launcher.email}|${BOT.name}|${BOT.email}|auto: shell step build\n\n` +
+        `${RESOLVED_IDENTITY.coAuthorTrailer}`
+    );
+  });
+
+  it('leaves the message bare when the identity has no trailer', () => {
+    const { good, work } = setup();
+    run(work, good, { author: BOT, committer: BOT });
+    expect(git(good, 'log', '-1', '--format=%B', 'auto/T-1').trim()).toBe('auto: shell step build');
+  });
+
+  it('carries no literal auto-swe identity in the script', () => {
+    const script = finalizeScript('/w', {
+      branch: 'b',
+      cleanUrl: 'https://example.com/r.git',
+      commandSummary: 'x',
+      identity: RESOLVED_IDENTITY,
+    });
+    expect(script).not.toContain("user.name='auto-swe'");
+    expect(script).not.toContain('auto-swe@localhost');
+  });
 
   it('never runs a clean filter the author command planted in the repo config', () => {
     const { good, loot, work } = setup();
