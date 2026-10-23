@@ -47,6 +47,21 @@ const githubOrgLogin = z
   .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, 'must be a lowercase GitHub organization login')
   .max(39);
 const ratio = z.number().min(0).max(1);
+/// Git identity fields end up inside a commit header, where a control
+/// character or angle bracket would corrupt the `Name <email>` line. The email
+/// is deliberately not `z.email()`: the default `auto-swe@localhost` has no TLD.
+const GIT_IDENTITY_FORBIDDEN_RE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}\p{Cs}<>]/u;
+const gitIdentityName = z
+  .string()
+  .min(1)
+  .max(100)
+  .refine((v) => v.trim().length > 0, 'must not be blank')
+  .refine((v) => !GIT_IDENTITY_FORBIDDEN_RE.test(v), 'must not contain control characters, < or >');
+const gitIdentityEmail = z
+  .string()
+  .max(254)
+  .regex(/^[^@\s]+@[^@\s]+$/, 'must contain exactly one @ and no whitespace')
+  .refine((v) => !GIT_IDENTITY_FORBIDDEN_RE.test(v), 'must not contain control characters, < or >');
 
 /// LiteLLM's community-maintained price table: per-token prices for the major
 /// providers and most OpenAI-compatible hosts, keyed by model id.
@@ -270,6 +285,46 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: positiveInt.max(20),
     unit: 'runs',
+  }),
+
+  // ── Git commit identity ────────────────────────────────────────────────────
+  // The author and committer written on every commit a workspace makes, so a
+  // deployment can present its own identity instead of the platform's.
+  'git.authorEmail': defineSetting({
+    defaultValue: 'auto-swe@localhost',
+    description:
+      'Email address written as the author and committer of every commit the platform makes. Not validated as a deliverable address: the default has no domain suffix.',
+    group: 'git',
+    label: 'Commit author email',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: gitIdentityEmail,
+  }),
+  'git.authorName': defineSetting({
+    defaultValue: 'auto-swe',
+    description:
+      'Name written as the author and committer of every commit the platform makes. Up to 100 characters, with no control characters, "<" or ">".',
+    group: 'git',
+    label: 'Commit author name',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: gitIdentityName,
+  }),
+  'git.launcherAttribution': defineSetting({
+    defaultValue: 'none',
+    description:
+      'Whether the person who launched a run is credited on its commits. "none" credits no one, "co-author-trailer" adds a Co-authored-by trailer to each commit message, and "author" makes the launcher the commit author.',
+    group: 'git',
+    label: 'Launcher attribution',
+    overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],
+    requiredRole: 'LEAD',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.enum(['none', 'co-author-trailer', 'author']),
   }),
 
   // ── GitHub hosts and per-user credentials ──────────────────────────────────
