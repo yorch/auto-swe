@@ -219,6 +219,13 @@ describe('buildImplementerTurnRunner', () => {
 
   it('builds the harness on the Agent’s own model, credential and config', async () => {
     h.resolveSetting.mockResolvedValue('claude-code');
+    h.resolveImplementerConfig.mockResolvedValue({
+      harnessApiRetries: 6,
+      maxSteps: 42,
+      maxToolOutputChars: 20_000,
+      skills,
+      toolKeys: null,
+    });
     const given = input({ agentKey: 'ciFixer' });
 
     const turns = await buildImplementerTurnRunner(given);
@@ -233,6 +240,7 @@ describe('buildImplementerTurnRunner', () => {
         effort: 'high',
         modelId: 'claude-opus-5-5',
       },
+      harnessApiRetries: 6,
       loadProjectSettings: true,
       maxToolOutputChars: 20_000,
       maxTurns: 42,

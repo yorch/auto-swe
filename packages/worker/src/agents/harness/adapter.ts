@@ -231,6 +231,12 @@ export interface HarnessRuntimeOptions<Access> {
    */
   harnessContextTokens?: number;
   /**
+   * `workspace.harnessApiRetries`, how many times a harness retries a failed
+   * model API call before giving up, for a harness that does its own retrying
+   * (Claude Code); the setting's default when omitted.
+   */
+  harnessApiRetries?: number;
+  /**
    * The resolved Agent's `toolKeys` (`IMPLEMENTER_TOOL_IDS`), read as the Mastra
    * implementer reads them: null, absent or empty grants every tool.
    */

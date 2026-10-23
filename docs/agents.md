@@ -547,6 +547,14 @@ them (`runtimeWarnings`; the library page shows them), because the saved agent i
 model the Mastra loop can. The column carries a CHECK constraint, and the worker reads an unknown
 value as no opinion, with a warning.
 
+**API retries.** The Claude Code harness retries a failed model call itself, with exponential backoff,
+and it retries a rejected key like any other error: at its default of 10 retries a turn with a bad
+key took about three minutes to fail. `workspace.harnessApiRetries` (default 4) sets
+`CLAUDE_CODE_MAX_RETRIES`, which brings that to roughly twenty seconds while still absorbing a brief
+provider overload without losing the conversation in progress. A turn that gives up fails with
+`HARNESS_AUTH_FAILURE` (non-retryable) when the API answered 401 or 403, and with an ordinary
+failure otherwise, which the activity's retry policy decides about from a fresh workspace.
+
 **Agent runs on the harness.** An agent run whose agent asks for `claude-code` runs one harness turn in
 its own container in place of the Mastra loop. The run's step ceiling is the harness's turn cap and its
 wall-clock deadline stops the turn as it stops the Mastra loop: the run ends with
