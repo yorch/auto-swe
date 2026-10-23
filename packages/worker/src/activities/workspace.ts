@@ -2,6 +2,11 @@ import crypto from 'node:crypto';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { CapturedResult, OnTimeout } from '../lib/execUtils.js';
+import {
+  type GitIdentity,
+  gitIdentityConfigScript,
+  resolveGitIdentity,
+} from '../lib/gitIdentity.js';
 import { redactExecError } from '../lib/redactToken.js';
 import {
   beginWorkspaceRegistries,
@@ -22,6 +27,8 @@ export { shellQuote };
 
 export interface Workspace {
   containerId: string;
+  /** The author and committer every platform commit in this workspace carries. */
+  gitIdentity: GitIdentity;
   /**
    * Run a command and resolve with stdout; rejects on non-zero exit. The
    * default 2-minute timeout suits git/file operations — pass `timeoutMs` for
@@ -587,6 +594,11 @@ export async function createWorkspace(
   const containerName = `workspace-${id}`;
   const backend = workspaceBackend();
 
+  // Resolved before any container exists: a database failure here throws with
+  // nothing to clean up, and the activity retries rather than committing under
+  // a fallback identity.
+  const gitIdentity = await resolveGitIdentity({ teamId: options?.teamId ?? null });
+
   // Every command run in the container carries a fresh tag, and a command that
   // outlives its timeout has its whole in-container process tree killed by
   // that tag. Killing the local `docker exec` client alone — all a timeout used
@@ -662,8 +674,7 @@ export async function createWorkspace(
 
     // Configure git identity — required for commits in ephemeral containers.
     // Without this, `git commit` fails with "Author identity unknown".
-    await rootExec("git config --global user.name 'auto-swe'");
-    await rootExec("git config --global user.email 'auto-swe@localhost'");
+    await rootExec(gitIdentityConfigScript(gitIdentity));
 
     // Clone repo — shell-quote branch names to prevent injection. With a pinned
     // SHA we need full history (a shallow clone at HEAD may not contain an older
@@ -836,5 +847,6 @@ export async function createWorkspace(
         throw err;
       }
     },
+    gitIdentity,
   };
 }

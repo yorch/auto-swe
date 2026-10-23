@@ -81,6 +81,28 @@ describe('resolveGitIdentity scope', () => {
     expect(resolveSettings).not.toHaveBeenCalled();
   });
 
+  it('skips the team lookup and resolves from the global tier for a null team', async () => {
+    await resolveGitIdentity({ teamId: null });
+    expect(teamFindUnique).not.toHaveBeenCalled();
+    expect(resolveSettings).toHaveBeenCalledWith(expect.anything(), {
+      orgId: undefined,
+      teamId: undefined,
+      workflowTemplateId: 'tpl-1',
+    });
+  });
+
+  it('resolves a null team with no template outside a workflow run, and attributes no one', async () => {
+    currentRunLaunchContext.mockResolvedValue(null);
+    settings('author');
+    const identity = await resolveGitIdentity({ teamId: null });
+    expect(resolveSettings).toHaveBeenCalledWith(expect.anything(), {
+      orgId: undefined,
+      teamId: undefined,
+      workflowTemplateId: undefined,
+    });
+    expect(identity.author).toEqual(CONFIGURED);
+  });
+
   it('omits the organization for a team that has none', async () => {
     teamFindUnique.mockResolvedValue({ orgId: null });
     await resolveGitIdentity({ teamId: 'team-1' });

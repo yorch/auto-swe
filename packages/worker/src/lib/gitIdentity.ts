@@ -59,19 +59,22 @@ async function resolveLauncher(
  * failure throws and the activity retries: the platform never commits under a
  * fallback identity.
  */
-export async function resolveGitIdentity(scope: { teamId: string }): Promise<GitIdentity> {
+export async function resolveGitIdentity(scope: { teamId: string | null }): Promise<GitIdentity> {
+  const { teamId } = scope;
   const [team, launch] = await Promise.all([
-    prisma.team.findUnique({ select: { orgId: true }, where: { id: scope.teamId } }),
+    teamId === null
+      ? null
+      : prisma.team.findUnique({ select: { orgId: true }, where: { id: teamId } }),
     currentRunLaunchContext(),
   ]);
-  if (!team) {
-    throw new Error(`Cannot resolve a git identity: team ${scope.teamId} does not exist`);
+  if (teamId !== null && !team) {
+    throw new Error(`Cannot resolve a git identity: team ${teamId} does not exist`);
   }
   const configured = await resolveSettings(
     ['git.authorName', 'git.authorEmail', 'git.launcherAttribution'],
     {
-      orgId: team.orgId ?? undefined,
-      teamId: scope.teamId,
+      orgId: team?.orgId ?? undefined,
+      teamId: teamId ?? undefined,
       workflowTemplateId: launch?.workflowTemplateId,
     }
   );
@@ -93,14 +96,9 @@ export async function resolveGitIdentity(scope: { teamId: string }): Promise<Git
   return identity;
 }
 
-/**
- * `-c` flags for a `git` invocation that ignores global config. Every value
- * is `shellQuote`d: the `git.*` schemas allow shell metacharacters and a
- * leading `-`, so the value is only ever the argument of `-c key=<quoted>`,
- * never bare. Embed the result in a `sh -c` script.
- */
-export function gitIdentityFlags(identity: GitIdentity): string {
-  const pairs: Array<[string, string]> = [
+/** The six git config keys an identity sets, as `[key, unquoted value]`. */
+export function gitIdentityEntries(identity: GitIdentity): Array<[string, string]> {
+  return [
     ['user.name', identity.committer.name],
     ['user.email', identity.committer.email],
     ['author.name', identity.author.name],
@@ -108,7 +106,30 @@ export function gitIdentityFlags(identity: GitIdentity): string {
     ['committer.name', identity.committer.name],
     ['committer.email', identity.committer.email],
   ];
-  return pairs.map(([key, value]) => `-c ${key}=${shellQuote(value)}`).join(' ');
+}
+
+/**
+ * A `sh -c` script that writes the identity to the global git config. `--`
+ * ends option parsing: the schemas allow a name starting with `-`, which git
+ * would otherwise read as a switch. One script, so a partial write cannot
+ * leave some keys set.
+ */
+export function gitIdentityConfigScript(identity: GitIdentity): string {
+  return gitIdentityEntries(identity)
+    .map(([key, value]) => `git config --global -- ${key} ${shellQuote(value)}`)
+    .join(' && ');
+}
+
+/**
+ * `-c` flags for a `git` invocation that ignores global config. Every value
+ * is `shellQuote`d: the `git.*` schemas allow shell metacharacters and a
+ * leading `-`, so the value is only ever the argument of `-c key=<quoted>`,
+ * never bare. Embed the result in a `sh -c` script.
+ */
+export function gitIdentityFlags(identity: GitIdentity): string {
+  return gitIdentityEntries(identity)
+    .map(([key, value]) => `-c ${key}=${shellQuote(value)}`)
+    .join(' ');
 }
 
 /** Appends the trailer to the message text; `git commit --trailer` needs git 2.32. */
