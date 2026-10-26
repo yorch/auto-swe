@@ -203,8 +203,10 @@ export interface EventSource<Filters = unknown, Facts = unknown> {
    * acts only for a platform member. The engine then starts a run only when that account
    * (by its numeric id on the repository's host) is an active platform user who is a member of
    * the repository, records the run as theirs, and otherwise suppresses it as a precondition.
+   * Null for an occurrence no person is behind (a bot's nudge): the run then has no requester
+   * and no per-actor access decision is made; every other gate still applies.
    */
-  actor?(facts: Facts): { id: string; login: string };
+  actor?(facts: Facts): { id: string; login: string } | null;
   /** Per-team / -organization switch that stops every automation of this source. */
   killSwitch: SettingKey;
   /**

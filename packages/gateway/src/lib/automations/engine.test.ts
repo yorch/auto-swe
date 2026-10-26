@@ -18,12 +18,16 @@ vi.mock('../orgAccess.js', () => ({ isOrgOverBudget: vi.fn(async () => m.overBud
 
 import {
   INBOUND_EVENT,
+  PR_FEEDBACK,
+  PrFeedbackFactsSchema,
+  prFeedbackSource,
   WORKFLOW_RUN_FAILED,
   type WorkflowRunFailedFacts,
   workflowRunFailedSource,
 } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
+import { PR_FEEDBACK_INPUT_SCHEMA } from '@auto-swe/shared/lib/prFeedback';
 import { FAKE_TEAM_SOURCE, fakeTeamSource } from '../../test/fakeTeamSource.js';
 import { isOrgOverBudget } from '../orgAccess.js';
 import {
@@ -1157,5 +1161,131 @@ describe('inbound events (inbound.event)', () => {
     });
     // Still decided on the endpoint, not the repository.
     expect(h.fires[0]?.ownerKey).toBe(`@endpoint/${ENDPOINT}`);
+  });
+});
+
+// ── a Qodo nudge: a bot, no person behind it ─────────────────────────
+
+describe('handleOccurrence (github.pull_request.feedback, Qodo findings)', () => {
+  const HEAD = 'a'.repeat(40);
+  const qodoAutomation = (over: Record<string, unknown> = {}) => ({
+    cooldownMinutes: 0,
+    createdAt: new Date(0),
+    enabled: true,
+    filters: { pullRequests: ['platform'], triggers: ['qodo_findings'] },
+    id: 'aaaaaaaa-0000-4000-8000-000000000002',
+    inputs: {},
+    maxRunsPerDay: 10,
+    source: PR_FEEDBACK,
+    templateId: null,
+    ...over,
+  });
+  const qodoHarness = (over: Record<string, unknown> = {}, gone = async () => true) =>
+    harness({
+      gone,
+      template: {
+        activeVersion: 1,
+        id: 'tttttttt-0000-4000-8000-000000000002',
+        inputSchema: PR_FEEDBACK_INPUT_SCHEMA,
+      },
+      triggers: [qodoAutomation(over) as never],
+    });
+  const nudge = (over: Record<string, unknown> = {}) => ({
+    facts: PrFeedbackFactsSchema.parse({
+      eventId: '1',
+      eventKind: 'review_comment',
+      headRef: 'auto/prfb-9-1',
+      headSha: HEAD,
+      htmlUrl: 'https://github.com/acme/api/pull/9',
+      notes: '',
+      origin: 'workflow',
+      prNumber: 9,
+      senderId: '424242',
+      senderLogin: 'review-bot[bot]',
+      submittedAt: '2026-10-01T00:00:00Z',
+      trigger: 'qodo_findings',
+      ...over,
+    }),
+    org: 'acme',
+    repoFullName: 'acme/api',
+    repoHtmlUrl: 'https://github.com/acme/api',
+    repoName: 'api',
+  });
+  const fire = (h: ReturnType<typeof harness>, o = nudge()) =>
+    handleOccurrence(h.fastify as never, prFeedbackSource, o, null, new Date(), 0);
+
+  it('starts a run with no requester and makes no per-actor access decision', async () => {
+    const h = qodoHarness();
+    // The harness has no `user` table: a lookup of the bot's account would throw.
+    expect(h.db).not.toHaveProperty('user');
+    const result = await fire(h);
+    expect(result).toMatchObject({ outcome: 'STARTED' });
+    expect(h.started).toHaveLength(1);
+    expect(h.runInputs[0]).toMatchObject({ requestedById: null });
+    expect(h.runInputs[0]).not.toHaveProperty('launchedById');
+    expect(h.started[0].input).toMatchObject({
+      request: {
+        description:
+          'Address the open findings Qodo reported on the head commit of pull request #9.',
+      },
+    });
+  });
+
+  it('still refuses an organization over its budget', async () => {
+    m.overBudget = true;
+    const h = qodoHarness();
+    expect(await fire(h)).toMatchObject({ outcome: 'SUPPRESSED_BUDGET' });
+    expect(h.started).toHaveLength(0);
+  });
+
+  it('decides K comments of one review on one head as one run', async () => {
+    const h = qodoHarness();
+    const results = [];
+    for (const [i, eventKind] of (
+      ['review', 'review', 'review_comment', 'review_comment', 'issue_comment'] as const
+    ).entries()) {
+      results.push(await fire(h, nudge({ eventId: String(100 + i), eventKind })));
+    }
+    expect(results.filter((r) => 'outcome' in r && r.outcome === 'STARTED')).toHaveLength(1);
+    expect(h.started).toHaveLength(1);
+    expect(results.slice(1)).toEqual(
+      Array(4).fill(expect.objectContaining({ outcome: 'SUPPRESSED_SAME_SUBJECT' }))
+    );
+    expect(h.fires.map((f) => f.subjectKey)).toEqual(Array(5).fill(`pr-9@qodo-${HEAD}`));
+  });
+
+  it('is not windowed: a late comment of an old review is still the same decision', async () => {
+    const h = qodoHarness({ cooldownMinutes: 0 });
+    await fire(h, nudge({ eventId: '1' }));
+    h.fires[0].createdAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    expect(await fire(h, nudge({ eventId: '2' }))).toMatchObject({
+      outcome: 'SUPPRESSED_SAME_SUBJECT',
+    });
+  });
+
+  it('treats Qodo’s review of the platform’s own pushed commit as a new subject, not as its output', async () => {
+    const h = qodoHarness();
+    await fire(h, nudge({ eventId: '1' }));
+    const pushed = 'f'.repeat(40);
+    // The round pushed a fix: the ledger records the commit as the platform's own output.
+    h.fires[0].producedKey = pushed;
+    const again = await fire(h, nudge({ eventId: '2', headSha: pushed }));
+    expect(again).toMatchObject({ outcome: 'STARTED' });
+    expect(h.started).toHaveLength(2);
+  });
+
+  it('is still held by the in-flight guard while an earlier round on the pull request runs', async () => {
+    const h = qodoHarness({}, async () => false);
+    await fire(h, nudge({ eventId: '1' }));
+    h.active.push({ currentStatus: 'IMPLEMENTING', temporalWorkflowId: h.started[0].id });
+    expect(await fire(h, nudge({ eventId: '2', headSha: 'b'.repeat(40) }))).toMatchObject({
+      outcome: 'SUPPRESSED_IN_FLIGHT',
+    });
+  });
+
+  it('does not match an automation that never listed the trigger', async () => {
+    const h = qodoHarness({ filters: { pullRequests: ['platform'], triggers: ['command'] } });
+    expect(await fire(h)).toMatchObject({ ignored: true });
+    expect(h.started).toHaveLength(0);
   });
 });

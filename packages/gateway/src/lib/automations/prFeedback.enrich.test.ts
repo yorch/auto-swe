@@ -131,3 +131,133 @@ describe('enrichPrFeedbackFacts — the host read for `other` origins is gated',
     expect(r).toMatchObject({ facts: { headRef: 'feature/x' }, type: 'ok' });
   });
 });
+
+describe('enrichPrFeedbackFacts — a Qodo nudge', () => {
+  const SHA = 'c'.repeat(40);
+  const nudge = (over: Record<string, unknown> = {}) => {
+    const e = event();
+    return {
+      ...e,
+      facts: {
+        ...e.facts,
+        eventKind: 'review' as const,
+        headRef: 'auto/prfb-9-1',
+        headSha: SHA,
+        notes: '',
+        senderId: '424242',
+        trigger: 'qodo_findings' as const,
+        ...over,
+      },
+    };
+  };
+  const platformPr = {
+    repoId: 'conn-1',
+    workflow: { assignedBranch: 'auto/prfb-9-1', temporalWorkflowId: 'wf-1' },
+  };
+
+  beforeEach(() => {
+    m.settings['qodo.prFeedbackBotAccountIds'] = [424242];
+    m.settings['qodo.enabled'] = true;
+    m.pullRequestFindFirst.mockResolvedValue(platformPr);
+    m.runFindFirst.mockResolvedValue({ template: { origin: 'USER', teamId: 'team-1' } });
+  });
+
+  it('passes an allowlisted bot on a platform pull request through, origin set', async () => {
+    const r = await enrichPrFeedbackFacts(prisma, nudge() as never, 'github.com');
+    expect(r).toMatchObject({
+      facts: { headSha: SHA, origin: 'workflow', trigger: 'qodo_findings' },
+      type: 'ok',
+    });
+    expect(m.fetch).not.toHaveBeenCalled();
+  });
+
+  it('answers a bot that is not on the allowlist as any bot has always been answered', async () => {
+    const r = await enrichPrFeedbackFacts(prisma, nudge({ senderId: '1' }) as never, 'github.com');
+    expect(r).toEqual({ reason: 'left by a Bot, not a person', type: 'ignored' });
+    // Nothing was queried for it.
+    expect(m.connectionFindMany).not.toHaveBeenCalled();
+  });
+
+  it('ignores every bot while the allowlist is empty', async () => {
+    m.settings['qodo.prFeedbackBotAccountIds'] = [];
+    const r = await enrichPrFeedbackFacts(prisma, nudge() as never, 'github.com');
+    expect(r).toMatchObject({ type: 'ignored' });
+  });
+
+  it('matches the numeric id, not the login', async () => {
+    const r = await enrichPrFeedbackFacts(
+      prisma,
+      nudge({ senderId: '424243', senderLogin: 'qodo-lookalike[bot]' }) as never,
+      'github.com'
+    );
+    expect(r.type).toBe('ignored');
+  });
+
+  it('ignores a pull request the platform did not open', async () => {
+    m.pullRequestFindFirst.mockResolvedValue(null);
+    const r = await enrichPrFeedbackFacts(prisma, nudge() as never, 'github.com');
+    expect(r).toMatchObject({
+      reason: 'the pull request is not one the platform opened',
+      type: 'ignored',
+    });
+  });
+
+  it('ignores the nudge when Qodo reading is off for the repository’s team', async () => {
+    m.settings['qodo.enabled'] = false;
+    const r = await enrichPrFeedbackFacts(prisma, nudge() as never, 'github.com');
+    expect(r.type).toBe('ignored');
+  });
+
+  it('reads the pull request once for the head a discussion comment does not carry', async () => {
+    m.fetch.mockResolvedValue({
+      json: async () => ({
+        head: { ref: 'auto/prfb-9-1', repo: { id: 500 }, sha: SHA.toUpperCase() },
+        state: 'open',
+      }),
+      ok: true,
+      status: 200,
+    });
+    const r = await enrichPrFeedbackFacts(
+      prisma,
+      nudge({ eventKind: 'issue_comment', headRef: undefined, headSha: undefined }) as never,
+      'github.com'
+    );
+    expect(r).toMatchObject({
+      facts: { headRef: 'auto/prfb-9-1', headSha: SHA, origin: 'workflow' },
+      type: 'ok',
+    });
+    expect(m.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a discussion comment on a closed or forked pull request, or one that cannot be read', async () => {
+    const issueNudge = nudge({
+      eventKind: 'issue_comment',
+      headRef: undefined,
+      headSha: undefined,
+    });
+    const answer = (head: Record<string, unknown>, state = 'open') =>
+      m.fetch.mockResolvedValue({
+        json: async () => ({ head, state }),
+        ok: true,
+        status: 200,
+      });
+    answer({ ref: 'x', repo: { id: 500 }, sha: SHA }, 'closed');
+    expect(await enrichPrFeedbackFacts(prisma, issueNudge as never, 'github.com')).toMatchObject({
+      type: 'ignored',
+    });
+    answer({ ref: 'x', repo: { id: 9 }, sha: SHA });
+    expect(await enrichPrFeedbackFacts(prisma, issueNudge as never, 'github.com')).toMatchObject({
+      reason: 'the pull request is from a fork',
+      type: 'ignored',
+    });
+    answer({ ref: 'x', repo: { id: 500 } });
+    expect(await enrichPrFeedbackFacts(prisma, issueNudge as never, 'github.com')).toMatchObject({
+      reason: 'the pull request names no head commit',
+      type: 'ignored',
+    });
+    m.fetch.mockResolvedValue({ ok: false, status: 500 });
+    expect((await enrichPrFeedbackFacts(prisma, issueNudge as never, 'github.com')).type).toBe(
+      'failed'
+    );
+  });
+});

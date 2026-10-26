@@ -217,6 +217,23 @@ describe('respondToPrFeedback — verdict and replies', () => {
     expect(r2.replies).toBe(0);
     expect(m.modelCalled).toHaveBeenCalledTimes(1); // previous verdict: no model call
   });
+  it('posts only the summary for a Qodo finding: it has no GitHub thread to reply on', async () => {
+    base();
+    m.replyToReviewComment.mockImplementation(async (...a: unknown[]) => {
+      m.replies.push({ body: a[3] as string, commentId: a[2] as number });
+      return {};
+    });
+    const r = await respondToPrFeedback({
+      gather: gather({
+        threads: [{ label: 'T1', line: null, path: '', replyToCommentId: 0, threadId: '' }],
+      }),
+      push: { branch: 'feature/work', commitSha: 'c'.repeat(40), pushed: true },
+      request: request(),
+    });
+    expect(r).toMatchObject({ commented: true, replies: 0 });
+    expect(m.replies).toHaveLength(0);
+    expect(m.postedComments.length).toBeGreaterThan(0);
+  });
   it('previous-verdict calls re-render summary with push + CI lines, no model call', async () => {
     base();
     const r = await respondToPrFeedback({

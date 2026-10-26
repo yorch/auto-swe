@@ -5,6 +5,7 @@ import {
   PR_FEEDBACK_EVENT_INPUT_KEYS,
   PR_FEEDBACK_EVENT_KINDS,
   PR_FEEDBACK_ORIGINS,
+  PR_FEEDBACK_QODO_TRIGGER,
   PR_FEEDBACK_TEMPLATE_NAME,
   PR_FEEDBACK_TRIGGERS,
   PrFeedbackPayloadSchema,
@@ -44,6 +45,15 @@ export const PrFeedbackFactsSchema = z.object({
   eventKind: z.enum(PR_FEEDBACK_EVENT_KINDS),
   /** The pull request's head branch. Absent when the enrichment could not name it. */
   headRef: z.string().min(1).max(200).optional(),
+  /**
+   * The pull request's head commit as the delivery named it, set only for a Qodo nudge: its
+   * dedupe subject, so every comment of one Qodo review on one head is one decision. A head
+   * the delivery did not carry (a discussion comment) is filled by the gateway's enrichment.
+   */
+  headSha: z
+    .string()
+    .regex(/^[0-9a-f]{40,64}$/i)
+    .optional(),
   htmlUrl: z.string().max(500),
   /** The visible text after the command, or the review body. HTML comments stripped. */
   notes: z.string().max(MAX_NOTES_CHARS),
@@ -83,6 +93,9 @@ export function parseFeedbackCommand(body: string): { notes: string } | null {
 
 /** How a trigger reads in lists and messages. */
 function triggerLabel(trigger: string): string {
+  if (trigger === PR_FEEDBACK_QODO_TRIGGER) {
+    return 'Qodo’s review of the pull request';
+  }
   return trigger === 'command' ? 'the `/auto-swe fix` command' : 'a review requesting changes';
 }
 
@@ -95,11 +108,16 @@ function triggerLabel(trigger: string): string {
  * request, and then only via the explicit command.
  */
 export const prFeedbackSource: EventSource<PrFeedbackFilters, PrFeedbackFacts> = {
-  actor: (x) => ({ id: x.senderId, login: x.senderLogin }),
+  // A Qodo nudge is a bot's: no person is behind it, so no per-actor access decision runs
+  // and the run has no requester. The safety of that path rests on the gateway's allowlist of
+  // bot ids, the platform-opened pull request, and the worker's checks (docs/pr-feedback.md).
+  actor: (x) =>
+    x.trigger === PR_FEEDBACK_QODO_TRIGGER ? null : { id: x.senderId, login: x.senderLogin },
   contract: PrFeedbackPayloadSchema,
   dedupeKey: (ownerKey, x) =>
     `${ownerKey}#pr-${x.prNumber}/${x.eventKind}-${x.eventId}`.toLowerCase(),
-  defaultFilters: { pullRequests: ['platform'], triggers: [...PR_FEEDBACK_TRIGGERS] },
+  // Qodo is opt-in: an automation that never listed it keeps reacting to people only.
+  defaultFilters: { pullRequests: ['platform'], triggers: ['changes_requested', 'command'] },
   defaultTemplate: { name: PR_FEEDBACK_TEMPLATE_NAME },
   describe: (f) =>
     `${f.triggers.map(triggerLabel).join(' or ')} on ${
@@ -131,6 +149,7 @@ export const prFeedbackSource: EventSource<PrFeedbackFilters, PrFeedbackFacts> =
       options: [
         { label: 'A review requests changes', value: 'changes_requested' },
         { label: 'The `/auto-swe fix` command', value: 'command' },
+        { label: 'Qodo reviews the pull request', value: 'qodo_findings' },
       ],
     },
     {
@@ -157,15 +176,25 @@ export const prFeedbackSource: EventSource<PrFeedbackFilters, PrFeedbackFacts> =
   // A round can wait hours on a person's review; a delivery meanwhile is in flight.
   inFlightLookbackMs: 24 * 60 * 60 * 1000,
   key: PR_FEEDBACK,
+  // A Qodo review posts several comments, each its own delivery: they share one subject (the
+  // pull request at the head Qodo reviewed), so the ledger decides them once. A fix push moves
+  // the head, so Qodo's re-review is a new subject. The subject is never a bare commit sha, so
+  // the platform's own pushed commit does not mark Qodo's review of it as the platform's output.
   keys: (x) => ({
     scope: `pr-${x.prNumber}`,
-    subject: `pr-${x.prNumber}@${x.eventKind}-${x.eventId}`,
+    subject:
+      x.trigger === PR_FEEDBACK_QODO_TRIGGER && x.headSha
+        ? `pr-${x.prNumber}@qodo-${x.headSha.toLowerCase()}`
+        : `pr-${x.prNumber}@${x.eventKind}-${x.eventId}`,
   }),
   killSwitch: 'github.prFeedbackAutomationsEnabled',
   label: 'When pull request feedback arrives',
   mismatch(f, x) {
     if (!(f.triggers as readonly string[]).includes(x.trigger)) {
       return `it does not react to ${triggerLabel(x.trigger)}`;
+    }
+    if (x.trigger === PR_FEEDBACK_QODO_TRIGGER && x.origin === 'other') {
+      return 'Qodo’s findings are only acted on for a pull request the platform opened';
     }
     if (x.origin === 'other') {
       if (!(f.pullRequests as readonly string[]).includes('others')) {
@@ -180,11 +209,16 @@ export const prFeedbackSource: EventSource<PrFeedbackFilters, PrFeedbackFacts> =
     return null;
   },
   run: (x) => ({
-    description: [
-      `Address review feedback on pull request #${x.prNumber}, ` +
-        `${triggerLabel(x.trigger)} by ${x.senderLogin}: ${x.htmlUrl}`,
-      x.notes,
-    ]
+    description: (x.trigger === PR_FEEDBACK_QODO_TRIGGER
+      ? [
+          `Address the open findings Qodo reported on the head commit of pull request #${x.prNumber}.`,
+        ]
+      : [
+          `Address review feedback on pull request #${x.prNumber}, ` +
+            `${triggerLabel(x.trigger)} by ${x.senderLogin}: ${x.htmlUrl}`,
+          x.notes,
+        ]
+    )
       .filter((p) => p.trim().length > 0)
       .join('\n\n'),
     fields: {
@@ -217,6 +251,9 @@ export const prFeedbackSource: EventSource<PrFeedbackFilters, PrFeedbackFacts> =
       if (f.pullRequests.includes('platform')) {
         out.push({ ...base, origin: 'workflow', trigger });
         out.push({ ...base, origin: 'agent_run', trigger });
+      }
+      if (trigger === PR_FEEDBACK_QODO_TRIGGER) {
+        continue;
       }
       if (trigger === 'command' && f.pullRequests.includes('others')) {
         out.push({ ...base, origin: 'other', trigger });
@@ -269,6 +306,7 @@ export const prFeedbackSource: EventSource<PrFeedbackFilters, PrFeedbackFacts> =
         options: [
           { label: 'Review requesting changes', value: 'changes_requested' },
           { label: 'The `/auto-swe fix` command', value: 'command' },
+          { label: 'Qodo reviews the pull request', value: 'qodo_findings' },
         ],
       },
       {

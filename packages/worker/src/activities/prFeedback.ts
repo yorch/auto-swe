@@ -23,6 +23,7 @@ import { AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import { linkedGithubAccountIds } from '@auto-swe/shared/lib/githubAccountId';
 import { permissionMeets } from '@auto-swe/shared/lib/githubPermission';
 import {
+  PR_FEEDBACK_QODO_TRIGGER,
   PR_FEEDBACK_TEMPLATE_NAME,
   type PrFeedbackPayload,
   PrFeedbackPayloadSchema,
@@ -41,6 +42,14 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { withHeartbeat } from '../lib/execUtils.js';
+import {
+  actionLevelAtLeast,
+  createQodoFindingsClient,
+  isFindingTextWithheld,
+  isOpenFinding,
+  type QodoFindingsClient,
+  type QodoPrReviewState,
+} from '../lib/qodo/client.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import type { ReviewThread } from '../lib/scm/types.js';
@@ -227,87 +236,95 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
     const headSha = pr.headSha;
     const headRef = pr.headRef;
 
-    // ── 3. The triggering review or comment, re-read by id ──
+    // A Qodo nudge is a bot's: it names no person to trust and carries no text to read, so
+    // steps 3 and 4 (re-read the trigger, match the requester) do not apply to it. Its
+    // findings are pulled from Qodo in step 7, under the gates there.
+    const isQodo = payload.feedbackTrigger === PR_FEEDBACK_QODO_TRIGGER;
+
     let triggerAuthorId: string | null = null;
     let triggerAuthorLogin = '';
     let triggerBody = '';
     let triggerThreadCommentId: number | null = null;
-    if (payload.feedbackEventKind === 'review') {
-      const review = await scm.getPullRequestReview(
-        repoRef,
-        payload.pullRequestNumber,
-        payload.feedbackEventId
-      );
-      if (!review) {
-        return skip('the review no longer exists', { headRef, silent: true });
-      }
-      if (
-        payload.feedbackTrigger === 'changes_requested' &&
-        review.state.toLowerCase() !== 'changes_requested'
-      ) {
-        return skip('the review is no longer requesting changes', { headRef, silent: true });
-      }
-      triggerAuthorId = review.authorId;
-      triggerAuthorLogin = review.authorLogin;
-      triggerBody = review.body;
-    } else {
-      const comment =
-        payload.feedbackEventKind === 'issue_comment'
-          ? await scm.getIssueComment(repoRef, payload.feedbackEventId)
-          : await scm.getReviewComment(repoRef, payload.feedbackEventId);
-      if (!comment) {
-        return skip('the comment no longer exists', { headRef, silent: true });
-      }
-      if ('issueNumber' in comment && comment.issueNumber !== payload.pullRequestNumber) {
-        return skip('the comment is not on this pull request', { headRef, silent: true });
-      }
-      if (
-        'pullRequestNumber' in comment &&
-        comment.pullRequestNumber !== payload.pullRequestNumber
-      ) {
-        return skip('the comment is not on this pull request', { headRef, silent: true });
-      }
-      if (parseFeedbackCommand(comment.body) === null) {
-        return skip('the comment no longer carries the command', { headRef, silent: true });
-      }
-      triggerAuthorId = comment.authorId;
-      triggerAuthorLogin = comment.authorLogin;
-      triggerBody = comment.body;
-      if ('inReplyToId' in comment) {
-        // A reply's thread is named by its top-level comment.
-        triggerThreadCommentId = comment.inReplyToId ?? Number(payload.feedbackEventId);
-      } else {
-        triggerThreadCommentId = Number(payload.feedbackEventId);
-      }
-    }
 
-    // ── 4. The requester really wrote it (R13), is an active member, AND has write
-    // permission on the repository — unconditionally, the access gate is not what trusts them.
-    const runInput = await prisma.runInput.findUnique({
-      include: {
-        requestedBy: { select: { githubLoginAccountId: true, id: true, isActive: true } },
-      },
-      where: { id: request.workRequestId },
-    });
-    const requester = runInput?.requestedBy;
-    const linked = requester?.githubLoginAccountId ?? null;
-    const matchesRequester =
-      requester?.isActive === true &&
-      linked !== null &&
-      triggerAuthorId !== null &&
-      linkedGithubAccountIds(host, triggerAuthorId).includes(linked);
-    if (!matchesRequester) {
-      return skip('the feedback was not written by the account the run recorded', {
-        headRef,
-        silent: true,
+    // ── 3. The triggering review or comment, re-read by id ──
+    if (!isQodo) {
+      if (payload.feedbackEventKind === 'review') {
+        const review = await scm.getPullRequestReview(
+          repoRef,
+          payload.pullRequestNumber,
+          payload.feedbackEventId
+        );
+        if (!review) {
+          return skip('the review no longer exists', { headRef, silent: true });
+        }
+        if (
+          payload.feedbackTrigger === 'changes_requested' &&
+          review.state.toLowerCase() !== 'changes_requested'
+        ) {
+          return skip('the review is no longer requesting changes', { headRef, silent: true });
+        }
+        triggerAuthorId = review.authorId;
+        triggerAuthorLogin = review.authorLogin;
+        triggerBody = review.body;
+      } else {
+        const comment =
+          payload.feedbackEventKind === 'issue_comment'
+            ? await scm.getIssueComment(repoRef, payload.feedbackEventId)
+            : await scm.getReviewComment(repoRef, payload.feedbackEventId);
+        if (!comment) {
+          return skip('the comment no longer exists', { headRef, silent: true });
+        }
+        if ('issueNumber' in comment && comment.issueNumber !== payload.pullRequestNumber) {
+          return skip('the comment is not on this pull request', { headRef, silent: true });
+        }
+        if (
+          'pullRequestNumber' in comment &&
+          comment.pullRequestNumber !== payload.pullRequestNumber
+        ) {
+          return skip('the comment is not on this pull request', { headRef, silent: true });
+        }
+        if (parseFeedbackCommand(comment.body) === null) {
+          return skip('the comment no longer carries the command', { headRef, silent: true });
+        }
+        triggerAuthorId = comment.authorId;
+        triggerAuthorLogin = comment.authorLogin;
+        triggerBody = comment.body;
+        if ('inReplyToId' in comment) {
+          // A reply's thread is named by its top-level comment.
+          triggerThreadCommentId = comment.inReplyToId ?? Number(payload.feedbackEventId);
+        } else {
+          triggerThreadCommentId = Number(payload.feedbackEventId);
+        }
+      }
+
+      // ── 4. The requester really wrote it (R13), is an active member, AND has write
+      // permission on the repository — unconditionally, the access gate is not what trusts them.
+      const runInput = await prisma.runInput.findUnique({
+        include: {
+          requestedBy: { select: { githubLoginAccountId: true, id: true, isActive: true } },
+        },
+        where: { id: request.workRequestId },
       });
-    }
-    const requesterTrusted = await trustedUserId(triggerAuthorId, triggerAuthorLogin);
-    if (requesterTrusted !== requester?.id) {
-      return skip('the requester is not a member with write access to the repository', {
-        headRef,
-        silent: true,
-      });
+      const requester = runInput?.requestedBy;
+      const linked = requester?.githubLoginAccountId ?? null;
+      const matchesRequester =
+        requester?.isActive === true &&
+        linked !== null &&
+        triggerAuthorId !== null &&
+        linkedGithubAccountIds(host, triggerAuthorId).includes(linked);
+      if (!matchesRequester) {
+        return skip('the feedback was not written by the account the run recorded', {
+          headRef,
+          silent: true,
+        });
+      }
+      const requesterTrusted = await trustedUserId(triggerAuthorId, triggerAuthorLogin);
+      if (requesterTrusted !== requester?.id) {
+        return skip('the requester is not a member with write access to the repository', {
+          headRef,
+          silent: true,
+        });
+      }
     }
 
     // ── 5. The pull request's origin, from the database — never the payload ──
@@ -349,6 +366,7 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
         return skip('the run that opened this pull request is still working on it', {
           headRef,
           origin,
+          silent: isQodo,
         });
       }
     }
@@ -384,7 +402,118 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
     });
     const round = pushed + 1;
     if (round > payload.maxRounds) {
-      return skip('round limit reached', { headRef, origin, round });
+      return skip('round limit reached', { headRef, origin, round, silent: isQodo });
+    }
+    if (isQodo) {
+      // On top of the automation's own limit: how many pushes Qodo's findings alone may cause
+      // on this pull request. A Qodo fire's subject is `pr-N@qodo-<head>`, never an event id.
+      const qodoPushed = await prisma.automationFire.count({
+        where: {
+          outcome: 'STARTED',
+          ownerKey,
+          producedKey: { not: null },
+          scopeKey: `pr-${payload.pullRequestNumber}`,
+          source: PR_FEEDBACK,
+          subjectKey: { startsWith: `pr-${payload.pullRequestNumber}@qodo-` },
+        },
+      });
+      if (qodoPushed >= (await resolveSetting('qodo.prFeedbackMaxRounds', ctx))) {
+        return skip('the Qodo round limit is reached', { headRef, origin, round, silent: true });
+      }
+    }
+
+    // ── 8. The round's work branch, at the pull request's head, and the gather result ──
+    // Shared by both kinds of round: `triggerLine` and the brief parts are all that differ.
+    const finishRound = async (round_: {
+      briefParts: string[];
+      briefThreads: FeedbackBriefThread[];
+      dropped: GatherResult['dropped'];
+      triggerLine: string;
+    }): Promise<GatherResult> => {
+      const { branchPrefix } = await resolveWorkflowDefaults();
+      const workBranch = `${branchPrefix}/${request.externalTicketId}`;
+      if (workBranch === headRef) {
+        return skip('the work branch would be the pull request’s own branch', {
+          headRef,
+          origin,
+          silent: true,
+        });
+      }
+
+      // ── 8. The work branch at the pull request's head ──
+      const created = await scm.createBranch(repoRef, workBranch, headSha);
+      if (created === 'exists_other') {
+        return skip('a previous attempt left this round’s work branch', {
+          headRef,
+          origin,
+          round,
+        });
+      }
+      const codeResult: CodeResult = {
+        baseBranch: headRef,
+        baseSha: headSha,
+        branch: workBranch,
+        diff: '',
+        filesChanged: [],
+        headSha,
+        implementationNotes: '',
+        repoId,
+        testResults: { duration_ms: 0, failing: 0, passed: true, passing: 0, stdout: '', total: 0 },
+      };
+      tracer.addActivityEvent({
+        name: 'pr_feedback.gathered',
+        outputJson: {
+          origin,
+          prNumber: payload.pullRequestNumber,
+          round,
+          threads: round_.briefThreads.length,
+        },
+      });
+      return {
+        agentRef,
+        brief: fenceReviewFeedback([round_.triggerLine, ...round_.briefParts].join('\n\n')),
+        codeResult,
+        decision: 'fix',
+        dropped: round_.dropped,
+        fixer: origin === 'agent_run' && agentRef !== undefined ? 'agent' : 'reviewFixer',
+        headRef,
+        headSha,
+        newerFeedback: false,
+        origin,
+        originalTask,
+        prNumber: payload.pullRequestNumber,
+        reason: '',
+        round,
+        silent: false,
+        threads: round_.briefThreads,
+        workBranch,
+      };
+    };
+
+    if (isQodo) {
+      if (!repo.teamId) {
+        return skip('the repository has no team to read Qodo for', {
+          headRef,
+          origin,
+          round,
+          silent: true,
+        });
+      }
+      return await gatherQodoRound({
+        client: createQodoFindingsClient({
+          ...(repo.team?.orgId ? { orgId: repo.team.orgId } : {}),
+          teamId: repo.teamId,
+          tracer,
+        }),
+        ctx,
+        finishRound,
+        headSha,
+        prUrl: await scm.prUrl(repoRef, payload.pullRequestNumber),
+        recheckHead: async () =>
+          (await scm.pullRequestInfo(repoRef, payload.pullRequestNumber))?.headSha ?? null,
+        skip: (reason) => skip(reason, { headRef, origin, round, silent: true }),
+        tracer,
+      });
     }
 
     // ── 7. The feedback set: the trigger plus every open member thread. Every comment is
@@ -499,66 +628,12 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
     if (briefThreads.length === 0 && triggerNotes.trim().length === 0) {
       return skip('nothing usable in the feedback', { headRef, origin });
     }
-    const { branchPrefix } = await resolveWorkflowDefaults();
-    const workBranch = `${branchPrefix}/${request.externalTicketId}`;
-    if (workBranch === headRef) {
-      return skip('the work branch would be the pull request’s own branch', {
-        headRef,
-        origin,
-        silent: true,
-      });
-    }
-
-    // ── 8. The work branch at the pull request's head ──
-    const created = await scm.createBranch(repoRef, workBranch, headSha);
-    if (created === 'exists_other') {
-      return skip('a previous attempt left this round’s work branch', {
-        headRef,
-        origin,
-        round,
-      });
-    }
-    const codeResult: CodeResult = {
-      baseBranch: headRef,
-      baseSha: headSha,
-      branch: workBranch,
-      diff: '',
-      filesChanged: [],
-      headSha,
-      implementationNotes: '',
-      repoId,
-      testResults: { duration_ms: 0, failing: 0, passed: true, passing: 0, stdout: '', total: 0 },
-    };
-    tracer.addActivityEvent({
-      name: 'pr_feedback.gathered',
-      outputJson: {
-        origin,
-        prNumber: payload.pullRequestNumber,
-        round,
-        threads: briefThreads.length,
-      },
-    });
-    return {
-      agentRef,
-      brief: fenceReviewFeedback(
-        [`[TRIGGER] ${triggerNotes || '(no additional notes)'}`, ...briefParts].join('\n\n')
-      ),
-      codeResult,
-      decision: 'fix',
+    return finishRound({
+      briefParts,
+      briefThreads,
       dropped,
-      fixer: origin === 'agent_run' && agentRef !== undefined ? 'agent' : 'reviewFixer',
-      headRef,
-      headSha,
-      newerFeedback: false,
-      origin,
-      originalTask,
-      prNumber: payload.pullRequestNumber,
-      reason: '',
-      round,
-      silent: false,
-      threads: briefThreads,
-      workBranch,
-    };
+      triggerLine: `[TRIGGER] ${triggerNotes || '(no additional notes)'}`,
+    });
   } catch (err) {
     if (!(err instanceof ApplicationFailure)) {
       tracer.addActivityEvent({ error: getErrorMessage(err), name: 'pr_feedback.gather_failed' });
@@ -567,6 +642,173 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
   } finally {
     await persistActivityTrace(tracer, 'reviewFixer');
   }
+}
+
+// ── A Qodo round: the findings are pulled from Qodo, never read from a comment ─────────────
+
+/** Qodo's review of a head commit can finish a while after its first comment lands. */
+const QODO_POLL_INTERVAL_MS = 10_000;
+
+const QODO_LEVEL_ORDER = {
+  action_required: 3,
+  informational: 1,
+  remediation_recommended: 2,
+  unknown: 0,
+} as const;
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Ask Qodo about the pull request until its review of exactly `headSha` is complete, for at
+ * most `waitSeconds`. Every refusal is a fixed string: nothing Qodo returned, and no error
+ * text, reaches a reason, a trace or a comment.
+ */
+async function readQodoReview(
+  client: QodoFindingsClient,
+  prUrl: string,
+  headSha: string,
+  waitSeconds: number,
+  tracer: AgentTracer
+): Promise<
+  | { type: 'ready'; state: Extract<QodoPrReviewState, { kind: 'ok' }> }
+  | { type: 'skip'; reason: string }
+> {
+  const deadline = Date.now() + waitSeconds * 1_000;
+  for (;;) {
+    const state = await client.getPrReviewState(prUrl);
+    if (state.kind === 'unavailable') {
+      tracer.addActivityEvent({
+        name: 'pr_feedback.qodo_unavailable',
+        outputJson: { reason: state.reason },
+      });
+      return { reason: 'Qodo could not be read', type: 'skip' };
+    }
+    if (state.kind === 'no_session') {
+      return { reason: 'Qodo has no review of this pull request', type: 'skip' };
+    }
+    const stale = state.session.commitSha.toLowerCase() !== headSha.toLowerCase();
+    if (!stale) {
+      if (state.session.status === 'completed') {
+        return { state, type: 'ready' };
+      }
+      if (state.session.status === 'failed') {
+        return { reason: 'Qodo’s review of this commit failed', type: 'skip' };
+      }
+    }
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      return {
+        reason: stale
+          ? 'Qodo has not reviewed the pull request’s current head commit'
+          : 'Qodo has not finished reviewing the pull request',
+        type: 'skip',
+      };
+    }
+    await sleep(Math.min(QODO_POLL_INTERVAL_MS, remaining));
+  }
+}
+
+/**
+ * One round of Qodo's findings on a pull request the platform opened. The gateway's nudge said
+ * only that Qodo's bot spoke; what Qodo found is asked of Qodo itself, with the repository's
+ * team's connection, and only the review of the pull request's CURRENT head commit counts — the
+ * fix is cut from that commit, so it is the one the findings are about. Open findings at or
+ * above the configured level become the brief: Qodo's title and description only (no code, no
+ * paths), bounded, screened for injection in one batch, and fenced like human review text.
+ * Every way this cannot proceed is a silent skip.
+ */
+async function gatherQodoRound(args: {
+  client: QodoFindingsClient;
+  ctx: { orgId?: string; teamId: string | null };
+  finishRound: (r: {
+    briefParts: string[];
+    briefThreads: FeedbackBriefThread[];
+    dropped: GatherResult['dropped'];
+    triggerLine: string;
+  }) => Promise<GatherResult>;
+  headSha: string;
+  prUrl: string;
+  /** The pull request's head commit now, or null when it cannot be read. */
+  recheckHead: () => Promise<string | null>;
+  skip: (reason: string) => Promise<GatherResult>;
+  tracer: AgentTracer;
+}): Promise<GatherResult> {
+  const { client, ctx, headSha, prUrl, tracer } = args;
+  const settingsCtx = {
+    ...(ctx.orgId ? { orgId: ctx.orgId } : {}),
+    teamId: ctx.teamId ?? undefined,
+  };
+  const minLevel = await resolveSetting('qodo.prFeedbackMinActionLevel', settingsCtx);
+  const waitSeconds = await resolveSetting('qodo.prFeedbackWaitSeconds', settingsCtx);
+  const read = await readQodoReview(client, prUrl, headSha, waitSeconds, tracer);
+  if (read.type === 'skip') {
+    return args.skip(read.reason);
+  }
+  // The pull request may have moved since the head was first read, whether or not this waited
+  // (the read itself takes time): the review no longer matches it. One call, every time.
+  if ((await args.recheckHead()) !== headSha) {
+    return args.skip('the pull request’s head moved while Qodo was read');
+  }
+  const { state } = read;
+  if (state.unrecognisedStatuses > 0) {
+    tracer.addActivityEvent({
+      name: 'pr_feedback.qodo_unrecognised_statuses',
+      outputJson: { count: state.unrecognisedStatuses },
+    });
+  }
+  if (state.withheldFields > 0) {
+    // A count only: what the screen withheld is never written to a trace.
+    tracer.addActivityEvent({
+      name: 'pr_feedback.qodo_withheld_fields',
+      outputJson: { count: state.withheldFields },
+    });
+  }
+  const open = state.findings
+    .filter((f) => isOpenFinding(f) && actionLevelAtLeast(f, minLevel))
+    .sort((a, b) => QODO_LEVEL_ORDER[b.actionLevel] - QODO_LEVEL_ORDER[a.actionLevel])
+    .slice(0, MAX_THREADS);
+  if (open.length === 0) {
+    return args.skip('Qodo has no open findings at or above the configured level');
+  }
+  const texts = open.map((f) =>
+    visibleIssueText(`${f.title}\n${f.description}`).trim().slice(0, MAX_COMMENT_CHARS)
+  );
+  // ONE screening batch over every finding, exactly as human feedback is screened.
+  const unusable = await feedbackInjectionScreen(texts);
+  const dropped = { overLimit: 0, screened: 0, untrusted: 0 };
+  const briefParts: string[] = [];
+  const briefThreads: FeedbackBriefThread[] = [];
+  let briefChars = 0;
+  for (const [i, finding] of open.entries()) {
+    // A finding whose title or description the result screen withheld has nothing to act on, and
+    // its placeholder must not stand in for Qodo's words: it is dropped, as a screened one is.
+    if (unusable.has(i) || isFindingTextWithheld(finding)) {
+      dropped.screened += 1;
+      continue;
+    }
+    if (texts[i].length === 0) {
+      continue;
+    }
+    if (briefChars > MAX_BRIEF_CHARS) {
+      dropped.overLimit += 1;
+      continue;
+    }
+    const label = `T${briefThreads.length + 1}`;
+    const block = `[${label}] Qodo finding (${finding.actionLevel})\n— Qodo: ${texts[i]}`;
+    briefChars += block.length;
+    // A Qodo finding is not a GitHub thread: nothing to reply on, only the summary comment.
+    briefThreads.push({ label, line: null, path: '', replyToCommentId: 0, threadId: '' });
+    briefParts.push(block);
+  }
+  if (briefThreads.length === 0) {
+    return args.skip('nothing usable in Qodo’s findings');
+  }
+  return args.finishRound({
+    briefParts,
+    briefThreads,
+    dropped,
+    triggerLine: `[TRIGGER] Qodo reviewed commit ${headSha.slice(0, 7)} and reports ${briefThreads.length} open finding(s) to address.`,
+  });
 }
 
 // ── Pushing the fix onto the pull request's branch ──────────────────────────
@@ -923,7 +1165,7 @@ async function respondToPrFeedbackImpl(input: RespondInput): Promise<RespondResu
     if (dropped.untrusted + dropped.screened + dropped.overLimit > 0) {
       lines.push(
         '',
-        `Ignored: ${dropped.untrusted} comment(s) from untrusted authors, ${dropped.screened} comment(s) that failed screening, ${dropped.overLimit} thread(s) over the limit.`
+        `Ignored: ${dropped.untrusted} comment(s) from untrusted authors, ${dropped.screened} comment(s) or finding(s) that failed screening, ${dropped.overLimit} thread(s) over the limit.`
       );
     }
     // "Newer feedback" comes from the ledger, not a timestamp guess: another delivery on this
@@ -967,7 +1209,7 @@ async function respondToPrFeedbackImpl(input: RespondInput): Promise<RespondResu
       );
       for (const t of gather.threads) {
         const v = byLabel.get(t.label);
-        if (!v || answered.has(t.threadId)) {
+        if (!v || t.threadId === '' || answered.has(t.threadId)) {
           continue;
         }
         const body = [

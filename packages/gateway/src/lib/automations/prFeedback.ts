@@ -19,6 +19,7 @@ import { resolvePlatformCredential } from '@auto-swe/shared/lib/githubHostCreden
 import { installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { isSafeGitBranchName } from '@auto-swe/shared/lib/gitRef';
+import { PR_FEEDBACK_QODO_TRIGGER } from '@auto-swe/shared/lib/prFeedback';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { z } from 'zod';
@@ -39,7 +40,11 @@ const RepositorySchema = z.object({
 
 /** A `pull_request` object as the review payloads carry it. */
 const PullRequestSchema = z.object({
-  head: z.object({ ref: z.string(), repo: z.object({ id: z.number() }).nullish() }),
+  head: z.object({
+    ref: z.string(),
+    repo: z.object({ id: z.number() }).nullish(),
+    sha: z.string().optional(),
+  }),
   number: z.number().int().positive(),
   state: z.string(),
 });
@@ -102,6 +107,60 @@ function senderFacts(sender: { id: number; login: string }) {
   return { senderId: String(sender.id), senderLogin: sender.login.slice(0, 100) };
 }
 
+const HEAD_SHA = /^[0-9a-f]{40,64}$/i;
+
+/**
+ * What a bot's review or comment becomes: a nudge for the Qodo findings trigger. It carries
+ * only identifiers — a bot's text is never copied and never read for a command, so `notes` is
+ * empty. Whether the bot is Qodo's, and whether the feature is on, is the enrichment's call
+ * (those are settings); a delivery that is not is answered there with the same reason a bot
+ * always got.
+ */
+function qodoNudge(args: {
+  eventId: string;
+  eventKind: PrFeedbackFacts['eventKind'];
+  headRef?: string;
+  headSha?: string;
+  parts: { org: string; repoName: string };
+  prNumber: number;
+  repository: { full_name: string; html_url?: string; id: number };
+  sender: { id: number; login: string };
+  submittedAt: string;
+}): PrFeedbackEvent {
+  return {
+    facts: {
+      eventId: args.eventId,
+      eventKind: args.eventKind,
+      ...(args.headRef ? { headRef: args.headRef } : {}),
+      ...(args.headSha ? { headSha: args.headSha.toLowerCase() } : {}),
+      htmlUrl: `https://github.com/${args.repository.full_name}/pull/${args.prNumber}`,
+      notes: '',
+      origin: 'other',
+      prNumber: args.prNumber,
+      submittedAt: args.submittedAt.slice(0, 40),
+      trigger: PR_FEEDBACK_QODO_TRIGGER,
+      ...senderFacts(args.sender),
+    },
+    repositoryId: args.repository.id,
+    type: 'feedback',
+    ...args.parts,
+    repoFullName: args.repository.full_name,
+    repoHtmlUrl: args.repository.html_url,
+  };
+}
+
+/** Other senders (an organization, a mannequin) are never acted on; a Bot is judged later. */
+function notAPersonOrBot(sender: { type: string }): PrFeedbackEvent | null {
+  return sender.type === 'User' || sender.type === 'Bot'
+    ? null
+    : { reason: `left by a ${sender.type}, not a person`, type: 'ignored' };
+}
+
+const NO_HEAD = {
+  reason: 'the pull request names no head commit',
+  type: 'ignored',
+} as const;
+
 /**
  * Pure mapping from a `pull_request_review`, `pull_request_review_comment` or
  * `issue_comment` webhook body to the feedback an automation may act on. `origin` and (for an
@@ -129,8 +188,9 @@ function normalizeReview(body: unknown): PrFeedbackEvent {
   if (action !== 'submitted') {
     return { reason: `action ${action}`, type: 'ignored' };
   }
-  if (sender.type !== 'User') {
-    return { reason: `left by a ${sender.type}, not a person`, type: 'ignored' };
+  const other = notAPersonOrBot(sender);
+  if (other) {
+    return other;
   }
   if (pr.state !== 'open') {
     return { reason: 'the pull request is not open', type: 'ignored' };
@@ -142,6 +202,22 @@ function normalizeReview(body: unknown): PrFeedbackEvent {
   const parts = repoParts(repository);
   if (!parts || !isSafeGitBranchName(pr.head.ref)) {
     return { type: 'unrecognized' };
+  }
+  if (sender.type === 'Bot') {
+    if (!pr.head.sha || !HEAD_SHA.test(pr.head.sha)) {
+      return NO_HEAD;
+    }
+    return qodoNudge({
+      eventId: String(review.id),
+      eventKind: 'review',
+      headRef: pr.head.ref,
+      headSha: pr.head.sha,
+      parts,
+      prNumber: pr.number,
+      repository,
+      sender,
+      submittedAt: review.submitted_at,
+    });
   }
   const command = parseFeedbackCommand(review.body ?? '');
   const trigger = review.state.toLowerCase() === 'changes_requested' ? 'changes_requested' : null;
@@ -180,8 +256,9 @@ function normalizeReviewComment(body: unknown): PrFeedbackEvent {
   if (action !== 'created') {
     return { reason: `action ${action}`, type: 'ignored' };
   }
-  if (sender.type !== 'User') {
-    return { reason: `left by a ${sender.type}, not a person`, type: 'ignored' };
+  const other = notAPersonOrBot(sender);
+  if (other) {
+    return other;
   }
   if (pr.state !== 'open') {
     return { reason: 'the pull request is not open', type: 'ignored' };
@@ -192,6 +269,22 @@ function normalizeReviewComment(body: unknown): PrFeedbackEvent {
   const parts = repoParts(repository);
   if (!parts || !isSafeGitBranchName(pr.head.ref)) {
     return { type: 'unrecognized' };
+  }
+  if (sender.type === 'Bot') {
+    if (!pr.head.sha || !HEAD_SHA.test(pr.head.sha)) {
+      return NO_HEAD;
+    }
+    return qodoNudge({
+      eventId: String(comment.id),
+      eventKind: 'review_comment',
+      headRef: pr.head.ref,
+      headSha: pr.head.sha,
+      parts,
+      prNumber: pr.number,
+      repository,
+      sender,
+      submittedAt: comment.created_at,
+    });
   }
   const command = parseFeedbackCommand(comment.body ?? '');
   if (command === null) {
@@ -232,8 +325,9 @@ function normalizeIssueComment(body: unknown): PrFeedbackEvent {
   if (issue.pull_request === undefined) {
     return { reason: 'not on a pull request', type: 'ignored' };
   }
-  if (sender.type !== 'User') {
-    return { reason: `left by a ${sender.type}, not a person`, type: 'ignored' };
+  const other = notAPersonOrBot(sender);
+  if (other) {
+    return other;
   }
   if (issue.state !== 'open') {
     return { reason: 'the pull request is not open', type: 'ignored' };
@@ -241,6 +335,18 @@ function normalizeIssueComment(body: unknown): PrFeedbackEvent {
   const parts = repoParts(repository);
   if (!parts) {
     return { type: 'unrecognized' };
+  }
+  if (sender.type === 'Bot') {
+    // No head in this payload: the enrichment reads it, with the head branch, from the host.
+    return qodoNudge({
+      eventId: String(comment.id),
+      eventKind: 'issue_comment',
+      parts,
+      prNumber: issue.number,
+      repository,
+      sender,
+      submittedAt: comment.created_at,
+    });
   }
   const command = parseFeedbackCommand(comment.body ?? '');
   if (command === null) {
@@ -322,9 +428,59 @@ async function feedbackReadTarget(
 }
 
 const PrHeadSchema = z.object({
-  head: z.object({ ref: z.string(), repo: z.object({ id: z.number() }).nullish() }),
+  head: z.object({
+    ref: z.string(),
+    repo: z.object({ id: z.number() }).nullish(),
+    sha: z.string().optional(),
+  }),
   state: z.string(),
 });
+type PrHead = z.infer<typeof PrHeadSchema>;
+
+/** One read of a pull request from its host, with a platform credential that stays on its host. */
+async function readPullRequestHead(
+  target: { apiUrl: string; token: string },
+  event: { org: string; repoName: string },
+  prNumber: number,
+  log?: { warn: (obj: unknown, msg: string) => void }
+): Promise<
+  | { type: 'ok'; pr: PrHead }
+  | { type: 'ignored'; reason: string }
+  | { type: 'failed'; reason: string }
+> {
+  try {
+    const res = await fetch(
+      `${target.apiUrl}/repos/${event.org}/${event.repoName}/pulls/${prNumber}`,
+      {
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${target.token}`,
+          'User-Agent': 'auto-swe/1.0',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        redirect: 'error',
+        signal: AbortSignal.timeout(15_000),
+      }
+    );
+    if (res.status === 404 || res.status === 410) {
+      return { reason: 'the pull request is gone', type: 'ignored' };
+    }
+    if (!res.ok) {
+      return { reason: `the pull request read answered ${res.status}`, type: 'failed' };
+    }
+    const parsed = PrHeadSchema.safeParse(await res.json());
+    if (!parsed.success) {
+      return { reason: 'the pull request read was unreadable', type: 'failed' };
+    }
+    return { pr: parsed.data, type: 'ok' };
+  } catch (err) {
+    log?.warn({ err, prNumber }, 'the pull request read failed');
+    return { reason: 'the pull request could not be read', type: 'failed' };
+  }
+}
+
+/** What a bot that is not Qodo's has always been answered with. */
+const BOT_REASON = 'left by a Bot, not a person';
 
 /**
  * The one enrichment pass a `github.pull_request.feedback` occurrence gets, once in the
@@ -347,6 +503,14 @@ export async function enrichPrFeedbackFacts(
   log?: { warn: (obj: unknown, msg: string) => void }
 ): Promise<EnrichedFeedback> {
   const { facts } = event;
+  // A bot's nudge is acted on only when the bot is the one an admin named by its numeric
+  // account id; nothing is queried before that. Any other bot is answered as ever.
+  if (
+    facts.trigger === PR_FEEDBACK_QODO_TRIGGER &&
+    !(await resolveSetting('qodo.prFeedbackBotAccountIds')).includes(Number(facts.senderId))
+  ) {
+    return { reason: BOT_REASON, type: 'ignored' };
+  }
   const repositoryWhere = await webhookRepositoryWhere(
     prisma,
     event.org,
@@ -399,6 +563,16 @@ export async function enrichPrFeedbackFacts(
         : 'workflow';
     // An `issue_comment` names no branch; a platform pull request's head is its run's own.
     headRef ??= pullRequest.workflow.assignedBranch ?? undefined;
+  }
+  if (facts.trigger === PR_FEEDBACK_QODO_TRIGGER) {
+    return enrichQodoNudge(
+      facts,
+      event,
+      origin,
+      headRef,
+      connections.find((c) => c.id === pullRequest?.repoId),
+      log
+    );
   }
   if (origin === 'other' && facts.eventKind === 'issue_comment' && !headRef) {
     // No token is minted and no host read runs unless a round could actually start on a
@@ -453,39 +627,11 @@ export async function enrichPrFeedbackFacts(
       return { facts: { ...facts, headRef: undefined, origin }, type: 'ok' };
     }
     if (target) {
-      let pr: z.infer<typeof PrHeadSchema>;
-      try {
-        const res = await fetch(
-          `${target.apiUrl}/repos/${event.org}/${event.repoName}/pulls/${facts.prNumber}`,
-          {
-            headers: {
-              Accept: 'application/vnd.github+json',
-              Authorization: `Bearer ${target.token}`,
-              'User-Agent': 'auto-swe/1.0',
-              'X-GitHub-Api-Version': '2022-11-28',
-            },
-            redirect: 'error',
-            signal: AbortSignal.timeout(15_000),
-          }
-        );
-        if (res.status === 404 || res.status === 410) {
-          return { reason: 'the pull request is gone', type: 'ignored' };
-        }
-        if (!res.ok) {
-          return {
-            reason: `the pull request read answered ${res.status}`,
-            type: 'failed',
-          };
-        }
-        const parsed = PrHeadSchema.safeParse(await res.json());
-        if (!parsed.success) {
-          return { reason: 'the pull request read was unreadable', type: 'failed' };
-        }
-        pr = parsed.data;
-      } catch (err) {
-        log?.warn({ err, prNumber: facts.prNumber }, 'the pull request read failed');
-        return { reason: 'the pull request could not be read', type: 'failed' };
+      const read = await readPullRequestHead(target, event, facts.prNumber, log);
+      if (read.type !== 'ok') {
+        return read;
       }
+      const pr = read.pr;
       if (pr.state !== 'open') {
         return { reason: 'the pull request is not open', type: 'ignored' };
       }
@@ -499,4 +645,60 @@ export async function enrichPrFeedbackFacts(
     }
   }
   return { facts: { ...facts, headRef, origin }, type: 'ok' };
+}
+
+/**
+ * The rest of a Qodo nudge's enrichment: only a pull request the platform opened, only where
+ * Qodo reading is on for the repository's team, and only with the head commit it is deduped
+ * on. A delivery that carries no head (a discussion comment) gets it from one read of the pull
+ * request, which also catches a fork head and a closed pull request.
+ */
+async function enrichQodoNudge(
+  facts: PrFeedbackFacts,
+  event: { org: string; repoName: string; repositoryId?: number },
+  origin: PrFeedbackFacts['origin'],
+  headRef: string | undefined,
+  connection:
+    | (FeedbackConnection & { teamId: string | null; team?: { orgId: string | null } | null })
+    | undefined,
+  log?: { warn: (obj: unknown, msg: string) => void }
+): Promise<EnrichedFeedback> {
+  if (origin === 'other' || !connection) {
+    return { reason: 'the pull request is not one the platform opened', type: 'ignored' };
+  }
+  const enabled = await resolveSetting('qodo.enabled', {
+    ...(connection.team?.orgId ? { orgId: connection.team.orgId } : {}),
+    teamId: connection.teamId ?? undefined,
+  });
+  if (!enabled) {
+    return { reason: 'reading Qodo’s review is switched off', type: 'ignored' };
+  }
+  if (facts.headSha && headRef) {
+    return { facts: { ...facts, headRef, origin }, type: 'ok' };
+  }
+  const target = await feedbackReadTarget(connection, log);
+  if (!target) {
+    return { reason: 'no credential can read the pull request', type: 'ignored' };
+  }
+  const read = await readPullRequestHead(target, event, facts.prNumber, log);
+  if (read.type !== 'ok') {
+    return read;
+  }
+  const { pr } = read;
+  if (pr.state !== 'open') {
+    return { reason: 'the pull request is not open', type: 'ignored' };
+  }
+  if (!pr.head.repo || pr.head.repo.id !== event.repositoryId) {
+    return { reason: 'the pull request is from a fork', type: 'ignored' };
+  }
+  if (!isSafeGitBranchName(pr.head.ref)) {
+    return { reason: 'the pull request names no usable branch', type: 'ignored' };
+  }
+  if (!pr.head.sha || !HEAD_SHA.test(pr.head.sha)) {
+    return NO_HEAD;
+  }
+  return {
+    facts: { ...facts, headRef: pr.head.ref, headSha: pr.head.sha.toLowerCase(), origin },
+    type: 'ok',
+  };
 }

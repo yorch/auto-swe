@@ -45,6 +45,7 @@ import {
   prdActivities,
   prFeedbackActivities,
   prFeedbackAgentTaskActivities,
+  prFeedbackQodoGatherActivities,
   stateActivities,
 } from './runnableActivities.js';
 
@@ -559,7 +560,15 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         request,
       }),
   ],
-  ['gatherPrFeedback', ({ request }) => prFeedbackActivities.gatherPrFeedback({ request })],
+  [
+    'gatherPrFeedback',
+    ({ request }) =>
+      // The trigger is part of the run's payload, so the choice is the same on every replay.
+      (request.payload as { feedbackTrigger?: unknown } | undefined)?.feedbackTrigger ===
+      'qodo_findings'
+        ? prFeedbackQodoGatherActivities.gatherPrFeedback({ request })
+        : prFeedbackActivities.gatherPrFeedback({ request }),
+  ],
   [
     'executePrFeedbackImplementation',
     ({ ctx, config, inputs }) => {

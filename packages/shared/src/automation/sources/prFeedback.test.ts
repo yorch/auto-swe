@@ -232,3 +232,98 @@ describe('parseFeedbackCommand', () => {
     expect(out?.notes.length).toBe(4_000);
   });
 });
+
+describe('prFeedbackSource: the Qodo findings trigger', () => {
+  const SHA = 'd'.repeat(40);
+  const qodo = (over: Record<string, unknown> = {}) =>
+    facts({
+      eventKind: 'review_comment',
+      headSha: SHA.toUpperCase(),
+      htmlUrl: 'https://evil.example/pull/1',
+      notes: '',
+      senderId: '424242',
+      senderLogin: 'review-bot[bot]',
+      trigger: 'qodo_findings',
+      ...over,
+    });
+  const withQodo = PrFeedbackFiltersSchema.parse({
+    pullRequests: ['platform'],
+    triggers: ['qodo_findings'],
+  });
+
+  it('is opt-in: the default filters keep reacting to people only', () => {
+    expect(src.defaultFilters.triggers).toEqual(['changes_requested', 'command']);
+  });
+
+  it('has no actor, so no person is looked up and the run has no requester', () => {
+    expect(src.actor?.(qodo())).toBeNull();
+    expect(src.actor?.(facts())).toEqual({ id: '42', login: 'octocat' });
+  });
+
+  it('puts every comment of one review on one head under one subject', () => {
+    const a = src.keys(qodo({ eventId: '1' }));
+    const b = src.keys(qodo({ eventId: '2', eventKind: 'issue_comment' }));
+    const c = src.keys(qodo({ eventId: '3', eventKind: 'review' }));
+    expect(a).toEqual({ scope: 'pr-1', subject: `pr-1@qodo-${SHA}` });
+    expect(b).toEqual(a);
+    expect(c).toEqual(a);
+    // A different head — the platform's own push — is a different subject, and never a bare sha.
+    const next = src.keys(qodo({ headSha: 'e'.repeat(40) }));
+    expect(next.subject).not.toBe(a.subject);
+    expect(next.subject).not.toBe('e'.repeat(40));
+    // Each delivery still has its own dedupe key, so a redelivery is recognised as one.
+    expect(src.dedupeKey('github.com/acme/api', qodo({ eventId: '1' }))).not.toBe(
+      src.dedupeKey('github.com/acme/api', qodo({ eventId: '2' }))
+    );
+  });
+
+  it('only matches an automation that lists it, and only on a platform pull request', () => {
+    expect(src.mismatch(filters, qodo())).toMatch(/does not react/);
+    expect(src.mismatch(withQodo, qodo())).toBeNull();
+    expect(src.mismatch(withQodo, qodo({ origin: 'agent_run' }))).toBeNull();
+    const everything = PrFeedbackFiltersSchema.parse({
+      pullRequests: ['platform', 'others'],
+      triggers: ['qodo_findings'],
+    });
+    expect(src.mismatch(everything, qodo({ origin: 'other' }))).toMatch(/platform opened/);
+  });
+
+  it('describes the run without the sender or any URL from the payload', () => {
+    const run = src.run(qodo());
+    expect(run.description).toBe(
+      'Address the open findings Qodo reported on the head commit of pull request #1.'
+    );
+    expect(run.description).not.toContain('evil.example');
+    expect(run.description).not.toContain('review-bot');
+    expect(run.fields).toMatchObject({ feedbackTrigger: 'qodo_findings', pullRequestNumber: 1 });
+  });
+
+  it('builds a payload its contract accepts', () => {
+    const built = buildAutomationPayload(
+      src,
+      PR_FEEDBACK_INPUT_SCHEMA,
+      {},
+      '00000000-0000-4000-8000-000000000001',
+      qodo()
+    );
+    expect(built).toMatchObject({ ok: true });
+    expect(PrFeedbackPayloadSchema.safeParse(built.ok ? built.payload : {}).success).toBe(true);
+  });
+
+  it('samples only platform origins for it, all valid and selected', () => {
+    const samples = src.samples(withQodo);
+    expect(new Set(samples.map((s) => `${s.origin}:${s.trigger}`))).toEqual(
+      new Set(['workflow:qodo_findings', 'agent_run:qodo_findings'])
+    );
+    for (const sample of samples) {
+      expect(PrFeedbackFactsSchema.safeParse(sample).success).toBe(true);
+      expect(src.mismatch(withQodo, sample)).toBeNull();
+    }
+  });
+
+  it('refuses a head that is not a commit id', () => {
+    expect(PrFeedbackFactsSchema.safeParse({ ...qodo(), headSha: 'not-a-sha' }).success).toBe(
+      false
+    );
+  });
+});

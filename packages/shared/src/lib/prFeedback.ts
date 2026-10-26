@@ -9,9 +9,16 @@ export const PR_FEEDBACK_TEMPLATE_NAME = 'address-pr-feedback';
 export const PR_FEEDBACK_EVENT_KINDS = ['review', 'review_comment', 'issue_comment'] as const;
 export type PrFeedbackEventKind = (typeof PR_FEEDBACK_EVENT_KINDS)[number];
 
-/** What a feedback delivery asks for: a requested change, or the explicit command. */
-export const PR_FEEDBACK_TRIGGERS = ['changes_requested', 'command'] as const;
+/**
+ * What a feedback delivery asks for: a requested change, the explicit command, or — on a pull
+ * request the platform opened — Qodo's review bot having reviewed it. The last carries no text:
+ * it is only a nudge, and the findings are pulled from Qodo itself.
+ */
+export const PR_FEEDBACK_TRIGGERS = ['changes_requested', 'command', 'qodo_findings'] as const;
 export type PrFeedbackTrigger = (typeof PR_FEEDBACK_TRIGGERS)[number];
+
+/** The trigger whose findings are read from Qodo, never from a GitHub comment. */
+export const PR_FEEDBACK_QODO_TRIGGER = 'qodo_findings' satisfies PrFeedbackTrigger;
 
 /** Who opened the pull request the feedback is on. */
 export const PR_FEEDBACK_ORIGINS = ['workflow', 'agent_run', 'other'] as const;

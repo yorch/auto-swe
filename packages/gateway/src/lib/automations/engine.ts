@@ -352,8 +352,8 @@ export async function decideAndStart<F, X>(
     }
     // A source that acts only for a platform member: the account on the host must be one.
     let requestedById: string | null = null;
-    if (source.actor) {
-      const actor = source.actor(facts);
+    const actor = source.actor?.(facts) ?? null;
+    if (actor) {
       // Only a repository's members act through a source with an actor; a team automation
       // has no repository to be a member of.
       const decided = connection
