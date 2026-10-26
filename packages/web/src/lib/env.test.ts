@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { supportInfo } from './env';
+
+type SupportInfoFn = typeof import('./env').supportInfo;
 
 function setSupport(values: { url?: string; email?: string; slack?: string }) {
   vi.stubEnv('NEXT_PUBLIC_SUPPORT_URL', values.url ?? '');
@@ -9,9 +10,12 @@ function setSupport(values: { url?: string; email?: string; slack?: string }) {
 
 describe('supportInfo', () => {
   let warn: ReturnType<typeof vi.spyOn>;
+  let supportInfo: SupportInfoFn;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.resetModules();
+    ({ supportInfo } = await import('./env'));
   });
 
   afterEach(() => {
@@ -82,6 +86,39 @@ describe('supportInfo', () => {
   it('keeps valid fields and logs one warning for several invalid ones', () => {
     setSupport({ email: 'bad', slack: '#ok', url: 'http://x.com' });
     expect(supportInfo()).toEqual({ slack: { text: '#ok' } });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns once per process for the same message across repeated reads', () => {
+    setSupport({ url: 'http://x.com' });
+    supportInfo();
+    supportInfo();
+    supportInfo();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('warns again for a different message', () => {
+    setSupport({ url: 'http://x.com' });
+    supportInfo();
+    setSupport({ email: 'bad' });
+    supportInfo();
+    expect(warn).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops a support URL that carries credentials', () => {
+    setSupport({ url: 'https://user:pw@help.example.com' });
+    expect(supportInfo()).toBeUndefined();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a username-only support URL', () => {
+    setSupport({ url: 'https://user@help.example.com' });
+    expect(supportInfo()).toBeUndefined();
+  });
+
+  it('drops a Slack link that carries credentials instead of showing it as text', () => {
+    setSupport({ slack: 'https://user:pw@acme.slack.com/archives/C1' });
+    expect(supportInfo()).toBeUndefined();
     expect(warn).toHaveBeenCalledTimes(1);
   });
 });

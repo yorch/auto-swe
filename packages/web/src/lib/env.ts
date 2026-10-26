@@ -36,12 +36,30 @@ export interface SupportInfo {
 
 const SLACK_MAX_LENGTH = 80;
 
-function httpsHref(value: string): string | undefined {
+function parseUrl(value: string): URL | undefined {
   try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'https:' ? parsed.href : undefined;
+    return new URL(value);
   } catch {
     return undefined;
+  }
+}
+
+function hasCredentials(url: URL): boolean {
+  return url.username !== '' || url.password !== '';
+}
+
+function httpsHref(value: string): string | undefined {
+  const parsed = parseUrl(value);
+  return parsed?.protocol === 'https:' && !hasCredentials(parsed) ? parsed.href : undefined;
+}
+
+/** `supportInfo()` runs on every request; one warning per distinct message per process. */
+const warned = new Set<string>();
+
+function warnOnce(message: string): void {
+  if (!warned.has(message)) {
+    warned.add(message);
+    console.warn(message);
   }
 }
 
@@ -79,7 +97,8 @@ export function supportInfo(): SupportInfo | undefined {
     }
   }
   if (rawSlack) {
-    if (rawSlack.length <= SLACK_MAX_LENGTH) {
+    const slackUrl = parseUrl(rawSlack);
+    if (rawSlack.length <= SLACK_MAX_LENGTH && !(slackUrl && hasCredentials(slackUrl))) {
       const href = httpsHref(rawSlack);
       info.slack = href ? { href, text: rawSlack } : { text: rawSlack };
     } else {
@@ -88,7 +107,7 @@ export function supportInfo(): SupportInfo | undefined {
   }
 
   if (dropped.length > 0) {
-    console.warn(`Ignoring invalid support contact setting(s): ${dropped.join(', ')}`);
+    warnOnce(`Ignoring invalid support contact setting(s): ${dropped.join(', ')}`);
   }
   return Object.keys(info).length > 0 ? info : undefined;
 }
