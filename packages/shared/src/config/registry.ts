@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { AGENT_RUN_MAX_WALL_CLOCK_SECONDS } from '../lib/agentRun.js';
 import { GlobListSchema } from '../lib/ciTrigger.js';
+import { hasGitNameCharacter } from '../lib/gitIdentityName.js';
 import { IMPLEMENTER_RUNTIMES } from '../types/api.js';
 import { DOCKER_IMAGE_REF_RE } from '../workflow/shellImageAllowlist.js';
 import { MAX_FANOUT_CONCURRENCY } from '../workflow/spec.js';
@@ -56,7 +57,8 @@ const gitIdentityName = z
   .min(1)
   .max(100)
   .refine((v) => v.trim().length > 0, 'must not be blank')
-  .refine((v) => !GIT_IDENTITY_FORBIDDEN_RE.test(v), 'must not contain control characters, < or >');
+  .refine((v) => !GIT_IDENTITY_FORBIDDEN_RE.test(v), 'must not contain control characters, < or >')
+  .refine(hasGitNameCharacter, 'must contain a character git accepts in a name');
 const gitIdentityEmail = z
   .string()
   .max(254)
@@ -305,7 +307,7 @@ export const SETTING_DEFINITIONS = {
   'git.authorName': defineSetting({
     defaultValue: 'auto-swe',
     description:
-      'Name written as the author and committer of every commit the platform makes. Up to 100 characters, with no control characters, "<" or ">".',
+      'Name written as the author and committer of every commit the platform makes. Up to 100 characters, with no control characters, "<" or ">", and at least one character other than whitespace and . , : ; " \' \\.',
     group: 'git',
     label: 'Commit author name',
     overridableAt: ['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION'],

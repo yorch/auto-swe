@@ -208,6 +208,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/memoryForget.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/gitIdentityName',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/gitIdentityName.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/skillRevision',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/skillRevision.ts'),
       },

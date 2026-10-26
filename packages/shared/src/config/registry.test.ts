@@ -67,6 +67,16 @@ describe('git author settings', () => {
     }
   });
 
+  it('git.authorName rejects names git refuses to commit with (only ident crud characters)', () => {
+    const key = 'git.authorName';
+    for (const bad of [',;', '"', "''", '\\', '. ,', '.', ':;<', '\t ']) {
+      expect(accepts(key, bad), JSON.stringify(bad)).toBe(false);
+    }
+    for (const ok of ["O'Brien", 'a.', '.a', 'Acme Bot', 'auto-swe']) {
+      expect(accepts(key, ok), ok).toBe(true);
+    }
+  });
+
   it('git.authorEmail accepts the TLD-less default and rejects malformed values', () => {
     const key = 'git.authorEmail';
     const longest = `${'a'.repeat(245)}@acme.com`;
