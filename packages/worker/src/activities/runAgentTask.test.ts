@@ -173,6 +173,7 @@ vi.mock('./agentRunFinalize.js', () => ({
 }));
 
 import { __resetReconcileCacheForTests } from '@auto-swe/shared/lib/agentRunAdmission';
+import { loadMcpTools } from '../agents/mcpTools.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { resolveAgent } from '../lib/config/agentResolver.js';
 import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
@@ -438,6 +439,16 @@ describe('tool grants and agent scope', () => {
     const spec = m.runAgent.mock.calls[0]?.[0] as { tools: Record<string, unknown> };
     return Object.keys(spec.tools).sort();
   };
+
+  it('hands the Mastra loop the whole connection target, allowlist included', async () => {
+    const target = { allowedTools: ['rules-search'], url: 'https://mcp.example/mcp' };
+    vi.mocked(resolveAgentMcpUrl).mockResolvedValueOnce(target as never);
+    vi.mocked(loadMcpTools).mockResolvedValueOnce({ close: async () => {}, tools: {} });
+
+    await runAgentTask({ request: request() });
+
+    expect(vi.mocked(loadMcpTools).mock.calls[0]?.[0]).toBe(target);
+  });
 
   it('toolKeys null grants the read tools only', async () => {
     m.toolKeys = null;

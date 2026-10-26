@@ -8,6 +8,13 @@ import {
   sealMcpHeaders,
   validateMcpHeaders,
 } from '@auto-swe/shared/lib/mcpHeaders';
+import {
+  AllowedToolsSchema,
+  isQodoConnectionConfig,
+  nonReadQodoTools,
+  QODO_INTEGRATION,
+  QODO_READ_TOOLS,
+} from '@auto-swe/shared/lib/qodoConnection';
 import { checkProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
@@ -45,7 +52,20 @@ const BearerToken = z
 const HeaderName = z.string().min(1).max(100);
 const HeaderValue = z.string().min(1).max(2048);
 
+/**
+ * Policy keys of `config`, settable by an admin only (this whole surface is `adminOnly`):
+ * `integration` marks the connection as a known integration (Qodo, which implies a read-only tool
+ * allowlist and result screening), `allowedTools` restricts which server tools an agent can bind
+ * (exact names; an empty list binds none), and `scanResults` screens and fences every tool result.
+ */
+const PolicyFields = {
+  allowedTools: AllowedToolsSchema.optional(),
+  integration: z.literal(QODO_INTEGRATION).optional(),
+  scanResults: z.boolean().optional(),
+};
+
 const CreateSchema = z.object({
+  ...PolicyFields,
   /** Waives the private-network refusal for this connection's server (never loopback/metadata). */
   allowPrivateNetwork: z.boolean().optional(),
   /** Optional bearer token the server requires; sent as `Authorization: Bearer …`. */
@@ -69,12 +89,18 @@ const CreateSchema = z.object({
 
 /**
  * Edit an existing `mcp` connection. `name` + `url` are always present (the edit
- * form is pre-filled); the two timeouts are optional and the handler rebuilds
- * `config` from scratch, so a blank timeout in the form clears the override back
- * to `loadMcpTools`'s default rather than leaving a stale value behind.
+ * form is pre-filled); the two timeouts are optional and a blank one clears the
+ * override back to `loadMcpTools`'s default rather than leaving a stale value
+ * behind. Only the keys this route owns are replaced: any other key in the stored
+ * `config` (the policy keys above) survives an edit.
  */
 const UpdateSchema = z
   .object({
+    /**
+     * Policy keys keep their stored value when omitted; `null` removes one. They are not rebuilt
+     * from the body like the url and the timeouts, because the edit form does not carry them.
+     */
+    allowedTools: AllowedToolsSchema.nullable().optional(),
     allowPrivateNetwork: z.boolean().optional(),
     /** Replaces the stored token. Omit to keep it. */
     bearerToken: BearerToken.optional(),
@@ -89,8 +115,10 @@ const UpdateSchema = z
       .array(z.object({ name: HeaderName, value: HeaderValue.optional() }))
       .max(MAX_MCP_HEADERS)
       .optional(),
+    integration: z.literal(QODO_INTEGRATION).nullable().optional(),
     listTimeoutMs: z.number().int().positive().optional(),
     name: z.string().min(1).max(200),
+    scanResults: z.boolean().nullable().optional(),
     url: z
       .string()
       .url()
@@ -99,6 +127,13 @@ const UpdateSchema = z
   .refine((b) => !(b.bearerToken !== undefined && b.clearBearerToken), {
     message: 'Send either a new token or clearBearerToken, not both',
   });
+
+function qodoWriteToolsMessage(names: string[]): string {
+  return `A Qodo connection is read-only. These tools are not read tools: ${names.join(', ')}`;
+}
+
+/** The `config` keys the update route rebuilds from its body; every other key is preserved. */
+const OWNED_CONFIG_KEYS = ['url', 'allowPrivateNetwork', 'listTimeoutMs', 'callTimeoutMs'];
 
 const IdParams = z.object({ id: z.string().uuid() });
 
@@ -298,15 +333,36 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
           },
         };
       }
+      // The saved URL passed the text check above; the probe also resolves its host, refuses an
+      // internal answer (private only with the connection's opt-in) and pins the connection.
+      const { advertisedToolNames, ...probed } = await probeMcpServer(
+        config.url,
+        timeoutMs,
+        createGuardedFetch({ allowPrivate: config.allowPrivateNetwork === true }),
+        { bearerToken, headers }
+      );
+      if (!(probed.ok && isQodoConnectionConfig(conn.config))) {
+        return { data: probed };
+      }
+      // The read allowlist uses the Qodo CLI catalog's names. A server that advertises them under
+      // other names would bind nothing, so say so here rather than let every feature go inert.
+      const advertised = advertisedToolNames ?? [];
+      const matched = QODO_READ_TOOLS.filter((name) => advertised.includes(name));
+      const findingsToolAdvertised = advertised.includes('get-pr-review-findings');
       return {
-        // The saved URL passed the text check above; the probe also resolves its host, refuses an
-        // internal answer (private only with the connection's opt-in) and pins the connection.
-        data: await probeMcpServer(
-          config.url,
-          timeoutMs,
-          createGuardedFetch({ allowPrivate: config.allowPrivateNetwork === true }),
-          { bearerToken, headers }
-        ),
+        data: {
+          ...probed,
+          qodo: {
+            findingsToolAdvertised,
+            matchedReadTools: matched.length,
+            ...(matched.length === 0
+              ? {
+                  warning:
+                    'None of the advertised tools match the read allowlist, so no Qodo tool will bind. The server may name its tools differently from the Qodo CLI catalog.',
+                }
+              : {}),
+          },
+        },
       };
     }
   );
@@ -318,6 +374,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
       const actor = requireUser(request);
       const { name, teamId, url, listTimeoutMs, callTimeoutMs, bearerToken, headers } =
         request.body;
+      const { allowedTools, integration, scanResults } = request.body;
       const allowPrivateNetwork = request.body.allowPrivateNetwork === true;
       const safety = checkProbeUrl(url, { allowPrivate: allowPrivateNetwork });
       if (!safety.ok) {
@@ -336,7 +393,14 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         ...(allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
         ...(listTimeoutMs !== undefined ? { listTimeoutMs } : {}),
         ...(callTimeoutMs !== undefined ? { callTimeoutMs } : {}),
+        ...(allowedTools !== undefined ? { allowedTools } : {}),
+        ...(integration !== undefined ? { integration } : {}),
+        ...(scanResults !== undefined ? { scanResults } : {}),
       };
+      const writeTools = nonReadQodoTools(config);
+      if (writeTools.length > 0) {
+        return sendError(reply, 400, 'QODO_WRITE_TOOLS', qodoWriteToolsMessage(writeTools));
+      }
       const conn = await fastify.prisma.connection.create({
         data: {
           config,
@@ -373,6 +437,7 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
       const actor = requireUser(request);
       const { name, url, listTimeoutMs, callTimeoutMs, bearerToken, clearBearerToken } =
         request.body;
+      const { allowedTools, integration, scanResults } = request.body;
       const allowPrivateNetwork = request.body.allowPrivateNetwork === true;
       // Scope to type='mcp' so this route can never mutate a git_repo connection.
       const conn = await fastify.prisma.connection.findFirst({
@@ -460,12 +525,30 @@ export const mcpConnectionRoutes: FastifyPluginAsync = async (fastify) => {
         type: 'mcp',
         ...(typeof before?.url === 'string' ? { url: sanitizeAuditUrl(before.url) } : {}),
       };
+      // Keys this route does not own are carried over from the stored config; the ones it owns are
+      // rebuilt from the body, so a blank timeout still clears its override.
+      const kept = Object.fromEntries(
+        Object.entries(before ?? {}).filter(([key]) => !OWNED_CONFIG_KEYS.includes(key))
+      );
+      const policy = { allowedTools, integration, scanResults };
+      for (const [key, value] of Object.entries(policy)) {
+        if (value === null) {
+          delete kept[key];
+        } else if (value !== undefined) {
+          kept[key] = value;
+        }
+      }
       const config = {
+        ...kept,
         url,
         ...(allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
         ...(listTimeoutMs !== undefined ? { listTimeoutMs } : {}),
         ...(callTimeoutMs !== undefined ? { callTimeoutMs } : {}),
       };
+      const writeTools = nonReadQodoTools(config);
+      if (writeTools.length > 0) {
+        return sendError(reply, 400, 'QODO_WRITE_TOOLS', qodoWriteToolsMessage(writeTools));
+      }
       const updated = await fastify.prisma.connection.update({
         data: {
           config,

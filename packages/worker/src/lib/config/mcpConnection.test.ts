@@ -11,6 +11,7 @@ vi.mock('./agentResolver.js', () => ({ fetchActiveAgent: vi.fn() }));
 import { prisma } from '@auto-swe/shared/db';
 import { _resetKeyCacheForTests, encryptSecret } from '@auto-swe/shared/lib/crypto';
 import { sealMcpHeaders } from '@auto-swe/shared/lib/mcpHeaders';
+import { QODO_READ_TOOLS } from '@auto-swe/shared/lib/qodoConnection';
 import { fetchActiveAgent } from './agentResolver.js';
 import {
   mcpUrlForConnection,
@@ -56,6 +57,38 @@ describe('mcpUrlForConnection', () => {
       callTimeoutMs: 5000,
       listTimeoutMs: 2500,
       url: 'https://mcp.example.com/mcp',
+    });
+  });
+
+  describe('tool allowlist and result screening', () => {
+    const config = (extra: Record<string, unknown>) =>
+      mcpConn({ config: { url: 'https://mcp.example.com/mcp', ...extra } }) as never;
+
+    it('reads a stored allowlist, and leaves an ordinary connection unscreened', async () => {
+      findUnique.mockResolvedValue(config({ allowedTools: ['a'] }));
+      expect(await mcpUrlForConnection('c1')).toEqual({
+        allowedTools: ['a'],
+        url: 'https://mcp.example.com/mcp',
+      });
+    });
+
+    it('resolves a malformed allowlist to an empty one (fail closed)', async () => {
+      findUnique.mockResolvedValue(config({ allowedTools: 'rules-search' }));
+      expect((await mcpUrlForConnection('c1'))?.allowedTools).toEqual([]);
+    });
+
+    it('defaults a qodo connection with no list to the read tools and screens its results', async () => {
+      findUnique.mockResolvedValue(config({ integration: 'qodo' }));
+      const target = await mcpUrlForConnection('c1');
+      expect(target?.allowedTools).toEqual(QODO_READ_TOOLS);
+      expect(target?.scanResults).toBe(true);
+    });
+
+    it('screens results when a connection opts in', async () => {
+      findUnique.mockResolvedValue(config({ scanResults: true }));
+      const target = await mcpUrlForConnection('c1');
+      expect(target?.scanResults).toBe(true);
+      expect(target?.allowedTools).toBeUndefined();
     });
   });
 

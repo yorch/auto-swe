@@ -10,6 +10,7 @@ export const GROUP_TITLES: Record<string, string> = {
   mcp: 'MCP server',
   memory: 'Semantic memory',
   models: 'Model providers',
+  qodo: 'Qodo review',
   repoAccess: 'Repository access',
   repoDependency: 'Repo dependency graph',
   skills: 'Skill imports',
@@ -33,6 +34,7 @@ export const GROUP_BLURBS: Record<string, string> = {
   memory: 'Relevance thresholds for what semantic memory surfaces.',
   models:
     'Which internal hosts a provider credential may point at, for LLM endpoints on a private network.',
+  qodo: "Whether the platform may read Qodo's review of pull requests through a team's Qodo connection.",
   repoAccess: 'Who can reach a repository, and how stale a shared view may get.',
   repoDependency:
     'How confidently an LLM-inferred repo-to-repo dependency edge must be evidenced before it is promoted straight to active instead of waiting for a human confirm.',

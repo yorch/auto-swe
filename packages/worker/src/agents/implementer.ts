@@ -1,5 +1,4 @@
 import { getSettingDefinition, resolveSettings } from '@auto-swe/shared/config';
-import type { McpHeader } from '@auto-swe/shared/lib/mcpHeaders';
 import { IMPLEMENTER_TOOL_IDS, MCP_TOOL_KEY } from '@auto-swe/shared/workflow/stepRegistry';
 import { Mastra } from '@mastra/core';
 import { Agent } from '@mastra/core/agent';
@@ -41,25 +40,14 @@ export { IMPLEMENTER_TOOL_IDS };
 
 export interface ImplementerAgentOptions {
   /**
-   * `Repository.mcpServerRef` for the repo being worked on — an http(s) URL
-   * of a streamable-HTTP/SSE MCP server whose tools are added alongside the
-   * built-in workspace tools. Defaults to disabled (callers must opt in).
-   * Loading is additionally gated by the `'mcp'` pseudo-key in the effective
-   * `AgentToolConfig` (see `isMcpToolEnabled`) and is failure-isolated: an
-   * unreachable server logs `mcp.connect_failed` and the agent proceeds with
+   * The resolved MCP connection of the Agent being run — its server URL, credentials, timeouts,
+   * tool allowlist and result screening travel together as one target, so none can be left behind.
+   * Defaults to disabled (callers must opt in). Loading is additionally gated by the `'mcp'`
+   * pseudo-key in the effective `AgentToolConfig` (see `isMcpToolEnabled`) and is
+   * failure-isolated: an unreachable server logs `mcp.connect_failed` and the agent proceeds with
    * built-in tools only.
    */
-  mcpServerRef?: string | null;
-  /** Optional per-connection override of `loadMcpTools`'s list-timeout (default 15 s). */
-  mcpListTimeoutMs?: number;
-  /** Decrypted bearer token for the MCP connection, if it has one. Never logged. */
-  mcpBearerToken?: string;
-  /** Decrypted custom headers for the MCP connection, if it has any. Never logged. */
-  mcpHeaders?: readonly McpHeader[];
-  /** The MCP connection's opt-in for a server on a private address. */
-  mcpAllowPrivateNetwork?: boolean;
-  /** Optional per-connection override of `loadMcpTools`'s per-call timeout (default 60 s). */
-  mcpCallTimeoutMs?: number;
+  mcp?: McpConnectionTarget | null;
   /**
    * `workspace.maxToolOutputChars` (default 20,000), pre-resolved by the
    * caller. Threaded in rather than resolved here so it's a single settings
@@ -203,20 +191,14 @@ export async function createImplementerAgent(
       : {}),
   };
 
-  // MCP tools (Repository.mcpServerRef): opt-in via options, gated by the 'mcp'
+  // MCP tools (the Agent's connection): opt-in via options, gated by the 'mcp'
   // pseudo-key in AgentToolConfig (a non-empty tool config must explicitly
   // include 'mcp'; no config = all tools = MCP allowed). loadMcpTools never
   // throws — connection failures leave the agent with built-in tools only.
   let mcpTools: McpToolRecord = {};
   let closeMcp: (() => Promise<void>) | undefined;
-  if (options?.mcpServerRef && isMcpToolEnabled(tools)) {
-    const loaded = await loadMcpTools(options.mcpServerRef, tracer, {
-      allowPrivateNetwork: options.mcpAllowPrivateNetwork,
-      bearerToken: options.mcpBearerToken,
-      callTimeoutMs: options.mcpCallTimeoutMs,
-      headers: options.mcpHeaders,
-      listTimeoutMs: options.mcpListTimeoutMs,
-    });
+  if (options?.mcp && isMcpToolEnabled(tools)) {
+    const loaded = await loadMcpTools(options.mcp, tracer);
     // Always adopt the returned close — it is NOOP on failure/empty paths and
     // safe to call repeatedly. Capturing it only when tools>0 would leak the
     // live MCP client connection when a server connects but exposes zero tools.
@@ -430,12 +412,7 @@ export async function buildImplementerForActivity(
         (key) => key === 'searchKnowledge' || key === 'submitLearning'
       ),
       maxToolOutputChars,
-      mcpAllowPrivateNetwork: mcpTarget?.allowPrivateNetwork,
-      mcpBearerToken: mcpTarget?.bearerToken,
-      mcpCallTimeoutMs: mcpTarget?.callTimeoutMs,
-      mcpHeaders: mcpTarget?.headers,
-      mcpListTimeoutMs: mcpTarget?.listTimeoutMs,
-      mcpServerRef: mcpTarget?.url,
+      mcp: mcpTarget,
       resolveCtx: ctx,
     },
     modelOverride

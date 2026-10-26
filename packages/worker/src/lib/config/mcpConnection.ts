@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { decryptSecret } from '@auto-swe/shared/lib/crypto';
 import { type McpHeader, openMcpHeaders } from '@auto-swe/shared/lib/mcpHeaders';
+import { allowedToolsOfConfig, isQodoConnectionConfig } from '@auto-swe/shared/lib/qodoConnection';
 import { isMcpToolEnabled } from '../../agents/mcpTools.js';
 import { logWarn } from '../activityLog.js';
 import type { AgentTracer } from '../agentTracer.js';
@@ -30,6 +31,17 @@ export interface McpConnectionTarget {
   allowPrivateNetwork?: boolean;
   /** Decrypted custom headers; non-enumerable for the same reason as `bearerToken`. */
   readonly headers?: readonly McpHeader[];
+  /**
+   * The server tools this connection may bind, by exact name; `undefined` means no restriction.
+   * It travels with the target, and `loadMcpTools` and `openMcpRelay` take the target, so a
+   * caller cannot connect without it. A malformed stored list is `[]` (nothing binds).
+   */
+  readonly allowedTools?: readonly string[];
+  /**
+   * Screen every tool result for injection text and fence it as untrusted (opt-in per
+   * connection; always on for a Qodo-marked one).
+   */
+  readonly scanResults?: boolean;
 }
 
 /** A finite, strictly-positive number — `0`/negative/NaN/Infinity are invalid timeouts. */
@@ -61,6 +73,7 @@ export async function mcpUrlForConnection(
       listTimeoutMs?: unknown;
       callTimeoutMs?: unknown;
       allowPrivateNetwork?: unknown;
+      scanResults?: unknown;
     } | null;
     const url = config && typeof config === 'object' ? config.url : null;
     if (typeof url !== 'string') {
@@ -68,8 +81,13 @@ export async function mcpUrlForConnection(
     }
     const listTimeoutMs = readPositiveNumber(config?.listTimeoutMs);
     const callTimeoutMs = readPositiveNumber(config?.callTimeoutMs);
+    const allowedTools = allowedToolsOfConfig(conn.config);
     const target: McpConnectionTarget = {
       url,
+      ...(allowedTools !== undefined ? { allowedTools } : {}),
+      ...(config?.scanResults === true || isQodoConnectionConfig(conn.config)
+        ? { scanResults: true }
+        : {}),
       ...(config?.allowPrivateNetwork === true ? { allowPrivateNetwork: true } : {}),
       ...(listTimeoutMs !== undefined ? { listTimeoutMs } : {}),
       ...(callTimeoutMs !== undefined ? { callTimeoutMs } : {}),

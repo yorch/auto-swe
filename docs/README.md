@@ -40,6 +40,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [knowledge.md](./knowledge.md) | Governed reusable knowledge — local capture, evidence, review/publication scopes, retrieval and trust boundaries |
 | [repo-dependency-graph.md](./repo-dependency-graph.md) | Directed dependency edges between git repos — the `RepoDependency` model, the cross-team edge API and management UI, and the neighbour resolver |
 | [bundles.md](./bundles.md) | Signed, versioned distribution of reusable agents, skills, scanner patterns, and templates across deployments |
+| [qodo.md](./qodo.md) | Reading Qodo's review of a pull request through a team's read-only Qodo MCP connection — setup, output screening, the shared findings client and the `qodo.enabled` switch |
 | [transcripts.md](./transcripts.md) | Full-fidelity agent model-call capture: recording, normalized reads, integrity hashes, retention and legal holds |
 | [repo-access-gating.md](./repo-access-gating.md) | Making repository access agree with GitHub — the permission projection, the sweep and webhook refresh, and the advisory-then-enforce rollout |
 | [repositories.md](./repositories.md) | What identifies a repository (host, owner, name), which hosts its URLs may point at, and sharing it with other teams |

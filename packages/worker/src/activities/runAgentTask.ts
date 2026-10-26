@@ -581,13 +581,7 @@ async function runOnMastra(
   const mcpTarget = await resolveAgentMcpUrl(key, agentCtx, { tenant: input.settingsCtx, tracer });
   let mcpTools: AgentTools | undefined;
   if (mcpTarget) {
-    const loaded = await loadMcpTools(mcpTarget.url, tracer, {
-      allowPrivateNetwork: mcpTarget.allowPrivateNetwork,
-      bearerToken: mcpTarget.bearerToken,
-      callTimeoutMs: mcpTarget.callTimeoutMs,
-      headers: mcpTarget.headers,
-      listTimeoutMs: mcpTarget.listTimeoutMs,
-    });
+    const loaded = await loadMcpTools(mcpTarget, tracer);
     onMcp(loaded.close);
     mcpTools = loaded.tools as AgentTools;
     spec.tools = { ...loaded.tools, ...spec.tools } as AgentTools;

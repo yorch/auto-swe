@@ -106,7 +106,7 @@ flowchart TB
 | Domain | Capabilities |
 |---|---|
 | **Agent system** | 33 seeded agents (19 model-backed + 14 sub-role personas); multi-agent review network; TDD implementation loop driven by the platform's Mastra tool loop or, per template/team/organization or per agent, the Claude Code harness inside the workspace container or Pi's agent loop in the worker ([agents.md §3.7](./agents.md#37-runtimes-mastra-and-the-harnesses)); channel-resident assistant with ambient, reactive, and persona modes. See [agents.md](./agents.md). |
-| **Skills** | 35 built-in prompt-fragment skills; progressive disclosure (`loadSkill`) for the implementer; custom skills with content scanning + verification flag; scope cascade |
+| **Skills** | 36 built-in prompt-fragment skills; progressive disclosure (`loadSkill`) for the implementer; custom skills with content scanning + verification flag; scope cascade |
 | **Multi-model** | DB-driven model selection per role per scope; Anthropic / OpenAI / Google + any OpenAI-compatible provider; AES-256-GCM encrypted credentials. See [model-configuration.md](./model-configuration.md). |
 | **Workflow engine** | 15 node types (incl. the declarative `agent` node and the `eval` node); versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
 | **Orchestration** | Temporal durable execution; budget tiers (STANDARD / LARGE / EPIC) with hard token caps and `BUDGET_EXCEEDED` enforcement |

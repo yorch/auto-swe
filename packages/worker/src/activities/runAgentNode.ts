@@ -211,13 +211,7 @@ async function bindMcpTools(
   if (!mcpTarget) {
     return undefined;
   }
-  const loaded = await loadMcpTools(mcpTarget.url, tracer, {
-    allowPrivateNetwork: mcpTarget.allowPrivateNetwork,
-    bearerToken: mcpTarget.bearerToken,
-    callTimeoutMs: mcpTarget.callTimeoutMs,
-    headers: mcpTarget.headers,
-    listTimeoutMs: mcpTarget.listTimeoutMs,
-  });
+  const loaded = await loadMcpTools(mcpTarget, tracer);
   onOpen(loaded.close);
   return loaded.tools as AgentTools;
 }

@@ -211,7 +211,9 @@ separately.
   file/URL based and trust is pinned to ed25519 public keys.
 - **MCP connection IDs are not portable.** A template spec referencing an `mcp` connection will
   carry a local UUID; another deployment must create an `mcp` `Connection` and update the template
-  or the node will fail at run time.
+  or the node will fail at run time. A connection's tool allowlist, result screening and
+  `integration` marker are connection config too, so a bundle does not carry them: the installing
+  deployment sets them on its own connection.
 - **Template versions are exported as a single spec.** The active version is frozen into the bundle;
   experiment versions and version history are not carried.
 - **A bundle without a `runtime` or `reasoning` leaves an installed agent's value as it is.** Absent
