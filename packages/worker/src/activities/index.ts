@@ -3,6 +3,8 @@
 export { nameAssistantConversationNow } from './assistantTitle.js';
 export type { AssistantTurnInput, AssistantTurnResult } from './assistantTurn.js';
 export { failAssistantReply, runAssistantTurn } from './assistantTurn.js';
+export type { AwaitQodoReviewInput, QodoReviewResult } from './awaitQodoReview.js';
+export { awaitQodoReview } from './awaitQodoReview.js';
 // Channel assistant (Phase 3) — ambient digest
 export { runChannelAmbientDigest } from './channelAmbient.js';
 // Channel assistant (Phase 0) — channel-resident Slack assistant

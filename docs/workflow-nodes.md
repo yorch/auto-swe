@@ -1423,6 +1423,87 @@ and the instruction travels with each branch's item.
 With `onBranchFail: "continue"`, a branch that failed contributes `null` to `plucked` and is counted
 in `failed`, and the run still reaches `done`.
 
+### Wait for Qodo's review of the pull request
+
+The `awaitQodoReview` step waits for and reads Qodo's review of the pull request the run just
+opened. It reads the review Qodo's own PR bot produces; it cannot start one, so it works only where
+that bot is installed. Details, the result's fields and the credential rules are in
+[qodo.md §6](./qodo.md#6-waiting-for-qodos-review-in-a-workflow).
+
+| Part | Contract |
+|---|---|
+| `inputs.prUrl`, `inputs.headSha` | The pull request's URL and the head commit the review must cover; bind them from the node that opened it |
+| `config.waitSeconds` | Optional, 0 to 600; default the `qodo.reviewWaitSeconds` setting |
+| `config.minActionLevel` | Optional; open findings below this level are ignored |
+| output | `status` (`reviewed`, `pending`, `stale`, `unavailable`, `disabled`), `reviewedHeadSha`, `headMatches`, `counts`, `worst`, `blocking`, `findings` (at most 25), `truncated`, `withheldFields`; never a `passed` field |
+
+The node names no connection: the team, and so the Qodo credential, is the run's repository's.
+The step never fails the run, so it blocks only if the template routes on it. Qodo's finding text
+is untrusted; never bind `findings` into an agent prompt unfenced. A template carrying this step
+spends up to `qodo.reviewWaitSeconds` (default 180) and repeated MCP reads on every run of a
+repository without the Qodo PR bot; a wait of 0 makes it a single read. The `qodoReview()` authoring
+helper emits the two nodes below.
+
+```json
+{
+  "schemaVersion": 1,
+  "name": "qodo-review-example",
+  "description": "Open a pull request, wait for Qodo's review, and ask a person when it blocks.",
+  "entry": "openPR",
+  "nodes": {
+    "openPR": {
+      "type": "step",
+      "step": "createOrUpdatePullRequest",
+      "inputs": { "codeResult": { "from": "context.currentCodeResult" } },
+      "next": "savePrInfo"
+    },
+    "savePrInfo": {
+      "type": "set",
+      "values": {
+        "context.prNumber": { "from": "nodes.openPR.output.prNumber" },
+        "context.prUrl": { "from": "nodes.openPR.output.prUrl" }
+      },
+      "next": "qodoReview"
+    },
+    "qodoReview": {
+      "type": "step",
+      "step": "awaitQodoReview",
+      "config": { "waitSeconds": 240 },
+      "inputs": {
+        "prUrl": { "from": "context.prUrl" },
+        "headSha": { "from": "context.currentCodeResult.headSha" }
+      },
+      "onFail": "warn",
+      "next": "qodoGate"
+    },
+    "qodoGate": {
+      "type": "cond",
+      "expr": "nodes.qodoReview.output.blocking == true",
+      "onTrue": "qodoDecision",
+      "onFalse": "done"
+    },
+    "qodoDecision": {
+      "type": "humanDecision",
+      "title": "Qodo found a blocking issue. Continue anyway?",
+      "options": [
+        { "label": "Continue", "value": "continue", "next": "done" },
+        { "label": "Stop", "value": "stop", "next": "stopped" }
+      ],
+      "storeAs": "context.qodoChoice",
+      "timeout": "24h",
+      "onTimeout": "stopped"
+    },
+    "done": { "type": "terminate", "status": "SUCCESS" },
+    "stopped": { "type": "terminate", "status": "FAILED" }
+  }
+}
+```
+
+`qodoReview` follows the node that records `context.prUrl`, and `qodoDecision` offers to continue or
+stop. To fail closed when Qodo did not finish, pass `failClosed: true` to `qodoReview()`, which
+gates on
+`nodes.qodoReview.output.status != 'reviewed' || nodes.qodoReview.output.blocking == true`.
+
 ## Limitations
 
 - **No per-node activity timeouts or retry policy.** The worker fixes them per kind of step; the node

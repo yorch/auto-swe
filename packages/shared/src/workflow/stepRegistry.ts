@@ -181,6 +181,31 @@ register({
   configFields: [
     {
       description:
+        "Seconds to wait for Qodo to finish reviewing the pull request's head commit, at most 600. Leave empty for the team's `qodo.reviewWaitSeconds` setting. 0 reads once.",
+      key: 'waitSeconds',
+      label: 'Wait (s)',
+      type: 'number',
+    },
+    {
+      description:
+        'Ignore open findings below this level. Leave empty to count every level. The result never blocks the run by itself: route on `blocking` or `status` with a condition.',
+      enumValues: ['action_required', 'remediation_recommended', 'informational'],
+      key: 'minActionLevel',
+      label: 'Lowest finding level',
+      type: 'enum',
+    },
+  ],
+  description:
+    "Wait for and read Qodo's review of the pull request this run opened (inputs: prUrl, headSha), so a later condition can route on its severity. Reads the review Qodo's own PR bot produces; it cannot start one. Never fails the run.",
+  label: 'Wait for Qodo review',
+  name: 'awaitQodoReview',
+});
+
+register({
+  category: 'vcs',
+  configFields: [
+    {
+      description:
         'Open the PR as a draft. A repository that cannot hold drafts fails the step; it never gets a ready-for-review PR instead. Off by default.',
       key: 'draft',
       label: 'Open as draft',

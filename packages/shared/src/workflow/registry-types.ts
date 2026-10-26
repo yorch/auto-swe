@@ -107,6 +107,8 @@ export const BUILTIN_STEPS = [
   'runEvalNode',
   'mcpCallTool',
   'runContainerStep',
+  // Waits for and reads Qodo's review of the pull request the run opened
+  'awaitQodoReview',
   // PRD decomposition workflow steps
   'analyzePrd',
   'decomposePrd',

@@ -5,7 +5,7 @@ steps the step registry holds, and which built-in templates use each. It lists w
 [workflow-nodes.md](./workflow-nodes.md) explains how to use it. This page is generated from
 the code by `yarn docs:inventory`, and a test fails when it no longer matches.
 
-There are 15 node types, 54 registered steps (1 of them internal) and 29 built-in templates.
+There are 15 node types, 55 registered steps (1 of them internal) and 29 built-in templates.
 
 ## Node types
 
@@ -88,6 +88,7 @@ owns it, and is left out of the editor’s palette. A step’s built-in template
 
 | Step | Label | Description | Config fields | Agent role | Built-in templates |
 |---|---|---|---|---|---|
+| `awaitQodoReview` | Wait for Qodo review | Wait for and read Qodo's review of the pull request this run opened (inputs: prUrl, headSha), so a later condition can route on its severity. Reads the review Qodo's own PR bot produces; it cannot start one. Never fails the run. | `minActionLevel`, `waitSeconds` | — | — |
 | `checkPriceListNotes` | Check price-list notes | Compare the pushed model catalog file with the one the change started from, and find every added or repriced row whose figure differs from the community price list (models.priceListUrl) without a "// price list says" comment. output.ok is false with output.summary as a finding for the fixer. Passes, saying why, when the list is off or unreadable. | — | — | 1 node in 1 template: `model-catalog-refresh` |
 | `createOrUpdatePullRequest` | Create or update PR | Create or update the PR for this work request. | `draft` | — | 27 nodes in 19 templates: `agent-reviewed-pr`, `approve-before-pr`, `ci-triage-and-fix`, `code-and-ci`, `consensus-review`, `db-migration-dry-run`, `dependency-update`, `external-approval-gate`, `four-eyes`, `fully-supervised`, `hotfix`, `human-code-review`, `model-catalog-refresh`, `parallel-fan-out`, `scope-clarification`, `security-triage`, `staged-deploy-signals`, `ticket-to-merge`, `tiered-escalation` |
 | `finishCiFixPush` | Finish a pushed CI fix | Delete the run's own work branch once a fix pushed onto a pull request's branch is done with. The pull request branch itself is never touched. | — | — | 2 nodes in 1 template: `ci-triage-and-fix` |

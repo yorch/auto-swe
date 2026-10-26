@@ -46,6 +46,7 @@ import {
   prFeedbackActivities,
   prFeedbackAgentTaskActivities,
   prFeedbackQodoGatherActivities,
+  qodoReviewActivities,
   stateActivities,
 } from './runnableActivities.js';
 
@@ -692,6 +693,19 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         inputs.logsUrl as string | undefined,
         request.repoId ?? undefined
       ),
+  ],
+  [
+    'awaitQodoReview',
+    // The repository, and so the team whose Qodo connection is read, is the run's own; neither
+    // the config nor the inputs can name another.
+    ({ request, config, inputs }) =>
+      qodoReviewActivities.awaitQodoReview({
+        headSha: inputs.headSha,
+        minActionLevel: config.minActionLevel,
+        prUrl: inputs.prUrl,
+        repoId: request.repoId,
+        waitSeconds: config.waitSeconds,
+      }),
   ],
   ['resolveCiWaitConfig', () => ciConfigActivities.resolveCiWaitConfig()],
   [

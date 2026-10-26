@@ -21,6 +21,7 @@ export {
 export { type FailureLessonOutcome, failureLesson } from './failureLesson.js';
 export { type OpenPullRequestOptions, openPullRequest } from './openPullRequest.js';
 export { type PolicyGatedWriteOptions, policyGatedWrite } from './policyGatedWrite.js';
+export { type QodoReviewOptions, qodoReview } from './qodoReview.js';
 export { type ReviewLoopOptions, reviewLoop } from './reviewLoop.js';
 export { type SignalGateOptions, signalGate } from './signalGate.js';
 export { type SourceHeadOptions, sourceHead } from './sourceHead.js';

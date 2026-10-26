@@ -316,6 +316,18 @@ export const ciPollActivities = proxyActivities<Pick<typeof activitiesType, 'wai
   startToCloseTimeout: '6h',
 });
 
+// `awaitQodoReview` polls Qodo, inside the activity, for at most 600 s (the node's wait is
+// clamped to that) and heartbeats while it does. It never throws, so there is nothing for a
+// retry to recover, and a second attempt would only wait again: a single attempt, with a
+// start-to-close well past the longest wait plus the final read.
+export const qodoReviewActivities = proxyActivities<Pick<typeof activitiesType, 'awaitQodoReview'>>(
+  {
+    heartbeatTimeout: T_2M,
+    retry: RETRY_SINGLE_ATTEMPT,
+    startToCloseTimeout: T_15M,
+  }
+);
+
 // PRD decomposition workflow steps. analyzePrd + decomposePrd call LLM agents
 // (heartbeat + generous timeout); createTrackerItems + submitPrdWorkRequests
 // make external HTTP calls (shorter timeout; no heartbeat needed).
