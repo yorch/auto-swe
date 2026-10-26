@@ -131,6 +131,9 @@ JWT_SECRET=<openssl rand -base64 48>
 NEXT_PUBLIC_API_URL=https://api.example.com
 API_INTERNAL_URL=http://gateway:8080                      # server-only: gateway as reached from the web and worker containers (the in-app assistant's tools); web defaults to NEXT_PUBLIC_API_URL
 NEXT_PUBLIC_TEMPORAL_UI_URL=https://temporal.example.com   # optional; omit to hide the link
+NEXT_PUBLIC_SUPPORT_URL=https://help.example.com           # optional; https only; omit to hide it
+NEXT_PUBLIC_SUPPORT_EMAIL=help@example.com                 # optional; shown as a mailto link
+NEXT_PUBLIC_SUPPORT_SLACK=#platform-help                   # optional; up to 80 characters; an https URL becomes a link
 
 # Browser-facing gateway
 CORS_ORIGIN=https://app.example.com,https://admin.example.com  # first entry = better-auth client origin
@@ -402,7 +405,7 @@ docker push registry.example.com/auto-swe/worker:$SHA
 docker push registry.example.com/auto-swe/web:$SHA
 ```
 
-> **The web image takes no URL build args.** `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_TEMPORAL_UI_URL` are read at request time by the root Server Component (`app/layout.tsx`) and injected into `window.__APP_CONFIG__`, so one image serves every environment — set them as runtime env on the container. The exception is `NEXT_PUBLIC_APP_VERSION`, the login-footer label: it is inlined by `next build`, and the shipped Dockerfile does not thread it through as a build arg, so the containerised dashboard shows `0.0.0` unless you build the web bundle with that variable set.
+> **The web image takes no URL build args.** `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_TEMPORAL_UI_URL` and the optional support contact variables (`NEXT_PUBLIC_SUPPORT_*`, see [configuration.md §8](./configuration.md#8-support-contact)) are read at request time by the root Server Component (`app/layout.tsx`) and injected into `window.__APP_CONFIG__`, so one image serves every environment — set them as runtime env on the container. The exception is `NEXT_PUBLIC_APP_VERSION`, the login-footer label: it is inlined by `next build`, and the shipped Dockerfile does not thread it through as a build arg, so the containerised dashboard shows `0.0.0` unless you build the web bundle with that variable set.
 
 ---
 

@@ -370,7 +370,7 @@ a team lead can change them for their own team.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `git.authorName` | `auto-swe` | Name on the commit. 1–100 characters, no control characters, no `<` or `>`. |
+| `git.authorName` | `auto-swe` | Name on the commit. 1–100 characters, no control characters, no `<` or `>`, and at least one character that is not whitespace or one of `. , : ; " ' \`, because git refuses to commit under a name made only of those. |
 | `git.authorEmail` | `auto-swe@localhost` | Address on the commit. Up to 254 characters, one `@`, no whitespace. |
 | `git.launcherAttribution` | `none` | Whether the person who launched the run is credited: `none`, `co-author-trailer` or `author`. |
 
@@ -391,11 +391,15 @@ standalone gate run, resolves from the global value.
 | `co-author-trailer` | configured identity | configured identity | ends with `Co-authored-by: <name> <email>` for the launcher |
 | `author` | the launcher | configured identity | unchanged |
 
-The launcher is credited only when their account email is verified, because GitHub credits a commit
-to the account that owns the author address. A run with no launcher, such as one started by a
-webhook or a schedule, uses the configured identity in every mode. Both credited modes write the
-launcher's account email into the target repository's history, where it stays, so the default is
-`none`.
+The launcher is credited only when two things hold. Their account email is verified, because GitHub
+credits a commit to the account that owns the author address. And they are a member of the team that
+owns the repository, so a person who reaches a repository only through a team it is shared with does
+not have their email written into another team's history. A run with no launcher, such as one started
+by a webhook or a schedule, a launcher who fails either test, and a run whose repository has no team
+all use the configured identity in every mode. The launcher's name is capped at 100 characters, and a
+name that git would refuse, such as one made only of punctuation, is replaced by their email address.
+Both credited modes write the launcher's account email into the target repository's history, where
+it stays, so the default is `none`.
 
 ## 8. Support contact
 
@@ -405,12 +409,12 @@ deployment. They are read on each request and passed to the browser with the res
 
 | Variable | Shown as | Rule |
 |---|---|---|
-| `NEXT_PUBLIC_SUPPORT_URL` | a link | Must parse as an `https:` URL. |
+| `NEXT_PUBLIC_SUPPORT_URL` | a link | Must parse as an `https:` URL with no embedded username or password. |
 | `NEXT_PUBLIC_SUPPORT_EMAIL` | a `mailto:` link | One `@`, no whitespace, no `<`, `>` or quotes. |
-| `NEXT_PUBLIC_SUPPORT_SLACK` | text, or a link when it is an `https:` URL | Up to 80 characters. |
+| `NEXT_PUBLIC_SUPPORT_SLACK` | text, or a link when it is an `https:` URL | Up to 80 characters. A URL with embedded credentials is dropped. |
 
-A value that fails its rule is dropped with one warning in the web container's log, and the rest
-still show. With none set, nothing is rendered. The contact appears on the sign-in screen, including
+A value that fails its rule is dropped, and the web container logs one warning per process for
+each distinct message. The rest still show. With none set, nothing is rendered. The contact appears on the sign-in screen, including
 the awaiting-approval screen, on the error and not-found pages, and in the sidebar footer. The
 compose files pass the three variables through, because the web container does not receive `.env`.
 
@@ -424,7 +428,12 @@ compose files pass the three variables through, because the web container does n
   identity follows the workflow template, team and organization, not the agent. A run that wants to
   show which agent produced a change has no identity to carry that.
 - **Launcher attribution uses the account email.** There is no GitHub no-reply address option, and an
-  account whose email is not verified is never credited.
+  account whose email is not verified is never credited. Only members of the repository's owning team
+  are credited. Members of a team the repository is shared with get the configured identity.
+- **`author` mode needs git 2.22 or newer in the workspace image.** Older git ignores the
+  `author.name` and `author.email` keys, so the commit carries the configured identity and the
+  launcher is not credited, with no error. The co-author trailer is part of the message and needs no
+  particular git version.
 - **The support contact is global.** It does not vary by team or organization. The fallback screen
   that replaces the whole page after a fatal error shows it only when the page's config script had
   already loaded, and it checks the values less strictly than the server does.

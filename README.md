@@ -197,6 +197,7 @@ curl -H "Authorization: Bearer $TOKEN" 'http://localhost:8080/api/v1/workflow-ru
 | `DEFAULT_TEAM_SLUG`         | Optional  | Slug new better-auth sign-ups join automatically (default: `default`)                          |
 | `NEXT_PUBLIC_API_URL`       | Web       | Gateway URL the web bundle calls (default: `http://localhost:8080`)                            |
 | `NEXT_PUBLIC_APP_VERSION`   | Web       | Version label shown in the login page footer                                                   |
+| `NEXT_PUBLIC_SUPPORT_URL` / `NEXT_PUBLIC_SUPPORT_EMAIL` / `NEXT_PUBLIC_SUPPORT_SLACK` | Web (optional) | Support contact shown on the sign-in, error and not-found screens and in the sidebar; omit all to hide it (see `docs/configuration.md` §8) |
 | `RESEND_API_KEY`            | Optional³ | Resend HTTP API key for magic-link email delivery                                              |
 | `SMTP_HOST` / `SMTP_PORT`   | Optional³ | SMTP transport for magic-link email (alternative to Resend)                                    |
 | `SMTP_USER` / `SMTP_PASS`   | Optional³ | SMTP auth credentials (omit for unauthenticated relays)                                        |
