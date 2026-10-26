@@ -6,9 +6,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const teamFindUnique = vi.fn();
 const userFindUnique = vi.fn();
+const membershipFindUnique = vi.fn();
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     team: { findUnique: (...a: unknown[]) => teamFindUnique(...a) },
+    teamMembership: { findUnique: (...a: unknown[]) => membershipFindUnique(...a) },
     user: { findUnique: (...a: unknown[]) => userFindUnique(...a) },
   },
 }));
@@ -47,6 +49,7 @@ beforeEach(() => {
     workflowTemplateId: 'tpl-1',
   });
   userFindUnique.mockResolvedValue(VERIFIED_LAUNCHER);
+  membershipFindUnique.mockResolvedValue({ id: 'membership-1' });
   settings('none');
 });
 
@@ -268,6 +271,76 @@ describe('resolveGitIdentity launcher attribution', () => {
       expect(identity.author).toEqual(CONFIGURED);
       expect(identity.coAuthorTrailer).toBeUndefined();
     }
+  });
+});
+
+describe('resolveGitIdentity owning-team rule', () => {
+  it.each(['co-author-trailer', 'author'])(
+    'credits a launcher who is a member of the owning team (%s)',
+    async (mode) => {
+      settings(mode);
+      const identity = await resolveGitIdentity({ teamId: 'team-1' });
+      expect(membershipFindUnique).toHaveBeenCalledWith({
+        select: { id: true },
+        where: { userId_teamId: { teamId: 'team-1', userId: 'user-1' } },
+      });
+      if (mode === 'author') {
+        expect(identity.author.email).toBe('ada@acme.example');
+      } else {
+        expect(identity.coAuthorTrailer).toContain('ada@acme.example');
+      }
+    }
+  );
+
+  it.each(['co-author-trailer', 'author'])(
+    'uses the configured identity with no trailer for a launcher outside the owning team (%s)',
+    async (mode) => {
+      settings(mode);
+      membershipFindUnique.mockResolvedValue(null);
+      const identity = await resolveGitIdentity({ teamId: 'team-1' });
+      expect(identity.author).toEqual(CONFIGURED);
+      expect(identity.committer).toEqual(CONFIGURED);
+      expect(identity.coAuthorTrailer).toBeUndefined();
+    }
+  );
+
+  it.each(['co-author-trailer', 'author'])(
+    'attributes no one when the repository has no team (%s)',
+    async (mode) => {
+      settings(mode);
+      const identity = await resolveGitIdentity({ teamId: null });
+      expect(identity.author).toEqual(CONFIGURED);
+      expect(identity.coAuthorTrailer).toBeUndefined();
+    }
+  );
+
+  it('runs no membership query in none mode', async () => {
+    await resolveGitIdentity({ teamId: 'team-1' });
+    expect(membershipFindUnique).not.toHaveBeenCalled();
+  });
+
+  it('lets a membership lookup error throw', async () => {
+    settings('author');
+    membershipFindUnique.mockRejectedValue(new Error('connection reset'));
+    await expect(resolveGitIdentity({ teamId: 'team-1' })).rejects.toThrow('connection reset');
+  });
+
+  it.each([',;', '"', '. ,', '\\'])(
+    'falls back to the email when the launcher name %j is only characters git refuses',
+    async (name) => {
+      settings('author');
+      userFindUnique.mockResolvedValue({ ...VERIFIED_LAUNCHER, name });
+      const identity = await resolveGitIdentity({ teamId: 'team-1' });
+      expect(identity.author.name).toBe('ada@acme.example');
+    }
+  );
+
+  it('does not split a surrogate pair when capping the name at 100 code points', async () => {
+    settings('author');
+    userFindUnique.mockResolvedValue({ ...VERIFIED_LAUNCHER, name: '\u{1F600}'.repeat(150) });
+    const { name } = (await resolveGitIdentity({ teamId: 'team-1' })).author;
+    expect(Array.from(name)).toHaveLength(100);
+    expect(name).not.toMatch(/\p{Cs}/u);
   });
 });
 

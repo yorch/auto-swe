@@ -1,5 +1,6 @@
 import { resolveSettings } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
+import { hasGitNameCharacter } from '@auto-swe/shared/lib/gitIdentityName';
 import { currentRunLaunchContext } from './runLauncher.js';
 import { shellQuote } from './shellQuote.js';
 
@@ -44,12 +45,11 @@ async function resolveLauncher(
   if (email.length > MAX_EMAIL_LENGTH || !EMAIL_SHAPE.test(email) || UNSAFE_CHARS.test(email)) {
     return null;
   }
-  const name = (user.name ?? '')
-    .replace(UNSAFE_NAME_CHARS, '')
-    .trim()
+  const name = Array.from((user.name ?? '').replace(UNSAFE_NAME_CHARS, '').trim())
     .slice(0, MAX_NAME_LENGTH)
+    .join('')
     .trim();
-  return { email, name: name || email };
+  return { email, name: hasGitNameCharacter(name) ? name : email };
 }
 
 /**
@@ -84,8 +84,18 @@ export async function resolveGitIdentity(scope: { teamId: string | null }): Prom
   if (mode === 'none') {
     return identity;
   }
-  const launcher = await resolveLauncher(launch?.launchedById ?? null);
-  if (!launcher) {
+  const launchedById = launch?.launchedById ?? null;
+  const launcher = await resolveLauncher(launchedById);
+  if (!launcher || launchedById === null || teamId === null) {
+    return identity;
+  }
+  // Only a member of the repository's owning team is credited: a launcher
+  // outside it gets the configured identity, as an unknown launcher does.
+  const membership = await prisma.teamMembership.findUnique({
+    select: { id: true },
+    where: { userId_teamId: { teamId, userId: launchedById } },
+  });
+  if (!membership) {
     return identity;
   }
   if (mode === 'author') {
