@@ -337,10 +337,13 @@ describe('resolveGitIdentity owning-team rule', () => {
 
   it('does not split a surrogate pair when capping the name at 100 code points', async () => {
     settings('author');
-    userFindUnique.mockResolvedValue({ ...VERIFIED_LAUNCHER, name: '\u{1F600}'.repeat(150) });
+    // One leading ASCII character puts UTF-16 unit 100 in the middle of an emoji, so a cap by
+    // UTF-16 unit leaves a lone high surrogate; a name of whole emoji would cut on a boundary.
+    userFindUnique.mockResolvedValue({ ...VERIFIED_LAUNCHER, name: `a${'\u{1F600}'.repeat(150)}` });
     const { name } = (await resolveGitIdentity({ teamId: 'team-1' })).author;
     expect(Array.from(name)).toHaveLength(100);
     expect(name).not.toMatch(/\p{Cs}/u);
+    expect(name.endsWith('\u{1F600}')).toBe(true);
   });
 });
 
