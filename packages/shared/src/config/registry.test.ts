@@ -180,3 +180,40 @@ describe('qodo pull-request feedback settings', () => {
     }
   });
 });
+
+describe('Jira filter polling settings', () => {
+  const accepts = (key: keyof typeof SETTING_DEFINITIONS, value: unknown) =>
+    SETTING_DEFINITIONS[key].schema.safeParse(value).success;
+
+  it('the kill switch is off by default, ADMIN only, and settable per team or organization', () => {
+    const def = SETTING_DEFINITIONS['workflow.jiraPollAutomationsEnabled'];
+    expect(def.defaultValue).toBe(false);
+    expect(def.requiredRole).toBe('ADMIN');
+    expect(def.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
+    expect(accepts('workflow.jiraPollAutomationsEnabled', 'yes')).toBe(false);
+  });
+
+  it('the project allowlist is empty by default and takes only Jira project keys', () => {
+    const key = 'workflow.jiraPollProjectKeys';
+    expect(SETTING_DEFINITIONS[key].defaultValue).toEqual([]);
+    expect(SETTING_DEFINITIONS[key].requiredRole).toBe('ADMIN');
+    expect(SETTING_DEFINITIONS[key].overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
+    expect(accepts(key, ['PAY', 'plat_eng', 'A1'])).toBe(true);
+    for (const bad of [['PAY-1'], ['has space'], ['1ABC'], [''], 'PAY', [1]]) {
+      expect(accepts(key, bad), JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('the poll interval is global only, at least a minute, and five minutes by default', () => {
+    const key = 'workflow.jiraPollIntervalSeconds';
+    expect(SETTING_DEFINITIONS[key].defaultValue).toBe(300);
+    expect(SETTING_DEFINITIONS[key].overridableAt).toEqual([]);
+    expect(SETTING_DEFINITIONS[key].requiredRole).toBe('ADMIN');
+    for (const ok of [60, 300, 86_400]) {
+      expect(accepts(key, ok), String(ok)).toBe(true);
+    }
+    for (const bad of [59, 0, 86_401, 90.5, '300']) {
+      expect(accepts(key, bad), String(bad)).toBe(false);
+    }
+  });
+});

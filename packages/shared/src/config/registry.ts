@@ -842,6 +842,46 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.boolean(),
   }),
+  // ── Jira filter polling ────────────────────────────────────────────────────
+  // Read each tick by the gateway's poller (the interval) and per automation (the other two),
+  // with the repository's team.
+  'workflow.jiraPollAutomationsEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether a repository's Jira filter automations may poll Jira and start runs. Off by default: a new issue in a filter starts a template on the issue's text, which anyone with access to the Jira project may have written, so an admin turns this on deliberately, per team or organization. While off, no Jira request is made for the team's automations. Turning it off does not stop runs already started.",
+    group: 'workflow',
+    label: 'Jira filter automations enabled',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'workflow.jiraPollIntervalSeconds': defineSetting({
+    defaultValue: 300,
+    description:
+      'Seconds between polls of every Jira filter automation. One value for the whole deployment, read before each poll, so a change applies from the next one.',
+    group: 'workflow',
+    label: 'Jira poll interval',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(60).max(86_400),
+    unit: 'seconds',
+  }),
+  'workflow.jiraPollProjectKeys': defineSetting({
+    defaultValue: [],
+    description:
+      'Jira project keys a Jira filter automation may act on. The platform queries Jira with its own credential, so a filter can see every project that credential can; only issues in these projects are acted on, whatever the filter says. Empty means no issue is acted on, and a Jira filter automation cannot be saved.',
+    group: 'workflow',
+    label: 'Jira projects allowed for filter automations',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.array(z.string().regex(/^[A-Za-z][A-Za-z0-9_]{1,49}$/)).max(100),
+  }),
   'workflow.maxTransitions': defineSetting({
     defaultValue: 500,
     description:

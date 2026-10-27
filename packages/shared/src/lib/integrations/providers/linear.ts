@@ -4,6 +4,8 @@ import type {
   FetchedIssue,
   FetchIssueOptions,
   IssueCreateFields,
+  SearchIssuesOptions,
+  SearchIssuesResult,
   TrackerSyncEvent,
 } from '../types.js';
 
@@ -149,6 +151,10 @@ export class LinearProvider implements IssueTrackerProvider {
       this.log?.warn({ err, issueId: id }, 'Linear fetchIssue failed');
       return null;
     }
+  }
+
+  async searchIssues(_query: string, _opts: SearchIssuesOptions): Promise<SearchIssuesResult> {
+    throw new Error('searchIssues is not supported by the Linear provider');
   }
 
   async createIssue(fields: IssueCreateFields): Promise<CreatedIssue | null> {

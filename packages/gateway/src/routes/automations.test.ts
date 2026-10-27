@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const gateState = vi.hoisted(() => ({ gate: undefined as unknown }));
 vi.mock('@auto-swe/shared/lib/repoAccessGate', async (orig) => ({
@@ -14,19 +14,25 @@ const launch = vi.hoisted(() => ({
     | { ok: false; refusal: { status: 403; body: { error: { code: string; message: string } } } },
 }));
 const settings = vi.hoisted(() => ({
+  jiraPolling: true,
+  jiraProjects: ['PAY'] as string[],
   otherPrsAllowed: false,
   pushAllowed: false,
   signingPolicyTeams: [] as string[],
 }));
 vi.mock('@auto-swe/shared/config', () => ({
   resolveSetting: vi.fn(async (key: string, ctx?: { teamId?: string }) =>
-    key === 'github.ciFixPushToPullRequestEnabled'
-      ? settings.pushAllowed
-      : key === 'github.prFeedbackOtherPullRequestsEnabled'
-        ? settings.otherPrsAllowed
-        : key === 'workflow.templateWebhookRequireSignature'
-          ? settings.signingPolicyTeams.includes(ctx?.teamId ?? '')
-          : undefined
+    key === 'workflow.jiraPollAutomationsEnabled'
+      ? settings.jiraPolling
+      : key === 'workflow.jiraPollProjectKeys'
+        ? settings.jiraProjects
+        : key === 'github.ciFixPushToPullRequestEnabled'
+          ? settings.pushAllowed
+          : key === 'github.prFeedbackOtherPullRequestsEnabled'
+            ? settings.otherPrsAllowed
+            : key === 'workflow.templateWebhookRequireSignature'
+              ? settings.signingPolicyTeams.includes(ctx?.teamId ?? '')
+              : undefined
   ),
 }));
 
@@ -36,6 +42,17 @@ const tracker = vi.hoisted(() => ({
 vi.mock('@auto-swe/shared/lib/systemConfig', async (orig) => ({
   ...(await orig<typeof import('@auto-swe/shared/lib/systemConfig')>()),
   resolveIssueTrackerConfig: vi.fn(async () => tracker.config),
+}));
+
+const jira = vi.hoisted(() => ({
+  searchIssues: vi.fn(),
+}));
+vi.mock('@auto-swe/shared/lib/integrations/registry', async (orig) => ({
+  ...(await orig<typeof import('@auto-swe/shared/lib/integrations/registry')>()),
+  // Like the real one: no client without a provider and a token.
+  createIssueTrackerProvider: vi.fn((config: { provider?: string; apiToken?: string | null }) =>
+    config.provider && config.apiToken ? { searchIssues: jira.searchIssues } : null
+  ),
 }));
 
 const engine = vi.hoisted(() => ({ decideAndStart: vi.fn() }));
@@ -52,8 +69,14 @@ vi.mock('../lib/launchAuthorization.js', () => ({
   ) => reply.status(r.status).send(r.body),
 }));
 
-import { PR_FEEDBACK, WORKFLOW_RUN_FAILED } from '@auto-swe/shared/automation';
+import {
+  JIRA_FILTER_NEW_ISSUE,
+  PR_FEEDBACK,
+  WORKFLOW_RUN_FAILED,
+} from '@auto-swe/shared/automation';
 import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
+import { AtlassianError } from '@auto-swe/shared/lib/integrations/atlassianClient';
+import { createIssueTrackerProvider } from '@auto-swe/shared/lib/integrations/registry';
 import { PR_FEEDBACK_INPUT_SCHEMA } from '@auto-swe/shared/lib/prFeedback';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { authorizeLaunch } from '../lib/launchAuthorization.js';
@@ -136,6 +159,7 @@ async function buildApp() {
       findMany: vi.fn(async (_args: { take?: number }) => [] as unknown[]),
       groupBy: vi.fn(async (_args: unknown) => [] as unknown[]),
     },
+    automationPollState: { updateMany: vi.fn(async (_args: unknown) => ({ count: 1 })) },
     configAuditLog: { create: vi.fn(async (_args: { data: Record<string, unknown> }) => ({})) },
     connection: {
       findFirst: vi.fn(),
@@ -205,6 +229,17 @@ describe('automationRoutes (event automations)', () => {
       });
       expect(res.statusCode).toBe(200);
       expect(res.json().data).toEqual({ automations: [], canManage: false });
+    });
+
+    it('returns each automation with its poll state, so the dashboard can show how polling is going', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
+      await ctx.app.inject({ headers: AUTH, method: 'GET', url: `${URL}?connectionId=${REPO}` });
+      const call = ctx.prisma.automation.findMany.mock.calls[0] as unknown as
+        | [{ select: Record<string, unknown> }]
+        | undefined;
+      expect(call?.[0].select.pollState).toEqual({
+        select: { baselinedAt: true, lastError: true, lastPolledAt: true },
+      });
     });
 
     it('lets a member of a SHARED team read, but not manage', async () => {
@@ -837,6 +872,332 @@ describe('automationRoutes (event automations)', () => {
       expect(ctx.prisma.configAuditLog.create.mock.calls[0]?.[0].data).toMatchObject({
         action: 'DELETE',
         entityType: 'Automation',
+      });
+    });
+  });
+
+  describe('Jira filter automations', () => {
+    const JIRA_TEMPLATE = {
+      activeVersion: 1,
+      id: 'c0000000-0000-4000-8000-000000000000',
+      inputSchema: {
+        properties: {
+          connectionId: { connectionType: 'git_repo', type: 'connection' },
+          description: { type: 'string' },
+          ticketId: { type: 'string' },
+        },
+        required: ['connectionId', 'description', 'ticketId'],
+        type: 'object',
+      },
+    };
+    const JIRA = {
+      connectionId: REPO,
+      filters: { jql: 'status = "To Do"' },
+      name: 'new tickets',
+      source: JIRA_FILTER_NEW_ISSUE,
+    };
+    const storedJira = (over: Record<string, unknown> = {}) =>
+      stored({ filters: JIRA.filters, source: JIRA_FILTER_NEW_ISSUE, ...over });
+    const originalConfig = tracker.config;
+
+    beforeEach(() => {
+      settings.jiraPolling = true;
+      settings.jiraProjects = ['PAY'];
+      tracker.config = {
+        allowPrivateNetwork: false,
+        apiToken: 't',
+        baseUrl: 'https://acme.atlassian.net',
+        email: 'e@acme.test',
+        provider: 'jira',
+      };
+      jira.searchIssues.mockResolvedValue({ issues: [], truncated: false });
+      ctx.prisma.workflowTemplate.findFirst.mockResolvedValue(JIRA_TEMPLATE);
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+    });
+    afterEach(() => {
+      tracker.config = originalConfig;
+    });
+
+    it('creates one after asking Jira to run the JQL once, narrowed to the allowed projects', async () => {
+      const res = await post(JIRA);
+      expect(res.statusCode).toBe(201);
+      expect(jira.searchIssues).toHaveBeenCalledTimes(1);
+      expect(jira.searchIssues).toHaveBeenCalledWith('project in ("PAY") AND (status = "To Do")', {
+        maxResults: 1,
+      });
+      expect(ctx.prisma.automation.create.mock.calls[0]?.[0].data).toMatchObject({
+        connectionId: REPO,
+        filters: { jql: 'status = "To Do"' },
+        source: JIRA_FILTER_NEW_ISSUE,
+      });
+    });
+
+    it('drops a trailing ORDER BY before asking, as the poller does', async () => {
+      const res = await post({ ...JIRA, filters: { jql: 'status = Open ORDER BY created DESC' } });
+      expect(res.statusCode).toBe(201);
+      expect(jira.searchIssues.mock.calls[0]?.[0]).toBe('project in ("PAY") AND (status = Open)');
+    });
+
+    it.each([
+      ['an empty allowlist', () => (settings.jiraProjects = []), 'NO_ALLOWED_PROJECTS'],
+      [
+        'a tracker that is not Jira',
+        () => (tracker.config = { ...tracker.config, provider: 'linear' }),
+        'TRACKER_NOT_CONFIGURED',
+      ],
+      [
+        'a Jira that is not configured',
+        () => (tracker.config = { ...tracker.config, apiToken: null }),
+        'TRACKER_NOT_CONFIGURED',
+      ],
+    ])('refuses to save an enabled one with %s, asking Jira nothing', async (_l, arrange, code) => {
+      arrange();
+      const res = await post(JIRA);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe(code);
+      expect(jira.searchIssues).not.toHaveBeenCalled();
+      expect(ctx.prisma.automation.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses JQL whose parentheses are unbalanced, asking Jira nothing', async () => {
+      const res = await post({
+        ...JIRA,
+        filters: { jql: 'x = 1) OR project = SECRET OR (x = 1' },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('INVALID_FILTERS');
+      expect(jira.searchIssues).not.toHaveBeenCalled();
+      expect(ctx.prisma.automation.create).not.toHaveBeenCalled();
+    });
+
+    it('answers JQL_REJECTED, and stores nothing, when Jira refuses the query', async () => {
+      jira.searchIssues.mockRejectedValue(
+        new AtlassianError(400, 'server', 'Atlassian request failed: 400')
+      );
+      const res = await post(JIRA);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('JQL_REJECTED');
+      expect(JSON.stringify(res.json())).not.toContain('Atlassian request failed');
+      expect(ctx.prisma.automation.create).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['an auth failure', new AtlassianError(401, 'auth', 'Atlassian auth failed: 401')],
+      ['a server error', new AtlassianError(503, 'server', 'Atlassian server error: 503')],
+      ['a network error', new AtlassianError(0, 'network', 'ECONNREFUSED internal-host')],
+      ['something unexpected', new Error('boom with a token abc123')],
+    ])('answers 502 TRACKER_UNAVAILABLE, and stores nothing, on %s', async (_l, error) => {
+      jira.searchIssues.mockRejectedValue(error);
+      const res = await post(JIRA);
+      expect(res.statusCode).toBe(502);
+      expect(res.json().error.code).toBe('TRACKER_UNAVAILABLE');
+      expect(JSON.stringify(res.json())).not.toMatch(/internal-host|abc123|auth failed/);
+      expect(ctx.prisma.automation.create).not.toHaveBeenCalled();
+    });
+
+    it('saves a disabled draft without asking Jira, even with an empty allowlist', async () => {
+      settings.jiraProjects = [];
+      const res = await post({ ...JIRA, enabled: false });
+      expect(res.statusCode).toBe(201);
+      expect(jira.searchIssues).not.toHaveBeenCalled();
+    });
+
+    it('saves without asking Jira while the team’s polling switch is off, as other sources do', async () => {
+      settings.jiraPolling = false;
+      const res = await post(JIRA);
+      expect(res.statusCode).toBe(201);
+      expect(jira.searchIssues).not.toHaveBeenCalled();
+    });
+
+    it('still refuses an empty allowlist or an unconfigured tracker while the switch is off', async () => {
+      settings.jiraPolling = false;
+      settings.jiraProjects = [];
+      const res = await post(JIRA);
+      expect(res.statusCode).toBe(400);
+      expect(res.json().error.code).toBe('NO_ALLOWED_PROJECTS');
+    });
+
+    it('asks Jira without retries, so a save fails fast and cannot multiply load', async () => {
+      await post(JIRA);
+      const factory = createIssueTrackerProvider as unknown as ReturnType<typeof vi.fn>;
+      expect(factory.mock.calls[0]?.[0]).toMatchObject({ maxRetries: 0, provider: 'jira' });
+    });
+
+    it('limits how often one user may create or change an automation', async () => {
+      const configs = new Map<string, unknown>();
+      const app = Fastify();
+      app.setValidatorCompiler(validatorCompiler);
+      app.setSerializerCompiler(serializerCompiler);
+      app.addHook('onRoute', (route) => {
+        for (const method of [route.method].flat()) {
+          configs.set(`${method} ${route.url}`, route.config);
+        }
+      });
+      app.decorate('prisma', {} as never);
+      await app.register(automationRoutes, { prefix: '/api/v1/automations' });
+      await app.ready();
+      await app.close();
+      for (const route of [
+        'POST /api/v1/automations/events',
+        'PATCH /api/v1/automations/events/:id',
+      ]) {
+        expect(configs.get(route), route).toMatchObject({
+          rateLimit: { max: 20, timeWindow: '1 minute' },
+        });
+      }
+    });
+
+    describe('its decisions', () => {
+      const FIRE = '44444444-4444-4444-8444-444444444444';
+      const FACTS = {
+        description: 'Confidential details of the ticket',
+        issueKey: 'PAY-1',
+        projectKey: 'PAY',
+        summary: 'Add a health check',
+        url: 'https://acme.atlassian.net/browse/PAY-1',
+      };
+      const fire = (over: Record<string, unknown> = {}) => ({
+        facts: FACTS,
+        id: FIRE,
+        outcome: 'SUPPRESSED_DAILY_CAP',
+        ownerKey: 'github.com/acme/api',
+        retriedAt: null,
+        ...over,
+      });
+      const fires = () =>
+        ctx.app.inject({
+          headers: AUTH,
+          method: 'GET',
+          url: `${URL}/${AUTOMATION}/fires?limit=5`,
+        });
+      const retry = () =>
+        ctx.app.inject({
+          headers: AUTH,
+          method: 'POST',
+          url: `${URL}/${AUTOMATION}/fires/${FIRE}/retry`,
+        });
+
+      beforeEach(() => {
+        ctx.prisma.automation.findUnique.mockResolvedValue(storedJira());
+        ctx.prisma.automationFire.findMany.mockResolvedValue([fire()]);
+      });
+
+      it('never returns the ticket description, to anyone', async () => {
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+        const res = await fires();
+        expect(res.statusCode).toBe(200);
+        expect(JSON.stringify(res.json())).not.toContain('Confidential details');
+        expect(res.json().data.fires[0].facts).not.toHaveProperty('description');
+      });
+
+      it('shows the title only to those who manage the automation', async () => {
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+        expect((await fires()).json().data.fires[0].facts).toMatchObject({
+          issueKey: 'PAY-1',
+          summary: 'Add a health check',
+        });
+        // A member of a shared team may have no Jira access, and the project may not be theirs.
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null, lead));
+        const shared = (await fires()).json().data.fires[0].facts;
+        expect(shared).not.toHaveProperty('summary');
+        expect(shared).not.toHaveProperty('description');
+        expect(shared).toMatchObject({ issueKey: 'PAY-1', projectKey: 'PAY' });
+      });
+
+      it('leaves the decisions of another source as they are', async () => {
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
+        ctx.prisma.automation.findUnique.mockResolvedValue(stored());
+        ctx.prisma.automationFire.findMany.mockResolvedValue([
+          { facts: { branch: 'main', description: 'kept' } },
+        ]);
+        expect((await fires()).json().data.fires[0].facts).toEqual({
+          branch: 'main',
+          description: 'kept',
+        });
+      });
+
+      it('takes a decision again while its project is allowed', async () => {
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+        ctx.prisma.automationFire.findFirst.mockResolvedValue(fire());
+        engine.decideAndStart.mockResolvedValue({ automationId: AUTOMATION, outcome: 'STARTED' });
+        expect((await retry()).statusCode).toBe(200);
+        expect(engine.decideAndStart).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses to take a decision again once its project is no longer allowed', async () => {
+        settings.jiraProjects = ['OPS'];
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+        ctx.prisma.automationFire.findFirst.mockResolvedValue(fire());
+        const res = await retry();
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error.code).toBe('NOT_RETRYABLE');
+        expect(res.json().error.message).toMatch(/no longer allowed/i);
+        expect(engine.decideAndStart).not.toHaveBeenCalled();
+      });
+
+      it('refuses it for an empty allowlist too', async () => {
+        settings.jiraProjects = [];
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+        ctx.prisma.automationFire.findFirst.mockResolvedValue(fire());
+        expect((await retry()).statusCode).toBe(409);
+        expect(engine.decideAndStart).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('changing one', () => {
+      it('asks Jira again when the JQL changes, and leaves the baseline to the poller, which takes a new one for a new JQL', async () => {
+        ctx.prisma.automation.findUnique.mockResolvedValue(storedJira());
+        const res = await patch({ filters: { jql: 'status = Open' } });
+        expect(res.statusCode).toBe(200);
+        expect(jira.searchIssues).toHaveBeenCalledTimes(1);
+        expect(ctx.prisma.automationPollState.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('asks Jira and resets the baseline, before the write, when an automation is switched on', async () => {
+        ctx.prisma.automation.findUnique.mockResolvedValue(storedJira({ enabled: false }));
+        const res = await patch({ enabled: true });
+        expect(res.statusCode).toBe(200);
+        expect(jira.searchIssues).toHaveBeenCalledTimes(1);
+        // The baseline starts again, and a reason the automation could not poll before is gone.
+        expect(ctx.prisma.automationPollState.updateMany).toHaveBeenCalledWith({
+          data: { baselinedAt: null, lastError: null },
+          where: { automationId: AUTOMATION },
+        });
+        const reset = ctx.prisma.automationPollState.updateMany.mock.invocationCallOrder[0] ?? 0;
+        const write = ctx.prisma.automation.update.mock.invocationCallOrder[0] ?? 0;
+        expect(reset).toBeLessThan(write);
+      });
+
+      it('does neither for an edit that leaves the JQL and the switch alone', async () => {
+        ctx.prisma.automation.findUnique.mockResolvedValue(storedJira());
+        const res = await patch({ name: 'renamed' });
+        expect(res.statusCode).toBe(200);
+        expect(jira.searchIssues).not.toHaveBeenCalled();
+        expect(ctx.prisma.automationPollState.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('does not ask Jira, and resets nothing, when the JQL of a disabled one changes', async () => {
+        ctx.prisma.automation.findUnique.mockResolvedValue(storedJira({ enabled: false }));
+        const res = await patch({ filters: { jql: 'status = Open' } });
+        expect(res.statusCode).toBe(200);
+        expect(jira.searchIssues).not.toHaveBeenCalled();
+        expect(ctx.prisma.automationPollState.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('changes nothing when Jira refuses the new JQL', async () => {
+        ctx.prisma.automation.findUnique.mockResolvedValue(storedJira());
+        jira.searchIssues.mockRejectedValue(new AtlassianError(400, 'server', 'bad'));
+        const res = await patch({ filters: { jql: 'nonsense' } });
+        expect(res.statusCode).toBe(400);
+        expect(res.json().error.code).toBe('JQL_REJECTED');
+        expect(ctx.prisma.automation.update).not.toHaveBeenCalled();
+        expect(ctx.prisma.automationPollState.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('resets no baseline for an automation of another source', async () => {
+        ctx.prisma.automation.findUnique.mockResolvedValue(stored({ enabled: false }));
+        await patch({ enabled: true });
+        expect(ctx.prisma.automationPollState.updateMany).not.toHaveBeenCalled();
       });
     });
   });

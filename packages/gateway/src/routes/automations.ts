@@ -22,6 +22,8 @@ import {
   INBOUND_EVENT,
   type InboundEventFilters,
   isRepositoryOwnerKey,
+  JIRA_FILTER_NEW_ISSUE,
+  type JiraFilterFilters,
   optionsSchema,
   parseOwnerKey,
   storedInputs,
@@ -31,6 +33,8 @@ import { resolveSetting } from '@auto-swe/shared/config';
 import { roleMeets } from '@auto-swe/shared/config/permissions';
 import { latestActivity, TEMPLATE_WEBHOOK_SOURCE } from '@auto-swe/shared/lib/automationLedger';
 import { isInputSchema } from '@auto-swe/shared/lib/inputSchema';
+import { AtlassianError } from '@auto-swe/shared/lib/integrations/atlassianClient';
+import { createIssueTrackerProvider } from '@auto-swe/shared/lib/integrations/registry';
 import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -57,6 +61,7 @@ import {
   resolveAutomationTemplate,
 } from '../lib/automations/engine.js';
 import { loadTargetConnection, TARGET_UNAVAILABLE } from '../lib/automations/inboundEvent.js';
+import { hasBalancedParentheses, wrapJqlInProjects } from '../lib/automations/jiraPoller.js';
 import { sendError } from '../lib/httpErrors.js';
 import { authorizeLaunch, sendLaunchRefusal } from '../lib/launchAuthorization.js';
 import { EXCLUDE_SYSTEM_TEMPLATES } from '../lib/systemTemplate.js';
@@ -121,6 +126,20 @@ const CreateBody = z
   .refine(oneOwner, ONE_OWNER);
 const UpdateBody = z.object(Fields).partial();
 
+/**
+ * A Jira decision's recorded occurrence without the ticket text. The description is never
+ * returned: the ledger is read by every member of a team the repository is shared with, who may
+ * have no access to the Jira project. The title is returned only to those who manage the
+ * automation. Anything that is not an object is returned as it is.
+ */
+function withoutTicketText(facts: unknown, includeTitle: boolean): unknown {
+  if (typeof facts !== 'object' || facts === null || Array.isArray(facts)) {
+    return facts;
+  }
+  const { description: _description, summary, ...rest } = facts as Record<string, unknown>;
+  return includeTitle ? { ...rest, summary } : rest;
+}
+
 const automationSelect = {
   connectionId: true,
   cooldownMinutes: true,
@@ -132,6 +151,8 @@ const automationSelect = {
   inputs: true,
   maxRunsPerDay: true,
   name: true,
+  // How polling is going, for a source that polls; null for every other.
+  pollState: { select: { baselinedAt: true, lastError: true, lastPolledAt: true } },
   source: true,
   targetConnection: { select: { id: true, organizationName: true, repoName: true } },
   targetConnectionId: true,
@@ -235,9 +256,11 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       inputs: unknown;
       templateId: string | null;
       targetConnectionId: string | null;
+      /** Whether the automation is on after this save: some checks only matter for one that is. */
+      enabled: boolean;
     },
     access: AutomationOwnerAccess
-  ): Promise<{ code: string; message: string } | null> {
+  ): Promise<{ code: string; message: string; status?: number } | null> {
     const team = ownerTeam(access);
     const filters = parseFilters(source, body.filters);
     if (filters === null) {
@@ -264,6 +287,15 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
           message: 'endpointId must name one of the team’s event endpoints',
         };
       }
+    }
+    if (
+      source.key === JIRA_FILTER_NEW_ISSUE &&
+      !hasBalancedParentheses((filters as JiraFilterFilters).jql)
+    ) {
+      return {
+        code: 'INVALID_FILTERS',
+        message: 'The JQL has an unbalanced parenthesis outside a quoted string',
+      };
     }
     if (!body.templateId && !source.defaultTemplate) {
       return {
@@ -345,9 +377,69 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       prisma: fastify.prisma,
       teamId: team.id,
     });
-    return unusable
-      ? { code: 'INVALID_INPUTS', message: `The options do not fit the template: ${unusable}` }
+    if (unusable) {
+      return {
+        code: 'INVALID_INPUTS',
+        message: `The options do not fit the template: ${unusable}`,
+      };
+    }
+    // Last, because it calls Jira: an automation that is off is a draft and asks nothing of it.
+    return source.key === JIRA_FILTER_NEW_ISSUE && body.enabled
+      ? jiraEnabledProblem(filters as JiraFilterFilters, team)
       : null;
+  }
+
+  /**
+   * What saving an enabled Jira filter automation needs: a project an admin allows, a Jira that is
+   * configured, and a JQL Jira accepts — asked once, narrowed as the poller will narrow it, for a
+   * single result. Jira's own text never reaches the answer.
+   */
+  async function jiraEnabledProblem(
+    filters: JiraFilterFilters,
+    team: { id: string; orgId: string | null }
+  ): Promise<{ code: string; message: string; status?: number } | null> {
+    const scope = { ...(team.orgId ? { orgId: team.orgId } : {}), teamId: team.id };
+    const allowed = (await resolveSetting('workflow.jiraPollProjectKeys', scope)).map((key) =>
+      key.toUpperCase()
+    );
+    if (allowed.length === 0) {
+      return {
+        code: 'NO_ALLOWED_PROJECTS',
+        message:
+          'No Jira project is allowed for filter automations: an admin sets workflow.jiraPollProjectKeys for the team or organization',
+      };
+    }
+    const config = await resolveIssueTrackerConfig();
+    // No retries: a save fails fast, and cannot multiply load on the shared credential.
+    const provider =
+      config.provider === 'jira'
+        ? createIssueTrackerProvider({ ...config, maxRetries: 0 }, { log: fastify.log })
+        : null;
+    if (!provider) {
+      return {
+        code: 'TRACKER_NOT_CONFIGURED',
+        message: 'The issue tracker is not Jira, or Jira is not fully configured',
+      };
+    }
+    // While polling is switched off for the team nothing may be asked of Jira, a save included.
+    // The automation saves as any source's does while its switch is off, and is checked by its
+    // first poll once an admin turns the switch on.
+    if ((await resolveSetting('workflow.jiraPollAutomationsEnabled', scope)) !== true) {
+      return null;
+    }
+    try {
+      await provider.searchIssues(wrapJqlInProjects(filters.jql, allowed), { maxResults: 1 });
+      return null;
+    } catch (err) {
+      if (err instanceof AtlassianError && err.status === 400) {
+        return { code: 'JQL_REJECTED', message: 'Jira does not accept this JQL' };
+      }
+      return {
+        code: 'TRACKER_UNAVAILABLE',
+        message: 'Jira could not be reached to check the JQL; try again',
+        status: 502,
+      };
+    }
   }
 
   /**
@@ -758,7 +850,12 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
   // POST /api/v1/automations/events
   app.post(
     '/events',
-    { onRequest: signedIn, schema: { body: CreateBody } },
+    {
+      // A save of a Jira filter automation asks Jira, with the platform's one credential.
+      config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+      onRequest: signedIn,
+      schema: { body: CreateBody },
+    },
     async (request, reply) => {
       const user = requireUser(request);
       const body = request.body;
@@ -791,7 +888,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const problem = await saveProblem(source, body, access);
       if (problem) {
-        return sendError(reply, 400, problem.code, problem.message);
+        return sendError(reply, problem.status ?? 400, problem.code, problem.message);
       }
       const created = await fastify.prisma.automation.create({
         data: {
@@ -826,7 +923,11 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
   // PATCH /api/v1/automations/events/:id
   app.patch(
     '/events/:id',
-    { onRequest: signedIn, schema: { body: UpdateBody, params: IdParams } },
+    {
+      config: { rateLimit: { max: 20, timeWindow: '1 minute' } },
+      onRequest: signedIn,
+      schema: { body: UpdateBody, params: IdParams },
+    },
     async (request, reply) => {
       const loaded = await loadAutomation(request, reply, request.params.id);
       if (!loaded) {
@@ -865,16 +966,22 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
           return;
         }
       }
+      // An automation that is switched on is checked as a new one is, whatever else changed: its
+      // Jira query may have stopped being valid, or its project allowed, while it was off.
+      const isJira = source.key === JIRA_FILTER_NEW_ISSUE;
+      const switchedOn = body.enabled === true && existing.enabled === false;
       // Template, options, filters and the repository are checked together, as they will run.
       if (
         body.templateId !== undefined ||
         body.inputs !== undefined ||
         body.filters !== undefined ||
-        body.targetConnectionId !== undefined
+        body.targetConnectionId !== undefined ||
+        (isJira && switchedOn)
       ) {
         const problem = await saveProblem(
           source,
           {
+            enabled: body.enabled ?? existing.enabled,
             filters: body.filters ?? existing.filters,
             inputs: body.inputs ?? existing.inputs,
             targetConnectionId,
@@ -883,8 +990,19 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
           access
         );
         if (problem) {
-          return sendError(reply, 400, problem.code, problem.message);
+          return sendError(reply, problem.status ?? 400, problem.code, problem.message);
         }
+      }
+      // A switch back on starts the automation from now: what already matches is recorded at the
+      // next poll and starts nothing. The reset comes first and is safe, because an automation
+      // that is off is not polled, so no poll can land between it and the write. A changed query
+      // needs nothing here: the poller takes a new baseline for a query it has not baselined.
+      if (isJira && switchedOn) {
+        await fastify.prisma.automationPollState.updateMany({
+          // Also forgets a reason it could not poll before, which is gone now.
+          data: { baselinedAt: null, lastError: null },
+          where: { automationId: existing.id },
+        });
       }
       const { filters, inputs, ...rest } = body;
       const updated = await fastify.prisma.automation.update({
@@ -959,7 +1077,17 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         take: request.query.limit,
         where: { automationId: loaded.row.id },
       });
-      return { data: { fires } };
+      return {
+        data: {
+          fires:
+            loaded.row.source === JIRA_FILTER_NEW_ISSUE
+              ? fires.map((f) => ({
+                  ...f,
+                  facts: withoutTicketText(f.facts, loaded.access.canManage),
+                }))
+              : fires,
+        },
+      };
     }
   );
 
@@ -1055,6 +1183,25 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
           'NOT_RETRYABLE',
           'The automation is off, or its filters no longer select this occurrence'
         );
+      }
+      // The allowlist is the access control for Jira issues, and it may have changed since the
+      // decision: a project taken off it must not start a run from the text stored back then.
+      if (source.key === JIRA_FILTER_NEW_ISSUE) {
+        const team = ownerTeam(access);
+        const allowed = (
+          await resolveSetting('workflow.jiraPollProjectKeys', {
+            ...(team.orgId ? { orgId: team.orgId } : {}),
+            teamId: team.id,
+          })
+        ).map((key) => key.toUpperCase());
+        if (!allowed.includes((facts.data as { projectKey: string }).projectKey.toUpperCase())) {
+          return sendError(
+            reply,
+            409,
+            'NOT_RETRYABLE',
+            'The issue’s project is no longer allowed for Jira filter automations'
+          );
+        }
       }
       // A repository automation decides on its repository row; a team's on its team, with no
       // repository.

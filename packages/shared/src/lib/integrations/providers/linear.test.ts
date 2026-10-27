@@ -135,3 +135,11 @@ describe('LinearProvider.addComment', () => {
     await expect(provider().addComment('iss-1', 'hi')).resolves.toBe(false);
   });
 });
+
+describe('LinearProvider.searchIssues', () => {
+  it('is not supported: polling a filter is Jira only', async () => {
+    await expect(provider().searchIssues('x', { maxResults: 5 })).rejects.toThrow(
+      'searchIssues is not supported by the Linear provider'
+    );
+  });
+});

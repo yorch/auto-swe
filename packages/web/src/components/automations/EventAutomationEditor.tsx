@@ -5,6 +5,7 @@ import {
   eventSource,
   type FilterField,
   INBOUND_EVENT,
+  JIRA_FILTER_NEW_ISSUE,
 } from '@auto-swe/shared/automation';
 import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { useState } from 'react';
@@ -14,6 +15,7 @@ import { Checkbox } from '@/components/ui/Checkbox';
 import { Icon } from '@/components/ui/Icon';
 import { Input } from '@/components/ui/Input';
 import { Select } from '@/components/ui/Select';
+import { Textarea } from '@/components/ui/Textarea';
 import { SchemaFieldInput, validatePayload } from '@/components/workflow/schemaForm';
 import {
   type AutomationOwner,
@@ -72,7 +74,15 @@ function startingFilters(fields: FilterField[], filters: Record<string, unknown>
   for (const f of fields) {
     const v = filters[f.key];
     const list = Array.isArray(v) ? v.map(String) : [];
-    out[f.key] = f.kind === 'choices' ? list : list.join(', ');
+    // A text field is one string as typed; a list is edited as comma-separated text.
+    out[f.key] =
+      f.kind === 'text'
+        ? typeof v === 'string'
+          ? v
+          : ''
+        : f.kind === 'choices'
+          ? list
+          : list.join(', ');
   }
   return out;
 }
@@ -81,7 +91,8 @@ function filtersFrom(fields: FilterField[], values: Record<string, FilterValue>)
   const out: Record<string, unknown> = {};
   for (const f of fields) {
     const v = values[f.key] ?? '';
-    out[f.key] = f.kind === 'choices' ? v : splitList(typeof v === 'string' ? v : '');
+    out[f.key] =
+      f.kind === 'choices' ? v : f.kind === 'text' ? v : splitList(typeof v === 'string' ? v : '');
   }
   return out;
 }
@@ -314,6 +325,17 @@ export function EventAutomationEditor({
                 })}
               </div>
             </div>
+          ) : f.kind === 'text' ? (
+            <Textarea
+              compact
+              hint={f.hint}
+              key={f.key}
+              label={f.label}
+              onChange={(e) => setFilterValues((s) => ({ ...s, [f.key]: e.target.value }))}
+              rows={4}
+              spellCheck={false}
+              value={(filterValues[f.key] as string | undefined) ?? ''}
+            />
           ) : (
             <Input
               hint={f.hint}
@@ -324,7 +346,10 @@ export function EventAutomationEditor({
             />
           )
         )}
-        {!custom && <MatchTester filters={filters} source={source} />}
+        {/* Jira evaluates the JQL, not this form, so a "would this match" answer would mean nothing. */}
+        {!custom && source.key !== JIRA_FILTER_NEW_ISSUE && (
+          <MatchTester filters={filters} source={source} />
+        )}
       </fieldset>
 
       <fieldset className="space-y-3">

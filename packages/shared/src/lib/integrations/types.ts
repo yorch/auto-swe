@@ -31,6 +31,24 @@ export interface FetchedIssue {
   raw: unknown;
 }
 
+/// One match of a tracker search: enough to decide whether an issue is new, not its content.
+export interface SearchedIssue {
+  key: string;
+  summary: string;
+  projectKey: string;
+}
+
+export interface SearchIssuesOptions {
+  /// Most matches wanted. A search with more is cut and reported as `truncated`.
+  maxResults: number;
+}
+
+export interface SearchIssuesResult {
+  issues: SearchedIssue[];
+  /// True when more than `maxResults` issues matched; `issues` then holds the first `maxResults`.
+  truncated: boolean;
+}
+
 export interface IssueCreateFields {
   title: string;
   description: string;
