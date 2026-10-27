@@ -985,7 +985,8 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       // needs nothing here: the poller takes a new baseline for a query it has not baselined.
       if (isJira && switchedOn) {
         await fastify.prisma.automationPollState.updateMany({
-          data: { baselinedAt: null },
+          // Also forgets a reason it could not poll before, which is gone now.
+          data: { baselinedAt: null, lastError: null },
           where: { automationId: existing.id },
         });
       }

@@ -46,6 +46,8 @@ const MAX_ISSUES_PER_POLL = 50;
 /** The only values `lastError` ever holds. */
 export type PollErrorCode =
   | 'NO_ALLOWED_PROJECTS'
+  | 'SWITCHED_OFF'
+  | 'REPOSITORY_INACTIVE'
   | 'FILTER_TOO_BROAD'
   | 'JQL_REJECTED'
   | 'TRACKER_UNAVAILABLE'
@@ -136,15 +138,36 @@ function isJqlRejection(err: unknown): boolean {
   return err instanceof AtlassianError && err.status === 400;
 }
 
+/**
+ * Says why an automation is not being polled, and forgets its baseline. A period in which it is
+ * not polled (switched off, a repository out of use) is a period whose issues it must not start
+ * runs for when polling resumes: the next poll takes a new baseline and starts nothing. Without a
+ * reason the row would read "not polled yet", with nothing to say why.
+ */
+async function recordSkip(
+  deps: PollDeps,
+  automationId: string,
+  code: 'SWITCHED_OFF' | 'REPOSITORY_INACTIVE'
+): Promise<void> {
+  const { automationPollState: states } = deps.prisma;
+  await states.createMany({ data: [{ automationId }], skipDuplicates: true });
+  await states.updateMany({
+    data: { baselinedAt: null, lastError: code },
+    where: { automationId },
+  });
+}
+
 export async function pollAutomation(
   deps: PollDeps,
   automation: PollableAutomation
 ): Promise<PollOutcome> {
   const { connection } = automation;
   if (!connection.isActive) {
+    await recordSkip(deps, automation.id, 'REPOSITORY_INACTIVE');
     return { reason: 'repository-inactive', status: 'skipped' };
   }
   if (isInstallationRetired(connection)) {
+    await recordSkip(deps, automation.id, 'REPOSITORY_INACTIVE');
     return { reason: 'installation-retired', status: 'skipped' };
   }
   const scope = {
@@ -152,6 +175,7 @@ export async function pollAutomation(
     teamId: connection.team.id,
   };
   if ((await resolveSetting(KILL_SWITCH, scope)) !== true) {
+    await recordSkip(deps, automation.id, 'SWITCHED_OFF');
     return { reason: 'switched-off', status: 'skipped' };
   }
 
@@ -206,14 +230,16 @@ async function poll(
   if (!filters.success || !hasBalancedParentheses(filters.data.jql)) {
     return { code: 'INVALID_FILTERS', status: 'error' };
   }
-  const allowed = (await resolveSetting(ALLOWLIST, scope)).map((k) => k.toUpperCase());
+  // Sorted, so the same projects in another order are the same query and the same baseline.
+  const allowed = (await resolveSetting(ALLOWLIST, scope)).map((k) => k.toUpperCase()).sort();
   if (allowed.length === 0) {
     return { code: 'NO_ALLOWED_PROJECTS', status: 'error' };
   }
 
+  const narrowed = wrapJqlInProjects(filters.data.jql, allowed);
   let found: Awaited<ReturnType<PollDeps['tracker']['searchIssues']>>;
   try {
-    found = await deps.tracker.searchIssues(wrapJqlInProjects(filters.data.jql, allowed), {
+    found = await deps.tracker.searchIssues(narrowed, {
       maxResults: JIRA_POLL_MAX_MATCHES,
     });
   } catch (err) {
@@ -229,8 +255,10 @@ async function poll(
 
   const { automationPollState: states, automationSeenIssue: seenIssues } = deps.prisma;
   const state = await states.findUniqueOrThrow({ where: { automationId: automation.id } });
-  // A baseline belongs to the query it was taken for: a different one takes a new baseline.
-  if (state.baselinedAt === null || state.baselineJql !== filters.data.jql) {
+  // A baseline belongs to the query it was taken for, as Jira is asked it: the JQL and the
+  // allowed projects. A different one (an edited JQL, a project added to the allowlist) takes a
+  // new baseline, so what it already matched is recorded and starts nothing.
+  if (state.baselinedAt === null || state.baselineJql !== narrowed) {
     await seenIssues.createMany({
       data: inAllowedProjects.map((i) => ({
         automationId: automation.id,
@@ -239,7 +267,7 @@ async function poll(
       skipDuplicates: true,
     });
     await states.update({
-      data: { baselinedAt: deps.now, baselineJql: filters.data.jql },
+      data: { baselinedAt: deps.now, baselineJql: narrowed },
       where: { automationId: automation.id },
     });
     return { recorded: inAllowedProjects.length, status: 'baselined' };
@@ -300,6 +328,10 @@ async function startNewIssues(
     // The search approved this key in this project. A read that answers for another issue (one
     // moved to another project since) is not it, and is left for the next search to show.
     if (issue.id.toLowerCase() !== match.key.toLowerCase()) {
+      // It has a new key now, which the next search shows if it is allowed. Left unseen it would
+      // keep its place in the window of 50 on every poll and hide the newer issues behind it.
+      await markSeen(match.key);
+      decided++;
       continue;
     }
     const facts = JiraFilterFactsSchema.safeParse({

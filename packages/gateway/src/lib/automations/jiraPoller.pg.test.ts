@@ -12,9 +12,14 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
   resolveWorkflowDefaults: vi.fn(async () => ({ branchPrefix: 'auto' })),
 }));
+const settings = vi.hoisted(() => ({ allowed: ['PAY'], polling: true }));
 vi.mock('@auto-swe/shared/config', () => ({
   resolveSetting: vi.fn(async (key: string) =>
-    key === 'workflow.jiraPollProjectKeys' ? ['PAY'] : true
+    key === 'workflow.jiraPollProjectKeys'
+      ? settings.allowed
+      : key === 'workflow.jiraPollAutomationsEnabled'
+        ? settings.polling
+        : true
   ),
 }));
 
@@ -169,6 +174,8 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
   });
 
   beforeEach(async () => {
+    settings.allowed = ['PAY'];
+    settings.polling = true;
     startedWorkflows.length = 0;
     await prisma.automationSeenIssue.deleteMany({ where: { automationId } });
     await prisma.automationPollState.deleteMany({ where: { automationId } });
@@ -308,6 +315,30 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
     }
   });
 
+  it('reloads an automation as it is now, and nothing once it is off, removed or another source', async () => {
+    const deps2 = defaultTickDeps({ prisma } as never, () => false);
+    expect((await deps2.reload(automationId))?.id).toBe(automationId);
+    await runUnscoped('test fixture', ['Automation'], () =>
+      prisma.automation.update({ data: { enabled: false }, where: { id: automationId } })
+    );
+    try {
+      expect(await deps2.reload(automationId)).toBeNull();
+    } finally {
+      await runUnscoped('test fixture', ['Automation'], () =>
+        prisma.automation.update({ data: { enabled: true }, where: { id: automationId } })
+      );
+    }
+    expect(await deps2.reload(crypto.randomUUID())).toBeNull();
+  });
+
+  it('marks an automation as attempted, creating its poll state if it has none', async () => {
+    const deps2 = defaultTickDeps({ prisma } as never, () => false);
+    await deps2.markAttempted(automationId);
+    const state = await prisma.automationPollState.findUniqueOrThrow({ where: { automationId } });
+    expect(state.lastPolledAt).not.toBeNull();
+    expect(state.baselinedAt).toBeNull();
+  });
+
   describe('with the real engine', () => {
     const poll = async (found = issues) =>
       pollAutomation(
@@ -358,7 +389,7 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
 
     it('takes a new baseline when the JQL changed, so what the new query already matched starts nothing', async () => {
       expect((await poll()).status).toBe('baselined');
-      const changed = { ...automation, filters: { jql: 'status = Open ORDER BY created' } };
+      const changed = { ...automation, filters: { jql: 'status = Blocked' } };
       const found = [...issues, hit('PAY-9')];
       const rebaselined = await pollAutomation(
         deps(slowTracker(found), new Date(), (await realDecider()) as never),
@@ -367,7 +398,7 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
       expect(rebaselined).toEqual({ recorded: 3, status: 'baselined' });
       expect(startedWorkflows).toHaveLength(0);
       const state = await prisma.automationPollState.findUniqueOrThrow({ where: { automationId } });
-      expect(state.baselineJql).toBe('status = Open ORDER BY created');
+      expect(state.baselineJql).toBe('project in ("PAY") AND (status = Blocked)');
       // The baseline now holds, so the next new issue under the new query does start a run.
       const next = await pollAutomation(
         deps(slowTracker([...found, hit('PAY-10')]), new Date(), (await realDecider()) as never),
@@ -375,6 +406,31 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
       );
       expect(next).toEqual({ pending: 0, started: 1, status: 'polled', suppressed: 0 });
       expect(startedWorkflows).toHaveLength(1);
+    });
+
+    it('takes a new baseline when a project is added to the allowlist, so its old issues start nothing', async () => {
+      expect((await poll()).status).toBe('baselined');
+      settings.allowed = ['PAY', 'HR2'];
+      const found = [...issues, hit('HR2-7')];
+      expect(await poll(found)).toEqual({ recorded: 3, status: 'baselined' });
+      expect(startedWorkflows).toHaveLength(0);
+      const state = await prisma.automationPollState.findUniqueOrThrow({ where: { automationId } });
+      expect(state.baselineJql).toBe('project in ("HR2", "PAY") AND (status = Open)');
+    });
+
+    it('takes a new baseline after polling was switched off and on, so what appeared meanwhile starts nothing', async () => {
+      expect((await poll()).status).toBe('baselined');
+      settings.polling = false;
+      expect(await poll()).toEqual({ reason: 'switched-off', status: 'skipped' });
+      const off = await prisma.automationPollState.findUniqueOrThrow({ where: { automationId } });
+      expect(off.baselinedAt).toBeNull();
+      expect(off.lastError).toBe('SWITCHED_OFF');
+      settings.polling = true;
+      // PAY-5 was created while polling was off.
+      expect((await poll([...issues, hit('PAY-5')])).status).toBe('baselined');
+      expect(startedWorkflows).toHaveLength(0);
+      const on = await prisma.automationPollState.findUniqueOrThrow({ where: { automationId } });
+      expect(on.lastError).toBeNull();
     });
 
     it('marks an issue seen when the daily cap suppresses it, and starts nothing', async () => {

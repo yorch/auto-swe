@@ -278,6 +278,8 @@ describe('EventAutomationsPanel: Jira filter automations', () => {
     ['TRACKER_UNAVAILABLE', /could not be reached/i],
     ['INVALID_FILTERS', /saved jql is not valid/i],
     ['START_FAILED', /could not be started/i],
+    ['SWITCHED_OFF', /polling is switched off/i],
+    ['REPOSITORY_INACTIVE', /repository is inactive/i],
   ])('explains the poll error %s in words', (code, words) => {
     state.automations = [
       {

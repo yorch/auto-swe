@@ -1061,8 +1061,9 @@ describe('automationRoutes (event automations)', () => {
         const res = await patch({ enabled: true });
         expect(res.statusCode).toBe(200);
         expect(jira.searchIssues).toHaveBeenCalledTimes(1);
+        // The baseline starts again, and a reason the automation could not poll before is gone.
         expect(ctx.prisma.automationPollState.updateMany).toHaveBeenCalledWith({
-          data: { baselinedAt: null },
+          data: { baselinedAt: null, lastError: null },
           where: { automationId: AUTOMATION },
         });
         const reset = ctx.prisma.automationPollState.updateMany.mock.invocationCallOrder[0] ?? 0;

@@ -62,3 +62,17 @@
 **Decision**: The save-time Jira check runs without retries, is skipped while the team's polling switch is off, and sits behind a 20 a minute per-user limit on the create and change routes.
 **Reason**: The check spends the platform's single Jira credential on a request from one tenant's lead, so it must fail fast, honour the operator's switch, and not be loopable.
 **Alternatives considered**: Limiting only Jira sources. Rejected: the limit is per route, and 20 saves a minute is far above what a person makes.
+
+## D10 — 2026-10-27 — Branch review: what a baseline is bound to
+
+**Status**: Accepted (supersedes the baseline rule of D8)
+**Decision**: A baseline is bound to the query as Jira is asked it: the JQL narrowed to the allowed projects, with the projects sorted. A poll whose narrowed query differs takes a new baseline. An automation that is skipped because polling is switched off, or its repository is inactive or retired, records the reason and forgets its baseline.
+**Reason**: D8 bound the baseline to the JQL alone. An admin adding a project to the allowlist changes what the query returns without changing the JQL, so every old issue in the added project would start a run. A period in which an automation is not polled has the same effect on resume. Binding the baseline to the narrowed query, and dropping it while not polling, keeps the rule that a broad filter never launches a backlog. A trailing `ORDER BY` and the order of the allowlist do not change the narrowed query, so they do not re-baseline.
+**Alternatives considered**: Clearing every baseline when an admin changes a setting. Rejected: there is no hook on a registry write, and the poller already reads both settings each poll.
+
+## D11 — 2026-10-27 — Branch review: a poll acts on the automation as it is now
+
+**Status**: Accepted
+**Decision**: Before polling an automation, the tick reads it again and skips it if it is gone or off. A poll that fails or is abandoned notes an attempt, so it does not stay first in line. An issue found to have moved is marked seen.
+**Reason**: A tick can run for ten minutes after it listed its automations, so an automation disabled meanwhile would still start up to 50 runs. A failing automation never updated its place in the order, so it came first every tick. A moved issue left unseen held a place in the window of 50 on every poll and hid newer issues without a trace.
+**Alternatives considered**: Checking `enabled` inside the engine. Rejected: only the poller reads an automation long after it listed it.

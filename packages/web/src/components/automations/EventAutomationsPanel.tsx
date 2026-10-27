@@ -30,7 +30,11 @@ const POLL_ERRORS: Record<string, string> = {
   JQL_REJECTED: 'Jira refused the JQL. Check it in Jira.',
   NO_ALLOWED_PROJECTS:
     'No Jira project is allowed for this team, so nothing is polled. An admin sets the allowed projects.',
+  REPOSITORY_INACTIVE:
+    'The repository is inactive or its GitHub App installation is retired, so nothing is polled.',
   START_FAILED: 'A run could not be started; it is tried again at the next poll.',
+  SWITCHED_OFF:
+    'Jira filter polling is switched off for this team, so nothing is polled. An admin turns it on.',
   TRACKER_UNAVAILABLE: 'Jira could not be reached or read; it is tried again at the next poll.',
 };
 

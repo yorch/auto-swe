@@ -217,7 +217,9 @@ describe('pollAllJiraAutomations', () => {
   const deps = (over: Partial<PollTickDeps> = {}): PollTickDeps => ({
     instanceBaseUrl: vi.fn(async () => 'https://github.com'),
     listAutomations: vi.fn(async () => [row('a'), row('b')]),
+    markAttempted: vi.fn(async () => {}),
     poll: vi.fn(async () => polled),
+    reload: vi.fn(async (id: string) => row(id)),
     shouldStop: () => false,
     tracker: vi.fn(async () => tracker as never),
     ...over,
@@ -288,6 +290,49 @@ describe('pollAllJiraAutomations', () => {
     }
   });
 
+  it('polls an automation as it is when its turn comes, not as it was when the tick listed it', async () => {
+    const reload = vi.fn(async (id: string) =>
+      row(id, { filters: { jql: 'status = Blocked' }, maxRunsPerDay: 1 })
+    );
+    const d = deps({ reload });
+    await pollAllJiraAutomations(fastify(), d);
+    const calls = (d.poll as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls[0]?.[1].filters).toEqual({ jql: 'status = Blocked' });
+    expect(reload).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['removed', async () => null],
+    ['switched off', async (id: string) => row(id, { enabled: false })],
+  ])('skips an automation that was %s after the tick listed it', async (_label, reload) => {
+    const d = deps({ reload: vi.fn(reload) });
+    const result = await pollAllJiraAutomations(fastify(), d);
+    expect(d.poll).not.toHaveBeenCalled();
+    expect(result).toEqual({ failed: 0, polled: 0, skipped: 2 });
+  });
+
+  it('marks a poll that failed as attempted, so it does not stay first in line', async () => {
+    const poll = vi.fn().mockRejectedValueOnce(new Error('db down')).mockResolvedValueOnce(polled);
+    const d = deps({ poll });
+    await pollAllJiraAutomations(fastify(), d);
+    expect(d.markAttempted).toHaveBeenCalledTimes(1);
+    expect(d.markAttempted).toHaveBeenCalledWith('a');
+  });
+
+  it('does the same for a poll abandoned at its deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const poll = vi.fn().mockImplementationOnce(() => new Promise<PollOutcome>(() => {}));
+      const d = deps({ deadlineMs: 5_000, poll });
+      const running = pollAllJiraAutomations(fastify(), d);
+      await vi.advanceTimersByTimeAsync(5_000);
+      await running;
+      expect(d.markAttempted).toHaveBeenCalledWith('a');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('goes on with the others when one automation’s poll throws, and logs it', async () => {
     const poll = vi.fn().mockRejectedValueOnce(new Error('db down')).mockResolvedValueOnce(polled);
     const f = fastify() as unknown as { log: { error: ReturnType<typeof vi.fn> } };
@@ -299,7 +344,10 @@ describe('pollAllJiraAutomations', () => {
   it('skips an automation whose repository names no owner, and polls the rest', async () => {
     const bad = row('a');
     (bad.connection as { organizationName: string | null }).organizationName = null;
-    const d = deps({ listAutomations: vi.fn(async () => [bad, row('b')]) });
+    const d = deps({
+      listAutomations: vi.fn(async () => [bad, row('b')]),
+      reload: vi.fn(async (id: string) => (id === 'a' ? bad : row(id))),
+    });
     const f = fastify() as unknown as { log: { warn: ReturnType<typeof vi.fn> } };
     const result = await pollAllJiraAutomations(f as never, d);
     expect(result).toEqual({ failed: 0, polled: 1, skipped: 1 });

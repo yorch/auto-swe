@@ -113,6 +113,14 @@ export interface PollTickDeps {
   /** The Jira client, or null when the tracker is not Jira or is not fully configured. */
   tracker: () => Promise<Pick<IssueTrackerProvider, 'searchIssues' | 'fetchIssue'> | null>;
   listAutomations: () => Promise<PollRow[]>;
+  /**
+   * The automation as it is now, or null when it is gone, off, or no longer a Jira filter. A tick
+   * can run for minutes after it listed its automations, and what an owner changed or switched
+   * off in that time must be what is polled.
+   */
+  reload: (automationId: string) => Promise<PollRow | null>;
+  /** Notes that a poll was tried, so one that keeps failing does not stay first in line. */
+  markAttempted: (automationId: string) => Promise<void>;
   /** The instance's own web base URL, the host of a repository that names none. */
   instanceBaseUrl: () => Promise<string>;
   poll: typeof pollAutomation;
@@ -151,7 +159,7 @@ export async function pollAllJiraAutomations(
   const clock = deps.clock ?? Date.now;
   const startedAt = clock();
   const rows = await deps.listAutomations();
-  for (const [index, row] of rows.entries()) {
+  for (const [index, listed] of rows.entries()) {
     if (deps.shouldStop()) {
       break;
     }
@@ -161,6 +169,11 @@ export async function pollAllJiraAutomations(
         'the Jira poll tick used its time budget; the rest wait for the next tick'
       );
       break;
+    }
+    const row = await deps.reload(listed.id);
+    if (!row?.enabled) {
+      result.skipped++;
+      continue;
     }
     const ownerKey = connectionOwnerKey(row.connection, baseUrl);
     if (!ownerKey) {
@@ -198,6 +211,7 @@ export async function pollAllJiraAutomations(
     } catch (err) {
       result.failed++;
       fastify.log.error({ automationId: row.id, err }, 'a Jira filter automation poll failed');
+      await deps.markAttempted(row.id).catch(() => {});
     }
   }
   if (result.polled + result.failed + result.skipped > 0) {
@@ -232,7 +246,26 @@ export function defaultTickDeps(
       );
       return rows.filter((r): r is PollRow => r.connection !== null);
     },
+    markAttempted: async (automationId) => {
+      const states = fastify.prisma.automationPollState;
+      await states.createMany({ data: [{ automationId }], skipDuplicates: true });
+      await states.updateMany({ data: { lastPolledAt: new Date() }, where: { automationId } });
+    },
     poll: pollAutomation,
+    reload: async (automationId) => {
+      const row = await runUnscoped(
+        'the Jira poller reads one automation it is about to poll, to poll it as it is now',
+        ['Automation'],
+        () =>
+          fastify.prisma.automation.findUnique({
+            include: { connection: { include: connectionInclude } },
+            where: { id: automationId },
+          })
+      );
+      return row?.enabled && row.source === JIRA_FILTER_NEW_ISSUE && row.connection !== null
+        ? (row as PollRow)
+        : null;
+    },
     shouldStop,
     tracker: async () => {
       const config = await resolveIssueTrackerConfig();

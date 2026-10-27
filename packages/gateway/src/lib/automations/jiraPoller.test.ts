@@ -19,6 +19,8 @@ import {
 type SearchIssuesResult = Awaited<ReturnType<IssueTrackerProvider['searchIssues']>>;
 
 const NOW = new Date('2026-10-27T12:00:00Z');
+/** What a baseline is bound to: the query as Jira is asked it, the allowlist sorted. */
+const NARROWED = 'project in ("OPS", "PAY") AND (status = Open)';
 
 interface StateRow {
   automationId: string;
@@ -198,7 +200,7 @@ describe('pollAutomation: what it refuses to poll', () => {
     });
     expect(outcome).toEqual({ reason: 'repository-inactive', status: 'skipped' });
     expect(search).not.toHaveBeenCalled();
-    expect(fake.prisma.automationPollState.createMany).not.toHaveBeenCalled();
+    expect(fake.state()?.lastError).toBe('REPOSITORY_INACTIVE');
   });
 
   it('makes no request for a retired installation', async () => {
@@ -211,6 +213,7 @@ describe('pollAutomation: what it refuses to poll', () => {
     });
     expect(outcome).toEqual({ reason: 'installation-retired', status: 'skipped' });
     expect(search).not.toHaveBeenCalled();
+    expect(fake.state()?.lastError).toBe('REPOSITORY_INACTIVE');
   });
 
   it('makes no Jira request while the team’s kill switch is off, and asks with its team and org', async () => {
@@ -222,7 +225,7 @@ describe('pollAutomation: what it refuses to poll', () => {
     const outcome = await run(fake, search);
     expect(outcome).toEqual({ reason: 'switched-off', status: 'skipped' });
     expect(search).not.toHaveBeenCalled();
-    expect(fake.prisma.automationPollState.createMany).not.toHaveBeenCalled();
+    expect(fake.state()?.lastError).toBe('SWITCHED_OFF');
     expect(settings.resolveSetting).toHaveBeenCalledWith('workflow.jiraPollAutomationsEnabled', {
       orgId: 'org-1',
       teamId: 'team-1',
@@ -342,6 +345,86 @@ describe('pollAutomation: the lease', () => {
   });
 });
 
+describe('pollAutomation: what a baseline is bound to', () => {
+  it('takes a new baseline, starting nothing, when a project is added to the allowlist', async () => {
+    const fake = fakePrisma({
+      baselinedAt: new Date('2026-10-01T00:00:00Z'),
+      baselineJql: NARROWED,
+    });
+    fake.seen.add('pay-1');
+    settings.resolveSetting.mockImplementation(async (key: string) =>
+      key === 'workflow.jiraPollAutomationsEnabled' ? true : ['PAY', 'OPS', 'HR2']
+    );
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    // HR2-7 matched all along, but HR2 was not allowed: it must be recorded, not started.
+    const search = vi.fn(async () => found(hit('PAY-1'), hit('HR2-7')));
+    const outcome = await run(fake, search, automation(), { decide });
+    expect(outcome).toEqual({ recorded: 2, status: 'baselined' });
+    expect(decide).not.toHaveBeenCalled();
+    expect(fake.state()?.baselineJql).toBe('project in ("HR2", "OPS", "PAY") AND (status = Open)');
+  });
+
+  it('keeps the baseline when only the order of the allowlist differs', async () => {
+    const fake = fakePrisma({
+      baselinedAt: new Date('2026-10-01T00:00:00Z'),
+      baselineJql: NARROWED,
+    });
+    settings.resolveSetting.mockImplementation(async (key: string) =>
+      key === 'workflow.jiraPollAutomationsEnabled' ? true : ['pay', 'ops']
+    );
+    const search = vi.fn(async () => found());
+    expect((await run(fake, search)).status).toBe('polled');
+  });
+
+  it('keeps the baseline when only a trailing ORDER BY of the JQL differs', async () => {
+    const fake = fakePrisma({
+      baselinedAt: new Date('2026-10-01T00:00:00Z'),
+      baselineJql: NARROWED,
+    });
+    const search = vi.fn(async () => found());
+    const a = automation({ filters: { jql: 'status = Open ORDER BY created DESC' } });
+    expect((await run(fake, search, a)).status).toBe('polled');
+  });
+
+  it.each([
+    ['the team’s polling switch is off', 'switched-off'],
+    ['the repository is inactive', 'repository-inactive'],
+  ])(
+    'clears the baseline while %s, so polling resumes from now and never with a backlog',
+    async (_label, reason) => {
+      const fake = fakePrisma({
+        baselinedAt: new Date('2026-10-01T00:00:00Z'),
+        baselineJql: NARROWED,
+      });
+      const base = automation();
+      if (reason === 'switched-off') {
+        settings.resolveSetting.mockImplementation(async (key: string) =>
+          key === 'workflow.jiraPollAutomationsEnabled' ? false : ['PAY']
+        );
+      }
+      const a =
+        reason === 'repository-inactive'
+          ? { ...base, connection: { ...base.connection, isActive: false } }
+          : base;
+      await run(fake, vi.fn(), a);
+      expect(fake.state()?.baselinedAt).toBeNull();
+      // Switched back on, the next poll baselines and starts nothing.
+      settings.resolveSetting.mockImplementation(async (key: string) =>
+        key === 'workflow.jiraPollAutomationsEnabled' ? true : ['PAY', 'OPS']
+      );
+      const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+      const resumed = await run(
+        fake,
+        vi.fn(async () => found(hit('PAY-1'))),
+        automation(),
+        { decide }
+      );
+      expect(resumed.status).toBe('baselined');
+      expect(decide).not.toHaveBeenCalled();
+    }
+  );
+});
+
 describe('pollAutomation: the baseline', () => {
   it('stores every match as seen, lower-cased, starts nothing and releases the lease', async () => {
     const fake = fakePrisma();
@@ -349,12 +432,12 @@ describe('pollAutomation: the baseline', () => {
     const outcome = await run(fake, search);
     expect(outcome).toEqual({ recorded: 2, status: 'baselined' });
     expect([...fake.seen].sort()).toEqual(['ops-22', 'pay-1']);
-    expect(search).toHaveBeenCalledWith('project in ("PAY", "OPS") AND (status = Open)', {
+    expect(search).toHaveBeenCalledWith(NARROWED, {
       maxResults: JIRA_POLL_MAX_MATCHES,
     });
     expect(fake.state()).toMatchObject({
       baselinedAt: NOW,
-      baselineJql: 'status = Open',
+      baselineJql: NARROWED,
       lastError: null,
       lastPolledAt: NOW,
       leaseUntil: null,
@@ -378,13 +461,13 @@ describe('pollAutomation: the baseline', () => {
     expect(outcome).toEqual({ recorded: 2, status: 'baselined' });
     expect(decide).not.toHaveBeenCalled();
     expect([...fake.seen].sort()).toEqual(['pay-1', 'pay-9']);
-    expect(fake.state()?.baselineJql).toBe('status = Open');
+    expect(fake.state()?.baselineJql).toBe(NARROWED);
   });
 
   it('does not baseline again once baselined', async () => {
     const fake = fakePrisma({
       baselinedAt: new Date('2026-10-01T00:00:00Z'),
-      baselineJql: 'status = Open',
+      baselineJql: NARROWED,
     });
     fake.seen.add('pay-1');
     const search = vi.fn(async () => found(hit('PAY-1')));
@@ -434,7 +517,7 @@ describe('pollAutomation: the project allowlist', () => {
 
 describe('pollAutomation: new issues', () => {
   const baselined = () =>
-    fakePrisma({ baselinedAt: new Date('2026-10-01T00:00:00Z'), baselineJql: 'status = Open' });
+    fakePrisma({ baselinedAt: new Date('2026-10-01T00:00:00Z'), baselineJql: NARROWED });
 
   it('decides once for each issue it has not seen, and marks it seen afterwards', async () => {
     const fake = baselined();
@@ -604,7 +687,7 @@ describe('pollAutomation: new issues', () => {
     expect(fake.state()?.leaseUntil).toBeNull();
   });
 
-  it('skips, and goes on, when the issue it read is not the one the search approved', async () => {
+  it('marks seen, and goes on, when the issue it read is not the one the search approved', async () => {
     const fake = baselined();
     const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
     // PAY-1 was moved to a project that is not allowed between the search and the read.
@@ -613,10 +696,12 @@ describe('pollAutomation: new issues', () => {
     );
     const search = vi.fn(async () => found(hit('PAY-1'), hit('PAY-2')));
     const outcome = await run(fake, search, automation(), { decide, fetchIssue });
-    expect(outcome).toEqual({ pending: 1, started: 1, status: 'polled', suppressed: 0 });
+    expect(outcome).toEqual({ pending: 0, started: 1, status: 'polled', suppressed: 0 });
     expect(decide).toHaveBeenCalledTimes(1);
     expect(decide.mock.calls[0]?.[0].issueKey).toBe('PAY-2');
-    expect([...fake.seen]).toEqual(['pay-2']);
+    // A moved issue has a new key, so the old one is done with: it must not hold a place in the
+    // window of 50 on every poll.
+    expect([...fake.seen].sort()).toEqual(['pay-1', 'pay-2']);
   });
 
   it('does the same when reading an issue throws, without Jira’s text', async () => {
