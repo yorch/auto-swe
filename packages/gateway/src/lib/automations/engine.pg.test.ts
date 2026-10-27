@@ -3,6 +3,7 @@ import {
   INBOUND_EVENT,
   ISSUE_LABELED,
   issueLabeledSource,
+  JIRA_FILTER_NEW_ISSUE,
   WORKFLOW_RUN_FAILED,
   workflowRunFailedSource,
 } from '@auto-swe/shared/automation';
@@ -515,5 +516,64 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
       data: { ...base, targetConnectionId: repoId, teamId },
     });
     await prisma.automation.delete({ where: { id: ok.id } });
+  });
+
+  it('keeps Jira filter automations on a repository, with a non-empty JQL', async () => {
+    const base = { connectionId: repoId, name: 'jira', source: JIRA_FILTER_NEW_ISSUE };
+    for (const bad of [
+      { ...base, filters: {} },
+      { ...base, filters: { jql: '' } },
+      { ...base, filters: { jql: '   ' } },
+      { ...base, filters: { jql: ['project = PAY'] } },
+      { ...base, filters: { jql: 5 } },
+      { ...base, filters: ['project = PAY'] },
+      // A source that targets a repository never lives on a team alone.
+      {
+        connectionId: undefined,
+        filters: { jql: 'project = PAY' },
+        name: 'jira',
+        source: JIRA_FILTER_NEW_ISSUE,
+        teamId,
+      },
+    ]) {
+      await expect(prisma.automation.create({ data: bad })).rejects.toThrow();
+    }
+    const ok = await prisma.automation.create({
+      data: { ...base, filters: { jql: 'project = PAY' } },
+    });
+    await prisma.automation.delete({ where: { id: ok.id } });
+  });
+
+  it('deletes a Jira automation’s poll state and seen issues with it, and keeps seen keys lower-case', async () => {
+    const automation = await prisma.automation.create({
+      data: {
+        connectionId: repoId,
+        filters: { jql: 'project = PAY' },
+        name: 'jira',
+        source: JIRA_FILTER_NEW_ISSUE,
+      },
+    });
+    const automationId = automation.id;
+    try {
+      await prisma.automationPollState.create({ data: { automationId } });
+      await prisma.automationSeenIssue.createMany({
+        data: [
+          { automationId, issueKey: 'pay-1' },
+          { automationId, issueKey: 'pay-2' },
+        ],
+      });
+      // A key is stored in one spelling, so the same issue is never seen twice.
+      await expect(
+        prisma.automationSeenIssue.create({ data: { automationId, issueKey: 'PAY-3' } })
+      ).rejects.toThrow();
+      await expect(
+        prisma.automationSeenIssue.create({ data: { automationId, issueKey: 'pay-1' } })
+      ).rejects.toThrow();
+      await expect(prisma.automationPollState.create({ data: { automationId } })).rejects.toThrow();
+    } finally {
+      await prisma.automation.delete({ where: { id: automationId } });
+    }
+    expect(await prisma.automationPollState.count({ where: { automationId } })).toBe(0);
+    expect(await prisma.automationSeenIssue.count({ where: { automationId } })).toBe(0);
   });
 });
