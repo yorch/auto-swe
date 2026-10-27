@@ -447,8 +447,9 @@ compose files pass the three variables through, because the web container does n
   host is resolved and checked beforehand but the connection cannot be pinned to that answer. The
   check still needs local DNS: a network that only resolves through its proxy fails closed, with the
   fixed "could not be resolved" refusal. A literal IP address is classified as written. The guard does not cover the
-  Okta issuer's discovery fetch (made by the sign-in library at start-up), the model providers'
-  own SDK calls from the worker, the GitHub Enterprise and Octokit calls (those hosts are governed
+  Okta issuer's discovery fetch (made by the sign-in library at start-up), a Claude Code harness run
+  without the model proxy (the harness calls the provider from inside the workspace), the GitHub
+  Enterprise and Octokit calls (those hosts are governed
   by `github.repositoryHosts`, and a private host is legitimate there), or fixed public hosts such
   as Slack, Linear, Notion and Figma.
 - **The draft GitHub test cannot reach a private address.** A GitHub Enterprise host that is written

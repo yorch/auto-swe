@@ -212,7 +212,8 @@ WEB_URL=https://app.example.com      # base URL for the "Open approvals" link (t
 # WORKSPACE_BLOCK_METADATA=true        # only the literal `false` disables the metadata blackhole
 # SCANNER_REGEX_BUDGET_MS=250          # per-pattern scanner wall-clock budget
 # The Claude Code harness's model proxy (the compose files turn it on): the worker holds the model
-# key and meters every call; a workspace gets a per-turn token. Unset the port to turn it off.
+# key and meters every call; a workspace gets a per-turn token. Unset the port to turn it off on the Docker backend;
+# the Kubernetes backend refuses to start without it.
 # npm registry proxy — workspaces install packages through the worker, which
 # alone holds each registry's credential. Empty REGISTRY_PROXY_PORT disables it.
 # REGISTRY_PROXY_PORT=8791
@@ -511,7 +512,7 @@ To run the Kubernetes backend:
 
 1. Apply `infra/kubernetes/workspace-namespace.yaml` after adjusting the marked values: the namespace enforces PodSecurity `restricted`, a NetworkPolicy denies all ingress and allows egress only to DNS, the worker's proxy ports and the public internet (never the cloud metadata endpoint or a private range), and a Role/RoleBinding gives the worker's ServiceAccount `create`/`get`/`list`/`watch`/`delete` on pods and `create` on `pods/exec` in that namespace only.
 2. Run the cluster on a CNI that enforces NetworkPolicy (GKE Dataplane V2; EKS VPC CNI with network policy enabled; AKS with Azure NPM, Cilium or Calico). The worker checks this at start: it launches a probe pod and **refuses to start** if the pod can reach `169.254.169.254` or the cluster API address.
-3. Set `HARNESS_MODEL_PROXY_URL` and `REGISTRY_PROXY_URL` to a Service name pods can resolve (the `{hostname}` placeholder is the worker pod's name, which other pods cannot resolve; the default Docker host alias does not exist in a cluster), and the matching `*_BIND` to `0.0.0.0`.
+3. Set `HARNESS_MODEL_PROXY_PORT` and `HARNESS_MODEL_PROXY_URL` (the model proxy is required on this backend: the worker **refuses to start** without the port, or with a URL that is unset, uses the Docker host alias or contains `{hostname}`, because the provider API key would otherwise be placed inside the workspace pod), and `REGISTRY_PROXY_URL` if you run the registry proxy, to a Service name pods can resolve (the `{hostname}` placeholder is the worker pod's name, which other pods cannot resolve; the default Docker host alias does not exist in a cluster), and the matching `*_BIND` to `0.0.0.0`.
 4. Set a node-pool `podPidsLimit`: Kubernetes has no per-pod PID cap, so `WORKSPACE_PIDS_LIMIT` is not applied.
 5. Make sure the executor image runs as a non-root user. The curated images use uid 1000; set `K8S_WORKSPACE_RUN_AS_UID` if yours differs.
 

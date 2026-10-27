@@ -1178,7 +1178,7 @@ runbook.
 | Pause | `kill -STOP -1` in the pod: SIGSTOP cannot be caught, and the tree is quiescent for the copy |
 | Cloud metadata and egress | The namespace's NetworkPolicy, not a sidecar (`NET_ADMIN` is forbidden under `restricted`). The GCP metadata hostnames also resolve to `0.0.0.0` through `hostAliases` |
 | Start-up check | A worker refuses to start unless it holds the RBAC it needs and a probe pod cannot reach the metadata endpoint or the cluster API address, which proves the CNI enforces the policy. `K8S_REQUIRE_NETWORK_POLICY=false` skips only the second check, for a local cluster |
-| Proxies | Workspaces reach the worker's model and registry proxies at the URLs the deployment advertises (`HARNESS_MODEL_PROXY_URL`, `REGISTRY_PROXY_URL`): a Service name, not the Docker host alias |
+| Proxies | Workspaces reach the worker's model and registry proxies at the URLs the deployment advertises (`HARNESS_MODEL_PROXY_URL`, `REGISTRY_PROXY_URL`): a Service name, not the Docker host alias. The model proxy is required: `assertWorkspaceInfraEnv()` fails the boot unless `HARNESS_MODEL_PROXY_PORT` is set and `HARNESS_MODEL_PROXY_URL` is set to something other than the Docker host alias or the `{hostname}` placeholder, so the provider key never enters a workspace pod. It does not check that the Service exists or is reachable, and it does not check `REGISTRY_PROXY_URL` |
 
 Package installs go through a second seam: when `REGISTRY_PROXY_PORT` is set the worker runs a
 read-only npm registry proxy ([package-registries.md](./package-registries.md)) — the workspace
