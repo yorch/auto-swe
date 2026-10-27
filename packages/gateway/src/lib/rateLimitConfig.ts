@@ -3,6 +3,8 @@
  *
  * - `RATE_LIMIT_MAX` — requests allowed per window (default 200)
  * - `RATE_LIMIT_WINDOW_SECONDS` — window length in seconds (default 60)
+ * - `WEBHOOK_RATE_LIMIT_MAX` — requests allowed per window, per client address, on the
+ *   GitHub-signed webhook routes (default 6000); the window is the one above
  *
  * Raise them for an end-to-end suite that drives one signed-in user through
  * many page loads. A value that is not a positive integer is a failed boot:
@@ -11,6 +13,7 @@
  */
 export const DEFAULT_RATE_LIMIT_MAX = 200;
 export const DEFAULT_RATE_LIMIT_WINDOW_SECONDS = 60;
+export const DEFAULT_WEBHOOK_RATE_LIMIT_MAX = 6000;
 
 function positiveInteger(name: string, raw: string | undefined, fallback: number): number {
   const value = raw?.trim() ?? '';
@@ -26,6 +29,7 @@ function positiveInteger(name: string, raw: string | undefined, fallback: number
 export function parseRateLimitConfig(env: Record<string, string | undefined>): {
   max: number;
   timeWindowMs: number;
+  webhookMax: number;
 } {
   return {
     max: positiveInteger('RATE_LIMIT_MAX', env.RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_MAX),
@@ -35,5 +39,10 @@ export function parseRateLimitConfig(env: Record<string, string | undefined>): {
         env.RATE_LIMIT_WINDOW_SECONDS,
         DEFAULT_RATE_LIMIT_WINDOW_SECONDS
       ) * 1000,
+    webhookMax: positiveInteger(
+      'WEBHOOK_RATE_LIMIT_MAX',
+      env.WEBHOOK_RATE_LIMIT_MAX,
+      DEFAULT_WEBHOOK_RATE_LIMIT_MAX
+    ),
   };
 }
