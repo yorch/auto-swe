@@ -11,7 +11,7 @@ Every commit passes the full gate list in `CLAUDE.md` §5 Quality Gates. In this
 - [x] Task 1: Add `searchIssues` to the Jira provider — `28b8b543`
 - [x] Task 2: Add the `jira.filter.new_issue` source and its settings — `ef8ff09c`
 - [x] Task 3: Add the migration and poll-state models — `c2658df2`
-- [ ] Task 4: Poll a filter and record the baseline
+- [x] Task 4: Poll a filter and record the baseline — `83acb3a2`
 - [ ] Task 5: Start a run for each new matching issue
 - [ ] Task 6: Run the poller on a schedule in the gateway
 - [ ] Task 7: Apply the save-time rules
@@ -52,7 +52,7 @@ Every commit passes the full gate list in `CLAUDE.md` §5 Quality Gates. In this
 
 ### Task 5: Start a run for each new matching issue
 
-**What**: Extend `pollAutomation()` for a baselined automation. Compute the unseen keys and take at most 50, oldest first. For each, fetch the issue text through `fetchIssue`, build the facts (build the issue `url` from the configured Jira base URL, never from API response data), and call `decideAndStart` with `retry: { kind: 'redelivery' }`, the repository's connection and the repository owner key. Store the key as seen after any outcome except `FAILED_TO_START`. A `duplicate` answer also stores the key as seen.
+**What**: Extend `pollAutomation()` for a baselined automation. The lease is already released by compare-and-set, and a poll that starts runs must still be safe if a second replica polls the same automation, because the ledger's dedupe key answers `duplicate`. Compute the unseen keys and take at most 50, oldest first. For each, fetch the issue text through `fetchIssue`, build the facts (build the issue `url` from the configured Jira base URL, never from API response data), and call `decideAndStart` with `retry: { kind: 'redelivery' }`, the repository's connection and the repository owner key. Store the key as seen after any outcome except `FAILED_TO_START`. A `duplicate` answer also stores the key as seen.
 **Files**: `packages/gateway/src/lib/automations/jiraPoller.ts`, `packages/gateway/src/lib/automations/jiraPoller.test.ts`, `packages/gateway/src/lib/automations/jiraPoller.pg.test.ts`
 **Depends on**: Task 4, Task 2
 **Verify**: Unit tests show one `decideAndStart` call per unseen key, no call for a seen key, the 50-key bound, a failed start leaving the key unseen, and limit-suppressed decisions storing the key as seen. The `.pg` suite shows a second poll over the same keys starts no second run, using the real engine and a fake Temporal client.
