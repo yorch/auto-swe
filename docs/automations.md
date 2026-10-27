@@ -13,8 +13,9 @@ Each decision it makes is one row in the decision ledger, whether it started a r
 This page describes **event automations**, the generic kind, and the contract every event source
 follows. CI-failure triage is the first source ([ci-failure-triggers.md](./ci-failure-triggers.md)
 covers what is specific to it); events other services post to a team's signed endpoints are another
-([inbound-events.md](./inbound-events.md)). Cron schedules, template webhook URLs and the issue-tracker
-transition hook start runs too; they keep their own configuration (§6).
+([inbound-events.md](./inbound-events.md)); a new issue in a Jira filter, found by polling, is a
+third (§3.2). Cron schedules, template webhook URLs and the issue-tracker
+transition hook start runs too; they keep their own configuration (§5).
 
 ---
 
@@ -278,9 +279,11 @@ are environment-only ([configuration.md](./configuration.md)).
 | `github.issues.labeled` | A person adds one of the automation's labels to an open issue (§3.1) | that labelling / the issue | `ticket-to-merge` | `github.issueLabelAutomationsEnabled` (off by default) |
 | `github.pull_request.feedback` | A changes-requested review, an `/auto-swe fix` command, or (opt-in) Qodo's review bot reviewing lands on a pull request ([pr-feedback.md](./pr-feedback.md)) | the review or comment / the pull request | `address-pr-feedback` | `github.prFeedbackAutomationsEnabled` (off by default) |
 | `inbound.event` | A verified event posted to one of the team's event endpoints is of a selected type and meets the automation's conditions ([inbound-events.md](./inbound-events.md)); targets a **team** | the event's subject / its scope (from pointers; by default the event id / its type) | none: the automation names one | `workflow.inboundEventsEnabled` (off by default) |
+| `jira.filter.new_issue` | A poll of the automation's Jira filter (a JQL) finds an issue it has not seen (§3.2) | the issue / the issue | `ticket-to-merge` | `workflow.jiraPollAutomationsEnabled` (off by default) |
 
 A source is a pure descriptor (`EventSource` in `@auto-swe/shared/automation`) plus a webhook
-normalizer in the gateway. The descriptor declares:
+normalizer in the gateway, or, for the Jira source, a poller in the gateway (§3.2). The descriptor
+declares:
 
 - **Filters:** the filter schema, its defaults, and the form fields (a source whose filters need a
   form of their own, like inbound events, declares none and the dashboard renders its own);
@@ -337,13 +340,86 @@ Each labelling is its own subject, so removing and adding a label again starts a
 the scope, so a labelling while an earlier run on the issue is open is `SUPPRESSED_IN_FLIGHT`, for
 up to 14 days. A closed issue and a pull request are ignored.
 
+### 3.2 Jira filter
+
+A new issue in a Jira filter starts the automation's template on the issue: by default
+`ticket-to-merge`, which implements it and opens a pull request. The automation holds one **JQL**
+(a query, or `filter = <id>` for a saved filter), one repository and one template, so a deployment
+with many repositories has one automation for each. The run's ticket is the Jira key, so the
+ticket-context step and tracker sync work on it. Its description starts with the key and a link to
+the issue, then the summary and the description (the first 4,000 characters) inside a block marked
+as untrusted text.
+
+**Three settings** govern it. All are ADMIN's:
+
+| Setting | Meaning | Default |
+|---|---|---|
+| `workflow.jiraPollAutomationsEnabled` | Whether a team's or organization's Jira filter automations poll and start runs. While off, no Jira request is made for them, and a save does not ask Jira either | off |
+| `workflow.jiraPollProjectKeys` | The Jira projects a team's or organization's automations may act on. Empty means none | empty |
+| `workflow.jiraPollIntervalSeconds` | Seconds between polls, for the whole deployment (60–86400) | 300 |
+
+**Why the allowlist.** The platform asks Jira with its own one credential, which can see every
+project the credential can. The query is narrowed to the allowed projects, and every issue that
+comes back is checked against them again, so what the JQL says never widens what is acted on. JQL
+with an unbalanced parenthesis outside a quoted string is refused, because it could end the
+narrowing early.
+
+**Saving.** ADMIN, or a LEAD of the repository's owning team, saves one, as for any event
+automation. An enabled one needs an allowed project, a Jira tracker that is configured, and a JQL
+Jira accepts: while the polling switch is on for the team, the platform asks Jira once, for one
+result, and answers `JQL_REJECTED` when Jira refuses the query and `502 TRACKER_UNAVAILABLE` when
+it cannot be reached. Neither stores anything or carries Jira's text. With the switch off the
+allowed-project and tracker checks still apply, but Jira is not asked. A disabled one is a draft
+and asks nothing of Jira. The create and change routes allow 20 requests a minute for each user
+(each IP address, for a personal access token).
+
+**Polling.** One gateway loop polls every enabled automation in turn, the one polled longest ago
+first, and waits one interval after a round ends. Each automation is claimed through a lease on its
+poll state, so every gateway replica may run the loop. A round stops waiting for a poll that has
+not finished in four minutes and goes on; the poll itself runs on until it ends or its lease
+expires. A round stops starting automations after ten minutes and resumes where it left off.
+
+- **The first poll starts nothing.** It records every issue the filter already returns as seen.
+  The same holds when the JQL changes, because a baseline belongs to the JQL it was taken for, and
+  when an automation is switched back on. Only an issue that appears afterwards starts a run.
+- **New means a key the automation has not seen.** An issue starts a run once. Moving it to
+  another project gives it a new key, which is new.
+- **At most 50 issues a poll,** in key order (by project, then issue number). The rest wait for the
+  next poll.
+- **The limits of §2 apply.** An issue the engine suppresses (the daily cap, the budget, an open
+  run) is recorded in the ledger and counted as seen; a manager takes it again with **Decide
+  again**. An issue is marked seen only after the engine has decided it, so a poll that stops
+  between the two decides it again and the ledger answers `duplicate`.
+- **A stall is visible.** An issue that cannot be read, or whose start failed, ends the poll and
+  stays unseen, so it is tried again at the next poll and the issues behind it wait. The
+  automation's row shows the reason in words:
+
+  | Code | Meaning |
+  |---|---|
+  | `NO_ALLOWED_PROJECTS` | The team's allowlist is empty |
+  | `FILTER_TOO_BROAD` | The filter returns more than 1,000 issues, or Jira's result could not be read to the end, so none is acted on |
+  | `JQL_REJECTED` | Jira refuses the query |
+  | `TRACKER_UNAVAILABLE` | Jira could not be reached or an issue could not be read |
+  | `INVALID_FILTERS` | The saved JQL does not parse or is unbalanced |
+  | `START_FAILED` | The engine could not start the run, or ignored the issue |
+
+The dashboard's JQL box keeps the query as typed. The source offers no "would this match" tester,
+since Jira evaluates the JQL.
+
+**The Jira transition hook starts runs too** (§5), under its own workflow id. It is not per
+project: it acts on any ticket whose transition reaches its trigger status, when the deployment
+has a trigger status configured and exactly one active repository. Where both are true, a ticket
+that the hook and a filter both reach starts two runs, so use one of them.
+
 ## 4. Permissions on the host
 
 What an occurrence needs from the host is the source's: for CI, the **Workflow run** event and
 **Actions: Read**; for issue labels, the **Issues** event and **Issues: Read**; for pull-request
 feedback, the **Pull request review**, **Pull request review comment** and **Issue comment**
 events, with **Pull requests: Read & write** for the thread replies
-([github-app-setup.md](./github-app-setup.md)).
+([github-app-setup.md](./github-app-setup.md)). A Jira filter needs no GitHub permission of its own
+beyond what its template's run needs; it reads Jira with the issue-tracker integration's
+credential (`/admin/integrations` → Tracker), which must be able to read the allowed projects.
 
 ## 5. Other kinds of automation
 
@@ -490,9 +566,29 @@ recorded as `FAILED_TO_START` with its code.
 
 ## Limitations
 
-- **Four event sources.** Failed GitHub Actions runs, issue labels and pull-request review
-  feedback start automations on a repository, and events posted to a team's endpoints start
-  automations on a team; a pull request label or a push does not.
+- **Five event sources.** Failed GitHub Actions runs, issue labels, pull-request review feedback
+  and new issues in a Jira filter start automations on a repository, and events posted to a team's
+  endpoints start automations on a team; a pull request label or a push does not.
+- **Jira polling is Jira Cloud only,** one JQL for each automation, and starts runs on one
+  repository. A filter that should feed several repositories is several automations.
+- **A Jira issue is new once.** A ticket starts one run however its status changes later, and an
+  issue that leaves the filter and returns is not new. Moved to another project, it has a new key
+  and starts a run if it is allowed there.
+- **Jira polling is not in creation order across projects.** A poll takes issues by project, then
+  issue number, so with more than 50 new at once a project that sorts late waits for the next poll.
+- **Jira text is somebody else's.** The summary and description may have been written by anyone
+  with write access to an allowed project. The allowlist limits which projects, not who wrote the
+  text; the text is marked as untrusted in the run's description, which lowers the risk and does
+  not remove it. Only the first 4,000 characters of the description are used, and later edits to the
+  issue are not seen.
+- **A Jira filter can tell its author what exists.** Jira validates every clause of the JQL, so
+  `JQL_REJECTED` against success tells a lead whether a project, user, version or field exists for
+  the platform's credential. No issue content leaks. The route limit, the lack of retries at save
+  and the allowlist bound it.
+- **Decide again reads the issue as it was.** Taking a Jira decision again reads the recorded
+  occurrence, not the issue now.
+- **Suppressed Jira issues are not taken again by themselves.** Only a manager's **Decide again**
+  does. An automation stalled by an unreadable issue or a failed start waits until that is fixed.
 - **New event automation starts from a repository.** On the Automations page, **New event
   automation** asks for a repository; a team's automations open from the team's page or from an
   existing team automation's row.
