@@ -10,7 +10,7 @@ Every commit passes the full gate list in `CLAUDE.md` §5 Quality Gates. In this
 
 - [x] Task 1: Add `searchIssues` to the Jira provider — `28b8b543`
 - [x] Task 2: Add the `jira.filter.new_issue` source and its settings — `ef8ff09c`
-- [ ] Task 3: Add the migration and poll-state models
+- [x] Task 3: Add the migration and poll-state models — `c2658df2`
 - [ ] Task 4: Poll a filter and record the baseline
 - [ ] Task 5: Start a run for each new matching issue
 - [ ] Task 6: Run the poller on a schedule in the gateway
@@ -45,7 +45,7 @@ Every commit passes the full gate list in `CLAUDE.md` §5 Quality Gates. In this
 
 ### Task 4: Poll a filter and record the baseline
 
-**What**: Create `jiraPoller.ts` with `pollAutomation()`. It claims the lease with `updateMany` and a null-or-expired `leaseUntil` condition, skips an inactive repository, a retired installation or a team whose kill switch is off, resolves the allowlist, searches with the wrapped JQL, drops results outside the allowlist, and enforces the 1,000-match cap. When `baselinedAt` is empty it stores every key as seen, sets `baselinedAt`, and starts nothing. It always releases the lease and stores `lastPolledAt` and a fixed-code `lastError`. Compare project keys after upper-casing both sides, and never with `includes` on raw strings. Add `jiraPoller.pg.test.ts` for the lease and add it to the `ci.yml` step that runs `engine.pg.test.ts`'s flag.
+**What**: Create `jiraPoller.ts` with `pollAutomation()`. It claims the lease with `updateMany` and a null-or-expired `leaseUntil` condition, skips an inactive repository, a retired installation or a team whose kill switch is off, resolves the allowlist, searches with the wrapped JQL, drops results outside the allowlist, and enforces the 1,000-match cap. When `baselinedAt` is empty it stores every key as seen, sets `baselinedAt`, and starts nothing. It always releases the lease and stores `lastPolledAt` and a fixed-code `lastError`. Compare project keys after upper-casing both sides, and never with `includes` on raw strings. Write `lastError` only from a typed union of fixed codes. Store seen keys lower-cased, because the database refuses any other spelling. Read the new tables only by `automationId`. List the automations with `runUnscoped`, because `Automation` is a tenant-guarded model. Add `jiraPoller.pg.test.ts` for the lease and add it to the `ci.yml` step that runs `engine.pg.test.ts`'s flag.
 **Files**: `packages/gateway/src/lib/automations/jiraPoller.ts` (new, with test), `packages/gateway/src/lib/automations/jiraPoller.pg.test.ts` (new), `.github/workflows/ci.yml`
 **Depends on**: Task 1, Task 3
 **Verify**: `yarn test packages/gateway/src/lib/automations/jiraPoller.test.ts` passes cases for the baseline, the allowlist result filter, an empty allowlist, `FILTER_TOO_BROAD`, the kill switch making no Jira call, and `lastError` holding only fixed codes. The `.pg` suite passes with two concurrent claimers and only one winning. `yarn invariants:check` passes, which proves the new `.pg` suite is wired into CI.
