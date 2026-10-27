@@ -1,4 +1,5 @@
 import type { Agent } from '@mastra/core/agent';
+import { ApplicationFailure } from '@temporalio/activity';
 import { currentWorkflowId } from '../lib/activityContext.js';
 import { logWarn } from '../lib/activityLog.js';
 import type { AgentTracer } from '../lib/agentTracer.js';
@@ -9,6 +10,7 @@ import {
   recordLlmUsage,
   type TokenUsage,
 } from '../lib/costTracking.js';
+import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
 
 /** What the platform reads off one finished model turn, whatever drove the loop. */
@@ -54,6 +56,18 @@ export function withSpentUsage<E>(err: E, usageByModel: SpentByModel | undefined
 /** What {@link withSpentUsage} recorded on a failure, if anything. */
 export function spentUsageOf(err: unknown): SpentByModel | undefined {
   return typeof err === 'object' && err !== null ? spentBeforeFailure.get(err) : undefined;
+}
+
+const tracedFailures = new WeakSet<object>();
+
+/**
+ * Whether `runImplementerTurn` already wrote the `llm_response` row for this
+ * failure. A caller that adds its own row for a failed turn skips it then, or the
+ * turn's spend is traced twice. Only an object can be marked; the turn's own
+ * failures are errors.
+ */
+export function wasTurnTraced(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && tracedFailures.has(err);
 }
 
 /** One turn's prompt, and how the caller meters it. */
@@ -148,20 +162,40 @@ function combine(a: LlmAttribution, b: LlmAttribution): LlmAttribution {
 /**
  * Accrue a turn's usage against the run's budget, one model at a time, and
  * return the combined attribution (named for the model that spent the most).
+ * `onRecorded` sees each call's attribution as soon as the ledger holds it. A
+ * call whose debit then throws `BUDGET_EXCEEDED` was paid for and debited too,
+ * and carries its own attribution on the failure, so that is reported before the
+ * error propagates.
  */
 async function accrue(
   turn: Pick<ImplementerTurn, 'role' | 'usageEvent'>,
-  spent: { modelSpec?: string; usage: TokenUsage }[]
+  spent: { modelSpec?: string; usage: TokenUsage }[],
+  onRecorded?: (recorded: LlmAttribution) => void
 ): Promise<LlmAttribution> {
   let attribution: LlmAttribution = NO_SPEND;
   for (const [i, { modelSpec, usage }] of spent.entries()) {
-    const recorded = await recordLlmUsage(
-      currentWorkflowId(),
-      turn.role,
-      usage,
-      turn.usageEvent,
-      modelSpec
-    );
+    let recorded: LlmAttribution;
+    try {
+      recorded = await recordLlmUsage(
+        currentWorkflowId(),
+        turn.role,
+        usage,
+        turn.usageEvent,
+        modelSpec
+      );
+    } catch (err) {
+      const paid = failedCallAttribution(err, modelSpec);
+      if (paid.inputTokens !== undefined) {
+        onRecorded?.({
+          costUsd: paid.costUsd ?? 0,
+          inputTokens: paid.inputTokens,
+          modelSpec: paid.model ?? '',
+          outputTokens: paid.outputTokens ?? 0,
+        });
+      }
+      throw err;
+    }
+    onRecorded?.(recorded);
     attribution = i === 0 ? recorded : combine(attribution, recorded);
   }
   return attribution;
@@ -174,21 +208,71 @@ async function accrue(
  * tier by more than the call in flight — the guarantee the Mastra loop's
  * per-step accounting gives an agent run. A check that fails throws
  * (`BUDGET_EXCEEDED`), and the runtime ends the turn with that error.
- * `debited` is what the turn has been charged this way so far.
+ * `debited` is everything the turn has been charged so far, by either route, and
+ * is what an aborted turn's trace row reports; `charge` debits usage the runtime
+ * reports at the end of the turn into the same total.
  */
 export function perCallAccounting(turn: Pick<ImplementerTurn, 'role' | 'usageEvent'>): {
   onCallSpent: (spent: { modelSpec: string; usage: TokenUsage }[]) => Promise<void>;
+  charge: (spent: { modelSpec?: string; usage: TokenUsage }[]) => Promise<void>;
   debited: () => LlmAttribution;
 } {
   let total = NO_SPEND;
+  const charge = async (spent: { modelSpec?: string; usage: TokenUsage }[]) => {
+    await accrue(turn, spent, (recorded) => {
+      total = combine(total, recorded);
+    });
+  };
   return {
+    charge,
     debited: () => total,
     onCallSpent: async (spent) => {
-      total = combine(total, await accrue(turn, spent));
+      await charge(spent);
       // The next call must have something left to spend.
       await assertBudgetAvailable(`agent.${turn.role}`);
     },
   };
+}
+
+const ABORT_ERROR_MAX_CHARS = 1000;
+
+/**
+ * The one `llm_response` row of a turn that was aborted after spending: without it
+ * the spend is on the run's ledger but on no trace, so rollups and the run viewer
+ * lose exactly the runs that went wrong. A turn that spent nothing records nothing.
+ * Best-effort: tracing must never replace the error the turn is failing with.
+ */
+function recordAbortedTurn(
+  turn: ImplementerTurn,
+  attribution: LlmAttribution,
+  err: unknown,
+  durationMs: number
+): void {
+  if (!(attribution.costUsd > 0 || attribution.inputTokens > 0 || attribution.outputTokens > 0)) {
+    return;
+  }
+  try {
+    const text = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    turn.tracer.addLlmResponse({
+      agent: turn.agent,
+      costUsd: attribution.costUsd,
+      durationMs,
+      error: text.slice(0, ABORT_ERROR_MAX_CHARS),
+      inputJson: { ...turn.context, systemPrompt: turn.system, userMessage: turn.user },
+      inputTokens: attribution.inputTokens,
+      model: attribution.modelSpec || undefined,
+      outputTokens: attribution.outputTokens,
+      role: turn.role,
+    });
+    if (typeof err === 'object' && err !== null) {
+      tracedFailures.add(err);
+    }
+  } catch (traceErr: unknown) {
+    logWarn('[implementer] could not trace an aborted turn', {
+      error: traceErr instanceof Error ? traceErr.message : String(traceErr),
+      usageEvent: turn.usageEvent,
+    });
+  }
 }
 
 /**
@@ -198,10 +282,11 @@ export function perCallAccounting(turn: Pick<ImplementerTurn, 'role' | 'usageEve
  * sessions, the eval harness and the merge-conflict resolver used to copy.
  *
  * The caller still owns `assertBudgetAvailable` (it must run before the call and
- * must not be traced as a model call) and any failure row: a throw from the
- * runtime or from the budget check propagates untouched. A runtime failure that
- * carries what the turn spent ({@link withSpentUsage}) has that usage accrued
- * first; the original error is what propagates, even if the accrual fails.
+ * must not be traced as a model call): a throw from the runtime or from the
+ * budget check propagates untouched. A runtime failure that carries what the
+ * turn spent ({@link withSpentUsage}) has that usage accrued first. A turn that
+ * fails after spending gets one `llm_response` row with that usage and the error;
+ * the original error is what propagates, even if accrual or tracing fails.
  */
 export async function runImplementerTurn(turn: ImplementerTurn): Promise<{
   attribution: LlmAttribution;
@@ -219,25 +304,34 @@ export async function runImplementerTurn(turn: ImplementerTurn): Promise<{
       system: turn.system,
       user: turn.user,
     });
+    // What the runtime reports at the end (the whole turn, for the Mastra loop) is
+    // debited into the same total; its debit can trip the budget, and the turn then
+    // fails having spent, which the catch below records.
+    await accounting.charge(
+      outcome.usageByModel ??
+        (outcome.usage ? [{ modelSpec: turn.boundModelSpec, usage: outcome.usage }] : [])
+    );
   } catch (err) {
-    const spent = spentUsageOf(err);
-    if (spent) {
-      await accrue(turn, spent).catch((accrueErr: unknown) =>
+    // The remainder a runtime's failure says it still owed joins what the budget
+    // check already saw, so the row cannot drift from the ledger.
+    const owedOnFailure = spentUsageOf(err);
+    if (owedOnFailure) {
+      await accounting.charge(owedOnFailure).catch((accrueErr: unknown) => {
+        // A turn stopped by the budget is over the cap, so debiting what it still owed
+        // trips the same check again after the ledger has taken the debit: no warning.
+        if (accrueErr instanceof ApplicationFailure && accrueErr.type === 'BUDGET_EXCEEDED') {
+          return;
+        }
         logWarn('[implementer] could not accrue the usage of a failed turn', {
           error: accrueErr instanceof Error ? accrueErr.message : String(accrueErr),
           usageEvent: turn.usageEvent,
-        })
-      );
+        });
+      });
     }
+    recordAbortedTurn(turn, accounting.debited(), err, Date.now() - start);
     throw err;
   }
-
-  const spent =
-    outcome.usageByModel ??
-    (outcome.usage ? [{ modelSpec: turn.boundModelSpec, usage: outcome.usage }] : []);
-  const owed = await accrue(turn, spent);
-  // The calls debited as the turn ran come first, so the row is named for them.
-  const attribution = combine(accounting.debited(), owed);
+  const attribution = accounting.debited();
 
   // LLM output scanner — advisory, non-blocking (the helper never throws).
   await recordSuspiciousLlmOutput(turn.tracer, outcome.text ?? '', { inputJson: turn.context });
