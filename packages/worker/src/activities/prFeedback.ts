@@ -823,8 +823,14 @@ async function buildQodoBrief(args: {
   if (open.length === 0) {
     return { briefParts, briefThreads, dropped, qualifying: 0 };
   }
+  // One line each: a finding that echoes text from the diff must not be able to start a line of
+  // its own, such as a `[T1] path:line` block that looks like a reviewer's, in a brief where the
+  // blocks of people are also present.
   const texts = open.map((f) =>
-    visibleIssueText(`${f.title}\n${f.description}`).trim().slice(0, MAX_COMMENT_CHARS)
+    visibleIssueText(`${f.title}\n${f.description}`)
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, MAX_COMMENT_CHARS)
   );
   // ONE screening batch over every finding, exactly as human feedback is screened.
   const unusable = await feedbackInjectionScreen(texts);

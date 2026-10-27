@@ -166,8 +166,11 @@ deliveries of one review, so one review can yield two decisions, one per head.
    statuses are not) and at or above `qodo.prFeedbackMinActionLevel`, most severe first, and
    records how many had an unrecognised status;
 5. briefs each as `T1`, `T2`, … authored by the literal `Qodo`: title and description only, no code
-   snippets and no paths, HTML comments stripped, bounded, screened for injection in **one batch**
-   with the human feedback screen, and fenced exactly like human review text. A finding whose title
+   snippets and no paths, HTML comments stripped, joined onto one line (so a finding that echoes
+   text from the diff cannot start a line that looks like a person's `[Tn]` block, which matters
+   most in an `/auto-swe fix` round where both kinds of block are present), bounded, screened for
+   injection in **one batch** with the human feedback screen, and fenced exactly like human review
+   text. A finding whose title
    or description Qodo's result screen already withheld (see
    [qodo.md §3](./qodo.md#3-output-screening)) is dropped and counted as screened, so the
    placeholder never stands in for Qodo's words; the round records only how many strings were
