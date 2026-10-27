@@ -52,6 +52,13 @@ export type FilterField =
       hint?: string;
       /** A comma-separated list of plain values. */
       kind: 'list';
+    }
+  | {
+      key: string;
+      label: string;
+      hint?: string;
+      /** One free-text value, stored as typed (a query). */
+      kind: 'text';
     };
 
 /** An option value that is refused at save unless its conditions hold. */
