@@ -126,6 +126,20 @@ const CreateBody = z
   .refine(oneOwner, ONE_OWNER);
 const UpdateBody = z.object(Fields).partial();
 
+/**
+ * A Jira decision's recorded occurrence without the ticket text. The description is never
+ * returned: the ledger is read by every member of a team the repository is shared with, who may
+ * have no access to the Jira project. The title is returned only to those who manage the
+ * automation. Anything that is not an object is returned as it is.
+ */
+function withoutTicketText(facts: unknown, includeTitle: boolean): unknown {
+  if (typeof facts !== 'object' || facts === null || Array.isArray(facts)) {
+    return facts;
+  }
+  const { description: _description, summary, ...rest } = facts as Record<string, unknown>;
+  return includeTitle ? { ...rest, summary } : rest;
+}
+
 const automationSelect = {
   connectionId: true,
   cooldownMinutes: true,
@@ -1063,7 +1077,17 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
         take: request.query.limit,
         where: { automationId: loaded.row.id },
       });
-      return { data: { fires } };
+      return {
+        data: {
+          fires:
+            loaded.row.source === JIRA_FILTER_NEW_ISSUE
+              ? fires.map((f) => ({
+                  ...f,
+                  facts: withoutTicketText(f.facts, loaded.access.canManage),
+                }))
+              : fires,
+        },
+      };
     }
   );
 
@@ -1159,6 +1183,25 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
           'NOT_RETRYABLE',
           'The automation is off, or its filters no longer select this occurrence'
         );
+      }
+      // The allowlist is the access control for Jira issues, and it may have changed since the
+      // decision: a project taken off it must not start a run from the text stored back then.
+      if (source.key === JIRA_FILTER_NEW_ISSUE) {
+        const team = ownerTeam(access);
+        const allowed = (
+          await resolveSetting('workflow.jiraPollProjectKeys', {
+            ...(team.orgId ? { orgId: team.orgId } : {}),
+            teamId: team.id,
+          })
+        ).map((key) => key.toUpperCase());
+        if (!allowed.includes((facts.data as { projectKey: string }).projectKey.toUpperCase())) {
+          return sendError(
+            reply,
+            409,
+            'NOT_RETRYABLE',
+            'The issue’s project is no longer allowed for Jira filter automations'
+          );
+        }
       }
       // A repository automation decides on its repository row; a team's on its team, with no
       // repository.

@@ -380,8 +380,12 @@ not finished in four minutes and goes on; the poll itself runs on until it ends 
 expires. A round stops starting automations after ten minutes and resumes where it left off.
 
 - **The first poll starts nothing.** It records every issue the filter already returns as seen.
-  The same holds when the JQL changes, because a baseline belongs to the JQL it was taken for, and
-  when an automation is switched back on. Only an issue that appears afterwards starts a run.
+  A baseline belongs to the query as Jira is asked it: the JQL and the allowed projects. So the
+  same holds when the JQL changes, when a project is added to the allowlist, and when an
+  automation is switched back on. An automation that is not polled because the team's polling is
+  off, or its repository is inactive or retired, records why and forgets its baseline; when
+  polling resumes the next poll takes a new one. Only an issue that appears afterwards starts a
+  run. A trailing `ORDER BY` and the order of the allowlist do not change the query.
 - **New means a key the automation has not seen.** An issue starts a run once. Moving it to
   another project gives it a new key, which is new.
 - **At most 50 issues a poll,** in key order (by project, then issue number). The rest wait for the
@@ -391,12 +395,17 @@ expires. A round stops starting automations after ten minutes and resumes where 
   again**. An issue is marked seen only after the engine has decided it, so a poll that stops
   between the two decides it again and the ledger answers `duplicate`.
 - **A stall is visible.** An issue that cannot be read, or whose start failed, ends the poll and
-  stays unseen, so it is tried again at the next poll and the issues behind it wait. The
+  stays unseen, so it is tried again at the next poll and the issues behind it wait. An issue that
+  has moved to another project since the search is marked seen: it has a new key. The tick reads
+  each automation again just before polling it, so one switched off in the meantime is not polled,
+  and a poll that fails or is abandoned does not keep its place at the front of the order. The
   automation's row shows the reason in words:
 
   | Code | Meaning |
   |---|---|
   | `NO_ALLOWED_PROJECTS` | The team's allowlist is empty |
+  | `SWITCHED_OFF` | Polling is switched off for the team |
+  | `REPOSITORY_INACTIVE` | The repository is inactive, or its GitHub App installation is retired |
   | `FILTER_TOO_BROAD` | The filter returns more than 1,000 issues, or Jira's result could not be read to the end, so none is acted on |
   | `JQL_REJECTED` | Jira refuses the query |
   | `TRACKER_UNAVAILABLE` | Jira could not be reached or an issue could not be read |
@@ -405,6 +414,12 @@ expires. A round stops starting automations after ten minutes and resumes where 
 
 The dashboard's JQL box keeps the query as typed. The source offers no "would this match" tester,
 since Jira evaluates the JQL.
+
+**What the history shows.** An automation's decisions list the issue key, its link and its project.
+The title is shown only to those who manage the automation, and the description never: the history
+is readable by members of every team the repository is shared with, who may have no access to the
+Jira project. **Decide again** on a Jira decision is refused when the issue's project is no longer
+on the team's allowlist.
 
 **The Jira transition hook starts runs too** (§5), under its own workflow id. It is not per
 project: it acts on any ticket whose transition reaches its trigger status, when the deployment
@@ -579,12 +594,24 @@ recorded as `FAILED_TO_START` with its code.
 - **Jira text is somebody else's.** The summary and description may have been written by anyone
   with write access to an allowed project. The allowlist limits which projects, not who wrote the
   text; the text is marked as untrusted in the run's description, which lowers the risk and does
-  not remove it. Only the first 4,000 characters of the description are used, and later edits to the
-  issue are not seen.
+  not remove it. Only the first 4,000 characters of the description are used by the poll. The run's
+  ticket-context step then reads the live issue with the platform credential, including its latest
+  comments, which anyone with comment permission may have written, and its parent: neither is
+  limited to the allowed projects, and later edits are seen there.
 - **A Jira filter can tell its author what exists.** Jira validates every clause of the JQL, so
-  `JQL_REJECTED` against success tells a lead whether a project, user, version or field exists for
-  the platform's credential. No issue content leaks. The route limit, the lack of retries at save
-  and the allowlist bound it.
+  `JQL_REJECTED` against success, and which allowed issues match, tell a lead whether a project,
+  user, version or field exists for the platform's credential, and can hint at relationships to
+  issues outside the allowlist (`linkedIssues()`, `parent =`, an epic link). The same signal
+  appears at poll time through `lastError`. No issue content outside the allowlist is returned. The
+  route limit, the lack of retries at save and the allowlist bound it.
+- **The create and change limit covers every source.** The 20 requests a minute on creating and
+  changing event automations is per route, so it applies to automations of every source, and by IP
+  address for a personal access token.
+- **There is no cap on the number of Jira filter automations.** Each polls the shared Jira
+  credential every interval, and the tick's time budget is shared by all of them, so one team with
+  many can delay the rest.
+- **One repository, one ledger.** Two teams that register the same GitHub repository share its
+  ledger: an issue one team's automation decided is a duplicate for the other's.
 - **Decide again reads the issue as it was.** Taking a Jira decision again reads the recorded
   occurrence, not the issue now.
 - **Suppressed Jira issues are not taken again by themselves.** Only a manager's **Decide again**

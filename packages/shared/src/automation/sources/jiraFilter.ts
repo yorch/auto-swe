@@ -60,8 +60,9 @@ export const jiraFilterNewIssueSource: EventSource<JiraFilterFilters, JiraFilter
   defaultTemplate: { name: TICKET_TO_MERGE },
   describe: (f) => `matching ${f.jql.length > 80 ? `${f.jql.slice(0, 80)}…` : f.jql}`,
   describeOccurrence(f) {
-    const text = (k: string) => (typeof f[k] === 'string' ? String(f[k]) : '?');
-    return `${text('issueKey')} ${text('summary').slice(0, 80)}`;
+    const text = (k: string) => (typeof f[k] === 'string' ? String(f[k]) : '');
+    // The title is left out of what a reader who may not see it is sent, so it can be missing.
+    return [text('issueKey') || '?', text('summary').slice(0, 80)].filter(Boolean).join(' ');
   },
   eventInputKeys: [],
   facts: JiraFilterFactsSchema,

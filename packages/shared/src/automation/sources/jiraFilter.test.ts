@@ -115,6 +115,11 @@ describe('jiraFilterNewIssueSource', () => {
     expect(src.tester.facts({ issueKey: ' pay-7 ' }).issueKey).toBe('pay-7');
   });
 
+  it('describes an occurrence without a title, as the ledger shows it to a reader who may not see it', () => {
+    expect(src.describeOccurrence({ issueKey: 'PAY-12', projectKey: 'PAY' })).toBe('PAY-12');
+    expect(src.describeOccurrence({ issueKey: 'PAY-12', summary: '' })).toBe('PAY-12');
+  });
+
   it('describes the filter and an occurrence in a line', () => {
     expect(src.describe(filters)).toContain('project = PAY');
     expect(src.describeOccurrence(facts)).toContain('PAY-12');

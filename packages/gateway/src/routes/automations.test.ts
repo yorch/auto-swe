@@ -1047,6 +1047,103 @@ describe('automationRoutes (event automations)', () => {
       }
     });
 
+    describe('its decisions', () => {
+      const FIRE = '44444444-4444-4444-8444-444444444444';
+      const FACTS = {
+        description: 'Confidential details of the ticket',
+        issueKey: 'PAY-1',
+        projectKey: 'PAY',
+        summary: 'Add a health check',
+        url: 'https://acme.atlassian.net/browse/PAY-1',
+      };
+      const fire = (over: Record<string, unknown> = {}) => ({
+        facts: FACTS,
+        id: FIRE,
+        outcome: 'SUPPRESSED_DAILY_CAP',
+        ownerKey: 'github.com/acme/api',
+        retriedAt: null,
+        ...over,
+      });
+      const fires = () =>
+        ctx.app.inject({
+          headers: AUTH,
+          method: 'GET',
+          url: `${URL}/${AUTOMATION}/fires?limit=5`,
+        });
+      const retry = () =>
+        ctx.app.inject({
+          headers: AUTH,
+          method: 'POST',
+          url: `${URL}/${AUTOMATION}/fires/${FIRE}/retry`,
+        });
+
+      beforeEach(() => {
+        ctx.prisma.automation.findUnique.mockResolvedValue(storedJira());
+        ctx.prisma.automationFire.findMany.mockResolvedValue([fire()]);
+      });
+
+      it('never returns the ticket description, to anyone', async () => {
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+        const res = await fires();
+        expect(res.statusCode).toBe(200);
+        expect(JSON.stringify(res.json())).not.toContain('Confidential details');
+        expect(res.json().data.fires[0].facts).not.toHaveProperty('description');
+      });
+
+      it('shows the title only to those who manage the automation', async () => {
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+        expect((await fires()).json().data.fires[0].facts).toMatchObject({
+          issueKey: 'PAY-1',
+          summary: 'Add a health check',
+        });
+        // A member of a shared team may have no Jira access, and the project may not be theirs.
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null, lead));
+        const shared = (await fires()).json().data.fires[0].facts;
+        expect(shared).not.toHaveProperty('summary');
+        expect(shared).not.toHaveProperty('description');
+        expect(shared).toMatchObject({ issueKey: 'PAY-1', projectKey: 'PAY' });
+      });
+
+      it('leaves the decisions of another source as they are', async () => {
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
+        ctx.prisma.automation.findUnique.mockResolvedValue(stored());
+        ctx.prisma.automationFire.findMany.mockResolvedValue([
+          { facts: { branch: 'main', description: 'kept' } },
+        ]);
+        expect((await fires()).json().data.fires[0].facts).toEqual({
+          branch: 'main',
+          description: 'kept',
+        });
+      });
+
+      it('takes a decision again while its project is allowed', async () => {
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+        ctx.prisma.automationFire.findFirst.mockResolvedValue(fire());
+        engine.decideAndStart.mockResolvedValue({ automationId: AUTOMATION, outcome: 'STARTED' });
+        expect((await retry()).statusCode).toBe(200);
+        expect(engine.decideAndStart).toHaveBeenCalledTimes(1);
+      });
+
+      it('refuses to take a decision again once its project is no longer allowed', async () => {
+        settings.jiraProjects = ['OPS'];
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+        ctx.prisma.automationFire.findFirst.mockResolvedValue(fire());
+        const res = await retry();
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error.code).toBe('NOT_RETRYABLE');
+        expect(res.json().error.message).toMatch(/no longer allowed/i);
+        expect(engine.decideAndStart).not.toHaveBeenCalled();
+      });
+
+      it('refuses it for an empty allowlist too', async () => {
+        settings.jiraProjects = [];
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(lead));
+        ctx.prisma.automationFire.findFirst.mockResolvedValue(fire());
+        expect((await retry()).statusCode).toBe(409);
+        expect(engine.decideAndStart).not.toHaveBeenCalled();
+      });
+    });
+
     describe('changing one', () => {
       it('asks Jira again when the JQL changes, and leaves the baseline to the poller, which takes a new one for a new JQL', async () => {
         ctx.prisma.automation.findUnique.mockResolvedValue(storedJira());
