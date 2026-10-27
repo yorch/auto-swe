@@ -7,6 +7,8 @@ import type {
   FetchedIssue,
   FetchIssueOptions,
   IssueCreateFields,
+  SearchIssuesOptions,
+  SearchIssuesResult,
   TrackerSyncEvent,
 } from '../types.js';
 
@@ -140,6 +142,10 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
       this.log?.warn({ err, issueId: id }, 'GitHub fetchIssue failed');
       return null;
     }
+  }
+
+  async searchIssues(_query: string, _opts: SearchIssuesOptions): Promise<SearchIssuesResult> {
+    throw new Error('searchIssues is not supported by the GitHub Issues provider');
   }
 
   async createIssue(fields: IssueCreateFields): Promise<CreatedIssue | null> {

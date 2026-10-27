@@ -9,6 +9,9 @@ import type {
   IssueComment,
   IssueCreateFields,
   IssueParent,
+  SearchedIssue,
+  SearchIssuesOptions,
+  SearchIssuesResult,
   TrackerSyncEvent,
 } from '../types.js';
 
@@ -52,6 +55,19 @@ interface JiraTransitionResponse {
 interface JiraRemoteLink {
   object?: { url?: string };
 }
+
+interface JiraSearchResponse {
+  issues?: { key?: string; fields?: { summary?: string; project?: { key?: string } } }[];
+  nextPageToken?: string;
+  isLast?: boolean;
+}
+
+/// Matches asked of Jira per page; the search endpoint allows up to 5000 but 100 keeps a page small.
+const SEARCH_PAGE_SIZE = 100;
+
+/// Pages read before giving up. Pages of unusable rows never grow the result, so the match cap
+/// alone cannot end a search against a Jira that keeps handing out tokens.
+const MAX_SEARCH_PAGES = 100;
 
 interface JiraCreateResponse {
   id: string;
@@ -204,6 +220,50 @@ export class JiraProvider implements IssueTrackerProvider {
       this.log?.warn({ err, fields }, 'Jira createIssue failed');
       return null;
     }
+  }
+
+  async searchIssues(jql: string, opts: SearchIssuesOptions): Promise<SearchIssuesResult> {
+    const issues: SearchedIssue[] = [];
+    const seenTokens = new Set<string>();
+    let nextPageToken: string | undefined;
+    // Not knowing the whole result is reported like a result that is too long: callers fail closed.
+    let incomplete = false;
+    // One match past the cap is enough to know the result was cut.
+    for (let page = 0; issues.length <= opts.maxResults; page++) {
+      if (page >= MAX_SEARCH_PAGES) {
+        incomplete = true;
+        break;
+      }
+      const response = await this.client.post<JiraSearchResponse>('/rest/api/3/search/jql', {
+        fields: ['summary', 'project'],
+        jql,
+        maxResults: SEARCH_PAGE_SIZE,
+        ...(nextPageToken ? { nextPageToken } : {}),
+      });
+      for (const hit of response.issues ?? []) {
+        const projectKey = hit.fields?.project?.key;
+        if (hit.key && projectKey) {
+          issues.push({ key: hit.key, projectKey, summary: hit.fields?.summary ?? '' });
+        }
+        if (issues.length > opts.maxResults) {
+          break;
+        }
+      }
+      if (response.isLast || !response.nextPageToken) {
+        break;
+      }
+      if (seenTokens.has(response.nextPageToken)) {
+        incomplete = true;
+        break;
+      }
+      seenTokens.add(response.nextPageToken);
+      nextPageToken = response.nextPageToken;
+    }
+    const truncated = incomplete || issues.length > opts.maxResults;
+    return {
+      issues: issues.length > opts.maxResults ? issues.slice(0, opts.maxResults) : issues,
+      truncated,
+    };
   }
 
   async transitionIssue(issueId: string, targetStatusName: string): Promise<void> {

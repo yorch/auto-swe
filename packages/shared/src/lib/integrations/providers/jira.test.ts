@@ -174,3 +174,122 @@ describe('JiraProvider.addComment', () => {
     await expect(provider(client).addComment('AIDEVEX-8', 'Looks good')).resolves.toBe(false);
   });
 });
+
+describe('JiraProvider.searchIssues', () => {
+  const hit = (key: string, project = 'AIDEVEX') => ({
+    fields: { project: { key: project }, summary: `Summary of ${key}` },
+    id: key.replace(/\D/g, ''),
+    key,
+  });
+
+  /** A client whose `post` answers each call with the next page. */
+  function pagedClient(pages: unknown[]) {
+    const calls: { path: string; body: unknown }[] = [];
+    const post = vi.fn(async (path: string, body: unknown) => {
+      calls.push({ body, path });
+      const page = pages[calls.length - 1];
+      if (page instanceof Error) {
+        throw page;
+      }
+      return page;
+    });
+    return {
+      calls,
+      client: { baseUrl: 'https://acme.atlassian.net', post } as unknown as AtlassianClient,
+    };
+  }
+
+  it('returns each match with its key, summary and project key', async () => {
+    const { client, calls } = pagedClient([
+      { isLast: true, issues: [hit('AIDEVEX-1'), hit('OPS-2', 'OPS')] },
+    ]);
+    const result = await provider(client).searchIssues('status = Open', { maxResults: 50 });
+    expect(result).toEqual({
+      issues: [
+        { key: 'AIDEVEX-1', projectKey: 'AIDEVEX', summary: 'Summary of AIDEVEX-1' },
+        { key: 'OPS-2', projectKey: 'OPS', summary: 'Summary of OPS-2' },
+      ],
+      truncated: false,
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.path).toBe('/rest/api/3/search/jql');
+    expect(calls[0]?.body).toMatchObject({ fields: ['summary', 'project'], jql: 'status = Open' });
+  });
+
+  it('follows nextPageToken until the last page', async () => {
+    const { client, calls } = pagedClient([
+      { issues: [hit('AIDEVEX-1')], nextPageToken: 'tok-1' },
+      { issues: [hit('AIDEVEX-2')], nextPageToken: 'tok-2' },
+      { isLast: true, issues: [hit('AIDEVEX-3')] },
+    ]);
+    const result = await provider(client).searchIssues('x', { maxResults: 50 });
+    expect(result.issues.map((i) => i.key)).toEqual(['AIDEVEX-1', 'AIDEVEX-2', 'AIDEVEX-3']);
+    expect(result.truncated).toBe(false);
+    expect(calls.map((c) => (c.body as { nextPageToken?: string }).nextPageToken)).toEqual([
+      undefined,
+      'tok-1',
+      'tok-2',
+    ]);
+  });
+
+  it('flags truncation and stops paging when more than maxResults match', async () => {
+    const { client, calls } = pagedClient([
+      { issues: [hit('AIDEVEX-1'), hit('AIDEVEX-2')], nextPageToken: 'tok-1' },
+      { issues: [hit('AIDEVEX-3'), hit('AIDEVEX-4')], nextPageToken: 'tok-2' },
+      { isLast: true, issues: [hit('AIDEVEX-5')] },
+    ]);
+    const result = await provider(client).searchIssues('x', { maxResults: 3 });
+    expect(result.truncated).toBe(true);
+    expect(result.issues).toHaveLength(3);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('is not truncated when exactly maxResults match', async () => {
+    const { client } = pagedClient([
+      { isLast: true, issues: [hit('AIDEVEX-1'), hit('AIDEVEX-2'), hit('AIDEVEX-3')] },
+    ]);
+    const result = await provider(client).searchIssues('x', { maxResults: 3 });
+    expect(result.truncated).toBe(false);
+    expect(result.issues).toHaveLength(3);
+  });
+
+  it('skips a row that has no key or no project', async () => {
+    const { client } = pagedClient([
+      {
+        isLast: true,
+        issues: [
+          { fields: { summary: 'no key' }, id: '1' },
+          { fields: {}, key: 'AIDEVEX-2' },
+          hit('AIDEVEX-3'),
+        ],
+      },
+    ]);
+    const result = await provider(client).searchIssues('x', { maxResults: 50 });
+    expect(result.issues.map((i) => i.key)).toEqual(['AIDEVEX-3']);
+  });
+
+  it('stops and reports truncation when Jira echoes the same page token', async () => {
+    const post = vi.fn(async () => ({ issues: [], nextPageToken: 'same' }));
+    const client = { baseUrl: 'https://acme.atlassian.net', post } as unknown as AtlassianClient;
+    const result = await provider(client).searchIssues('x', { maxResults: 50 });
+    expect(result).toEqual({ issues: [], truncated: true });
+    expect(post).toHaveBeenCalledTimes(2);
+  });
+
+  it('stops after a page limit when every page is empty but the token keeps changing', async () => {
+    let n = 0;
+    const post = vi.fn(async () => ({ issues: [], nextPageToken: `tok-${++n}` }));
+    const client = { baseUrl: 'https://acme.atlassian.net', post } as unknown as AtlassianClient;
+    const result = await provider(client).searchIssues('x', { maxResults: 50 });
+    expect(result.truncated).toBe(true);
+    expect(post.mock.calls.length).toBeLessThanOrEqual(100);
+  });
+
+  it('lets a Jira rejection reach the caller with its status', async () => {
+    const rejection = new AtlassianError(400, 'server', 'Atlassian request failed: 400');
+    const { client } = pagedClient([rejection]);
+    await expect(provider(client).searchIssues('not jql', { maxResults: 50 })).rejects.toBe(
+      rejection
+    );
+  });
+});

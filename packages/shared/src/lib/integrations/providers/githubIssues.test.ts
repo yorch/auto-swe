@@ -71,3 +71,12 @@ describe('GitHubIssuesProvider.addComment', () => {
     );
   });
 });
+
+describe('GitHubIssuesProvider.searchIssues', () => {
+  it('is not supported: polling a filter is Jira only', async () => {
+    const provider = new GitHubIssuesProvider({ apiToken: 't' });
+    await expect(provider.searchIssues('x', { maxResults: 5 })).rejects.toThrow(
+      'searchIssues is not supported by the GitHub Issues provider'
+    );
+  });
+});
