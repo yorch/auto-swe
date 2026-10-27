@@ -37,6 +37,7 @@ const dexec = (name: string, cmd: string, cwd = '/workspace/target-repo') =>
 
 function adapter(name: string, pushTarget?: string): Workspace {
   const run = (cmd: string) => dexec(name, cmd);
+  const identity = { email: 'auto-swe@localhost', name: 'auto-swe' };
   return {
     containerId: name,
     destroy: async () => {},
@@ -73,6 +74,7 @@ function adapter(name: string, pushTarget?: string): Workspace {
       const rewritten = sub.replace(/^push origin/, `push --no-verify ${pushTarget}`);
       return run(`git ${rewritten}`);
     },
+    gitIdentity: { author: identity, committer: identity },
   } as unknown as Workspace;
 }
 

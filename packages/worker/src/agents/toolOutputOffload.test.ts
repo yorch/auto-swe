@@ -18,6 +18,10 @@ function makeWorkspace(
     execCapture: vi.fn(async () => ({ exitCode: 0, stderr: '', stdout: '' })),
     execStdin: vi.fn(execStdinImpl),
     gitAuthed: vi.fn(async () => ''),
+    gitIdentity: {
+      author: { email: 'auto-swe@localhost', name: 'auto-swe' },
+      committer: { email: 'auto-swe@localhost', name: 'auto-swe' },
+    },
   };
 }
 

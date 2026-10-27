@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { Suspense, useEffect, useState } from 'react';
 import { ProviderMark } from '@/components/auth/ProviderMark';
 import { AuthHeading, AuthLayout, BrandMark } from '@/components/layout/AuthLayout';
+import { SupportContact } from '@/components/SupportContact';
 import { Alert } from '@/components/ui/Alert';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -424,6 +425,7 @@ function LoginPageInner() {
           <Icon name="arrowLeft" size={15} />
           Back to sign in
         </Button>
+        <SupportContact className="mt-6 text-center" />
       </AuthLayout>
     );
   }
@@ -661,6 +663,7 @@ function LoginPageInner() {
         <p className="mt-3 text-center text-sm leading-relaxed text-paper-500 lg:hidden">
           auto-swe turns a ticket into a pull request for you to review and merge.
         </p>
+        <SupportContact className="mt-6 text-center" />
       </AuthLayout>
     </div>
   );

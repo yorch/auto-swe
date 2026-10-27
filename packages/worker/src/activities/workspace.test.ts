@@ -44,8 +44,21 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   })),
 }));
 
+// `createWorkspace` resolves the commit identity from the database; the real
+// resolver is covered by gitIdentity.test.ts.
+vi.mock('../lib/gitIdentity.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/gitIdentity.js')>();
+  return { ...actual, resolveGitIdentity: vi.fn(async () => actual.DEFAULT_GIT_IDENTITY) };
+});
+
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { execShellAsync, spawnWithStdinAsync } from '../lib/execUtils.js';
+import {
+  DEFAULT_GIT_IDENTITY,
+  type GitIdentity,
+  gitIdentityConfigScript,
+  resolveGitIdentity,
+} from '../lib/gitIdentity.js';
 import {
   authedGitScript,
   buildMetadataBlockArgs,
@@ -894,5 +907,108 @@ describe('killTaggedProcessesScript', () => {
     expect(matches('00ff0000000a')).toBe(true);
     expect(matches('00ff')).toBe(true);
     expect(matches('0aff00ff')).toBe(false);
+  });
+});
+
+describe('createWorkspace commit identity (execShellAsync mocked)', () => {
+  // The config script runs inside `docker exec … sh -c '<script>'`, so a value
+  // that is `shellQuote`d in the script appears re-escaped once more outside.
+  const Q = (v: string) => shellQuote(v).replace(/'/g, "'\\''");
+  const URL = 'https://github.com/acme/repo.git';
+
+  beforeEach(() => {
+    vi.mocked(execShellAsync).mockReset();
+    vi.mocked(execShellAsync).mockImplementation(okExec);
+    vi.mocked(resolveGitIdentity).mockReset();
+    vi.mocked(resolveGitIdentity).mockResolvedValue(DEFAULT_GIT_IDENTITY);
+  });
+
+  const allCommands = () => vi.mocked(execShellAsync).mock.calls.map((call) => call[0] as string);
+  const configValue = (key: string) =>
+    allCommands().find((c) => c.includes(`config --global -- ${key} `));
+
+  it('writes the same user.name and user.email as before when no override exists', async () => {
+    const ws = await createWorkspace(URL, 'auto/T-1', 'main');
+    expect(configValue('user.name')).toContain(`user.name ${Q('auto-swe')}`);
+    expect(configValue('user.email')).toContain(`user.email ${Q('auto-swe@localhost')}`);
+    for (const key of ['author', 'committer']) {
+      expect(configValue(`${key}.name`)).toContain(`${key}.name ${Q('auto-swe')}`);
+      expect(configValue(`${key}.email`)).toContain(`${key}.email ${Q('auto-swe@localhost')}`);
+    }
+    expect(ws.gitIdentity).toEqual(DEFAULT_GIT_IDENTITY);
+    await ws.destroy();
+  });
+
+  it('resolves the identity for the repository team and writes an override verbatim', async () => {
+    const identity: GitIdentity = {
+      author: { email: 'ada@acme.example', name: "O'Brien" },
+      committer: { email: 'bot@acme.example', name: 'Acme Bot' },
+    };
+    vi.mocked(resolveGitIdentity).mockResolvedValue(identity);
+    const ws = await createWorkspace(URL, 'auto/T-1', 'main', undefined, undefined, undefined, {
+      teamId: 'team-1',
+    });
+    expect(resolveGitIdentity).toHaveBeenCalledWith({ teamId: 'team-1' });
+    expect(configValue('author.name')).toContain(`author.name ${Q("O'Brien")}`);
+    expect(configValue('author.email')).toContain(`author.email ${Q('ada@acme.example')}`);
+    expect(configValue('committer.name')).toContain(`committer.name ${Q('Acme Bot')}`);
+    expect(configValue('user.name')).toContain(`user.name ${Q('Acme Bot')}`);
+    expect(configValue('user.email')).toContain(`user.email ${Q('bot@acme.example')}`);
+    expect(ws.gitIdentity).toBe(identity);
+    await ws.destroy();
+  });
+
+  it('resolves from the global tier when the caller has no team', async () => {
+    const ws = await createWorkspace(URL, 'auto/T-1', 'main');
+    expect(resolveGitIdentity).toHaveBeenCalledWith({ teamId: null });
+    await ws.destroy();
+  });
+
+  it('quotes a name that is a shell command so it cannot run in the container', async () => {
+    const hostile = '$(touch /tmp/x)';
+    vi.mocked(resolveGitIdentity).mockResolvedValue({
+      author: { email: 'a@x.example', name: hostile },
+      committer: { email: 'a@x.example', name: hostile },
+    });
+    const ws = await createWorkspace(URL, 'auto/T-1', 'main');
+    expect(configValue('user.name')).toContain(`user.name ${Q(hostile)}`);
+    await ws.destroy();
+  });
+
+  it('ends git option parsing before every key it writes', () => {
+    const commands = gitIdentityConfigScript(DEFAULT_GIT_IDENTITY).split(' && ');
+    expect(commands).toHaveLength(6);
+    for (const command of commands) {
+      expect(command).toMatch(/^git config --global -- (user|author|committer)\.(name|email) '/);
+    }
+  });
+
+  it.each(['--amend', '-x', '--unset'])(
+    'stores a name of %s as a value, not a git option',
+    (name) => {
+      const home = mkdtempSync(join(tmpdir(), 'gitident-home-'));
+      try {
+        const env = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', HOME: home };
+        const script = gitIdentityConfigScript({
+          author: { email: 'a@x.example', name },
+          committer: { email: 'c@x.example', name },
+        });
+        execFileSync('sh', ['-c', script], { env });
+        const read = (key: string) =>
+          execFileSync('git', ['config', '--global', key], { env }).toString().trim();
+        expect(read('user.name')).toBe(name);
+        expect(read('author.name')).toBe(name);
+        expect(read('committer.name')).toBe(name);
+        expect(read('user.email')).toBe('c@x.example');
+      } finally {
+        rmSync(home, { force: true, recursive: true });
+      }
+    }
+  );
+
+  it('fails before any container exists when the identity cannot be resolved', async () => {
+    vi.mocked(resolveGitIdentity).mockRejectedValue(new Error('connection reset'));
+    await expect(createWorkspace(URL, 'auto/T-1', 'main')).rejects.toThrow('connection reset');
+    expect(allCommands().some((c) => c.includes('docker run'))).toBe(false);
   });
 });

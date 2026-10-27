@@ -40,6 +40,7 @@
     "./lib/runCallbacks": "./dist/lib/runCallbacks.js",
     "./lib/skillScanner": "./dist/lib/skillScanner.js",
     "./lib/skillRevision": "./dist/lib/skillRevision.js",
+    "./lib/gitIdentityName": "./dist/lib/gitIdentityName.js",
     "./lib/memoryForget": "./dist/lib/memoryForget.js",
     "./lib/skillSource": "./dist/lib/skillSource/index.js",
     "./lib/skillSourceSync": "./dist/lib/skillSourceSync.js",

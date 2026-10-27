@@ -1,9 +1,10 @@
-import { publicApiUrl, temporalUiUrl } from './env';
+import { publicApiUrl, type SupportInfo, temporalUiUrl } from './env';
 
 // Shape must match what layout.tsx injects into window.__APP_CONFIG__.
 interface AppConfig {
   apiUrl: string;
   temporalUiUrl: string;
+  support?: SupportInfo;
 }
 
 // Browser-only: reads window.__APP_CONFIG__ injected by the root Server Component

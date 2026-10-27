@@ -1,5 +1,8 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+import type { SupportInfo } from '@/lib/env';
+
 // Replaces the root layout when it itself throws, so it renders its own <html>
 // and cannot rely on the app's providers or stylesheet: styles are inline, and
 // every colour is a design token's value from globals.css, named after it.
@@ -11,7 +14,55 @@ const PAPER_400 = '#bac1d1';
 const ACCENT_500 = '#6a5bff';
 const DANGER_400 = '#ff7a7a';
 
+/** Best effort: this screen replaces the root layout, so the config script may be missing, and
+ *  nothing here may throw. Only well-typed strings are kept; links must be https. */
+function readSupport(): SupportInfo | undefined {
+  try {
+    return sanitiseSupport(
+      (window as unknown as { __APP_CONFIG__?: { support?: unknown } }).__APP_CONFIG__?.support
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function sanitiseSupport(raw: unknown): SupportInfo | undefined {
+  if (typeof raw !== 'object' || raw === null) {
+    return undefined;
+  }
+  const { url, email, slack } = raw as Record<string, unknown>;
+  const https = (v: unknown): v is string => typeof v === 'string' && v.startsWith('https://');
+  const info: SupportInfo = {};
+  if (https(url)) {
+    info.url = url;
+  }
+  if (typeof email === 'string' && email.split('@').length === 2) {
+    info.email = email;
+  }
+  if (typeof slack === 'object' && slack !== null) {
+    const { text, href } = slack as Record<string, unknown>;
+    if (typeof text === 'string') {
+      info.slack = https(href) ? { href, text } : { text };
+    }
+  }
+  return info.url || info.email || info.slack ? info : undefined;
+}
+
 export default function GlobalError({ reset }: { error: Error; reset: () => void }) {
+  // After mount, so the server-rendered markup and the first client render agree.
+  const [support, setSupport] = useState<SupportInfo | undefined>(undefined);
+  useEffect(() => {
+    setSupport(readSupport());
+  }, []);
+  const visuallyHidden = {
+    clip: 'rect(0 0 0 0)',
+    height: 1,
+    overflow: 'hidden',
+    position: 'absolute',
+    whiteSpace: 'nowrap',
+    width: 1,
+  } as const;
+  const supportLink = { color: PAPER_400, textDecoration: 'underline' } as const;
   const button = {
     alignItems: 'center',
     border: '1px solid transparent',
@@ -96,6 +147,54 @@ export default function GlobalError({ reset }: { error: Error; reset: () => void
               Go home
             </a>
           </div>
+          {support && (
+            <address
+              aria-label="Support"
+              style={{ color: PAPER_400, fontSize: 12, fontStyle: 'normal', marginTop: 24 }}
+            >
+              <div>Support</div>
+              {support.url && (
+                <div>
+                  <a
+                    href={support.url}
+                    rel="noopener noreferrer"
+                    style={supportLink}
+                    target="_blank"
+                  >
+                    {support.url}
+                    <span style={visuallyHidden}> (opens in a new tab)</span>
+                  </a>
+                </div>
+              )}
+              {support.email && (
+                <div>
+                  <a
+                    href={`mailto:${support.email.split('@').map(encodeURIComponent).join('@')}`}
+                    style={supportLink}
+                  >
+                    {support.email}
+                  </a>
+                </div>
+              )}
+              {support.slack && (
+                <div>
+                  {support.slack.href ? (
+                    <a
+                      href={support.slack.href}
+                      rel="noopener noreferrer"
+                      style={supportLink}
+                      target="_blank"
+                    >
+                      {support.slack.text}
+                      <span style={visuallyHidden}> (opens in a new tab)</span>
+                    </a>
+                  ) : (
+                    support.slack.text
+                  )}
+                </div>
+              )}
+            </address>
+          )}
         </main>
       </body>
     </html>

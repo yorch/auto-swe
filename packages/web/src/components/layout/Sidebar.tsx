@@ -5,6 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import { BrandMark } from '@/components/layout/AuthLayout';
 import { PALETTE_CHOICES } from '@/components/layout/ThemeToggle';
+import { SupportContact } from '@/components/SupportContact';
 import { Icon, isIconName } from '@/components/ui/Icon';
 import { SegmentedControl, type SegmentedOption } from '@/components/ui/SegmentedControl';
 import { useApprovalsCount } from '@/hooks/useApprovals';
@@ -310,6 +311,8 @@ export function Sidebar({ open, onClose, closeButtonRef }: SidebarProps) {
           </div>
         ))}
       </nav>
+
+      <SupportContact className="shrink-0 border-t border-ink-500/70 px-[18px] py-3" />
     </aside>
   );
 }

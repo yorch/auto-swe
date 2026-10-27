@@ -147,6 +147,13 @@ jobs:
           AGENT_RUN_DOCKER_TEST: '1'
         run: yarn test packages/worker/src/activities/agentRunFinalize.docker.test.ts
 
+      # Real commits under each launcher-attribution mode, read back with
+      # `git log`: proves the author/committer config keys on the image's git.
+      - name: Git attribution modes (Docker-backed tests)
+        env:
+          GIT_IDENTITY_DOCKER_TEST: '1'
+        run: yarn test packages/worker/src/activities/gitIdentity.docker.test.ts
+
       # Real npm/pnpm/yarn clients against the registry proxy through the
       # executor image — lockfile-mode installs and denial messages, end to end.
       - name: Registry proxy client tests (Docker-backed)

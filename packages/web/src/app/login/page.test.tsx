@@ -5,6 +5,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import LoginPage from './page';
 
 const nav = vi.hoisted(() => ({ params: new URLSearchParams() }));
+// What the mocked auth store reports; a test overrides it to reach the pending-approval screen.
+const auth = vi.hoisted(() => ({
+  status: 'unauthenticated' as 'authenticated' | 'unauthenticated',
+  user: null as { email: string; isActive: boolean } | null,
+}));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -13,12 +18,14 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('@/stores/authStore', () => {
   const state = {
-    hydrateFromSession: async () => 'unauthenticated',
+    hydrateFromSession: async () => auth.status,
     login: async () => null,
     requestMagicLink: async () => undefined,
     requestPasswordReset: async () => undefined,
     signInWithProvider: async () => undefined,
-    user: null,
+    get user() {
+      return auth.user;
+    },
   };
   const useAuthStore = Object.assign((selector: (s: typeof state) => unknown) => selector(state), {
     getState: () => state,
@@ -39,12 +46,59 @@ vi.mock('@/hooks/useGatewayStatus', () => ({
 afterEach(() => {
   cleanup();
   nav.params = new URLSearchParams();
+  auth.status = 'unauthenticated';
+  auth.user = null;
 });
 
 function renderWithQuery(query: string) {
   nav.params = new URLSearchParams(query);
   return render(<LoginPage />);
 }
+
+describe('login page: support contact', () => {
+  afterEach(() => {
+    (window as unknown as { __APP_CONFIG__?: unknown }).__APP_CONFIG__ = undefined;
+  });
+
+  it('shows the configured support contact below the sign-in card', async () => {
+    (window as unknown as { __APP_CONFIG__?: unknown }).__APP_CONFIG__ = {
+      support: { email: 'help@example.com' },
+    };
+    renderWithQuery('');
+    expect(await screen.findByRole('link', { name: 'help@example.com' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Support' })).toBeTruthy();
+  });
+
+  it('shows the support contact on the awaiting-approval screen too', async () => {
+    (window as unknown as { __APP_CONFIG__?: unknown }).__APP_CONFIG__ = {
+      support: { email: 'help@example.com' },
+    };
+    auth.status = 'authenticated';
+    auth.user = { email: 'new.hire@example.com', isActive: false };
+    renderWithQuery('');
+    expect(await screen.findByText('Awaiting approval')).toBeTruthy();
+    expect(await screen.findByRole('link', { name: 'help@example.com' })).toBeTruthy();
+    expect(screen.getByRole('group', { name: 'Support' })).toBeTruthy();
+  });
+
+  it('adds no support element on the awaiting-approval screen when nothing is configured', async () => {
+    auth.status = 'authenticated';
+    auth.user = { email: 'new.hire@example.com', isActive: false };
+    renderWithQuery('');
+    expect(await screen.findByText('Awaiting approval')).toBeTruthy();
+    expect(screen.queryByRole('group', { name: 'Support' })).toBeNull();
+    expect(screen.queryByText('Support')).toBeNull();
+  });
+
+  it('adds no support element when nothing is configured', async () => {
+    renderWithQuery('');
+    await screen.findByText(
+      'auto-swe turns a ticket into a pull request for you to review and merge.'
+    );
+    expect(screen.queryByRole('group', { name: 'Support' })).toBeNull();
+    expect(screen.queryByText('Support')).toBeNull();
+  });
+});
 
 describe('login page: what it is and how to get in', () => {
   it('says what auto-swe does and points a new user to an administrator', async () => {

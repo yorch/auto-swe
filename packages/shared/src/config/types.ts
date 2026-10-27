@@ -27,6 +27,7 @@ export const SETTING_GROUPS = [
   'audit',
   'channel',
   'evals',
+  'git',
   'github',
   'mcp',
   'memory',

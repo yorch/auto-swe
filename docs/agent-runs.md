@@ -475,7 +475,9 @@ takes no new slot.
   means adding its key to `NON_LAUNCHABLE_AGENT_KEYS`.
 - **The real-Docker check is opt-in.** The trusted-container shell is exercised against real containers
   by `agentRunFinalize.docker.test.ts` only when `AGENT_RUN_DOCKER_TEST=1`; the default suite exercises
-  the same code against a fake workspace.
+  the same code against a fake workspace. The commit's author, committer and optional launcher
+  trailer come from the `git.*` settings ([configuration.md §7](./configuration.md#7-git-commit-identity));
+  `gitIdentity.docker.test.ts` checks them against real commits only when `GIT_IDENTITY_DOCKER_TEST=1`.
 - **A model with no known price is refused only under a USD cap.** When the run's organization has a
   monthly USD budget and the agent's model has no catalog price, the run fails before it starts (before
   the container is created) with `MODEL_UNPRICED`, naming the model and the model catalog; the run

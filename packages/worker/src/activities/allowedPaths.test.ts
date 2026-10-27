@@ -329,6 +329,69 @@ describe('with no allowedPaths', () => {
   });
 });
 
+describe('the workspace git identity', () => {
+  const bot = { email: 'bot@example.com', name: "Acme 'Bot'; touch pwned" };
+  const launcher = { email: 'ada@example.com', name: 'Ada Lovelace' };
+  const TRAILER = 'Co-authored-by: Ada Lovelace <ada@example.com>';
+  const botIdentity = { author: bot, committer: bot };
+  const guarded = async (identity?: typeof botIdentity & { coAuthorTrailer?: string }) => {
+    const guard = await startPathGuard(workspace, 'main', ALLOWED);
+    write('catalog.ts', 'export const BUILTIN_MODELS = [1];\n');
+    sh('git add -A');
+    const ws = identity ? { exec: workspace.exec, gitIdentity: identity } : workspace;
+    await commitStaged(ws, 'auto: implement', guard);
+  };
+  const unguarded = async (identity: typeof botIdentity & { coAuthorTrailer?: string }) => {
+    write('catalog.ts', 'export const BUILTIN_MODELS = [1];\n');
+    sh('git add -A');
+    await commitStaged(
+      { exec: workspace.exec, gitIdentity: identity },
+      'auto: implement',
+      undefined
+    );
+  };
+  const log = (format: string) => sh(`git log -1 --format='${format}'`).trim();
+
+  it('commits a guarded step under the workspace identity, not the literal one', async () => {
+    await guarded(botIdentity);
+    expect(log('%an|%ae|%cn|%ce')).toBe(`${bot.name}|${bot.email}|${bot.name}|${bot.email}`);
+  });
+
+  it('falls back to the default identity when the workspace carries none', async () => {
+    await guarded();
+    expect(log('%an|%ae')).toBe('auto-swe|auto-swe@localhost');
+  });
+
+  it('authors as the launcher and commits as the bot in author mode', async () => {
+    await guarded({ author: launcher, committer: bot });
+    expect(log('%an|%ae|%cn|%ce')).toBe(
+      `${launcher.name}|${launcher.email}|${bot.name}|${bot.email}`
+    );
+  });
+
+  it('appends the co-author trailer to a guarded commit', async () => {
+    await guarded({ ...botIdentity, coAuthorTrailer: TRAILER });
+    expect(log('%B')).toBe(`auto: implement\n\n${TRAILER}`);
+  });
+
+  it('appends the co-author trailer to an unguarded commit', async () => {
+    await unguarded({ ...botIdentity, coAuthorTrailer: TRAILER });
+    expect(log('%B')).toBe(`auto: implement\n\n${TRAILER}`);
+  });
+
+  it('adds no trailer when the identity has none', async () => {
+    await guarded(botIdentity);
+    expect(log('%B')).toBe('auto: implement');
+    await unguarded(botIdentity);
+    expect(log('%B')).toBe('auto: implement');
+  });
+
+  it('never lets a hostile identity value run as a command', async () => {
+    await guarded(botIdentity);
+    expect(() => sh('test -e pwned')).toThrow();
+  });
+});
+
 describe('startPathGuard', () => {
   it('fails closed, non-retryably, when the starting commit cannot be read', async () => {
     const ws = {

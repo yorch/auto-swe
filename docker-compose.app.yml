@@ -192,6 +192,11 @@ services:
       - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8080}
       - NEXT_PUBLIC_TEMPORAL_UI_URL=${NEXT_PUBLIC_TEMPORAL_UI_URL:-}
       - NEXT_PUBLIC_GRAFANA_URL=${NEXT_PUBLIC_GRAFANA_URL:-}
+      # Optional support contact shown on the sign-in and error screens and in the
+      # sidebar. The web container has no `env_file`, so each one needs a line here.
+      - NEXT_PUBLIC_SUPPORT_URL=${NEXT_PUBLIC_SUPPORT_URL:-}
+      - NEXT_PUBLIC_SUPPORT_EMAIL=${NEXT_PUBLIC_SUPPORT_EMAIL:-}
+      - NEXT_PUBLIC_SUPPORT_SLACK=${NEXT_PUBLIC_SUPPORT_SLACK:-}
       # Server-side fetches (the /admin layout's role check) reach the gateway
       # over the compose network — the browser URL above does not resolve here.
       - API_INTERNAL_URL=${API_INTERNAL_URL:-http://gateway:8080}

@@ -28,6 +28,90 @@ export function grafanaUrl(): string {
   return process.env.NEXT_PUBLIC_GRAFANA_URL ?? '';
 }
 
+export interface SupportInfo {
+  url?: string;
+  email?: string;
+  slack?: { text: string; href?: string };
+}
+
+const SLACK_MAX_LENGTH = 80;
+
+function parseUrl(value: string): URL | undefined {
+  try {
+    return new URL(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function hasCredentials(url: URL): boolean {
+  return url.username !== '' || url.password !== '';
+}
+
+function httpsHref(value: string): string | undefined {
+  const parsed = parseUrl(value);
+  return parsed?.protocol === 'https:' && !hasCredentials(parsed) ? parsed.href : undefined;
+}
+
+/** `supportInfo()` runs on every request; one warning per distinct message per process. */
+const warned = new Set<string>();
+
+function warnOnce(message: string): void {
+  if (!warned.has(message)) {
+    warned.add(message);
+    console.warn(message);
+  }
+}
+
+function validEmail(value: string): boolean {
+  return value.split('@').length === 2 && !/[\s<>"']/.test(value) && !value.startsWith('@');
+}
+
+/**
+ * Operator-supplied support contacts, validated on the server. Invalid values
+ * are dropped with one warning; returns undefined when nothing valid is set.
+ * Must be read on the server and passed to the browser through the layout's
+ * app config: a client-side `process.env.NEXT_PUBLIC_*` read is inlined at
+ * build time.
+ */
+export function supportInfo(): SupportInfo | undefined {
+  const rawUrl = process.env.NEXT_PUBLIC_SUPPORT_URL?.trim();
+  const rawEmail = process.env.NEXT_PUBLIC_SUPPORT_EMAIL?.trim();
+  const rawSlack = process.env.NEXT_PUBLIC_SUPPORT_SLACK?.trim();
+  const info: SupportInfo = {};
+  const dropped: string[] = [];
+
+  if (rawUrl) {
+    const href = httpsHref(rawUrl);
+    if (href) {
+      info.url = href;
+    } else {
+      dropped.push('NEXT_PUBLIC_SUPPORT_URL');
+    }
+  }
+  if (rawEmail) {
+    if (validEmail(rawEmail)) {
+      info.email = rawEmail;
+    } else {
+      dropped.push('NEXT_PUBLIC_SUPPORT_EMAIL');
+    }
+  }
+  if (rawSlack) {
+    const slackUrl = parseUrl(rawSlack);
+    if (rawSlack.length <= SLACK_MAX_LENGTH && !(slackUrl && hasCredentials(slackUrl))) {
+      const href = httpsHref(rawSlack);
+      info.slack = href ? { href, text: rawSlack } : { text: rawSlack };
+    } else {
+      dropped.push('NEXT_PUBLIC_SUPPORT_SLACK');
+    }
+  }
+
+  if (dropped.length > 0) {
+    warnOnce(`Ignoring invalid support contact setting(s): ${dropped.join(', ')}`);
+  }
+  return Object.keys(info).length > 0 ? info : undefined;
+}
+
 /**
  * Gateway base URL for fetches made on the server (Server Components, route
  * handlers). `NEXT_PUBLIC_API_URL` is the address the *browser* uses, which
