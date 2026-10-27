@@ -140,6 +140,7 @@ request's current head commit. The settings are:
 | `qodo.enabled` | off | Gates every read of Qodo |
 | `qodo.prFeedbackBotAccountIds` | empty | Numeric account ids of Qodo's bot on this GitHub host; empty keeps the trigger inert |
 | `qodo.prFeedbackMinActionLevel` | `remediation_recommended` | Lowest finding level addressed |
+| `qodo.prFeedbackIncludeOnCommand` | off | Whether an `/auto-swe fix` round also reads Qodo once and addresses its open findings |
 | `qodo.prFeedbackMaxRounds` | 2 | Pushed rounds Qodo alone may cause on one pull request |
 | `qodo.prFeedbackWaitSeconds` | 120 | How long a round waits for Qodo to finish reviewing the head |
 

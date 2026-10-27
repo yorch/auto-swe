@@ -625,6 +625,75 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
       });
       briefParts.push(block);
     }
+    // ── 7b. A person's `/auto-swe fix` can also address Qodo's open findings. Off by default,
+    // and only on a pull request the platform opened. Qodo is read once, without waiting: a
+    // review that is missing, unfinished or for another commit adds nothing, and the round
+    // carries on with the human threads alone.
+    if (
+      payload.feedbackTrigger === 'command' &&
+      origin !== 'other' &&
+      (await resolveSetting('qodo.enabled', ctx)) &&
+      (await resolveSetting('qodo.prFeedbackIncludeOnCommand', ctx))
+    ) {
+      const addedNothing = (reason: string) =>
+        tracer.addActivityEvent({
+          name: 'pr_feedback.qodo_command_skipped',
+          outputJson: { reason },
+        });
+      if (!repo.teamId) {
+        addedNothing('the repository has no team to read Qodo for');
+      } else if (briefThreads.length >= MAX_THREADS) {
+        addedNothing('the brief is already full');
+      } else {
+        // Qodo is an addition to a round a person asked for: whatever goes wrong here, even a
+        // host error, leaves the human threads as they are.
+        try {
+          const read = await readQodoReview(
+            createQodoFindingsClient({
+              ...(repo.team?.orgId ? { orgId: repo.team.orgId } : {}),
+              teamId: repo.teamId,
+              tracer,
+            }),
+            await scm.prUrl(repoRef, payload.pullRequestNumber),
+            headSha,
+            0,
+            tracer
+          );
+          if (read.type === 'skip') {
+            addedNothing(read.reason);
+          } else if (
+            (await scm.pullRequestInfo(repoRef, payload.pullRequestNumber))?.headSha !== headSha
+          ) {
+            // The review no longer matches the pull request: the fix is cut from the head.
+            addedNothing('the pull request’s head moved while Qodo was read');
+          } else {
+            const built = await buildQodoBrief({
+              firstLabel: label + 1,
+              minLevel: await resolveSetting('qodo.prFeedbackMinActionLevel', ctx),
+              state: read.state,
+              tracer,
+              usedChars: briefChars,
+              usedThreads: briefThreads.length,
+            });
+            if (built.qualifying === 0) {
+              addedNothing('Qodo has no open findings at or above the configured level');
+            } else {
+              dropped.overLimit += built.dropped.overLimit;
+              dropped.screened += built.dropped.screened;
+              if (built.briefThreads.length === 0) {
+                addedNothing('nothing usable in Qodo’s findings');
+              } else {
+                briefParts.push(...built.briefParts);
+                briefThreads.push(...built.briefThreads);
+              }
+            }
+          }
+        } catch {
+          // A fixed reason: an error's text could carry a host response.
+          addedNothing('Qodo could not be read');
+        }
+      }
+    }
     if (briefThreads.length === 0 && triggerNotes.trim().length === 0) {
       return skip('nothing usable in the feedback', { headRef, origin });
     }
@@ -709,6 +778,82 @@ async function readQodoReview(
 }
 
 /**
+ * The brief for Qodo's open findings at or above `minLevel`: most severe first, at most
+ * MAX_THREADS, Qodo's title and description only (no code, no paths), screened for injection in
+ * ONE batch, and bounded. Labels are numbered from `firstLabel`. `qualifying` counts the open
+ * findings considered, before the screen and the bound, so a caller can tell "none" from "none
+ * usable".
+ */
+async function buildQodoBrief(args: {
+  firstLabel: number;
+  minLevel: Parameters<typeof actionLevelAtLeast>[1];
+  state: Extract<QodoPrReviewState, { kind: 'ok' }>;
+  tracer: AgentTracer;
+  /** Characters of the brief already spent, so human and Qodo parts share one bound. */
+  usedChars?: number;
+  /** Threads of the brief already spent, so human and Qodo parts share one bound. */
+  usedThreads?: number;
+}): Promise<{
+  briefParts: string[];
+  briefThreads: FeedbackBriefThread[];
+  dropped: GatherResult['dropped'];
+  qualifying: number;
+}> {
+  const { firstLabel, minLevel, state, tracer, usedChars = 0, usedThreads = 0 } = args;
+  if (state.unrecognisedStatuses > 0) {
+    tracer.addActivityEvent({
+      name: 'pr_feedback.qodo_unrecognised_statuses',
+      outputJson: { count: state.unrecognisedStatuses },
+    });
+  }
+  if (state.withheldFields > 0) {
+    // A count only: what the screen withheld is never written to a trace.
+    tracer.addActivityEvent({
+      name: 'pr_feedback.qodo_withheld_fields',
+      outputJson: { count: state.withheldFields },
+    });
+  }
+  const open = state.findings
+    .filter((f) => isOpenFinding(f) && actionLevelAtLeast(f, minLevel))
+    .sort((a, b) => QODO_LEVEL_ORDER[b.actionLevel] - QODO_LEVEL_ORDER[a.actionLevel])
+    .slice(0, Math.max(0, MAX_THREADS - usedThreads));
+  const dropped = { overLimit: 0, screened: 0, untrusted: 0 };
+  const briefParts: string[] = [];
+  const briefThreads: FeedbackBriefThread[] = [];
+  if (open.length === 0) {
+    return { briefParts, briefThreads, dropped, qualifying: 0 };
+  }
+  const texts = open.map((f) =>
+    visibleIssueText(`${f.title}\n${f.description}`).trim().slice(0, MAX_COMMENT_CHARS)
+  );
+  // ONE screening batch over every finding, exactly as human feedback is screened.
+  const unusable = await feedbackInjectionScreen(texts);
+  let briefChars = usedChars;
+  for (const [i, finding] of open.entries()) {
+    // A finding whose title or description the result screen withheld has nothing to act on, and
+    // its placeholder must not stand in for Qodo's words: it is dropped, as a screened one is.
+    if (unusable.has(i) || isFindingTextWithheld(finding)) {
+      dropped.screened += 1;
+      continue;
+    }
+    if (texts[i].length === 0) {
+      continue;
+    }
+    if (briefChars > MAX_BRIEF_CHARS) {
+      dropped.overLimit += 1;
+      continue;
+    }
+    const label = `T${firstLabel + briefThreads.length}`;
+    const block = `[${label}] Qodo finding (${finding.actionLevel})\n— Qodo: ${texts[i]}`;
+    briefChars += block.length;
+    // A Qodo finding is not a GitHub thread: nothing to reply on, only the summary comment.
+    briefThreads.push({ label, line: null, path: '', replyToCommentId: 0, threadId: '' });
+    briefParts.push(block);
+  }
+  return { briefParts, briefThreads, dropped, qualifying: open.length };
+}
+
+/**
  * One round of Qodo's findings on a pull request the platform opened. The gateway's nudge said
  * only that Qodo's bot spoke; what Qodo found is asked of Qodo itself, with the repository's
  * team's connection, and only the review of the pull request's CURRENT head commit counts — the
@@ -749,57 +894,11 @@ async function gatherQodoRound(args: {
   if ((await args.recheckHead()) !== headSha) {
     return args.skip('the pull request’s head moved while Qodo was read');
   }
-  const { state } = read;
-  if (state.unrecognisedStatuses > 0) {
-    tracer.addActivityEvent({
-      name: 'pr_feedback.qodo_unrecognised_statuses',
-      outputJson: { count: state.unrecognisedStatuses },
-    });
-  }
-  if (state.withheldFields > 0) {
-    // A count only: what the screen withheld is never written to a trace.
-    tracer.addActivityEvent({
-      name: 'pr_feedback.qodo_withheld_fields',
-      outputJson: { count: state.withheldFields },
-    });
-  }
-  const open = state.findings
-    .filter((f) => isOpenFinding(f) && actionLevelAtLeast(f, minLevel))
-    .sort((a, b) => QODO_LEVEL_ORDER[b.actionLevel] - QODO_LEVEL_ORDER[a.actionLevel])
-    .slice(0, MAX_THREADS);
-  if (open.length === 0) {
+  const built = await buildQodoBrief({ firstLabel: 1, minLevel, state: read.state, tracer });
+  if (built.qualifying === 0) {
     return args.skip('Qodo has no open findings at or above the configured level');
   }
-  const texts = open.map((f) =>
-    visibleIssueText(`${f.title}\n${f.description}`).trim().slice(0, MAX_COMMENT_CHARS)
-  );
-  // ONE screening batch over every finding, exactly as human feedback is screened.
-  const unusable = await feedbackInjectionScreen(texts);
-  const dropped = { overLimit: 0, screened: 0, untrusted: 0 };
-  const briefParts: string[] = [];
-  const briefThreads: FeedbackBriefThread[] = [];
-  let briefChars = 0;
-  for (const [i, finding] of open.entries()) {
-    // A finding whose title or description the result screen withheld has nothing to act on, and
-    // its placeholder must not stand in for Qodo's words: it is dropped, as a screened one is.
-    if (unusable.has(i) || isFindingTextWithheld(finding)) {
-      dropped.screened += 1;
-      continue;
-    }
-    if (texts[i].length === 0) {
-      continue;
-    }
-    if (briefChars > MAX_BRIEF_CHARS) {
-      dropped.overLimit += 1;
-      continue;
-    }
-    const label = `T${briefThreads.length + 1}`;
-    const block = `[${label}] Qodo finding (${finding.actionLevel})\n— Qodo: ${texts[i]}`;
-    briefChars += block.length;
-    // A Qodo finding is not a GitHub thread: nothing to reply on, only the summary comment.
-    briefThreads.push({ label, line: null, path: '', replyToCommentId: 0, threadId: '' });
-    briefParts.push(block);
-  }
+  const { briefParts, briefThreads, dropped } = built;
   if (briefThreads.length === 0) {
     return args.skip('nothing usable in Qodo’s findings');
   }
