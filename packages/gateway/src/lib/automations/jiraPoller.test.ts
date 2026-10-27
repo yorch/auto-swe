@@ -78,10 +78,13 @@ function fakePrisma(initial: Partial<StateRow> = {}) {
           if (state === null || state.automationId !== where.automationId) {
             return { count: 0 };
           }
-          // A claim takes a free or expired lease; a release only the lease its caller holds.
+          // A claim takes a free or expired lease; a release only the lease its caller holds; an
+          // update with no lease condition applies whoever holds the lease.
           const matches = where.OR
             ? state.leaseUntil === null || state.leaseUntil < where.OR[1].leaseUntil.lt
-            : state.leaseUntil?.getTime() === where.leaseUntil?.getTime();
+            : where.leaseUntil === undefined
+              ? true
+              : state.leaseUntil?.getTime() === where.leaseUntil.getTime();
           if (!matches) {
             return { count: 0 };
           }
@@ -362,6 +365,35 @@ describe('pollAutomation: what a baseline is bound to', () => {
     expect(outcome).toEqual({ recorded: 2, status: 'baselined' });
     expect(decide).not.toHaveBeenCalled();
     expect(fake.state()?.baselineJql).toBe('project in ("HR2", "OPS", "PAY") AND (status = Open)');
+  });
+
+  it('clears the baseline while the allowlist is empty, so restoring it starts nothing for what appeared meanwhile', async () => {
+    const fake = fakePrisma({
+      baselinedAt: new Date('2026-10-01T00:00:00Z'),
+      baselineJql: NARROWED,
+    });
+    settings.resolveSetting.mockImplementation(async (key: string) =>
+      key === 'workflow.jiraPollAutomationsEnabled' ? true : []
+    );
+    const locked = await run(fake, vi.fn());
+    expect(locked).toEqual({ code: 'NO_ALLOWED_PROJECTS', status: 'error' });
+    expect(fake.state()?.baselinedAt).toBeNull();
+    expect(fake.state()?.lastError).toBe('NO_ALLOWED_PROJECTS');
+    // The same list is restored: issues created during the lockout are recorded, not started.
+    settings.resolveSetting.mockImplementation(async (key: string) =>
+      key === 'workflow.jiraPollAutomationsEnabled' ? true : ['PAY', 'OPS']
+    );
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    const resumed = await run(
+      fake,
+      vi.fn(async () => found(hit('PAY-1'))),
+      automation(),
+      {
+        decide,
+      }
+    );
+    expect(resumed.status).toBe('baselined');
+    expect(decide).not.toHaveBeenCalled();
   });
 
   it('keeps the baseline when only the order of the allowlist differs', async () => {

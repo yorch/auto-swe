@@ -383,8 +383,8 @@ expires. A round stops starting automations after ten minutes and resumes where 
   A baseline belongs to the query as Jira is asked it: the JQL and the allowed projects. So the
   same holds when the JQL changes, when a project is added to the allowlist, and when an
   automation is switched back on. An automation that is not polled because the team's polling is
-  off, or its repository is inactive or retired, records why and forgets its baseline; when
-  polling resumes the next poll takes a new one. Only an issue that appears afterwards starts a
+  off, its repository is inactive or retired, or the allowlist is empty, records why and forgets
+  its baseline; when polling resumes the next poll takes a new one. Only an issue that appears afterwards starts a
   run. A trailing `ORDER BY` and the order of the allowlist do not change the query.
 - **New means a key the automation has not seen.** An issue starts a run once. Moving it to
   another project gives it a new key, which is new.

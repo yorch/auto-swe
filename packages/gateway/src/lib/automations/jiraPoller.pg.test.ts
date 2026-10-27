@@ -418,6 +418,19 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
       expect(state.baselineJql).toBe('project in ("HR2", "PAY") AND (status = Open)');
     });
 
+    it('takes a new baseline after the allowlist was emptied and restored, so what appeared meanwhile starts nothing', async () => {
+      expect((await poll()).status).toBe('baselined');
+      settings.allowed = [];
+      expect(await poll()).toEqual({ code: 'NO_ALLOWED_PROJECTS', status: 'error' });
+      const locked = await prisma.automationPollState.findUniqueOrThrow({
+        where: { automationId },
+      });
+      expect(locked.baselinedAt).toBeNull();
+      settings.allowed = ['PAY'];
+      expect((await poll([...issues, hit('PAY-5')])).status).toBe('baselined');
+      expect(startedWorkflows).toHaveLength(0);
+    });
+
     it('takes a new baseline after polling was switched off and on, so what appeared meanwhile starts nothing', async () => {
       expect((await poll()).status).toBe('baselined');
       settings.polling = false;

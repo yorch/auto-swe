@@ -233,6 +233,12 @@ async function poll(
   // Sorted, so the same projects in another order are the same query and the same baseline.
   const allowed = (await resolveSetting(ALLOWLIST, scope)).map((k) => k.toUpperCase()).sort();
   if (allowed.length === 0) {
+    // Locked out, like switched off: what appears meanwhile must not start runs when the same
+    // list comes back, so the next poll takes a new baseline.
+    await deps.prisma.automationPollState.updateMany({
+      data: { baselinedAt: null },
+      where: { automationId: automation.id },
+    });
     return { code: 'NO_ALLOWED_PROJECTS', status: 'error' };
   }
 
