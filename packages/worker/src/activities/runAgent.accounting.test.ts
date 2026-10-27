@@ -23,6 +23,7 @@ vi.mock('../lib/cancellation.js', () => ({
 const { ledger } = vi.hoisted(() => ({
   ledger: {
     budgetCalls: 0,
+    debitDelayMs: 0,
     recorded: [] as number[],
     specs: [] as (string | undefined)[],
     stopAfterBudgetChecks: Number.POSITIVE_INFINITY,
@@ -46,6 +47,9 @@ vi.mock('../lib/costTracking.js', () => ({
       _span?: string,
       boundSpec?: string
     ) => {
+      if (ledger.debitDelayMs) {
+        await new Promise((r) => setTimeout(r, ledger.debitDelayMs));
+      }
       ledger.recorded.push(usage.inputTokens ?? 0);
       ledger.usages.push(usage);
       ledger.specs.push(boundSpec);
@@ -125,6 +129,7 @@ function specFor(model: unknown): AgentSpec {
 
 beforeEach(() => {
   ledger.budgetCalls = 0;
+  ledger.debitDelayMs = 0;
   ledger.recorded = [];
   ledger.usages = [];
   ledger.specs = [];
@@ -191,6 +196,17 @@ describe('runAgent per-step accounting', () => {
     expect(callCount()).toBeLessThan(10);
     // Every step that ran was still debited.
     expect(ledger.recorded.length).toBe(callCount());
+  });
+
+  it('still debits the steps that finish after the budget stop, because Mastra does not wait for the hook', async () => {
+    ledger.stopAfterBudgetChecks = 2; // 1 pre-call + the 1st step pass, the 2nd step fails
+    ledger.debitDelayMs = 50;
+    const { model } = toolLoopModel();
+    await expect(runAgent(specFor(model), 'go', { perStepAccounting: true })).rejects.toMatchObject(
+      { type: 'BUDGET_EXCEEDED' }
+    );
+    // The loop ran on while the second debit was in flight: those steps are on the ledger too.
+    expect(ledger.recorded.length).toBeGreaterThan(2);
   });
 
   it('keeps the spend of earlier steps when the provider fails mid-loop', async () => {

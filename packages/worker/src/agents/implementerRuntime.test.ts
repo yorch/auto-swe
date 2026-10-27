@@ -66,6 +66,7 @@ describe('runImplementerTurn', () => {
     const result = await runImplementerTurn(turn(runtime, { iteration: 2 }));
 
     expect(runtime.runTurn).toHaveBeenCalledWith({
+      chargeCall: expect.any(Function),
       onCallSpent: expect.any(Function),
       system: 'SYS',
       user: 'USER',
@@ -744,5 +745,326 @@ describe('wasTurnTraced and the failed-turn warning', () => {
     expect(logWarn).not.toHaveBeenCalled();
     await run(new Error('ledger down'));
     expect(logWarn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a Mastra turn metered per step', () => {
+  type StepUsage = { inputTokens: number; outputTokens: number; cachedInputTokens?: number };
+  const step = (n: number): StepUsage => ({ inputTokens: 100 * n, outputTokens: 10 * n });
+  const sum = (steps: StepUsage[]): StepUsage => ({
+    inputTokens: steps.reduce((a, s) => a + s.inputTokens, 0),
+    outputTokens: steps.reduce((a, s) => a + s.outputTokens, 0),
+  });
+
+  /**
+   * A tool loop that reports each step through `onStepFinish`, like Mastra, and stops
+   * when the abort signal it was given fires. `reportUsage: false` models a hook that
+   * never delivers usage; the final result still carries the turn's total.
+   */
+  function loop(steps: StepUsage[], opts: { failAfter?: number; reportUsage?: boolean } = {}) {
+    const ran: number[] = [];
+    const generate = vi.fn(
+      async (
+        _messages: unknown,
+        options: {
+          abortSignal?: AbortSignal;
+          onStepFinish?: (s: { usage?: StepUsage }) => Promise<void>;
+        }
+      ) => {
+        for (const [i, usage] of steps.entries()) {
+          if (options.abortSignal?.aborted) {
+            break;
+          }
+          if (opts.failAfter === i) {
+            throw new Error('provider exploded');
+          }
+          ran.push(i + 1);
+          await options.onStepFinish?.(opts.reportUsage === false ? {} : { usage });
+        }
+        return {
+          steps: ran.map(() => ({ toolCalls: [{}] })),
+          text: 'done',
+          usage: sum(steps.slice(0, ran.length)),
+        };
+      }
+    );
+    return { generate, ran };
+  }
+  beforeEach(() => {
+    assertBudgetAvailable.mockImplementation(async () => {});
+    abortSignalOption.mockImplementation(() => ({}));
+  });
+  const run = (generate: unknown, boundModelSpec?: string) =>
+    runImplementerTurn({
+      ...turn(mastraRuntime({ generate } as never, 50)),
+      boundModelSpec,
+    });
+  /** Prices a call at 1 cent per 100 input tokens, so a ledger total is checkable. */
+  const priceByTokens = () =>
+    recordLlmUsage.mockImplementation(
+      async (_wf: string, _role: string, usage: StepUsage, _span: string, spec?: string) => ({
+        costUsd: usage.inputTokens / 10_000,
+        inputTokens: usage.inputTokens,
+        modelSpec: spec ?? 'anthropic/claude-opus-5-5',
+        outputTokens: usage.outputTokens,
+      })
+    );
+
+  it('stops at the step whose debit trips the budget and records the steps it paid for', async () => {
+    priceByTokens();
+    const failure = ApplicationFailure.nonRetryable('Budget exceeded', 'BUDGET_EXCEEDED');
+    assertBudgetAvailable.mockImplementation(async () => {
+      if (recordLlmUsage.mock.calls.length >= 3) {
+        throw failure;
+      }
+    });
+    const { generate, ran } = loop([1, 2, 3, 4, 5].map(step));
+
+    await expect(run(generate)).rejects.toBe(failure);
+
+    expect(ran).toEqual([1, 2, 3]);
+    expect(recordLlmUsage).toHaveBeenCalledTimes(3);
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ costUsd: 0.06, inputTokens: 600, outputTokens: 60 })
+    );
+    expect(wasTurnTraced(failure)).toBe(true);
+  });
+
+  it('debits a completed turn once, by the sum of its steps, and records one success row', async () => {
+    priceByTokens();
+    const steps = [1, 2, 3, 4, 5].map(step);
+    const { generate } = loop(steps);
+
+    const { attribution } = await run(generate);
+
+    const ledgerInput = recordLlmUsage.mock.calls.reduce((a, c) => a + c[2].inputTokens, 0);
+    expect(recordLlmUsage).toHaveBeenCalledTimes(5);
+    // What the old end-of-turn debit of the whole usage came to.
+    expect(ledgerInput).toBe(sum(steps).inputTokens);
+    expect(attribution).toMatchObject({ inputTokens: 1500, outputTokens: 150 });
+    expect(attribution.costUsd).toBeCloseTo(0.15);
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse.mock.calls[0][0]).not.toHaveProperty('error');
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ inputTokens: 1500, outputTokens: 150 })
+    );
+  });
+
+  it('debits the turn total once at the end when the hook delivers no usage', async () => {
+    priceByTokens();
+    const steps = [1, 2, 3].map(step);
+    const { generate } = loop(steps, { reportUsage: false });
+
+    const { attribution } = await run(generate);
+
+    expect(recordLlmUsage).toHaveBeenCalledTimes(1);
+    expect(recordLlmUsage.mock.calls[0][2]).toMatchObject(sum(steps));
+    expect(attribution.inputTokens).toBe(600);
+  });
+
+  it('keeps the steps already debited when the provider fails mid-turn', async () => {
+    priceByTokens();
+    const { generate } = loop([1, 2, 3, 4].map(step), { failAfter: 2 });
+
+    await expect(run(generate)).rejects.toThrow('provider exploded');
+
+    expect(recordLlmUsage).toHaveBeenCalledTimes(2);
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        costUsd: 0.03,
+        error: expect.stringContaining('provider exploded'),
+        inputTokens: 300,
+        outputTokens: 30,
+      })
+    );
+  });
+
+  it("prices each step at the bound model with the step's cache counts", async () => {
+    priceByTokens();
+    const cached = { cachedInputTokens: 80, inputTokens: 100, outputTokens: 10 };
+    const { generate } = loop([cached, cached]);
+
+    await run(generate, 'anthropic/claude-haiku-4-5-20251001');
+
+    expect(recordLlmUsage).toHaveBeenCalledTimes(2);
+    for (const call of recordLlmUsage.mock.calls) {
+      expect(call[2]).toMatchObject(cached);
+      expect(call[4]).toBe('anthropic/claude-haiku-4-5-20251001');
+    }
+  });
+
+  it('reports a cancelled activity as the failure, not a partial result', async () => {
+    priceByTokens();
+    const controller = new AbortController();
+    abortSignalOption.mockReturnValue({ abortSignal: controller.signal });
+    const reason = new Error('cancelled');
+    const generate = vi.fn(async (_m: unknown, options: { abortSignal?: AbortSignal }) => {
+      controller.abort(reason);
+      expect(options.abortSignal?.aborted).toBe(true);
+      return { steps: [], text: '', usage: undefined };
+    });
+
+    await expect(run(generate)).rejects.toBe(reason);
+  });
+
+  it('carries every usage field on the remainder a hook left owed', async () => {
+    priceByTokens();
+    const generate = vi.fn(
+      async (_m: unknown, options: { onStepFinish?: (s: unknown) => Promise<void> }) => {
+        await options.onStepFinish?.({
+          finishReason: 'tool-calls',
+          usage: {
+            cacheCreationInputTokens: 5,
+            cacheCreationInputTokens1h: 4,
+            cachedInputTokens: 10,
+            inputTokenDetails: { cacheReadTokens: 10, cacheWriteTokens: 5 },
+            inputTokens: 100,
+            outputTokens: 10,
+            reasoningTokens: 2,
+          },
+        });
+        return {
+          steps: [],
+          text: 'done',
+          usage: {
+            cacheCreationInputTokens: 30,
+            cacheCreationInputTokens1h: 20,
+            cachedInputTokens: 60,
+            inputTokenDetails: { cacheReadTokens: 60, cacheWriteTokens: 30 },
+            inputTokens: 300,
+            outputTokens: 40,
+            reasoningTokens: 7,
+          },
+        };
+      }
+    );
+
+    await run(generate);
+
+    expect(recordLlmUsage).toHaveBeenCalledTimes(2);
+    expect(recordLlmUsage.mock.calls[1][2]).toEqual({
+      cacheCreationInputTokens: 25,
+      cacheCreationInputTokens1h: 16,
+      cachedInputTokens: 50,
+      inputTokenDetails: { cacheReadTokens: 50, cacheWriteTokens: 25 },
+      inputTokens: 200,
+      outputTokens: 30,
+      reasoningTokens: 5,
+    });
+  });
+
+  it('charges a step after the stop without checking the budget, and the remainder on the error', async () => {
+    priceByTokens();
+    const failure = ApplicationFailure.nonRetryable('Budget exceeded', 'BUDGET_EXCEEDED');
+    assertBudgetAvailable.mockRejectedValue(failure);
+    // Mastra starts the next call before the hook for the last one is done.
+    const generate = vi.fn(
+      async (_m: unknown, options: { onStepFinish?: (s: unknown) => Promise<void> }) => {
+        const first = options.onStepFinish?.({ finishReason: 'tool-calls', usage: step(1) });
+        const second = options.onStepFinish?.({ finishReason: 'tool-calls', usage: step(2) });
+        await Promise.all([first, second]);
+        return { steps: [], text: '', usage: sum([step(1), step(2), step(3)]) };
+      }
+    );
+
+    await expect(run(generate)).rejects.toBe(failure);
+
+    expect(assertBudgetAvailable).toHaveBeenCalledTimes(1);
+    // Steps 1 and 2 as they finished, step 3 as the remainder: the ledger holds the total.
+    expect(recordLlmUsage.mock.calls.reduce((a, c) => a + c[2].inputTokens, 0)).toBe(600);
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ inputTokens: 600, outputTokens: 60 })
+    );
+  });
+
+  it.each([
+    ['stop', [{}]],
+    ['other', []],
+    ['unknown', []],
+    ['retry', []],
+    ['tool-calls', []],
+  ])(
+    'checks the budget after a %s step that Mastra continues from',
+    async (finishReason, toolCalls) => {
+      priceByTokens();
+      const generate = vi.fn(
+        async (_m: unknown, options: { onStepFinish?: (s: unknown) => Promise<void> }) => {
+          await options.onStepFinish?.({ finishReason, toolCalls, usage: step(1) });
+          return { steps: [], text: '', usage: step(1) };
+        }
+      );
+
+      await run(generate);
+
+      expect(assertBudgetAvailable).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it.each(['stop', 'length', 'content-filter', 'error'])(
+    'skips the budget check after a final %s step with no tool calls',
+    async (finishReason) => {
+      priceByTokens();
+      const generate = vi.fn(
+        async (_m: unknown, options: { onStepFinish?: (s: unknown) => Promise<void> }) => {
+          await options.onStepFinish?.({ finishReason, toolCalls: [], usage: step(1) });
+          return { steps: [], text: 'x', usage: step(1) };
+        }
+      );
+
+      await run(generate);
+
+      expect(recordLlmUsage).toHaveBeenCalledTimes(1);
+      expect(assertBudgetAvailable).not.toHaveBeenCalled();
+    }
+  );
+
+  it('logs a debit that fails after the stop instead of dropping it silently', async () => {
+    priceByTokens();
+    const stop = ApplicationFailure.nonRetryable('Budget exceeded', 'BUDGET_EXCEEDED');
+    assertBudgetAvailable.mockRejectedValue(stop);
+    recordLlmUsage.mockImplementationOnce(async () => ({
+      costUsd: 0,
+      inputTokens: 100,
+      modelSpec: 'x/y',
+      outputTokens: 10,
+    }));
+    recordLlmUsage.mockRejectedValueOnce(new Error('db down'));
+    const generate = vi.fn(
+      async (_m: unknown, options: { onStepFinish?: (s: unknown) => Promise<void> }) => {
+        await options.onStepFinish?.({ finishReason: 'tool-calls', usage: step(1) });
+        await options.onStepFinish?.({ finishReason: 'tool-calls', usage: step(2) });
+        return { steps: [], text: '', usage: sum([step(1), step(2)]) };
+      }
+    );
+
+    await expect(run(generate)).rejects.toBe(stop);
+
+    expect(logWarn).toHaveBeenCalledTimes(1);
+    expect(logWarn).toHaveBeenCalledWith(
+      expect.stringContaining('step'),
+      expect.objectContaining({ error: 'db down', step: 2 })
+    );
+  });
+
+  it('charges the usage of a cancelled turn whose hook reported none', async () => {
+    priceByTokens();
+    const controller = new AbortController();
+    abortSignalOption.mockReturnValue({ abortSignal: controller.signal });
+    const reason = new Error('cancelled');
+    const generate = vi.fn(async () => {
+      controller.abort(reason);
+      return { steps: [], text: '', usage: sum([step(1), step(2)]) };
+    });
+
+    await expect(run(generate)).rejects.toBe(reason);
+
+    expect(recordLlmUsage).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ inputTokens: 300, outputTokens: 30 })
+    );
   });
 });

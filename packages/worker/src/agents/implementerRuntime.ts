@@ -12,6 +12,7 @@ import {
 } from '../lib/costTracking.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { recordSuspiciousLlmOutput } from '../lib/llmOutputScan.js';
+import type { StepLike } from '../lib/stepAccounting.js';
 
 /** What the platform reads off one finished model turn, whatever drove the loop. */
 export interface ImplementerTurnOutcome {
@@ -79,10 +80,17 @@ export interface ImplementerTurnInput {
    * once the call is complete, while the turn runs. It debits the call and may
    * then throw (the run's budget is exhausted); the turn is aborted and fails
    * with that error. A call handed here is not reported again in the turn's
-   * usage. A runtime that cannot see its calls one by one (the Mastra loop
-   * reports a turn's usage when it ends) ignores it.
+   * usage. A runtime that cannot see its calls one by one ignores it.
    */
   onCallSpent?: (spent: SpentByModel) => Promise<void>;
+  /**
+   * Debits a call without the budget check that follows it, and without throwing the
+   * budget stop: for a call that finishes after the turn was stopped, or that nothing
+   * follows. A runtime that meters per call and has none uses `onCallSpent`.
+   */
+  chargeCall?: (spent: SpentByModel) => Promise<void>;
+  /** The spec the caller bound for the turn; a runtime that meters per call prices at it. */
+  modelSpec?: string;
 }
 
 /**
@@ -94,30 +102,183 @@ export interface ImplementerRuntime {
   runTurn(input: ImplementerTurnInput): Promise<ImplementerTurnOutcome>;
 }
 
+/** What the Mastra step hook reads off a finished step. */
+type MastraStep = StepLike & { finishReason?: string; toolCalls?: unknown[] };
+
+/** Finish reasons after which Mastra ends the loop, given the step made no tool call. */
+const TERMINAL_FINISH_REASONS = new Set(['stop', 'length', 'content-filter', 'error']);
+
+/**
+ * `total` less `parts`, field by field and never below zero, carrying every usage
+ * field (cache writes by TTL, the AI SDK's detail objects, reasoning tokens). The
+ * counters a ledger prices are what matter: a remainder with no input and no output
+ * is nothing.
+ */
+function usageLeft(total: TokenUsage, parts: TokenUsage[]): TokenUsage | undefined {
+  const left = (whole: unknown, taken: unknown[]): unknown => {
+    if (typeof whole === 'number') {
+      const done = taken.reduce<number>((n, t) => n + (typeof t === 'number' ? t : 0), 0);
+      return Math.max(0, whole - done);
+    }
+    if (typeof whole === 'object' && whole !== null) {
+      return Object.fromEntries(
+        Object.entries(whole).map(([key, value]) => [
+          key,
+          left(
+            value,
+            taken.map((t) =>
+              typeof t === 'object' && t !== null ? Reflect.get(t, key) : undefined
+            )
+          ),
+        ])
+      );
+    }
+    return whole;
+  };
+  const rest = left(total, parts) as TokenUsage;
+  return (rest.inputTokens ?? 0) > 0 || (rest.outputTokens ?? 0) > 0 ? rest : undefined;
+}
+
 /**
  * The Mastra tool loop. `maxSteps` is the `workspace.agentMaxSteps` budget:
  * without it Mastra stops a turn after 5 steps.
+ *
+ * With the turn's `onCallSpent`, each step is debited as it finishes (Mastra's
+ * `onStepFinish`), one at a time. Mastra runs the model loop ahead of its hooks, so
+ * a debit that throws aborts the loop some steps after the one that tripped it:
+ * about one step when the debit is quick, up to every remaining step (`maxSteps`)
+ * when it is slow. Steps that finish after the stop are still debited
+ * (`chargeCall`, which does not check the budget) so the ledger holds every step
+ * that ran. The held error, not the abort it caused, is what the turn fails with;
+ * an aborted `generate` may also resolve instead of throw, so the error is
+ * rethrown once it settles, carrying what the steps did not debit
+ * ({@link withSpentUsage}). A final step (a terminal finish reason and no tool
+ * call, so no model call follows) is debited without `assertBudgetAvailable`; the
+ * debit itself still fails the turn if it takes the tier over its cap. The turn
+ * reports only what the steps did not debit, so nothing is counted twice, and a
+ * hook that delivered no usage leaves the whole turn total owed.
  */
 export function mastraRuntime(
   agent: Pick<Agent, 'generate'>,
   maxSteps: number
 ): ImplementerRuntime {
   return {
-    async runTurn({ system, user }) {
-      const result = await agent.generate(
-        [
-          { content: system, role: 'system' },
-          { content: user, role: 'user' },
-        ],
-        { maxSteps, toolChoice: 'auto', ...abortSignalOption() }
-      );
+    async runTurn({ system, user, onCallSpent, chargeCall, modelSpec = '' }) {
+      const messages = [
+        { content: system, role: 'system' as const },
+        { content: user, role: 'user' as const },
+      ];
+      const accrued: SpentByModel = [];
+      let debitError: { error: unknown } | undefined;
+      const stop = new AbortController();
+      const cancellation = abortSignalOption().abortSignal;
+      // Hooks run in the order steps finish, and `generate` settling does not mean the
+      // last one has.
+      let hooks: Promise<void> = Promise.resolve();
+      let stepNumber = 0;
+      const charge = chargeCall ?? onCallSpent;
+      const metering =
+        onCallSpent && charge
+          ? {
+              abortSignal: AbortSignal.any([stop.signal, ...(cancellation ? [cancellation] : [])]),
+              onStepFinish: (step: MastraStep) => {
+                const work = async () => {
+                  const { usage } = step;
+                  // Mastra also reports a failed step, with zero usage: nothing to debit.
+                  if (!(usage?.inputTokens || usage?.outputTokens)) {
+                    return;
+                  }
+                  const spent = [
+                    {
+                      modelSpec,
+                      usage: {
+                        ...usage,
+                        inputTokens: usage.inputTokens,
+                        outputTokens: usage.outputTokens,
+                      },
+                    },
+                  ];
+                  // Counted as debited before the callback runs: one that throws after
+                  // recording the spend (an exhausted budget) must not be charged again.
+                  accrued.push(...spent);
+                  stepNumber += 1;
+                  // After the stop, or on a final step (Mastra continues unless the
+                  // reason is terminal and no tool was called), only the debit is owed.
+                  const final =
+                    TERMINAL_FINISH_REASONS.has(step.finishReason ?? '') &&
+                    !(step.toolCalls && step.toolCalls.length > 0);
+                  const guarded = !debitError && !final;
+                  try {
+                    await (guarded ? onCallSpent : charge)(spent);
+                  } catch (error) {
+                    // The budget stop is the turn's failure; anything else is worth a line,
+                    // since this step may be missing from the ledger.
+                    if (
+                      !(error instanceof ApplicationFailure && error.type === 'BUDGET_EXCEEDED')
+                    ) {
+                      logWarn('[implementer] could not debit a step of a Mastra turn', {
+                        error: error instanceof Error ? error.message : String(error),
+                        step: stepNumber,
+                      });
+                    }
+                    if (!debitError) {
+                      debitError = { error };
+                      stop.abort(error);
+                    }
+                  }
+                };
+                const run = hooks.then(work);
+                hooks = run;
+                return run;
+              },
+            }
+          : abortSignalOption();
+      let result: Awaited<ReturnType<typeof agent.generate>> | undefined;
+      let failure: { error: unknown } | undefined;
+      try {
+        result = await agent.generate(messages, { maxSteps, toolChoice: 'auto', ...metering });
+      } catch (error) {
+        failure = { error };
+      }
+      await hooks;
+      // What the turn spent that no step debited, for a failure to carry.
+      const unpaid = () => {
+        const owed = result?.usage
+          ? usageLeft(
+              result.usage,
+              accrued.map((a) => a.usage)
+            )
+          : undefined;
+        return owed ? [{ modelSpec, usage: owed }] : undefined;
+      };
+      if (debitError) {
+        // A debit that threw aborted the loop: that error, not the abort, is the failure.
+        throw withSpentUsage(debitError.error, unpaid());
+      }
+      if (failure) {
+        throw failure.error;
+      }
+      if (!result) {
+        throw new Error('generate returned no result');
+      }
+      if (cancellation?.aborted) {
+        // A cancelled turn still spent: what no step debited is carried on the failure.
+        throw withSpentUsage(cancellation.reason, unpaid());
+      }
       // A step is one model call, which may make several tool calls or none: count
       // the calls, as the harness runtime does.
       const toolCallCount = (result.steps ?? []).reduce(
         (n, step) => n + (step.toolCalls?.length ?? 0),
         0
       );
-      return { text: result.text, toolCallCount, usage: result.usage };
+      const usage =
+        accrued.length > 0 && result.usage
+          ? usageLeft(
+              result.usage,
+              accrued.map((a) => a.usage)
+            )
+          : result.usage;
+      return { text: result.text, toolCallCount, usage };
     },
   };
 }
@@ -300,11 +461,13 @@ export async function runImplementerTurn(turn: ImplementerTurn): Promise<{
   let outcome: ImplementerTurnOutcome;
   try {
     outcome = await turn.runtime.runTurn({
+      chargeCall: accounting.charge,
       onCallSpent: accounting.onCallSpent,
+      ...(turn.boundModelSpec ? { modelSpec: turn.boundModelSpec } : {}),
       system: turn.system,
       user: turn.user,
     });
-    // What the runtime reports at the end (the whole turn, for the Mastra loop) is
+    // What the runtime reports at the end (what it did not debit call by call) is
     // debited into the same total; its debit can trip the budget, and the turn then
     // fails having spent, which the catch below records.
     await accounting.charge(
