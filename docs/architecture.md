@@ -982,7 +982,8 @@ no contact point, until an operator adds one.
 
 **Budget tiers.** Every run carries a tier, set at submission (default `STANDARD`).
 `recordLlmUsage` accrues tokens and cost onto `ActiveWorkflow` *before* checking the limit, so the
-UI shows real overage, then throws a non-retryable `BUDGET_EXCEEDED` failure once the cap is passed.
+ledger shows real overage, then throws a non-retryable `BUDGET_EXCEEDED` failure once the cap is
+passed. The input cap counts dollar-equivalent input tokens, not the raw tokens the UI shows (below).
 
 | Tier | Input cap | Output cap |
 |---|---|---|
@@ -992,6 +993,23 @@ UI shows real overage, then throws a non-retryable `BUDGET_EXCEEDED` failure onc
 
 These are DB-backed defaults on the `WorkflowDefaults` singleton, editable at `/admin/workflow-defaults`,
 falling back to the built-in `BUDGET_LIMITS` when unconfigured.
+
+**The input cap counts dollar-equivalent tokens.** An agent loop resends its growing context on
+every turn, and the provider serves most of it from the prompt cache at a fraction of the input
+price, so raw prompt tokens overstate what such a loop costs. Each call adds to the cap its input
+priced the way the call is priced: uncached input at 1, cache reads and cache writes at the model's
+own cache multipliers (the model catalog row where it sets one, else the code table — Anthropic
+reads at 0.1 and writes at 1.25, with 2 for a 1-hour write). A call that reports no cache breakdown,
+or whose model has no known price, counts its raw tokens. The figure is fixed when the call is
+recorded, so a later price edit changes only calls made afterwards, never a run already under way.
+
+`ActiveWorkflow.tokensInputCountedUsed` holds the counted total beside `tokensInputUsed`, which stays
+the raw total that the UI, the run record and the org usage rollup display; both move in one atomic
+update. The pre-call gate and the post-call check both compare the counted column to the tier's
+input cap, and the `workflow.budget_remaining_input_tokens` span attribute is the counted
+remainder. Output tokens are counted as before. When the two input figures differ, the failure
+message gives both:
+`Budget exceeded for tier STANDARD: 2,013,000/2,000,000 input tokens counted (2,488,649 raw), ...`.
 
 **Runless workflows.** Workflow authoring and explaining, scheduled evals, lesson consolidation and
 repo-dependency inference keep neither a ledger row nor a run, so no tier applies. Each execution is
@@ -1243,6 +1261,23 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
+- **The input cap bounds dollar-equivalent input tokens, not dollars.** Output tokens have their own
+  cap, and a run's cost is the sum of both. A cache-heavy run counts well under its raw total, so
+  the effective headroom of such a run is larger than a raw count gave it. Cache writes count above
+  raw (1.25x for 5 minutes, 2x for 1 hour on Anthropic), so a run that keeps rewriting its context,
+  for example after a tool-turn gap longer than the cache TTL, can reach the cap at roughly 1.6M
+  raw tokens: the cap is reached above the raw rate as well as below it. A loop of uncached input
+  reaches it at the raw rate.
+- **The Mastra implementer runtime debits once per turn.** Its usage is recorded after the turn
+  ends, so one turn can pass the cap before the check fires; the harness runtimes debit each model
+  call as they report it.
+- **The runless cap is not weighted.** `workflow.runlessMaxInputTokens` sums raw trace tokens.
+- **A run that predates the counted column carries its raw input total as its counted total.** It is
+  held to the raw figure it had accrued and counts only later calls at the dollar-equivalent rate.
+- **The counted column is written only by a build that knows it.** After a rollback to an older build
+  and a re-upgrade, the calls the older build recorded are missing from the counted total, so those
+  runs have headroom equal to what they spent meanwhile; nothing backfills it again. A worker that
+  starts before the gateway has applied the migration fails on the missing column.
 - **The usage top-runs ranking is exact only up to a 5,000-run list per source.** With the live
   traces and the rollup both in play, a run is missed only if it ranks below 5,000 in both
   sources and still places in the top ten by the two added, after the threshold test has already

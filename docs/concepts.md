@@ -31,7 +31,8 @@ through the **scope cascade**, so one platform can behave differently per team.
   [repo-dependency-graph.md](./repo-dependency-graph.md).
 
 - **Budget tier** — The token ceiling a run is held to — `STANDARD`, `LARGE`, or `EPIC`. A run that
-  exceeds it is stopped with `BUDGET_EXCEEDED`.
+  exceeds it is stopped with `BUDGET_EXCEEDED`. The input cap counts dollar-equivalent tokens, so
+  prompt-cache reads count at the model's cache rate rather than in full.
 
 ## Workflows
 

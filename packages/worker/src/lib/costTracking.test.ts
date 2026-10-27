@@ -101,6 +101,7 @@ import {
   assertBudgetAvailable,
   BUDGET_LIMITS,
   calculateCostUsd,
+  countedInputTokensForCall,
   getModelPrice,
   ignoredPriceOverrideVars,
   MODEL_PRICES,
@@ -362,6 +363,7 @@ describe('recordLlmUsage', () => {
    */
   function ledger(init: {
     budgetTier?: string;
+    tokensInputCountedUsed?: number;
     tokensInputUsed?: number;
     tokensOutputUsed?: number;
     costUsdAccrued?: number;
@@ -370,6 +372,9 @@ describe('recordLlmUsage', () => {
       budgetTier: init.budgetTier ?? 'STANDARD',
       costUsdAccrued: init.costUsdAccrued ?? 0,
       id: 'wf-1',
+      // A run that never cached counts what it spent, so a preset raw total is a
+      // preset counted total unless a test says otherwise.
+      tokensInputCountedUsed: init.tokensInputCountedUsed ?? init.tokensInputUsed ?? 0,
       tokensInputUsed: init.tokensInputUsed ?? 0,
       tokensOutputUsed: init.tokensOutputUsed ?? 0,
     };
@@ -841,6 +846,136 @@ describe('recordLlmUsage', () => {
     ).rejects.toThrow(ApplicationFailure);
   });
 
+  describe('dollar-equivalent input cap', () => {
+    // STANDARD: 2,000,000 input tokens. The default model is Anthropic: reads at 0.1x.
+    const ANTHROPIC = 'anthropic/claude-opus-4-8';
+    const OPENAI_LIKE = 'openai/gpt-5'; // reads at 0.1x here, writes at 1x
+    const NO_DISCOUNT = 'mystery/unreleased';
+
+    it('stores the counted figure beside the raw one, in one update', async () => {
+      const row = ledger({});
+
+      await recordLlmUsage('wf-temporal-1', 'implementer', {
+        cachedInputTokens: 900_000,
+        inputTokens: 1_000_000,
+        outputTokens: 10,
+      });
+
+      expect(row.tokensInputUsed).toBe(1_000_000);
+      // 100k uncached + 900k cached at 0.1.
+      expect(row.tokensInputCountedUsed).toBe(190_000);
+      expect(prisma.activeWorkflow.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('lets a cache-heavy run past the raw cap that stopped the incident run', async () => {
+      // The production turn: 2,487,759 prompt tokens, 2,357,632 of them cache reads.
+      const row = ledger({});
+
+      await expect(
+        recordLlmUsage('wf-temporal-1', 'implementer', {
+          cachedInputTokens: 2_357_632,
+          inputTokens: 2_487_759,
+          outputTokens: 14_000,
+        })
+      ).resolves.toBeTruthy();
+
+      expect(row.tokensInputUsed).toBe(2_487_759);
+      expect(row.tokensInputCountedUsed).toBe(130_127 + 235_763);
+    });
+
+    it('still stops once counted input passes the cap, and says both figures', async () => {
+      // Counted so far 1,900,000 (raw 6,000,000); this call adds 200,000 uncached.
+      ledger({ tokensInputCountedUsed: 1_900_000, tokensInputUsed: 6_000_000 });
+
+      await expect(
+        recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 200_000, outputTokens: 1 })
+      ).rejects.toMatchObject({
+        message: expect.stringContaining(
+          'Budget exceeded for tier STANDARD: 2,100,000/2,000,000 input tokens counted (6,200,000 raw), '
+        ),
+        type: 'BUDGET_EXCEEDED',
+      });
+    });
+
+    it('carries raw and counted totals in the failure details', async () => {
+      ledger({ tokensInputCountedUsed: 1_900_000, tokensInputUsed: 6_000_000 });
+
+      await expect(
+        recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 200_000, outputTokens: 1 })
+      ).rejects.toMatchObject({
+        details: [expect.objectContaining({ newInput: 6_200_000, newInputCounted: 2_100_000 })],
+      });
+    });
+
+    it('counts a call with no cache breakdown at its raw tokens, as before', async () => {
+      const row = ledger({});
+
+      await expect(
+        recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 2_100_000, outputTokens: 1 })
+      ).rejects.toThrow(/^Budget exceeded for tier STANDARD: 2,100,000\/2,000,000 input tokens, /);
+
+      expect(row.tokensInputCountedUsed).toBe(2_100_000);
+    });
+
+    it('counts an unpriced model at raw tokens even when it reports cache reads', async () => {
+      const row = ledger({});
+
+      await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        { cachedInputTokens: 900, inputTokens: 1_000, outputTokens: 1 },
+        'llm.usage',
+        NO_DISCOUNT
+      );
+
+      expect(row.tokensInputCountedUsed).toBe(1_000);
+    });
+
+    it("uses the bound model's own rate, not Anthropic's", async () => {
+      const row = ledger({});
+      catalogFindMany.mockResolvedValue([
+        catalogRow(OPENAI_LIKE, 1.25, 10, { cacheReadMultiplier: 0.5 }),
+      ]);
+      _resetModelPricesForTests();
+
+      await recordLlmUsage(
+        'wf-temporal-1',
+        'implementer',
+        { cachedInputTokens: 800, inputTokens: 1_000, outputTokens: 1 },
+        'llm.usage',
+        OPENAI_LIKE
+      );
+
+      // 200 uncached + 800 at the catalog's 0.5.
+      expect(row.tokensInputCountedUsed).toBe(600);
+    });
+
+    it('a later change to the price table cannot re-weigh a run already counted', async () => {
+      const row = ledger({ tokensInputCountedUsed: 300_000, tokensInputUsed: 3_000_000 });
+      catalogFindMany.mockResolvedValue([catalogRow(ANTHROPIC, 5, 25, { cacheReadMultiplier: 1 })]);
+      _resetModelPricesForTests();
+
+      await recordLlmUsage('wf-temporal-1', 'implementer', { inputTokens: 10, outputTokens: 1 });
+
+      // The new rate applies to this call only; the 300k already counted stays.
+      expect(row.tokensInputCountedUsed).toBe(300_010);
+    });
+
+    it('the pre-call gate compares the counted column, not the raw one', async () => {
+      // Raw 10M is over the 2M cap; counted 1.45M is not.
+      ledger({ tokensInputCountedUsed: 1_450_000, tokensInputUsed: 10_000_000 });
+      await expect(assertBudgetAvailable('probe')).resolves.toBeUndefined();
+
+      ledger({ tokensInputCountedUsed: 2_000_000, tokensInputUsed: 2_400_000 });
+      await expect(assertBudgetAvailable('probe')).rejects.toMatchObject({
+        message: expect.stringContaining(
+          'Budget already exhausted for tier STANDARD before probe: 2,000,000/2,000,000 input tokens counted (2,400,000 raw), '
+        ),
+        type: 'BUDGET_EXCEEDED',
+      });
+    });
+  });
+
   it('throws BUDGET_EXCEEDED when cumulative input tokens exceed tier limit', async () => {
     ledger({ costUsdAccrued: 29.99, tokensInputUsed: 1_999_900 });
 
@@ -910,5 +1045,133 @@ describe('recordLlmUsage', () => {
         }),
       })
     );
+  });
+});
+
+describe('countedInputTokensForCall', () => {
+  const anthropic = { read: 0.1, write: 1.25, write1h: 2 };
+  const openaiLike = { read: 0.5, write: 1, write1h: 1 };
+
+  it('counts reads and writes at the model rates and the rest in full', () => {
+    // 100 uncached + 800 * 0.1 + 100 * 1.25
+    expect(
+      countedInputTokensForCall(
+        {
+          cacheCreationInputTokens: 100,
+          cachedInputTokens: 800,
+          inputTokens: 1_000,
+          outputTokens: 0,
+        },
+        anthropic
+      )
+    ).toBe(305);
+  });
+
+  it('prices a 1-hour write at its own rate', () => {
+    expect(
+      countedInputTokensForCall(
+        {
+          cacheCreationInputTokens: 100,
+          cacheCreationInputTokens1h: 100,
+          inputTokens: 100,
+          outputTokens: 0,
+        },
+        anthropic
+      )
+    ).toBe(200);
+  });
+
+  it("uses a different vendor's multipliers as given", () => {
+    expect(
+      countedInputTokensForCall(
+        { cachedInputTokens: 800, inputTokens: 1_000, outputTokens: 0 },
+        openaiLike
+      )
+    ).toBe(600);
+  });
+
+  it('reads the AI SDK usage shape too', () => {
+    expect(
+      countedInputTokensForCall(
+        { inputTokenDetails: { cacheReadTokens: 800 }, inputTokens: 1_000, outputTokens: 0 },
+        anthropic
+      )
+    ).toBe(280);
+  });
+
+  it('is the raw count when the usage has no cache breakdown', () => {
+    expect(countedInputTokensForCall({ inputTokens: 1_000, outputTokens: 0 }, anthropic)).toBe(
+      1_000
+    );
+  });
+
+  it('is the raw count when the rates are unknown or unusable', () => {
+    const usage = { cachedInputTokens: 800, inputTokens: 1_000, outputTokens: 0 };
+    expect(countedInputTokensForCall(usage, undefined)).toBe(1_000);
+    expect(countedInputTokensForCall(usage, { read: Number.NaN, write: 1, write1h: 1 })).toBe(
+      1_000
+    );
+    expect(countedInputTokensForCall(usage, { read: -1, write: 1, write1h: 1 })).toBe(1_000);
+  });
+
+  it('counts an impossible shape at raw: reads beyond the input', () => {
+    // A provider whose input excludes cache: 5,000 reads of 1,000 input. Counting
+    // 1,000 x 0.1 would be below raw, so fail closed.
+    expect(
+      countedInputTokensForCall(
+        { cachedInputTokens: 5_000, inputTokens: 1_000, outputTokens: 0 },
+        anthropic
+      )
+    ).toBe(1_000);
+  });
+
+  it('counts an impossible shape at raw: reads and writes together beyond the input', () => {
+    expect(
+      countedInputTokensForCall(
+        {
+          cacheCreationInputTokens: 500,
+          cachedInputTokens: 900,
+          inputTokens: 1_000,
+          outputTokens: 0,
+        },
+        anthropic
+      )
+    ).toBe(1_000);
+  });
+
+  it('still discounts when reads and writes exactly fill the input', () => {
+    // 900 reads * 0.1 + 100 writes * 1.25
+    expect(
+      countedInputTokensForCall(
+        {
+          cacheCreationInputTokens: 100,
+          cachedInputTokens: 900,
+          inputTokens: 1_000,
+          outputTokens: 0,
+        },
+        anthropic
+      )
+    ).toBe(215);
+  });
+
+  it('ignores negative and non-finite cache parts', () => {
+    expect(
+      countedInputTokensForCall(
+        {
+          cacheCreationInputTokens: Number.NaN,
+          cachedInputTokens: -300,
+          inputTokens: 1_000,
+          outputTokens: 0,
+        },
+        anthropic
+      )
+    ).toBe(1_000);
+  });
+
+  it('treats missing or negative input as zero', () => {
+    expect(countedInputTokensForCall({ inputTokens: undefined, outputTokens: 0 }, anthropic)).toBe(
+      0
+    );
+    expect(countedInputTokensForCall({ inputTokens: -5, outputTokens: 0 }, anthropic)).toBe(0);
   });
 });
