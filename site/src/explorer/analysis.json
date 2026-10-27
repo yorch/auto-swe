@@ -3551,6 +3551,40 @@
       "refs": ["dockerProxy", "infra"],
       "status": "Implemented",
       "title": "The worker reaches Docker through a socket proxy"
+    },
+    {
+      "body": "A connection marked as Qodo's binds only Qodo's read tools, and what its tools return is screened and fenced before an agent reads it.",
+      "category": "Integrations",
+      "detail": "Qodo's catalog mixes read tools with tools that approve, comment, label and change rules, so a Qodo connection is an ordinary MCP connection with a marker (config.integration) that only an admin can set. The marker implies a read-only allowlist. A marked connection with no stored list gets Qodo's read list; a stored list is intersected with it, so a write tool in it binds nothing, and a stored list that is not valid binds nothing at all. Create and edit refuse a write tool on a marked connection with a 400 that names it. An edit rebuilds only the config keys the route owns and carries the rest over, so renaming a connection cannot drop the guard. The allowlist travels with the resolved connection target into the loader, so a caller cannot connect without it; the harness relay and the mcp node enforce it too, and the node refuses before connecting. Results of a marked connection, and of any connection that sets scanResults, are screened with the INJECTION patterns string by string, object keys included. A flagged string is replaced by a fixed placeholder, the rest of the result is returned, and every string kept is fenced as untrusted. A scan that throws withholds the whole result. The connection test lists tools and calls none, and also reports how many advertised tools match the read list. resolveQodoConnection returns the oldest active Qodo connection the repository's team owns; no template, agent or run input names a connection.",
+      "id": "qodoConnection",
+      "refs": [
+        "qodoAllowlist",
+        "qodoWriteRefusal",
+        "qodoConfigKeep",
+        "qodoScreen",
+        "qodoResolve",
+        "mcpRelay"
+      ],
+      "status": "Implemented",
+      "title": "Qodo as a read-only MCP connection"
+    },
+    {
+      "body": "The platform reads Qodo's review of a pull request, never asks for one, and a workflow step and a built-in template route on it.",
+      "category": "Integrations",
+      "detail": "Qodo's MCP catalog has no tool that starts a review, so the platform only reads the one Qodo's pull request bot produces. One client calls a single tool for a pull request's URL. It checks qodo.enabled before it touches the connection or the network, resolves the repository team's connection, and turns every failure into a fixed reason with no error text. The awaitQodoReview step polls that client, with a heartbeat, until Qodo has completed a review of the exact head commit it was given or its wait runs out. The wait comes from qodo.reviewWaitSeconds, and the step gets its own single-attempt activity group. It takes the repository from the run, so no step config or input can point it at another team's connection. Its result is typed and bounded and the step never throws: reviewed, pending, stale, unavailable and disabled are statuses. blocking is true only for a completed review of the given head with an open action_required finding. Nothing is blocked unless a template routes on it. The qodoReview authoring helper builds the node and its gate, with an optional fail-closed form. ticket-to-merge-qodo is ticket-to-merge with that step between green CI and the merge wait, so the review it reads is of the final head. A blocking review asks a person to continue or stop; stop ends the run FAILED, no answer within a day ends it TIMED_OUT, and every other result goes on to the merge wait. No lesson is stored for the Qodo ends.",
+      "id": "qodoReview",
+      "refs": ["qodoClient", "qodoAwait", "qodoTemplate"],
+      "status": "Implemented",
+      "title": "Waiting for Qodo's review in a workflow"
+    },
+    {
+      "body": "A Qodo bot's review on a pull request the platform opened can start a feedback round, and the worker pulls Qodo's findings instead of reading the bot's comment.",
+      "category": "Engineering",
+      "detail": "The qodo_findings trigger of the pull-request feedback source is opt-in per automation. A review, review comment or discussion comment from a sender of type Bot whose numeric account id is in qodo.prFeedbackBotAccountIds, on an open pull request from the same repository that the platform opened, is only a nudge. The id is matched, never the login, and the bot's text is never copied or read as a command. Every delivery for one head commit shares one decision subject, so a review that posts many comments starts one round, and a fix push moves the head. The worker then asks Qodo for the findings and goes on only when Qodo's completed review is of the pull request's current head, read again just before the brief is built. Only findings that are still pending, at or above qodo.prFeedbackMinActionLevel, are briefed. They pass one injection-screen batch and are fenced like human review text. Every other outcome is a silent skip with a fixed reason. A person's /auto-swe fix command can also include Qodo's findings, but only when qodo.prFeedbackIncludeOnCommand is on and the pull request is the platform's own. It reads Qodo once and never waits, and any outcome that adds nothing leaves the round on the human threads with one recorded reason.",
+      "id": "qodoFeedback",
+      "refs": ["qodoNudge", "qodoGather", "qodoCommand"],
+      "status": "Implemented",
+      "title": "Qodo's findings fix a pull request, pulled and not scraped"
     }
   ],
   "limits": [
@@ -4275,6 +4309,15 @@
       "refs": ["slackChannelSync", "privateChannelMembers", "channelContentGuard"],
       "status": "Confirmed boundary",
       "title": "Private-channel access lags Slack by a sync, and privacy is only tightened"
+    },
+    {
+      "body": "Qodo's text is screened and fenced, not verified, and a Qodo-triggered round trusts no person.",
+      "category": "Trust boundary",
+      "detail": "A finding is derived from the diff Qodo read, so anyone who can push to the pull request's branch can influence it. The INJECTION screen is a pattern tripwire applied string by string, so a phrase split across two fields is not matched, and fencing marks the text as data without making it safe. The containment that remains is the unchanged push gate: a default or protected branch, a non-fast-forward push, and changes to workflow files are refused. A Qodo-triggered round has no requester, so the engine makes no per-actor access decision and no human-author gate applies to its findings; the organization budget is still checked. The run's trace keeps the server's raw answer, because only the agent's view is screened. A review that Qodo has not finished by the end of the wait spends that head's one decision. Reading a review needs Qodo's pull request bot installed on the repository, and the platform cannot ask Qodo to start one. The read list uses the names of Qodo's CLI catalog; a server that advertises them differently binds nothing, which the connection test reports.",
+      "id": "qodoBounds",
+      "refs": ["qodoScreen", "qodoGather", "qodoActor", "qodoTraceRaw", "qodoAllowlist"],
+      "status": "Confirmed boundary",
+      "title": "Qodo findings are screened and fenced, not verified, and the Qodo path trusts no person"
     }
   ],
   "modelDescriptions": {
@@ -9896,6 +9939,110 @@
       "lines": 14,
       "path": "packages/gateway/src/routes/workflowRuns.ts",
       "title": "Run search matches the request’s launch label column"
+    },
+    {
+      "anchor": "export function allowedToolsOfConfig(",
+      "before": 8,
+      "id": "qodoAllowlist",
+      "lines": 24,
+      "path": "packages/shared/src/lib/qodoConnection.ts",
+      "title": "A Qodo connection binds only the read tools, whatever list is stored"
+    },
+    {
+      "anchor": "function qodoWriteToolsMessage(",
+      "before": 0,
+      "id": "qodoWriteRefusal",
+      "lines": 3,
+      "path": "packages/gateway/src/routes/mcpConnections.ts",
+      "title": "A write tool on a Qodo connection is refused with a message naming it"
+    },
+    {
+      "anchor": "const OWNED_CONFIG_KEYS =",
+      "before": 1,
+      "id": "qodoConfigKeep",
+      "lines": 3,
+      "path": "packages/gateway/src/routes/mcpConnections.ts",
+      "title": "An edit rebuilds only the config keys the route owns, so the Qodo guard survives it"
+    },
+    {
+      "anchor": "export async function screenMcpResult(",
+      "before": 0,
+      "id": "qodoScreen",
+      "lines": 31,
+      "path": "packages/worker/src/agents/mcpScreen.ts",
+      "title": "Each string of a tool result is screened and fenced on its own"
+    },
+    {
+      "anchor": "export async function resolveQodoConnection(",
+      "before": 12,
+      "id": "qodoResolve",
+      "lines": 40,
+      "path": "packages/worker/src/lib/qodo/connection.ts",
+      "title": "The Qodo connection is the repository team's own, never one a run names"
+    },
+    {
+      "anchor": "export function createQodoFindingsClient(",
+      "before": 0,
+      "id": "qodoClient",
+      "lines": 36,
+      "path": "packages/worker/src/lib/qodo/client.ts",
+      "title": "One client reads Qodo's review through one tool and reports a fixed reason on failure"
+    },
+    {
+      "anchor": "export async function awaitQodoReview(",
+      "before": 0,
+      "id": "qodoAwait",
+      "lines": 28,
+      "path": "packages/worker/src/activities/awaitQodoReview.ts",
+      "title": "The step reads the review of the run's own repository and never throws"
+    },
+    {
+      "anchor": "export const TICKET_TO_MERGE_QODO_SPEC",
+      "before": 16,
+      "id": "qodoTemplate",
+      "lines": 46,
+      "path": "packages/shared/src/workflow/templates/ticketToMergeQodo.ts",
+      "title": "ticket-to-merge with Qodo's review between green CI and the merge wait"
+    },
+    {
+      "anchor": "async function enrichQodoNudge(",
+      "before": 6,
+      "id": "qodoNudge",
+      "lines": 40,
+      "path": "packages/gateway/src/lib/automations/prFeedback.ts",
+      "title": "A Qodo bot's comment is a nudge, matched by numeric account id"
+    },
+    {
+      "anchor": "async function gatherQodoRound(",
+      "before": 9,
+      "id": "qodoGather",
+      "lines": 40,
+      "path": "packages/worker/src/activities/prFeedback.ts",
+      "title": "A Qodo round pulls the findings and requires a review of the current head"
+    },
+    {
+      "anchor": "7b. A person's",
+      "before": 0,
+      "id": "qodoCommand",
+      "lines": 69,
+      "path": "packages/worker/src/activities/prFeedback.ts",
+      "title": "A command round that Qodo adds nothing to records a fixed reason and goes on"
+    },
+    {
+      "anchor": "source.actor?.(",
+      "before": 1,
+      "id": "qodoActor",
+      "lines": 17,
+      "path": "packages/gateway/src/lib/automations/engine.ts",
+      "title": "A source with no actor makes no per-actor decision"
+    },
+    {
+      "anchor": "The trace keeps what the server sent; the agent sees what the screen lets through.",
+      "before": 6,
+      "id": "qodoTraceRaw",
+      "lines": 18,
+      "path": "packages/worker/src/agents/mcpTools.ts",
+      "title": "The trace keeps the server's raw answer; the agent sees the screened one"
     }
   ],
   "usecases": [
