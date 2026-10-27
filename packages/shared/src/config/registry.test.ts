@@ -146,6 +146,17 @@ describe('qodo pull-request feedback settings', () => {
     }
   });
 
+  it('includes Qodo in a command round only when an admin opts in, per team or organization', () => {
+    const d = def['qodo.prFeedbackIncludeOnCommand'];
+    expect(d.defaultValue).toBe(false);
+    expect(d.requiredRole).toBe('ADMIN');
+    expect(d.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
+    expect(d.runPinned).toBe(false);
+    expect(d.restartRequired).toBe(false);
+    expect(accepts('qodo.prFeedbackIncludeOnCommand', true)).toBe(true);
+    expect(accepts('qodo.prFeedbackIncludeOnCommand', 'yes')).toBe(false);
+  });
+
   it('bounds the rounds, the level and the wait', () => {
     expect(def['qodo.prFeedbackMaxRounds'].defaultValue).toBe(2);
     expect(def['qodo.prFeedbackMinActionLevel'].defaultValue).toBe('remediation_recommended');

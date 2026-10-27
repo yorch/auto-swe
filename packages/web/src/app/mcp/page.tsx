@@ -21,6 +21,7 @@ import {
   type McpConnectionRow,
   type McpHeaderInput,
   type McpTestResult,
+  type UpdateMcpConnectionBody,
   useCreateMcpConnection,
   useDeleteMcpConnection,
   useMcpConnections,
@@ -281,6 +282,46 @@ function McpPrivateNetworkField({
   );
 }
 
+/**
+ * The Qodo marker and result screening. A marked connection is always screened by the worker, so
+ * the screening box shows ticked and locked while the marker is on.
+ */
+function McpQodoFields({
+  idPrefix,
+  onChange,
+  qodo,
+  scan,
+}: {
+  idPrefix: string;
+  qodo: boolean;
+  scan: boolean;
+  onChange: (patch: { qodo?: boolean; scan?: boolean }) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <Checkbox
+        checked={qodo}
+        hint="Marks this as the team's Qodo connection. Only Qodo's read tools bind, and every result is screened as untrusted text."
+        id={`${idPrefix}-qodo`}
+        label="Qodo integration"
+        onChange={(e) => onChange({ qodo: e.target.checked })}
+      />
+      <Checkbox
+        checked={qodo || scan}
+        disabled={qodo}
+        hint={
+          qodo
+            ? 'Always on for a Qodo connection.'
+            : 'Checks each tool result for injected instructions before an agent reads it.'
+        }
+        id={`${idPrefix}-scan-results`}
+        label="Screen tool results"
+        onChange={(e) => onChange({ scan: e.target.checked })}
+      />
+    </div>
+  );
+}
+
 function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open: boolean }) {
   const { data: teams } = useTeams();
   const create = useCreateMcpConnection();
@@ -290,6 +331,8 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
     callTimeoutMs: '',
     listTimeoutMs: '',
     name: '',
+    qodo: false,
+    scan: false,
     teamId: '',
     url: '',
   };
@@ -318,6 +361,8 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
           ? { headers: headers.headers.map((h) => ({ name: h.name, value: h.value ?? '' })) }
           : {}),
         ...(form.bearerToken.trim() ? { bearerToken: form.bearerToken.trim() } : {}),
+        ...(form.qodo ? { integration: 'qodo' as const } : {}),
+        ...(form.qodo || form.scan ? { scanResults: true } : {}),
         name: form.name,
         teamId: form.teamId,
         url: form.url,
@@ -364,6 +409,12 @@ function CreateMcpConnectionModal({ onClose, open }: { onClose: () => void; open
           value={form.bearerToken}
         />
         <McpHeaderFields idPrefix="mcp-new" onChange={setHeaderRows} rows={headerRows} />
+        <McpQodoFields
+          idPrefix="mcp-new"
+          onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+          qodo={form.qodo}
+          scan={form.scan}
+        />
         <Combobox
           hint="The team owns the connection and manages it. Platform-wide agents can use any connection; a team's own agents can only use that team's."
           id="mcp-new-team"
@@ -410,6 +461,8 @@ function EditMcpConnectionModal({
     callTimeoutMs: connection?.config?.callTimeoutMs?.toString() ?? '',
     listTimeoutMs: connection?.config?.listTimeoutMs?.toString() ?? '',
     name: connection?.name ?? '',
+    qodo: connection?.config?.integration === 'qodo',
+    scan: connection?.config?.scanResults === true,
     url: connection?.config?.url ?? '',
   });
   const [clearToken, setClearToken] = useState(false);
@@ -447,9 +500,19 @@ function EditMcpConnectionModal({
       headerRows.length > 0 ||
       (connection.headerNames ?? []).length > 0 ||
       connection.headersUnreadable === true;
+    // A policy key is sent only when it differs from what is stored; omitting it keeps it.
+    const wasQodo = connection.config?.integration === 'qodo';
+    const wasScan = connection.config?.scanResults === true;
+    const integration: Pick<UpdateMcpConnectionBody, 'integration'> =
+      form.qodo === wasQodo ? {} : { integration: form.qodo ? 'qodo' : null };
+    // A marked connection is screened whatever scanResults says, so the box is not read then.
+    const scanResults: Pick<UpdateMcpConnectionBody, 'scanResults'> =
+      form.qodo || form.scan === wasScan ? {} : { scanResults: form.scan ? true : null };
     try {
       await update.mutateAsync({
         body: {
+          ...integration,
+          ...scanResults,
           ...(form.allowPrivateNetwork ? { allowPrivateNetwork: true } : {}),
           ...(touchedHeaders ? { headers: headers.headers } : {}),
           ...(form.bearerToken.trim() ? { bearerToken: form.bearerToken.trim() } : {}),
@@ -523,6 +586,36 @@ function EditMcpConnectionModal({
           </Alert>
         )}
         <McpHeaderFields idPrefix="mcp-edit" onChange={setHeaderRows} rows={headerRows} />
+        <McpQodoFields
+          idPrefix="mcp-edit"
+          // Clearing the marker on a marked connection keeps screening on, so dropping it takes a
+          // second, deliberate click: until then the connection was screened whatever the box said.
+          onChange={(patch) =>
+            setForm((f) => ({
+              ...f,
+              ...patch,
+              ...(patch.qodo === false && connection.config?.integration === 'qodo'
+                ? { scan: true }
+                : {}),
+            }))
+          }
+          qodo={form.qodo}
+          scan={form.scan}
+        />
+        {connection.config?.integration === 'qodo' && !form.qodo && (
+          <Alert variant="warning">
+            Removing the Qodo marker removes the read-only guard: the connection becomes an ordinary
+            MCP connection and binds every tool it advertises, unless a custom tool list is stored.
+            Tool results stay screened until Screen tool results is cleared as well.
+          </Alert>
+        )}
+        {connection.config?.allowedTools && (
+          <p className="text-xs text-paper-500">
+            {`Custom tool list: ${connection.config.allowedTools.length} ${
+              connection.config.allowedTools.length === 1 ? 'tool' : 'tools'
+            } (set through the API)`}
+          </p>
+        )}
         <McpTimeoutFields
           callTimeoutMs={form.callTimeoutMs}
           idPrefix="mcp-edit"
@@ -675,6 +768,19 @@ export default function StudioMcpConnectionsPage() {
                             {result.ok && (result.toolNames ?? []).length > 0 && (
                               <div className="font-mono">{(result.toolNames ?? []).join(', ')}</div>
                             )}
+                            {result.qodo && (
+                              <div className="space-y-0.5">
+                                <div>{`Matched read tools: ${result.qodo.matchedReadTools}`}</div>
+                                <div>
+                                  {`get-pr-review-findings advertised: ${
+                                    result.qodo.findingsToolAdvertised ? 'yes' : 'no'
+                                  }`}
+                                </div>
+                                {result.qodo.warning && (
+                                  <div className="text-warning-400">{result.qodo.warning}</div>
+                                )}
+                              </div>
+                            )}
                           </div>
                         )}
                       </>
@@ -690,6 +796,11 @@ export default function StudioMcpConnectionsPage() {
                         <div className="mt-0.5 text-paper-500">
                           {`Headers: ${(c.headerNames ?? []).join(', ')}`}
                         </div>
+                      )}
+                      {c.config?.integration === 'qodo' && (
+                        <Badge className="mt-1 mr-1" tone="info" variant="outline">
+                          Qodo
+                        </Badge>
                       )}
                       {c.config?.allowPrivateNetwork && (
                         <Badge className="mt-1" tone="warning" variant="outline">

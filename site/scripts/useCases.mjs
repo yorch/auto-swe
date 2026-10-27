@@ -108,6 +108,18 @@ export const USE_CASES = {
       'next run on the same repository.',
     title: 'Ticket to reviewed pull request',
   },
+  'ticket-to-merge-qodo': {
+    group: 'engineering',
+    maturity: 'composed',
+    source: 'packages/shared/src/workflow/templates/ticketToMergeQodo.ts',
+    summary:
+      'The flagship ticket-to-merge flow with one more check: once CI is green it reads ' +
+      'Qodo’s review of the final commit. A review with an open action_required finding ' +
+      'asks a person whether to continue to the merge wait or stop, and anything else goes ' +
+      'straight on. It only reads the review that Qodo’s pull request bot produces, and it ' +
+      'does nothing while the Qodo integration is off.',
+    title: 'Ticket to merge with a Qodo review',
+  },
   hotfix: {
     group: 'engineering',
     maturity: 'composed',

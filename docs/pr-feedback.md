@@ -110,6 +110,7 @@ platform's own output. A refused push is reported and the round ends FAILED.
 | `qodo.enabled` | ADMIN, TEAM / ORGANIZATION override | off | Whether Qodo's review may be read at all; off, a Qodo nudge is ignored |
 | `qodo.prFeedbackBotAccountIds` | ADMIN, platform-wide | empty | Numeric GitHub account ids of Qodo's review bot on this host (at most 10); empty keeps the Qodo trigger inert |
 | `qodo.prFeedbackMinActionLevel` | ADMIN, TEAM / ORGANIZATION override | `remediation_recommended` | Lowest Qodo action level that is addressed: `action_required`, `remediation_recommended` or `informational` |
+| `qodo.prFeedbackIncludeOnCommand` | ADMIN, TEAM / ORGANIZATION override | off | Whether an `/auto-swe fix` round also reads Qodo once and addresses its open findings (needs `qodo.enabled`) |
 | `qodo.prFeedbackMaxRounds` | ADMIN, TEAM / ORGANIZATION override | 2 | Pushed rounds Qodo's findings alone may cause on one pull request (1–10), on top of `maxRounds` |
 | `qodo.prFeedbackWaitSeconds` | ADMIN, platform-wide | 120 | How long a Qodo round waits for Qodo to finish reviewing the head commit (0–600 s) |
 
@@ -165,8 +166,11 @@ deliveries of one review, so one review can yield two decisions, one per head.
    statuses are not) and at or above `qodo.prFeedbackMinActionLevel`, most severe first, and
    records how many had an unrecognised status;
 5. briefs each as `T1`, `T2`, … authored by the literal `Qodo`: title and description only, no code
-   snippets and no paths, HTML comments stripped, bounded, screened for injection in **one batch**
-   with the human feedback screen, and fenced exactly like human review text. A finding whose title
+   snippets and no paths, HTML comments stripped, joined onto one line (so a finding that echoes
+   text from the diff cannot start a line that looks like a person's `[Tn]` block, which matters
+   most in an `/auto-swe fix` round where both kinds of block are present), bounded, screened for
+   injection in **one batch** with the human feedback screen, and fenced exactly like human review
+   text. A finding whose title
    or description Qodo's result screen already withheld (see
    [qodo.md §3](./qodo.md#3-output-screening)) is dropped and counted as screened, so the
    placeholder never stands in for Qodo's words; the round records only how many strings were
@@ -179,6 +183,22 @@ comment and replies on no thread. The rest of the round — fixer, gates, push, 
 is the same as for people. The gather runs under its own activity group with a single attempt and a
 timeout well beyond the longest wait, so a long wait is not retried; push and respond keep the
 shared bounds.
+
+**In an `/auto-swe fix` round.** A person's command can also address Qodo's findings. It does so
+only when `qodo.enabled` and `qodo.prFeedbackIncludeOnCommand` are both on for the repository's
+team, the trigger is the command (not a review that requests changes), and the pull request is one
+the platform opened. The human threads are gathered and trusted exactly as before. Then Qodo is read
+**once, without waiting**, under the same conditions as a Qodo round: a completed review of the
+pull request's current head commit, only `pending` findings at or above
+`qodo.prFeedbackMinActionLevel`, the same single screening batch and fencing, and the head read
+again before the brief is final. The findings follow the human threads and their labels continue
+from the last human label. Anything that stops Qodo adding to the round — it is unreadable, has no
+review, has not finished or reviewed another commit, has nothing qualifying, or the head moved —
+leaves the round on the human threads alone and writes one `pr_feedback.qodo_command_skipped`
+activity event with a fixed reason. A host error while Qodo is read counts the same way, and the
+human threads and the findings share the brief's thread and character bounds, so a full brief asks
+Qodo nothing. The round counts toward the automation's `maxRounds` only;
+`qodo.prFeedbackMaxRounds` caps rounds Qodo triggers, and the decision subject is the command's own.
 
 **No person.** A Qodo-triggered run has no requester: the engine makes no per-actor access decision
 and the run records no `requestedById`. The organization budget is still checked.
@@ -232,8 +252,13 @@ and the run records no `requestedById`. The organization budget is still checked
   transient host or Qodo error also ends that head's decision without a retry.
 - A Qodo nudge arriving while a round on the same pull request runs (including its CI watch, up to
   four hours) is suppressed in flight. Qodo's re-review of the platform's own push usually lands
-  then, so convergence may need a later Qodo event or an `/auto-swe fix` comment, which does not
-  consult Qodo.
+  then, so convergence may need a later Qodo event or an `/auto-swe fix` comment. That command
+  reads Qodo only when `qodo.prFeedbackIncludeOnCommand` is on.
+- An `/auto-swe fix` round reads Qodo once and never waits, so a review that is still running or
+  covers an older commit adds nothing, and the person may need to run the command again. When Qodo
+  re-reviews the platform's push, that review can start a Qodo-triggered round, which
+  `qodo.prFeedbackMaxRounds` bounds. Qodo's text enters a brief a person triggered, but it passes
+  only the injection screen and the fence, which are a tripwire and not a boundary.
 - Qodo has no outbound webhooks and is not an inbound-event sender: the GitHub App's deliveries are
   the only trigger, so Qodo's bot must be installed on the repository and its comments must reach
   this App's webhook.
