@@ -48,3 +48,17 @@
 **Decision**: A tick abandons one automation's poll after four minutes, stops starting automations after ten, and lists them least recently polled first. A closing server waits for the running tick for up to thirty seconds.
 **Reason**: The tick is serial and every tenant shares one Jira credential, so one slow tenant could hold the loop and leave late-created tenants behind it every time. Each Jira request is already bounded, which makes a hang unlikely, but a loop with no bound of its own would fail silently. Fastify closes the database and Temporal plugins after this plugin's hook, so a tick left running would use them closed.
 **Alternatives considered**: Polling in parallel. Rejected: it multiplies the load on the shared Jira credential. Cancelling the abandoned poll. Rejected: the Jira client cannot be cancelled mid-request, and the lease's compare-and-set already protects what the left-behind poll does later.
+
+## D8 — 2026-10-27 — Task 7: Check a Jira filter automation when it is saved
+
+**Status**: Accepted
+**Decision**: A poll baseline is bound to the JQL it was taken for (`baseline_jql`). A poll whose JQL differs takes a new baseline. The route resets the baseline only when an automation is switched back on.
+**Reason**: Resetting `baselinedAt` in the route, before or after the write, races with a poll: one that lands between the two writes, or one already running, baselines the old query and leaves the new query marked as baselined, which starts a run for everything the new query already matched. Comparing the stored JQL makes the order of the writes irrelevant. A reset on switch-on is safe because an automation that is off is not polled.
+**Alternatives considered**: Doing the write and the reset in one transaction. Rejected: it closes the gap between them but not a poll already running.
+
+## D9 — 2026-10-27 — Task 7: Check a Jira filter automation when it is saved
+
+**Status**: Accepted
+**Decision**: The save-time Jira check runs without retries, is skipped while the team's polling switch is off, and sits behind a 20 a minute per-user limit on the create and change routes.
+**Reason**: The check spends the platform's single Jira credential on a request from one tenant's lead, so it must fail fast, honour the operator's switch, and not be loopable.
+**Alternatives considered**: Limiting only Jira sources. Rejected: the limit is per route, and 20 saves a minute is far above what a person makes.

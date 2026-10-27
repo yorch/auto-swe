@@ -94,7 +94,7 @@ Per automation, one poll does the following:
 2. Resolve the allowlist for the repository's team. If it is empty, record `lastError = NO_ALLOWED_PROJECTS` and stop.
 3. Search with `project in (<allowlist>) AND (<jql>)` through `POST /rest/api/3/search/jql`, requesting only `summary` and `project`. Page until done, up to 1,000 matches. If there are more, record `lastError = FILTER_TOO_BROAD` and act on none of them.
 4. Drop every returned issue whose `project.key` is not in the allowlist. **This result check is the authoritative control.** The query wrapper only narrows the search, because a JQL with unbalanced parentheses can escape it.
-5. If the automation has no `baselinedAt`, store every returned key as seen, set `baselinedAt`, and stop. No run starts.
+5. If the automation has no `baselinedAt`, or its `baseline_jql` differs from the current JQL, store every returned key as seen, set `baselinedAt` and `baseline_jql`, and stop. No run starts. A baseline belongs to the query it was taken for, so a changed query takes a new one whatever order the change and a poll landed in.
 6. Otherwise, compute the unseen keys. Handle at most 50 per tick, in key order (by project, then issue number), and leave the rest for the next tick. Jira's creation order is not read, so this is not strictly oldest first across projects.
 7. For each unseen key, fetch the issue text, build the facts, and call `decideAndStart` with `retry: { kind: 'redelivery' }`. Then store the key as seen. Three cases end the poll with a fixed error code and leave the key unseen, so the next poll tries it again and the stall is visible: an issue that cannot be read (`TRACKER_UNAVAILABLE`), and a start that failed or was ignored by the engine (`START_FAILED`). A read that answers for a different key than the search approved, which happens when an issue moved projects in between, is skipped. Facts that can never be valid are stored as seen.
 
@@ -110,7 +110,7 @@ New migration, hand-written SQL beside the Prisma schema change:
 
 - `automations_source_known` is replaced to add `jira.filter.new_issue`.
 - A new `CHECK`, `automations_jira_filter_filters`, requires `filters ? 'jql'` and a non-empty string for that source. It uses `COALESCE(..., false)`, like the sibling checks.
-- `automation_poll_states`: `automation_id` (PK, cascade), `baselined_at`, `last_polled_at`, `last_error` (a fixed code, never Jira text), `lease_until`.
+- `automation_poll_states`: `automation_id` (PK, cascade), `baselined_at`, `baseline_jql` (the JQL the baseline was taken for), `last_polled_at`, `last_error` (a fixed code, never Jira text), `lease_until`.
 - `automation_seen_issues`: `automation_id` (cascade), `issue_key`, `first_seen_at`, primary key `(automation_id, issue_key)`.
 
 The seen set is separate from the ledger on purpose. The retention sweep deletes ledger rows that started no run, so a seen key kept only there would look new again after pruning.
@@ -119,8 +119,9 @@ The seen set is separate from the ledger on purpose. The retention sweep deletes
 
 - Create and update stay with the existing event-automation routes and roles: ADMIN, or a LEAD of the repository's owning team.
 - Saving an enabled automation validates the JQL once, with a one-result search through the same wrapper. A Jira `400` returns `400 JQL_REJECTED`. A network or auth failure returns `502 TRACKER_UNAVAILABLE`. Nothing is saved in either case.
-- Changing the JQL clears `baselinedAt`, and so does switching the automation from off to on. Existing seen keys stay. The next poll re-baselines, so a changed filter or a re-enabled automation never floods the repository with a backlog.
-- An empty allowlist, or an unconfigured tracker, makes the save fail with a plain message.
+- Switching an automation from off to on clears `baselinedAt` before the write. This is safe because an automation that is off is not polled. A changed JQL needs no reset: the poller takes a new baseline for a query it has not baselined. Existing seen keys stay, so neither a changed filter nor a re-enabled automation launches a backlog.
+- An empty allowlist (`400 NO_ALLOWED_PROJECTS`) or a tracker that is not Jira or not fully configured (`400 TRACKER_NOT_CONFIGURED`) makes the save of an enabled automation fail with a plain message. A disabled automation is a draft: it saves without asking Jira.
+- JQL with an unbalanced parenthesis outside a quoted string is refused at save (`400 INVALID_FILTERS`), enabled or not, because it could end the project wrapper early.
 
 ### Jira client
 
@@ -146,13 +147,15 @@ The event-automation editor shows a JQL textarea for this source. The automation
 12. If a search matches more than 1,000 issues, then the poller shall record `lastError = FILTER_TOO_BROAD` and act on none of them.
 13. The poller shall handle at most 50 unseen keys per automation per tick, in key order.
 14. When two replicas poll at the same moment, only the replica that wins the lease compare-and-set shall poll that automation.
-15. When the saved JQL changes, or the automation goes from disabled to enabled, the system shall clear `baselinedAt`.
+15. When the JQL differs from the one the baseline was taken for, the poller shall take a new baseline, store the matches as seen, and start no run. When an automation goes from disabled to enabled, the system shall clear `baselinedAt`.
 16. If Jira answers `400` to the save-time validation search, then the save shall return `400 JQL_REJECTED` and store nothing.
 17. If Jira is unreachable at save time, then the save shall return `502 TRACKER_UNAVAILABLE` and store nothing.
 18. If a poll fails, then `lastError` shall hold a fixed code and no Jira response text.
 19. The database shall refuse an automation of this source whose `filters` lack a non-empty string `jql`.
 20. While `workflow.jiraPollIntervalSeconds` is `120`, the poller shall start the next tick about 120 seconds after the previous one ends.
 21. If the tracker provider is not Jira, then the poller shall not start.
+22. The save-time check shall ask Jira without retries, and the create and change routes shall allow one user at most 20 requests a minute.
+23. While `workflow.jiraPollAutomationsEnabled` is off for the team, the save-time check shall not ask Jira.
 
 ## Out of Scope
 
@@ -173,6 +176,7 @@ The event-automation editor shows a JQL textarea for this source. The automation
 - **Key rename or move. Deferred.** A moved issue gets a new key and counts as new.
 - **A stalled automation. Resolved by being visible.** A key whose start always fails, or that cannot be read, stays unseen and stops the batch at every tick, so newer issues wait behind it. `lastError` shows the cause on every poll. Skipping it instead would hide the stall.
 - **Cost of a wrong JQL. Resolved.** The baseline, the 50-per-tick bound, `maxRunsPerDay` and the org budget limit the effect of a broad filter.
+- **Existence oracle at save and at poll. Accepted.** `JQL_REJECTED` against success tells a LEAD whether a project, user, version or field exists for the platform credential, whatever the answer text says, because Jira validates the clauses inside the project wrapper. No issue content leaks. The same signal exists at poll time through `lastError`. It cannot be closed while the two codes differ, so it is limited instead: the route is rate limited, the check does not retry, and an admin allows the projects.
 - **Rollout flag. Resolved.** `workflow.jiraPollAutomationsEnabled` is off by default, so the feature is dark until an admin enables it per team.
 - **Schema change. Process.** Read the `prisma-pgvector-hnsw` skill before any `prisma migrate` command. The new `CHECK` and the replaced source constraint are hand-written SQL.
 
