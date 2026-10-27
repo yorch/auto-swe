@@ -101,7 +101,12 @@ describe('probeMcpServer', () => {
       json({ id: 2, jsonrpc: '2.0', result: { tools: [{ name: 'search' }, { name: 'fetch' }] } })
     );
     const res = await probeMcpServer('https://mcp.test/mcp', 5000, f as never);
-    expect(res).toMatchObject({ ok: true, toolCount: 2, toolNames: ['search', 'fetch'] });
+    expect(res).toMatchObject({
+      advertisedToolNames: ['search', 'fetch'],
+      ok: true,
+      toolCount: 2,
+      toolNames: ['search', 'fetch'],
+    });
     const listCall = f.mock.calls.find(([, init]) =>
       String((init as RequestInit).body).includes('tools/list')
     )?.[1] as RequestInit;

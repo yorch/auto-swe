@@ -302,6 +302,9 @@ limit, an earlier run or the budget holds it back.
 
 ## Limitations
 
+- **Qodo is not an inbound-event sender.** Qodo emits no outbound webhooks, so there is nothing for
+  an endpoint to receive; its findings are pulled by the worker after a GitHub App delivery nudges
+  it ([pr-feedback.md §8](./pr-feedback.md#8-qodo-findings)).
 - **`hmac-sha256` and `shared-secret-header` have no timestamp.** A captured call can be replayed
   for as long as the secret is valid. The dedupe key stops the same event id from starting a second
   run, but an event that names no id is keyed by its body, and a replay of it is a duplicate only

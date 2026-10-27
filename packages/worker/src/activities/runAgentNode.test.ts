@@ -263,9 +263,8 @@ describe('runAgentNode', () => {
     await runAgentNode({ agentRef: 'reviewer', userMessage: 'hi' });
 
     expect(mockedLoadMcpTools).toHaveBeenCalledWith(
-      'https://mcp.example.com/mcp',
-      expect.any(AgentTracer),
-      { callTimeoutMs: undefined, listTimeoutMs: undefined }
+      { url: 'https://mcp.example.com/mcp' },
+      expect.any(AgentTracer)
     );
     // The binding records a refusal on the node's own tracer — the one the MCP client uses.
     expect(mockedResolveMcpUrl).toHaveBeenCalledWith('reviewer', expect.anything(), {
@@ -308,10 +307,25 @@ describe('runAgentNode', () => {
     await runAgentNode({ agentRef: 'reviewer', userMessage: 'hi' });
 
     expect(mockedLoadMcpTools).toHaveBeenCalledWith(
-      'https://mcp.example.com/mcp',
-      expect.any(AgentTracer),
-      { callTimeoutMs: 90_000, listTimeoutMs: 30_000 }
+      { callTimeoutMs: 90_000, listTimeoutMs: 30_000, url: 'https://mcp.example.com/mcp' },
+      expect.any(AgentTracer)
     );
+  });
+
+  it('hands loadMcpTools the whole target, so its allowlist and screening travel with it', async () => {
+    const close = vi.fn().mockResolvedValue(undefined);
+    mockedResolveSpec.mockResolvedValueOnce({ agentKey: 'reviewer', tools: {} } as never);
+    const target = {
+      allowedTools: ['rules-search'],
+      scanResults: true,
+      url: 'https://mcp.example.com/mcp',
+    };
+    mockedResolveMcpUrl.mockResolvedValueOnce(target);
+    mockedLoadMcpTools.mockResolvedValueOnce({ close, tools: {} } as never);
+
+    await runAgentNode({ agentRef: 'reviewer', userMessage: 'hi' });
+
+    expect(mockedLoadMcpTools.mock.calls[0]?.[0]).toBe(target);
   });
 
   it('skips MCP loading when the agent has no mcp server', async () => {

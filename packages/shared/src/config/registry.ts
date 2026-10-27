@@ -64,6 +64,9 @@ const gitIdentityEmail = z
   .max(254)
   .regex(/^[^@\s]+@[^@\s]+$/, 'must contain exactly one @ and no whitespace')
   .refine((v) => !GIT_IDENTITY_FORBIDDEN_RE.test(v), 'must not contain control characters, < or >');
+/// How serious a Qodo finding is, most serious first.
+const qodoActionLevel = z.enum(['action_required', 'remediation_recommended', 'informational']);
+type QodoActionLevel = z.infer<typeof qodoActionLevel>;
 
 /// LiteLLM's community-maintained price table: per-token prices for the major
 /// providers and most OpenAI-compatible hosts, keyed by model id.
@@ -605,6 +608,89 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: hostList,
     sensitive: true,
+  }),
+
+  // ── Qodo ───────────────────────────────────────────────────────────────────
+  'qodo.enabled': defineSetting({
+    defaultValue: false,
+    description:
+      "Whether runs may read Qodo's review of pull requests. When on, PR identifiers and the team's Qodo credential are used to read Qodo's review of pull requests; no source code is uploaded by auto-swe. Off, no Qodo call is made.",
+    group: 'qodo',
+    label: 'Read Qodo reviews',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'qodo.prFeedbackBotAccountIds': defineSetting({
+    defaultValue: [],
+    description:
+      "Numeric GitHub account ids of Qodo's review bot on this deployment's GitHub host (the `id` of the bot account, not its login: logins can be renamed, ids cannot). A pull-request feedback automation that lists the `qodo_findings` trigger treats a review or comment from one of these bot accounts as a nudge to read Qodo's findings. The bot's text is never read from GitHub. Empty keeps the feature inert. Platform-wide: it names who Qodo's bot is on this host.",
+    group: 'qodo',
+    label: 'Qodo review bot account ids',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z
+      .array(
+        z.preprocess(
+          (v) => (typeof v === 'string' && /^\d{1,15}$/.test(v) ? Number(v) : v),
+          z.number().int().positive().max(Number.MAX_SAFE_INTEGER)
+        )
+      )
+      .max(10),
+  }),
+  'qodo.prFeedbackMaxRounds': defineSetting({
+    defaultValue: 2,
+    description:
+      "How many pushed rounds Qodo's findings may cause on one pull request, on top of the automation's own rounds limit. A round that pushes nothing does not count.",
+    group: 'qodo',
+    label: 'Qodo-triggered rounds per pull request',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(1).max(10),
+  }),
+  'qodo.prFeedbackMinActionLevel': defineSetting({
+    defaultValue: 'remediation_recommended' as QodoActionLevel,
+    description:
+      'The lowest action level of a Qodo finding that is addressed: `action_required`, `remediation_recommended` or `informational`. Findings below it are left alone.',
+    group: 'qodo',
+    label: 'Lowest Qodo finding level to address',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: qodoActionLevel,
+  }),
+  'qodo.prFeedbackWaitSeconds': defineSetting({
+    defaultValue: 120,
+    description:
+      "How long a Qodo-triggered round waits for Qodo to finish reviewing the pull request's current head commit before it gives up without changing anything. 0 reads once.",
+    group: 'qodo',
+    label: 'Wait for Qodo to finish reviewing',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(600),
+    unit: 'seconds',
+  }),
+  'qodo.reviewWaitSeconds': defineSetting({
+    defaultValue: 180,
+    description:
+      "How long a workflow's Qodo review step waits for Qodo to finish reviewing the pull request's head commit when the node sets no wait of its own. 0 reads once. A node's own `waitSeconds` overrides it, and both are capped at 600.",
+    group: 'qodo',
+    label: 'Wait for the Qodo review step',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(600),
+    unit: 'seconds',
   }),
 
   // ── Repository permission gating ───────────────────────────────────────────

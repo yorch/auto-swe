@@ -19,6 +19,7 @@ import { PERFORMANCE_IMPACT_ASSESSMENT_SKILL } from './performanceImpactAssessme
 import { PR_DESCRIPTION_QUALITY_SKILL } from './prDescriptionQuality.js';
 import { PRD_READINESS_SKILL } from './prdReadiness.js';
 import { PRODUCT_ACCEPTANCE_CRITERIA_SKILL } from './productAcceptanceCriteria.js';
+import { QODO_CONTEXT_SKILL } from './qodoContext.js';
 import { REVIEW_FOCUS_SECURITY_SKILL } from './reviewFocusSecurity.js';
 import { ROLLBACK_FIRST_PLANNING_SKILL } from './rollbackFirstPlanning.js';
 import { SCOPE_CONSERVATISM_SKILL } from './scopeConservatism.js';
@@ -85,6 +86,8 @@ export const BUILTIN_SKILLS: BuiltinSkillDef[] = [
   PRD_READINESS_SKILL,
   PRODUCT_ACCEPTANCE_CRITERIA_SKILL,
   STORY_DECOMPOSITION_SKILL,
+  // Integrations (attached by an admin to agents bound to the connection)
+  QODO_CONTEXT_SKILL,
 ];
 
 export {
@@ -109,6 +112,7 @@ export {
   PR_DESCRIPTION_QUALITY_SKILL,
   PRD_READINESS_SKILL,
   PRODUCT_ACCEPTANCE_CRITERIA_SKILL,
+  QODO_CONTEXT_SKILL,
   REVIEW_FOCUS_SECURITY_SKILL,
   ROLLBACK_FIRST_PLANNING_SKILL,
   SCOPE_CONSERVATISM_SKILL,

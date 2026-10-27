@@ -30,11 +30,14 @@ export interface McpProbeResult {
   toolCount?: number;
   /** The first few tool names, so the admin can recognise the server. */
   toolNames?: string[];
+  /** Every advertised tool name (capped), for a caller that checks them against an allowlist. */
+  advertisedToolNames?: string[];
   durationMs: number;
 }
 
 const MAX_BODY_BYTES = 1_000_000;
 const MAX_TOOL_NAMES = 12;
+const MAX_ADVERTISED_NAMES = 500;
 /** A stored per-connection timeout is admin-chosen; a probe never waits longer than this. */
 const MAX_TIMEOUT_MS = 60_000;
 const PROTOCOL_VERSION = '2025-03-26';
@@ -342,6 +345,7 @@ export async function probeMcpServer(
       .map((t) => (t as { name?: unknown }).name)
       .filter((n): n is string => typeof n === 'string');
     return {
+      advertisedToolNames: names.slice(0, MAX_ADVERTISED_NAMES),
       durationMs: Date.now() - started,
       ok: true,
       toolCount: tools.length,

@@ -389,6 +389,39 @@ private-range refusal, with the semantics of the issue-tracker and knowledge-bas
 without it. Save, the Test probe and the worker's connect all apply the same check against the saved
 flag, and the flag appears in the audit trail.
 
+**Tool allowlist.** A connection may carry `config.allowedTools`, a list of server tool names (exact,
+case-sensitive; at most 200). Only those tools bind: `loadMcpTools` skips the rest before wrapping them
+(Mastra loop, `runAgentTask`, `runAgentNode`), `openMcpRelay` leaves them out of the list a harness sees
+(its Claude Code policy allows exactly the relayed names) and refuses a call to any other name, and the
+`mcp` workflow node refuses a tool outside it before connecting. The skipped names are recorded as
+`mcp.tools_skipped`. The list rides on the resolved `McpConnectionTarget`, and both loaders take the
+whole target rather than loose fields, so a caller cannot connect without it. A stored list that is
+not a valid list resolves to `[]` (nothing binds); a connection with no list is unrestricted. Setting
+`allowedTools`, `integration` and `scanResults` is `ADMIN`-only (the route is), the gateway validates
+them with Zod, and an edit that does not send them keeps the stored values (`null` removes one); the
+`/mcp` form does not show them.
+
+**Result screening.** With `config.scanResults: true`, every tool result is checked against the
+INJECTION patterns of the memory gate and, when clean, each text in it is fenced between
+`BEGIN UNTRUSTED MCP OUTPUT` and `END UNTRUSTED MCP OUTPUT` lines, keeping the result's shape. Each
+string is checked on its own, and a text block holding JSON is checked string by string inside it:
+a string that matches, or whose scan is incomplete, is replaced by a fixed placeholder and the rest
+of the result is returned. A scan that fails outright withholds the whole result with a fixed
+message. Either way an `mcp.output_blocked` activity event is recorded (`{ tool, patterns, reason,
+withheldLeaves }`; never the text). The trace keeps
+what the server sent. Connections that do not opt in are not screened.
+
+**Qodo.** `config.integration: 'qodo'` marks a team's Qodo connection (URL
+`https://sdk.qodo.ai/v1/tools/mcp/` with the trailing slash, since a redirect is refused; the bearer is
+the Qodo API key). It implies `scanResults`, and an allowlist of the 41 read tools of the Qodo catalog
+(`QODO_READ_TOOLS`, `shared/src/lib/qodoConnection.ts`) when none is stored, so it cannot bind unfiltered
+however the row was made, and a stored list on a marked connection is intersected with it (the
+gateway also refuses to save one that names a write tool). The 23 write tools (comments, approvals, labels, rules and notes changes) are
+not in it. `resolveQodoConnection({ teamId })` (`worker/src/lib/qodo/connection.ts`) returns the oldest
+active Qodo connection that team owns, with its target, or null; no template or agent names one. The
+built-in `qodo-context` skill is assigned to no agent: an admin attaches it, with the connection and the
+`'mcp'` tool key, to the agents that should use Qodo.
+
 **Activation requires all four:**
 
 1. The resolved Agent has an `mcpConnectionId` pointing at an active `mcp` Connection.
@@ -1112,7 +1145,7 @@ Skills are an **ADMIN-curated library**: creation (`POST /api/v1/platform/skills
 
 **Table:** `skills` in `packages/shared/src/prisma/schema.prisma`
 
-### 6.2 Built-in Skills (35 total)
+### 6.2 Built-in Skills (36 total)
 
 **File:** `packages/shared/src/skills/index.ts`
 
@@ -1153,6 +1186,7 @@ Skills are an **ADMIN-curated library**: creation (`POST /api/v1/platform/skills
 || Product | `prd-readiness` | `productAnalyst` |
 || | `product-acceptance-criteria` | `productAnalyst`, `prdWriter` |
 || | `story-decomposition` | `prdWriter` |
+|| Integrations | `qodo-context` | none (attached by an admin) |
 
 ### 6.3 Skill Assignment & Scope Cascade
 
@@ -1633,6 +1667,15 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
 
 ## 11. Limitations
 
+- **The MCP tool allowlist is by exact name.** A tool a server adds later, or renames, does not bind
+  until the list names it, and a tool a server reclassifies from read to write stays bound if its
+  name is listed: `QODO_READ_TOOLS` is audited against the Qodo catalog by hand. The allowlist and
+  screening bind tools; they do not make a server's tool read-only. An agent has one `mcpConnectionId`,
+  so it cannot bind Qodo and another server together.
+- **Result screening can refuse legitimate text.** Qodo rules are imperative by nature and can match an
+  INJECTION pattern; that string is then withheld and traced as `mcp.output_blocked`, and the scan
+  rides on the same pattern set as memory, so it has the same blind spots. A bundle cannot carry the
+  connection, so a Qodo skill bundle still needs a local `mcp` connection.
 - **The ticket is read with the platform's tracker token, not the requester's.** Anyone who can
   launch a run and name a ticket id gets that ticket's text into an agent prompt, and so possibly
   into the pull request, including a ticket they could not open in the tracker. The same token
@@ -1920,7 +1963,8 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
 - **The harness gets no sub-agent, web or plugin tool,** and no MCP server but the Agent's own
   connection, relayed from the worker: a repository's `.mcp.json` and the harness's own MCP settings
   are ignored (`strictMcpConfig`). A relayed MCP tool is allowed by name and runs in the worker; like
-  the Mastra loop's MCP tools, its arguments and results are not scanned, only audit-logged and traced.
+  the Mastra loop's MCP tools, its arguments are not scanned, only audit-logged and traced, and its
+  results are screened only for connections that opt in (§3.5).
 - **`Edit` is content-checked on the inserted text only,** not on the whole resulting file, and
   `Bash` is covered by the same text heuristics as the Mastra `bash` tool — a determined agent can
   evade them.

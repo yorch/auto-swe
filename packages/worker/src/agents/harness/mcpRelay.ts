@@ -12,6 +12,7 @@ import { auditLog } from '../../lib/activityLog.js';
 import { redactString } from '../../lib/agentTracer.js';
 import type { McpConnectionTarget } from '../../lib/config/mcpConnection.js';
 import { getErrorMessage } from '../../lib/errors.js';
+import { screenMcpResult } from '../mcpScreen.js';
 import {
   bearerFetch,
   guardedMcpFetch,
@@ -19,6 +20,7 @@ import {
   originScopedFetch,
   parseMcpServerRef,
   scrubToken,
+  selectAllowedMcpTools,
   withTimeout,
 } from '../mcpTools.js';
 
@@ -127,9 +129,23 @@ export async function openMcpRelay(
 
   let client: Client;
   let tools: Tool[];
+  let skipped: string[];
   try {
     client = await connect(url, fetch, listTimeoutMs);
-    tools = await withTimeout(listAllTools(client), listTimeoutMs, `MCP tool listing from ${url}`);
+    const listed = await withTimeout(
+      listAllTools(client),
+      listTimeoutMs,
+      `MCP tool listing from ${url}`
+    );
+    // The connection's allowlist applies here, before anything is offered: a tool outside it is
+    // absent from the list the harness sees, and `callTool` refuses any name that is not in it.
+    const split = selectAllowedMcpTools(
+      listed.map((t) => t.name),
+      target.allowedTools
+    );
+    const kept = new Set(split.kept);
+    tools = listed.filter((t) => kept.has(t.name));
+    skipped = split.skipped;
   } catch (err) {
     tracer?.addActivityEvent({
       durationMs: Date.now() - start,
@@ -152,11 +168,16 @@ export async function openMcpRelay(
       `[mcp:audit] server=${url} tool=${name} args=${redactString(JSON.stringify(args ?? {}).slice(0, 2_000))} via=harness`
     );
     try {
-      return (await withTimeout(
+      const result = (await withTimeout(
         client.callTool({ arguments: args, name }),
         callTimeoutMs,
         `MCP tool call '${name}'`
       )) as CallToolResult;
+      if (target.scanResults !== true) {
+        return result;
+      }
+      const screened = await screenMcpResult(result, name, tracer);
+      return screened.blocked ? failure(screened.message) : (screened.result as CallToolResult);
     } catch (err) {
       return failure(scrubToken(getErrorMessage(err), target.bearerToken));
     }
@@ -173,6 +194,13 @@ export async function openMcpRelay(
     return server;
   };
 
+  if (skipped.length > 0) {
+    tracer?.addActivityEvent({
+      inputJson: { mcpServerRef: target.url },
+      name: 'mcp.tools_skipped',
+      outputJson: { reason: 'not_allowlisted', skipped, via: 'harness' },
+    });
+  }
   tracer?.addActivityEvent({
     durationMs: Date.now() - start,
     inputJson: { mcpServerRef: target.url },

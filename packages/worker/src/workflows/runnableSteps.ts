@@ -45,6 +45,8 @@ import {
   prdActivities,
   prFeedbackActivities,
   prFeedbackAgentTaskActivities,
+  prFeedbackQodoGatherActivities,
+  qodoReviewActivities,
   stateActivities,
 } from './runnableActivities.js';
 
@@ -559,7 +561,15 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         request,
       }),
   ],
-  ['gatherPrFeedback', ({ request }) => prFeedbackActivities.gatherPrFeedback({ request })],
+  [
+    'gatherPrFeedback',
+    ({ request }) =>
+      // The trigger is part of the run's payload, so the choice is the same on every replay.
+      (request.payload as { feedbackTrigger?: unknown } | undefined)?.feedbackTrigger ===
+      'qodo_findings'
+        ? prFeedbackQodoGatherActivities.gatherPrFeedback({ request })
+        : prFeedbackActivities.gatherPrFeedback({ request }),
+  ],
   [
     'executePrFeedbackImplementation',
     ({ ctx, config, inputs }) => {
@@ -683,6 +693,19 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         inputs.logsUrl as string | undefined,
         request.repoId ?? undefined
       ),
+  ],
+  [
+    'awaitQodoReview',
+    // The repository, and so the team whose Qodo connection is read, is the run's own; neither
+    // the config nor the inputs can name another.
+    ({ request, config, inputs }) =>
+      qodoReviewActivities.awaitQodoReview({
+        headSha: inputs.headSha,
+        minActionLevel: config.minActionLevel,
+        prUrl: inputs.prUrl,
+        repoId: request.repoId,
+        waitSeconds: config.waitSeconds,
+      }),
   ],
   ['resolveCiWaitConfig', () => ciConfigActivities.resolveCiWaitConfig()],
   [

@@ -79,16 +79,19 @@ async function mcpCallToolImpl(input: McpCallToolInput): Promise<McpCallToolResu
       `mcp node: connection '${input.connectionRef}' is not an active mcp connection`
     );
   }
-  const { url, listTimeoutMs, callTimeoutMs, bearerToken, headers, allowPrivateNetwork } = target;
+  const { url } = target;
+  // The same allowlist `loadMcpTools` enforces when it binds, checked first so a refused tool
+  // never costs a connection and the error names the cause rather than a missing tool.
+  if (target.allowedTools && !target.allowedTools.includes(input.tool)) {
+    throw new Error(
+      `mcp node: tool '${input.tool}' is not permitted by the connection's tool allowlist`
+    );
+  }
 
   const tracer = new AgentTracer();
-  const loaded = await loadMcpTools(url, tracer, {
-    allowPrivateNetwork,
-    bearerToken,
-    callTimeoutMs,
-    headers,
-    listTimeoutMs,
-  });
+  // The connection's allowlist applies to this step too: a tool outside it is never bound, so the
+  // lookup below cannot find it.
+  const loaded = await loadMcpTools(target, tracer);
   try {
     // Do not call an external tool for a run that was cancelled while connecting.
     throwIfActivityCancelled();

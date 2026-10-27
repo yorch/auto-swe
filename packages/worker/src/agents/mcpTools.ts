@@ -28,7 +28,9 @@ import type { Tool } from '@mastra/core/tools';
 import { MCPClient } from '@mastra/mcp';
 import { auditLog } from '../lib/activityLog.js';
 import { type AgentTracer, redactString } from '../lib/agentTracer.js';
+import type { McpConnectionTarget } from '../lib/config/mcpConnection.js';
 import { getErrorMessage } from '../lib/errors.js';
+import { screenMcpResult } from './mcpScreen.js';
 
 /**
  * Pseudo tool-key that gates MCP tool loading. Re-exported from the shared
@@ -50,31 +52,8 @@ export interface LoadedMcpTools {
   close: () => Promise<void>;
 }
 
-export interface LoadMcpToolsOptions {
-  /** Timeout for connecting + listing tools (default 15 s). */
-  listTimeoutMs?: number;
-  /** Timeout for each individual MCP tool call (default 60 s). */
-  callTimeoutMs?: number;
-  /**
-   * Plaintext bearer token for the server, already decrypted by the resolver. Sent as
-   * `Authorization: Bearer …` to the server's own origin only (see `bearerFetch`); never logged,
-   * traced, or included in an error message.
-   */
-  bearerToken?: string;
-  /**
-   * Custom request headers, already decrypted by the resolver. Sent to the server's own origin
-   * only, like the token; never logged, traced, or included in an error message.
-   */
-  headers?: readonly McpHeader[];
-  /**
-   * The connection's opt-in for a server on a private (RFC 1918 / ULA) address. Loopback,
-   * link-local, unspecified and metadata addresses are refused regardless.
-   */
-  allowPrivateNetwork?: boolean;
-}
-
-const DEFAULT_LIST_TIMEOUT_MS = 15_000;
-const DEFAULT_CALL_TIMEOUT_MS = 60_000;
+export const DEFAULT_LIST_TIMEOUT_MS = 15_000;
+export const DEFAULT_CALL_TIMEOUT_MS = 60_000;
 /** Internal MCPClient server name — produces stable `mcp_*` namespacing. */
 const SERVER_NAME = 'mcp';
 const NOOP_CLOSE = async (): Promise<void> => {};
@@ -203,6 +182,25 @@ export function sanitizeToolName(name: string): string {
   return name.replace(/[^A-Za-z0-9_-]/g, '_');
 }
 
+/**
+ * Split a server's tool names by a connection's allowlist: `undefined` keeps every tool, a list
+ * keeps exactly the names it holds (exact, case-sensitive). The one definition both the Mastra
+ * loop and the harness relay filter with.
+ */
+export function selectAllowedMcpTools(
+  names: readonly string[],
+  allowed: readonly string[] | undefined
+): { kept: string[]; skipped: string[] } {
+  if (allowed === undefined) {
+    return { kept: [...names], skipped: [] };
+  }
+  const permitted = new Set(allowed);
+  return {
+    kept: names.filter((name) => permitted.has(name)),
+    skipped: names.filter((name) => !permitted.has(name)),
+  };
+}
+
 function safeJson(value: unknown, max = 2_000): string {
   try {
     const s = JSON.stringify(value);
@@ -223,7 +221,8 @@ function wrapMcpTool(
   toolName: string,
   serverUrl: string,
   callTimeoutMs: number,
-  tracer?: McpTracer
+  tracer?: McpTracer,
+  screenResults = false
 ): void {
   const originalExecute = tool.execute?.bind(tool);
   if (!originalExecute) {
@@ -240,18 +239,23 @@ function wrapMcpTool(
     );
     const start = Date.now();
     try {
-      const result = await withTimeout(
+      const raw = await withTimeout(
         originalExecute(...args),
         callTimeoutMs,
         `MCP tool call '${toolName}'`
       );
+      // The trace keeps what the server sent; the agent sees what the screen lets through.
       tracer?.addToolCall({
         durationMs: Date.now() - start,
         inputJson: input,
-        outputJson: result,
+        outputJson: raw,
         toolName: tracedName,
       });
-      return result;
+      if (!screenResults) {
+        return raw;
+      }
+      const screened = await screenMcpResult(raw, toolName, tracer);
+      return screened.blocked ? screened.message : screened.result;
     } catch (err: unknown) {
       tracer?.addToolCall({
         durationMs: Date.now() - start,
@@ -265,20 +269,21 @@ function wrapMcpTool(
 }
 
 /**
- * Connects to the MCP server referenced by `mcpServerRef` and returns its tools
- * keyed `mcp_<toolName>`, each wrapped with audit logging + tracer recording +
- * per-call timeout. Never throws — all failures return an empty tool set.
+ * Connects to the MCP server of a resolved connection `target` and returns its tools keyed
+ * `mcp_<toolName>`, each wrapped with audit logging + tracer recording + per-call timeout. Takes
+ * the whole target, not loose fields, so the connection's tool allowlist and result screening
+ * cannot be left behind by a caller. Never throws — all failures return an empty tool set.
  */
 export async function loadMcpTools(
-  mcpServerRef: string,
-  tracer?: McpTracer,
-  options?: LoadMcpToolsOptions
+  target: McpConnectionTarget,
+  tracer?: McpTracer
 ): Promise<LoadedMcpTools> {
-  const listTimeoutMs = options?.listTimeoutMs ?? DEFAULT_LIST_TIMEOUT_MS;
-  const callTimeoutMs = options?.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
+  const mcpServerRef = target.url;
+  const listTimeoutMs = target.listTimeoutMs ?? DEFAULT_LIST_TIMEOUT_MS;
+  const callTimeoutMs = target.callTimeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
   const start = Date.now();
 
-  const url = parseMcpServerRef(mcpServerRef, options?.allowPrivateNetwork === true);
+  const url = parseMcpServerRef(mcpServerRef, target.allowPrivateNetwork === true);
   if (!url) {
     const error = `mcpServerRef must be an http(s) URL (stdio is not supported): ${mcpServerRef}`;
     console.warn(`[mcp] invalid server ref: ${error}`);
@@ -296,7 +301,7 @@ export async function loadMcpTools(
       await client?.disconnect();
     } catch (err: unknown) {
       console.warn(
-        `[mcp] disconnect failed for ${url}: ${scrubToken(getErrorMessage(err), options?.bearerToken)}`
+        `[mcp] disconnect failed for ${url}: ${scrubToken(getErrorMessage(err), target.bearerToken)}`
       );
     }
   };
@@ -314,17 +319,17 @@ export async function loadMcpTools(
           // text check on the ref is not enough: a public name can resolve to an internal address).
           // With a token or custom headers it also carries them, and `allowedHosts` pins the client
           // to the connection's host as a second line behind the origin check in `bearerFetch`.
-          ...(options?.bearerToken || options?.headers?.length
+          ...(target.bearerToken || target.headers?.length
             ? {
                 allowedHosts: [url.host],
                 fetch: bearerFetch(
                   url,
-                  options.bearerToken,
-                  originScopedFetch(url, options.allowPrivateNetwork === true),
-                  options.headers
+                  target.bearerToken,
+                  originScopedFetch(url, target.allowPrivateNetwork === true),
+                  target.headers
                 ),
               }
-            : { fetch: guardedMcpFetch(url, options?.allowPrivateNetwork === true) }),
+            : { fetch: guardedMcpFetch(url, target.allowPrivateNetwork === true) }),
         },
       },
       timeout: callTimeoutMs,
@@ -343,9 +348,22 @@ export async function loadMcpTools(
     }
 
     const tools: McpToolRecord = {};
-    for (const [name, tool] of Object.entries(serverTools)) {
-      wrapMcpTool(tool, name, url.toString(), callTimeoutMs, tracer);
+    // A tool outside the connection's allowlist is never wrapped or bound, so nothing can call it.
+    const { kept, skipped } = selectAllowedMcpTools(Object.keys(serverTools), target.allowedTools);
+    for (const name of kept) {
+      const tool = serverTools[name];
+      if (!tool) {
+        continue;
+      }
+      wrapMcpTool(tool, name, url.toString(), callTimeoutMs, tracer, target.scanResults === true);
       tools[`mcp_${sanitizeToolName(name)}`] = tool;
+    }
+    if (skipped.length > 0) {
+      tracer?.addActivityEvent({
+        inputJson: { mcpServerRef },
+        name: 'mcp.tools_skipped',
+        outputJson: { reason: 'not_allowlisted', skipped },
+      });
     }
 
     tracer?.addActivityEvent({
@@ -361,7 +379,7 @@ export async function loadMcpTools(
   } catch (err: unknown) {
     // Connection / listing failure must NOT fail the implementation —
     // record the event and continue with built-in workspace tools only.
-    const error = scrubToken(getErrorMessage(err), options?.bearerToken);
+    const error = scrubToken(getErrorMessage(err), target.bearerToken);
     console.error(`[mcp] connect failed for ${url}: ${error}`);
     tracer?.addActivityEvent({
       durationMs: Date.now() - start,

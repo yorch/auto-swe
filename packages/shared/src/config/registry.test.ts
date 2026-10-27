@@ -111,3 +111,61 @@ describe('git author settings', () => {
     }
   });
 });
+
+describe('qodo pull-request feedback settings', () => {
+  const def = SETTING_DEFINITIONS;
+  const accepts = (key: keyof typeof SETTING_DEFINITIONS, value: unknown) =>
+    def[key].schema.safeParse(value).success;
+
+  it('keeps the feature inert until an admin names the bot', () => {
+    const d = def['qodo.prFeedbackBotAccountIds'];
+    expect(d.defaultValue).toEqual([]);
+    expect(d.overridableAt).toEqual([]);
+    expect(d.requiredRole).toBe('ADMIN');
+    expect(def['qodo.enabled'].defaultValue).toBe(false);
+  });
+
+  it('takes up to ten positive integer account ids, and a numeric string as the form sends it', () => {
+    const key = 'qodo.prFeedbackBotAccountIds';
+    for (const ok of [[], [424242], ['424242'], Array.from({ length: 10 }, (_, i) => i + 1)]) {
+      expect(accepts(key, ok), JSON.stringify(ok)).toBe(true);
+    }
+    expect(def[key].schema.parse(['424242', 7])).toEqual([424242, 7]);
+    for (const bad of [
+      [0],
+      [-1],
+      [1.5],
+      ['abc'],
+      [''],
+      ['12 3'],
+      [null],
+      [true],
+      Array.from({ length: 11 }, (_, i) => i + 1),
+    ]) {
+      expect(accepts(key, bad), JSON.stringify(bad)).toBe(false);
+    }
+  });
+
+  it('bounds the rounds, the level and the wait', () => {
+    expect(def['qodo.prFeedbackMaxRounds'].defaultValue).toBe(2);
+    expect(def['qodo.prFeedbackMinActionLevel'].defaultValue).toBe('remediation_recommended');
+    expect(def['qodo.prFeedbackWaitSeconds'].defaultValue).toBe(120);
+    for (const ok of [1, 10]) {
+      expect(accepts('qodo.prFeedbackMaxRounds', ok)).toBe(true);
+    }
+    for (const bad of [0, 11, 1.5]) {
+      expect(accepts('qodo.prFeedbackMaxRounds', bad)).toBe(false);
+    }
+    for (const ok of ['action_required', 'remediation_recommended', 'informational']) {
+      expect(accepts('qodo.prFeedbackMinActionLevel', ok)).toBe(true);
+    }
+    expect(accepts('qodo.prFeedbackMinActionLevel', 'unknown')).toBe(false);
+    // The wait stays below the gather activity's timeout (30 min), with room to spare.
+    for (const ok of [0, 600]) {
+      expect(accepts('qodo.prFeedbackWaitSeconds', ok)).toBe(true);
+    }
+    for (const bad of [-1, 601, 900]) {
+      expect(accepts('qodo.prFeedbackWaitSeconds', bad)).toBe(false);
+    }
+  });
+});

@@ -75,6 +75,7 @@
     "./lib/stackDetection": "./dist/lib/stackDetection.js",
     "./lib/guardedDispatcher": "./dist/lib/guardedDispatcher.js",
     "./lib/mcpHeaders": "./dist/lib/mcpHeaders.js",
+    "./lib/qodoConnection": "./dist/lib/qodoConnection.js",
     "./lib/modelDiscovery": "./dist/lib/modelDiscovery.js",
     "./lib/modelPriceList": "./dist/lib/modelPriceList.js",
     "./lib/modelSuggestions": "./dist/lib/modelSuggestions.js",

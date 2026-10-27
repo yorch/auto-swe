@@ -105,10 +105,41 @@ describe('mcpCallTool', () => {
 
     await mcpCallTool({ connectionRef: 'c1', inputs: { q: 'x' }, tool: 'search_docs' });
 
-    expect(mockedLoad).toHaveBeenCalledWith('https://mcp.example.com/mcp', expect.anything(), {
-      callTimeoutMs: 5000,
-      listTimeoutMs: 2500,
+    expect(mockedLoad).toHaveBeenCalledWith(
+      { callTimeoutMs: 5000, listTimeoutMs: 2500, url: 'https://mcp.example.com/mcp' },
+      expect.anything()
+    );
+  });
+
+  it('hands loadMcpTools the whole target, so the connection allowlist travels with it', async () => {
+    const target = { allowedTools: ['rules-search'], url: 'https://mcp.example.com/mcp' };
+    mockedUrl.mockResolvedValue(target);
+    const execute = vi.fn().mockResolvedValue({ ok: 1 });
+    const close = vi.fn().mockResolvedValue(undefined);
+    mockedLoad.mockResolvedValue({ close, tools: { 'mcp_rules-search': { execute } } } as never);
+
+    await mcpCallTool({ connectionRef: 'c1', tool: 'rules-search' });
+
+    expect(mockedLoad.mock.calls[0]?.[0]).toBe(target);
+  });
+
+  it('refuses a tool outside the connection allowlist before connecting', async () => {
+    mockedUrl.mockResolvedValue({
+      allowedTools: ['rules-search'],
+      url: 'https://mcp.example.com/mcp',
     });
+
+    await expect(mcpCallTool({ connectionRef: 'c1', tool: 'rules-update' })).rejects.toThrow(
+      /not permitted by the connection's tool allowlist/
+    );
+    expect(mockedLoad).not.toHaveBeenCalled();
+  });
+
+  it('refuses every tool when the allowlist is empty', async () => {
+    mockedUrl.mockResolvedValue({ allowedTools: [], url: 'https://mcp.example.com/mcp' });
+    await expect(mcpCallTool({ connectionRef: 'c1', tool: 'rules-search' })).rejects.toThrow(
+      /allowlist/
+    );
   });
 
   it('throws when the connection is not an active mcp connection', async () => {

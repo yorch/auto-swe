@@ -119,6 +119,68 @@ describe('mcpConnectionRoutes', () => {
       );
     });
 
+    it('reports how many advertised tools match the qodo read list, and warns on none', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue({
+        config: { integration: 'qodo', url: 'https://sdk.qodo.ai/v1/tools/mcp/' },
+        id: ID,
+      });
+      vi.mocked(probeMcpServer).mockResolvedValueOnce({
+        advertisedToolNames: ['get-pr-review-findings', 'rules-get', 'litegit-approve', 'other'],
+        durationMs: 5,
+        ok: true,
+        toolCount: 4,
+      });
+      const matched = JSON.parse(
+        (await app.inject({ headers: AUTH, method: 'POST', url })).payload
+      ).data;
+      expect(matched.qodo).toEqual({ findingsToolAdvertised: true, matchedReadTools: 2 });
+      expect(matched).not.toHaveProperty('advertisedToolNames');
+
+      vi.mocked(probeMcpServer).mockResolvedValueOnce({
+        advertisedToolNames: ['qodo_rules_get'],
+        durationMs: 5,
+        ok: true,
+        toolCount: 1,
+      });
+      const none = JSON.parse(
+        (await app.inject({ headers: AUTH, method: 'POST', url })).payload
+      ).data;
+      expect(none.qodo).toMatchObject({ findingsToolAdvertised: false, matchedReadTools: 0 });
+      expect(none.qodo.warning).toContain('None of the advertised tools');
+    });
+
+    it('adds no qodo report to an unmarked connection', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue({
+        config: { url: 'https://mcp.example.com/mcp' },
+        id: ID,
+      });
+      const data = JSON.parse(
+        (await app.inject({ headers: AUTH, method: 'POST', url })).payload
+      ).data;
+      expect(data).not.toHaveProperty('qodo');
+    });
+
+    it('never returns the advertised tool names on an unmarked connection either', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue({
+        config: { url: 'https://mcp.example.com/mcp' },
+        id: ID,
+      });
+      vi.mocked(probeMcpServer).mockResolvedValueOnce({
+        advertisedToolNames: ['a', 'b'],
+        durationMs: 5,
+        ok: true,
+        toolCount: 2,
+      });
+      const data = JSON.parse(
+        (await app.inject({ headers: AUTH, method: 'POST', url })).payload
+      ).data;
+      expect(data).toMatchObject({ ok: true, toolCount: 2 });
+      expect(data).not.toHaveProperty('advertisedToolNames');
+    });
+
     it('does not probe an address the SSRF guard refuses', async () => {
       const { app, mockPrisma } = await buildApp();
       mockPrisma.connection.findFirst.mockResolvedValue({
@@ -332,6 +394,203 @@ describe('mcpConnectionRoutes', () => {
       })
     );
     await app.close();
+  });
+
+  describe('policy keys: integration, allowedTools, scanResults', () => {
+    const stored = {
+      config: {
+        allowedTools: ['rules-search'],
+        callTimeoutMs: 60_000,
+        integration: 'qodo',
+        scanResults: true,
+        url: 'https://sdk.qodo.ai/v1/tools/mcp/',
+      },
+      id: ID,
+      name: 'Qodo',
+      type: 'mcp',
+    };
+    const patch = async (body: Record<string, unknown>, role: 'ADMIN' | 'ENGINEER' = 'ADMIN') => {
+      const { app, mockPrisma } = await buildApp(role);
+      mockPrisma.connection.findFirst.mockResolvedValue(stored);
+      mockPrisma.connection.update.mockResolvedValue({ id: ID, name: 'x', type: 'mcp' });
+      const res = await app.inject({
+        body,
+        headers: AUTH,
+        method: 'PATCH',
+        url: `/api/v1/platform/mcp-connections/${ID}`,
+      });
+      const data = mockPrisma.connection.update.mock.calls[0]?.[0]?.data;
+      await app.close();
+      return { config: data?.config, res };
+    };
+
+    it('keeps them when an edit only renames the connection', async () => {
+      const { config, res } = await patch({
+        callTimeoutMs: 60_000,
+        name: 'Renamed',
+        url: 'https://sdk.qodo.ai/v1/tools/mcp/',
+      });
+      expect(res.statusCode).toBe(200);
+      expect(config).toEqual(stored.config);
+    });
+
+    it('keeps them when an edit clears a timeout', async () => {
+      const { config } = await patch({ name: 'Qodo', url: 'https://sdk.qodo.ai/v1/tools/mcp/' });
+      expect(config).toEqual({
+        allowedTools: ['rules-search'],
+        integration: 'qodo',
+        scanResults: true,
+        url: 'https://sdk.qodo.ai/v1/tools/mcp/',
+      });
+    });
+
+    it('preserves a config key the route does not know, on a rename and on a timeout clear', async () => {
+      const withFuture = { ...stored, config: { ...stored.config, futureKey: 'keep' } };
+      const run = async (body: Record<string, unknown>) => {
+        const { app, mockPrisma } = await buildApp();
+        mockPrisma.connection.findFirst.mockResolvedValue(withFuture);
+        mockPrisma.connection.update.mockResolvedValue({ id: ID, name: 'x', type: 'mcp' });
+        await app.inject({
+          body,
+          headers: AUTH,
+          method: 'PATCH',
+          url: `/api/v1/platform/mcp-connections/${ID}`,
+        });
+        const data = mockPrisma.connection.update.mock.calls[0]?.[0]?.data;
+        await app.close();
+        return data?.config;
+      };
+      const renamed = await run({
+        callTimeoutMs: 60_000,
+        name: 'Renamed',
+        url: 'https://sdk.qodo.ai/v1/tools/mcp/',
+      });
+      expect(renamed).toMatchObject({ futureKey: 'keep' });
+      const cleared = await run({ name: 'Qodo', url: 'https://sdk.qodo.ai/v1/tools/mcp/' });
+      expect(cleared).toMatchObject({ futureKey: 'keep' });
+      expect(cleared).not.toHaveProperty('callTimeoutMs');
+    });
+
+    it('replaces an allowlist that is sent, and removes one sent as null', async () => {
+      const base = { name: 'Qodo', url: 'https://sdk.qodo.ai/v1/tools/mcp/' };
+      expect((await patch({ ...base, allowedTools: ['rules-get'] })).config.allowedTools).toEqual([
+        'rules-get',
+      ]);
+      const cleared = (await patch({ ...base, allowedTools: null, integration: null })).config;
+      expect(cleared).not.toHaveProperty('allowedTools');
+      expect(cleared).not.toHaveProperty('integration');
+    });
+
+    it('rejects an unknown integration, a malformed list and a non-admin', async () => {
+      const base = { name: 'Qodo', url: 'https://sdk.qodo.ai/v1/tools/mcp/' };
+      expect((await patch({ ...base, integration: 'other' })).res.statusCode).toBe(400);
+      expect((await patch({ ...base, allowedTools: 'rules-get' })).res.statusCode).toBe(400);
+      expect((await patch({ ...base, allowedTools: [''] })).res.statusCode).toBe(400);
+      expect((await patch({ ...base, allowedTools: Array(201).fill('a') })).res.statusCode).toBe(
+        400
+      );
+      expect((await patch(base, 'ENGINEER')).res.statusCode).toBe(403);
+    });
+
+    it('refuses write tools on a qodo connection at create, naming them', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, isActive: true });
+      const res = await app.inject({
+        body: {
+          allowedTools: ['rules-search', 'litegit-approve', 'rules-update'],
+          integration: 'qodo',
+          name: 'Qodo',
+          teamId: TEAM,
+          url: 'https://sdk.qodo.ai/v1/tools/mcp/',
+        },
+        headers: AUTH,
+        method: 'POST',
+        url: '/api/v1/platform/mcp-connections',
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toContain('litegit-approve');
+      expect(res.body).toContain('rules-update');
+      expect(res.body).not.toContain('rules-search');
+      expect(mockPrisma.connection.create).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it('allows write-named tools on an unmarked connection', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, isActive: true });
+      mockPrisma.connection.create.mockResolvedValue({ id: ID, name: 'x', type: 'mcp' });
+      const res = await app.inject({
+        body: {
+          allowedTools: ['litegit-approve'],
+          name: 'Other',
+          teamId: TEAM,
+          url: 'https://mcp.example.com/mcp',
+        },
+        headers: AUTH,
+        method: 'POST',
+        url: '/api/v1/platform/mcp-connections',
+      });
+      expect(res.statusCode).toBe(201);
+      await app.close();
+    });
+
+    it('refuses write tools on a qodo connection at PATCH, in the submitted or stored list', async () => {
+      const base = { name: 'Qodo', url: 'https://sdk.qodo.ai/v1/tools/mcp/' };
+      const submitted = await patch({ ...base, allowedTools: ['pr-review-dismiss'] });
+      expect(submitted.res.statusCode).toBe(400);
+      expect(submitted.res.body).toContain('pr-review-dismiss');
+
+      // Setting the marker on a connection whose stored list already has a write tool.
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.connection.findFirst.mockResolvedValue({
+        config: {
+          allowedTools: ['litegit-post-comment'],
+          url: 'https://sdk.qodo.ai/v1/tools/mcp/',
+        },
+        id: ID,
+        name: 'Qodo',
+        type: 'mcp',
+      });
+      const res = await app.inject({
+        body: { ...base, integration: 'qodo' },
+        headers: AUTH,
+        method: 'PATCH',
+        url: `/api/v1/platform/mcp-connections/${ID}`,
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toContain('litegit-post-comment');
+      expect(mockPrisma.connection.update).not.toHaveBeenCalled();
+      await app.close();
+    });
+
+    it('persists them on create and audits them without any secret', async () => {
+      const { app, mockPrisma } = await buildApp();
+      mockPrisma.team.findUnique.mockResolvedValue({ id: TEAM, isActive: true });
+      mockPrisma.connection.create.mockResolvedValue({ id: ID, name: 'Qodo', type: 'mcp' });
+      const res = await app.inject({
+        body: {
+          allowedTools: ['rules-search'],
+          bearerToken: 'qodo-secret-token',
+          integration: 'qodo',
+          name: 'Qodo',
+          teamId: TEAM,
+          url: 'https://sdk.qodo.ai/v1/tools/mcp/',
+        },
+        headers: AUTH,
+        method: 'POST',
+        url: '/api/v1/platform/mcp-connections',
+      });
+      expect(res.statusCode).toBe(201);
+      expect(mockPrisma.connection.create.mock.calls[0]?.[0]?.data.config).toEqual({
+        allowedTools: ['rules-search'],
+        integration: 'qodo',
+        url: 'https://sdk.qodo.ai/v1/tools/mcp/',
+      });
+      expect(JSON.stringify(mockPrisma.configAuditLog.create.mock.calls)).not.toContain(
+        'qodo-secret-token'
+      );
+      await app.close();
+    });
   });
 
   it('404s updating an unknown mcp connection', async () => {
