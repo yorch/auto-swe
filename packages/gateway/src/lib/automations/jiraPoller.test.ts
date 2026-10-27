@@ -215,6 +215,21 @@ describe('wrapJqlInProjects: a trailing ORDER BY', () => {
     );
   });
 
+  it('is dropped when it names a quoted field, or follows a closing parenthesis directly', () => {
+    expect(wrapJqlInProjects('status = Open ORDER BY "Story Points" DESC', ['PAY'])).toBe(
+      'project in ("PAY") AND (status = Open)'
+    );
+    expect(wrapJqlInProjects("status = Open ORDER BY 'Story Points', created", ['PAY'])).toBe(
+      'project in ("PAY") AND (status = Open)'
+    );
+    expect(wrapJqlInProjects('(a = 1)order by x', ['PAY'])).toBe(
+      'project in ("PAY") AND ((a = 1))'
+    );
+    expect(wrapJqlInProjects('status = Open ORDER BY cf[10001] DESC', ['PAY'])).toBe(
+      'project in ("PAY") AND (status = Open)'
+    );
+  });
+
   it('leaves the words inside a quoted string alone', () => {
     expect(wrapJqlInProjects('summary ~ "sort order by name"', ['PAY'])).toBe(
       'project in ("PAY") AND (summary ~ "sort order by name")'

@@ -68,7 +68,7 @@ const KILL_SWITCH = 'workflow.jiraPollAutomationsEnabled';
 const ALLOWLIST = 'workflow.jiraPollProjectKeys';
 
 /** A trailing `ORDER BY …`, which Jira refuses inside parentheses and a poll has no use for. */
-const TRAILING_ORDER_BY = /(?:^|\s)order\s+by\s+[^()"']+$/i;
+const TRAILING_ORDER_BY = /(?<=^|[\s)])order\s+by\s+(?:[^()"']|"[^"]*"|'[^']*')+$/i;
 
 /**
  * The JQL narrowed to the allowed projects. With balanced parentheses (`hasBalancedParentheses`)
