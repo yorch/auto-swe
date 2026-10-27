@@ -20,7 +20,10 @@ import {
  *  - a step that exhausts the budget aborts the loop, and the `BUDGET_EXCEEDED`
  *    failure is surfaced by the caller after `generate` settles — an aborted
  *    generate may resolve with `finishReason: 'aborted'` rather than throw, so
- *    the reason cannot ride on the abort itself.
+ *    the reason cannot ride on the abort itself;
+ *  - Mastra does not wait for this hook before the next model call, so a step
+ *    can finish after the stop: it is still debited, without a second check.
+ *    "The first failure wins" relies on Mastra running the hooks one at a time.
  */
 export interface StepAccounting {
   /** Merged signal: activity cancellation + caller deadline + budget stop. */
@@ -71,9 +74,9 @@ export function createStepAccounting(
       if (step.text) {
         lastText = step.text;
       }
-      if (budgetError) {
-        return;
-      }
+      // A step that finishes after the stop was paid for: it is debited, but there is
+      // no next call to guard and the first failure is the one reported.
+      const stopped = budgetError !== undefined;
       try {
         // Mastra also reports a failed step, with zero usage: nothing to debit.
         if (step.usage && (step.usage.inputTokens || step.usage.outputTokens)) {
@@ -95,10 +98,14 @@ export function createStepAccounting(
           totals.pricingKnown = (totals.pricingKnown ?? true) && a.pricingKnown !== false;
         }
         // The next step must have something left to spend.
-        await assertBudgetAvailable(`agent.${agentKey}`);
+        if (!stopped) {
+          await assertBudgetAvailable(`agent.${agentKey}`);
+        }
       } catch (e) {
-        budgetError = e;
-        budgetStop.abort(e);
+        if (!stopped) {
+          budgetError = e;
+          budgetStop.abort(e);
+        }
       }
     },
     signal,
