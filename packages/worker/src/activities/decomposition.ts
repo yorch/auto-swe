@@ -18,7 +18,7 @@ import type {
 } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { planDecomposition as decomposerPlan } from '../agents/decomposer.js';
-import { runImplementerTurn } from '../agents/implementerRuntime.js';
+import { runImplementerTurn, wasTurnTraced } from '../agents/implementerRuntime.js';
 import {
   buildImplementerTurnRunner,
   type ImplementerTurnRunner,
@@ -557,8 +557,9 @@ async function mergeOneWithResolver(
         user: userMessage,
       });
     } catch (err) {
-      // No row when the model was never called (payload read or budget gate).
-      if (calledModel) {
+      // No row when the model was never called (payload read or budget gate), or when the
+      // turn already traced its own failure with the usage it spent.
+      if (calledModel && !wasTurnTraced(err)) {
         opts.tracer.addLlmResponse({
           ...failedCallAttribution(err, turns.boundModelSpec),
           agent: turns.agent,

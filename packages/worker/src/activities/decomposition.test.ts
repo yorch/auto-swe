@@ -1,3 +1,4 @@
+import { ApplicationFailure } from '@temporalio/activity';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // Which loop drives the implementer is a run-pinned setting; these tests are about
@@ -607,6 +608,53 @@ describe('resolveMergeConflict', () => {
       })
     );
     expect(closeMcpMock).toHaveBeenCalled();
+  });
+
+  const budgetFailure = () =>
+    ApplicationFailure.nonRetryable('Budget exceeded for tier STANDARD', 'BUDGET_EXCEEDED', {
+      attribution: {
+        costUsd: 0.01,
+        inputTokens: 10,
+        modelSpec: 'anthropic/claude-x',
+        outputTokens: 5,
+      },
+    });
+
+  const resolveAndExpectRejection = async (message: string) => {
+    const addLlmResponse = vi.spyOn(AgentTracer.prototype, 'addLlmResponse');
+    await expect(
+      resolveMergeConflict({
+        request: baseRequest,
+        sourceBranches: ['auto/TICK-1/db'],
+        targetBranch: 'auto/TICK-1',
+      })
+    ).rejects.toThrow(message);
+    return addLlmResponse;
+  };
+
+  it('traces a budget stop on the resolver turn exactly once', async () => {
+    primeRepo();
+    installFakeGit(conflictingGit());
+    generateMock.mockResolvedValue({ text: 'x', usage: { inputTokens: 10, outputTokens: 5 } });
+    recordLlmUsageMock.mockRejectedValueOnce(budgetFailure());
+
+    const addLlmResponse = await resolveAndExpectRejection('Budget exceeded');
+
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ costUsd: 0.01, inputTokens: 10, outputTokens: 5 })
+    );
+  });
+
+  it('traces a non-budget failure after a call exactly once', async () => {
+    primeRepo();
+    installFakeGit(conflictingGit());
+    generateMock.mockResolvedValue({ text: 'x', usage: { inputTokens: 10, outputTokens: 5 } });
+    recordLlmUsageMock.mockRejectedValueOnce(new Error('ledger down'));
+
+    const addLlmResponse = await resolveAndExpectRejection('ledger down');
+
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
   });
 
   it('refuses an unpriced resolver model before the call, as the mergeConflictResolver role', async () => {

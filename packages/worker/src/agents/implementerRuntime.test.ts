@@ -9,11 +9,13 @@ const { abortSignalOption, assertBudgetAvailable, recordLlmUsage, recordSuspicio
   }));
 
 vi.mock('../lib/activityContext.js', () => ({ currentWorkflowId: vi.fn(() => 'wf-1') }));
-vi.mock('../lib/activityLog.js', () => ({ logWarn: vi.fn() }));
+const { logWarn } = vi.hoisted(() => ({ logWarn: vi.fn() }));
+vi.mock('../lib/activityLog.js', () => ({ logWarn }));
 vi.mock('../lib/cancellation.js', () => ({ abortSignalOption }));
 vi.mock('../lib/costTracking.js', () => ({ assertBudgetAvailable, recordLlmUsage }));
 vi.mock('../lib/llmOutputScan.js', () => ({ recordSuspiciousLlmOutput }));
 
+import { ApplicationFailure } from '@temporalio/activity';
 import type { AgentTracer } from '../lib/agentTracer.js';
 import {
   type ImplementerRuntime,
@@ -21,6 +23,7 @@ import {
   perCallAccounting,
   runImplementerTurn,
   spentUsageOf,
+  wasTurnTraced,
   withSpentUsage,
 } from './implementerRuntime.js';
 
@@ -249,8 +252,19 @@ describe('runImplementerTurn', () => {
       'llm.implementer.iteration_0',
       'anthropic/claude-opus-5-5'
     );
-    // The failure row stays the caller's.
-    expect(addLlmResponse).not.toHaveBeenCalled();
+    // The aborted turn's one row carries what it spent and the error.
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: { id: 'agent-row-1', version: 4 },
+        costUsd: 0.5,
+        error: 'Error: Claude Code ended with error_during_execution',
+        inputTokens: 10,
+        model: 'anthropic/claude-opus-5-5',
+        outputTokens: 4,
+        role: 'implementer',
+      })
+    );
   });
 
   it('rethrows the runtime’s error even when accruing its usage fails', async () => {
@@ -378,7 +392,146 @@ describe('perCallAccounting', () => {
       },
     };
     await expect(runImplementerTurn(turn(runtime))).rejects.toBe(budget);
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+  });
+
+  it('records one row with the summed per-call usage when the turn aborts after N calls', async () => {
+    const budget = new Error('BUDGET_EXCEEDED: run is over its tier');
+    assertBudgetAvailable
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(budget);
+    const runtime: ImplementerRuntime = {
+      runTurn: async ({ onCallSpent }) => {
+        for (let i = 0; i < 3; i++) {
+          await onCallSpent?.([
+            { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 1, outputTokens: 1 } },
+          ]);
+        }
+        return { toolCallCount: 0 };
+      },
+    };
+
+    await expect(runImplementerTurn(turn(runtime, { iteration: 1 }))).rejects.toBe(budget);
+
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        costUsd: 1.5,
+        error: 'Error: BUDGET_EXCEEDED: run is over its tier',
+        inputJson: { iteration: 1, systemPrompt: 'SYS', userMessage: 'USER' },
+        inputTokens: 30,
+        model: 'anthropic/claude-opus-5-5',
+        outputTokens: 12,
+      })
+    );
+  });
+
+  it('adds the debited calls and the remainder an error carries into one row', async () => {
+    const failure = new Error('cancelled');
+    const runtime: ImplementerRuntime = {
+      runTurn: async ({ onCallSpent }) => {
+        await onCallSpent?.([
+          { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 1, outputTokens: 1 } },
+        ]);
+        throw withSpentUsage(failure, [
+          { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 1, outputTokens: 1 } },
+        ]);
+      },
+    };
+
+    await expect(runImplementerTurn(turn(runtime))).rejects.toBe(failure);
+
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ costUsd: 1, inputTokens: 20, outputTokens: 8 })
+    );
+  });
+
+  it('trims the error text and keeps the stack out of it', async () => {
+    const failure = new TypeError('x'.repeat(5000));
+    const runtime: ImplementerRuntime = {
+      runTurn: async ({ onCallSpent }) => {
+        await onCallSpent?.([
+          { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 1, outputTokens: 1 } },
+        ]);
+        throw failure;
+      },
+    };
+
+    await expect(runImplementerTurn(turn(runtime))).rejects.toBe(failure);
+
+    const { error } = addLlmResponse.mock.calls[0][0] as { error: string };
+    expect(error).toHaveLength(1000);
+    expect(error.startsWith('TypeError: xxx')).toBe(true);
+  });
+
+  it('records nothing for an abort before any model call returned', async () => {
+    const failure = new Error('aborted early');
+    const runtime: ImplementerRuntime = {
+      runTurn: async () => {
+        throw failure;
+      },
+    };
+    await expect(runImplementerTurn(turn(runtime))).rejects.toBe(failure);
     expect(addLlmResponse).not.toHaveBeenCalled();
+  });
+
+  it('rethrows the original error when the tracer throws while recording the abort', async () => {
+    addLlmResponse.mockImplementationOnce(() => {
+      throw new Error('tracer broke');
+    });
+    const failure = new Error('provider 500');
+    const runtime: ImplementerRuntime = {
+      runTurn: async ({ onCallSpent }) => {
+        await onCallSpent?.([
+          { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 1, outputTokens: 1 } },
+        ]);
+        throw failure;
+      },
+    };
+    await expect(runImplementerTurn(turn(runtime))).rejects.toBe(failure);
+  });
+
+  it('still records the debited usage when accruing the error remainder fails', async () => {
+    const failure = withSpentUsage(new Error('harness failed'), [
+      { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 1, outputTokens: 1 } },
+    ]);
+    const runtime: ImplementerRuntime = {
+      runTurn: async ({ onCallSpent }) => {
+        await onCallSpent?.([
+          { modelSpec: 'anthropic/claude-opus-5-5', usage: { inputTokens: 1, outputTokens: 1 } },
+        ]);
+        throw failure;
+      },
+    };
+    recordLlmUsage.mockResolvedValueOnce({
+      costUsd: 0.5,
+      inputTokens: 10,
+      modelSpec: 'anthropic/claude-opus-5-5',
+      outputTokens: 4,
+    });
+    recordLlmUsage.mockRejectedValueOnce(new Error('ledger down'));
+
+    await expect(runImplementerTurn(turn(runtime))).rejects.toBe(failure);
+
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ costUsd: 0.5, inputTokens: 10 })
+    );
+  });
+
+  it('records exactly one row on the success path', async () => {
+    const runtime: ImplementerRuntime = {
+      runTurn: async () => ({
+        text: 'ok',
+        toolCallCount: 0,
+        usage: { inputTokens: 1, outputTokens: 1 },
+      }),
+    };
+    await runImplementerTurn(turn(runtime));
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse.mock.calls[0][0]).not.toHaveProperty('error');
   });
 });
 
@@ -434,5 +587,162 @@ describe('mastraRuntime', () => {
 
     expect(generate.mock.calls[0]?.[1]).toMatchObject({ abortSignal: signal });
     expect(outcome.toolCallCount).toBe(0);
+  });
+});
+
+describe('a Mastra turn whose end-of-turn debit trips the budget', () => {
+  // The Mastra loop reports a turn's usage when it ends, so this is where its budget stop
+  // lands: the ledger is debited, then the debit throws BUDGET_EXCEEDED carrying that call.
+  const attribution = {
+    costUsd: 2.26,
+    inputTokens: 900_000,
+    modelSpec: 'anthropic/claude-opus-5-5',
+    outputTokens: 40_000,
+  };
+  const budget = () =>
+    ApplicationFailure.nonRetryable('Budget exceeded for tier STANDARD', 'BUDGET_EXCEEDED', {
+      attribution,
+    });
+  const agent = (usage: { inputTokens: number; outputTokens: number }) => ({
+    generate: vi.fn(async () => ({
+      steps: Array.from({ length: 50 }, () => ({ toolCalls: [{}] })),
+      text: '',
+      usage,
+    })),
+  });
+
+  it('records one row with the usage the failing debit carried, and rethrows the error', async () => {
+    const failure = budget();
+    recordLlmUsage.mockRejectedValue(failure);
+    const runtime = mastraRuntime(
+      agent({ inputTokens: 900_000, outputTokens: 40_000 }) as unknown as Parameters<
+        typeof mastraRuntime
+      >[0],
+      50
+    );
+
+    await expect(runImplementerTurn(turn(runtime, { iteration: 3 }))).rejects.toBe(failure);
+
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agent: { id: 'agent-row-1', version: 4 },
+        costUsd: 2.26,
+        error: expect.stringContaining('Budget exceeded for tier STANDARD'),
+        inputJson: { iteration: 3, systemPrompt: 'SYS', userMessage: 'USER' },
+        inputTokens: 900_000,
+        model: 'anthropic/claude-opus-5-5',
+        outputTokens: 40_000,
+        role: 'implementer',
+      })
+    );
+  });
+
+  it('keeps the models already debited when a later model trips the budget', async () => {
+    const failure = budget();
+    recordLlmUsage.mockResolvedValueOnce({
+      costUsd: 0.5,
+      inputTokens: 10,
+      modelSpec: 'anthropic/claude-haiku-4-5-20251001',
+      outputTokens: 4,
+    });
+    recordLlmUsage.mockRejectedValueOnce(failure);
+    const runtime: ImplementerRuntime = {
+      runTurn: async () => ({
+        toolCallCount: 0,
+        usageByModel: [
+          {
+            modelSpec: 'anthropic/claude-haiku-4-5-20251001',
+            usage: { inputTokens: 10, outputTokens: 4 },
+          },
+          {
+            modelSpec: 'anthropic/claude-opus-5-5',
+            usage: { inputTokens: 900_000, outputTokens: 40_000 },
+          },
+        ],
+      }),
+    };
+
+    await expect(runImplementerTurn(turn(runtime))).rejects.toBe(failure);
+
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse).toHaveBeenCalledWith(
+      expect.objectContaining({ costUsd: 2.76, inputTokens: 900_010, outputTokens: 40_004 })
+    );
+  });
+
+  it('records one row, with no error, when the turn completes', async () => {
+    const runtime = mastraRuntime(
+      agent({ inputTokens: 10, outputTokens: 4 }) as unknown as Parameters<typeof mastraRuntime>[0],
+      50
+    );
+    await runImplementerTurn(turn(runtime));
+    expect(addLlmResponse).toHaveBeenCalledTimes(1);
+    expect(addLlmResponse.mock.calls[0][0]).not.toHaveProperty('error');
+  });
+
+  it('records nothing when generate throws before any usage is reported', async () => {
+    const failure = new Error('provider 529');
+    const runtime = mastraRuntime(
+      { generate: vi.fn(async () => Promise.reject(failure)) } as unknown as Parameters<
+        typeof mastraRuntime
+      >[0],
+      50
+    );
+    await expect(runImplementerTurn(turn(runtime))).rejects.toBe(failure);
+    expect(recordLlmUsage).not.toHaveBeenCalled();
+    expect(addLlmResponse).not.toHaveBeenCalled();
+  });
+});
+
+describe('wasTurnTraced and the failed-turn warning', () => {
+  const budget = () =>
+    ApplicationFailure.nonRetryable('over', 'BUDGET_EXCEEDED', {
+      attribution: { costUsd: 1, inputTokens: 1, modelSpec: 'anthropic/m', outputTokens: 1 },
+    });
+
+  it('marks the error it traced, and no other', async () => {
+    const failure = budget();
+    recordLlmUsage.mockRejectedValue(failure);
+    const runtime: ImplementerRuntime = {
+      runTurn: async () => ({
+        toolCallCount: 0,
+        usage: { inputTokens: 1, outputTokens: 1 },
+      }),
+    };
+    await expect(runImplementerTurn(turn(runtime))).rejects.toBe(failure);
+    expect(wasTurnTraced(failure)).toBe(true);
+    expect(wasTurnTraced(budget())).toBe(false);
+    expect(wasTurnTraced('boom')).toBe(false);
+    expect(wasTurnTraced(undefined)).toBe(false);
+  });
+
+  it('does not mark an error when nothing was recorded for it', async () => {
+    const failure = new Error('early');
+    const runtime: ImplementerRuntime = {
+      runTurn: async () => {
+        throw failure;
+      },
+    };
+    await expect(runImplementerTurn(turn(runtime))).rejects.toBe(failure);
+    expect(wasTurnTraced(failure)).toBe(false);
+  });
+
+  it('does not warn when charging the remainder trips the budget again, but does for anything else', async () => {
+    const owed = [{ modelSpec: 'anthropic/m', usage: { inputTokens: 1, outputTokens: 1 } }];
+    const run = async (secondary: Error) => {
+      recordLlmUsage.mockRejectedValueOnce(secondary);
+      const failure = withSpentUsage(budget(), owed);
+      const runtime: ImplementerRuntime = {
+        runTurn: async () => {
+          throw failure;
+        },
+      };
+      await expect(runImplementerTurn(turn(runtime))).rejects.toBe(failure);
+    };
+    await run(budget());
+    expect(logWarn).not.toHaveBeenCalled();
+    await run(new Error('ledger down'));
+    expect(logWarn).toHaveBeenCalledTimes(1);
   });
 });

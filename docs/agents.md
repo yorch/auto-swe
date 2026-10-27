@@ -1409,6 +1409,8 @@ An attempt can persist more than one tracer — its own and `runAgent`'s — and
 
 **`runAgent`** records a `tool_call` row for every tool call Mastra made inside its loop, then the call's `llm_response` row. Each tool it binds is wrapped so its `execute` records the row as the call happens — real duration, input, output or the thrown error's message — which also keeps the rows of calls made before a `generate` that then throws. A call that never reached `execute` (invalid input, an unknown tool) is read afterwards from the steps of the `generate` result, matched by call id so a wrapped call is not recorded twice; Mastra keeps only successful results in a step's `toolResults`, so such a call's error comes from the tool message the loop fed back to the model, and a call with no outcome anywhere is recorded as failed, never as a success with no output. A caller whose tools record themselves passes its own tracer as `RunAgentOptions.tracer` and names those tools in `RunAgentOptions.selfRecordingTools` — `runAgentNode` (MCP tools) and `runAgentTask` (workspace and MCP tools) do. `runAgent` then records into that tracer, leaves the named tools unwrapped and unread, and leaves persisting to the caller, so every row shares one sequence and persists once. Every row lands in call order as the calls happen; only the rows read from the steps are appended after the loop returns, just before the `llm_response`. A tool is named by identity, not key, so a self-recording tool displaced on a key collision does not take the winning tool's rows with it.
 
+**`runImplementerTurn`** (the turn runner behind the TDD loop, the fix sessions, the eval harness, the merge-conflict resolver and the agent-run and agent-node steps, on the Mastra loop and on the harnesses alike) records the turn's `llm_response` row when the turn completes. A turn that fails after it spent also records one `llm_response` row, carrying the usage consumed and the error (`Name: message`, trimmed to 1000 characters). That covers a harness turn aborted between model calls (a budget stop, a cancellation, a timeout, a provider error) and a Mastra turn whose end-of-turn debit trips `BUDGET_EXCEEDED`: the debit has already reached the ledger, and the failure carries that call's attribution. The row's tokens and cost are the one running total the turn debits into (per-call debits, the runtime's end-of-turn report, and any remainder its failure carries), priced like a complete turn, so it follows the run's ledger. A caller that adds a row of its own for a failed turn (the merge-conflict resolver) skips it when `wasTurnTraced(err)` says the turn already wrote one, so a budget stop is traced once. A turn that failed before anything was debited records nothing. Recording is best-effort: the original error propagates unchanged whether or not the row could be written.
+
 **`inputJson` convention for `addLlmResponse`:** always pass `{ systemPrompt, userMessage }` so the `/runs/[id]` viewer can show exactly what was sent to the model. Declare prompt variables as `let` before the `try` block (not `const` inside it) so the error `catch` path can reference them too — otherwise failed LLM calls produce traces with no request context.
 
 ### 8.2 Trace Record Shape
@@ -1689,6 +1691,16 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   "requirements, not instructions" framing lower the risk of text in a ticket steering an agent;
   they do not remove it, and the digest is model output derived from that text. The injection
   scanners cover skill text, the implementer's output, diffs and file writes, not this block.
+- **An aborted turn's row can trail the ledger.** The row is built from what each debit returned or,
+  for a budget stop, from the attribution the failure carries. A debit that throws after the ledger
+  write for another reason (the tier limits failing to resolve, say) leaves the ledger ahead of the
+  row, and a thrown value that is not an object cannot be marked as traced.
+- **A Mastra implementer turn that throws before it returns has no usage to trace.** The Mastra loop
+  reports a turn's usage when `generate` returns and is debited then, not step by step, so a turn
+  that fails mid-loop (a provider error, a cancellation) spent tokens that reach neither the run's
+  ledger nor an `llm_response` row. Its budget stop is only seen at the end of the turn, after every
+  step ran. The harness runtimes debit each call as it completes, so their aborted turns keep the
+  usage seen so far; a call still in flight when a turn aborts is not counted.
 - **The gatherer is one `planner`-model call per run**, with no cache across runs.
 - **The Claude Code harness's container-side checks are tripwires, not a boundary.** The binary's
   hash is taken with the container's own `sha256sum`, so code that controls the container (its
