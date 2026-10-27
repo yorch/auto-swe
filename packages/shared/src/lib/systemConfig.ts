@@ -921,6 +921,14 @@ const isHttpUrl = (raw: string) => {
   }
 };
 
+/// Whether a pod can resolve the URL's host: not the Docker host alias, and not
+/// the worker's own hostname, which only the worker pod knows.
+function podResolvableUrl(raw: string): boolean {
+  return (
+    !raw.includes(HOSTNAME_PLACEHOLDER) && new URL(raw).hostname.toLowerCase() !== DOCKER_HOST_ALIAS
+  );
+}
+
 /// Lenient, like the rest of this section: an unusable value turns the proxy
 /// off rather than throwing; `assertWorkspaceInfraEnv()` fails the boot on it.
 /// Lenient, like `resolveHarnessModelProxy`: an unusable value turns the
@@ -1215,6 +1223,29 @@ export function validateWorkspaceInfraEnv(): string[] {
     (raw) => raw.split(',').every((name) => K8S_NAME_RE.test(name.trim())),
     'a comma-separated list of Secret names'
   );
+  // Without the proxy the provider key is handed to the workspace pod itself.
+  // Outside Kubernetes the proxy is optional, and only the shipped compose files
+  // turn it on. On Kubernetes it is required, and so is a URL pods can resolve:
+  // the default is the Docker host alias, and `{hostname}` is the worker pod's
+  // own name, which other pods cannot resolve. A port or URL that is set but
+  // unusable is already reported above, so only an absent or unresolvable one
+  // is added here.
+  if (process.env.WORKSPACE_BACKEND === 'kubernetes') {
+    const port = process.env.HARNESS_MODEL_PROXY_PORT;
+    const url = process.env.HARNESS_MODEL_PROXY_URL;
+    if (!port) {
+      problems.push(
+        'WORKSPACE_BACKEND=kubernetes requires the model proxy: set HARNESS_MODEL_PROXY_PORT and ' +
+          'HARNESS_MODEL_PROXY_URL (a Service name workspace pods can resolve), or the provider API key ' +
+          'would be placed inside the workspace pod'
+      );
+    } else if (isPort(port) && (!url || (isHttpUrl(url) && !podResolvableUrl(url)))) {
+      problems.push(
+        'WORKSPACE_BACKEND=kubernetes requires HARNESS_MODEL_PROXY_URL to be a Service name ' +
+          `workspace pods can resolve; unset, ${DOCKER_HOST_ALIAS} and ${HOSTNAME_PLACEHOLDER} do not`
+      );
+    }
+  }
   if (process.env.WORKSPACE_BLOCK_METADATA !== 'false') {
     for (const entry of (process.env.WORKSPACE_DNS ?? '').split(',').map((e) => e.trim())) {
       if (METADATA_BLOCKED_ADDRESSES.includes(entry.toLowerCase())) {
