@@ -12,6 +12,11 @@ export interface McpConnectionRow {
     listTimeoutMs?: number;
     callTimeoutMs?: number;
     allowPrivateNetwork?: boolean;
+    /** Marks the team's Qodo connection: only Qodo's read tools bind and results are screened. */
+    integration?: 'qodo';
+    /** A stored custom tool list. Set through the API; the page only reports its size. */
+    allowedTools?: string[];
+    scanResults?: boolean;
   } | null;
   teamId: string;
   team?: { id: string; name: string; slug: string } | null;
@@ -32,6 +37,8 @@ export interface McpTestResult {
   toolCount?: number;
   toolNames?: string[];
   durationMs: number;
+  /** Present only for a connection marked as Qodo's. */
+  qodo?: { findingsToolAdvertised: boolean; matchedReadTools: number; warning?: string };
 }
 
 /** A custom header to send. On an edit, omitting `value` keeps the stored value of that name. */
@@ -43,6 +50,10 @@ export interface McpHeaderInput {
 export interface CreateMcpConnectionBody {
   /** Waives the private-network refusal for this server (never loopback or metadata addresses). */
   allowPrivateNetwork?: boolean;
+  /** Marks the connection as the team's Qodo connection. */
+  integration?: 'qodo';
+  /** Screens every tool result as untrusted text. A marked connection is always screened. */
+  scanResults?: boolean;
   /** Custom request headers; values are write-only. */
   headers?: { name: string; value: string }[];
   /** Optional bearer token the server requires. Write-only. */
@@ -83,6 +94,10 @@ export function useCreateMcpConnection() {
 
 export interface UpdateMcpConnectionBody {
   allowPrivateNetwork?: boolean;
+  /** `'qodo'` sets the marker, `null` removes it; omit to keep it. */
+  integration?: 'qodo' | null;
+  /** `true` turns screening on, `null` removes it; omit to keep it. */
+  scanResults?: boolean | null;
   /** The complete header set after the edit; omit to keep every stored header. */
   headers?: McpHeaderInput[];
   /** Replaces the stored token. Omit to keep it. */
