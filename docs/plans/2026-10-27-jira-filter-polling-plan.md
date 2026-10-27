@@ -8,7 +8,7 @@ Every commit passes the full gate list in `CLAUDE.md` §5 Quality Gates. In this
 
 ## Progress
 
-- [ ] Task 1: Add `searchIssues` to the Jira provider
+- [x] Task 1: Add `searchIssues` to the Jira provider — `28b8b543`
 - [ ] Task 2: Add the `jira.filter.new_issue` source and its settings
 - [ ] Task 3: Add the migration and poll-state models
 - [ ] Task 4: Poll a filter and record the baseline
