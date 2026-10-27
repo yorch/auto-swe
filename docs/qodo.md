@@ -14,7 +14,8 @@ A team's Qodo connection is an `mcp` Connection with these properties:
 - **Credential** — the Qodo API key, sent as a bearer token.
 - **Marker** — `config.integration: 'qodo'`. The marker is what makes it the team's Qodo connection,
   and it implies result screening and the read-only allowlist below.
-- **Allowlist** — `config.allowedTools`, set through the API. A marked connection with no stored list
+- **Allowlist** — `config.allowedTools`, set through the API only; the `/mcp` page shows the size of
+  a stored list and offers no way to edit it. A marked connection with no stored list
   gets the read-only list, so it cannot bind unfiltered. A stored list on a marked connection can
   only narrow it: the gateway answers `400 QODO_WRITE_TOOLS`, naming the tools, when a create or an
   edit leaves a name outside the read list in the marked connection's list (including an edit that
@@ -27,13 +28,25 @@ audited admin decision that removes the Qodo guard with it: the connection is th
 `mcp` connection, its stored list is read as written and its results are screened only if
 `scanResults` is set.
 
+The `/mcp` page sets the marker and screening with two checkboxes in the create and edit forms,
+"Qodo integration" and "Screen tool results". Ticking Qodo checks the screening box and locks it,
+because a marked connection is always screened. The edit form sends a policy field only when it
+differs from the stored value, so saving without touching the boxes changes neither; clearing the
+Qodo box on a marked connection sends `integration: null`, keeps the screening box ticked so that
+results stay screened until the admin clears it too, and shows a warning that the read-only guard
+goes with the marker. A marked connection carries a "Qodo" badge in the list, and a stored custom tool list
+appears as a read-only count. A `400 QODO_WRITE_TOOLS` answer shows its message in the form's alert.
+
 The connection test (`POST /api/v1/platform/mcp-connections/:id/test`, which lists tools and calls
-none) also reports, for a marked connection, a `qodo` object with `matchedReadTools` (how many advertised
-tools are on the read list), `findingsToolAdvertised` (whether `get-pr-review-findings` is
-advertised) and a `warning` when none match. Run it after creating the connection: the read list uses the
-Qodo CLI catalog's names, and a server that advertises them differently would bind nothing. `resolveQodoConnection({ teamId })` returns the
-oldest active Qodo connection the repository's team owns, or nothing; no template, agent or run
-input names a connection, and another team's connection is never returned.
+none) also reports, for a marked connection, a `qodo` object with `matchedReadTools` (how many
+advertised tools are on the read list), `findingsToolAdvertised` (whether `get-pr-review-findings`
+is advertised) and a `warning` when none match. The `/mcp` page shows these three under the test
+result and shows nothing Qodo-specific for an unmarked connection.
+
+Run the test after creating the connection: the read list uses the Qodo CLI catalog's names, and a
+server that advertises them differently would bind nothing. `resolveQodoConnection({ teamId })`
+returns the oldest active Qodo connection the repository's team owns, or nothing. No template,
+agent or run input names a connection, and another team's connection is never returned.
 
 ## 2. Read-only guarantee
 
@@ -127,6 +140,7 @@ request's current head commit. The settings are:
 | `qodo.enabled` | off | Gates every read of Qodo |
 | `qodo.prFeedbackBotAccountIds` | empty | Numeric account ids of Qodo's bot on this GitHub host; empty keeps the trigger inert |
 | `qodo.prFeedbackMinActionLevel` | `remediation_recommended` | Lowest finding level addressed |
+| `qodo.prFeedbackIncludeOnCommand` | off | Whether an `/auto-swe fix` round also reads Qodo once and addresses its open findings |
 | `qodo.prFeedbackMaxRounds` | 2 | Pushed rounds Qodo alone may cause on one pull request |
 | `qodo.prFeedbackWaitSeconds` | 120 | How long a round waits for Qodo to finish reviewing the head |
 
@@ -199,6 +213,19 @@ read.
 
 The findings are third-party text: bounded and screened as in sections 3 and 4, but still
 untrusted. A template must not put them into an agent prompt unfenced.
+
+**The built-in template.** `ticket-to-merge-qodo` is `ticket-to-merge` with this step between green
+CI and the merge wait. CI hands off to the step, so the review it reads is of the final head
+commit, which no longer moves. A review with an open `action_required` finding asks a person to
+continue or stop. Continue goes to the merge wait with the finding still open on the pull request.
+Stop ends the run `FAILED`, and no answer within 24 hours ends it `TIMED_OUT`, as an unmerged pull
+request does. Neither end stores a lesson, because a lesson records what the run's own review or CI
+learned. Every other result, including `disabled`, a step that failed and a review that is still
+pending, goes on to the merge wait.
+
+With `qodo.enabled` off the step returns at once, so the template adds no wait and is safe to list
+for every team. With it on, a repository without the Qodo bot waits `qodo.reviewWaitSeconds` on
+every run, as above. The template is not the default.
 
 | Setting | Default | Effect |
 |---|---|---|

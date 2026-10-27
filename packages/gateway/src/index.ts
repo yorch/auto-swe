@@ -27,13 +27,10 @@ import {
   warnIfGitHubDotComWebhookSecret,
   warnIfReposOnUnusableHosts,
 } from './lib/repoIdentityIndexCheck.js';
+import { logRequestError } from './lib/requestErrorLog.js';
 import { redactedRequestSerializer, redactingLogMethod } from './lib/requestUrlRedaction.js';
 import { syncSchedulesOnceConnected } from './lib/startupScheduleSync.js';
-import {
-  healthBody,
-  isTemporalUnavailable,
-  replyIfTemporalUnavailable,
-} from './lib/temporalErrors.js';
+import { healthBody, replyIfTemporalUnavailable } from './lib/temporalErrors.js';
 import { parseTrustProxy } from './lib/trustProxy.js';
 import authPlugin, {
   ACCESS_TOKEN_TTL_SECONDS,
@@ -140,13 +137,7 @@ async function start() {
   // 5xx messages can leak internals (DB constraint text, library errors), so
   // log the detail server-side and return a generic message.
   app.setErrorHandler(async (error: FastifyError, request, reply) => {
-    // Temporal not being connected yet is expected and retryable; pollers would flood
-    // the error level during the connect window.
-    if (isTemporalUnavailable(error)) {
-      request.log.warn({ err: error }, 'Temporal not connected');
-    } else {
-      request.log.error(error);
-    }
+    logRequestError(request, reply, error);
     const statusCode = error.statusCode ?? 500;
     // Temporal not being connected yet is an expected, retryable condition with
     // its own stable code and a message safe to show — not an internal error.

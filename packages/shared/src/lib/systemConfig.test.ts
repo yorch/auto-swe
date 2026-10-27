@@ -708,6 +708,69 @@ describe('systemConfig resolvers', () => {
         }
       });
 
+      it('refuses a Kubernetes backend with no model proxy, since the provider key would enter the pod', () => {
+        vi.stubEnv('WORKSPACE_BACKEND', 'kubernetes');
+        const problems = validateWorkspaceInfraEnv();
+        expect(problems).toHaveLength(1);
+        expect(problems[0]).toContain('HARNESS_MODEL_PROXY_PORT');
+        expect(problems[0]).toContain('HARNESS_MODEL_PROXY_URL');
+        expect(problems[0]).toContain('WORKSPACE_BACKEND=kubernetes');
+        vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '');
+        expect(validateWorkspaceInfraEnv()).toHaveLength(1);
+      });
+
+      it('accepts a Kubernetes backend with the model proxy configured', () => {
+        vi.stubEnv('WORKSPACE_BACKEND', 'kubernetes');
+        vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+        vi.stubEnv('HARNESS_MODEL_PROXY_URL', 'http://auto-swe-worker.auto-swe.svc:8790');
+        expect(validateWorkspaceInfraEnv()).toEqual([]);
+      });
+
+      it('refuses a Kubernetes model proxy whose URL pods cannot resolve', () => {
+        vi.stubEnv('WORKSPACE_BACKEND', 'kubernetes');
+        vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+        for (const url of [
+          undefined,
+          '',
+          'http://host.docker.internal:8790',
+          'http://{hostname}:8790',
+        ]) {
+          vi.stubEnv('HARNESS_MODEL_PROXY_URL', url);
+          const problems = validateWorkspaceInfraEnv();
+          expect(problems, String(url)).toHaveLength(1);
+          expect(problems[0]).toContain('HARNESS_MODEL_PROXY_URL');
+          expect(problems[0]).toContain('Service name');
+        }
+      });
+
+      it('reports an unparseable Kubernetes model proxy URL once', () => {
+        vi.stubEnv('WORKSPACE_BACKEND', 'kubernetes');
+        vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+        vi.stubEnv('HARNESS_MODEL_PROXY_URL', 'not a url');
+        expect(validateWorkspaceInfraEnv()).toEqual([
+          'HARNESS_MODEL_PROXY_URL="not a url" is not an http(s) URL with no credentials',
+        ]);
+      });
+
+      it('lets the Docker backend leave the model proxy URL unset', () => {
+        vi.stubEnv('WORKSPACE_BACKEND', 'docker');
+        vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '8790');
+        expect(validateWorkspaceInfraEnv()).toEqual([]);
+      });
+
+      it('does not report a missing proxy twice when the Kubernetes port is set but unusable', () => {
+        vi.stubEnv('WORKSPACE_BACKEND', 'kubernetes');
+        vi.stubEnv('HARNESS_MODEL_PROXY_PORT', '0');
+        expect(validateWorkspaceInfraEnv()).toEqual([
+          'HARNESS_MODEL_PROXY_PORT="0" is not a port number (1-65535)',
+        ]);
+      });
+
+      it('leaves the Docker backend free to run without the model proxy', () => {
+        vi.stubEnv('WORKSPACE_BACKEND', 'docker');
+        expect(validateWorkspaceInfraEnv()).toEqual([]);
+      });
+
       it('assertWorkspaceInfraEnv throws one error listing every problem, and is silent when valid', () => {
         expect(() => assertWorkspaceInfraEnv()).not.toThrow();
         vi.stubEnv('WORKSPACE_CPUS', 'two');

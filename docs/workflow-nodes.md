@@ -1503,6 +1503,8 @@ helper emits the two nodes below.
 stop. To fail closed when Qodo did not finish, pass `failClosed: true` to `qodoReview()`, which
 gates on
 `nodes.qodoReview.output.status != 'reviewed' || nodes.qodoReview.output.blocking == true`.
+The built-in `ticket-to-merge-qodo` template places this pattern between green CI and the merge
+wait (see [qodo.md §6](./qodo.md#6-waiting-for-qodos-review-in-a-workflow)).
 
 ## Limitations
 

@@ -642,6 +642,18 @@ export const SETTING_DEFINITIONS = {
       )
       .max(10),
   }),
+  'qodo.prFeedbackIncludeOnCommand': defineSetting({
+    defaultValue: false,
+    description:
+      "When on, an `/auto-swe fix` round on a pull request the platform opened also reads Qodo's review once, without waiting, and addresses its open findings at or above `qodo.prFeedbackMinActionLevel`. Needs `qodo.enabled`.",
+    group: 'qodo',
+    label: 'Include Qodo findings in an /auto-swe fix round',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'qodo.prFeedbackMaxRounds': defineSetting({
     defaultValue: 2,
     description:

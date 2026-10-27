@@ -29,6 +29,7 @@ import { SECURITY_TRIAGE_SPEC } from './securityTriage.js';
 import { SEND_SLACK_UPDATE_SPEC } from './sendSlackUpdate.js';
 import { STAGED_DEPLOY_SIGNALS_SPEC } from './stagedDeploySignals.js';
 import { TICKET_TO_MERGE_SPEC } from './ticketToMerge.js';
+import { TICKET_TO_MERGE_QODO_SPEC } from './ticketToMergeQodo.js';
 import { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';
 import { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';
 
@@ -72,6 +73,13 @@ export const BUILTIN_TEMPLATES: BuiltinTemplate[] = [
     isDefault: true,
     name: TICKET_TO_MERGE_SPEC.name,
     spec: TICKET_TO_MERGE_SPEC,
+  },
+  {
+    // The same run inputs as ticket-to-merge; Qodo's review is read once CI is green.
+    description: TICKET_TO_MERGE_QODO_SPEC.description,
+    inputSchema: SWE_INPUT_SCHEMA,
+    name: TICKET_TO_MERGE_QODO_SPEC.name,
+    spec: TICKET_TO_MERGE_QODO_SPEC,
   },
 
   // ── Automated (no HITL) ──────────────────────────────────────────────────
@@ -369,5 +377,6 @@ export { SEND_SLACK_UPDATE_SPEC } from './sendSlackUpdate.js';
 export { STAGED_DEPLOY_SIGNALS_SPEC } from './stagedDeploySignals.js';
 // Re-export individual specs so callers can import from this module directly.
 export { TICKET_TO_MERGE_SPEC } from './ticketToMerge.js';
+export { TICKET_TO_MERGE_QODO_SPEC } from './ticketToMergeQodo.js';
 export { TIERED_ESCALATION_SPEC } from './tieredEscalation.js';
 export { ZENDESK_TICKET_REPLY_SPEC } from './zendeskTicketReply.js';

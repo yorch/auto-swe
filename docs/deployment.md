@@ -142,6 +142,7 @@ TRUST_PROXY=10.0.0.0/8   # behind a reverse proxy: the proxy IPs/CIDRs whose X-F
                          # is trusted (or `true`). Unset = do not trust it
 RATE_LIMIT_MAX=200               # optional: requests per client per window (default 200)
 RATE_LIMIT_WINDOW_SECONDS=60     # optional: window length in seconds (default 60)
+WEBHOOK_RATE_LIMIT_MAX=6000       # optional: requests per client address per window on the GitHub webhook routes (default 6000)
 
 # Config encryption — REQUIRED for gateway and worker to start
 # Encrypts all DB-stored secrets (GitHub token, Slack tokens, S3 credentials, OAuth secrets)
@@ -211,7 +212,8 @@ WEB_URL=https://app.example.com      # base URL for the "Open approvals" link (t
 # WORKSPACE_BLOCK_METADATA=true        # only the literal `false` disables the metadata blackhole
 # SCANNER_REGEX_BUDGET_MS=250          # per-pattern scanner wall-clock budget
 # The Claude Code harness's model proxy (the compose files turn it on): the worker holds the model
-# key and meters every call; a workspace gets a per-turn token. Unset the port to turn it off.
+# key and meters every call; a workspace gets a per-turn token. Unset the port to turn it off on the Docker backend;
+# the Kubernetes backend refuses to start without it.
 # npm registry proxy — workspaces install packages through the worker, which
 # alone holds each registry's credential. Empty REGISTRY_PROXY_PORT disables it.
 # REGISTRY_PROXY_PORT=8791
@@ -510,7 +512,7 @@ To run the Kubernetes backend:
 
 1. Apply `infra/kubernetes/workspace-namespace.yaml` after adjusting the marked values: the namespace enforces PodSecurity `restricted`, a NetworkPolicy denies all ingress and allows egress only to DNS, the worker's proxy ports and the public internet (never the cloud metadata endpoint or a private range), and a Role/RoleBinding gives the worker's ServiceAccount `create`/`get`/`list`/`watch`/`delete` on pods and `create` on `pods/exec` in that namespace only.
 2. Run the cluster on a CNI that enforces NetworkPolicy (GKE Dataplane V2; EKS VPC CNI with network policy enabled; AKS with Azure NPM, Cilium or Calico). The worker checks this at start: it launches a probe pod and **refuses to start** if the pod can reach `169.254.169.254` or the cluster API address.
-3. Set `HARNESS_MODEL_PROXY_URL` and `REGISTRY_PROXY_URL` to a Service name pods can resolve (the `{hostname}` placeholder is the worker pod's name, which other pods cannot resolve; the default Docker host alias does not exist in a cluster), and the matching `*_BIND` to `0.0.0.0`.
+3. Set `HARNESS_MODEL_PROXY_PORT` and `HARNESS_MODEL_PROXY_URL` (the model proxy is required on this backend: the worker **refuses to start** without the port, or with a URL that is unset, uses the Docker host alias or contains `{hostname}`, because the provider API key would otherwise be placed inside the workspace pod), and `REGISTRY_PROXY_URL` if you run the registry proxy, to a Service name pods can resolve (the `{hostname}` placeholder is the worker pod's name, which other pods cannot resolve; the default Docker host alias does not exist in a cluster), and the matching `*_BIND` to `0.0.0.0`.
 4. Set a node-pool `podPidsLimit`: Kubernetes has no per-pod PID cap, so `WORKSPACE_PIDS_LIMIT` is not applied.
 5. Make sure the executor image runs as a non-root user. The curated images use uid 1000; set `K8S_WORKSPACE_RUN_AS_UID` if yours differs.
 
@@ -585,6 +587,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - [ ] Worker host is isolated — separate VPC subnet, no shared Docker socket (the worker holds none; only `docker-socket-proxy` does), no inbound traffic.
 - [ ] Infra ports are not world-reachable. `docker-compose.infra.yml` publishes Postgres (5432), Temporal (7233, plus 8233 for the Web UI only when the `temporal-ui` profile is enabled, which production must not do) and the object store (9000) — and `docker-compose.app.yml` Grafana (3001) and OTLP (4317/4318) — on loopback by default so the runbook can reach them from the host. An override such as `POSTGRES_PORT=55432` without the `127.0.0.1:` prefix publishes on every interface; keep the prefix, or firewall the port. The local `docker-compose.app.yml` also binds the gateway (8080) and dashboard (3000) to `APP_BIND_ADDRESS`, loopback by default; `docker-compose.prod.yml` publishes those two on every interface (or not at all under the Traefik overlay), so put them behind the reverse proxy.
 - [ ] `RATE_LIMIT_MAX` / `RATE_LIMIT_WINDOW_SECONDS` are left at the defaults (200 per minute per client) unless a suite drives one signed-in user hard: an end-to-end (Playwright) run loads many pages as a single user and exhausts 200 per minute. Raise them only for that environment. Both are read once at startup and a value that is not a positive integer stops the gateway from booting.
+- [ ] `WEBHOOK_RATE_LIMIT_MAX` (default 6000 per window, the same window as `RATE_LIMIT_WINDOW_SECONDS`) is sized above the GitHub App's peak delivery rate. The GitHub-signed webhook routes (`/api/v1/webhooks/git`, `/access`, `/ci`) have this ceiling instead of `RATE_LIMIT_MAX`, per client address and per route: every delivery from a GitHub host arrives from one address, an App installed on many repositories can send hundreds of deliveries a minute, and GitHub does not retry a `429`, so a delivery over the ceiling is lost. The tuned value is read once at startup and an invalid one stops the gateway from booting.
 - [ ] Reverse proxy enforces HTTPS and forwards `X-Forwarded-For` / `X-Forwarded-Proto`, and `TRUST_PROXY` names that proxy's IPs or CIDRs. The gateway rate-limits a verified user by user id and everything else by client IP; without `TRUST_PROXY` every anonymous request behind the proxy shares the proxy's IP and one limit. Do not set it when clients can reach the gateway directly — they could then choose their own IP.
 - [ ] With the bundled object store (`COMPOSE_PROFILES=objectstore`), `GARAGE_RPC_SECRET` is set in `.env`. Compose does not enforce it in production (§5c); left unset, Garage runs on the infra file's public placeholder.
 - [ ] Postgres connection uses TLS (`?sslmode=require`).
@@ -603,6 +606,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 - **The Docker socket proxy runs as root.** It must open the host socket, which is root-owned; the container is read-only, drops every capability and runs nothing but haproxy. CI exercises the worker's Docker calls through the same image and config.
 - **The proxy's allowlist is by path prefix, not by operation.** It refuses the bulk and exfiltrating operations (prune, push, load, image export and import from a URL), but every other operation in an allowed group passes, including ones the worker does not use, such as `kill`, `rename` and image delete.
 - **The infra images are tag-pinned, not digest-pinned.** The app Dockerfiles, the agent executor image, the socket proxy default and `otel-lgtm` pin `tag@sha256:<digest>` (the multi-arch index digest, so amd64 and arm64 both resolve), and Dependabot bumps tag and digest together. The images in `docker-compose.infra.yml` (pgvector, postgres, the Temporal images, Garage) and Watchtower stay tag-only because each tag is a `${VAR:-default}` override point: a digest appended after the variable would win over the tag, so a deployment's override would be silently ignored. A registry can still move what those tags resolve to. `DOCKER_SOCKET_PROXY_IMAGE` replaces the whole reference, digest included, so an override there is as pinned as the value it supplies.
+- **The GitHub webhook ceiling is per process, per address and per route.** Gateway replicas do not share it. A delivery over `WEBHOOK_RATE_LIMIT_MAX` from one address in a window is answered `429` and is not retried by GitHub. Anyone who can make the GitHub host send junk deliveries to the endpoint (anyone able to add a webhook on a repository the host serves) counts against the same address bucket as the valid ones, so the ceiling bounds that, it does not prevent it. Unsigned requests are cheap to refuse but not free: each costs one secret lookup and one HMAC check. When `TRUST_PROXY` trusts a hop that forwards a client-chosen `X-Forwarded-For`, a caller can pick the address, and so the bucket, it is counted in. The other webhook routes (template tokens, Jira, inbound events) keep their own limits.
 
 ---
 

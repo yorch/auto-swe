@@ -719,7 +719,7 @@ the run's budget like any other call. A workspace reaches the proxy at `HARNESS_
 default `host.docker.internal`, which `createWorkspace` maps to the Docker host gateway, or a worker
 that shares `WORKSPACE_NETWORK` with its workspaces, as the shipped compose files run it.
 
-Without the proxy the credential reaches the container as `ANTHROPIC_API_KEY`, named on the
+Without the proxy the credential reaches the container as `ANTHROPIC_API_KEY`. The Docker backend allows that; the Kubernetes backend does not, and a worker with `WORKSPACE_BACKEND=kubernetes` refuses to start without `HARNESS_MODEL_PROXY_PORT` and a `HARNESS_MODEL_PROXY_URL` that workspace pods can resolve. The key is named on the
 `docker exec` command line without a value so it never appears in `ps`. Either way the base URL is
 pinned through the SDK's highest-priority settings layer, so a repository's own
 `.claude/settings.json` cannot redirect the harness, and the key or token it sends, to another host.
@@ -1908,7 +1908,7 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   container.** The agent runs as root on a network with unrestricted egress, so anything it runs can
   read the key and send it elsewhere; a repository's settings cannot move where the harness itself
   sends it, but the agent's own commands can. The blast radius is whatever the key can spend. Turn
-  the proxy on (`HARNESS_MODEL_PROXY_PORT`; the shipped compose files do), or point the credential
+  the proxy on (`HARNESS_MODEL_PROXY_PORT`; the shipped compose files do, and the Kubernetes backend requires it), or point the credential
   at a gateway key scoped to that run's budget.
 - **The model proxy's token is still a bearer token inside the container.** Anything the agent runs
   can read it and spend through the proxy until the turn ends — but only on the Messages API, only

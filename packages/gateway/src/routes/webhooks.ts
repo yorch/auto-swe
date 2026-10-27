@@ -49,6 +49,7 @@ import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/id
 import { applyInstallationEvent, INSTALLATION_EVENT_TYPES } from '../lib/installationWebhook.js';
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
+import { parseRateLimitConfig } from '../lib/rateLimitConfig.js';
 import {
   resolveLaunchCallback,
   sendCallbackRefusal,
@@ -584,11 +585,17 @@ async function recordPullRequestChange(
 }
 
 export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
+  // Every delivery from one GitHub host shares an address, so the global per-address limit would
+  // drop valid events (GitHub does not retry a 429). The GitHub-signed routes have their own,
+  // higher ceiling, read once when the plugin registers.
+  const { timeWindowMs, webhookMax } = parseRateLimitConfig(process.env);
+  const signedRateLimit = { max: webhookMax, timeWindow: timeWindowMs };
+
   // POST /api/v1/webhooks/git
   fastify.post(
     '/git',
     {
-      config: { rawBody: true },
+      config: { rateLimit: signedRateLimit, rawBody: true },
     },
     async (request, reply) => {
       const verified = await verifyWebhookOrReject(request, reply);
@@ -866,7 +873,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post(
     '/access',
     {
-      config: { rawBody: true },
+      config: { rateLimit: signedRateLimit, rawBody: true },
     },
     async (request, reply) => {
       const verified = await verifyWebhookOrReject(request, reply);
@@ -921,7 +928,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
   fastify.post(
     '/ci',
     {
-      config: { rawBody: true },
+      config: { rateLimit: signedRateLimit, rawBody: true },
     },
     async (request, reply) => {
       const verified = await verifyWebhookOrReject(request, reply);

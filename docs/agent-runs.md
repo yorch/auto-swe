@@ -432,7 +432,7 @@ takes no new slot.
   without streaming a message (a small-model side task) is charged only with the turn's totals and
   never triggers the check; a turn stopped at the deadline has no totals, so those calls are missed.
   The harness then also holds the model credential inside the agent's container. The worker's model
-  proxy (`HARNESS_MODEL_PROXY_PORT`) closes both
+  proxy (`HARNESS_MODEL_PROXY_PORT`, required on the Kubernetes backend) closes both
   ([agents.md, Limitations](./agents.md#11-limitations)).
 - **MCP next to a workspace is an exfiltration channel.** An agent with an MCP connection and a
   readable repository can send source anywhere that connection reaches, steered by text in the
