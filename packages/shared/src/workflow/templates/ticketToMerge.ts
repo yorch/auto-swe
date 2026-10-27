@@ -4,6 +4,7 @@ import {
   ciWaitEntry,
   initCounters,
   mergeNodes,
+  type NodeMap,
   openPullRequest,
   prResult,
   reviewLoop,
@@ -41,7 +42,17 @@ export const TICKET_TO_MERGE_SPEC: WorkflowSpec = {
     'the logs, then wait for a person to merge. The lesson is stored for the next run.',
   entry: 'setValidating',
   name: 'ticket-to-merge',
-  nodes: mergeNodes(
+  nodes: ticketToMergeNodes('setAwaitingHumanMerge'),
+  schemaVersion: SPEC_SCHEMA_VERSION,
+};
+
+/**
+ * The ticket-to-merge node graph, as a function of where the CI loop goes when CI passes.
+ * `ticket-to-merge` hands off to the merge wait; a template that checks something between green CI
+ * and the merge wait passes its own first node and adds the nodes it needs beside the result.
+ */
+export function ticketToMergeNodes(passed: string): NodeMap {
+  return mergeNodes(
     validatePhase({ next: 'setImplementing', ticketContext: true }),
     {
       implement: {
@@ -70,7 +81,7 @@ export const TICKET_TO_MERGE_SPEC: WorkflowSpec = {
     ciLoop({
       exhausted: 'lessonCIFailed',
       fix: { handoff: { rereview: 'setReviewing' } },
-      passed: 'setAwaitingHumanMerge',
+      passed,
       wait: 'pollOrSignal',
     }),
     {
@@ -137,6 +148,5 @@ export const TICKET_TO_MERGE_SPEC: WorkflowSpec = {
         type: 'signal',
       },
     }
-  ),
-  schemaVersion: SPEC_SCHEMA_VERSION,
-};
+  );
+}

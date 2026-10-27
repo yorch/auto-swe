@@ -214,6 +214,19 @@ read.
 The findings are third-party text: bounded and screened as in sections 3 and 4, but still
 untrusted. A template must not put them into an agent prompt unfenced.
 
+**The built-in template.** `ticket-to-merge-qodo` is `ticket-to-merge` with this step between green
+CI and the merge wait. CI hands off to the step, so the review it reads is of the final head
+commit, which no longer moves. A review with an open `action_required` finding asks a person to
+continue or stop. Continue goes to the merge wait with the finding still open on the pull request.
+Stop ends the run `FAILED`, and no answer within 24 hours ends it `TIMED_OUT`, as an unmerged pull
+request does. Neither end stores a lesson, because a lesson records what the run's own review or CI
+learned. Every other result, including `disabled`, a step that failed and a review that is still
+pending, goes on to the merge wait.
+
+With `qodo.enabled` off the step returns at once, so the template adds no wait and is safe to list
+for every team. With it on, a repository without the Qodo bot waits `qodo.reviewWaitSeconds` on
+every run, as above. The template is not the default.
+
 | Setting | Default | Effect |
 |---|---|---|
 | `qodo.reviewWaitSeconds` | 180 | Wait used by a node that sets no `waitSeconds`; 0 to 600; overridable per team and organization |
