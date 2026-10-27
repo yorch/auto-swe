@@ -711,6 +711,19 @@ describe('syncBuiltins — seeded prompt migration', () => {
     expect(versions()).toHaveLength(2);
   });
 
+  it('moves an untouched validateContext seed onto the prompt that asks for an AMBIGUOUS entry', async () => {
+    const { agent, prisma, versions } = await seeded('validateContext');
+    const current = agent.systemPrompt as string;
+    expect(current).toContain('AMBIGUOUS:');
+    expect(hashes.validateContext).not.toContain(sha(current));
+    agent.systemPrompt = 'an earlier validator prompt';
+    await withPreviousHash('validateContext', 'an earlier validator prompt', () =>
+      seedSweStarter(prisma)
+    );
+    expect(versions()).toHaveLength(2);
+    expect(versions()[1]).toMatchObject({ isActive: true, systemPrompt: current, version: 2 });
+  });
+
   it('leaves an admin-edited prompt alone', async () => {
     const { agent, prisma, versions } = await seeded('workflowAuthor');
     agent.systemPrompt = 'an admin rewrote this';

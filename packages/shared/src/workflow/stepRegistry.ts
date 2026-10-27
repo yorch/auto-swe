@@ -119,7 +119,8 @@ register({
   category: 'agent',
   configFields: [SYSTEM_PROMPT_FIELD],
   costHint: { role: 'validateContext', tokensIn: 4000, tokensOut: 500 },
-  description: 'Extract success criteria from the work request payload.',
+  description:
+    'Extract success criteria from the work request payload. Output: `successCriteria`, `actionable` (false when every criterion is an `AMBIGUOUS:` entry, or a successful extraction found none), `ambiguities`.',
   label: 'Validate context',
   name: 'validateContext',
 });

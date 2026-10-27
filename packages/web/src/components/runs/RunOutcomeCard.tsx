@@ -63,15 +63,22 @@ function OutcomeShell({
   children,
   icon,
   title = 'Outcome',
+  tone = 'success',
 }: {
   children: ReactNode;
   icon: IconName;
   title?: string;
+  /** `warning` for a run that stopped without finishing its work; every other card is `success`. */
+  tone?: 'success' | 'warning';
 }) {
   return (
     <Card className="space-y-2.5 p-4" variant="inset">
       <h3 className="flex items-center gap-2 text-sm font-semibold text-paper-100">
-        <Icon className="text-success-400" name={icon} size={15} />
+        <Icon
+          className={tone === 'warning' ? 'text-warning-400' : 'text-success-400'}
+          name={icon}
+          size={15}
+        />
         {title}
       </h3>
       {children}
@@ -170,6 +177,28 @@ export function RunOutcomeCard({ result, runId, templateName, isAgentRun }: RunO
       <OutcomeShell icon="ticket">
         {issueUrl ? <OutcomeLink href={issueUrl} label={title ?? issueUrl} /> : null}
         <OutcomeText runId={runId} value={result.description} />
+      </OutcomeShell>
+    );
+  }
+
+  // A run that stopped on purpose says why in `message`, with the open questions in `ambiguities`
+  // (the `ticket-to-merge` stop on an unactionable request). Plain text nodes only.
+  if (typeof result.message === 'string' && result.message !== '') {
+    const ambiguities = Array.isArray(result.ambiguities)
+      ? [...new Set(result.ambiguities.filter((item): item is string => typeof item === 'string'))]
+      : [];
+    return (
+      <OutcomeShell icon="warning" title="Stopped" tone="warning">
+        <OutcomeText runId={runId} value={result.message} />
+        {ambiguities.length > 0 ? (
+          <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-paper-300">
+            {ambiguities.map((item) => (
+              <li className="break-words" key={item}>
+                {truncate(item, 500)}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </OutcomeShell>
     );
   }

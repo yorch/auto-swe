@@ -22,6 +22,7 @@ import proto from '@temporalio/proto';
 import { TestWorkflowEnvironment } from '@temporalio/testing';
 import { DefaultLogger, Runtime, Worker } from '@temporalio/worker';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, type TestContext } from 'vitest';
+import { assessSuccessCriteria } from '../lib/contextAmbiguity.js';
 
 const TASK_QUEUE = 'runnable-workflow-test';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -85,6 +86,8 @@ const calls: {
 const lessonEvidence: unknown[] = [];
 /** Spec served by the fake createWorkflowRun; set per test before starting. */
 let currentSpec: Record<string, unknown> = {};
+/** What the fake `validateContext` extracts; the verdict is the real `assessSuccessCriteria`. */
+let validateCriteria: string[] = ['builds'];
 /**
  * Pinned-settings snapshot served by the fake createWorkflowRun. Undefined is
  * the realistic default: every run row created before the column existed
@@ -257,7 +260,11 @@ const fakeActivities = {
   }),
   updateDomainState: (workflowId: string, status: string) =>
     updateDomainStateImpl(workflowId, status),
-  validateContext: async () => ({ contextSnapshotId: 'cs-1', successCriteria: ['builds'] }),
+  validateContext: async () => ({
+    contextSnapshotId: 'cs-1',
+    successCriteria: validateCriteria,
+    ...assessSuccessCriteria(validateCriteria),
+  }),
   verifyCiFix: async (input: { codeResult: unknown }) => ({
     codeResult: input.codeResult,
     verification: { status: 'unverified', summary: 'no command' },
@@ -304,6 +311,7 @@ beforeEach((ctx: TestContext) => {
   // Default to the pre-existing-run shape so a test that cares about pinning
   // has to opt in, and one that doesn't cannot accidentally depend on it.
   currentPinnedSettings = undefined;
+  validateCriteria = ['builds'];
   createRunError = undefined;
   createRunThrows = false;
   calls.retiredLaunches.length = 0;
@@ -398,6 +406,33 @@ describe('RunnableWorkflow (TestWorkflowEnvironment)', () => {
     ]);
     expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'SUCCESS' });
   }, 120_000);
+
+  it.each([
+    ['an ambiguity-only extraction', ['AMBIGUOUS: the request is only a Jira URL']],
+    ['a successful extraction that found nothing', []],
+  ])(
+    'ends the seeded ticket-to-merge template FAILED before implement on %s',
+    async (_name, criteria) => {
+      currentSpec = TICKET_TO_MERGE_SPEC as unknown as Record<string, unknown>;
+      validateCriteria = criteria;
+      calls.implementations.length = 0;
+      const handle = await env.client.workflow.start(
+        'RunnableWorkflow',
+        startArgs('wf-not-actionable')
+      );
+      const result = (await handle.result()) as {
+        ambiguities?: string[];
+        message?: string;
+        status: string;
+      };
+      expect(result.status).toBe('FAILED');
+      expect(result.message).toContain('not actionable');
+      expect(result.ambiguities).toHaveLength(1);
+      expect(calls.implementations).toHaveLength(0);
+      expect(calls.finalize.at(-1)).toEqual({ runId: 'run-test-1', status: 'FAILED' });
+    },
+    120_000
+  );
 
   it('stores a MERGE_TIMED_OUT lesson when nobody merges the ticket-to-merge PR', async () => {
     // The seeded seven-day wait, shortened to fit inside the test's execution timeout.

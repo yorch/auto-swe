@@ -108,7 +108,12 @@ describe('validateContext degradation', () => {
 
     const out = await validateContext({ description: 'x', workRequestId: 'wr-1' } as never);
 
-    expect(out).toEqual({ contextSnapshotId: 'snap-1', successCriteria: [] });
+    expect(out).toEqual({
+      actionable: true,
+      ambiguities: [],
+      contextSnapshotId: 'snap-1',
+      successCriteria: [],
+    });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('provider 529'));
     const [tracer, key] = persistMock.mock.calls[0] as [
       { records: Array<{ type: string; toolName?: string | null; error?: string | null }> },
@@ -130,6 +135,58 @@ describe('validateContext degradation', () => {
     const out = await validateContext({ description: 'x', workRequestId: 'wr-1' } as never);
     expect(out.successCriteria).toEqual(['a']);
     expect(persistMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('validateContext verdict', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('reports a request whose every criterion is an ambiguity as not actionable', async () => {
+    runAgentMock.mockResolvedValue({
+      object: { successCriteria: ['AMBIGUOUS: only a Jira URL, no description'] },
+    });
+    const out = await validateContext({ description: 'x', workRequestId: 'wr-1' } as never);
+    expect(out).toEqual({
+      actionable: false,
+      ambiguities: ['only a Jira URL, no description'],
+      contextSnapshotId: 'snap-1',
+      successCriteria: ['AMBIGUOUS: only a Jira URL, no description'],
+    });
+    // The snapshot keeps the criteria exactly as the agent wrote them.
+    expect(upsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({
+          successCriteria: ['AMBIGUOUS: only a Jira URL, no description'],
+        }),
+      })
+    );
+  });
+
+  it('reports a successful extraction that found nothing as not actionable', async () => {
+    runAgentMock.mockResolvedValue({ object: { successCriteria: [] } });
+    const out = await validateContext({ description: 'x', workRequestId: 'wr-1' } as never);
+    expect(out.actionable).toBe(false);
+    expect(out.ambiguities).toEqual(['validation could not extract any verifiable criteria']);
+    expect(out.successCriteria).toEqual([]);
+  });
+
+  it('does not stop a request when the extraction itself failed', async () => {
+    runAgentMock.mockRejectedValue(new Error('provider 529'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = await validateContext({ description: 'x', workRequestId: 'wr-1' } as never);
+    expect(out.actionable).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('reports a request with a verifiable criterion as actionable', async () => {
+    runAgentMock.mockResolvedValue({
+      object: { successCriteria: ['GET /health returns 200', 'AMBIGUOUS: no auth stated'] },
+    });
+    const out = await validateContext({ description: 'x', workRequestId: 'wr-1' } as never);
+    expect(out.actionable).toBe(true);
+    expect(out.ambiguities).toEqual(['no auth stated']);
   });
 });
 

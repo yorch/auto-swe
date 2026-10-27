@@ -7,6 +7,7 @@ import { AgentTracer } from '../lib/agentTracer.js';
 import { throwIfActivityCancelled } from '../lib/cancellation.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
+import { assessSuccessCriteria } from '../lib/contextAmbiguity.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { withHeartbeat } from '../lib/execUtils.js';
 import { resolveTicketContext } from '../lib/ticketFallback.js';
@@ -17,6 +18,15 @@ import { runAgent } from './runAgent.js';
 const ContextValidationSchema = z.object({
   successCriteria: z.array(z.string()),
 });
+
+export interface ValidateContextResult {
+  contextSnapshotId: string;
+  successCriteria: string[];
+  /** False when validation found nothing to verify but ambiguities, or nothing at all. A template can stop on it. */
+  actionable: boolean;
+  /** The ambiguity reasons, `AMBIGUOUS:` marker removed. */
+  ambiguities: string[];
+}
 
 // ── Context Validator Activity ──
 
@@ -50,7 +60,7 @@ export async function validateContext(
   workRequest: RunRequest,
   systemPromptOverride?: string,
   ticketContext?: string
-): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
+): Promise<ValidateContextResult> {
   // Heartbeats while the whole activity runs: its LLM call can outlast the
   // heartbeat timeout, and a heartbeat is how a cancellation reaches it.
   return withHeartbeat(
@@ -63,7 +73,7 @@ async function validateContextImpl(
   workRequest: RunRequest,
   systemPromptOverride?: string,
   ticketContext?: string
-): Promise<{ contextSnapshotId: string; successCriteria: string[] }> {
+): Promise<ValidateContextResult> {
   heartbeat('extracting success criteria');
 
   const ctx = await currentRequestContext();
@@ -85,6 +95,7 @@ async function validateContextImpl(
   const userMessage = buildValidationUserMessage(workRequest, ticketText);
 
   let successCriteria: string[] = [];
+  let degraded = false;
   try {
     const result = await runAgent<z.infer<typeof ContextValidationSchema>>(spec, userMessage, {
       spanName: 'llm.context_validation',
@@ -94,6 +105,7 @@ async function validateContextImpl(
     // A cancelled activity must stop, not persist a snapshot for a run the
     // workflow has already abandoned.
     throwIfActivityCancelled();
+    degraded = true;
     // Graceful degradation: empty criteria still allows the workflow to
     // proceed — but say so. Downstream, the domain-logic reviewer checks the
     // diff against these criteria, and an empty list silently turns that check
@@ -131,5 +143,6 @@ async function validateContextImpl(
   return {
     contextSnapshotId: snapshot.id,
     successCriteria,
+    ...assessSuccessCriteria(successCriteria, { degraded }),
   };
 }

@@ -1,4 +1,4 @@
-import { mergeNodes, type NodeMap, statusStamp } from './common.js';
+import { mergeNodes, type NodeMap, statusStamp, terminate } from './common.js';
 
 export interface ValidatePhaseOptions {
   /** Node the phase hands over to once it is done (normally `setImplementing`). */
@@ -19,6 +19,13 @@ export interface ValidatePhaseOptions {
    */
   ticketContext?: boolean;
   /**
+   * End the run, FAILED, when `validate` reports the request is not actionable (its `actionable`
+   * output is `false`: every criterion it found is an ambiguity), instead of handing over to
+   * `next`. The terminate result carries a message for the requester and the ambiguities. A
+   * validate step that threw, or an output with no verdict, does not stop the run. Default false.
+   */
+  stopIfNotActionable?: boolean;
+  /**
    * Add the `setValidating` status stamp in front of `validate` (default true).
    * With it, the phase's entry node is `setValidating`; without it, `validate`.
    */
@@ -36,6 +43,8 @@ export function validatePhase(opts: ValidatePhaseOptions): NodeMap {
   const withCriteria = opts.successCriteria ?? true;
   const criteriaId = opts.successCriteriaId ?? 'setSuccessCriteria';
   const withTicket = opts.ticketContext ?? false;
+  const withStop = opts.stopIfNotActionable ?? false;
+  const afterCheck = withCriteria ? criteriaId : opts.next;
   return mergeNodes(
     opts.stamp === false
       ? {}
@@ -73,13 +82,38 @@ export function validatePhase(opts: ValidatePhaseOptions): NodeMap {
       validate: {
         group,
         ...(withTicket ? { inputs: { ticket: { from: 'context.ticket' } } } : {}),
-        next: withCriteria ? criteriaId : opts.next,
+        next: withStop ? 'checkActionable' : afterCheck,
         onError: 'continue',
         step: 'validateContext',
         title: 'Validate the ticket context',
         type: 'step',
       },
     },
+    withStop
+      ? {
+          checkActionable: {
+            expr: 'nodes.validate.output.actionable == false',
+            group,
+            onFalse: afterCheck,
+            onTrue: 'terminateNotActionable',
+            title: 'Is the request actionable?',
+            type: 'cond',
+          },
+          terminateNotActionable: terminate('FAILED', {
+            group,
+            result: {
+              ambiguities: { default: [], from: 'nodes.validate.output.ambiguities' },
+              message: {
+                literal:
+                  'The request is not actionable: validation found nothing it could verify, ' +
+                  'only the ambiguities listed here. Paste the ticket text or add acceptance ' +
+                  'criteria to the request, then re-run.',
+              },
+            },
+            title: 'Stop: the request is not actionable',
+          }),
+        }
+      : {},
     withCriteria
       ? {
           [criteriaId]: {

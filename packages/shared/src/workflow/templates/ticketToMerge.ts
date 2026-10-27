@@ -24,6 +24,11 @@ import {
  *   review loop → CI loop →
  *   wait-for-human-merge → commit-to-memory → done
  *
+ * A request validation cannot act on (every criterion it found is an `AMBIGUOUS:` entry, as
+ * when the description is only a link the gatherer could not read) ends the run FAILED at
+ * `terminateNotActionable`, before `implement` spends a budget guessing. A request with a real
+ * description is never stopped by an unreachable ticket: only validation's verdict stops a run.
+ *
  * A review or CI loop that runs out of attempts, and a merge wait that times
  * out, stores a lesson about what happened before the run ends. A step that
  * throws — the security gate's SECURITY_GATE_FAILURE, any other implementation
@@ -53,7 +58,7 @@ export const TICKET_TO_MERGE_SPEC: WorkflowSpec = {
  */
 export function ticketToMergeNodes(passed: string): NodeMap {
   return mergeNodes(
-    validatePhase({ next: 'setImplementing', ticketContext: true }),
+    validatePhase({ next: 'setImplementing', stopIfNotActionable: true, ticketContext: true }),
     {
       implement: {
         group: 'implement',

@@ -295,7 +295,7 @@ RULES:
 2. Focus on observable outcomes: new files, functions, API endpoints, behavior changes
 3. Avoid vague criteria like "code should be clean" — prefer "endpoint returns 200 for valid input"
 4. Include both positive (what should work) and negative (what should NOT break) criteria when relevant
-5. If the input is too vague to extract criteria, return an empty array
+5. If the input is too vague to extract verifiable criteria (for example only a link, or a request with no stated outcome), do not return an empty array: return one entry of the form AMBIGUOUS: <what is missing and why it blocks the work>
 
 You MUST respond with valid JSON matching this schema:
 {
