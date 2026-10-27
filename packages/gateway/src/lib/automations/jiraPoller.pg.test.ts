@@ -356,6 +356,27 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
       expect(marked).toBe(1);
     });
 
+    it('takes a new baseline when the JQL changed, so what the new query already matched starts nothing', async () => {
+      expect((await poll()).status).toBe('baselined');
+      const changed = { ...automation, filters: { jql: 'status = Open ORDER BY created' } };
+      const found = [...issues, hit('PAY-9')];
+      const rebaselined = await pollAutomation(
+        deps(slowTracker(found), new Date(), (await realDecider()) as never),
+        changed
+      );
+      expect(rebaselined).toEqual({ recorded: 3, status: 'baselined' });
+      expect(startedWorkflows).toHaveLength(0);
+      const state = await prisma.automationPollState.findUniqueOrThrow({ where: { automationId } });
+      expect(state.baselineJql).toBe('status = Open ORDER BY created');
+      // The baseline now holds, so the next new issue under the new query does start a run.
+      const next = await pollAutomation(
+        deps(slowTracker([...found, hit('PAY-10')]), new Date(), (await realDecider()) as never),
+        changed
+      );
+      expect(next).toEqual({ pending: 0, started: 1, status: 'polled', suppressed: 0 });
+      expect(startedWorkflows).toHaveLength(1);
+    });
+
     it('marks an issue seen when the daily cap suppresses it, and starts nothing', async () => {
       await prisma.automation.update({ data: { maxRunsPerDay: 1 }, where: { id: automationId } });
       try {

@@ -229,7 +229,8 @@ async function poll(
 
   const { automationPollState: states, automationSeenIssue: seenIssues } = deps.prisma;
   const state = await states.findUniqueOrThrow({ where: { automationId: automation.id } });
-  if (state.baselinedAt === null) {
+  // A baseline belongs to the query it was taken for: a different one takes a new baseline.
+  if (state.baselinedAt === null || state.baselineJql !== filters.data.jql) {
     await seenIssues.createMany({
       data: inAllowedProjects.map((i) => ({
         automationId: automation.id,
@@ -238,7 +239,7 @@ async function poll(
       skipDuplicates: true,
     });
     await states.update({
-      data: { baselinedAt: deps.now },
+      data: { baselinedAt: deps.now, baselineJql: filters.data.jql },
       where: { automationId: automation.id },
     });
     return { recorded: inAllowedProjects.length, status: 'baselined' };

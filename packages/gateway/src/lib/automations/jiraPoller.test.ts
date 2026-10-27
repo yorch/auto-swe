@@ -23,6 +23,8 @@ const NOW = new Date('2026-10-27T12:00:00Z');
 interface StateRow {
   automationId: string;
   baselinedAt: Date | null;
+  /** The JQL the baseline was taken for. */
+  baselineJql: string | null;
   lastPolledAt: Date | null;
   lastError: string | null;
   leaseUntil: Date | null;
@@ -39,6 +41,7 @@ function fakePrisma(initial: Partial<StateRow> = {}) {
           state = {
             automationId: data[0]?.automationId ?? '',
             baselinedAt: null,
+            baselineJql: null,
             lastError: null,
             lastPolledAt: null,
             leaseUntil: null,
@@ -351,6 +354,7 @@ describe('pollAutomation: the baseline', () => {
     });
     expect(fake.state()).toMatchObject({
       baselinedAt: NOW,
+      baselineJql: 'status = Open',
       lastError: null,
       lastPolledAt: NOW,
       leaseUntil: null,
@@ -361,8 +365,27 @@ describe('pollAutomation: the baseline', () => {
     expect(JIRA_POLL_MAX_MATCHES).toBe(1000);
   });
 
+  it('baselines again, starts nothing, and records the new JQL when the JQL changed since the baseline', async () => {
+    const fake = fakePrisma({
+      baselinedAt: new Date('2026-10-01T00:00:00Z'),
+      baselineJql: 'status = "In Progress"',
+    });
+    fake.seen.add('pay-1');
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    // PAY-9 matches the new JQL and was never seen: it must be recorded, not started.
+    const search = vi.fn(async () => found(hit('PAY-1'), hit('PAY-9')));
+    const outcome = await run(fake, search, automation(), { decide });
+    expect(outcome).toEqual({ recorded: 2, status: 'baselined' });
+    expect(decide).not.toHaveBeenCalled();
+    expect([...fake.seen].sort()).toEqual(['pay-1', 'pay-9']);
+    expect(fake.state()?.baselineJql).toBe('status = Open');
+  });
+
   it('does not baseline again once baselined', async () => {
-    const fake = fakePrisma({ baselinedAt: new Date('2026-10-01T00:00:00Z') });
+    const fake = fakePrisma({
+      baselinedAt: new Date('2026-10-01T00:00:00Z'),
+      baselineJql: 'status = Open',
+    });
     fake.seen.add('pay-1');
     const search = vi.fn(async () => found(hit('PAY-1')));
     const outcome = await run(fake, search);
@@ -410,7 +433,8 @@ describe('pollAutomation: the project allowlist', () => {
 });
 
 describe('pollAutomation: new issues', () => {
-  const baselined = () => fakePrisma({ baselinedAt: new Date('2026-10-01T00:00:00Z') });
+  const baselined = () =>
+    fakePrisma({ baselinedAt: new Date('2026-10-01T00:00:00Z'), baselineJql: 'status = Open' });
 
   it('decides once for each issue it has not seen, and marks it seen afterwards', async () => {
     const fake = baselined();

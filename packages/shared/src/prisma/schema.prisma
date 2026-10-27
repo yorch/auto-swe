@@ -1769,6 +1769,9 @@ model AutomationPollState {
   automationId String     @id @map("automation_id") @db.Uuid
   automation   Automation @relation(fields: [automationId], references: [id], onDelete: Cascade)
   baselinedAt  DateTime?  @map("baselined_at") @db.Timestamptz
+  /// The JQL the baseline was taken for. A poll whose JQL differs takes a new baseline, so a changed
+  /// query never starts runs for what it already matched, whatever order the writes landed in.
+  baselineJql  String?    @map("baseline_jql")
   lastPolledAt DateTime?  @map("last_polled_at") @db.Timestamptz
   /// A fixed code (`FILTER_TOO_BROAD`, …), never text from the tracker. Null after a good poll.
   lastError    String?    @map("last_error")
