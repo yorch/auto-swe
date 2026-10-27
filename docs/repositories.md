@@ -213,10 +213,14 @@ section (when onboarding or editing), with `POST /repositories` / `PATCH /reposi
 the default, and `null` clears them all — or with the CLI's `auto-swe repos gate-commands`.
 
 The test loop runs `runTests` when set, else a command guessed from `package.json` that falls back to
-`npm test`. When the command cannot run in the workspace — exit status 127 or 126, or npm's
-`Missing script: "test"` — the loop ends after that test run instead of starting another agent
-pass, records a `tdd.test_unrunnable` event, still commits and pushes the work, and says so in the
-implementation notes. This holds for a configured `runTests` too. Set `runTests` to a command the
+`npm test`. When the command cannot run in the workspace — exit status 127 or 126, npm's
+`Missing script: "test"`, or npm's missing-`package.json` error (what the `npm test` fallback hits in
+a repository that is not a Node project) — the loop ends after that test run instead of starting
+another agent pass, records a `tdd.test_unrunnable` event, still commits and pushes the work, and
+says so in the implementation notes. The missing-`package.json` case counts only as npm's own
+`npm error enoent Could not read package.json` line at the start of a line together with exit status
+254, so a suite that runs npm itself and then fails an assertion keeps iterating. This holds for a
+configured `runTests` too. Set `runTests` to a command the
 workspace can run, or pin an `executorImage` that carries the repository's toolchain.
 
 A gate command runs in the agent workspace of every run on the repository, so changing the set takes
@@ -393,7 +397,10 @@ longer fit.
   without it), and a further agent pass might have installed it. The implementer already runs the
   tests itself in its first pass, and a wasted pass costs a whole budget, so the loop stops; the
   diff is still committed and goes to review. A compound `runTests` that ran the tests and then hit
-  127 in a later tool is stopped the same way.
+  127 in a later tool is stopped the same way. A repository with no `package.json` and no
+  `runTests` falls back to `npm test`, which cannot run there, so the loop stops after one pass until
+  `runTests` is set. Only npm 11's output with exit 254 is recognised: yarn, pnpm, bun and older npm
+  with no `package.json` still iterate.
 - **Gate commands are checked when they are saved or moved, not when a run starts.** The worker runs
   whatever set the row holds, so a command stays in use after the admin who set it loses the role,
   and a value written to the column outside the API has no audit entry.

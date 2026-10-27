@@ -681,6 +681,43 @@ describe('executeImplementation unrunnable test command', () => {
     expect(out.output).not.toContain('HEAD');
   });
 
+  it('stops after one pass when npm cannot find a package.json (non-repo-Node workspace)', async () => {
+    const eventSpy = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+    failTestRun({
+      code: 254,
+      stdout: [
+        'npm error code ENOENT',
+        'npm error syscall open',
+        'npm error path /workspace/target-repo/package.json',
+        'npm error errno -2',
+        'npm error enoent Could not read package.json: Error: ENOENT: no such file or directory',
+      ].join('\n'),
+    });
+    const result = await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect(workspaceMock.exec.mock.calls.filter(isTestRun)).toHaveLength(1);
+    const events = eventSpy.mock.calls
+      .map(([e]) => e)
+      .filter((e) => e.name === 'tdd.test_unrunnable');
+    expect(events).toHaveLength(1);
+    expect((events[0].outputJson as { reason: string }).reason).toBe(
+      'npm reports no package.json in the workspace'
+    );
+    expect(result.implementationNotes).toContain(
+      'could not run in the workspace (npm reports no package.json in the workspace)'
+    );
+  });
+
+  it('keeps iterating when the missing-package.json text comes with exit 1 (a nested run in a failing suite)', async () => {
+    failTestRun({
+      code: 1,
+      stdout:
+        'npm error enoent Could not read package.json: Error: ENOENT: no such file\nTests: 1 failed',
+    });
+    await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalledTimes(3);
+  });
+
   it('says plainly that the test command could not run, with the command and cause', async () => {
     failTestRun({ code: 127, stdout: 'sh: npm: not found' });
     const result = await executeImplementation(REQUEST);

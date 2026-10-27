@@ -59,6 +59,19 @@ function detectTestCommandFromPackageJson(packageJsonStr: string): string {
 const NPM_MISSING_TEST_SCRIPT = /npm (?:error|ERR!) Missing script: "test"/;
 
 /**
+ * What npm 11 prints when the directory has no package.json, as the fallback
+ * `npm test` meets in a repository that is not a Node project, and the exit
+ * status it uses (254). Both are required. A suite that itself runs npm in an
+ * empty directory prints the same line, un-indented, and then fails on an
+ * assertion with exit 1; the status tells the two apart. The line is also
+ * anchored to the start of a line and to npm's own prefix and exact message, so
+ * output that merely mentions ENOENT or package.json does not match. Only the
+ * `error` prefix is accepted: the older `ERR!` form's exit status is unverified.
+ */
+const NPM_NO_PACKAGE_JSON_STATUS = 254;
+const NPM_NO_PACKAGE_JSON = /^npm error enoent Could not read package\.json: Error: ENOENT/m;
+
+/**
  * Why a rejected test run could not run in this workspace at all, or
  * `undefined` for an ordinary failure (tests ran and failed, a timeout, an
  * unknown error). The string is the classifier's truth and the text reported
@@ -70,6 +83,7 @@ const NPM_MISSING_TEST_SCRIPT = /npm (?:error|ERR!) Missing script: "test"/;
  *   (the `execSync` shape). Output text is never searched for "not found",
  *   because a runner's own output can say that about a test's subprocess.
  * - npm's `Missing script: "test"` message, which npm reports with exit 1.
+ * - npm's no-package.json message with exit 254 (see `NPM_NO_PACKAGE_JSON`).
  *
  * A caller that stops on this accepts a trade-off: a missing local tool (a
  * runner the platform never installed) also exits 127 and a further agent pass
@@ -90,7 +104,12 @@ export function unrunnableTestCause(err: unknown): string | undefined {
     return 'exit status 126: command not executable';
   }
   const output = [e.stdout, e.stderr].filter((v): v is string => typeof v === 'string').join('\n');
-  return NPM_MISSING_TEST_SCRIPT.test(output) ? 'npm reports Missing script: "test"' : undefined;
+  if (NPM_MISSING_TEST_SCRIPT.test(output)) {
+    return 'npm reports Missing script: "test"';
+  }
+  return exitStatus === NPM_NO_PACKAGE_JSON_STATUS && NPM_NO_PACKAGE_JSON.test(output)
+    ? 'npm reports no package.json in the workspace'
+    : undefined;
 }
 
 /**
