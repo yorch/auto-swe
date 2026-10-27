@@ -16,7 +16,7 @@ import {
 } from '../lib/automations/jiraPoller.js';
 
 /**
- * Polls every enabled Jira filter automation on a timer (docs/specs/2026-10-27-jira-filter-polling.md).
+ * Polls every enabled Jira filter automation on a timer (docs/automations.md §3.2).
  * It runs in the gateway because the engine that decides an issue lives here. Replicas coordinate
  * through each automation's lease (`pollAutomation`), so every replica may run this loop.
  */

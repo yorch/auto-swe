@@ -51,7 +51,7 @@
 
 ## D8 — 2026-10-27 — Task 7: Check a Jira filter automation when it is saved
 
-**Status**: Accepted
+**Status**: Accepted (its baseline rule is superseded by D10)
 **Decision**: A poll baseline is bound to the JQL it was taken for (`baseline_jql`). A poll whose JQL differs takes a new baseline. The route resets the baseline only when an automation is switched back on.
 **Reason**: Resetting `baselinedAt` in the route, before or after the write, races with a poll: one that lands between the two writes, or one already running, baselines the old query and leaves the new query marked as baselined, which starts a run for everything the new query already matched. Comparing the stored JQL makes the order of the writes irrelevant. A reset on switch-on is safe because an automation that is off is not polled.
 **Alternatives considered**: Doing the write and the reset in one transaction. Rejected: it closes the gap between them but not a poll already running.

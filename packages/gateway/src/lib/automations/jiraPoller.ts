@@ -1,5 +1,5 @@
 /**
- * The Jira filter poller (docs/specs/2026-10-27-jira-filter-polling.md): one poll of one
+ * The Jira filter poller (docs/automations.md §3.2): one poll of one
  * `jira.filter.new_issue` automation. It runs the automation's JQL with the platform's Jira
  * credential, keeps only the issues in the projects an admin allowed, and compares them with
  * what the automation has already seen.
