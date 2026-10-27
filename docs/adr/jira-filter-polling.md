@@ -41,3 +41,10 @@
 **Decision**: The run's description puts the key and the link first and the ticket text inside an untrusted `<ticket>` block, escaping any closing tag in the text.
 **Reason**: Anyone with write access to an allowed Jira project can change what the agent reads. The sibling GitHub issue source does not fence its text, but the people who can write to a Jira project are a wider group than those who can write to a repository.
 **Alternatives considered**: No fence, as for issue labels. Rejected as the exposure is larger here.
+
+## D7 — 2026-10-27 — Task 6: Run the poller on a schedule in the gateway
+
+**Status**: Accepted
+**Decision**: A tick abandons one automation's poll after four minutes, stops starting automations after ten, and lists them least recently polled first. A closing server waits for the running tick for up to thirty seconds.
+**Reason**: The tick is serial and every tenant shares one Jira credential, so one slow tenant could hold the loop and leave late-created tenants behind it every time. Each Jira request is already bounded, which makes a hang unlikely, but a loop with no bound of its own would fail silently. Fastify closes the database and Temporal plugins after this plugin's hook, so a tick left running would use them closed.
+**Alternatives considered**: Polling in parallel. Rejected: it multiplies the load on the shared Jira credential. Cancelling the abandoned poll. Rejected: the Jira client cannot be cancelled mid-request, and the lease's compare-and-set already protects what the left-behind poll does later.

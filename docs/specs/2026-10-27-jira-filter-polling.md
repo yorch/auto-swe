@@ -100,6 +100,8 @@ Per automation, one poll does the following:
 
 A crash between the decision and the seen-key write is safe. The ledger's unique `dedupeKey` answers `duplicate` on the next poll, and the key is then stored as seen.
 
+One tick polls the enabled automations in turn, the one polled longest ago first. Three bounds keep one slow automation from holding the rest. A poll that has not finished in four minutes is abandoned, logged as failed, and the tick goes on. A tick stops starting automations after ten minutes, and the next tick resumes with the ones it left. A closing server waits up to thirty seconds for a tick that is running, so the database and Temporal are still open while it finishes.
+
 The poller reuses `decideAndStart`, so budget, daily cap, same-subject and in-flight checks apply with no engine change. A decision suppressed by a limit is recorded in the ledger and the key is stored as seen. A manager retries it with **Decide again**.
 
 ### Data model

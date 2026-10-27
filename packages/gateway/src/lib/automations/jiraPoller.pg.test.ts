@@ -18,6 +18,7 @@ vi.mock('@auto-swe/shared/config', () => ({
   ),
 }));
 
+import { defaultTickDeps } from '../../plugins/jiraPoller.js';
 import { connectionInclude, type EngineConnection } from './engine.js';
 import {
   connectionOwnerKey,
@@ -265,6 +266,46 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
     expect(state.lastError).toBe('TRACKER_UNAVAILABLE');
     expect(state.leaseUntil).toBeNull();
     expect(state.baselinedAt).toBeNull();
+  });
+
+  it('lists the automation polled longest ago first, one never polled before any', async () => {
+    const other = await runUnscoped('test fixture', ['Automation'], () =>
+      prisma.automation.create({
+        data: {
+          connectionId: repoId,
+          filters: { jql: 'status = Open' },
+          name: 'jira-other',
+          source: JIRA_FILTER_NEW_ISSUE,
+        },
+      })
+    );
+    try {
+      const list = async () => {
+        const rows = await defaultTickDeps({ prisma } as never, () => false).listAutomations();
+        return rows.map((r) => r.id).filter((id) => id === automationId || id === other.id);
+      };
+      // Neither has been polled: the older one first.
+      expect(await list()).toEqual([automationId, other.id]);
+      // The older was polled just now, so the one never polled goes first.
+      await prisma.automationPollState.create({
+        data: { automationId, lastPolledAt: new Date() },
+      });
+      expect(await list()).toEqual([other.id, automationId]);
+      // Both polled: the one polled longest ago first.
+      await prisma.automationPollState.create({
+        data: { automationId: other.id, lastPolledAt: new Date(Date.now() - 3_600_000) },
+      });
+      expect(await list()).toEqual([other.id, automationId]);
+      await prisma.automationPollState.update({
+        data: { lastPolledAt: new Date(Date.now() - 7_200_000) },
+        where: { automationId },
+      });
+      expect(await list()).toEqual([automationId, other.id]);
+    } finally {
+      await runUnscoped('test fixture', ['Automation'], () =>
+        prisma.automation.deleteMany({ where: { id: other.id } })
+      );
+    }
   });
 
   describe('with the real engine', () => {

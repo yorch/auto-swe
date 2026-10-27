@@ -41,6 +41,7 @@ import authPlugin, {
   requireAuth,
   requireUser,
 } from './plugins/auth.js';
+import jiraPollerPlugin from './plugins/jiraPoller.js';
 import prismaPlugin from './plugins/prisma.js';
 import temporalPlugin from './plugins/temporal.js';
 import { mcpRoutes } from './routes/mcp.js';
@@ -130,6 +131,10 @@ async function start() {
   void syncSchedulesOnceConnected(app).catch((err) =>
     app.log.warn({ err }, 'startup schedule sync failed')
   );
+
+  // Polls every enabled Jira filter automation. After the built-in sync above, so the default
+  // template exists; each tick does nothing until the tracker is Jira and an automation is on.
+  await app.register(jiraPollerPlugin);
 
   // Global error handler. 4xx messages are intentional (validation, auth);
   // 5xx messages can leak internals (DB constraint text, library errors), so
