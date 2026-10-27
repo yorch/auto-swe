@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
-import Fastify from 'fastify';
+import rateLimit from '@fastify/rate-limit';
+import Fastify, { type FastifyError, type FastifyReply, type FastifyRequest } from 'fastify';
 import fastifyRawBody from 'fastify-raw-body';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -254,6 +255,8 @@ import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredentia
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import { AutomationStartError, handleOccurrence } from '../lib/automations/engine.js';
+import { logRequestError } from '../lib/requestErrorLog.js';
+import { ipRateLimitKey } from '../plugins/auth.js';
 import { webhookRoutes } from './webhooks.js';
 
 const SECRET = 'hook-secret';
@@ -3069,5 +3072,109 @@ describe('webhook events carry the repository host', () => {
         repository: { full_name: 'acme/api' },
       })
     ).toMatchObject({ repoHtmlUrl: undefined, type: 'completed' });
+  });
+});
+
+describe('webhook rate limiting', () => {
+  const GLOBAL_MAX = 5;
+  const WEBHOOK_MAX = 12;
+  const ping = JSON.stringify({ action: 'closed', zen: 'Design for failure.' });
+  const logLines: string[] = [];
+  let limited: ReturnType<typeof Fastify>;
+  let previousMax: string | undefined;
+
+  beforeAll(async () => {
+    previousMax = process.env.WEBHOOK_RATE_LIMIT_MAX;
+    process.env.WEBHOOK_RATE_LIMIT_MAX = String(WEBHOOK_MAX);
+    limited = Fastify({ trustProxy: false });
+    limited.setValidatorCompiler(validatorCompiler);
+    limited.setSerializerCompiler(serializerCompiler);
+    await limited.register(fastifyRawBody, { encoding: 'utf8', global: false, runFirst: true });
+    await limited.register(rateLimit, {
+      keyGenerator: ipRateLimitKey,
+      max: GLOBAL_MAX,
+      timeWindow: 60_000,
+    });
+    limited.decorate('prisma', {
+      gitHubHostWebhookSecret: { findMany: async () => [], findUnique: async () => null },
+    } as unknown as never);
+    limited.setErrorHandler(
+      async (error: FastifyError, request: FastifyRequest, reply: FastifyReply) => {
+        logRequestError(request, reply, error);
+        return reply.status(error.statusCode ?? 500).send({ error: { message: error.message } });
+      }
+    );
+    await limited.register(webhookRoutes, { prefix: '/api/v1/webhooks' });
+    await limited.ready();
+    limited.log.warn = (...args: unknown[]) => {
+      logLines.push(String(args[0]));
+    };
+  });
+
+  afterAll(async () => {
+    if (previousMax === undefined) {
+      delete process.env.WEBHOOK_RATE_LIMIT_MAX;
+    } else {
+      process.env.WEBHOOK_RATE_LIMIT_MAX = previousMax;
+    }
+    await limited.close();
+  });
+
+  function deliver(url: string, remoteAddress: string, signature?: string) {
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (signature !== undefined) {
+      headers['x-hub-signature-256'] = signature;
+    }
+    return limited.inject({ headers, method: 'POST', payload: ping, remoteAddress, url });
+  }
+
+  it.each(['git', 'access', 'ci'])(
+    'accepts signed /%s deliveries beyond the global limit, up to the webhook ceiling',
+    async (route) => {
+      const ip = `192.0.2.${route.length}`;
+      for (let i = 0; i < WEBHOOK_MAX; i++) {
+        const res = await deliver(`/api/v1/webhooks/${route}`, ip, sign(ping));
+        expect(res.statusCode).toBe(200);
+      }
+      const over = await deliver(`/api/v1/webhooks/${route}`, ip, sign(ping));
+      expect(over.statusCode).toBe(429);
+      expect(Number(over.headers['retry-after'])).toBeGreaterThan(0);
+      expect(over.headers['x-ratelimit-limit']).toBe(String(WEBHOOK_MAX));
+    }
+  );
+
+  it('keeps the global limit on a route that is not GitHub-signed', async () => {
+    const codes: number[] = [];
+    for (let i = 0; i < GLOBAL_MAX + 1; i++) {
+      codes.push((await deliver('/api/v1/webhooks/jira', '192.0.2.50')).statusCode);
+    }
+    expect(codes.slice(0, GLOBAL_MAX)).not.toContain(429);
+    expect(codes[GLOBAL_MAX]).toBe(429);
+  });
+
+  it('counts each client address separately', async () => {
+    for (let i = 0; i < WEBHOOK_MAX + 1; i++) {
+      await deliver('/api/v1/webhooks/git', '192.0.2.60', sign(ping));
+    }
+    expect((await deliver('/api/v1/webhooks/git', '192.0.2.60', sign(ping))).statusCode).toBe(429);
+    expect((await deliver('/api/v1/webhooks/git', '192.0.2.61', sign(ping))).statusCode).toBe(200);
+  });
+
+  it('keeps a separate bucket for each signed route', async () => {
+    for (let i = 0; i < WEBHOOK_MAX + 1; i++) {
+      await deliver('/api/v1/webhooks/git', '192.0.2.70', sign(ping));
+    }
+    expect((await deliver('/api/v1/webhooks/git', '192.0.2.70', sign(ping))).statusCode).toBe(429);
+    expect((await deliver('/api/v1/webhooks/ci', '192.0.2.70', sign(ping))).statusCode).toBe(200);
+  });
+
+  it('logs the refusal as one WARN line with the route', async () => {
+    logLines.length = 0;
+    for (let i = 0; i < WEBHOOK_MAX + 1; i++) {
+      await deliver('/api/v1/webhooks/git', '192.0.2.80', sign(ping));
+    }
+    expect(logLines).toEqual([
+      `rate limit exceeded: route=/api/v1/webhooks/git key=ip limit=${WEBHOOK_MAX}`,
+    ]);
   });
 });
