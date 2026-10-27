@@ -314,6 +314,38 @@ describe('MCP connections page', () => {
       expect(body).not.toHaveProperty('scanResults');
     });
 
+    it('keeps screening on when Qodo is cleared on a connection that was only marked', async () => {
+      const MARKED = { ...CONNECTION, config: { ...CONNECTION.config, integration: 'qodo' } };
+      const spy = mount(MARKED);
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      fireEvent.click(document.getElementById('mcp-edit-qodo') as HTMLInputElement);
+      const screenBox = document.getElementById('mcp-edit-scan-results') as HTMLInputElement;
+      // Still ticked, and now the admin's to clear.
+      expect(screenBox.checked).toBe(true);
+      expect(screenBox.disabled).toBe(false);
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(spy.mock.calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+      const body = bodyOf(spy, '/mcp-connections/m1', 'PATCH') as Record<string, unknown>;
+      expect(body.integration).toBeNull();
+      expect(body.scanResults).toBe(true);
+    });
+
+    it('drops screening with the marker only when the admin clears the screening box too', async () => {
+      const MARKED = { ...CONNECTION, config: { ...CONNECTION.config, integration: 'qodo' } };
+      const spy = mount(MARKED);
+      render(withQuery(<StudioMcpConnectionsPage />));
+      fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+      fireEvent.click(document.getElementById('mcp-edit-qodo') as HTMLInputElement);
+      fireEvent.click(document.getElementById('mcp-edit-scan-results') as HTMLInputElement);
+      fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+      await waitFor(() => expect(spy.mock.calls.some(([, i]) => i?.method === 'PATCH')).toBe(true));
+      const body = bodyOf(spy, '/mcp-connections/m1', 'PATCH') as Record<string, unknown>;
+      expect(body.integration).toBeNull();
+      // Nothing was stored, so nothing is removed and nothing is sent.
+      expect(body).not.toHaveProperty('scanResults');
+    });
+
     it('sends scanResults null when only screening is unticked on an unmarked connection', async () => {
       const spy = mount({ ...CONNECTION, config: { ...CONNECTION.config, scanResults: true } });
       render(withQuery(<StudioMcpConnectionsPage />));

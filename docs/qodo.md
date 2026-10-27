@@ -32,9 +32,9 @@ The `/mcp` page sets the marker and screening with two checkboxes in the create 
 "Qodo integration" and "Screen tool results". Ticking Qodo checks the screening box and locks it,
 because a marked connection is always screened. The edit form sends a policy field only when it
 differs from the stored value, so saving without touching the boxes changes neither; clearing the
-Qodo box on a marked connection sends `integration: null` and shows a warning that the read-only
-guard goes with the marker and that results are no longer screened unless the screening box stays
-ticked. A marked connection carries a "Qodo" badge in the list, and a stored custom tool list
+Qodo box on a marked connection sends `integration: null`, keeps the screening box ticked so that
+results stay screened until the admin clears it too, and shows a warning that the read-only guard
+goes with the marker. A marked connection carries a "Qodo" badge in the list, and a stored custom tool list
 appears as a read-only count. A `400 QODO_WRITE_TOOLS` answer shows its message in the form's alert.
 
 The connection test (`POST /api/v1/platform/mcp-connections/:id/test`, which lists tools and calls

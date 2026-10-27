@@ -588,7 +588,17 @@ function EditMcpConnectionModal({
         <McpHeaderFields idPrefix="mcp-edit" onChange={setHeaderRows} rows={headerRows} />
         <McpQodoFields
           idPrefix="mcp-edit"
-          onChange={(patch) => setForm((f) => ({ ...f, ...patch }))}
+          // Clearing the marker on a marked connection keeps screening on, so dropping it takes a
+          // second, deliberate click: until then the connection was screened whatever the box said.
+          onChange={(patch) =>
+            setForm((f) => ({
+              ...f,
+              ...patch,
+              ...(patch.qodo === false && connection.config?.integration === 'qodo'
+                ? { scan: true }
+                : {}),
+            }))
+          }
           qodo={form.qodo}
           scan={form.scan}
         />
@@ -596,7 +606,7 @@ function EditMcpConnectionModal({
           <Alert variant="warning">
             Removing the Qodo marker removes the read-only guard: the connection becomes an ordinary
             MCP connection and binds every tool it advertises, unless a custom tool list is stored.
-            Tool results are no longer screened unless Screen tool results stays ticked.
+            Tool results stay screened until Screen tool results is cleared as well.
           </Alert>
         )}
         {connection.config?.allowedTools && (
