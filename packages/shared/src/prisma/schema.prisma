@@ -147,6 +147,10 @@ model ActiveWorkflow {
   /// exceed the INT32 ceiling.
   tokensInputUsed    BigInt      @default(0) @map("tokens_input_used")
   tokensOutputUsed   BigInt      @default(0) @map("tokens_output_used")
+  /// The input a run's cap counts: each call in dollar-equivalent tokens (cache
+  /// reads and writes at the model's own cache multipliers), fixed when the call is
+  /// recorded. `tokensInputUsed` stays the raw total every dashboard and rollup reads.
+  tokensInputCountedUsed BigInt @default(0) @map("tokens_input_counted_used")
   costUsdAccrued     Float       @default(0) @map("cost_usd_accrued")
   updatedAt          DateTime    @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 

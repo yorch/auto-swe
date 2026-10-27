@@ -250,7 +250,7 @@ export function WorkflowDefaultsForm() {
         </CardHeader>
         <div className="space-y-6">
           <FieldGroup
-            help="A run that reaches its tier's input or output token cap is stopped with BUDGET_EXCEEDED."
+            help="A run that reaches its tier's input or output token cap is stopped with BUDGET_EXCEEDED. The input cap counts dollar-equivalent tokens: prompt-cache reads count at the model's cache rate, not in full. Run pages show the raw input tokens."
             label="Per-tier token budgets"
           >
             <NumberField

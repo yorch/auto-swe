@@ -20,11 +20,13 @@ const ListWorkflowsQuery = paginationQuery({ defaultLimit: 200, maxLimit: 500 })
 
 // The token counters are `BigInt` in the DB (they can exceed Int32 on large
 // runs). Fastify's JSON serializer throws on a bare BigInt, so coerce the two
-// columns to Number before returning a raw ActiveWorkflow row.
+// columns to Number before returning a raw ActiveWorkflow row. The counted-input
+// counter is the budget's own bookkeeping and is not part of the response.
 function serializeWorkflow<
   R extends Partial<ConnectionEnvelopeColumns> & PullRequestRepo,
   P extends { prNumber: number | null },
   T extends {
+    tokensInputCountedUsed?: bigint;
     tokensInputUsed: bigint;
     tokensOutputUsed: bigint;
     repository: R | null;
@@ -33,7 +35,10 @@ function serializeWorkflow<
 >(
   workflow: T,
   instanceBaseUrl: string
-): Omit<T, 'tokensInputUsed' | 'tokensOutputUsed' | 'repository' | 'pullRequests'> & {
+): Omit<
+  T,
+  'tokensInputCountedUsed' | 'tokensInputUsed' | 'tokensOutputUsed' | 'repository' | 'pullRequests'
+> & {
   pullRequests: Array<P & { url: string | null }>;
   repository: RedactedConnection<R> | null;
   tokensInputUsed: number;
@@ -49,6 +54,8 @@ function serializeWorkflow<
     })),
     // The joined connection carries the API-token envelope — strip it.
     repository: repo ? redactConnection(repo) : null,
+    // `undefined` drops out of the JSON, which a BigInt would not survive.
+    tokensInputCountedUsed: undefined,
     tokensInputUsed: Number(workflow.tokensInputUsed),
     tokensOutputUsed: Number(workflow.tokensOutputUsed),
   };

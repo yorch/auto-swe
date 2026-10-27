@@ -246,17 +246,26 @@ export async function calculateCostUsd(
   return costFromPrice((await getModelPrice(modelSpec)).price, inputTokens, outputTokens);
 }
 
-function costFromPrice(
-  price: ModelPrice,
-  inputTokens: number,
-  outputTokens: number,
-  cache: { read: number; write: number; write1h: number; rates: CacheMultipliers } = {
-    rates: { read: 1, write: 1, write1h: 1 },
-    read: 0,
-    write: 0,
-    write1h: 0,
-  }
-): number {
+interface CacheBreakdown {
+  read: number;
+  write: number;
+  write1h: number;
+  rates: CacheMultipliers;
+}
+
+const NO_CACHE: CacheBreakdown = {
+  rates: { read: 1, write: 1, write1h: 1 },
+  read: 0,
+  write: 0,
+  write1h: 0,
+};
+
+/**
+ * Input tokens in price-equivalent units: uncached input at 1, each cache part at
+ * its rate. The cost of a call and what the run's input cap counts for it are both
+ * this figure (the cost times the input price), so the two cannot drift apart.
+ */
+function priceEquivalentInput(inputTokens: number, cache: CacheBreakdown): number {
   // `inputTokens` is the provider's total, cached input included (the AI SDK's
   // v3 usage shape). Clamped so a provider that reports cache tokens outside
   // that total is costed at no less than its plain input. `write` is every
@@ -265,12 +274,21 @@ function costFromPrice(
   const write = Math.min(cache.write, inputTokens - read);
   const write1h = Math.min(cache.write1h, write);
   const uncached = inputTokens - read - write;
-  const inputCost =
-    (uncached +
-      read * cache.rates.read +
-      (write - write1h) * cache.rates.write +
-      write1h * cache.rates.write1h) *
-    price.input;
+  return (
+    uncached +
+    read * cache.rates.read +
+    (write - write1h) * cache.rates.write +
+    write1h * cache.rates.write1h
+  );
+}
+
+function costFromPrice(
+  price: ModelPrice,
+  inputTokens: number,
+  outputTokens: number,
+  cache: CacheBreakdown = NO_CACHE
+): number {
+  const inputCost = priceEquivalentInput(inputTokens, cache) * price.input;
   return (inputCost + outputTokens * price.output) / 1_000_000;
 }
 
@@ -305,6 +323,54 @@ export function cacheTokens(usage: TokenUsage): {
     write: count(usage.cacheCreationInputTokens ?? usage.inputTokenDetails?.cacheWriteTokens),
     write1h: count(usage.cacheCreationInputTokens1h),
   };
+}
+
+/**
+ * The input tokens one call adds to the run's input cap, in dollar-equivalent
+ * units: priced the way the call is — uncached input at 1, cache reads and writes
+ * at the model's own cache multipliers. A prompt-cache read costs a fraction of an
+ * input token and an agent loop resends its whole context every turn, so counting
+ * raw tokens trips the cap on spend that is cheap.
+ *
+ * The figure is fixed when the call is recorded, so a later price or catalog edit
+ * cannot re-weigh a run already under way. It fails closed to the raw count when
+ * the model's rates are unknown (`multipliers` undefined) or unusable, when the cache
+ * parts exceed the input (an impossible shape), and for a usage that reports no
+ * cache breakdown.
+ */
+export function countedInputTokensForCall(
+  usage: TokenUsage,
+  multipliers: CacheMultipliers | undefined
+): number {
+  const raw = Number.isFinite(usage.inputTokens) ? Math.max(0, usage.inputTokens as number) : 0;
+  const usable =
+    multipliers !== undefined &&
+    [multipliers.read, multipliers.write, multipliers.write1h].every(
+      (m) => Number.isFinite(m) && m >= 0
+    );
+  if (!usable) {
+    return raw;
+  }
+  const cache = cacheTokens(usage);
+  // `inputTokens` includes the cache parts. Reads and writes beyond it mean the
+  // provider's input excludes them, so the shape is not the one the clamps in
+  // `priceEquivalentInput` assume — and clamping would count the call below raw.
+  if (cache.read + cache.write > raw) {
+    return raw;
+  }
+  return Math.round(priceEquivalentInput(raw, { ...cache, rates: multipliers }));
+}
+
+/** One number format for every budget message: `1,234,567`. */
+function fmt(n: number): string {
+  return n.toLocaleString('en-US');
+}
+
+/** `C/L input tokens`, giving the raw total as well when the counted one differs. */
+function describeInput(counted: number, raw: number, limit: number): string {
+  return counted === raw
+    ? `${fmt(raw)}/${fmt(limit)} input tokens`
+    : `${fmt(counted)}/${fmt(limit)} input tokens counted (${fmt(raw)} raw)`;
 }
 
 /**
@@ -388,6 +454,7 @@ export async function assertBudgetAvailable(label = 'llm.call'): Promise<void> {
     select: {
       budgetTier: true,
       costUsdAccrued: true,
+      tokensInputCountedUsed: true,
       tokensInputUsed: true,
       tokensOutputUsed: true,
     },
@@ -400,7 +467,10 @@ export async function assertBudgetAvailable(label = 'llm.call'): Promise<void> {
   }
 
   const { limits, tier } = await resolveTierLimits(workflow.budgetTier);
-  const usedInput = Number(workflow.tokensInputUsed);
+  // The cap is on the counted (dollar-equivalent) input; the raw total is shown
+  // beside it only so the message matches what the UI displays.
+  const usedInput = Number(workflow.tokensInputCountedUsed);
+  const rawInput = Number(workflow.tokensInputUsed);
   const usedOutput = Number(workflow.tokensOutputUsed);
   // `>=` here, `>` in the post-check below, deliberately: a call that lands
   // exactly on the cap has spent its budget and is allowed, but the next call
@@ -408,11 +478,11 @@ export async function assertBudgetAvailable(label = 'llm.call'): Promise<void> {
   if (usedInput >= limits.inputTokens || usedOutput >= limits.outputTokens) {
     throw ApplicationFailure.nonRetryable(
       `Budget already exhausted for tier ${tier} before ${label}: ` +
-        `${usedInput}/${limits.inputTokens} input tokens, ` +
-        `${usedOutput}/${limits.outputTokens} output tokens used ` +
+        `${describeInput(usedInput, rawInput, limits.inputTokens)}, ` +
+        `${fmt(usedOutput)}/${fmt(limits.outputTokens)} output tokens used ` +
         `($${workflow.costUsdAccrued.toFixed(4)})`,
       'BUDGET_EXCEEDED',
-      { label, tier, usedInput, usedOutput }
+      { label, tier, usedInput, usedInputRaw: rawInput, usedOutput }
     );
   }
 }
@@ -522,10 +592,13 @@ export async function recordLlmUsage(
   const inputTokens = usage.inputTokens ?? 0;
   const outputTokens = usage.outputTokens ?? 0;
   const cache = cacheTokens(usage);
+  const cacheRates = await getCacheMultipliers(modelSpec);
   const callCost = costFromPrice(price, inputTokens, outputTokens, {
     ...cache,
-    rates: await getCacheMultipliers(modelSpec),
+    rates: cacheRates,
   });
+  // What this call adds to the input cap. An unpriced model is counted raw.
+  const countedInput = countedInputTokensForCall(usage, known ? cacheRates : undefined);
   // Before the ledger: a call with no ledger row (channel, PRD, authoring) was
   // still made and paid for.
   recordLlmCallMetrics({
@@ -555,6 +628,7 @@ export async function recordLlmUsage(
           'llm.cost_pricing_known': known,
           'llm.cost_usd': callCost,
           'llm.input_tokens': inputTokens,
+          'llm.input_tokens_counted': countedInput,
           'llm.model': modelSpec,
           'llm.output_tokens': outputTokens,
           'llm.role': role,
@@ -584,6 +658,7 @@ export async function recordLlmUsage(
         let updated: {
           budgetTier: string | null;
           costUsdAccrued: number;
+          tokensInputCountedUsed: bigint;
           tokensInputUsed: bigint;
           tokensOutputUsed: bigint;
         };
@@ -591,12 +666,16 @@ export async function recordLlmUsage(
           updated = await prisma.activeWorkflow.update({
             data: {
               costUsdAccrued: { increment: costDelta },
+              // Raw for display and rollups, counted for the cap; both move in
+              // this one statement so they cannot disagree.
+              tokensInputCountedUsed: { increment: countedInput },
               tokensInputUsed: { increment: inputTokens },
               tokensOutputUsed: { increment: outputTokens },
             },
             select: {
               budgetTier: true,
               costUsdAccrued: true,
+              tokensInputCountedUsed: true,
               tokensInputUsed: true,
               tokensOutputUsed: true,
             },
@@ -627,12 +706,14 @@ export async function recordLlmUsage(
         }
 
         const newInput = Number(updated.tokensInputUsed);
+        const newInputCounted = Number(updated.tokensInputCountedUsed);
         const newOutput = Number(updated.tokensOutputUsed);
         const newCost = updated.costUsdAccrued;
 
         span.setAttributes({
           'workflow.budget_tier': updated.budgetTier ?? 'STANDARD',
           'workflow.cost_usd_cumulative': newCost,
+          'workflow.tokens_input_counted_cumulative': newInputCounted,
           'workflow.tokens_input_cumulative': newInput,
           'workflow.tokens_output_cumulative': newOutput,
         });
@@ -645,14 +726,14 @@ export async function recordLlmUsage(
         const { limits, tier } = await resolveTierLimits(updated.budgetTier);
 
         span.setAttributes({
-          'workflow.budget_remaining_input_tokens': limits.inputTokens - newInput,
+          'workflow.budget_remaining_input_tokens': limits.inputTokens - newInputCounted,
           'workflow.budget_remaining_output_tokens': limits.outputTokens - newOutput,
         });
 
-        if (newInput > limits.inputTokens || newOutput > limits.outputTokens) {
+        if (newInputCounted > limits.inputTokens || newOutput > limits.outputTokens) {
           recordBudgetExceeded(tier);
           throw ApplicationFailure.nonRetryable(
-            `Budget exceeded for tier ${tier}: ${newInput}/${limits.inputTokens} input tokens, ${newOutput}/${limits.outputTokens} output tokens used ($${newCost.toFixed(4)})`,
+            `Budget exceeded for tier ${tier}: ${describeInput(newInputCounted, newInput, limits.inputTokens)}, ${fmt(newOutput)}/${fmt(limits.outputTokens)} output tokens used ($${newCost.toFixed(4)})`,
             'BUDGET_EXCEEDED',
             {
               // The call was made and the ledger debited; carry its attribution
@@ -660,6 +741,7 @@ export async function recordLlmUsage(
               attribution: { costUsd: callCost, inputTokens, modelSpec, outputTokens },
               newCost,
               newInput,
+              newInputCounted,
               newOutput,
               tier,
             }
