@@ -9,7 +9,7 @@ Every commit passes the full gate list in `CLAUDE.md` §5 Quality Gates. In this
 ## Progress
 
 - [x] Task 1: Add `searchIssues` to the Jira provider — `28b8b543`
-- [ ] Task 2: Add the `jira.filter.new_issue` source and its settings
+- [x] Task 2: Add the `jira.filter.new_issue` source and its settings — `ef8ff09c`
 - [ ] Task 3: Add the migration and poll-state models
 - [ ] Task 4: Poll a filter and record the baseline
 - [ ] Task 5: Start a run for each new matching issue
@@ -45,14 +45,14 @@ Every commit passes the full gate list in `CLAUDE.md` §5 Quality Gates. In this
 
 ### Task 4: Poll a filter and record the baseline
 
-**What**: Create `jiraPoller.ts` with `pollAutomation()`. It claims the lease with `updateMany` and a null-or-expired `leaseUntil` condition, skips an inactive repository, a retired installation or a team whose kill switch is off, resolves the allowlist, searches with the wrapped JQL, drops results outside the allowlist, and enforces the 1,000-match cap. When `baselinedAt` is empty it stores every key as seen, sets `baselinedAt`, and starts nothing. It always releases the lease and stores `lastPolledAt` and a fixed-code `lastError`. Add `jiraPoller.pg.test.ts` for the lease and add it to the `ci.yml` step that runs `engine.pg.test.ts`'s flag.
+**What**: Create `jiraPoller.ts` with `pollAutomation()`. It claims the lease with `updateMany` and a null-or-expired `leaseUntil` condition, skips an inactive repository, a retired installation or a team whose kill switch is off, resolves the allowlist, searches with the wrapped JQL, drops results outside the allowlist, and enforces the 1,000-match cap. When `baselinedAt` is empty it stores every key as seen, sets `baselinedAt`, and starts nothing. It always releases the lease and stores `lastPolledAt` and a fixed-code `lastError`. Compare project keys after upper-casing both sides, and never with `includes` on raw strings. Add `jiraPoller.pg.test.ts` for the lease and add it to the `ci.yml` step that runs `engine.pg.test.ts`'s flag.
 **Files**: `packages/gateway/src/lib/automations/jiraPoller.ts` (new, with test), `packages/gateway/src/lib/automations/jiraPoller.pg.test.ts` (new), `.github/workflows/ci.yml`
 **Depends on**: Task 1, Task 3
 **Verify**: `yarn test packages/gateway/src/lib/automations/jiraPoller.test.ts` passes cases for the baseline, the allowlist result filter, an empty allowlist, `FILTER_TOO_BROAD`, the kill switch making no Jira call, and `lastError` holding only fixed codes. The `.pg` suite passes with two concurrent claimers and only one winning. `yarn invariants:check` passes, which proves the new `.pg` suite is wired into CI.
 
 ### Task 5: Start a run for each new matching issue
 
-**What**: Extend `pollAutomation()` for a baselined automation. Compute the unseen keys and take at most 50, oldest first. For each, fetch the issue text through `fetchIssue`, build the facts, and call `decideAndStart` with `retry: { kind: 'redelivery' }`, the repository's connection and the repository owner key. Store the key as seen after any outcome except `FAILED_TO_START`. A `duplicate` answer also stores the key as seen.
+**What**: Extend `pollAutomation()` for a baselined automation. Compute the unseen keys and take at most 50, oldest first. For each, fetch the issue text through `fetchIssue`, build the facts (build the issue `url` from the configured Jira base URL, never from API response data), and call `decideAndStart` with `retry: { kind: 'redelivery' }`, the repository's connection and the repository owner key. Store the key as seen after any outcome except `FAILED_TO_START`. A `duplicate` answer also stores the key as seen.
 **Files**: `packages/gateway/src/lib/automations/jiraPoller.ts`, `packages/gateway/src/lib/automations/jiraPoller.test.ts`, `packages/gateway/src/lib/automations/jiraPoller.pg.test.ts`
 **Depends on**: Task 4, Task 2
 **Verify**: Unit tests show one `decideAndStart` call per unseen key, no call for a seen key, the 50-key bound, a failed start leaving the key unseen, and limit-suppressed decisions storing the key as seen. The `.pg` suite shows a second poll over the same keys starts no second run, using the real engine and a fake Temporal client.
@@ -73,7 +73,7 @@ Every commit passes the full gate list in `CLAUDE.md` §5 Quality Gates. In this
 
 ### Task 8: Show the JQL and poll status in the dashboard
 
-**What**: Add `lastPolledAt` and `lastError` for this source to the existing automation list response, with no new route. Render `kind: 'text'` fields as a textarea in the event-automation editor. Show the poll status and its error code in the automation panel.
+**What**: Add `lastPolledAt` and `lastError` for this source to the existing automation list response, with no new route. Render `kind: 'text'` fields as a textarea in the event-automation editor. Show the poll status and its error code in the automation panel. The editor's `startingFilters` and `filtersFrom` treat every non-`choices` field as a comma-list, which would split a JQL on its commas and send it as an array. Add `text` branches that keep a plain string.
 **Files**: `packages/gateway/src/routes/automations.ts`, `packages/web/src/components/automations/EventAutomationEditor.tsx`, `packages/web/src/components/automations/EventAutomationsPanel.tsx` (plus their tests)
 **Depends on**: Task 3, Task 7
 **Verify**: `yarn test packages/gateway/src/routes/automations packages/web/src/components/automations` passes. A gateway test shows the status fields on the list response for this source only. A web test shows the textarea, the saved JQL round trip, and the status line. Start `yarn dev:web`, create an automation in the dashboard, and see the status update after one poll.
