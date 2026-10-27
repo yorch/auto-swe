@@ -103,4 +103,46 @@ describe('validatePhase', () => {
       expect(nodes.validate).not.toHaveProperty('inputs');
     });
   });
+
+  describe('stopping when the request is not actionable', () => {
+    const stop = { next: 'setImplementing', stopIfNotActionable: true } as const;
+
+    it("checks validate's verdict before the criteria are kept, and ends the run when it is negative", () => {
+      const nodes = validatePhase(stop);
+      expect(nodes.validate).toMatchObject({ next: 'checkActionable' });
+      expect(nodes.checkActionable).toMatchObject({
+        expr: 'nodes.validate.output.actionable == false',
+        onFalse: 'setSuccessCriteria',
+        onTrue: 'terminateNotActionable',
+        type: 'cond',
+      });
+      expect(nodes.terminateNotActionable).toMatchObject({
+        result: {
+          ambiguities: { default: [], from: 'nodes.validate.output.ambiguities' },
+          message: { literal: expect.stringContaining('not actionable') },
+        },
+        status: 'FAILED',
+        type: 'terminate',
+      });
+      expectWellFormed(nodes, 'setValidating', ['setImplementing']);
+    });
+
+    it('goes straight to `next` when there are no success criteria to keep', () => {
+      const nodes = validatePhase({ ...stop, successCriteria: false });
+      expect(nodes.checkActionable).toMatchObject({ onFalse: 'setImplementing' });
+      expectWellFormed(nodes, 'setValidating', ['setImplementing']);
+    });
+
+    it('follows the gatherer when the ticket context is on', () => {
+      const nodes = validatePhase({ ...stop, ticketContext: true });
+      expect(nodes.setTicket).toMatchObject({ next: 'validate' });
+      expectWellFormed(nodes, 'setValidating', ['setImplementing']);
+    });
+
+    it('is off by default: no extra nodes', () => {
+      const nodes = validatePhase({ next: 'setImplementing' });
+      expect(nodes.checkActionable).toBeUndefined();
+      expect(nodes.terminateNotActionable).toBeUndefined();
+    });
+  });
 });

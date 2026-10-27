@@ -591,6 +591,35 @@ function withTicketGatherer(g: WorkflowSpec): WorkflowSpec {
   return { ...g, nodes } as WorkflowSpec;
 }
 
+/**
+ * `ticket-to-merge` ends the run, FAILED, when `validate` reports the request is not actionable
+ * (every criterion it found is an ambiguity), instead of implementing it anyway.
+ */
+function withNotActionableStop(g: WorkflowSpec): WorkflowSpec {
+  const nodes = { ...g.nodes } as Record<string, unknown>;
+  nodes.validate = { ...(nodes.validate as object), next: 'checkActionable' };
+  nodes.checkActionable = {
+    expr: 'nodes.validate.output.actionable == false',
+    onFalse: 'setSuccessCriteria',
+    onTrue: 'terminateNotActionable',
+    type: 'cond',
+  };
+  nodes.terminateNotActionable = {
+    result: {
+      ambiguities: { default: [], from: 'nodes.validate.output.ambiguities' },
+      message: {
+        literal:
+          'The request is not actionable: validation found nothing it could verify, ' +
+          'only the ambiguities listed here. Paste the ticket text or add acceptance ' +
+          'criteria to the request, then re-run.',
+      },
+    },
+    status: 'FAILED',
+    type: 'terminate',
+  };
+  return { ...g, nodes } as WorkflowSpec;
+}
+
 function ticketToMergeFailureLessons(g: WorkflowSpec): WorkflowSpec {
   const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
   const lesson = (outcome: string, next: string) => ({
@@ -929,12 +958,21 @@ const INTENDED_CHANGES: Record<
   },
   'ticket-to-merge': {
     apply: (g: WorkflowSpec) =>
-      withTicketGatherer(ticketToMergeFailureLessons(removePassThrough(g, 'setCompleted'))),
+      withNotActionableStop(
+        withTicketGatherer(ticketToMergeFailureLessons(removePassThrough(g, 'setCompleted')))
+      ),
     reason:
       'the finalizer already writes COMPLETED on SUCCESS; a review or CI loop that runs out ' +
       'of attempts, or a merge wait that times out, stores a lesson about what happened ' +
       'before the run ends, and every commitToMemory step names the outcome it records; ' +
-      "the run's tracker ticket is gathered before validation and handed to validate and implement",
+      "the run's tracker ticket is gathered before validation and handed to validate and implement; " +
+      'a request validation finds not actionable ends the run FAILED before implement',
+  },
+  'ticket-to-merge-qodo': {
+    apply: (g: WorkflowSpec) => withNotActionableStop(g),
+    reason:
+      'it is built on the ticket-to-merge node graph, so a request validation finds not ' +
+      'actionable ends the run FAILED before implement',
   },
   // The two templates that ended the run on the first CI failure now fix and retry like their
   // siblings, with CI ahead of the human / consensus gates (and the setCompleted removal above).

@@ -1071,6 +1071,21 @@ that keeps `nodes.<id>.output.text` in `context.ticket`, and `ticket: context.ti
 `validate` and `implement` fetch the plain ticket themselves when no step handed them one. A ticket
 handed in as the empty string means the run has none, and neither path fetches again.
 
+**Stopping on an unactionable request.** `ticket-to-merge` does not implement a request that
+validation cannot act on. The `validateContext` activity returns `actionable` and `ambiguities`
+beside `successCriteria`. A request is not actionable when the extraction succeeded and either every
+criterion is an `AMBIGUOUS: <what is unclear>` entry (the format the `context-ambiguity-resolution`
+skill asks for) or it returned no criteria at all. A degraded extraction (the model call failed,
+traced `context_validation.degraded`) is not a verdict: its empty list stays actionable. The marker
+is read in one place, `packages/worker/src/lib/contextAmbiguity.ts`, at the start of an entry and
+after the decoration a model adds (backticks, emphasis, a bullet or list number, a colon or dash).
+The `ambiguities` copied into the result are bounded: at most 10, each cut to 500 characters, and a
+bare marker becomes `no reason given`. A `cond` after `validate` then ends the run `FAILED` at a
+`terminate` node whose result carries `message` and `ambiguities`, which the run page shows, instead
+of letting `implement` spend its budget guessing. An unreachable ticket alone never stops a run: a
+request with a real description yields real criteria and goes on, and so does a `validate` step that
+threw. A template opts in with `validatePhase({ stopIfNotActionable: true })`.
+
 Ticket text is written by people other than the operator, so everything that reaches a prompt is
 bounded (title 300 characters, description 6,000, comments 1,500 each within a 12,000-character
 budget that keeps the newest, parent description 2,000, and at most 12 items of 400 characters in
@@ -1702,6 +1717,15 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   step ran. The harness runtimes debit each call as it completes, so their aborted turns keep the
   usage seen so far; a call still in flight when a turn aborts is not counted.
 - **The gatherer is one `planner`-model call per run**, with no cache across runs.
+- **The unactionable-request stop reads a prompt convention, not a schema field.** It rests on the
+  `validateContext` agent writing `AMBIGUOUS:` entries (or none, for input it cannot read). A model
+  that words an ambiguity differently defeats the marker, and the run implements as before. A model
+  that writes every gap as an `AMBIGUOUS` entry, even one it could assume a default for, stops a
+  request the implementer could have handled; the remedy is to add acceptance criteria and re-run.
+  One concrete criterion beside the ambiguities lets a run go on. An admin-edited `validateContext`
+  prompt keeps its own text: only an untouched seeded prompt moves to the current one, as a new
+  agent version. Only `ticket-to-merge` stops; the other built-in templates still continue past an
+  ambiguity verdict, and a custom copy of `ticket-to-merge` keeps its old graph.
 - **The Claude Code harness's container-side checks are tripwires, not a boundary.** The binary's
   hash is taken with the container's own `sha256sum`, so code that controls the container (its
   `sha256sum`, or a process that outlives the turn's tag cleanup) can defeat the check; the harness's
