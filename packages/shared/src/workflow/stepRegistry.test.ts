@@ -119,6 +119,14 @@ describe('stepRegistry', () => {
     expect(provider?.enumValues).toContain('document');
   });
 
+  it('offers postTicketComment to authors, with a required body and an optional heading', () => {
+    expect(listSteps().map((s) => s.name)).toContain('postTicketComment');
+    const fields = getStepMetadata('postTicketComment').configFields;
+    expect(fields.find((f) => f.key === 'body')).toMatchObject({ required: true, type: 'string' });
+    expect(fields.find((f) => f.key === 'heading')).toMatchObject({ type: 'string' });
+    expect(fields.find((f) => f.key === 'heading')?.required).not.toBe(true);
+  });
+
   it('publishOutcome exposes the action risk class config field', () => {
     const fields = getStepMetadata('publishOutcome').configFields;
     const action = fields.find((f) => f.key === 'action');

@@ -178,6 +178,8 @@ export type {
 export { persistDraftTemplate } from './persistDraftTemplate.js';
 // Phase 3
 export { planEpic } from './planEpic.js';
+export type { PostTicketCommentInput, PostTicketCommentResult } from './postTicketComment.js';
+export { postTicketComment } from './postTicketComment.js';
 export type {
   PrdAnalysis,
   PrdDecomposition,

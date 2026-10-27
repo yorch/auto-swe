@@ -135,6 +135,31 @@ register({
 });
 
 register({
+  category: 'control',
+  configFields: [
+    {
+      description:
+        'The comment text, usually bound from an earlier step’s output. Cut to 30,000 characters, with a marker saying so.',
+      key: 'body',
+      label: 'Comment',
+      multiline: true,
+      required: true,
+      type: 'string',
+    },
+    {
+      description: 'Optional first line of the comment, followed by a blank line.',
+      key: 'heading',
+      label: 'Heading',
+      type: 'string',
+    },
+  ],
+  description:
+    "Post one comment to the run's tracker ticket through the configured issue tracker. Output: `posted`, and a `reason` when it did not post. A run with no ticket, a platform-generated ticket id, no tracker configured, a body that is not text, a comment the tracker refuses, or a step that times out or loses its worker returns `posted: false` without failing the run; after a timeout the comment may or may not have been posted. Credential-shaped text is masked, and on GitHub and Linear @mentions and images are neutralised.",
+  label: 'Post ticket comment',
+  name: 'postTicketComment',
+});
+
+register({
   category: 'agent',
   configFields: [
     SYSTEM_PROMPT_FIELD,

@@ -201,21 +201,30 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     }
   }
 
-  async addComment(issueId: string, bodyText: string): Promise<void> {
+  async addComment(issueId: string, bodyText: string): Promise<boolean> {
     try {
       const parsed = parseGitHubTicketId(issueId, this.defaultRepo);
       if (!parsed) {
-        return;
+        this.log?.warn(
+          { issueId },
+          'GitHub addComment: ticket ID must be owner/repo#123 or a bare issue number'
+        );
+        return false;
       }
       const url = `${this.baseUrl}/repos/${parsed.owner}/${parsed.repo}/issues/${parsed.number}/comments`;
-      await this.request(url, {
+      const res = await this.request(url, {
         body: JSON.stringify({ body: bodyText }),
         headers: { ...this.headers(), 'Content-Type': 'application/json' },
         method: 'POST',
         signal: AbortSignal.timeout(10_000),
       });
+      if (!res.ok) {
+        this.log?.warn({ issueId, status: res.status }, 'GitHub addComment failed');
+      }
+      return res.ok;
     } catch (err) {
       this.log?.warn({ err, issueId }, 'GitHub addComment failed');
+      return false;
     }
   }
 

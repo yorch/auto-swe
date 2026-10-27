@@ -55,6 +55,7 @@ export const BUILTIN_STEPS = [
   'updateDomainState',
   'validateContext',
   'gatherTicketContext',
+  'postTicketComment',
   'executeImplementation',
   'runReviewNetwork',
   'executeReviewFixImplementation',
