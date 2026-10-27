@@ -2,7 +2,7 @@
 
 Jira: N/A
 Date: 2026-10-27
-Status: Draft
+Status: Approved
 Last reviewed: 2026-10-27
 
 ## Problem
