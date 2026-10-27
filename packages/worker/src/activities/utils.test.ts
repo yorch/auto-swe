@@ -177,6 +177,53 @@ describe('unrunnableTestCause', () => {
     ).toBeDefined();
   });
 
+  it("recognises npm's missing package.json failure (exit 254)", () => {
+    const stdout = [
+      'npm error code ENOENT',
+      'npm error syscall open',
+      'npm error path /workspace/target-repo/package.json',
+      'npm error errno -2',
+      'npm error enoent Could not read package.json: Error: ENOENT: no such file or directory, open',
+    ].join('\n');
+    expect(unrunnableTestCause(execError({ code: 254, stdout }))).toBe(
+      'npm reports no package.json in the workspace'
+    );
+  });
+
+  it('needs exit 254 and an unindented line: a nested npm run inside a failing suite is not it', () => {
+    const line = 'npm error enoent Could not read package.json: Error: ENOENT: no such file';
+    const outputs = [
+      line,
+      `Tests: 1 failed\n${line}`,
+      `    ${line}`,
+      `stderr | x > ${line}`,
+      `npm ERR! enoent Could not read package.json: Error: ENOENT`,
+      `error Couldn't find a package.json file in "/workspace/target-repo"`,
+    ];
+    for (const stdout of outputs) {
+      expect(unrunnableTestCause(execError({ code: 1, stdout }))).toBeUndefined();
+    }
+    for (const stdout of [
+      `    ${line}`,
+      `stderr | x > ${line}`,
+      line.replace('npm error', 'npm ERR!'),
+    ]) {
+      expect(unrunnableTestCause(execError({ code: 254, stdout }))).toBeUndefined();
+    }
+  });
+
+  it('does not match application output that merely mentions package.json or ENOENT', () => {
+    const outputs = [
+      'FAIL cfg.test.ts\n  Error: ENOENT: no such file or directory, open package.json\nTests: 1 failed',
+      'enoent Could not read package.json: Error: ENOENT (printed by a test)',
+      'console.log: npm error code ENOENT is what npm prints\nTests: 1 failed',
+      'npm error enoent Could not read something.json: Error: ENOENT',
+    ];
+    for (const stdout of outputs) {
+      expect(unrunnableTestCause(execError({ code: 254, stdout }))).toBeUndefined();
+    }
+  });
+
   it('does not treat an ordinary failing run as unrunnable', () => {
     expect(unrunnableTestCause(execError({ code: 1, stdout: 'Tests: 2 failed, 5 passed' }))).toBe(
       undefined
