@@ -67,6 +67,7 @@ sequenceDiagram
 | Workflow id | `jirapoll-<automation8>-<key>`. It differs from the Jira webhook's `jira-<ticket>` |
 | Default template | `ticket-to-merge`. The automation's `templateId` overrides it |
 | Run ticket | The real Jira key, not a synthetic one, so `gatherTicketContext` and tracker sync work |
+| Run description | The key and the link first, then the summary and description inside an explicit untrusted block (`<ticket>…</ticket>`), with a line that tells the agent to treat it as data. A `</ticket` inside the text is escaped |
 | In-flight look-back | 14 days, as for issue labels |
 | Kill switch | `workflow.jiraPollAutomationsEnabled` |
 | `actor` | None. The run uses the platform credential, as CI-failure runs do |
@@ -94,8 +95,8 @@ Per automation, one poll does the following:
 3. Search with `project in (<allowlist>) AND (<jql>)` through `POST /rest/api/3/search/jql`, requesting only `summary` and `project`. Page until done, up to 1,000 matches. If there are more, record `lastError = FILTER_TOO_BROAD` and act on none of them.
 4. Drop every returned issue whose `project.key` is not in the allowlist. **This result check is the authoritative control.** The query wrapper only narrows the search, because a JQL with unbalanced parentheses can escape it.
 5. If the automation has no `baselinedAt`, store every returned key as seen, set `baselinedAt`, and stop. No run starts.
-6. Otherwise, compute the unseen keys. Handle at most 50 per tick, oldest first, and leave the rest for the next tick.
-7. For each unseen key, fetch the issue text, build the facts, and call `decideAndStart` with `retry: { kind: 'redelivery' }`. Then store the key as seen, except when the outcome is `FAILED_TO_START`. A failed start leaves the key unseen, so the next poll tries it again.
+6. Otherwise, compute the unseen keys. Handle at most 50 per tick, in key order (by project, then issue number), and leave the rest for the next tick. Jira's creation order is not read, so this is not strictly oldest first across projects.
+7. For each unseen key, fetch the issue text, build the facts, and call `decideAndStart` with `retry: { kind: 'redelivery' }`. Then store the key as seen. Three cases end the poll with a fixed error code and leave the key unseen, so the next poll tries it again and the stall is visible: an issue that cannot be read (`TRACKER_UNAVAILABLE`), and a start that failed or was ignored by the engine (`START_FAILED`). A read that answers for a different key than the search approved, which happens when an issue moved projects in between, is skipped. Facts that can never be valid are stored as seen.
 
 A crash between the decision and the seen-key write is safe. The ledger's unique `dedupeKey` answers `duplicate` on the next poll, and the key is then stored as seen.
 
@@ -136,12 +137,12 @@ The event-automation editor shows a JQL textarea for this source. The automation
 5. When a baselined automation's search returns a key that is not in its seen set, the poller shall call `decideAndStart` once for that key and the automation.
 6. When the same key appears in a later poll, the poller shall start no second run.
 7. When a run starts, its `ticketId` shall be the Jira key, `ticketIsSynthetic` shall be `false`, and its workflow id shall start with `jirapoll-`.
-8. If `decideAndStart` returns `FAILED_TO_START`, then the poller shall leave the key unseen so the next poll tries it again.
+8. If `decideAndStart` returns `FAILED_TO_START`, throws a start error or ignores the occurrence, then the poller shall leave the key unseen, record `lastError = START_FAILED`, and stop the batch.
 9. If a decision is suppressed by a daily cap, budget, or in-flight check, then the poller shall store the key as seen and the ledger shall hold the decision.
 10. If a returned issue's `project.key` is not in `workflow.jiraPollProjectKeys`, then the poller shall ignore the issue, whatever the JQL says.
 11. If `workflow.jiraPollProjectKeys` is empty, then the poller shall record `lastError = NO_ALLOWED_PROJECTS` and start no run.
 12. If a search matches more than 1,000 issues, then the poller shall record `lastError = FILTER_TOO_BROAD` and act on none of them.
-13. The poller shall handle at most 50 unseen keys per automation per tick, oldest first.
+13. The poller shall handle at most 50 unseen keys per automation per tick, in key order.
 14. When two replicas poll at the same moment, only the replica that wins the lease compare-and-set shall poll that automation.
 15. When the saved JQL changes, or the automation goes from disabled to enabled, the system shall clear `baselinedAt`.
 16. If Jira answers `400` to the save-time validation search, then the save shall return `400 JQL_REJECTED` and store nothing.
@@ -165,10 +166,10 @@ The event-automation editor shows a JQL textarea for this source. The automation
 ## Risks & Open Questions
 
 - **Search API shape. Needs spike.** The plan assumes `POST /rest/api/3/search/jql` with `nextPageToken` paging, and that requesting `summary` and `project` returns the key. The Atlassian MCP did not connect in this session, so this was not checked against a live Jira. Verify against the real instance in the first implementation task.
-- **Ticket text is not trusted. Deferred.** A run acts on text anyone with Jira access may have written. The allowlist limits which projects, not who wrote the text. The docs must say so, as they do for issue labels.
+- **Ticket text is not trusted. Mitigated, not removed.** A run acts on text anyone with write access to an allowed Jira project may have written. The allowlist limits which projects, not who wrote the text. The text is fenced and marked as data, which lowers the risk but is not a guarantee. The post-diff scanners and the human merge are the controls behind it. The docs must say so.
 - **Double start. Resolved by documentation.** A ticket can also reach the Jira transition webhook, which uses workflow id `jira-<ticket>`. The two paths would start two runs. Operators should not use both for one project.
 - **Key rename or move. Deferred.** A moved issue gets a new key and counts as new.
-- **Permanent start failure. Deferred.** A key whose start always fails stays unseen and is retried every tick. The ledger row is replaced in place, not added. `lastError` shows the problem. Add a retry limit only if it proves noisy.
+- **A stalled automation. Resolved by being visible.** A key whose start always fails, or that cannot be read, stays unseen and stops the batch at every tick, so newer issues wait behind it. `lastError` shows the cause on every poll. Skipping it instead would hide the stall.
 - **Cost of a wrong JQL. Resolved.** The baseline, the 50-per-tick bound, `maxRunsPerDay` and the org budget limit the effect of a broad filter.
 - **Rollout flag. Resolved.** `workflow.jiraPollAutomationsEnabled` is off by default, so the feature is dark until an admin enables it per team.
 - **Schema change. Process.** Read the `prisma-pgvector-hnsw` skill before any `prisma migrate` command. The new `CHECK` and the replaced source constraint are hand-written SQL.

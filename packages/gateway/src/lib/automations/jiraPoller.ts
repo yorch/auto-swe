@@ -14,11 +14,25 @@
  * text from Jira.
  */
 import type { PrismaClient } from '@auto-swe/shared';
-import { JiraFilterFiltersSchema } from '@auto-swe/shared/automation';
+import {
+  type JiraFilterFacts,
+  JiraFilterFactsSchema,
+  JiraFilterFiltersSchema,
+  jiraFilterNewIssueSource,
+  repositoryOwnerKey,
+} from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { AtlassianError } from '@auto-swe/shared/lib/integrations/atlassianClient';
 import type { IssueTrackerProvider } from '@auto-swe/shared/lib/integrations/issueTracker';
 import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
+import type { FastifyInstance } from 'fastify';
+import {
+  type AutomationResult,
+  type AutomationRow,
+  AutomationStartError,
+  decideAndStart,
+  type EngineConnection,
+} from './engine.js';
 
 /** Matches one poll will read. More means the filter is too broad to act on safely. */
 export const JIRA_POLL_MAX_MATCHES = 1_000;
@@ -26,13 +40,17 @@ export const JIRA_POLL_MAX_MATCHES = 1_000;
 /** How long a replica may hold an automation's lease. It expires by itself if the process dies. */
 const LEASE_MS = 5 * 60_000;
 
+/** Issues one poll of one automation decides. The rest stay unseen for the next poll. */
+const MAX_ISSUES_PER_POLL = 50;
+
 /** The only values `lastError` ever holds. */
 export type PollErrorCode =
   | 'NO_ALLOWED_PROJECTS'
   | 'FILTER_TOO_BROAD'
   | 'JQL_REJECTED'
   | 'TRACKER_UNAVAILABLE'
-  | 'INVALID_FILTERS';
+  | 'INVALID_FILTERS'
+  | 'START_FAILED';
 
 export type PollSkipReason =
   | 'repository-inactive'
@@ -44,7 +62,7 @@ export type PollOutcome =
   | { status: 'skipped'; reason: PollSkipReason }
   | { status: 'error'; code: PollErrorCode }
   | { status: 'baselined'; recorded: number }
-  | { status: 'polled' };
+  | { status: 'polled'; started: number; suppressed: number; pending: number };
 
 /** An automation as the poller reads it: its filters, and the repository it acts on. */
 export interface PollableAutomation {
@@ -60,7 +78,9 @@ export interface PollableAutomation {
 
 export interface PollDeps {
   prisma: Pick<PrismaClient, 'automationPollState' | 'automationSeenIssue'>;
-  tracker: Pick<IssueTrackerProvider, 'searchIssues'>;
+  tracker: Pick<IssueTrackerProvider, 'searchIssues' | 'fetchIssue'>;
+  /** Decides one new issue: the engine, for the automation being polled. */
+  decide: (facts: JiraFilterFacts) => Promise<AutomationResult>;
   now: Date;
 }
 
@@ -223,5 +243,155 @@ async function poll(
     });
     return { recorded: inAllowedProjects.length, status: 'baselined' };
   }
-  return { status: 'polled' };
+  return startNewIssues(deps, automation.id, inAllowedProjects);
+}
+
+/** `PAY-2` before `PAY-10`; within a poll, one project after another. */
+const byIssueNumber = (a: { key: string }, b: { key: string }) =>
+  a.key.localeCompare(b.key, 'en', { numeric: true });
+
+/**
+ * Decide the issues the automation has not seen, in key order (by project, then issue number)
+ * and at most one poll's worth. An issue is marked seen only after the engine has decided it, so a
+ * crash between the two is decided again and answered `duplicate`.
+ *
+ * What stops the batch is visible, never silent: an issue that cannot be read, or whose start
+ * failed or was ignored, ends the poll with a fixed error code and stays unseen, because its
+ * cause (Jira, a template, Temporal) is not the issue's. Skipping it instead would leave it
+ * first in line on every poll and starve the newer issues behind it without a trace.
+ */
+async function startNewIssues(
+  deps: PollDeps,
+  automationId: string,
+  matches: readonly { key: string; projectKey: string }[]
+): Promise<PollOutcome> {
+  const { automationSeenIssue: seenIssues } = deps.prisma;
+  // One issue is one key whatever its spelling.
+  const byKey = new Map(matches.map((m) => [m.key.toLowerCase(), m]));
+  const seenRows = await seenIssues.findMany({
+    select: { issueKey: true },
+    where: { automationId, issueKey: { in: [...byKey.keys()] } },
+  });
+  const seen = new Set(seenRows.map((r) => r.issueKey));
+  const unseen = [...byKey.entries()]
+    .filter(([key]) => !seen.has(key))
+    .map(([, match]) => match)
+    .sort(byIssueNumber);
+  const markSeen = (key: string) =>
+    seenIssues.createMany({
+      data: [{ automationId, issueKey: key.toLowerCase() }],
+      skipDuplicates: true,
+    });
+
+  let started = 0;
+  let suppressed = 0;
+  let decided = 0;
+  for (const match of unseen.slice(0, MAX_ISSUES_PER_POLL)) {
+    let issue: Awaited<ReturnType<PollDeps['tracker']['fetchIssue']>>;
+    try {
+      issue = await deps.tracker.fetchIssue(match.key);
+    } catch {
+      return { code: 'TRACKER_UNAVAILABLE', status: 'error' };
+    }
+    if (!issue) {
+      return { code: 'TRACKER_UNAVAILABLE', status: 'error' };
+    }
+    // The search approved this key in this project. A read that answers for another issue (one
+    // moved to another project since) is not it, and is left for the next search to show.
+    if (issue.id.toLowerCase() !== match.key.toLowerCase()) {
+      continue;
+    }
+    const facts = JiraFilterFactsSchema.safeParse({
+      description: issue.description.slice(0, 4_000),
+      issueKey: match.key,
+      projectKey: match.projectKey,
+      summary: issue.title.slice(0, 256),
+      url: issue.url.slice(0, 500),
+    });
+    if (!facts.success) {
+      // Facts that can never be valid (a key of an unheard-of shape): retrying changes nothing,
+      // and leaving it unseen would put it first in line on every poll.
+      await markSeen(match.key);
+      decided++;
+      continue;
+    }
+    let result: AutomationResult;
+    try {
+      result = await deps.decide(facts.data);
+    } catch (err) {
+      if (err instanceof AutomationStartError) {
+        return { code: 'START_FAILED', status: 'error' };
+      }
+      throw err;
+    }
+    if ('ignored' in result || ('outcome' in result && result.outcome === 'FAILED_TO_START')) {
+      return { code: 'START_FAILED', status: 'error' };
+    }
+    await markSeen(match.key);
+    decided++;
+    if ('outcome' in result) {
+      if (result.outcome === 'STARTED') {
+        started++;
+      } else {
+        suppressed++;
+      }
+    }
+  }
+  return { pending: unseen.length - decided, started, status: 'polled', suppressed };
+}
+
+/** `host[:port]` of a URL, lowercased, or null when it does not parse. */
+function hostOf(url: string): string | null {
+  try {
+    return new URL(url).host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The ledger owner of a repository connection, spelled as the webhook path spells it
+ * (`<host>/<owner>/<repo>`, lower-cased), so one repository's decisions are counted together
+ * whichever way an occurrence reached the engine. Null when the row names no repository.
+ */
+export function connectionOwnerKey(
+  connection: {
+    githubUrl: string | null;
+    organizationName: string | null;
+    repoName: string | null;
+  },
+  instanceBaseUrl: string
+): string | null {
+  if (!connection.organizationName || !connection.repoName) {
+    return null;
+  }
+  const host = hostOf(connection.githubUrl ?? instanceBaseUrl);
+  return host
+    ? repositoryOwnerKey(host, `${connection.organizationName}/${connection.repoName}`)
+    : null;
+}
+
+/** The engine, bound to one automation and the repository it acts on. */
+export function engineDecider(
+  fastify: FastifyInstance,
+  args: {
+    automation: AutomationRow;
+    connection: EngineConnection;
+    ownerKey: string;
+    now: Date;
+  }
+): PollDeps['decide'] {
+  return (facts) =>
+    decideAndStart(fastify, jiraFilterNewIssueSource, {
+      automation: args.automation,
+      connection: args.connection,
+      facts,
+      now: args.now,
+      ownerKey: args.ownerKey,
+      // A poll that decided an issue and crashed before marking it seen decides it again; only a
+      // start that failed is taken again, as for a redelivered webhook.
+      retry: { kind: 'redelivery' },
+      startRetryDelayMs: 1_000,
+      team: args.connection.team,
+    });
 }

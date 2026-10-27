@@ -1,11 +1,14 @@
+import type { JiraFilterFacts } from '@auto-swe/shared/automation';
 import { AtlassianError } from '@auto-swe/shared/lib/integrations/atlassianClient';
 import type { IssueTrackerProvider } from '@auto-swe/shared/lib/integrations/issueTracker';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { type AutomationResult, AutomationStartError } from './engine.js';
 
 const settings = vi.hoisted(() => ({ resolveSetting: vi.fn() }));
 vi.mock('@auto-swe/shared/config', () => settings);
 
 import {
+  connectionOwnerKey,
   hasBalancedParentheses,
   JIRA_POLL_MAX_MATCHES,
   type PollableAutomation,
@@ -89,6 +92,9 @@ function fakePrisma(initial: Partial<StateRow> = {}) {
         }
         return { count: data.length };
       }),
+      findMany: vi.fn(async ({ where }: { where: { issueKey: { in: string[] } } }) =>
+        where.issueKey.in.filter((k) => seen.has(k)).map((issueKey) => ({ issueKey }))
+      ),
     },
   };
   return {
@@ -125,12 +131,43 @@ const automation = (over: Partial<PollableAutomation> = {}): PollableAutomation 
   ...over,
 });
 
+const issueFor = (key: string, over: Record<string, unknown> = {}) => ({
+  assignee: undefined,
+  description: `Description of ${key}`,
+  id: key,
+  labels: [],
+  raw: {},
+  status: 'To Do',
+  title: `Summary ${key}`,
+  url: `https://acme.atlassian.net/browse/${key}`,
+  ...over,
+});
+
+const started = (): AutomationResult => ({ automationId: 'auto-1', outcome: 'STARTED' });
+
+type Extras = {
+  fetchIssue?: ReturnType<typeof vi.fn>;
+  decide?: ReturnType<typeof vi.fn>;
+};
+
 const run = (
   fake: ReturnType<typeof fakePrisma>,
   searchIssues: ReturnType<typeof vi.fn>,
-  a: PollableAutomation = automation()
+  a: PollableAutomation = automation(),
+  extras: Extras = {}
 ) =>
-  pollAutomation({ now: NOW, prisma: fake.prisma as never, tracker: { searchIssues } as never }, a);
+  pollAutomation(
+    {
+      decide: (extras.decide ?? vi.fn(async () => started())) as never,
+      now: NOW,
+      prisma: fake.prisma as never,
+      tracker: {
+        fetchIssue: extras.fetchIssue ?? vi.fn(async (key: string) => issueFor(key)),
+        searchIssues,
+      } as never,
+    },
+    a
+  );
 
 beforeEach(() => {
   settings.resolveSetting.mockReset();
@@ -326,9 +363,10 @@ describe('pollAutomation: the baseline', () => {
 
   it('does not baseline again once baselined', async () => {
     const fake = fakePrisma({ baselinedAt: new Date('2026-10-01T00:00:00Z') });
+    fake.seen.add('pay-1');
     const search = vi.fn(async () => found(hit('PAY-1')));
     const outcome = await run(fake, search);
-    expect(outcome).toEqual({ status: 'polled' });
+    expect(outcome).toEqual({ pending: 0, started: 0, status: 'polled', suppressed: 0 });
     expect(fake.prisma.automationSeenIssue.createMany).not.toHaveBeenCalled();
     expect(fake.state()?.lastPolledAt).toEqual(NOW);
     expect(fake.state()?.leaseUntil).toBeNull();
@@ -368,6 +406,225 @@ describe('pollAutomation: the project allowlist', () => {
       lastError: 'NO_ALLOWED_PROJECTS',
       leaseUntil: null,
     });
+  });
+});
+
+describe('pollAutomation: new issues', () => {
+  const baselined = () => fakePrisma({ baselinedAt: new Date('2026-10-01T00:00:00Z') });
+
+  it('decides once for each issue it has not seen, and marks it seen afterwards', async () => {
+    const fake = baselined();
+    fake.seen.add('pay-1');
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    const search = vi.fn(async () => found(hit('PAY-1'), hit('PAY-2'), hit('PAY-3')));
+    const outcome = await run(fake, search, automation(), { decide });
+    expect(outcome).toEqual({ pending: 0, started: 2, status: 'polled', suppressed: 0 });
+    expect(decide).toHaveBeenCalledTimes(2);
+    expect(decide.mock.calls.map(([facts]) => facts.issueKey)).toEqual(['PAY-2', 'PAY-3']);
+    expect([...fake.seen].sort()).toEqual(['pay-1', 'pay-2', 'pay-3']);
+  });
+
+  it('decides nothing for an issue it has already seen, so a later poll starts no second run', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    const search = vi.fn(async () => found(hit('PAY-1')));
+    await run(fake, search, automation(), { decide });
+    await run(fake, search, automation(), { decide });
+    expect(decide).toHaveBeenCalledTimes(1);
+  });
+
+  it('never decides during the baseline poll', async () => {
+    const fake = fakePrisma();
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    const search = vi.fn(async () => found(hit('PAY-1')));
+    expect((await run(fake, search, automation(), { decide })).status).toBe('baselined');
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it('builds the facts from the issue, bounded, with a link that comes from the configured Jira', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    const fetchIssue = vi.fn(async (key: string) =>
+      issueFor(key, { description: 'd'.repeat(5000), title: 't'.repeat(400) })
+    );
+    const search = vi.fn(async () => found(hit('PAY-7', 'PAY')));
+    await run(fake, search, automation(), { decide, fetchIssue });
+    const facts = decide.mock.calls[0]?.[0];
+    expect(facts).toEqual({
+      description: 'd'.repeat(4000),
+      issueKey: 'PAY-7',
+      projectKey: 'PAY',
+      summary: 't'.repeat(256),
+      url: 'https://acme.atlassian.net/browse/PAY-7',
+    });
+  });
+
+  it('takes them in key order: by project, then issue number', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    const search = vi.fn(async () => found(hit('PAY-10'), hit('PAY-2'), hit('PAY-33')));
+    await run(fake, search, automation(), { decide });
+    expect(decide.mock.calls.map(([facts]) => facts.issueKey)).toEqual([
+      'PAY-2',
+      'PAY-10',
+      'PAY-33',
+    ]);
+  });
+
+  it('handles at most 50 a poll and leaves the rest unseen for the next one', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    const all = Array.from({ length: 60 }, (_, i) => hit(`PAY-${i + 1}`));
+    const search = vi.fn(async () => found(...all));
+    const outcome = await run(fake, search, automation(), { decide });
+    expect(decide).toHaveBeenCalledTimes(50);
+    expect(outcome).toEqual({ pending: 10, started: 50, status: 'polled', suppressed: 0 });
+    expect(fake.seen.has('pay-51')).toBe(false);
+    expect(fake.seen.has('pay-50')).toBe(true);
+  });
+
+  it.each([
+    'SUPPRESSED_DAILY_CAP',
+    'SUPPRESSED_BUDGET',
+    'SUPPRESSED_IN_FLIGHT',
+    'SUPPRESSED_PRECONDITION',
+  ] as const)('marks an issue seen when the engine suppresses it (%s)', async (outcomeName) => {
+    const fake = baselined();
+    const decide = vi.fn(
+      async (): Promise<AutomationResult> => ({
+        automationId: 'auto-1',
+        outcome: outcomeName,
+      })
+    );
+    const search = vi.fn(async () => found(hit('PAY-1')));
+    const outcome = await run(fake, search, automation(), { decide });
+    expect(outcome).toEqual({ pending: 0, started: 0, status: 'polled', suppressed: 1 });
+    expect(fake.seen.has('pay-1')).toBe(true);
+  });
+
+  it('marks an issue seen when the engine says it already decided it', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (): Promise<AutomationResult> => ({ duplicate: true }));
+    const search = vi.fn(async () => found(hit('PAY-1')));
+    await run(fake, search, automation(), { decide });
+    expect(fake.seen.has('pay-1')).toBe(true);
+  });
+
+  it('leaves an issue unseen and stops the batch when its start failed', async () => {
+    const fake = baselined();
+    const decide = vi.fn(
+      async (): Promise<AutomationResult> => ({
+        automationId: 'auto-1',
+        outcome: 'FAILED_TO_START',
+        reason: 'no active version',
+      })
+    );
+    const search = vi.fn(async () => found(hit('PAY-1'), hit('PAY-2')));
+    const outcome = await run(fake, search, automation(), { decide });
+    expect(outcome).toEqual({ code: 'START_FAILED', status: 'error' });
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(fake.seen.size).toBe(0);
+    expect(fake.state()?.lastError).toBe('START_FAILED');
+  });
+
+  it('does the same when starting the workflow throws', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async () => {
+      throw new AutomationStartError('temporal down');
+    });
+    const search = vi.fn(async () => found(hit('PAY-1'), hit('PAY-2')));
+    const outcome = await run(fake, search, automation(), { decide });
+    expect(outcome).toEqual({ code: 'START_FAILED', status: 'error' });
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(fake.seen.size).toBe(0);
+  });
+
+  it('lets an unexpected failure through, and keeps what it had already decided', async () => {
+    const fake = baselined();
+    const decide = vi
+      .fn()
+      .mockResolvedValueOnce(started())
+      .mockRejectedValueOnce(new Error('db down'));
+    const search = vi.fn(async () => found(hit('PAY-1'), hit('PAY-2')));
+    await expect(run(fake, search, automation(), { decide })).rejects.toThrow('db down');
+    expect([...fake.seen]).toEqual(['pay-1']);
+    expect(fake.state()?.leaseUntil).toBeNull();
+  });
+
+  it('stops with a visible error and marks nothing when the engine ignores the occurrence', async () => {
+    const fake = baselined();
+    const decide = vi.fn(
+      async (_facts: JiraFilterFacts): Promise<AutomationResult> => ({
+        ignored: true,
+        reason: 'Jira filter automations are switched off',
+      })
+    );
+    const search = vi.fn(async () => found(hit('PAY-1'), hit('PAY-2')));
+    const outcome = await run(fake, search, automation(), { decide });
+    expect(outcome).toEqual({ code: 'START_FAILED', status: 'error' });
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(fake.seen.size).toBe(0);
+    expect(fake.state()?.lastError).toBe('START_FAILED');
+  });
+
+  it('stops with TRACKER_UNAVAILABLE when an issue cannot be read, keeping what it already started', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    const fetchIssue = vi.fn(async (key: string) => (key === 'PAY-2' ? null : issueFor(key)));
+    const search = vi.fn(async () => found(hit('PAY-1'), hit('PAY-2'), hit('PAY-3')));
+    const outcome = await run(fake, search, automation(), { decide, fetchIssue });
+    expect(outcome).toEqual({ code: 'TRACKER_UNAVAILABLE', status: 'error' });
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect([...fake.seen]).toEqual(['pay-1']);
+    expect(fake.state()?.lastError).toBe('TRACKER_UNAVAILABLE');
+    expect(fake.state()?.leaseUntil).toBeNull();
+  });
+
+  it('skips, and goes on, when the issue it read is not the one the search approved', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    // PAY-1 was moved to a project that is not allowed between the search and the read.
+    const fetchIssue = vi.fn(async (key: string) =>
+      key === 'PAY-1' ? issueFor('SECRET-5') : issueFor(key)
+    );
+    const search = vi.fn(async () => found(hit('PAY-1'), hit('PAY-2')));
+    const outcome = await run(fake, search, automation(), { decide, fetchIssue });
+    expect(outcome).toEqual({ pending: 1, started: 1, status: 'polled', suppressed: 0 });
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(decide.mock.calls[0]?.[0].issueKey).toBe('PAY-2');
+    expect([...fake.seen]).toEqual(['pay-2']);
+  });
+
+  it('does the same when reading an issue throws, without Jira’s text', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    const fetchIssue = vi.fn(async () => {
+      throw new Error('503 from internal-host with token abc123');
+    });
+    const search = vi.fn(async () => found(hit('PAY-1')));
+    const outcome = await run(fake, search, automation(), { decide, fetchIssue });
+    expect(outcome).toEqual({ code: 'TRACKER_UNAVAILABLE', status: 'error' });
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it('marks seen an issue whose facts can never be valid, so it cannot block the rest', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    const search = vi.fn(async () => found(hit('PAY-12345678901'), hit('PAY-2')));
+    const outcome = await run(fake, search, automation(), { decide });
+    expect(outcome).toEqual({ pending: 0, started: 1, status: 'polled', suppressed: 0 });
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(decide.mock.calls[0]?.[0].issueKey).toBe('PAY-2');
+    expect([...fake.seen].sort()).toEqual(['pay-12345678901', 'pay-2']);
+  });
+
+  it('decides an issue once even when the search returns its key in two spellings', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    const search = vi.fn(async () => found(hit('PAY-1'), hit('pay-1')));
+    const outcome = await run(fake, search, automation(), { decide });
+    expect(decide).toHaveBeenCalledTimes(1);
+    expect(outcome).toEqual({ pending: 0, started: 1, status: 'polled', suppressed: 0 });
   });
 });
 
@@ -461,5 +718,38 @@ describe('pollAutomation: failures are fixed codes and leave nothing half-done',
     const search = vi.fn(async () => found(hit('PAY-1')));
     await run(fake, search);
     expect(fake.state()?.lastError).toBeNull();
+  });
+});
+
+describe('connectionOwnerKey', () => {
+  const instance = 'https://github.com';
+  it('is the repository on its host, lower-cased, like the webhook path writes it', () => {
+    expect(
+      connectionOwnerKey({ githubUrl: null, organizationName: 'Acme', repoName: 'API' }, instance)
+    ).toBe('github.com/acme/api');
+  });
+
+  it('uses the connection’s own host when it has one, port included', () => {
+    expect(
+      connectionOwnerKey(
+        { githubUrl: 'https://ghe.example.com:8443', organizationName: 'acme', repoName: 'api' },
+        instance
+      )
+    ).toBe('ghe.example.com:8443/acme/api');
+  });
+
+  it('is null for a connection that names no repository, or a host that does not parse', () => {
+    expect(
+      connectionOwnerKey({ githubUrl: null, organizationName: null, repoName: 'api' }, instance)
+    ).toBeNull();
+    expect(
+      connectionOwnerKey({ githubUrl: null, organizationName: 'acme', repoName: null }, instance)
+    ).toBeNull();
+    expect(
+      connectionOwnerKey(
+        { githubUrl: 'not a url', organizationName: 'acme', repoName: 'api' },
+        instance
+      )
+    ).toBeNull();
   });
 });
