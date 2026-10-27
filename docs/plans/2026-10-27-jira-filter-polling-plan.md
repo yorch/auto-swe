@@ -15,7 +15,7 @@ Every commit passes the full gate list in `CLAUDE.md` §5 Quality Gates. In this
 - [x] Task 5: Start a run for each new matching issue — `72ce0f2e`
 - [x] Task 6: Run the poller on a schedule in the gateway — `509b08b0`
 - [x] Task 7: Apply the save-time rules — `9ccff081`
-- [ ] Task 8: Show the JQL and poll status in the dashboard
+- [x] Task 8: Show the JQL and poll status in the dashboard — `e6e4e97b`
 - [ ] Task 9: Document the source
 
 ## Tasks
