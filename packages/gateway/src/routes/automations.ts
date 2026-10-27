@@ -137,6 +137,8 @@ const automationSelect = {
   inputs: true,
   maxRunsPerDay: true,
   name: true,
+  // How polling is going, for a source that polls; null for every other.
+  pollState: { select: { baselinedAt: true, lastError: true, lastPolledAt: true } },
   source: true,
   targetConnection: { select: { id: true, organizationName: true, repoName: true } },
   targetConnectionId: true,

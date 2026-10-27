@@ -231,6 +231,17 @@ describe('automationRoutes (event automations)', () => {
       expect(res.json().data).toEqual({ automations: [], canManage: false });
     });
 
+    it('returns each automation with its poll state, so the dashboard can show how polling is going', async () => {
+      ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(member));
+      await ctx.app.inject({ headers: AUTH, method: 'GET', url: `${URL}?connectionId=${REPO}` });
+      const call = ctx.prisma.automation.findMany.mock.calls[0] as unknown as
+        | [{ select: Record<string, unknown> }]
+        | undefined;
+      expect(call?.[0].select.pollState).toEqual({
+        select: { baselinedAt: true, lastError: true, lastPolledAt: true },
+      });
+    });
+
     it('lets a member of a SHARED team read, but not manage', async () => {
       ctx.prisma.connection.findFirst.mockResolvedValue(repoRow(null, lead));
       const res = await ctx.app.inject({

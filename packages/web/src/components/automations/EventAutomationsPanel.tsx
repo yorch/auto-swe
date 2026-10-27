@@ -1,6 +1,6 @@
 'use client';
 
-import { EVENT_SOURCE_KEYS, eventSource } from '@auto-swe/shared/automation';
+import { EVENT_SOURCE_KEYS, eventSource, JIRA_FILTER_NEW_ISSUE } from '@auto-swe/shared/automation';
 import { useState } from 'react';
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmModal } from '@/components/ui/ConfirmModal';
 import { Icon } from '@/components/ui/Icon';
 import { SkeletonRows } from '@/components/ui/LoadingState';
+import { RelativeTime } from '@/components/ui/RelativeTime';
 import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   type AutomationOwner,
@@ -20,6 +21,41 @@ import {
 import { errMsg } from '@/lib/errors';
 import { AutomationHistory } from './AutomationHistory';
 import { EventAutomationEditor } from './EventAutomationEditor';
+
+/** What each fixed poll error code means, for the person who owns the automation. */
+const POLL_ERRORS: Record<string, string> = {
+  FILTER_TOO_BROAD:
+    'The filter matches more than 1,000 issues, so none is acted on. Narrow the JQL.',
+  INVALID_FILTERS: 'The saved JQL is not valid. Edit it and save.',
+  JQL_REJECTED: 'Jira refused the JQL. Check it in Jira.',
+  NO_ALLOWED_PROJECTS:
+    'No Jira project is allowed for this team, so nothing is polled. An admin sets the allowed projects.',
+  START_FAILED: 'A run could not be started; it is tried again at the next poll.',
+  TRACKER_UNAVAILABLE: 'Jira could not be reached or read; it is tried again at the next poll.',
+};
+
+/** How polling a Jira filter is going: when it last ran, and why it did not go well. */
+function PollStatus({ state }: { state: EventAutomation['pollState'] }) {
+  const polledAt = state?.lastPolledAt ?? null;
+  const error = state?.lastError ?? null;
+  return (
+    <div className="mt-0.5 text-xs">
+      {polledAt === null && error === null && (
+        <span className="text-paper-500">Not polled yet</span>
+      )}
+      {polledAt !== null && (
+        <span className="text-paper-500">
+          Last polled <RelativeTime value={polledAt} />
+        </span>
+      )}
+      {error !== null && (
+        <span className="ml-2 text-danger-400">
+          {Object.hasOwn(POLL_ERRORS, error) ? POLL_ERRORS[error] : `Last poll failed: ${error}`}
+        </span>
+      )}
+    </div>
+  );
+}
 
 function AutomationRow({
   owner,
@@ -77,6 +113,9 @@ function AutomationRow({
             {automation.targetConnection &&
               ` · on ${automation.targetConnection.organizationName}/${automation.targetConnection.repoName}`}
           </div>
+          {automation.source === JIRA_FILTER_NEW_ISSUE && automation.enabled && (
+            <PollStatus state={automation.pollState ?? null} />
+          )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <ToggleSwitch

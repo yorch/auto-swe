@@ -24,6 +24,13 @@ export interface EventAutomation {
   maxRunsPerDay: number;
   templateId: string | null;
   template: { id: string; name: string } | null;
+  /** How polling is going, for a source that polls (Jira); null for every other source. */
+  pollState?: {
+    baselinedAt: string | null;
+    lastPolledAt: string | null;
+    /** A fixed code naming why the last poll did not go well; null after a good one. */
+    lastError: string | null;
+  } | null;
   /** For a team automation: the repository its runs act on. */
   targetConnectionId?: string | null;
   targetConnection?: {

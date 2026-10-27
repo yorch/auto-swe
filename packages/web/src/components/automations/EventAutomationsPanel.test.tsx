@@ -1,7 +1,13 @@
 // @vitest-environment jsdom
 
-import { optionsSchema, workflowRunFailedSource } from '@auto-swe/shared/automation';
+import {
+  JIRA_FILTER_NEW_ISSUE,
+  jiraFilterNewIssueSource,
+  optionsSchema,
+  workflowRunFailedSource,
+} from '@auto-swe/shared/automation';
 import { CI_TRIAGE_INPUT_SCHEMA } from '@auto-swe/shared/lib/ciTrigger';
+import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -167,5 +173,148 @@ describe('EventAutomationsPanel', () => {
       id: 'a-1',
       inputs: { minFixConfidence: 0.8, mode: 'fix' },
     });
+  });
+});
+
+describe('EventAutomationsPanel: Jira filter automations', () => {
+  const JQL = 'status in ("To Do", "In Progress") AND project = PAY ORDER BY created';
+  const JIRA_TEMPLATE_SCHEMA: InputSchema = {
+    properties: {
+      connectionId: { connectionType: 'git_repo', type: 'connection' },
+      description: { type: 'string' },
+      ticketId: { type: 'string' },
+    },
+    required: ['connectionId', 'description', 'ticketId'],
+    type: 'object',
+  };
+  const jira = {
+    ...automation,
+    filters: { jql: JQL },
+    id: 'j-1',
+    inputs: {},
+    name: 'new tickets',
+    pollState: null as null | Record<string, unknown>,
+    source: JIRA_FILTER_NEW_ISSUE,
+  };
+
+  beforeEach(() => {
+    state.canManage = true;
+    state.created = [];
+    state.updated = [];
+    state.automations = [];
+    state.templates = [
+      {
+        builtIn: true,
+        description: '',
+        id: 'tpl-j',
+        name: 'ticket-to-merge',
+        options: optionsSchema(JIRA_TEMPLATE_SCHEMA, jiraFilterNewIssueSource),
+      },
+    ];
+  });
+
+  it('offers a manager the source, with the JQL as a text box', () => {
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
+    fireEvent.click(screen.getByRole('button', { name: /jira filter has a new issue/i }));
+    const box = screen.getByLabelText('JQL') as HTMLTextAreaElement;
+    expect(box.tagName).toBe('TEXTAREA');
+    expect(box.value).toBe('');
+  });
+
+  it('saves the JQL exactly as typed: one string, its commas and parentheses intact', () => {
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
+    fireEvent.click(screen.getByRole('button', { name: /jira filter has a new issue/i }));
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'new tickets' } });
+    fireEvent.change(screen.getByLabelText('JQL'), { target: { value: JQL } });
+    fireEvent.click(screen.getByRole('button', { name: /^add$/i }));
+    expect(state.created).toEqual([
+      expect.objectContaining({ filters: { jql: JQL }, source: JIRA_FILTER_NEW_ISSUE }),
+    ]);
+  });
+
+  it('shows a saved JQL when editing, and saves it back unchanged', () => {
+    state.automations = [jira];
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
+    fireEvent.click(screen.getByRole('button', { name: /actions for new tickets/i }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit' }));
+    expect((screen.getByLabelText('JQL') as HTMLTextAreaElement).value).toBe(JQL);
+    fireEvent.click(screen.getByRole('button', { name: /^save$/i }));
+    expect(state.updated[0]).toMatchObject({ filters: { jql: JQL }, id: 'j-1' });
+  });
+
+  it('offers no "would this match" tester, since the JQL is Jira’s to evaluate', () => {
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
+    fireEvent.click(screen.getByRole('button', { name: /jira filter has a new issue/i }));
+    expect(screen.queryByText(/would start a run/i)).toBeNull();
+    expect(screen.queryByLabelText('Issue key')).toBeNull();
+  });
+
+  it('says an enabled automation has not been polled yet', () => {
+    state.automations = [jira];
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
+    expect(screen.getByText(/not polled yet/i)).toBeTruthy();
+  });
+
+  it('says when it was last polled', () => {
+    state.automations = [
+      {
+        ...jira,
+        pollState: {
+          baselinedAt: new Date().toISOString(),
+          lastError: null,
+          lastPolledAt: new Date().toISOString(),
+        },
+      },
+    ];
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
+    expect(screen.getByText(/last polled/i)).toBeTruthy();
+    expect(screen.queryByText(/not polled yet/i)).toBeNull();
+  });
+
+  it.each([
+    ['NO_ALLOWED_PROJECTS', /no jira project is allowed/i],
+    ['FILTER_TOO_BROAD', /more than 1,000 issues/i],
+    ['JQL_REJECTED', /jira refused the jql/i],
+    ['TRACKER_UNAVAILABLE', /could not be reached/i],
+    ['INVALID_FILTERS', /saved jql is not valid/i],
+    ['START_FAILED', /could not be started/i],
+  ])('explains the poll error %s in words', (code, words) => {
+    state.automations = [
+      {
+        ...jira,
+        pollState: {
+          baselinedAt: new Date().toISOString(),
+          lastError: code,
+          lastPolledAt: new Date().toISOString(),
+        },
+      },
+    ];
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
+    expect(screen.getByText(words)).toBeTruthy();
+  });
+
+  it('shows an error code it does not know as it is', () => {
+    state.automations = [
+      { ...jira, pollState: { baselinedAt: null, lastError: 'SOMETHING_NEW', lastPolledAt: null } },
+    ];
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
+    expect(screen.getByText(/SOMETHING_NEW/)).toBeTruthy();
+  });
+
+  it('does not mistake an inherited object key for a known error code', () => {
+    state.automations = [
+      { ...jira, pollState: { baselinedAt: null, lastError: 'constructor', lastPolledAt: null } },
+    ];
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
+    expect(screen.getByText('Last poll failed: constructor')).toBeTruthy();
+  });
+
+  it('says nothing about polling for a disabled automation or another source', () => {
+    state.automations = [
+      { ...jira, enabled: false },
+      { ...automation, id: 'c-1', name: 'ci rule' },
+    ];
+    render(<EventAutomationsPanel owner={{ connectionId: 'r-1' }} />);
+    expect(screen.queryByText(/polled/i)).toBeNull();
   });
 });
