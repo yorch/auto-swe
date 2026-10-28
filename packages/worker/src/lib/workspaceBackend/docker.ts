@@ -9,6 +9,7 @@ import {
   spawnWithStdinAsync,
 } from '../execUtils.js';
 import { shellQuote } from '../shellQuote.js';
+import { assertSecretEnvName, secretEnvFlags } from './secretEnvName.js';
 import type {
   EphemeralContainerSpec,
   EphemeralRunOptions,
@@ -81,28 +82,18 @@ export function keeperPidProbeScript(): string {
   ].join('\n');
 }
 
-const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
 /**
- * The names of a `secretEnv`. Each is passed as `-e NAME` without a value, so
- * docker resolves it from the client's own environment and the value is never
- * on a command line. Anything but a plain identifier is refused: `-e A=b`
- * would set a literal value instead, and a name also reaches the shell string
- * of the throwing exec path.
+ * The names of a `secretEnv`, validated by {@link assertSecretEnvName}. Each is
+ * passed as `-e NAME` without a value, so docker resolves it from the client's
+ * own environment and the value is never on a command line. A name also reaches
+ * the shell string of the throwing exec path.
  */
 function secretEnvNames(secretEnv: Record<string, string> | undefined): string[] {
   const names = Object.keys(secretEnv ?? {});
   for (const name of names) {
-    if (!ENV_NAME_RE.test(name)) {
-      throw new Error(`invalid secret environment name: ${JSON.stringify(name)}`);
-    }
+    assertSecretEnvName(name);
   }
   return names;
-}
-
-/** `-e NAME` for each name of a `secretEnv` (see {@link secretEnvNames}). */
-function secretEnvFlags(secretEnv: Record<string, string> | undefined): string[] {
-  return secretEnvNames(secretEnv).flatMap((name) => ['-e', name]);
 }
 
 /**
