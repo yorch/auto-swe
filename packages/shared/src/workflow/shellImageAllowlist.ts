@@ -18,9 +18,9 @@ export const BUILTIN_SHELL_IMAGES: readonly string[] = Object.freeze([
   // Both Node majors are permitted, and neither is redundant. node:26-alpine
   // matches the Node the services run on; node:24-alpine is still the workspace
   // default, because it is the only one of the two carrying `yarn` — and
-  // `DEFAULT_COMMANDS` in the worker's qualityGates activity makes every
-  // built-in gate a `yarn` command, so a shell step on a yarn-less image fails
-  // with 127 rather than a real result.
+  // `DEFAULT_COMMANDS` in the worker's qualityGates activity is a `yarn` command
+  // for every gate that falls back to it (a Yarn or undetected Node root), so a
+  // shell step on a yarn-less image fails with 127 rather than a real result.
   //
   // Dropping either entry would reject already-stored templates that pin it,
   // and the allowlist is re-checked at container launch, so that rejection
@@ -28,6 +28,11 @@ export const BUILTIN_SHELL_IMAGES: readonly string[] = Object.freeze([
   'node:26-alpine',
   'node:24-alpine',
   'python:3.13-alpine',
+  // JVM and Go toolchains, so a shell step on those stacks does not need a
+  // team-level allowlist entry for the common case. Alpine, like the others: a
+  // shell step runs `sh` and never holds a credential.
+  'eclipse-temurin:21-jdk-alpine',
+  'golang:1.26-alpine',
   'alpine:latest',
 ]);
 

@@ -454,10 +454,11 @@ longer fit.
   merge-trust caveat above applies to every scheduled run, not only the first one.
 - **Rust, .NET and Ruby have no curated executor image and are not detected.** A repository on
   one of them needs its own image or `use_repo_dockerfile`, and its own `gateCommands`.
-- **`runVulnScan` cannot reach an advisory endpoint through the registry proxy.** The proxy answers
-  audit endpoints with a 404 (see [`package-registries.md`](./package-registries.md)), so
-  `npm audit`, `pnpm audit` and `yarn npm audit` fail in a workspace wired to it. Give `runVulnScan`
-  a command that does not need the registry, or leave the gate off such a repository.
+- **`runVulnScan` relays through the registry proxy only to the default registry.** The proxy serves
+  the bulk advisory endpoint (see [`package-registries.md`](./package-registries.md)), so
+  `npm audit` works in a wired workspace — this was exercised with npm; `pnpm audit` and
+  `yarn npm audit` use the same endpoint but were not exercised. An audit that names a private-scope
+  package is refused, and an upstream that does not implement the endpoint fails the gate.
 - **The Yarn built-ins assume Yarn 4.** `yarn npm audit` exists only in Yarn Berry; the detector sees
   lockfile names, not the Yarn version.
 - **The stack fallback follows the stored detection, which is weekly.** A repository onboarded

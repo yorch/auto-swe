@@ -436,7 +436,7 @@ run's branch, and push any changes it makes.
 
 | Field | Required | Meaning |
 |---|---|---|
-| `image` | yes | The image to run in. It must be on the team's effective allowlist: the built-in images (for example `node:24-alpine`, `python:3.13-alpine`, `alpine:latest`) plus the team's additions. |
+| `image` | yes | The image to run in. It must be on the team's effective allowlist: the built-in images (for example `node:24-alpine`, `python:3.13-alpine`, `eclipse-temurin:21-jdk-alpine`, `golang:1.26-alpine`, `alpine:latest`) plus the team's additions. |
 | `command` | yes | The shell command, up to 8000 characters. |
 | `inputs` | no | Bindings. Only three are read: `inputs.command` and `inputs.image` replace the node's own when they resolve to strings, and `inputs.branch` names the branch to check out and to push changes to (default the run's work branch). |
 | `network` | no | `"none"` (default) or `"egress"` for outbound traffic, filtered by the team's egress allowlist (see Pitfalls for what that filter does). |

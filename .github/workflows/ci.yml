@@ -104,7 +104,7 @@ jobs:
   # harness talks to a local mock Messages API, so no secret is needed.
   docker-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -163,6 +163,13 @@ jobs:
         run: |
           docker build -f defaults/Dockerfile.node -t asw-executor-node:ci defaults
           yarn test packages/worker/src/lib/registryProxy/clients.docker.test.ts
+
+      # Builds each curated defaults/Dockerfile.<stack> and checks it against the executor
+      # image contract and its own toolchain, as the user the executor runs as.
+      - name: Curated executor images (Docker-backed)
+        env:
+          EXECUTOR_IMAGES_DOCKER_TEST: '1'
+        run: yarn test packages/worker/src/activities/executorImages.docker.test.ts
 
       # The same suites through the socket proxy the worker uses in compose, with
       # the same config: the suites cover `run -d`, `exec -i`, `cp`, `pause` and

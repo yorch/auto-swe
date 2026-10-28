@@ -47,23 +47,29 @@ resolves it from the detected stack at run time.
 - [ ] M5. Dependency installs are npm-only (no PyPI / Maven / Go module proxy or credentialed path).
 - [~] M6. Go image added in phase 2 (`defaults/Dockerfile.go`, `stack` input, gateway enum). None for
   Rust/.NET/Ruby.
-- [ ] M7. Eval harness pinned to `node:24-alpine` (`EVAL_WORKSPACE_IMAGE`); `gate` scorers and flake
-  screens run on a Node image for every stack.
-- [ ] M8. `BUILTIN_SHELL_IMAGES` has no JVM or Go images.
+- [x] M7. Dataset cases ran on `node:24-alpine` whatever their stack. A case now names a `stack`
+  (nullable `eval_cases.stack`, API-only) that maps to a digest-pinned base; null stays on the
+  original image so stored scores do not rebase. (`gate` scorers already used the repo's image.)
+- [x] M8. `BUILTIN_SHELL_IMAGES` had no JVM or Go images; added `eclipse-temurin:21-jdk-alpine` and
+  `golang:1.26-alpine`.
 - [x] M9. Built-in skills assumed TypeScript/Node (`testFirst`, `noNewDependencies`); made
   stack-neutral in phase 2. `minimalSurfaceArea` was already hedged per language.
-- [ ] M10. Built-in `CODE_SECURITY` patterns cover JS/Python only (no `Runtime.exec`,
+- [x] M10. Built-in `CODE_SECURITY` patterns covered JS/Python only; five patterns added (Java and Go
+  exec, unsafe deserialization, SQL built at the call, weak hash). Original gap: JS/Python only (no `Runtime.exec`,
   `ObjectInputStream`, SQL concatenation, Go `InsecureSkipVerify`, `crypto/md5`).
 
-- [ ] M14. `runVulnScan` cannot work behind the registry proxy: it 404s audit endpoints, so
+- [x] M14. `runVulnScan` could not work behind the registry proxy; the proxy now relays the bulk
+  advisory query (npm exercised end to end; pnpm/yarn covered by new CI cases). Original gap: it cannot work behind the registry proxy: it 404s audit endpoints, so
   `npm audit`/`pnpm audit`/`yarn npm audit` all fail in a wired workspace. Needs either a proxied
   advisory endpoint or a registry-free scanner default.
 
 ### Low
 
-- [ ] L11. Doc drift: `deployment.md` and the shell allowlist comments justify `node:24-alpine` as
+- [x] L11. Doc drift: `deployment.md` and the shell allowlist comments justify `node:24-alpine` as
   the only yarn-bearing image; `defaults/Dockerfile.node` now installs Corepack on Node 26.
-- [ ] L12. No docker-gated test builds the python/jvm images or runs a real non-Node gate.
+- [x] L12. Docker-gated `executorImages.docker.test.ts` builds all four curated images and checks the
+  contract and toolchain; Go also runs its real gate commands. (Python/JVM gates need a package
+  index, so they are not run.)
 - [ ] L13. Detection suggestions are conservative: root manifest only; no build/lint/typecheck
   suggestions outside Node.
 
@@ -110,7 +116,7 @@ hostile read of the diff by the author, not an independent review).
 | 3 | Does a polyglot repo silently change behaviour? | Node outranks the others at the root, so it keeps the built-in gates; a stack only in a subdirectory is ignored. Documented under Limitations. |
 | 4 | Does an existing Python/JVM repo regress? | It failed before (exit 127). Gates without a table entry now fail as "no command configured" with the remedy, instead of 127. `onFail: 'warn'` makes them optional. No pass becomes a fail that was a pass. |
 | 5 | Is the Python `runTests` honest? | It assumes `pytest` is installed by the repo's own setup; the curated image does not ship it. Documented, not fixed. |
-| 6 | Other consumers of `DEFAULT_COMMANDS`? | `standaloneGateRunner` (eval `gate` scorers) still uses yarn defaults; tracked with M7. |
+| 6 | Other consumers of `DEFAULT_COMMANDS`? | The eval `gate` scorer fell back to yarn. Fixed in phase 2b: `gateCommandFor` (new `gateCommand.ts`) is the one resolver for `resolveCommand` and the scorer; the scorer now also honours the repo's `gateCommands`, which it ignored before. |
 | 7 | Widened suggestions (build/`go vet`) vs the "conservative" stance? | Accepted: they share the run-time table, so form and runtime agree. `ruff` stays suggestion-only because the image lacks it. |
 
 Gate results: typecheck, biome check, docs:check, invariants:check pass. `yarn test`: 7 failures in
@@ -135,3 +141,28 @@ Same caveat: author self-review, no independent agent.
 Gate results: typecheck, build, biome check, docs:check, invariants:check and the three Docker image
 builds pass. `yarn test`: 6 failures in the real-git suites (`shellStep`, `workspace`) that fail on a
 clean tree; `epics.test.ts` timed out once under full-suite load and passes alone (22/22).
+
+### Phase 2b (M7, M8, M10, M14, L11, L12)
+
+Same caveat: author self-review, no independent agent.
+
+| # | Challenge | Outcome |
+|---|---|---|
+| 16 | Can the new audit POST become an exfiltration channel from a hostile workspace? | The body must be exactly `{name: [versions]}` with name/version charsets validated; in lockfile mode every pair must also be committed. It cannot carry free text. Tested with hostile bodies. |
+| 17 | Does an audit leak private-scope package names to the default registry? | It would have. A body naming any package another registry serves is refused (403), not trimmed — a trimmed audit would read as a complete one. Tested, and against real npm. |
+| 18 | gzip bodies (npm sends them) and decompression bombs? | Bodies are gunzipped with a `maxOutputLength` equal to the request cap. Verified with real npm that it sends gzip, and that `NPM_CONFIG_AUDIT=false` (set for installs) does not stop an explicit `npm audit`. |
+| 19 | New SQL pattern: is it linear? | No — the first version was quadratic (keyword search inside the literal rescans to end of line per candidate). Caught by the adversarial-input test written alongside; the keyword is now anchored to the literal's start. |
+| 20 | Could a new eval `stack` become an arbitrary-image channel? | It is an enum at the API and a closed map in the worker; an unknown stored value throws instead of falling back, and `Object.hasOwn` guards `__proto__`/`constructor`. Existing cases (null) keep the original image, so no score rebases. |
+| 21 | Is Dockerfile.go safe under the agent workspace's flags? | Checked the driver: agent workspaces are not `--read-only` (only the shell-step runner is), so caches under `/home/executor` are writable. The new docker test runs it with `--cap-drop=ALL` and no-new-privileges as uid 1000. |
+| 22 | pnpm and Yarn 4 audit are only claimed from the shared endpoint. | Cases added to `clients.docker.test.ts`, which CI runs on the curated node image. They could not run here (no registry egress to build it), so CI is their first run. |
+
+Known open after this phase: eval cases cannot be given a stack in the dashboard or edited after
+creation; the eval bases carry no build tool beyond the language toolchain; Rust/.NET/Ruby have no
+image; M5 (PyPI/Maven/Go module proxying) and monorepo subdirectory components are untouched.
+
+Gate results for phase 2b: typecheck, `yarn build`, biome check (explicit dirs + `.github`), `docs:check`,
+`invariants:check`, `migrations:check`, the site build and the gateway/worker/web image builds pass.
+`yarn test`: 9 failures in `shellStep`/`workspace` (real-git, fail on a clean tree) plus 3 five-second
+timeouts under full-suite load (`transcripts`, `users`, `pi/runtime`) that pass alone (102/102).
+The curated-image docker test passed locally for go, python and jvm (25 tests); node and the pnpm/yarn
+audit cases could not be built here (no registry egress) and are first exercised by CI.
