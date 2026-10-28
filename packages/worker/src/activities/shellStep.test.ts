@@ -689,6 +689,12 @@ describe('runShellStep — registry wiring', () => {
       '/workspace/repo'
     );
     expect(setAllowlist).toHaveBeenCalled();
+    // The registry config reaches the helper as a secret, not as a `-e NAME=value` pair.
+    const configSpec = backendRunHelper.mock.calls
+      .map(([spec]) => spec as { env?: string[]; secretEnv?: Record<string, string> })
+      .find((spec) => spec.secretEnv?.AUTO_SWE_NPMRC !== undefined);
+    expect(configSpec).toBeDefined();
+    expect(configSpec?.env).toBeUndefined();
     // The clone script fetched the base branch before scrubbing origin.
     expect(helperScripts().some((c) => c.includes('refs/remotes/origin/main'))).toBe(true);
     expect(released).toHaveBeenCalled();

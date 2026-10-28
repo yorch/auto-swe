@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { optInSuiteViolations } from './check-invariants.mjs';
+import { envCredentialViolations, optInSuiteViolations } from './check-invariants.mjs';
 
 const PG = 'packages/gateway/src/routes/x.pg.test.ts';
 const DOCKER = 'packages/worker/src/agents/y.docker.test.ts';
@@ -71,5 +71,66 @@ describe('optInSuiteViolations', () => {
     );
     const v = optInSuiteViolations([{ path: DOCKER, src: gated('DOCKER_FLAG') }], yml);
     expect(v[0].detail).toContain('not run by any');
+  });
+});
+
+describe('envCredentialViolations', () => {
+  const wrap = (env) => `await backend.exec(h, ['sh'], {\n  ${env},\n  heartbeatLabel: 'x',\n});\n`;
+
+  it('passes an env list of non-secret pairs, and secretEnv', () => {
+    expect(envCredentialViolations(wrap('env: [tag.env]'))).toEqual([]);
+    expect(envCredentialViolations(wrap('env: [`${EXEC_TAG_ENV}=${tag}`, ...extra]'))).toEqual([]);
+    expect(envCredentialViolations(wrap('secretEnv: { ASW_GIT_AUTH: header }'))).toEqual([]);
+  });
+
+  it('reports a credential-shaped name in a string, template or identifier', () => {
+    for (const env of [
+      "env: ['GITHUB_TOKEN=abc']",
+      'env: [`AUTO_SWE_NPMRC=${npmrc}`]',
+      'env: [`X=${apiKey}`]',
+      "env: ['A=1', 'Authorization=Bearer x']",
+    ]) {
+      expect(envCredentialViolations(wrap(env)), env).toHaveLength(1);
+    }
+  });
+
+  it('reports an env assignment, a quoted key and leadingEnv', () => {
+    for (const src of [
+      'spec.env = [...(spec.env ?? []), `YARN_NPM_AUTH_TOKEN=${t}`];',
+      "run({ 'env': ['GITHUB_TOKEN=x'] });",
+      'turn.spawn({ leadingEnv: [`GITHUB_TOKEN=${t}`] });',
+    ]) {
+      expect(envCredentialViolations(src), src).toHaveLength(1);
+    }
+  });
+
+  it('does not report names that only contain a credential word', () => {
+    for (const env of [
+      "env: ['GIT_AUTHOR_NAME=x']",
+      "env: ['CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000']",
+    ]) {
+      expect(envCredentialViolations(wrap(env)), env).toEqual([]);
+    }
+    expect(envCredentialViolations(wrap("env: ['MAX_TOKENS=1', 'API_TOKEN=x']"))).toHaveLength(1);
+  });
+
+  it('does not treat a comparison or another property as an env assignment', () => {
+    expect(envCredentialViolations('if (x.env == [`TOKEN`]) {}')).toEqual([]);
+  });
+
+  it('reports the line of the env property', () => {
+    expect(envCredentialViolations(wrap("env: ['MY_SECRET=x']"))[0].line).toBe(2);
+  });
+
+  it('ignores a credential name in a comment, a sibling property, or a nested array', () => {
+    expect(envCredentialViolations('// env: [`TOKEN=${t}`]\nconst a = 1;')).toEqual([]);
+    expect(envCredentialViolations(wrap('env: [tag.env], token: t'))).toEqual([]);
+    expect(envCredentialViolations('const x = { sudoenv: [`TOKEN=${t}`] };')).toEqual([]);
+  });
+
+  it('does not see an env built elsewhere (a documented gap)', () => {
+    expect(envCredentialViolations('const pairs = [`TOKEN=${t}`];\nrun({ env: pairs });')).toEqual(
+      []
+    );
   });
 });

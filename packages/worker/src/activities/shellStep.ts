@@ -491,8 +491,11 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
         const yarnrc = renderYarnrc(registry.registries, registry.baseUrl);
         // The content reaches the files through env, never through the
         // container's command line, so the author command cannot read it from
-        // /proc. It does pass through the worker's docker client arguments,
-        // like every other step env value; it is the per-step proxy token.
+        // /proc. `secretEnv` keeps this write off the docker client's arguments
+        // (`-e NAME`, the value in the client's environment): it is the
+        // per-step proxy token. The author container's own env (below) still
+        // carries the same token as COREPACK_NPM_TOKEN / YARN_NPM_AUTH_TOKEN
+        // in plain `-e NAME=value` pairs; see Limitations in docs/architecture.md.
         const writeRes = await backend.runHelper(
           {
             argv: [
@@ -505,8 +508,10 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
                 'chmod 644 /workspace/.auto-swe/home/.yarnrc.yml; fi',
             ],
             entrypoint: 'sh',
-            env: [`AUTO_SWE_NPMRC=${npmrc}`, `AUTO_SWE_YARNRC=${yarnrc ?? ''}`],
             image: helperImage,
+            // Multi-line values: fine for Docker's client environment; a Kubernetes helper
+            // (not implemented) would need another channel, as the stdin preamble is line-based.
+            secretEnv: { AUTO_SWE_NPMRC: npmrc, ...(yarnrc ? { AUTO_SWE_YARNRC: yarnrc } : {}) },
             volumes: [{ source: volumeName, target: '/workspace' }],
           },
           { heartbeatLabel: 'shell-step: registry config' }

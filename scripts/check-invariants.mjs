@@ -633,6 +633,94 @@ function checkComposeProfilesAreAdded() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// INVARIANT 9 — a credential reaches a workspace command through `secretEnv`, never `env`.
+//
+// Under the Kubernetes backend a `kubectl exec` command is sent as `?command=` query parameters,
+// and the driver renders `env: string[]` into that command (`env NAME=value …`), so every pair in
+// it lands in the apiserver audit log, kept for as long as the operator keeps those. Under Docker the
+// same pair is a `docker run -e NAME=value` argument, visible in `ps` on the worker host. The safe
+// channel is `secretEnv` (a name → value map the driver delivers on stdin / from the client's own
+// environment). Both are `string`s to the type checker and a leaked token runs the command fine, so
+// nothing fails: the git `http.extraheader` was embedded in a script this way and shipped.
+//
+// Rule: in worker source, an array literal assigned to `env` or `leadingEnv` (as a property,
+// quoted or not, or as `x.env = [ … ]`) does not mention a credential-shaped name (TOKEN, SECRET,
+// PASSWORD, API_KEY, AUTH, CREDENTIAL, NPMRC, YARNRC), in a string or an identifier. `AUTHOR` and
+// `TOKENS` (GIT_AUTHOR_NAME, MAX_OUTPUT_TOKENS) are not credentials and are ignored.
+//
+// A tripwire over text, not a proof. It does not see an `env` built elsewhere and passed by name
+// (`opts.env.push(…)`, `base.concat([…])`, `cond ? […] : […]`, a `[...registry.env]` spread), an
+// object-valued `env` (the ephemeral container spec's `env: Record`), a secret whose name is
+// innocuous (`GH_PAT`), a trailing `//` comment inside the list (a false positive), a `]` inside a
+// regex literal or nested template in the list (the scanner closes the list early), or a script or
+// argv that interpolates a credential into its own text. Those are reviewed by hand.
+// ---------------------------------------------------------------------------
+
+const CREDENTIAL_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|AUTH|CREDENTIAL|NPMRC|YARNRC/i;
+
+/** `env: [`, `'env': [`, `leadingEnv: [` or `x.env = [` — the start of an env list literal. */
+const ENV_LIST = /(?:(?<![.\w])['"]?(?:env|leadingEnv)['"]?\s*:|\.(?:env|leadingEnv)\s*=(?!=))\s*\[/g;
+
+/** Names that contain a credential word without being one. */
+const NOT_A_CREDENTIAL = /AUTHOR|TOKENS(?![A-Za-z])/gi;
+
+/** The source of the bracket-balanced array whose `[` is at `open`. */
+function arraySlice(src, open) {
+  let depth = 0;
+  let quote = null;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (quote) {
+      if (c === '\\') {
+        i++;
+      } else if (c === quote) {
+        quote = null;
+      }
+      continue;
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      quote = c;
+    } else if (c === '[') {
+      depth++;
+    } else if (c === ']' && --depth === 0) {
+      return src.slice(open, i + 1);
+    }
+  }
+  return src.slice(open);
+}
+
+/** Violations in one file's source: `{ line, text }` per credential-shaped `env: [ … ]` list. */
+export function envCredentialViolations(src) {
+  const code = stripComments(src);
+  const found = [];
+  for (const m of code.matchAll(ENV_LIST)) {
+    const open = m.index + m[0].length - 1;
+    const list = arraySlice(code, open);
+    if (CREDENTIAL_NAME.test(list.replace(NOT_A_CREDENTIAL, ''))) {
+      found.push({ line: code.slice(0, open).split('\n').length, text: list.replace(/\s+/g, ' ') });
+    }
+  }
+  return found;
+}
+
+function checkCredentialsAreNotInEnv() {
+  const files = walk('packages/worker/src', (f) => f.endsWith('.ts') && !/\.test\.ts$/.test(f));
+  for (const file of files) {
+    for (const v of envCredentialViolations(read(file))) {
+      fail(
+        file,
+        v.line,
+        'credential-not-in-env',
+        `an \`env: [ … ]\` list names a credential: ${v.text.slice(0, 120)}`,
+        'Under Kubernetes the env pairs are part of the exec command, which the apiserver audit log ' +
+          'records; under Docker they are `-e NAME=value` argv. Pass the value as `secretEnv` ' +
+          '(see WorkspaceExecOptions / HelperContainerSpec) and read it from the environment.'
+      );
+    }
+  }
+}
+
 function main() {
   checkWorkspaceImageLiterals();
   checkDockerfileYarnProvisioning();
@@ -642,6 +730,7 @@ function main() {
   checkOperatorUrlFetchesAreGuarded();
   checkOptInSuitesRunInCi();
   checkComposeProfilesAreAdded();
+  checkCredentialsAreNotInEnv();
   report();
 }
 
@@ -659,7 +748,7 @@ function report() {
     process.exit(1);
   }
 
-  console.log('Invariant check passed — 8 invariants, no violations.');
+  console.log('Invariant check passed — 9 invariants, no violations.');
   console.log('  workspace image is inherited, never written inline at a call site');
   console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
   console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
@@ -668,6 +757,7 @@ function report() {
   console.log('  fetches to operator-supplied URLs resolve and pin their address');
   console.log('  every database- or Docker-backed test suite runs in CI with its opt-in flag set');
   console.log('  compose entry points add profiles to COMPOSE_PROFILES, never replace them');
+  console.log('  credentials reach a workspace command through secretEnv, never an env list');
 }
 
 const invokedDirectly =
