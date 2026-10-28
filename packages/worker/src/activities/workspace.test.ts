@@ -733,8 +733,8 @@ describe('authedGitScript against a real git repository', () => {
   it('pushes to the real remote without running a planted hook or following a redirect', () => {
     const { evil, good, loot, work } = setup();
     const script = authedGitScript(work, `push origin ${shellQuote('auto/T-1')}`, {
-      cleanUrl: `file://${good}`,
       authed: true,
+      cleanUrl: `file://${good}`,
     });
     run(script);
 
@@ -752,8 +752,8 @@ describe('authedGitScript against a real git repository', () => {
   it('fetches from the real remote and still updates origin/<branch>', () => {
     const { loot, good, work } = setup();
     const script = authedGitScript(work, `fetch origin ${shellQuote('main')}`, {
-      cleanUrl: `file://${good}`,
       authed: true,
+      cleanUrl: `file://${good}`,
     });
     run(script);
     expect(existsSync(loot)).toBe(false);
@@ -791,12 +791,10 @@ describe('authedGitScript against a real git repository', () => {
       fetchBranchesSubcommand(['main']),
     ]) {
       const script = authedGitScript(work, sub, {
-        cleanUrl: `file://${good}`,
         authed: true,
+        cleanUrl: `file://${good}`,
       });
-      expect(() => run(script)).toThrow(
-        /not a valid repository/
-      );
+      expect(() => run(script)).toThrow(/not a valid repository/);
     }
     expect(git(evil, 'branch', '--list')).toBe('');
     expect(git(good, 'branch', '--list', 'auto/T-1')).toBe('');
@@ -818,8 +816,8 @@ describe('authedGitScript against a real git repository', () => {
     expect(() => git(shallow, 'rev-parse', '--verify', '-q', 'origin/auto/T-1')).toThrow();
 
     const script = authedGitScript(shallow, fetchBranchesSubcommand(['auto/T-1']), {
-      cleanUrl: `file://${good}`,
       authed: true,
+      cleanUrl: `file://${good}`,
     });
     run(script);
     expect(git(shallow, 'rev-parse', 'origin/auto/T-1').trim()).toBe(
@@ -833,8 +831,8 @@ describe('authedGitScript against a real git repository', () => {
     const other = mkdtempSync(join(tmpdir(), 'authed-git-gitfile-'));
     writeFileSync(join(other, '.git'), `gitdir: ${join(work, '.git')}\n`);
     const script = authedGitScript(other, `fetch origin ${shellQuote('main')}`, {
-      cleanUrl: `file://${good}`,
       authed: true,
+      cleanUrl: `file://${good}`,
     });
     expect(() => run(script)).toThrow();
   });

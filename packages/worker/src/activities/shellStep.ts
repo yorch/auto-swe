@@ -381,10 +381,10 @@ async function finalizeWorkspaceVolume(
   gitAuthHeader?: string
 ): Promise<FinalizeResult> {
   const script = finalizeScript('/workspace/repo', {
+    authed: Boolean(gitAuthHeader),
     branch,
     cleanUrl,
     commandSummary,
-    authed: Boolean(gitAuthHeader),
     identity,
   });
   // `git push` failures can still echo credential material (e.g. a git build

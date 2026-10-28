@@ -774,8 +774,8 @@ export async function createWorkspace(
         const fetchScript = [
           killStrayProcessesScript(handle.keeperPid),
           authedGitScript('/workspace/target-repo', fetchBranchesSubcommand([defaultBranch]), {
-            cleanUrl,
             authed: Boolean(gitAuthHeader),
+            cleanUrl,
           }),
         ].join('\n');
         const tag = newExecTag();
@@ -861,8 +861,8 @@ export async function createWorkspace(
         const script = [
           killStrayProcessesScript(handle.keeperPid),
           authedGitScript('/workspace/target-repo', subcommand, {
-            cleanUrl,
             authed: Boolean(gitAuthHeader),
+            cleanUrl,
           }),
         ].join('\n');
         const tag = newExecTag();
