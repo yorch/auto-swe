@@ -22,6 +22,7 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
 import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
+import { detectedGateDefaults } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { activityInfo, heartbeat } from '@temporalio/activity';
@@ -190,7 +191,7 @@ export async function resolveCommand(
   }
 
   const repo = await prisma.connection.findUniqueOrThrow({
-    select: { gateCommands: true },
+    select: { detectedStack: true, gateCommands: true },
     where: { id: requireRepoId(request, 'qualityGate') },
   });
   const repoOverrides = (repo.gateCommands ?? null) as Record<string, string> | null;
@@ -202,6 +203,15 @@ export async function resolveCommand(
     repoOverrides[gate].trim().length > 0
   ) {
     return repoOverrides[gate];
+  }
+
+  // A repository whose root is a non-Node stack gets that stack's command, or
+  // none: the built-in `yarn` commands below belong to Node, and running one in a
+  // Python or JVM workspace exits 127 and reads as broken code. A gate the stack
+  // has no unambiguous command for resolves to null — reported as unconfigured.
+  const stackDefaults = detectedGateDefaults(repo.detectedStack);
+  if (stackDefaults) {
+    return stackDefaults[gate] ?? null;
   }
 
   return DEFAULT_COMMANDS[gate];

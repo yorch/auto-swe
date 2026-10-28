@@ -44,6 +44,68 @@ function nodeGateCommands(present: Set<string>, scripts: Set<string>): RepoGateC
 }
 
 /**
+ * Gate commands a stack runs when nothing else names one — the run-time fallback
+ * for a repository whose root is not a Node project, and the source of the
+ * suggestions above, so the two cannot disagree.
+ *
+ * Static on purpose: the commands come from this table, never from a stored
+ * detection row, because a gate command runs in the agent workspace and setting
+ * one is an admin-gated change (docs/repositories.md). A gate absent here has no
+ * unambiguous command for the stack; the caller reports it as unconfigured
+ * rather than substituting another ecosystem's command. `node` has no entry:
+ * the built-in `yarn` gates are its defaults.
+ *
+ * `rootFiles` (names of the root directory's files) picks the JVM build tool.
+ */
+export function stackGateDefaults(
+  stack: Stack | null,
+  rootFiles: ReadonlySet<string>
+): RepoGateCommands {
+  switch (stack) {
+    case 'python':
+      return { runTests: 'python -m pytest' };
+    case 'jvm':
+      return rootFiles.has('pom.xml')
+        ? { runBuild: 'mvn -B -q -DskipTests package', runTests: 'mvn -B -q test' }
+        : {
+            runBuild: './gradlew build -x test --no-daemon',
+            runTests: './gradlew test --no-daemon',
+          };
+    case 'go':
+      return { runBuild: 'go build ./...', runLint: 'go vet ./...', runTests: 'go test ./...' };
+    default:
+      return {};
+  }
+}
+
+/**
+ * Stack-derived fallback commands for a repository's stored detection, or null
+ * when the built-in (Node) gates apply: no detection, a Node root, or a root with
+ * no stack. A non-null result may be sparse — a gate it lacks has no unambiguous
+ * command for the stack, and the caller must not substitute another ecosystem's.
+ *
+ * Only the root counts: a detection with `components` is read from the root
+ * component (a polyglot root resolves by the fixed precedence, so node wins),
+ * and one from before `components` existed carried a root-only `primary`.
+ * The input is a JSON column, so nothing about its shape is assumed.
+ */
+export function detectedGateDefaults(detected: unknown): RepoGateCommands | null {
+  if (!detected || typeof detected !== 'object') {
+    return null;
+  }
+  const d = detected as Partial<DetectedStack>;
+  const root = Array.isArray(d.components)
+    ? d.components.find((c) => c?.path === '')?.stacks?.[0]
+    : d.primary;
+  if (root !== 'python' && root !== 'jvm' && root !== 'go') {
+    return null;
+  }
+  const evidence = Array.isArray(d.evidence) ? d.evidence : [];
+  const rootFiles = new Set(evidence.filter((f) => typeof f === 'string' && !f.includes('/')));
+  return stackGateDefaults(root, rootFiles);
+}
+
+/**
  * Detect a repository's stack(s) from the root files that are present —
  * `presentFiles` is a list of repo-root filenames (existence only; contents
  * are not needed). Returns every detected stack, the primary one by the fixed
@@ -116,31 +178,16 @@ export function detectStack(
     }
   }
 
-  const suggestedGateCommands: RepoGateCommands = {};
   // Suggestions stay root-only: a repo with no root stack gets none.
-  switch (rootStacks[0] ?? null) {
-    case 'node':
-      Object.assign(
-        suggestedGateCommands,
-        nodeGateCommands(present, new Set(opts?.packageJsonScripts))
-      );
-      break;
-    case 'python':
-      suggestedGateCommands.runTests = 'python -m pytest';
-      if (present.has('pyproject.toml')) {
-        suggestedGateCommands.runLint = 'ruff check';
-      }
-      break;
-    case 'jvm':
-      suggestedGateCommands.runTests = present.has('pom.xml')
-        ? 'mvn -B -q test'
-        : './gradlew test --no-daemon';
-      break;
-    case 'go':
-      suggestedGateCommands.runTests = 'go test ./...';
-      break;
-    case null:
-      break;
+  const rootStack = rootStacks[0] ?? null;
+  const suggestedGateCommands: RepoGateCommands =
+    rootStack === 'node'
+      ? nodeGateCommands(present, new Set(opts?.packageJsonScripts))
+      : { ...stackGateDefaults(rootStack, present) };
+  // Python's lint is a suggestion only: `ruff` is not in the curated image, so it
+  // is not a run-time default (a missing binary would fail the gate with 127).
+  if (rootStack === 'python' && present.has('pyproject.toml')) {
+    suggestedGateCommands.runLint = 'ruff check';
   }
 
   return {

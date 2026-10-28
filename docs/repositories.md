@@ -284,9 +284,27 @@ The scheduled dependency scan also records the repository's stacks on the connec
   - `primary`: the root's stack when the root has one. Otherwise it is the stack with the most
     components. Ties are broken by the fixed precedence node, then python, then jvm, then go.
   - a suggested curated Dockerfile
-  - conservative suggested gate commands, read from the root `package.json` scripts only
+  - conservative suggested gate commands: for a Node root, the scripts the root `package.json`
+    declares; for a Python, JVM or Go root, the stack's fixed commands (see below)
 - **Fallback.** When the tree cannot be listed, the scan falls back to the root directory. When
   neither listing works, the previous detection is kept.
+
+**Run-time fallback for a non-Node root.** When a repository's root is Python, JVM or Go and a
+gate has no step `command` and no entry in the repository's `gateCommands`, the gate runs the
+stack's command instead of the built-in `yarn` one, and the TDD and fix-session test loop runs the
+stack's test command when `runTests` is unset (the same chain, so loop and gate never disagree):
+
+| Root | `runTests` | `runBuild` | `runLint` |
+|---|---|---|---|
+| Python | `python -m pytest` | — | — |
+| JVM, Maven (`pom.xml`) | `mvn -B -q test` | `mvn -B -q -DskipTests package` | — |
+| JVM, Gradle | `./gradlew test --no-daemon` | `./gradlew build -x test --no-daemon` | — |
+| Go | `go test ./...` | `go build ./...` | `go vet ./...` |
+
+A gate the table leaves blank resolves to no command and fails as unconfigured (`onFail: 'warn'`
+on its node makes it optional); it is never filled with a command from another ecosystem. The
+commands come from this fixed table, not from the stored `suggestedGateCommands`. A Node root, a
+polyglot root (node outranks the rest) and a repository with no detection keep the built-in gates.
 
 The repository edit form shows the detection as a suggestion: the detected stacks and components,
 the suggested `defaults/Dockerfile.<stack>` for `build-executor.yml`, and a **Use suggested gate
@@ -422,10 +440,17 @@ longer fit.
   merge-trust caveat above applies to every scheduled run, not only the first one.
 - **Go has no curated executor image.** Stack detection recognizes `go.mod`, but `defaults/` has
   no Go Dockerfile, so a Go repository needs its own image or `use_repo_dockerfile`.
+- **The stack fallback follows the stored detection, which is weekly.** A repository onboarded
+  since the last scan has none and keeps the built-in `yarn` gates until the next scan; a root that
+  changed stack is followed only after a rescan. Only the root counts: a Python or JVM service in a
+  subdirectory of a repository whose root has no stack gets no fallback, and the test loop still
+  reads only the root `package.json`. The image is not chosen from the stack — the repository still
+  needs an `executorImage` (or the workspace default) that carries the toolchain, and a Python
+  `runTests` assumes `pytest` is installed by the repository's own setup.
 - **Stack detection is bounded.** It ignores signals deeper than four directories, and anything
   under the ignored build/vendor directories. It records at most 50 components
   (`componentsTruncated`). When the provider truncates a very large tree (`treeTruncated`), it
-  only sees part of the repository. Gate-command suggestions come from the root `package.json`
+  only sees part of the repository. Node gate-command suggestions come from the root `package.json`
   only, so a repository with no root stack gets none.
 - **Overrides must be base URLs on one host each.** A GitHub Enterprise server served under a path
   prefix rather than at the root of its host cannot be expressed: the web base is stored as an

@@ -6,6 +6,25 @@ import {
   unrunnableTestCause,
 } from './utils.js';
 
+describe('detectTestCommand with a detected stack', () => {
+  const python = { components: [{ path: '', stacks: ['python'] }], evidence: ['pyproject.toml'] };
+  const node = { components: [{ path: '', stacks: ['node'] }], evidence: ['package.json'] };
+
+  it('uses the stack default where there is no package.json to read', () => {
+    expect(detectTestCommand('{}', null, python)).toBe('python -m pytest');
+  });
+
+  it('still lets the configured runTests win over the stack default', () => {
+    expect(detectTestCommand('{}', { runTests: 'tox' }, python)).toBe('tox');
+  });
+
+  it('keeps the package.json guess for a Node or undetected root', () => {
+    const pkg = JSON.stringify({ devDependencies: { vitest: '1' } });
+    expect(detectTestCommand(pkg, null, node)).toBe('npx vitest run');
+    expect(detectTestCommand(pkg, null, null)).toBe('npx vitest run');
+  });
+});
+
 describe('detectTestCommand', () => {
   it("prefers the repository's configured runTests gate command", () => {
     const pkg = JSON.stringify({ devDependencies: { vitest: '4' } });
