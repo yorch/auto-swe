@@ -8,6 +8,8 @@ import {
   workspaceSecretName,
 } from './podSpec.js';
 
+const POD_UID = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+
 const config: KubernetesWorkspaceConfig = {
   imagePullSecrets: [],
   kubectl: 'kubectl',
@@ -199,7 +201,7 @@ describe('secretEnv', () => {
   });
 
   it('builds the per-pod Secret with the values, labelled for cleanup', () => {
-    const secret = buildWorkspaceSecret(withSecret, config);
+    const secret = buildWorkspaceSecret(withSecret, config, POD_UID);
     expect(workspaceSecretName('workspace-abc123')).toBe('workspace-abc123-env');
     expect(secret).toEqual({
       apiVersion: 'v1',
@@ -216,13 +218,16 @@ describe('secretEnv', () => {
         },
         name: 'workspace-abc123-env',
         namespace: 'auto-swe-workspaces',
+        ownerReferences: [
+          { apiVersion: 'v1', kind: 'Pod', name: 'workspace-abc123', uid: POD_UID },
+        ],
       },
       type: 'Opaque',
     });
   });
 
   it('makes no Secret, and no secretKeyRef, without secretEnv', () => {
-    expect(buildWorkspaceSecret(spec, config)).toBeNull();
+    expect(buildWorkspaceSecret(spec, config, POD_UID)).toBeNull();
     expect(JSON.stringify(pod())).not.toContain('secretKeyRef');
   });
 
@@ -231,7 +236,9 @@ describe('secretEnv', () => {
     const digitFirst = { ...spec, secretEnv: { '1X': 'x' } };
     const clash = { ...spec, secretEnv: { FOO: 'x' } };
     expect(() => buildWorkspacePod(badName, config)).toThrow(/invalid secret environment name/);
-    expect(() => buildWorkspaceSecret(digitFirst, config)).toThrow(/invalid secret environment/);
+    expect(() => buildWorkspaceSecret(digitFirst, config, POD_UID)).toThrow(
+      /invalid secret environment/
+    );
     expect(() => buildWorkspacePod(clash, config)).toThrow(/both plain and secret/);
   });
 });
