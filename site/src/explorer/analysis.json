@@ -6749,10 +6749,10 @@
       "title": "Only benign headers cross origins"
     },
     {
-      "anchor": "private request(url: string, init: RequestInit): Promise<Response> {",
-      "before": 8,
+      "anchor": "private request(",
+      "before": 11,
       "id": "connectorGithubIssues",
-      "lines": 12,
+      "lines": 42,
       "path": "packages/shared/src/lib/integrations/providers/githubIssues.ts",
       "title": "GitHub Issues follows redirects only through the guarded fetch"
     },
