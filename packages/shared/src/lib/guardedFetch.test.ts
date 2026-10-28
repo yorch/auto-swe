@@ -45,6 +45,25 @@ describe('fetchGuarded', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  it('refuses a redirect allowRedirect rejects, but never gates the first URL', async () => {
+    const fetchImpl = vi.fn().mockResolvedValueOnce(redirect(301, '/elsewhere'));
+    await expect(
+      fetchGuarded(
+        'https://api.example/a',
+        {},
+        { allowRedirect: (u) => u.pathname.startsWith('/a'), check: () => true, fetchImpl }
+      )
+    ).rejects.toThrow(/not allowed/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const ok = vi.fn().mockResolvedValueOnce(redirect(301, '/a/b')).mockResolvedValueOnce(done);
+    await fetchGuarded(
+      'https://api.example/z',
+      {},
+      { allowRedirect: (u) => u.pathname.startsWith('/a'), check: () => true, fetchImpl: ok }
+    );
+    expect(ok).toHaveBeenCalledTimes(2);
+  });
+
   it('refuses a hop the check rejects, without requesting it', async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(redirect(301, 'http://127.0.0.1/x'));
     await expect(

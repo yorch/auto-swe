@@ -49,6 +49,21 @@ export function parseGitHubTicketId(
   return null;
 }
 
+/// True when `repository_url` (`https://host/repos/o/r`) names `owner/repo`, case-insensitively.
+function repositoryUrlMatches(value: string, want: { owner: string; repo: string }): boolean {
+  try {
+    const segments = new URL(value).pathname.split('/').filter(Boolean);
+    const repo = segments.at(-1);
+    const owner = segments.at(-2);
+    return (
+      owner?.toLowerCase() === want.owner.toLowerCase() &&
+      repo?.toLowerCase() === want.repo.toLowerCase()
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Where the GitHub tracker sends requests when its config names no base URL. */
 export const GITHUB_ISSUES_DEFAULT_BASE_URL = 'https://api.github.com';
 
@@ -83,12 +98,19 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
 
   /**
    * GitHub answers a renamed repository or a transferred issue with a
-   * same-origin redirect, so redirects are followed — by hand, with every hop
-   * checked. The configured base was vetted when the provider was built; any
-   * other origin must pass the strict guard, and the token goes only to the
+   * same-origin redirect. Redirects are followed by hand with every hop checked,
+   * but only while the target stays inside the repository the request names
+   * (`scope`): a renamed repository or a transferred issue lands outside it and
+   * is refused, so a read or write never reaches a repository nobody checked.
+   * The configured base was vetted when the provider was built; any other
+   * origin must pass the strict guard, and the token goes only to the
    * configured origin.
    */
-  private request(url: string, init: RequestInit): Promise<Response> {
+  private request(
+    url: string,
+    init: RequestInit,
+    scope: { owner: string; repo: string }
+  ): Promise<Response> {
     const origin = new URL(this.baseUrl).origin;
     // Resolution is checked and pinned on every hop: the opt-in covers the configured
     // origin, any other origin is strict.
@@ -96,7 +118,20 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     const strict = createGuardedFetch();
     const pinned: typeof fetch = (target, hopInit) =>
       (new URL(target.toString()).origin === origin ? configured : strict)(target, hopInit);
+    const basePath = new URL(this.baseUrl).pathname.replace(/\/+$/, '');
+    const owner = encodeURIComponent(scope.owner);
+    const repo = encodeURIComponent(scope.repo);
+    const prefix = `${basePath}/repos/${owner}/${repo}/`.toLowerCase();
     return fetchGuarded(url, init, {
+      allowRedirect: (target) => {
+        const path = target.pathname.toLowerCase();
+        return (
+          target.origin === origin &&
+          path.startsWith(prefix) &&
+          !path.includes('%2e') &&
+          !path.includes('%2f')
+        );
+      },
       check: (target) => target.origin === origin || isSafeProbeUrl(target.toString()).ok,
       credentialOrigin: origin,
       fetchImpl: this.fetchImpl ?? pinned,
@@ -114,10 +149,11 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         return null;
       }
       const url = `${this.baseUrl}/repos/${parsed.owner}/${parsed.repo}/issues/${parsed.number}`;
-      const res = await this.request(url, {
-        headers: this.headers(),
-        signal: AbortSignal.timeout(10_000),
-      });
+      const res = await this.request(
+        url,
+        { headers: this.headers(), signal: AbortSignal.timeout(10_000) },
+        parsed
+      );
       if (!res.ok) {
         this.log?.warn({ issueId: id, status: res.status }, 'GitHub fetchIssue failed');
         return null;
@@ -129,7 +165,13 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         state?: string;
         labels?: ({ name?: string } | string)[];
         html_url?: string;
+        repository_url?: string;
       };
+      const reported = issue.repository_url;
+      if (reported !== undefined && !repositoryUrlMatches(reported, parsed)) {
+        this.log?.warn({ issueId: id }, 'GitHub fetchIssue: issue belongs to another repository');
+        return null;
+      }
       return {
         description: issue.body ?? '',
         id: `${parsed.owner}/${parsed.repo}#${issue.number}`,
@@ -160,16 +202,20 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         return null;
       }
       const url = `${this.baseUrl}/repos/${owner}/${repo}/issues`;
-      const res = await this.request(url, {
-        body: JSON.stringify({
-          body: fields.description,
-          labels: [fields.issueType.toLowerCase()],
-          title: fields.title,
-        }),
-        headers: { ...this.headers(), 'Content-Type': 'application/json' },
-        method: 'POST',
-        signal: AbortSignal.timeout(10_000),
-      });
+      const res = await this.request(
+        url,
+        {
+          body: JSON.stringify({
+            body: fields.description,
+            labels: [fields.issueType.toLowerCase()],
+            title: fields.title,
+          }),
+          headers: { ...this.headers(), 'Content-Type': 'application/json' },
+          method: 'POST',
+          signal: AbortSignal.timeout(10_000),
+        },
+        { owner, repo }
+      );
       if (!res.ok) {
         return null;
       }
@@ -199,12 +245,16 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
       }
       const state = targetStatusName.toLowerCase() === 'done' ? 'closed' : 'open';
       const url = `${this.baseUrl}/repos/${parsed.owner}/${parsed.repo}/issues/${parsed.number}`;
-      await this.request(url, {
-        body: JSON.stringify({ state }),
-        headers: { ...this.headers(), 'Content-Type': 'application/json' },
-        method: 'PATCH',
-        signal: AbortSignal.timeout(10_000),
-      });
+      await this.request(
+        url,
+        {
+          body: JSON.stringify({ state }),
+          headers: { ...this.headers(), 'Content-Type': 'application/json' },
+          method: 'PATCH',
+          signal: AbortSignal.timeout(10_000),
+        },
+        parsed
+      );
     } catch (err) {
       this.log?.warn({ err, issueId, targetStatusName }, 'GitHub transitionIssue failed');
     }
@@ -221,12 +271,16 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
         return false;
       }
       const url = `${this.baseUrl}/repos/${parsed.owner}/${parsed.repo}/issues/${parsed.number}/comments`;
-      const res = await this.request(url, {
-        body: JSON.stringify({ body: bodyText }),
-        headers: { ...this.headers(), 'Content-Type': 'application/json' },
-        method: 'POST',
-        signal: AbortSignal.timeout(10_000),
-      });
+      const res = await this.request(
+        url,
+        {
+          body: JSON.stringify({ body: bodyText }),
+          headers: { ...this.headers(), 'Content-Type': 'application/json' },
+          method: 'POST',
+          signal: AbortSignal.timeout(10_000),
+        },
+        parsed
+      );
       if (!res.ok) {
         this.log?.warn({ issueId, status: res.status }, 'GitHub addComment failed');
       }

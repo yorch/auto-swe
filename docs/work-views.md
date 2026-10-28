@@ -222,6 +222,15 @@ ticket is fetched or stored, the submission still succeeds and the run continues
 description, and a fixed line is logged with ids only. Jira and Linear ids and project keys name no
 repository and are not checked.
 
+The check runs on the repository the ticket id names, and the request then stays there. The
+provider follows a redirect only while its target is still under
+`/repos/<owner>/<repo>/` of the checked repository (case-insensitive), and a fetched issue whose
+`repository_url` names another repository is discarded. Reads and writes therefore never reach a
+repository other than the one checked. GitHub answers a renamed repository or a transferred issue
+with a redirect outside that path, which is not followed: a read treats the ticket as unavailable
+(no ticket is fetched or stored), and a write (comment, close, pull-request link, issue creation) is
+skipped.
+
 **Visibility is per row.** A request is in scope when the caller requested it, when the caller can
 see one of its runs (`buildWorkflowRunVisibilityFilter`, the rule `GET /workflow-runs/requests`
 lists by), or when the caller reaches a repository it has a ledger row on or targets. Within a
@@ -273,10 +282,17 @@ http(s) address.
 - With the GitHub tracker, comments, pull-request links, issue closes and PRD issue creation go
   only to a repository the run targets, on the tracker's host, and a ticket is read only from one.
   The tracker has no configured default repository, so a ticket id naming any other repository, a
-  repository on another host, or a bare issue number gets no write: `postTicketComment` returns `posted: false`, and the sync
+  repository on another host, or a bare issue number gets no write: `postTicketComment` returns
+  `posted: false`, and the sync
   is skipped. A PRD run's project key outside the run's repositories creates no issue.
-- A ticket already stored on a request's `ContextSnapshot` is used as it is; the read check applies
-  to a fetch, so a snapshot stored before it was in place keeps its content.
+- A ticket already on a `ContextSnapshot` is used as stored; the scope check applies only when the
+  ticket is fetched.
+- A deployment that keeps its tickets in a separate issues repository (for example `org/issues#5`
+  while the run targets `org/app`) gets no ticket context and no tracker writes: the read is
+  treated as a ticket that was not found and logs the fixed skip line, and each write is skipped
+  with its fixed line.
+- A renamed repository or a transferred issue is not followed, so its ticket is unavailable and its
+  writes are skipped until the id names the current repository.
 - A GitHub ticket id on a run with no git repository (no connection, no authorized repository) is
   never fetched, even a bare number.
 - Outcomes group PRs by the time they were opened and judge them as of now, so a recent cohort
