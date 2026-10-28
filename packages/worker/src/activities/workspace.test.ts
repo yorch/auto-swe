@@ -609,9 +609,22 @@ describe('cloneDependencyRepos', () => {
 
     expect(cloned).toEqual([{ label: 'acme-api', path: '/workspace/deps/acme-api' }]);
     const [cloneCmd, scrubCmd] = exec.mock.calls.map((c) => c[0] as string);
-    expect(cloneCmd).toContain('git clone --depth=1');
+    expect(cloneCmd).toContain(' clone --depth=1 ');
+    expect(cloneCmd).toContain('GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null');
+    expect(cloneCmd).toContain('-c core.hooksPath=/dev/null');
     expect(cloneCmd).toContain(`-b ${shellQuote('main')}`);
-    expect(cloneCmd).toContain(shellQuote('/workspace/deps/acme-api'));
+    // The clean URL after `--`, and the credential in no form on the command line:
+    // a Kubernetes exec's command is an apiserver URL kept in audit logs.
+    const clean = shellQuote('https://github.com/acme/api.git');
+    expect(cloneCmd).toContain(`-- ${clean} ${shellQuote('/workspace/deps/acme-api')}`);
+    const b64 = Buffer.from('x-access-token:ghp_secret').toString('base64');
+    const header = `AUTHORIZATION: basic ${b64}`;
+    expect(cloneCmd).not.toContain('ghp_secret');
+    expect(cloneCmd).not.toContain(b64);
+    expect(cloneCmd).toContain(`-c http.extraheader= ${AUTH_REF}`);
+    // The header reaches the clone as a secret, and only the clone.
+    expect(exec.mock.calls[0]?.[1]).toEqual({ secretEnv: { [GIT_AUTH_ENV]: header } });
+    expect(exec.mock.calls[1]?.[1]).toBeUndefined();
     expect(scrubCmd).toContain('git remote set-url origin');
     expect(scrubCmd).toContain(shellQuote('https://github.com/acme/api.git'));
     expect(scrubCmd).not.toContain('ghp_secret');
@@ -620,6 +633,13 @@ describe('cloneDependencyRepos', () => {
   it('omits the branch flag when no branch is given', async () => {
     await cloneDependencyRepos(ws, [{ authedCloneUrl: 'https://h/a.git', name: 'a' }]);
     expect(exec.mock.calls[0][0]).not.toContain('-b ');
+  });
+
+  it('sends no header and no secret for an unauthenticated URL', async () => {
+    await cloneDependencyRepos(ws, [{ authedCloneUrl: 'https://h/a.git', name: 'a' }]);
+    expect(exec.mock.calls[0][0]).toContain(`-- ${shellQuote('https://h/a.git')} `);
+    expect(exec.mock.calls[0][0]).not.toContain('http.extraheader');
+    expect(exec.mock.calls[0][1]).toBeUndefined();
   });
 
   it('shell-quotes every interpolated argument', async () => {
@@ -653,7 +673,7 @@ describe('cloneDependencyRepos', () => {
   it('is best-effort: one failed clone is cleaned up and the rest still land', async () => {
     exec.mockImplementation(async (cmd: string) => {
       if (cmd.includes('/workspace/deps/bad')) {
-        if (cmd.startsWith('git clone')) {
+        if (cmd.includes(' clone ')) {
           throw new Error('clone failed');
         }
       }
