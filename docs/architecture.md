@@ -558,7 +558,7 @@ it is active on its latest built-in version and runs no A/B experiment. Any othe
 an admin's and stays. A
 built-in version is one with no author (`createdBy` and `generatedBy` both null). The same
 create-if-missing rule covers the GLOBAL agents and their skill refs: a ref an admin removed stays
-removed, and only a built-in skill new in this release is attached to an existing agent. The one
+removed, and only a built-in skill the seed has added since the agent was created is attached to an existing agent. The one
 change to an existing agent is a model move: an untouched seed whose latest version still carries a
 default an earlier release shipped gets a new version on the current default, as
 [model configuration](./model-configuration.md) describes. That version copies its predecessor's

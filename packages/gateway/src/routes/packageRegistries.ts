@@ -22,25 +22,40 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const ScopeSchema = z.string().regex(/^@[a-z0-9][a-z0-9._-]*$/i, 'a scope looks like @acme');
 
-const CreateSchema = z.object({
-  accessMode: z.enum(PACKAGE_REGISTRY_ACCESS_MODES).default('lockfile'),
-  allowPrivateNetwork: z.boolean().default(false),
-  authKind: z.enum(PACKAGE_REGISTRY_AUTH_KINDS).default('bearer'),
-  ecosystem: z.enum(PACKAGE_REGISTRY_ECOSYSTEMS).default('npm'),
+/** Writable fields with no defaults: an update must tell "not sent" from "sent as the default". */
+const Fields = z.object({
+  accessMode: z.enum(PACKAGE_REGISTRY_ACCESS_MODES),
+  allowPrivateNetwork: z.boolean(),
+  authKind: z.enum(PACKAGE_REGISTRY_AUTH_KINDS),
+  ecosystem: z.enum(PACKAGE_REGISTRY_ECOSYSTEMS),
   name: z.string().min(1).max(100),
-  npmScopes: z.array(ScopeSchema).max(50).default([]),
-  teamId: z.string().uuid().nullable().default(null),
-  token: z.string().min(1).optional(),
+  npmScopes: z.array(ScopeSchema).max(50),
+  teamId: z.string().uuid().nullable(),
+  token: z.string().min(1),
   upstreamUrl: z.string().url(),
 });
 
-/** `null` clears teamId/scopes; omitting token keeps the stored one. */
-const UpdateSchema = CreateSchema.partial()
-  .omit({ ecosystem: true, name: true })
-  .extend({
-    isActive: z.boolean().optional(),
-    name: z.string().min(1).max(100).optional(),
-  });
+const CreateSchema = z.object({
+  accessMode: Fields.shape.accessMode.default('lockfile'),
+  allowPrivateNetwork: Fields.shape.allowPrivateNetwork.default(false),
+  authKind: Fields.shape.authKind.default('bearer'),
+  ecosystem: Fields.shape.ecosystem.default('npm'),
+  name: Fields.shape.name,
+  npmScopes: Fields.shape.npmScopes.default([]),
+  teamId: Fields.shape.teamId.default(null),
+  token: Fields.shape.token.optional(),
+  upstreamUrl: Fields.shape.upstreamUrl,
+});
+
+/**
+ * An omitted field is left as stored: `null` clears teamId, omitting token keeps the stored one.
+ * Built from `Fields`, never from `CreateSchema.partial()`, because Zod 4 still applies a
+ * `.default()` inside an optional, which would turn a `{ token }` rotation into a reset of the
+ * team, scopes and auth kind.
+ */
+const UpdateSchema = Fields.omit({ ecosystem: true }).partial().extend({
+  isActive: z.boolean().optional(),
+});
 
 const IdParams = z.object({ id: z.string().uuid() });
 

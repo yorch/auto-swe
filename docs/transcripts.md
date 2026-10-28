@@ -47,7 +47,7 @@ The token is `base64url(payload).base64url(HMAC-SHA256)`, keyed by an HKDF-SHA25
 
 ## Stream integrity
 
-Every content or export stream ends with a `{"kind":"eof","complete":true}` sentinel. A part whose sha256 does not verify, whose gunzip output exceeds 64 MiB, or whose artifact cannot be read ends the stream with an `integrity_error` line (`reason: sha_mismatch` / `too_large` / `read_failed`) and a torn-down connection — a client must treat any stream without the eof line as incomplete. The CLI exits non-zero on that.
+Every content or export stream ends with a `{"kind":"eof","complete":true}` sentinel. A part whose sha256 does not verify, whose gunzip output exceeds 64 MiB, or whose artifact cannot be read ends the stream with an `integrity_error` line (`reason: sha_mismatch` / `too_large` / `corrupt` / `read_failed`; `corrupt` means the part's gzip stream did not decode) and a torn-down connection — a client must treat any stream without the eof line as incomplete. The CLI exits non-zero on that.
 
 ## Normalized view
 

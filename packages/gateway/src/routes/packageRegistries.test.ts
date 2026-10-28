@@ -127,6 +127,10 @@ describe('packageRegistryRoutes', () => {
     )[0][0].data;
     expect(data.accessMode).toBe('open');
     expect(data.tokenCiphertext).toBeUndefined();
+    // A field the caller did not send is not written, least of all as its create-time default.
+    for (const key of ['teamId', 'npmScopes', 'authKind', 'allowPrivateNetwork']) {
+      expect(data).not.toHaveProperty(key);
+    }
   });
 
   it('is ADMIN only', async () => {

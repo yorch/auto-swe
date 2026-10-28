@@ -51,9 +51,9 @@ const h = vi.hoisted(() => ({
 vi.mock('@auto-swe/shared/db', () => ({
   prisma: {
     agentTranscript: {
-      delete: vi.fn(async ({ where }: { where: { id: string } }) => {
+      deleteMany: vi.fn(async ({ where }: { where: { id: string } }) => {
         h.deletedTranscripts.push(where.id);
-        return {};
+        return { count: 1 };
       }),
       findMany: vi.fn((args: Parameters<typeof agentTranscriptFindMany>[0]) =>
         agentTranscriptFindMany(args)

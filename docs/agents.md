@@ -57,8 +57,7 @@ agent fails that node at run time. Agents reached only through a template's `age
 checked non-fatally at template save and resolved per node at run time. `evalJudge` deliberately
 runs on a cheaper, different model from the agents it scores, to avoid self-preference bias.
 
-> **`securityReview` is live, not legacy.** It used to be documented as a compatibility shim, which
-> was wrong and unsafe advice — deleting the row breaks every implementation run. It backs
+> **`securityReview` is live, not legacy.** Deleting the row breaks every implementation run. It backs
 > `scanDiffForSecurityIssues`, which `executeImplementation` and all three fix paths call on the
 > committed diff, and which throws a non-retryable `SECURITY_GATE_FAILURE` when any finding is
 > CRITICAL (the processor forces `passed: false` in that case regardless of what the model returned).

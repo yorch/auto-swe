@@ -436,6 +436,10 @@ export function createRegistryProxy(options: {
       if (hit) {
         res.writeHead(200, { 'content-type': 'application/octet-stream' });
         const stream = hit.createStream();
+        // An unhandled stream error would take the whole worker down, and a client that
+        // hangs up must not leave the file descriptor open.
+        stream.on('error', () => res.destroy());
+        res.on('close', () => stream.destroy());
         stream.pipe(res);
         return;
       }
@@ -483,10 +487,15 @@ export function createRegistryProxy(options: {
       try {
         if (upstream.body) {
           for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
+            // A client that hung up never drains again; throwing leaves the loop, which cancels
+            // the upstream body, and the catch below aborts the cache write.
+            if (res.destroyed || res.writableEnded) {
+              throw new Error('client closed');
+            }
             const wrote = cacheStream ? await cacheStream.write(chunk) : Promise.resolve();
             const flushed = res.write(chunk);
             await wrote;
-            if (!flushed) {
+            if (!flushed && !res.destroyed) {
               await new Promise<void>((resolve) => {
                 const done = () => {
                   res.off('drain', done);

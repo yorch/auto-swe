@@ -6,6 +6,7 @@ import {
   resolveWorkspaceInfra,
 } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
+import { logWarn } from '../../activityLog.js';
 import {
   type CappedFileResult,
   type CapturedResult,
@@ -285,10 +286,18 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
 
   async remove(idOrHandle: string | WorkspaceHandle): Promise<void> {
     try {
-      await spawnCaptureAsync(this.kubectl, deletePodArgs(this.ref(idOrHandle)), {
+      const result = await spawnCaptureAsync(this.kubectl, deletePodArgs(this.ref(idOrHandle)), {
         heartbeatLabel: 'workspace: removing pod',
         timeoutMs: 60_000,
       });
+      // `--ignore-not-found` makes a missing pod a success, so a non-zero exit is a real failure
+      // (API error, RBAC): the pod would otherwise live to its deadline, holding quota.
+      if (result.exitCode !== 0) {
+        logWarn('kubernetes workspace pod could not be removed', {
+          exitCode: result.exitCode,
+          stderr: result.stderr.slice(0, 500),
+        });
+      }
     } catch {
       /* already gone */
     }
