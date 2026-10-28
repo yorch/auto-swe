@@ -24,6 +24,7 @@ import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
+import { executorImageFor } from '../lib/executorImage.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -277,7 +278,7 @@ async function runInCheckout(args: {
     authedCloneUrl,
     branch,
     baseBranch,
-    repo.executorImage ?? undefined,
+    executorImageFor(repo),
     undefined,
     undefined,
     { teamId: repo.teamId }

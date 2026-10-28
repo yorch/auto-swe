@@ -35,6 +35,7 @@ import { currentNodeTag } from '../lib/activityNodeTag.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { recordGateEval } from '../lib/evalCapture.js';
 import { throwIfActivityCancelled } from '../lib/execUtils.js';
+import { executorImageFor } from '../lib/executorImage.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
@@ -243,7 +244,7 @@ async function provisionGateWorkspace(
     authedCloneUrl,
     branch,
     baseBranch,
-    repo.executorImage ?? undefined,
+    executorImageFor(repo),
     undefined,
     undefined,
     { teamId: repo.teamId }

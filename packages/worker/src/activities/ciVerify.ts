@@ -24,6 +24,7 @@ import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflo
 import { heartbeat } from '@temporalio/activity';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
 import { getErrorMessage } from '../lib/errors.js';
+import { executorImageFor } from '../lib/executorImage.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
@@ -163,7 +164,7 @@ async function verify(input: {
     authedCloneUrl,
     fixBranch,
     baseBranch,
-    repo.executorImage ?? undefined,
+    executorImageFor(repo),
     undefined,
     undefined,
     { teamId: repo.teamId }

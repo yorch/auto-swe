@@ -38,6 +38,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage, getExecErrorOutput } from '../lib/errors.js';
+import { executorImageFor } from '../lib/executorImage.js';
 import { withCoAuthorTrailer } from '../lib/gitIdentity.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { resolveSystemPrompt } from '../lib/models.js';
@@ -417,7 +418,7 @@ async function provisionMergeWorkspace(
     authedCloneUrl,
     targetBranch,
     baseBranch,
-    repo.executorImage ?? undefined,
+    executorImageFor(repo),
     undefined,
     undefined,
     { teamId: repo.teamId }

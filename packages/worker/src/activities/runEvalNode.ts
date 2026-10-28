@@ -36,6 +36,7 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
+import { executorImageFor } from '../lib/executorImage.js';
 import { buildJudgePrompt } from '../lib/judgePrompt.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { resolveAutonomyPolicy } from '../lib/resolveAutonomyPolicy.js';
@@ -234,7 +235,7 @@ async function evaluateScorer(
           // from defaultBranch), on the repo's configured toolchain image.
           existingBranch: true,
           gate: scorer.gate as GateName,
-          image: repo.executorImage ?? undefined,
+          image: executorImageFor(repo),
           teamId: repo.teamId,
         });
         return {

@@ -35,6 +35,7 @@ import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
+import { executorImageFor } from '../lib/executorImage.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
@@ -108,6 +109,7 @@ export async function runAgentTask(input: RunAgentTaskInput): Promise<RunAgentTa
 export interface AgentTaskCoreInput {
   /** The `git_repo` connection row, with its installation. */
   repo: Parameters<typeof toRepoRef>[0] & {
+    detectedStack?: unknown;
     executorImage?: string | null;
     teamId: string | null;
   };
@@ -226,7 +228,7 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       authedCloneUrl,
       branch,
       baseBranch,
-      repo.executorImage ?? undefined,
+      executorImageFor(repo),
       undefined,
       undefined,
       { teamId: repo.teamId }
@@ -290,7 +292,7 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       authedCloneUrl,
       branch,
       baseBranch,
-      repo.executorImage ?? undefined,
+      executorImageFor(repo),
       baseSha,
       undefined,
       { teamId: repo.teamId }

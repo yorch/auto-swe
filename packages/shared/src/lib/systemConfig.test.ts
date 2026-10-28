@@ -417,6 +417,9 @@ describe('systemConfig resolvers', () => {
       'WORKSPACE_CPUS',
       'WORKSPACE_PIDS_LIMIT',
       'WORKSPACE_IMAGE',
+      'WORKSPACE_IMAGE_PYTHON',
+      'WORKSPACE_IMAGE_JVM',
+      'WORKSPACE_IMAGE_GO',
       'WORKSPACE_METADATA_BLOCK_IMAGE',
       'WORKSPACE_BLOCK_METADATA',
       'WORKER_MAX_CONCURRENT_ACTIVITIES',
@@ -440,6 +443,17 @@ describe('systemConfig resolvers', () => {
       for (const key of KEYS) {
         delete process.env[key];
       }
+    });
+
+    it('reads a per-stack executor image, ignores an invalid one, and has none for node', () => {
+      process.env.WORKSPACE_IMAGE_PYTHON = 'registry.example/executor-python:1';
+      process.env.WORKSPACE_IMAGE_JVM = 'not an image; rm -rf /';
+      process.env.WORKSPACE_IMAGE_GO = '';
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+      expect(resolveWorkspaceInfra().stackImages).toEqual({
+        python: 'registry.example/executor-python:1',
+      });
+      err.mockRestore();
     });
 
     it('returns the built-in defaults when nothing is set', () => {
@@ -467,6 +481,7 @@ describe('systemConfig resolvers', () => {
         pidsLimit: 512,
         regexScanBudgetMs: 250,
         registryProxy: null,
+        stackImages: {},
       });
     });
 
@@ -769,6 +784,13 @@ describe('systemConfig resolvers', () => {
       it('leaves the Docker backend free to run without the model proxy', () => {
         vi.stubEnv('WORKSPACE_BACKEND', 'docker');
         expect(validateWorkspaceInfraEnv()).toEqual([]);
+      });
+
+      it('refuses, at boot, a per-stack executor image that is not an image reference', () => {
+        vi.stubEnv('WORKSPACE_IMAGE_GO', 'registry.example/executor-go:1');
+        expect(validateWorkspaceInfraEnv()).toEqual([]);
+        vi.stubEnv('WORKSPACE_IMAGE_JVM', 'bad image; id');
+        expect(validateWorkspaceInfraEnv().join('\n')).toContain('WORKSPACE_IMAGE_JVM');
       });
 
       it('assertWorkspaceInfraEnv throws one error listing every problem, and is silent when valid', () => {

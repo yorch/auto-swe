@@ -115,7 +115,7 @@ function checkWorkspaceImageLiterals() {
           'workspace-image-inherited',
           `createWorkspace(…) image argument is the literal ${literal[0].trim()}`,
           'A literal wins the `image ?? infra.image` inside createWorkspace, so the ' +
-            "operator's configured image is never read. Pass `repo.executorImage ?? undefined`, " +
+            "operator's configured image is never read. Pass `executorImageFor(repo)` (lib/executorImage.ts), " +
             'or a named constant if the pin is deliberate (see EVAL_WORKSPACE_IMAGE).'
         );
       }
