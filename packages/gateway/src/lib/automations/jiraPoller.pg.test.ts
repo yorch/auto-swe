@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { JIRA_FILTER_NEW_ISSUE } from '@auto-swe/shared/automation';
+import { JIRA_FILTER_NEW_ISSUE, JIRA_FILTER_STATUS_CHANGED } from '@auto-swe/shared/automation';
 import { prisma } from '@auto-swe/shared/db';
 import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -59,6 +59,8 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
   let automationId: string;
   let automation: PollableAutomation;
   let repoId: string;
+  let templateId: string;
+  let fixtureTeam: { id: string; orgId: string };
   let ownerKey: string;
   const startedWorkflows: string[] = [];
 
@@ -157,6 +159,8 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
           },
         });
         repoId = repo.id;
+        templateId = template.id;
+        fixtureTeam = { id: team.id, orgId: organization.id };
         automationId = row.id;
         ownerKey = connectionOwnerKey(repo, 'https://github.com') ?? '';
         automation = {
@@ -461,6 +465,133 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
           where: { id: automationId },
         });
       }
+    });
+  });
+  describe('a status-change automation with the real engine', () => {
+    let statusId: string;
+    let statusAutomation: PollableAutomation;
+    const inStatus = (key: string, status: string) => ({ ...hit(key), status });
+
+    beforeAll(async () => {
+      await runUnscoped('test fixture', ['Automation'], async () => {
+        const row = await prisma.automation.create({
+          data: {
+            connectionId: repoId,
+            cooldownMinutes: 0,
+            filters: { jql: 'status = Open' },
+            maxRunsPerDay: 100,
+            name: 'jira status',
+            source: JIRA_FILTER_STATUS_CHANGED,
+            templateId,
+          },
+        });
+        statusId = row.id;
+        statusAutomation = {
+          connection: {
+            id: repoId,
+            installation: null,
+            isActive: true,
+            team: fixtureTeam,
+          },
+          filters: row.filters,
+          id: row.id,
+          source: row.source,
+        };
+      });
+    });
+
+    beforeEach(async () => {
+      await prisma.automationSeenIssue.deleteMany({ where: { automationId: statusId } });
+      await prisma.automationPollState.deleteMany({ where: { automationId: statusId } });
+    });
+
+    afterAll(async () => {
+      await prisma.automationFire.deleteMany({ where: { ownerKey } });
+      await runUnscoped('test fixture', ['Automation'], () =>
+        prisma.automation.deleteMany({ where: { id: statusId } })
+      );
+    });
+
+    const poll = async (found: ReturnType<typeof inStatus>[]) => {
+      const row = await prisma.automation.findUniqueOrThrow({ where: { id: statusId } });
+      const connection = (await prisma.connection.findFirstOrThrow({
+        include: connectionInclude,
+        where: { id: repoId },
+      })) as EngineConnection;
+      const decide = engineDecider(fastify as never, {
+        automation: row,
+        connection,
+        now: new Date(),
+        ownerKey,
+      });
+      return pollAutomation(
+        deps(slowTracker(found as never), new Date(), decide as never),
+        statusAutomation
+      );
+    };
+
+    it('accepts the source in the database, and baselines pairs without starting a run', async () => {
+      expect((await poll([inStatus('PAY-1', 'Open')])).status).toBe('baselined');
+      const seen = await prisma.automationSeenIssue.findMany({ where: { automationId: statusId } });
+      expect(seen.map((r) => r.issueKey)).toEqual(['pay-1#open']);
+      expect(startedWorkflows).toHaveLength(0);
+    });
+
+    it('starts one run for each new status of an issue, and none when polled again', async () => {
+      await poll([inStatus('PAY-1', 'Open')]);
+      const moved = [inStatus('PAY-1', 'In Review')];
+      expect(await poll(moved)).toEqual({
+        pending: 0,
+        started: 1,
+        status: 'polled',
+        suppressed: 0,
+      });
+      expect(startedWorkflows).toHaveLength(1);
+      expect(startedWorkflows[0]).toMatch(/^jirapoll-[0-9a-f]{8}-pay-1-[0-9a-f]{8}$/);
+      expect(await poll(moved)).toEqual({
+        pending: 0,
+        started: 0,
+        status: 'polled',
+        suppressed: 0,
+      });
+      expect(startedWorkflows).toHaveLength(1);
+      const fires = await prisma.automationFire.findMany({ where: { ownerKey } });
+      expect(fires).toHaveLength(1);
+      expect(fires[0]?.dedupeKey).toBe(`${ownerKey}#jira-pay-1#in review`);
+    });
+
+    it('starts no second run when a poll crashed after the decision and before the mark', async () => {
+      await poll([inStatus('PAY-1', 'Open')]);
+      const moved = [inStatus('PAY-1', 'In Review')];
+      await poll(moved);
+      await prisma.automationSeenIssue.delete({
+        where: {
+          automationId_issueKey: { automationId: statusId, issueKey: 'pay-1#in review' },
+        },
+      });
+      expect(await poll(moved)).toEqual({
+        pending: 0,
+        started: 0,
+        status: 'polled',
+        suppressed: 0,
+      });
+      expect(startedWorkflows).toHaveLength(1);
+    });
+
+    it('rejects a Jira filter without a JQL, as for the sibling source', async () => {
+      await expect(
+        runUnscoped('test fixture', ['Automation'], () =>
+          prisma.automation.create({
+            data: {
+              connectionId: repoId,
+              filters: { jql: '  ' },
+              name: 'bad',
+              source: JIRA_FILTER_STATUS_CHANGED,
+              templateId,
+            },
+          })
+        )
+      ).rejects.toThrow();
     });
   });
 });

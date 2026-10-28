@@ -1,6 +1,6 @@
 'use client';
 
-import { EVENT_SOURCE_KEYS, eventSource, JIRA_FILTER_NEW_ISSUE } from '@auto-swe/shared/automation';
+import { EVENT_SOURCE_KEYS, eventSource, isJiraFilterSource } from '@auto-swe/shared/automation';
 import { useState } from 'react';
 import { ActionMenu, type ActionMenuItem } from '@/components/ui/ActionMenu';
 import { Alert } from '@/components/ui/Alert';
@@ -117,7 +117,7 @@ function AutomationRow({
             {automation.targetConnection &&
               ` · on ${automation.targetConnection.organizationName}/${automation.targetConnection.repoName}`}
           </div>
-          {automation.source === JIRA_FILTER_NEW_ISSUE && automation.enabled && (
+          {isJiraFilterSource(automation.source) && automation.enabled && (
             <PollStatus state={automation.pollState ?? null} />
           )}
         </div>

@@ -1,4 +1,4 @@
-import type { JiraFilterFacts } from '@auto-swe/shared/automation';
+import type { JiraFilterFacts, JiraStatusChangedFacts } from '@auto-swe/shared/automation';
 import { AtlassianError } from '@auto-swe/shared/lib/integrations/atlassianClient';
 import type { IssueTrackerProvider } from '@auto-swe/shared/lib/integrations/issueTracker';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -122,7 +122,9 @@ const hit = (key: string, projectKey = key.split('-')[0] ?? '') => ({
   summary: `Summary ${key}`,
 });
 
-const found = (...issues: ReturnType<typeof hit>[]): SearchIssuesResult => ({
+const found = (
+  ...issues: (ReturnType<typeof hit> & { status?: string })[]
+): SearchIssuesResult => ({
   issues,
   truncated: false,
 });
@@ -959,5 +961,131 @@ describe('connectionOwnerKey', () => {
         instance
       )
     ).toBeNull();
+  });
+});
+
+describe('pollAutomation: status changes', () => {
+  const STATUS_SOURCE = 'jira.filter.status_changed';
+  const statusAutomation = () => automation({ source: STATUS_SOURCE });
+  const inStatus = (key: string, status: string) => ({ ...hit(key), status });
+  const baselined = () =>
+    fakePrisma({ baselinedAt: new Date('2026-10-01T00:00:00Z'), baselineJql: NARROWED });
+
+  it('baselines every match in the status it is in, and starts nothing', async () => {
+    const fake = fakePrisma();
+    const decide = vi.fn(async (_facts: JiraStatusChangedFacts) => started());
+    const search = vi.fn(async () =>
+      found(inStatus('PAY-1', 'In Review'), inStatus('PAY-2', 'Open'))
+    );
+    const outcome = await run(fake, search, statusAutomation(), { decide });
+    expect(outcome).toEqual({ recorded: 2, status: 'baselined' });
+    expect([...fake.seen].sort()).toEqual(['pay-1#in review', 'pay-2#open']);
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it('starts nothing for an issue still in the status it was baselined in', async () => {
+    const fake = baselined();
+    fake.seen.add('pay-1#open');
+    const decide = vi.fn(async (_facts: JiraStatusChangedFacts) => started());
+    const search = vi.fn(async () => found(inStatus('PAY-1', 'Open')));
+    const outcome = await run(fake, search, statusAutomation(), { decide });
+    expect(outcome).toEqual({ pending: 0, started: 0, status: 'polled', suppressed: 0 });
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it('decides an issue that moved to a new status, with that status in the facts', async () => {
+    const fake = baselined();
+    fake.seen.add('pay-1#open');
+    const decide = vi.fn(async (_facts: JiraStatusChangedFacts) => started());
+    const search = vi.fn(async () => found(inStatus('PAY-1', 'In Review')));
+    const outcome = await run(fake, search, statusAutomation(), { decide });
+    expect(outcome).toMatchObject({ started: 1, status: 'polled' });
+    expect(decide.mock.calls[0]?.[0]).toMatchObject({ issueKey: 'PAY-1', status: 'In Review' });
+    expect(fake.seen.has('pay-1#in review')).toBe(true);
+  });
+
+  it('decides a pair once: a replayed poll finds it recorded', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (_facts: JiraStatusChangedFacts) => started());
+    const search = vi.fn(async () => found(inStatus('PAY-1', 'In Review')));
+    await run(fake, search, statusAutomation(), { decide });
+    await run(fake, search, statusAutomation(), { decide });
+    expect(decide).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats the status case-insensitively and decides each distinct status once', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (_facts: JiraStatusChangedFacts) => started());
+    await run(
+      fake,
+      vi.fn(async () => found(inStatus('PAY-1', 'In Review'))),
+      statusAutomation(),
+      {
+        decide,
+      }
+    );
+    await run(
+      fake,
+      vi.fn(async () => found(inStatus('PAY-1', 'IN REVIEW'))),
+      statusAutomation(),
+      {
+        decide,
+      }
+    );
+    await run(
+      fake,
+      vi.fn(async () => found(inStatus('PAY-1', 'Done'))),
+      statusAutomation(),
+      {
+        decide,
+      }
+    );
+    expect(decide).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not act on, or record, a match the search showed no status for', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (_facts: JiraStatusChangedFacts) => started());
+    const search = vi.fn(async () => found(hit('PAY-1')));
+    const outcome = await run(fake, search, statusAutomation(), { decide });
+    expect(outcome).toEqual({ pending: 0, started: 0, status: 'polled', suppressed: 0 });
+    expect(decide).not.toHaveBeenCalled();
+    expect(fake.seen.size).toBe(0);
+  });
+
+  it('marks seen, and goes on, when the status can never make valid facts', async () => {
+    const fake = baselined();
+    const decide = vi.fn(async (_facts: JiraStatusChangedFacts) => started());
+    const search = vi.fn(async () =>
+      found(inStatus('PAY-1', 'x'.repeat(101)), inStatus('PAY-2', 'Open'))
+    );
+    const outcome = await run(fake, search, statusAutomation(), { decide });
+    expect(outcome).toMatchObject({ started: 1, status: 'polled' });
+    expect(fake.seen.size).toBe(2);
+  });
+
+  it('keeps the new-issue source keyed on the issue alone', async () => {
+    const fake = baselined();
+    fake.seen.add('pay-1');
+    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
+    const search = vi.fn(async () => found(inStatus('PAY-1', 'In Review')));
+    await run(fake, search, automation(), { decide });
+    expect(decide).not.toHaveBeenCalled();
+  });
+
+  it('stops with START_FAILED and leaves the pair unseen when the start failed', async () => {
+    const fake = baselined();
+    const decide = vi.fn(
+      async (_facts: JiraStatusChangedFacts): Promise<AutomationResult> => ({
+        automationId: 'auto-1',
+        outcome: 'FAILED_TO_START',
+      })
+    );
+    const search = vi.fn(async () => found(inStatus('PAY-1', 'In Review')));
+    expect(await run(fake, search, statusAutomation(), { decide })).toEqual({
+      code: 'START_FAILED',
+      status: 'error',
+    });
+    expect(fake.seen.size).toBe(0);
   });
 });

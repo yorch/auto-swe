@@ -21,8 +21,8 @@ import {
   eventSource,
   INBOUND_EVENT,
   type InboundEventFilters,
+  isJiraFilterSource,
   isRepositoryOwnerKey,
-  JIRA_FILTER_NEW_ISSUE,
   type JiraFilterFilters,
   optionsSchema,
   parseOwnerKey,
@@ -289,7 +289,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       }
     }
     if (
-      source.key === JIRA_FILTER_NEW_ISSUE &&
+      isJiraFilterSource(source.key) &&
       !hasBalancedParentheses((filters as JiraFilterFilters).jql)
     ) {
       return {
@@ -384,7 +384,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       };
     }
     // Last, because it calls Jira: an automation that is off is a draft and asks nothing of it.
-    return source.key === JIRA_FILTER_NEW_ISSUE && body.enabled
+    return isJiraFilterSource(source.key) && body.enabled
       ? jiraEnabledProblem(filters as JiraFilterFilters, team)
       : null;
   }
@@ -968,7 +968,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       }
       // An automation that is switched on is checked as a new one is, whatever else changed: its
       // Jira query may have stopped being valid, or its project allowed, while it was off.
-      const isJira = source.key === JIRA_FILTER_NEW_ISSUE;
+      const isJira = isJiraFilterSource(source.key);
       const switchedOn = body.enabled === true && existing.enabled === false;
       // Template, options, filters and the repository are checked together, as they will run.
       if (
@@ -1079,13 +1079,12 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       });
       return {
         data: {
-          fires:
-            loaded.row.source === JIRA_FILTER_NEW_ISSUE
-              ? fires.map((f) => ({
-                  ...f,
-                  facts: withoutTicketText(f.facts, loaded.access.canManage),
-                }))
-              : fires,
+          fires: isJiraFilterSource(loaded.row.source)
+            ? fires.map((f) => ({
+                ...f,
+                facts: withoutTicketText(f.facts, loaded.access.canManage),
+              }))
+            : fires,
         },
       };
     }
@@ -1186,7 +1185,7 @@ export const automationRoutes: FastifyPluginAsync = async (fastify) => {
       }
       // The allowlist is the access control for Jira issues, and it may have changed since the
       // decision: a project taken off it must not start a run from the text stored back then.
-      if (source.key === JIRA_FILTER_NEW_ISSUE) {
+      if (isJiraFilterSource(source.key)) {
         const team = ownerTeam(access);
         const allowed = (
           await resolveSetting('workflow.jiraPollProjectKeys', {

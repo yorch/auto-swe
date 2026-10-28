@@ -71,6 +71,7 @@ vi.mock('../lib/launchAuthorization.js', () => ({
 
 import {
   JIRA_FILTER_NEW_ISSUE,
+  JIRA_FILTER_STATUS_CHANGED,
   PR_FEEDBACK,
   WORKFLOW_RUN_FAILED,
 } from '@auto-swe/shared/automation';
@@ -930,6 +931,32 @@ describe('automationRoutes (event automations)', () => {
         filters: { jql: 'status = "To Do"' },
         source: JIRA_FILTER_NEW_ISSUE,
       });
+    });
+
+    it('creates a status-change one under the same checks as a new-issue one', async () => {
+      const res = await post({ ...JIRA, source: JIRA_FILTER_STATUS_CHANGED });
+      expect(res.statusCode).toBe(201);
+      expect(jira.searchIssues).toHaveBeenCalledWith('project in ("PAY") AND (status = "To Do")', {
+        maxResults: 1,
+      });
+      expect(ctx.prisma.automation.create.mock.calls[0]?.[0].data).toMatchObject({
+        source: JIRA_FILTER_STATUS_CHANGED,
+      });
+    });
+
+    it('refuses a status-change one with an empty allowlist or unbalanced JQL, asking Jira nothing', async () => {
+      settings.jiraProjects = [];
+      const noProjects = await post({ ...JIRA, source: JIRA_FILTER_STATUS_CHANGED });
+      expect(noProjects.json().error.code).toBe('NO_ALLOWED_PROJECTS');
+      settings.jiraProjects = ['PAY'];
+      const unbalanced = await post({
+        ...JIRA,
+        filters: { jql: 'x = 1) OR project = SECRET OR (x = 1' },
+        source: JIRA_FILTER_STATUS_CHANGED,
+      });
+      expect(unbalanced.json().error.code).toBe('INVALID_FILTERS');
+      expect(jira.searchIssues).not.toHaveBeenCalled();
+      expect(ctx.prisma.automation.create).not.toHaveBeenCalled();
     });
 
     it('drops a trailing ORDER BY before asking, as the poller does', async () => {

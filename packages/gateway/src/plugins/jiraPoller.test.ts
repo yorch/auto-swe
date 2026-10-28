@@ -248,6 +248,24 @@ describe('pollAllJiraAutomations', () => {
     expect(calls[0]?.[0].tracker).toBe(tracker);
   });
 
+  it('tells the poll which source each automation is, so a status-change one compares statuses', async () => {
+    const d = deps({
+      listAutomations: vi.fn(async () => [
+        row('a'),
+        row('b', { source: 'jira.filter.status_changed' }),
+      ]),
+      reload: vi.fn(async (id: string) =>
+        row(id, id === 'b' ? { source: 'jira.filter.status_changed' } : {})
+      ),
+    });
+    await pollAllJiraAutomations(fastify(), d);
+    const calls = (d.poll as ReturnType<typeof vi.fn>).mock.calls;
+    expect(calls.map(([, a]) => a.source)).toEqual([
+      'jira.filter.new_issue',
+      'jira.filter.status_changed',
+    ]);
+  });
+
   it('stops starting new automations once the tick has used its time budget, and says how many wait', async () => {
     let clock = 0;
     const poll = vi.fn(async () => {

@@ -1,5 +1,5 @@
 import type { Prisma } from '@auto-swe/shared';
-import { JIRA_FILTER_NEW_ISSUE } from '@auto-swe/shared/automation';
+import { isJiraFilterSource, JIRA_FILTER_SOURCES } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { createIssueTrackerProvider } from '@auto-swe/shared/lib/integrations/registry';
 import { resolveGitHubConfig, resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
@@ -200,7 +200,7 @@ export async function pollAllJiraAutomations(
             prisma: fastify.prisma,
             tracker,
           },
-          { connection: row.connection, filters: row.filters, id: row.id }
+          { connection: row.connection, filters: row.filters, id: row.id, source: row.source }
         ),
         deps.deadlineMs ?? POLL_DEADLINE_MS
       );
@@ -242,7 +242,11 @@ export function defaultTickDeps(
               { createdAt: 'asc' },
               { id: 'asc' },
             ],
-            where: { connectionId: { not: null }, enabled: true, source: JIRA_FILTER_NEW_ISSUE },
+            where: {
+              connectionId: { not: null },
+              enabled: true,
+              source: { in: [...JIRA_FILTER_SOURCES] },
+            },
           })
       );
       return rows.filter((r): r is PollRow => r.connection !== null);
@@ -263,7 +267,7 @@ export function defaultTickDeps(
             where: { id: automationId },
           })
       );
-      return row?.enabled && row.source === JIRA_FILTER_NEW_ISSUE && row.connection !== null
+      return row?.enabled && isJiraFilterSource(row.source) && row.connection !== null
         ? (row as PollRow)
         : null;
     },
