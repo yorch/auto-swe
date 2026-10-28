@@ -19,6 +19,11 @@ updates:
       - /defaults
     schedule:
       interval: weekly
+    ignore:
+      # The JVM executor image tracks an LTS release (21, 25, ...). A major bump would land on a
+      # non-LTS JDK that stops receiving fixes within months and breaks older Gradle wrappers.
+      - dependency-name: eclipse-temurin
+        update-types: ['version-update:semver-major']
   - package-ecosystem: docker-compose
     directory: /
     schedule:
