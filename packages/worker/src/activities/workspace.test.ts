@@ -335,9 +335,20 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
     // The raw token never appears on the command line…
     expect(cloneCmd).not.toContain('ghp_secret');
     expect(cloneCmd).not.toContain('x-access-token:');
-    // …the credential travels as a per-call header instead…
-    expect(cloneCmd).toContain('http.extraheader=');
-    expect(cloneCmd).toContain(HEADER_B64);
+    // …the credential travels as a per-call header read from the environment,
+    // so not even its base64 form is in the script (which a Kubernetes exec
+    // would put in an apiserver URL)…
+    expect(cloneCmd).toContain('-c "http.extraheader=$ASW_GIT_AUTH"');
+    expect(cloneCmd).not.toContain(HEADER_B64);
+    const cloneCall = vi
+      .mocked(execShellAsync)
+      .mock.calls.find((call) => call[0] === cloneCmd) as unknown as [
+      string,
+      { env?: Record<string, string> },
+    ];
+    expect(cloneCall[1].env).toEqual({
+      ASW_GIT_AUTH: `AUTHORIZATION: basic ${HEADER_B64}`,
+    });
     // …and option parsing is terminated before the (quoted) clean URL.
     expect(cloneCmd).toContain(`-- ${Q(CLEAN)} /workspace/target-repo`);
     expect(cloneCmd).toContain(`-b ${Q('main')}`);
@@ -415,6 +426,14 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
     expect(cmd).toContain('GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null');
     expect(cmd).toContain(`push --no-verify ${Q(CLEAN)} ${Q('auto/TICKET-1')}`);
     expect(cmd).not.toContain('push origin');
+    // The credential is neither in the script nor in any form on its command line.
+    expect(cmd).toContain('-c "http.extraheader=$ASW_GIT_AUTH"');
+    expect(cmd).not.toContain(HEADER_B64);
+    expect(cmd).not.toContain('ghp_secret');
+    const gitOptions = vi.mocked(execShellAsync).mock.calls[0]?.[1] as
+      | { env?: Record<string, string> }
+      | undefined;
+    expect(gitOptions?.env).toEqual({ ASW_GIT_AUTH: `AUTHORIZATION: basic ${HEADER_B64}` });
     expect(cmd.indexOf('mv -f .git/config')).toBeLessThan(cmd.indexOf('push --no-verify'));
     // Stray processes die first, in the same exec as the rewrite and the call.
     expect(cmd.indexOf('asw_sweep KILL')).toBeGreaterThanOrEqual(0);
@@ -651,6 +670,12 @@ describe('authedGitScript against a real git repository', () => {
   const git = (cwd: string, ...args: string[]) =>
     execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   const HEADER = 'AUTHORIZATION: basic c2VjcmV0';
+  // How the driver delivers the header: in the environment, never in the script.
+  const run = (script: string) =>
+    execFileSync('/bin/sh', ['-c', script], {
+      env: { ...process.env, ASW_GIT_AUTH: HEADER },
+      stdio: 'pipe',
+    });
 
   // A working clone whose `.git/` an attacker has written to: a pre-push and a
   // reference-transaction hook that dump GIT_CONFIG_PARAMETERS (where
@@ -709,9 +734,9 @@ describe('authedGitScript against a real git repository', () => {
     const { evil, good, loot, work } = setup();
     const script = authedGitScript(work, `push origin ${shellQuote('auto/T-1')}`, {
       cleanUrl: `file://${good}`,
-      gitAuthHeader: HEADER,
+      authed: true,
     });
-    execFileSync('/bin/sh', ['-c', script], { stdio: 'pipe' });
+    run(script);
 
     expect(existsSync(loot)).toBe(false);
     expect(git(good, 'branch', '--list', 'auto/T-1')).toContain('auto/T-1');
@@ -728,9 +753,9 @@ describe('authedGitScript against a real git repository', () => {
     const { loot, good, work } = setup();
     const script = authedGitScript(work, `fetch origin ${shellQuote('main')}`, {
       cleanUrl: `file://${good}`,
-      gitAuthHeader: HEADER,
+      authed: true,
     });
-    execFileSync('/bin/sh', ['-c', script], { stdio: 'pipe' });
+    run(script);
     expect(existsSync(loot)).toBe(false);
     expect(git(work, 'rev-parse', 'origin/main').trim()).toBe(
       git(good, 'rev-parse', 'main').trim()
@@ -767,9 +792,9 @@ describe('authedGitScript against a real git repository', () => {
     ]) {
       const script = authedGitScript(work, sub, {
         cleanUrl: `file://${good}`,
-        gitAuthHeader: HEADER,
+        authed: true,
       });
-      expect(() => execFileSync('/bin/sh', ['-c', script], { stdio: 'pipe' })).toThrow(
+      expect(() => run(script)).toThrow(
         /not a valid repository/
       );
     }
@@ -789,14 +814,14 @@ describe('authedGitScript against a real git repository', () => {
     const bare = authedGitScript(shallow, `fetch origin ${shellQuote('auto/T-1')}`, {
       cleanUrl: `file://${good}`,
     });
-    execFileSync('/bin/sh', ['-c', bare], { stdio: 'pipe' });
+    run(bare);
     expect(() => git(shallow, 'rev-parse', '--verify', '-q', 'origin/auto/T-1')).toThrow();
 
     const script = authedGitScript(shallow, fetchBranchesSubcommand(['auto/T-1']), {
       cleanUrl: `file://${good}`,
-      gitAuthHeader: HEADER,
+      authed: true,
     });
-    execFileSync('/bin/sh', ['-c', script], { stdio: 'pipe' });
+    run(script);
     expect(git(shallow, 'rev-parse', 'origin/auto/T-1').trim()).toBe(
       git(good, 'rev-parse', 'auto/T-1').trim()
     );
@@ -809,9 +834,9 @@ describe('authedGitScript against a real git repository', () => {
     writeFileSync(join(other, '.git'), `gitdir: ${join(work, '.git')}\n`);
     const script = authedGitScript(other, `fetch origin ${shellQuote('main')}`, {
       cleanUrl: `file://${good}`,
-      gitAuthHeader: HEADER,
+      authed: true,
     });
-    expect(() => execFileSync('/bin/sh', ['-c', script], { stdio: 'pipe' })).toThrow();
+    expect(() => run(script)).toThrow();
   });
 });
 

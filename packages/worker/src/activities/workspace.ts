@@ -169,6 +169,9 @@ const HARDENED_GIT_CONFIG = [
  */
 const HARDENED_GIT_ENV = 'GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0';
 
+/** Name of the environment variable that carries the `http.extraheader` value into a git script. */
+export const GIT_AUTH_ENV = 'ASW_GIT_AUTH';
+
 /**
  * Build a hardened `git` invocation, with the clone credential (when there is
  * one) injected for this call only via `-c http.extraheader`, so it is never
@@ -176,15 +179,24 @@ const HARDENED_GIT_ENV = 'GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_
  * neutralises. The empty `http.extraheader=` first resets the multi-valued
  * list, so no header from a config file rides along.
  *
- * The header is `shellQuote`d here — callers embed the result in a shell
- * script, so this stays the escaping boundary for the credential value.
+ * The header VALUE is never part of the script. A script goes through
+ * `backend.exec`, and under Kubernetes an exec's argv is an apiserver URL
+ * (`?command=…`) recorded in audit logs for as long as they are kept. The script
+ * reads the value from {@link GIT_AUTH_ENV}, and the caller delivers it with
+ * `secretEnv: gitAuthSecretEnv(header)`, which the driver keeps off every
+ * command line. `authed` must match whether the caller passes that env.
  */
-export function gitWithAuthHeader(subcommand: string, gitAuthHeader?: string): string {
+export function gitWithAuthHeader(subcommand: string, authed?: boolean): string {
   const flags = HARDENED_GIT_CONFIG.map((kv) => `-c ${kv}`);
-  if (gitAuthHeader) {
-    flags.push('-c http.extraheader=', `-c http.extraheader=${shellQuote(gitAuthHeader)}`);
+  if (authed) {
+    flags.push('-c http.extraheader=', `-c "http.extraheader=$${GIT_AUTH_ENV}"`);
   }
   return `${HARDENED_GIT_ENV} git ${flags.join(' ')} ${subcommand}`;
+}
+
+/** The `secretEnv` that supplies {@link GIT_AUTH_ENV}; undefined when there is no credential. */
+export function gitAuthSecretEnv(gitAuthHeader?: string): Record<string, string> | undefined {
+  return gitAuthHeader ? { [GIT_AUTH_ENV]: gitAuthHeader } : undefined;
 }
 
 /** Quote a value for a git config file (`"…"` with `\` and `"` escaped). */
@@ -286,9 +298,9 @@ export function fetchBranchesSubcommand(branches: string[]): string {
  * script's own process tree. `gitAuthed` runs it first, in the same exec as
  * the config rewrite and the credential-bearing git call, for two reasons:
  *
- *  - The credential is on git's command line (`-c http.extraheader=…`), and a
- *    process the agent left running (`nohup … &`) can read every other
- *    process's `/proc/<pid>/cmdline`.
+ *  - The credential is in git's environment and `-c http.extraheader=…` is
+ *    expanded into its command line, so a process the agent left running
+ *    (`nohup … &`) can read it from `/proc/<pid>/cmdline` or `environ`.
  *  - The same process could rewrite `.git/config` between the allow-list
  *    rewrite and git reading it.
  *
@@ -345,7 +357,7 @@ export function killStrayProcessesScript(keeperPid: number): string {
 export function authedGitScript(
   repoDir: string,
   subcommand: string,
-  opts: { cleanUrl: string; gitAuthHeader?: string }
+  opts: { cleanUrl: string; authed?: boolean }
 ): string {
   const explicit = subcommand.replace(
     /^push origin(?=\s|$)/,
@@ -355,7 +367,7 @@ export function authedGitScript(
     'set -e',
     `cd ${shellQuote(repoDir)}`,
     sanitizeGitRepoConfigScript(opts.cleanUrl),
-    gitWithAuthHeader(explicit, opts.gitAuthHeader),
+    gitWithAuthHeader(explicit, opts.authed),
   ].join('\n');
 }
 
@@ -644,12 +656,17 @@ export async function createWorkspace(
     handle = await backend.create(spec);
 
     // Initial exec function (root of container)
-    const rootExec = (command: string, timeoutMs?: number): Promise<string> => {
+    const rootExec = (
+      command: string,
+      timeoutMs?: number,
+      secretEnv?: Record<string, string>
+    ): Promise<string> => {
       const tag = newExecTag();
       return backend.execShell(handle, ['sh', '-c', command], {
         env: [tag.env],
         heartbeatLabel: 'workspace: provisioning',
         onTimeout: tag.onTimeout,
+        ...(secretEnv ? { secretEnv } : {}),
         timeoutMs,
       });
     };
@@ -665,8 +682,9 @@ export async function createWorkspace(
     const cloneCmd = (args: string): string =>
       gitWithAuthHeader(
         `clone ${args}${args ? ' ' : ''}-- ${shellQuote(cleanUrl)} /workspace/target-repo`,
-        gitAuthHeader
+        Boolean(gitAuthHeader)
       );
+    const cloneSecretEnv = gitAuthSecretEnv(gitAuthHeader);
 
     // Leave a working git on PATH: use it if shipped, install via apk/apt-get
     // when the image can, else fail naming the image contract.
@@ -681,7 +699,7 @@ export async function createWorkspace(
     // commit), then cut the working branch from that exact commit. Without one,
     // the cheap shallow clone at defaultBranch HEAD is used.
     if (checkoutSha) {
-      await rootExec(cloneCmd(''), CLONE_TIMEOUT_MS);
+      await rootExec(cloneCmd(''), CLONE_TIMEOUT_MS, cloneSecretEnv);
       await rootExec(
         `cd /workspace/target-repo && git checkout -b ${shellQuote(branch)} ${shellQuote(checkoutSha)}`
       );
@@ -689,9 +707,17 @@ export async function createWorkspace(
       // Check out an existing remote branch directly (the eval-gate path), so
       // the workspace holds the candidate's pushed code rather than a fresh
       // branch cut from defaultBranch HEAD.
-      await rootExec(cloneCmd(`--depth=50 -b ${shellQuote(branch)}`), CLONE_TIMEOUT_MS);
+      await rootExec(
+        cloneCmd(`--depth=50 -b ${shellQuote(branch)}`),
+        CLONE_TIMEOUT_MS,
+        cloneSecretEnv
+      );
     } else {
-      await rootExec(cloneCmd(`--depth=50 -b ${shellQuote(defaultBranch)}`), CLONE_TIMEOUT_MS);
+      await rootExec(
+        cloneCmd(`--depth=50 -b ${shellQuote(defaultBranch)}`),
+        CLONE_TIMEOUT_MS,
+        cloneSecretEnv
+      );
       await rootExec(`cd /workspace/target-repo && git checkout -b ${shellQuote(branch)}`);
     }
 
@@ -749,12 +775,13 @@ export async function createWorkspace(
           killStrayProcessesScript(handle.keeperPid),
           authedGitScript('/workspace/target-repo', fetchBranchesSubcommand([defaultBranch]), {
             cleanUrl,
-            gitAuthHeader,
+            authed: Boolean(gitAuthHeader),
           }),
         ].join('\n');
         const tag = newExecTag();
         await backend.execShell(handle, ['sh', '-c', fetchScript], {
           env: [tag.env],
+          ...(cloneSecretEnv ? { secretEnv: cloneSecretEnv } : {}),
           heartbeatLabel: 'workspace: fetching base for registry allowlist',
           onTimeout: tag.onTimeout,
         });
@@ -833,16 +860,22 @@ export async function createWorkspace(
         // so the sweep, the rewrite and the git call share one exec.
         const script = [
           killStrayProcessesScript(handle.keeperPid),
-          authedGitScript('/workspace/target-repo', subcommand, { cleanUrl, gitAuthHeader }),
+          authedGitScript('/workspace/target-repo', subcommand, {
+            cleanUrl,
+            authed: Boolean(gitAuthHeader),
+          }),
         ].join('\n');
         const tag = newExecTag();
+        const secretEnv = gitAuthSecretEnv(gitAuthHeader);
         return await backend.execShell(handle, ['sh', '-c', script], {
           env: [tag.env],
+          ...(secretEnv ? { secretEnv } : {}),
           heartbeatLabel: 'workspace: git',
           onTimeout: tag.onTimeout,
         });
       } catch (err) {
-        // Same leak as a failed clone: the auth header is on the command line.
+        // Defense in depth: nothing carries the header on a command line now, but a
+        // git that echoes its config would still put it in the error text.
         redactExecError(err, cloneSecrets);
         throw err;
       }

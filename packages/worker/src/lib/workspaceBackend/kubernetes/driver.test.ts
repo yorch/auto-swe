@@ -136,6 +136,61 @@ describe('exec', () => {
     expect(call?.stdin).toBe('payload');
   });
 
+  it('delivers secretEnv on stdin, never in the kubectl argv', async () => {
+    // kubectl puts the command in the apiserver URL, which audit logs keep.
+    const header = 'AUTHORIZATION: basic c2VjcmV0LXRva2Vu';
+    await backend.exec(backend.attach('workspace-t1'), ['sh', '-c', 'git clone x'], {
+      heartbeatLabel: 't',
+      secretEnv: { ASW_GIT_AUTH: header },
+    });
+    const [call] = await calls();
+    expect(JSON.stringify(call?.args)).not.toContain(header);
+    expect(JSON.stringify(call?.args)).not.toContain('c2VjcmV0LXRva2Vu');
+    expect(call?.args).toContain('-i');
+    expect(call?.args.join(' ')).toContain('read -r');
+    expect(call?.stdin).toBe(`ASW_GIT_AUTH=${header}\n\n`);
+  });
+
+  it('writes the secret preamble ahead of the caller’s stdin, Buffer included', async () => {
+    const header = 'AUTHORIZATION: basic c2VjcmV0';
+    await backend.exec(backend.attach('p'), ['cat'], {
+      heartbeatLabel: 't',
+      secretEnv: { ASW_GIT_AUTH: header },
+      stdin: Buffer.from('héllo\n', 'utf8'),
+    });
+    const [call] = await calls();
+    expect(JSON.stringify(call?.args)).not.toContain(header);
+    expect(call?.stdin).toBe(`ASW_GIT_AUTH=${header}\n\nhéllo\n`);
+  });
+
+  it('execShell carries secretEnv the same way', async () => {
+    const header = 'AUTHORIZATION: basic c2VjcmV0';
+    await backend.execShell(backend.attach('p'), ['sh', '-c', 'true'], {
+      heartbeatLabel: 't',
+      secretEnv: { ASW_GIT_AUTH: header },
+    });
+    const [call] = await calls();
+    expect(JSON.stringify(call?.args)).not.toContain(header);
+    expect(call?.stdin).toBe(`ASW_GIT_AUTH=${header}\n\n`);
+  });
+
+  it('refuses a secret it cannot deliver, before any kubectl call', async () => {
+    await expect(
+      backend.exec(backend.attach('p'), ['x'], {
+        heartbeatLabel: 't',
+        secretEnv: { K: 'a\nb' },
+      })
+    ).rejects.toThrow(/cannot be delivered/);
+    expect(await calls()).toHaveLength(0);
+  });
+
+  it('uses the plain wrapper when there is no secretEnv', async () => {
+    await backend.exec(backend.attach('p'), ['x'], { heartbeatLabel: 't', secretEnv: {} });
+    const [call] = await calls();
+    expect(call?.args).not.toContain('-i');
+    expect(call?.args.join(' ')).not.toContain('read -r');
+  });
+
   it('execShell rejects with the stdout/stderr shape callers expect', async () => {
     await setPlan([{ code: 2, match: 'fail', stderr: 'nope', stdout: 'partial' }]);
     await expect(

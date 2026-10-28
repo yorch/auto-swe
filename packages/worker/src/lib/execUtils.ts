@@ -103,7 +103,13 @@ export async function withHeartbeat<T>(label: string, work: Promise<T>): Promise
  */
 export async function execShellAsync(
   command: string,
-  options?: { timeoutMs?: number; heartbeatLabel?: string; onTimeout?: OnTimeout }
+  options?: {
+    timeoutMs?: number;
+    heartbeatLabel?: string;
+    onTimeout?: OnTimeout;
+    /** Extra variables for the child, on top of the worker's own (e.g. a `docker exec -e NAME` value). */
+    env?: Record<string, string>;
+  }
 ): Promise<string> {
   try {
     const { stdout } = await withHeartbeat(
@@ -112,6 +118,7 @@ export async function execShellAsync(
         encoding: 'utf-8',
         maxBuffer: 10 * 1024 * 1024,
         timeout: options?.timeoutMs ?? 120_000,
+        ...(options?.env ? { env: { ...process.env, ...options.env } } : {}),
       })
     );
     return stdout;
@@ -170,6 +177,8 @@ export function spawnCaptureAsync(
      * while stdout is still also buffered into the final result.
      */
     onStdoutLine?: (line: string) => void;
+    /** Extra variables for the child, on top of the worker's own. */
+    env?: Record<string, string>;
   }
 ): Promise<CapturedResult> {
   const timeoutMs = options?.timeoutMs ?? 600_000;
@@ -177,7 +186,10 @@ export function spawnCaptureAsync(
   const onStdoutLine = options?.onStdoutLine;
 
   const work = new Promise<CapturedResult>((resolve) => {
-    const child = spawn(file, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(file, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      ...(options?.env ? { env: { ...process.env, ...options.env } } : {}),
+    });
     let stdout = '';
     let stderr = '';
     let lineBuf = '';
@@ -284,13 +296,18 @@ export function spawnWithStdinAsync(
     maxBuffer?: number;
     heartbeatLabel?: string;
     onTimeout?: OnTimeout;
+    /** Extra variables for the child, on top of the worker's own. */
+    env?: Record<string, string>;
   }
 ): Promise<CapturedResult> {
   const timeoutMs = options?.timeoutMs ?? 600_000;
   const maxBuffer = options?.maxBuffer ?? 10 * 1024 * 1024;
 
   const work = new Promise<CapturedResult>((resolve) => {
-    const child = spawn(file, args, { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(file, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      ...(options?.env ? { env: { ...process.env, ...options.env } } : {}),
+    });
     let stdout = '';
     let stderr = '';
     let timedOut = false;

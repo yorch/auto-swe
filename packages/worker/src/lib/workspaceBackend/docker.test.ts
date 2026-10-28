@@ -1,5 +1,8 @@
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { DOCKER_HOST_ALIAS } from '@auto-swe/shared/lib/systemConfig';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { dockerWorkspaceBackend, ephemeralArgs } from './docker.js';
 
 describe('ephemeralArgs', () => {
@@ -32,5 +35,91 @@ describe('canReachWorkerProxy', () => {
     const backend = dockerWorkspaceBackend();
     expect(backend.canReachWorkerProxy(`http://${DOCKER_HOST_ALIAS}:9000`)).toBe(true);
     expect(backend.canReachWorkerProxy('http://worker.internal:9000')).toBe(false);
+  });
+});
+
+describe('secretEnv', () => {
+  // A stand-in `docker` first on PATH: records its argv and the value of the
+  // secret variable it was handed in its environment.
+  const FAKE = `#!/usr/bin/env node
+require('node:fs').appendFileSync(
+  process.env.FAKE_LOG,
+  JSON.stringify({ args: process.argv.slice(2), secret: process.env.ASW_GIT_AUTH ?? null }) + '\\n'
+);
+`;
+  const HEADER = 'AUTHORIZATION: basic c2VjcmV0LXRva2Vu';
+  let dir: string;
+  let oldPath: string | undefined;
+  const calls = async (): Promise<{ args: string[]; secret: string | null }[]> =>
+    (await fs.readFile(path.join(dir, 'log.jsonl'), 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docker-secret-'));
+    await fs.writeFile(path.join(dir, 'docker'), FAKE, { mode: 0o755 });
+    process.env.FAKE_LOG = path.join(dir, 'log.jsonl');
+    oldPath = process.env.PATH;
+    process.env.PATH = `${dir}${path.delimiter}${oldPath ?? ''}`;
+    delete process.env.ASW_GIT_AUTH;
+  });
+  afterEach(async () => {
+    process.env.PATH = oldPath;
+    delete process.env.FAKE_LOG;
+    await fs.rm(dir, { force: true, recursive: true });
+  });
+
+  const backend = dockerWorkspaceBackend();
+
+  it('exec names the variable and hands the value over in the client environment', async () => {
+    await backend.exec(backend.attach('workspace-t1'), ['sh', '-c', 'true'], {
+      heartbeatLabel: 't',
+      secretEnv: { ASW_GIT_AUTH: HEADER },
+    });
+    const [call] = await calls();
+    expect(call?.args).toEqual(expect.arrayContaining(['-e', 'ASW_GIT_AUTH']));
+    expect(JSON.stringify(call?.args)).not.toContain('c2VjcmV0LXRva2Vu');
+    expect(call?.secret).toBe(HEADER);
+    expect(process.env.ASW_GIT_AUTH).toBeUndefined();
+  });
+
+  it('exec with stdin does the same', async () => {
+    await backend.exec(backend.attach('workspace-t1'), ['cat'], {
+      heartbeatLabel: 't',
+      secretEnv: { ASW_GIT_AUTH: HEADER },
+      stdin: 'payload',
+    });
+    const [call] = await calls();
+    expect(call?.args).toEqual(expect.arrayContaining(['-i', '-e', 'ASW_GIT_AUTH']));
+    expect(JSON.stringify(call?.args)).not.toContain('c2VjcmV0LXRva2Vu');
+    expect(call?.secret).toBe(HEADER);
+  });
+
+  it('execShell does the same through the shell string', async () => {
+    await backend.execShell(backend.attach('workspace-t1'), ['sh', '-c', 'true'], {
+      heartbeatLabel: 't',
+      secretEnv: { ASW_GIT_AUTH: HEADER },
+    });
+    const [call] = await calls();
+    expect(call?.args).toEqual(expect.arrayContaining(['-e', 'ASW_GIT_AUTH']));
+    expect(JSON.stringify(call?.args)).not.toContain('c2VjcmV0LXRva2Vu');
+    expect(call?.secret).toBe(HEADER);
+  });
+
+  it('runHelper does the same', async () => {
+    await backend.runHelper(
+      {
+        argv: ['-c', 'true'],
+        entrypoint: 'sh',
+        image: 'helper:1',
+        secretEnv: { ASW_GIT_AUTH: HEADER },
+      },
+      { heartbeatLabel: 't' }
+    );
+    const [call] = await calls();
+    expect(call?.args).toEqual(expect.arrayContaining(['-e', 'ASW_GIT_AUTH']));
+    expect(JSON.stringify(call?.args)).not.toContain('c2VjcmV0LXRva2Vu');
+    expect(call?.secret).toBe(HEADER);
   });
 });
