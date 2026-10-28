@@ -1141,9 +1141,9 @@ describe('through the worker’s model proxy', () => {
     expect(JSON.stringify([args, spawnOptions.env.ANTHROPIC_API_KEY])).not.toContain(API_KEY);
   });
 
-  it('keeps a base URL that may carry a credential out of argv, env and settings', async () => {
+  it('stages the pinned settings when the base URL may carry a credential', async () => {
     const secretUrl = 'https://kong.example/anthropic/tok-SECRET123';
-    const { runtime } = setup({
+    const { runtime, workspace } = setup({
       access: { apiBase: `${secretUrl}/v1`, apiKey: API_KEY, modelId: 'claude-opus-5-5' },
       modelProxy: null,
     });
@@ -1151,9 +1151,20 @@ describe('through the worker’s model proxy', () => {
     await runtime.runTurn({ system: 'S', user: 'U' });
 
     const call = h.queryCalls[0] as (typeof h.queryCalls)[number];
-    expect(call.options.settings).not.toHaveProperty('env');
-    expect(call.options.settingSources).toEqual([]);
-    expect(JSON.stringify(call.options.settings)).not.toContain('SECRET123');
+    expect(call.options.settingSources).toEqual(['project']);
+    expect(call.options.settings).toBe('/workspace/.harness/home/.claude/pinned-settings.json');
+    const [stageCommand, staged] = (workspace.execStdin.mock.calls[0] ?? []) as unknown as [
+      string,
+      string,
+    ];
+    expect(stageCommand).toBe(
+      'umask 077; cat > /workspace/.harness/home/.claude/pinned-settings.json'
+    );
+    expect(stageCommand).not.toContain('SECRET123');
+    expect(JSON.parse(staged)).toEqual({
+      env: { ANTHROPIC_BASE_URL: secretUrl },
+      permissions: { defaultMode: 'default', disableBypassPermissionsMode: 'disable' },
+    });
     call.options.spawnClaudeCodeProcess({
       args: ['--output-format', 'stream-json'],
       env: {},

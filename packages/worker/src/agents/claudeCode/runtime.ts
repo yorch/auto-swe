@@ -58,6 +58,7 @@ const MAX_INLINE_SYSTEM_CHARS = 100_000;
  * the policy lets `Read` reach, so the harness can read what it is told to.
  */
 const STAGED_PROMPT = `${HARNESS_HOME}/.claude/system-prompt.md`;
+const PINNED_SETTINGS = `${HARNESS_HOME}/.claude/pinned-settings.json`;
 
 /**
  * The harness's own deadline for the PreToolUse hook, in seconds. It is longer
@@ -571,9 +572,24 @@ export function claudeCodeAdapter(
     }
 
     // A base URL that may carry a credential travels as `secretEnv`, never in the
-    // command line or `env`. The harness reads it from the process environment, so
-    // it also stays out of the `--settings` JSON the SDK puts in the args.
+    // command line or `env`. The pinned settings layer would put it in the args as
+    // inline JSON, so that layer is staged as a private file over stdin and the
+    // `settings` option names its path: still the highest-priority layer, so a
+    // repository's settings cannot repoint the harness.
     const baseUrlOffArgv = !endpoint.proxied && baseUrlMayCarryCredential(endpoint.baseUrl);
+    const pinnedPermissions = {
+      defaultMode: 'default',
+      disableBypassPermissionsMode: 'disable',
+    } as const;
+    if (baseUrlOffArgv) {
+      await turn.workspace.execStdin(
+        `umask 077; cat > ${PINNED_SETTINGS}`,
+        JSON.stringify({
+          env: { ANTHROPIC_BASE_URL: endpoint.baseUrl },
+          permissions: pinnedPermissions,
+        })
+      );
+    }
 
     const stream = query({
       options: {
@@ -620,17 +636,16 @@ export function claudeCodeAdapter(
         // and the harness refuses it as root anyway.
         permissionMode: 'default',
         resume: sessionId,
-        // A secret base URL cannot be pinned in the settings layer (that layer is
-        // visible in the args), so a repository's settings could repoint it: they are
-        // not loaded then. Origin-only and proxied URLs keep the pin below.
-        settingSources: loadProjectSettings && !baseUrlOffArgv ? ['project'] : [],
+        settingSources: loadProjectSettings ? ['project'] : [],
         // The highest-priority settings layer: a repository's own `.claude/settings.json`
         // cannot point the harness (and the key it sends) at another host, nor
         // start it in a mode that grants tool calls without asking.
-        settings: {
-          ...(baseUrlOffArgv ? {} : { env: { ANTHROPIC_BASE_URL: endpoint.baseUrl } }),
-          permissions: { defaultMode: 'default', disableBypassPermissionsMode: 'disable' },
-        },
+        settings: baseUrlOffArgv
+          ? PINNED_SETTINGS
+          : {
+              env: { ANTHROPIC_BASE_URL: endpoint.baseUrl },
+              permissions: pinnedPermissions,
+            },
         // With a custom spawn the SDK never reads stderr (its `stderr` option only
         // serves its own spawn); the shared spawn drains it.
         spawnClaudeCodeProcess: (spawnOptions) =>
