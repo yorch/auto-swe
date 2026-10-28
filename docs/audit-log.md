@@ -44,7 +44,7 @@ when the system acted, such as a webhook or a sweep), `beforeJson`, `afterJson`,
 - **Scheduled fires** write no audit row. A fire that starts is recorded in the schedule's decision
   ledger ([automations.md](./automations.md)), once per workflow id; a refused fire writes a
   `ScheduledWorkRequest` `UPDATE` row, at most one per reason per hour.
-- **Eval runs.** `POST /platform/evals/runs` writes one `CREATE` row of entity type `EvalRun` after
+- **Eval runs.** `POST /api/v1/platform/evals/runs` writes one `CREATE` row of entity type `EvalRun` after
   the workflow has started, with `afterJson` `{ source: "eval-run", baselineRef, candidateRef,
   datasetId, temporalWorkflowId }`. A refused or failed start leaves no row, and a failed audit write
   is logged without failing the run.

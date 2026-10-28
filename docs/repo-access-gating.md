@@ -12,8 +12,7 @@ told. A **listing** filters in the query, through `reachableConnections`. A **ro
 repositories** loads them first and calls `decideRepoAccess`, so a refusal can say which
 repositories were refused and why — filtering there would turn a legitimate mistake into "no such
 repository". Neither form can check membership without also asking GitHub, which is the point:
-they were separate checks once, and six launch paths shipped with the first and without the
-second.
+membership and reachability are separate checks, and every launch path must run both.
 
 ---
 
@@ -307,7 +306,7 @@ there is nobody to ask GitHub about. They are listed under Limitations, and they
 other way: to the template's own team. A retired installation does stop all of them, because that
 check reads no user.
 
-The Slack channel assistant used to be in that list and no longer is. Its code task does carry a
+The Slack channel assistant is not in that list. Its code task carries a
 requester — only the interactive turn can start one, and it knows who spoke — so once the gate is on
 it takes the same decision as everything else.
 

@@ -46,7 +46,7 @@ zero so a rate query has a baseline. Denials with a known person are counted the
 An `onResponse` hook builds the row from the request object. It never fails or delays a request.
 Three bounds keep a poller or a hostile signed-in caller from flooding the table:
 
-- **Dedupe.** At most one `read` or `export` row per person and route every 10 minutes, one `denied`
+- **Dedupe.** At most one `read` row per person and route every 10 minutes (an `export` row is never collapsed), one `denied`
   row per person, route and status every minute, and one page view per person and page every five
   seconds. The remembered keys are a small bounded map, so memory does not grow.
 - **Rate.** Each person has a budget per kind, refilled continuously: 120 denials, 60 exports, 60 reads

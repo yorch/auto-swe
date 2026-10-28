@@ -8,7 +8,7 @@ everything else is data an operator can change without a deploy.**
 |---|---|---|---|
 | Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*`; sign-in credentials (`GITHUB_CLIENT_*`, `GOOGLE_CLIENT_*`, `OKTA_*`); artifact storage (`ARTIFACT_S3_*`, `AWS_*`); workspace sizing, images and network (`WORKSPACE_*`); the harness model proxy (`HARNESS_MODEL_PROXY_*`, `REGISTRY_PROXY_*`); `WORKER_MAX_CONCURRENT_ACTIVITIES`; `SCANNER_REGEX_BUDGET_MS`; the scheduled sweeps (`REPO_ACCESS_SYNC_*`, `REPO_DEPENDENCY_SCAN_*`, `MODEL_DISCOVERY_*`, `RUN_REAPER_*`, `AUTOMATION_DECISION_PRUNE_*`, `SKILL_SOURCE_SYNC_*`, `SLACK_CHANNEL_SYNC_*`, `CALLBACK_DELIVERY_*`, `CALLBACK_DELIVERY_PRUNE_*`, `AGENT_TRANSCRIPT_PRUNE_*`, `AGENT_TRACE_ROLLUP_*`, `AUDIT_ACTIVITY_PRUNE_*`) | The deploy pipeline |
 | Integrations | Singleton config tables | GitHub, Slack, issue tracker, knowledge base, Figma, workflow defaults | Admins, at `/admin/integrations` and `/admin/workflow-defaults` |
-| Policy | The setting registry | Operator knobs that used to be constants in the worker | Admins and grant holders, at `/admin/platform-settings` |
+| Policy | The setting registry | Operator knobs, not constants in the worker | Admins and grant holders, at `/admin/platform-settings` |
 
 Each integration tab compares its form with the saved config: Save stays disabled with "No unsaved
 changes" until something differs (a typed secret or a cleared field counts), the footer shows the
@@ -370,8 +370,8 @@ a team lead can change them for their own team.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `git.authorName` | `auto-swe` | Name on the commit. 1–100 characters, no control characters, no `<` or `>`, and at least one character that is not whitespace or one of `. , : ; " ' \`, because git refuses to commit under a name made only of those. |
-| `git.authorEmail` | `auto-swe@localhost` | Address on the commit. Up to 254 characters, one `@`, no whitespace. |
+| `git.authorName` | `auto-swe` | Name on the commit (ADMIN to change). 1–100 characters, no control characters, no `<` or `>`, and at least one character that is not whitespace or one of `. , : ; " ' \`, because git refuses to commit under a name made only of those. |
+| `git.authorEmail` | `auto-swe@localhost` | Address on the commit (ADMIN to change). Up to 254 characters, one `@`, no whitespace. |
 | `git.launcherAttribution` | `none` | Whether the person who launched the run is credited: `none`, `co-author-trailer` or `author`. |
 
 The defaults give the identity commits carried before these settings existed, so a deployment that
