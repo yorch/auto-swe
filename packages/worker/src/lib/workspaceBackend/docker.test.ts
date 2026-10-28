@@ -143,3 +143,55 @@ require('node:fs').appendFileSync(
     await expect(fs.access(path.join(dir, 'log.jsonl'))).rejects.toThrow();
   });
 });
+
+describe('create with secretEnv', () => {
+  // A stand-in `docker`: records argv and the token variable it was handed, and
+  // answers the keeper probe so `create` completes.
+  const FAKE = `#!/usr/bin/env node
+const args = process.argv.slice(2);
+require('node:fs').appendFileSync(
+  process.env.FAKE_LOG,
+  JSON.stringify({ args, token: process.env.YARN_NPM_AUTH_TOKEN ?? null }) + '\\n'
+);
+if (args[0] === 'exec') process.stdout.write('42\\n');
+`;
+  const TOKEN = 'proxy-tok-s3cret';
+  let dir: string;
+  let oldPath: string | undefined;
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docker-create-'));
+    await fs.writeFile(path.join(dir, 'docker'), FAKE, { mode: 0o755 });
+    process.env.FAKE_LOG = path.join(dir, 'log.jsonl');
+    oldPath = process.env.PATH;
+    process.env.PATH = `${dir}${path.delimiter}${oldPath ?? ''}`;
+    delete process.env.YARN_NPM_AUTH_TOKEN;
+  });
+  afterEach(async () => {
+    process.env.PATH = oldPath;
+    delete process.env.FAKE_LOG;
+    await fs.rm(dir, { force: true, recursive: true });
+  });
+
+  it('names the variable on docker run and hands the value over in the environment', async () => {
+    await dockerWorkspaceBackend().create({
+      cpus: 1,
+      dns: [],
+      env: ['PLAIN=1'],
+      image: 'img:1',
+      memory: '1g',
+      name: 'workspace-t1',
+      pidsLimit: 10,
+      reachWorker: false,
+      secretEnv: { YARN_NPM_AUTH_TOKEN: TOKEN },
+    });
+    const lines = (await fs.readFile(path.join(dir, 'log.jsonl'), 'utf8')).split('\n');
+    const calls: { args: string[]; token: string | null }[] = lines
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    const run = calls.find((c) => c.args[0] === 'run');
+    expect(run?.args).toEqual(expect.arrayContaining(['-e', 'YARN_NPM_AUTH_TOKEN', 'PLAIN=1']));
+    expect(JSON.stringify(calls.map((c) => c.args))).not.toContain(TOKEN);
+    expect(run?.token).toBe(TOKEN);
+  });
+});

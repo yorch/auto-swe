@@ -15,6 +15,7 @@ import {
   spawnToFileCapped,
   spawnWithStdinAsync,
 } from '../../execUtils.js';
+import { redactExecError } from '../../redactToken.js';
 import { shellQuote } from '../../shellQuote.js';
 import { keeperPidProbeScript } from '../docker.js';
 import type {
@@ -28,15 +29,19 @@ import type {
   WorkspaceSpawnOptions,
 } from '../types.js';
 import {
+  createFromStdinArgs,
+  createPodArgs,
   deletePodArgs,
+  deleteSecretArgs,
   execArgs,
   execPrefix,
+  ownSecretArgs,
   type PodRef,
   secretStdinPreamble,
   tarOutArgs,
   waitRunningArgs,
 } from './kubectlArgs.js';
-import { buildWorkspacePod } from './podSpec.js';
+import { buildWorkspacePod, buildWorkspaceSecret, workspaceSecretName } from './podSpec.js';
 import { assertSafeArchive } from './safeTar.js';
 
 /** `kubectl exec` prints this after a command that exited non-zero; it is noise, not the command's stderr. */
@@ -112,14 +117,73 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
 
   async create(spec: WorkspaceContainerSpec): Promise<WorkspaceHandle> {
     const config = this.config();
+    // The values of `spec.secretEnv` live in one per-pod Secret, created
+    // before the Pod that names it. Whatever fails from here on, the Secret is
+    // deleted again; the Pod is the caller's to remove() by `spec.name`, which
+    // also deletes the Secret.
+    const secret = buildWorkspaceSecret(spec, config);
+    try {
+      if (secret) {
+        await this.createSecret(spec.name, secret);
+      }
+      return await this.createPod(spec, secret !== null);
+    } catch (err) {
+      if (secret) {
+        await this.deleteSecret(spec.name);
+      }
+      // A kubectl error can quote the object it refused.
+      redactExecError(err, Object.values(spec.secretEnv ?? {}));
+      throw err;
+    }
+  }
+
+  /** The manifest goes to kubectl on stdin: argv is an apiserver URL and a process-table entry. */
+  private async createSecret(podName: string, manifest: Record<string, unknown>): Promise<void> {
     const created = await spawnWithStdinAsync(
       this.kubectl,
-      ['create', '--namespace', config.namespace, '-f', '-'],
+      createFromStdinArgs(this.config().namespace),
+      JSON.stringify(manifest),
+      { heartbeatLabel: 'workspace: creating secret', timeoutMs: 60_000 }
+    );
+    if (created.exitCode !== 0) {
+      throw new Error(`workspace ${podName}: could not create its secret: ${created.stderr}`);
+    }
+  }
+
+  private async deleteSecret(podName: string): Promise<void> {
+    try {
+      const result = await spawnCaptureAsync(
+        this.kubectl,
+        deleteSecretArgs(this.config().namespace, workspaceSecretName(podName)),
+        { heartbeatLabel: 'workspace: removing secret', timeoutMs: 60_000 }
+      );
+      if (result.exitCode !== 0) {
+        logWarn('kubernetes workspace secret could not be removed', {
+          exitCode: result.exitCode,
+          stderr: result.stderr.slice(0, 500),
+        });
+      }
+    } catch {
+      /* already gone */
+    }
+  }
+
+  private async createPod(
+    spec: WorkspaceContainerSpec,
+    hasSecret: boolean
+  ): Promise<WorkspaceHandle> {
+    const config = this.config();
+    const created = await spawnWithStdinAsync(
+      this.kubectl,
+      createPodArgs(config.namespace, hasSecret),
       JSON.stringify(buildWorkspacePod(spec, config)),
       { heartbeatLabel: 'workspace: creating pod', timeoutMs: 60_000 }
     );
     if (created.exitCode !== 0) {
       throw new Error(`workspace ${spec.name}: could not create the pod: ${created.stderr}`);
+    }
+    if (hasSecret) {
+      await this.ownSecret(spec.name, created.stdout.trim());
     }
     const ref = this.ref(spec.name);
     const ready = await spawnCaptureAsync(this.kubectl, waitRunningArgs(ref, READY_TIMEOUT_SEC), {
@@ -151,6 +215,30 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
       );
     }
     return { id: spec.name, keeperPid: candidates[0] ?? 0 };
+  }
+
+  /**
+   * Makes the pod the Secret's owner, so deleting the pod object by any means
+   * (the worker's, an operator's, a namespace sweep) garbage-collects it. Best
+   * effort: without it `remove()` and the create-failure path still delete it.
+   */
+  private async ownSecret(podName: string, uid: string): Promise<void> {
+    if (!/^[0-9a-f-]{36}$/i.test(uid)) {
+      logWarn('kubernetes workspace secret not tied to its pod: no pod uid', { pod: podName });
+      return;
+    }
+    const result = await spawnCaptureAsync(
+      this.kubectl,
+      ownSecretArgs(this.config().namespace, workspaceSecretName(podName), podName, uid),
+      { heartbeatLabel: 'workspace: tying secret to pod', timeoutMs: 60_000 }
+    );
+    if (result.exitCode !== 0) {
+      logWarn('kubernetes workspace secret not tied to its pod', {
+        exitCode: result.exitCode,
+        pod: podName,
+        stderr: result.stderr.slice(0, 500),
+      });
+    }
   }
 
   attach(id: string, keeperPid = 0): WorkspaceHandle {
@@ -314,6 +402,10 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
     } catch {
       /* already gone */
     }
+    // The pod's own Secret, whether or not one was made: `--ignore-not-found`
+    // makes the common case a no-op, and a pod removed first must not leave
+    // the token behind.
+    await this.deleteSecret(typeof idOrHandle === 'string' ? idOrHandle : idOrHandle.id);
   }
 
   createVolume(_name: string): Promise<void> {

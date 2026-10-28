@@ -99,6 +99,50 @@ export function deletePodArgs(ref: PodRef): string[] {
   ];
 }
 
+/** `kubectl create` of one manifest read from stdin; the manifest is never an argument. */
+export function createFromStdinArgs(namespace: string): string[] {
+  return ['create', '--namespace', namespace, '-f', '-'];
+}
+
+/** `createFromStdinArgs` printing only the new object's UID, for the pod a Secret will belong to. */
+export function createPodArgs(namespace: string, printUid: boolean): string[] {
+  return [
+    ...createFromStdinArgs(namespace),
+    ...(printUid ? ['-o', 'jsonpath={.metadata.uid}'] : []),
+  ];
+}
+
+export function deleteSecretArgs(namespace: string, secret: string): string[] {
+  return ['delete', 'secret', secret, '--namespace', namespace, '--ignore-not-found'];
+}
+
+/**
+ * Makes the pod the Secret's owner, so Kubernetes garbage-collects the Secret
+ * when the pod object goes — including a pod the worker never got to delete.
+ * The patch holds names and a UID, never a secret value. No `blockOwnerDeletion`
+ * (it would need `update` on `pods/finalizers` where owner-reference permission
+ * enforcement is on, and nothing here needs the pod to wait for the Secret).
+ */
+export function ownSecretArgs(
+  namespace: string,
+  secret: string,
+  pod: string,
+  uid: string
+): string[] {
+  const owner = { apiVersion: 'v1', kind: 'Pod', name: pod, uid };
+  const patch = { metadata: { ownerReferences: [owner] } };
+  return [
+    'patch',
+    'secret',
+    secret,
+    '--namespace',
+    namespace,
+    '--type=merge',
+    '-p',
+    JSON.stringify(patch),
+  ];
+}
+
 /** Waits until the pod is Ready; it has no probes, so that means its container is running. */
 export function waitRunningArgs(ref: PodRef, timeoutSec: number): string[] {
   return [
