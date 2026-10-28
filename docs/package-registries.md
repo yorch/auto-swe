@@ -126,17 +126,25 @@ A scoped name may be written `@scope/pkg`, `@scope%2fpkg` or `%40scope%2fpkg`.
 Anything else, including search and other `/-/…` endpoints, is a JSON 404. The one exception is the
 audit query below.
 
-**Audit.** `POST <baseUrl>/npm/<registryId>/-/npm/v1/security/advisories/bulk` — the bulk advisory
-query `npm audit`, `pnpm audit` and `yarn npm audit` send — is relayed to the **default** registry
-with its credential, so a `runVulnScan` gate works in a wired workspace. The body (gzip accepted,
-8 MiB cap) must be exactly a JSON object of package names to non-empty lists of version strings,
-each a valid name and version, so it can carry nothing else. In lockfile mode every name and version
-must also be in the committed lockfiles (otherwise 403, reported like any other denial). A body that
-names a package another registry serves (a claimed private scope) is refused with 403, not trimmed:
-sending it to the default registry would disclose the name, and a trimmed audit would read as a
-complete one. The legacy `/-/npm/v1/security/audits*` endpoints are not served. The answer (8 MiB
-cap) is relayed as JSON with the upstream's status; whether it holds advisories depends on the
-upstream — a mirror that does not implement the endpoint answers an error, and the gate fails.
+**Audit.** Two query shapes are relayed to the **default** registry, with its credential, so a
+`runVulnScan` gate works in a wired workspace. They are the only requests other than GET and HEAD.
+
+| Client | Endpoint | Body |
+|---|---|---|
+| `npm audit`, `yarn npm audit` | `POST …/-/npm/v1/security/advisories/bulk` | a JSON object of package names to non-empty lists of versions |
+| `pnpm audit` | `POST …/-/npm/v1/security/audits/quick`, then `…/audits` if that does not answer 200 | pnpm's dependency tree: importers holding packages with `version`, `integrity`, `dev`, `requires` and nested `dependencies` |
+
+Both bodies (gzip accepted, 8 MiB cap) are held to that shape and nothing else: every key outside
+the known set is refused, every name, version and integrity value is held to its charset, and the
+tree's `install`, `remove` and `metadata` must be empty, so a body can carry nothing but the names
+and versions of a lockfile. What is forwarded is the validated body re-serialised, not the bytes
+received. In lockfile mode every name and version in it must also be in the committed lockfiles
+(otherwise 403, reported like any other denial). A body that names a package another registry
+serves (a claimed private scope) is refused with 403, not trimmed: sending it to the default
+registry would disclose the name, and a trimmed audit would read as a complete one. The answer
+(8 MiB cap) is relayed as JSON with the upstream's status; whether it holds advisories depends on
+the upstream — a mirror that does not serve the endpoint answers its own error (pnpm reports a 404
+from both of its endpoints as an audit endpoint that does not exist), and the gate fails.
 
 **A tarball path may carry a prefix.** Up to eight segments are allowed, and none may be `.` or
 `..` in any encoding. The proxy validates the prefix and then ignores it, and it strips an

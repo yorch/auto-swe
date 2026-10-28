@@ -41,6 +41,21 @@ import { registryWorkspaceEnv, renderNpmrc, renderYarnrc } from './render.js';
 const enabled = process.env.REGISTRY_PROXY_DOCKER_TEST === '1';
 const IMAGE = process.env.REGISTRY_PROXY_TEST_IMAGE ?? 'asw-executor-node:ci';
 const AUDIT_PATH = '/-/npm/v1/security/advisories/bulk';
+/** pnpm audit posts its dependency tree here (and to `/audits` if this does not answer 200). */
+const PNPM_AUDIT_PATH = '/-/npm/v1/security/audits/quick';
+/** A clean audit in the legacy report shape pnpm reads. */
+const CLEAN_LEGACY_AUDIT = {
+  actions: [],
+  advisories: {},
+  metadata: {
+    dependencies: 1,
+    devDependencies: 0,
+    optionalDependencies: 0,
+    totalDependencies: 1,
+    vulnerabilities: { critical: 0, high: 0, info: 0, low: 0, moderate: 0 },
+  },
+  muted: [],
+};
 const DENIED = "is not in the repository's committed lockfiles";
 
 /** One tarball built in a temp dir: `package/package.json` gzipped. */
@@ -79,11 +94,12 @@ function startUpstream(
     }
     // The bulk advisory query `npm audit`, `pnpm audit` and `yarn npm audit` send: no
     // advisories, so a clean audit exits 0.
-    if (req.method === 'POST' && req.url === AUDIT_PATH) {
+    if (req.method === 'POST' && (req.url === AUDIT_PATH || req.url === PNPM_AUDIT_PATH)) {
+      const legacy = req.url === PNPM_AUDIT_PATH;
       req.resume();
       req.on('end', () => {
         res.writeHead(200, { 'content-type': 'application/json' });
-        res.end('{}');
+        res.end(JSON.stringify(legacy ? CLEAN_LEGACY_AUDIT : {}));
       });
       return;
     }
@@ -575,7 +591,7 @@ describe.skipIf(!enabled)('registry proxy against real package managers', () => 
     expect(r.code, `${r.err}${r.out}`).toBe(0);
     expect(auditPosts(upstreamA).slice(before)[0]).toMatchObject({
       auth: 'Bearer up-A',
-      path: AUDIT_PATH,
+      path: PNPM_AUDIT_PATH,
     });
     await reg.release();
   }, 300_000);

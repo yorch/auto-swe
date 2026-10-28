@@ -1,7 +1,12 @@
 import http from 'node:http';
 import { gzipSync } from 'node:zlib';
 import { describe, expect, it, vi } from 'vitest';
-import { checkAuditBody, createRegistryProxy, tarballVersion } from './index.js';
+import {
+  checkAuditBody,
+  checkLegacyAuditBody,
+  createRegistryProxy,
+  tarballVersion,
+} from './index.js';
 import { registryWorkspaceEnv, renderNpmrc, renderYarnrc } from './render.js';
 
 vi.mock('../activityLog.js', () => ({ logWarn: vi.fn() }));
@@ -742,7 +747,7 @@ describe('registry proxy audit passthrough', () => {
     expect((await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, body)).status).toBe(503);
     reg.setAllowlist(new Map([[REG.id, null]]));
     expect(
-      (await post(base, `/npm/${REG.id}/-/npm/v1/security/audits/quick`, reg.token, body)).status
+      (await post(base, `/npm/${REG.id}/-/npm/v1/security/advisories`, reg.token, body)).status
     ).toBe(405);
     expect(
       (await post(base, `/npm/${REG.id}/-/user/org.couchdb.user:x`, reg.token, body)).status
@@ -825,6 +830,187 @@ describe('registry proxy audit passthrough', () => {
     expect(
       (await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, '{"left-pad":["1.3.0"]}')).status
     ).toBe(502);
+    await proxy.close();
+  });
+});
+
+/** The tree pnpm posts: an importer holding the lockfile's packages, each with its own subtree. */
+const pnpmTree = (extra: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    dependencies: {
+      '.': {
+        dependencies: {
+          '@s/p': {
+            dependencies: { inner: { dev: true, version: '0.1.0' } },
+            dev: false,
+            integrity: 'sha512-xyz',
+            requires: { inner: '0.1.0' },
+            version: '2.0.0',
+          },
+          'left-pad': { dev: false, integrity: 'sha512-AbC+/=', version: '1.3.0' },
+        },
+        dev: false,
+        requires: { '@s/p': '2.0.0', 'left-pad': '1.3.0' },
+        version: '1.0.0',
+      },
+    },
+    dev: false,
+    install: [],
+    metadata: {},
+    remove: [],
+    requires: { '.': '1.0.0' },
+    ...extra,
+  });
+
+describe('checkLegacyAuditBody', () => {
+  it('reads the packages, nested ones included, and not the importers', () => {
+    const r = checkLegacyAuditBody(pnpmTree());
+    expect(typeof r).toBe('object');
+    expect((r as { pairs: unknown }).pairs).toEqual({
+      '@s/p': ['2.0.0'],
+      inner: ['0.1.0'],
+      'left-pad': ['1.3.0'],
+    });
+  });
+
+  it('refuses anything that is not that tree', () => {
+    const tree = JSON.parse(pnpmTree());
+    const withNode = (patch: Record<string, unknown>) => {
+      const t = structuredClone(tree);
+      Object.assign(t.dependencies['.'].dependencies['left-pad'], patch);
+      return JSON.stringify(t);
+    };
+    for (const bad of [
+      'nope',
+      '[]',
+      '{}',
+      pnpmTree({ extra: 'x' }),
+      pnpmTree({ install: ['left-pad'] }),
+      pnpmTree({ metadata: { note: 'free text' } }),
+      pnpmTree({ name: 'x' }),
+      pnpmTree({ dev: true }),
+      withNode({ note: 'smuggled' }),
+      withNode({ version: '1.0.0; id' }),
+      withNode({ integrity: 'sha512-x; curl evil' }),
+      withNode({ integrity: 'a'.repeat(2000) }),
+      withNode({ dev: 'yes' }),
+      withNode({ requires: { 'left-pad': { nested: 1 } } }),
+      withNode({ dependencies: { '../x': { version: '1.0.0' } } }),
+      withNode({ dependencies: [] }),
+      JSON.stringify({ ...tree, dependencies: { __proto__: tree.dependencies['.'] } }),
+      JSON.stringify({ ...tree, dependencies: { '.': { dependencies: {}, version: '1.0.0' } } }),
+    ]) {
+      expect(typeof checkLegacyAuditBody(bad), bad.slice(0, 80)).toBe('string');
+    }
+  });
+
+  it('bounds the depth of the tree', () => {
+    let node: Record<string, unknown> = { version: '1.0.0' };
+    for (let i = 0; i < 150; i++) {
+      node = { dependencies: { p: node }, version: '1.0.0' };
+    }
+    const deep = JSON.stringify({ dependencies: { '.': node } });
+    expect(typeof checkLegacyAuditBody(deep)).toBe('string');
+  });
+
+  it('forwards the validated tree, not the bytes it was sent', () => {
+    const r = checkLegacyAuditBody(`  ${pnpmTree()}  `) as { body: string };
+    expect(JSON.parse(r.body)).toEqual(JSON.parse(pnpmTree()));
+  });
+});
+
+describe('registry proxy legacy (pnpm) audit', () => {
+  const QUICK = '/-/npm/v1/security/audits/quick';
+  const LEGACY = '/-/npm/v1/security/audits';
+  const answer = JSON.stringify({ advisories: {}, metadata: {} });
+
+  it('relays both legacy endpoints to the default registry with its credential', async () => {
+    const seen: Array<{ headers: Record<string, string>; url: string }> = [];
+    const { base, proxy } = await startProxy(async (url, init) => {
+      seen.push({ headers: init?.headers as Record<string, string>, url });
+      return new Response(answer, { status: 200 });
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    for (const path of [QUICK, LEGACY]) {
+      const res = await post(base, `/npm/${REG.id}${path}`, reg.token, pnpmTree());
+      expect(res.status).toBe(200);
+      expect(res.body).toBe(answer);
+    }
+    expect(seen.map((x) => x.url)).toEqual([
+      `http://upstream.test${QUICK}`,
+      `http://upstream.test${LEGACY}`,
+    ]);
+    expect(
+      seen.every(
+        (x) =>
+          x.headers.authorization === 'Bearer up-A' || x.headers.authorization === 'Bearer up-token'
+      )
+    ).toBe(true);
+    await proxy.close();
+  });
+
+  it('relays an upstream that does not serve it, so the client sees the 404', async () => {
+    const { base, proxy } = await startProxy(async () => new Response('gone', { status: 404 }));
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect((await post(base, `/npm/${REG.id}${QUICK}`, reg.token, pnpmTree())).status).toBe(404);
+    await proxy.close();
+  });
+
+  it('refuses a malformed tree before the upstream is asked', async () => {
+    const upstream = vi.fn(async () => new Response(answer, { status: 200 }));
+    const { base, proxy } = await startProxy(upstream);
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect(
+      (await post(base, `/npm/${REG.id}${QUICK}`, reg.token, '{"dependencies":{}}')).status
+    ).toBe(400);
+    expect(
+      (await post(base, `/npm/${REG.id}${QUICK}`, reg.token, pnpmTree({ install: ['x'] }))).status
+    ).toBe(400);
+    expect(upstream).not.toHaveBeenCalled();
+    await proxy.close();
+  });
+
+  it('in lockfile mode refuses a package or version the lockfile does not hold', async () => {
+    const upstream = vi.fn(async () => new Response(answer, { status: 200 }));
+    const { base, proxy } = await startProxy(upstream);
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    const all = new Map([
+      ['left-pad', new Set(['1.3.0'])],
+      ['@s/p', new Set(['2.0.0'])],
+      ['inner', new Set(['0.1.0'])],
+    ]);
+    reg.setAllowlist(new Map([[REG.id, all]]));
+    expect((await post(base, `/npm/${REG.id}${QUICK}`, reg.token, pnpmTree())).status).toBe(200);
+    all.set('inner', new Set(['9.9.9']));
+    expect((await post(base, `/npm/${REG.id}${QUICK}`, reg.token, pnpmTree())).status).toBe(403);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    await proxy.close();
+  });
+
+  it('refuses a tree naming a package another registry serves', async () => {
+    const upstream = vi.fn(async () => new Response(answer, { status: 200 }));
+    const { base, proxy } = await startProxy(upstream);
+    const priv = {
+      ...REG,
+      id: 'reg-private',
+      isDefault: false,
+      scopes: ['@s'],
+      upstreamUrl: 'http://priv.test',
+    };
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG, priv] });
+    reg.setAllowlist(
+      new Map([
+        [REG.id, null],
+        [priv.id, null],
+      ])
+    );
+    const res = await post(base, `/npm/${REG.id}${QUICK}`, reg.token, pnpmTree());
+    expect(res.status).toBe(403);
+    expect(res.body).toMatch(/another registry/);
+    expect(upstream).not.toHaveBeenCalled();
     await proxy.close();
   });
 });

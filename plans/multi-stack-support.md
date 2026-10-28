@@ -59,7 +59,7 @@ resolves it from the detected stack at run time.
   `ObjectInputStream`, SQL concatenation, Go `InsecureSkipVerify`, `crypto/md5`).
 
 - [x] M14. `runVulnScan` could not work behind the registry proxy; the proxy now relays the bulk
-  advisory query (npm exercised end to end; pnpm/yarn covered by new CI cases). Original gap: it cannot work behind the registry proxy: it 404s audit endpoints, so
+  advisory query (npm, pnpm 10.34.7 and Yarn 4.18.1 each exercised against the proxy). Original gap: it cannot work behind the registry proxy: it 404s audit endpoints, so
   `npm audit`/`pnpm audit`/`yarn npm audit` all fail in a wired workspace. Needs either a proxied
   advisory endpoint or a registry-free scanner default.
 
@@ -166,3 +166,20 @@ Gate results for phase 2b: typecheck, `yarn build`, biome check (explicit dirs +
 timeouts under full-suite load (`transcripts`, `users`, `pi/runtime`) that pass alone (102/102).
 The curated-image docker test passed locally for go, python and jvm (25 tests); node and the pnpm/yarn
 audit cases could not be built here (no registry egress) and are first exercised by CI.
+
+### Phase 2c — CI failure in `clients.docker.test.ts`
+
+The new pnpm audit case failed. It was reproduced locally by building an image from the stock node
+base plus pnpm 10.34.7 and Yarn 4.18.1 tarballs packed on the host (the sandbox cannot reach the
+public registry from inside a build), then running the four audit cases.
+
+| # | Finding | Outcome |
+|---|---|---|
+| 23 | The claim "pnpm audit uses the bulk endpoint" was wrong, and was written without running pnpm. | pnpm 10.34.7 posts a dependency tree to `audits/quick`, then `audits`; it never calls the bulk endpoint. The proxy answered 405. Corrected here and in the docs and PR text. |
+| 24 | Fix: serve the legacy endpoints too. | The tree is validated recursively (known keys only, charsets on every value, `install`/`remove`/`metadata` empty, depth ≤ 100, ≤ 200k nodes) and the validated tree is what is forwarded. Same lockfile and private-scope checks as the bulk body. 12 unit cases, including hostile trees. |
+| 25 | The fake upstream in the docker test only answered the bulk path. | It now answers the legacy path with a clean pnpm-shaped report; the test asserts pnpm used `audits/quick`. |
+| 26 | An existing unit test used `audits/quick` as its example of a refused POST path. | Pointed at a path that is still refused. |
+
+After the fix all four audit cases pass locally with real npm, pnpm and Yarn 4. Not re-run here: the
+rest of that suite (it needs Yarn classic and Corepack from the curated Node image), so a CI run is
+still the authority for it.

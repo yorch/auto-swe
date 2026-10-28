@@ -52,8 +52,25 @@ const DEFAULT_MAX_QUEUED_FETCHES = 64;
 const DEFAULT_QUEUE_WAIT_MS = 30_000;
 const DEFAULT_UPSTREAM_DEADLINE_MS = 20_000;
 
-/** The one non-GET path: the bulk advisory query every current package manager's `audit` sends. */
+/**
+ * The only non-GET paths: the audit queries. `npm audit` and `yarn npm audit` send the bulk
+ * advisory query; `pnpm audit` sends its dependency tree to the older `audits/quick`
+ * endpoint and, if that does not answer 200, to `audits`.
+ */
 const AUDIT_PATH = '/-/npm/v1/security/advisories/bulk';
+const LEGACY_AUDIT_PATHS: ReadonlySet<string> = new Set([
+  '/-/npm/v1/security/audits/quick',
+  '/-/npm/v1/security/audits',
+]);
+const isAuditPath = (p: string | undefined): boolean =>
+  p === AUDIT_PATH || (p !== undefined && LEGACY_AUDIT_PATHS.has(p));
+/** A node of the legacy audit tree, and the whole tree, are bounded. */
+const MAX_AUDIT_TREE_DEPTH = 100;
+const MAX_AUDIT_TREE_NODES = 200_000;
+/** An importer's key in the legacy tree: a workspace path with `/` written `__`, or `.`. */
+const IMPORTER_KEY_RE = /^[A-Za-z0-9.][A-Za-z0-9._~@-]{0,199}$/;
+/** A lockfile `integrity` value: one or more `sha…-base64` hashes. */
+const INTEGRITY_RE = /^[A-Za-z0-9+/=_.-]+(?: [A-Za-z0-9+/=_.-]+)*$/;
 /** An audit request, compressed or not, and its answer, are bounded: neither is a stream. */
 const MAX_AUDIT_REQUEST_BYTES = 8 * 1024 * 1024;
 const MAX_AUDIT_BODY_BYTES = 8 * 1024 * 1024;
@@ -429,6 +446,107 @@ export function checkAuditBody(text: string): Record<string, string[]> | string 
   return out;
 }
 
+/**
+ * The legacy audit body (pnpm's dependency tree) as the name → versions pairs it names, plus
+ * the tree to forward, or the reason it is refused.
+ *
+ * The tree is `{ dependencies: { <importer>: node }, dev: false, install: [], metadata: {},
+ * remove: [], requires: {…} }` where a node is `{ dev, integrity, version, dependencies?,
+ * requires? }`. Every key outside that set is refused, every name, version and integrity
+ * value is held to its charset, and `install`, `remove` and `metadata` must be empty — so,
+ * like the bulk body, it carries nothing but the names and versions of a lockfile. What is
+ * forwarded is the re-serialised validated tree, not the bytes received.
+ */
+export function checkLegacyAuditBody(
+  text: string
+): { body: string; pairs: Record<string, string[]> } | string {
+  const refused = 'the audit request is not a dependency tree of well-formed packages';
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    return 'the audit request is not JSON';
+  }
+  const isObject = (v: unknown): v is Record<string, unknown> =>
+    typeof v === 'object' && v !== null && !Array.isArray(v);
+  const isEmpty = (v: unknown, array: boolean) =>
+    array ? Array.isArray(v) && v.length === 0 : isObject(v) && Object.keys(v).length === 0;
+  if (!isObject(doc)) {
+    return refused;
+  }
+  const ROOT_KEYS = new Set(['dependencies', 'dev', 'install', 'metadata', 'remove', 'requires']);
+  const NODE_KEYS = new Set(['dependencies', 'dev', 'integrity', 'requires', 'version']);
+  if (
+    !Object.keys(doc).every((k) => ROOT_KEYS.has(k)) ||
+    !isObject(doc.dependencies) ||
+    (doc.dev !== undefined && doc.dev !== false) ||
+    (doc.install !== undefined && !isEmpty(doc.install, true)) ||
+    (doc.remove !== undefined && !isEmpty(doc.remove, true)) ||
+    (doc.metadata !== undefined && !isEmpty(doc.metadata, false))
+  ) {
+    return refused;
+  }
+  const pairs: Record<string, string[]> = Object.create(null);
+  let nodes = 0;
+  /** `requires`: dependency name → exact version. */
+  const requiresOk = (v: unknown, importer: boolean): boolean =>
+    v === undefined ||
+    (isObject(v) &&
+      Object.entries(v).every(
+        ([k, ver]) =>
+          (importer ? IMPORTER_KEY_RE.test(k) || NAME_RE.test(k) : NAME_RE.test(k)) &&
+          typeof ver === 'string' &&
+          VERSION_RE.test(ver)
+      ));
+  const walk = (deps: Record<string, unknown>, depth: number, importers: boolean): boolean => {
+    if (depth > MAX_AUDIT_TREE_DEPTH) {
+      return false;
+    }
+    for (const [key, node] of Object.entries(deps)) {
+      nodes += 1;
+      if (nodes > MAX_AUDIT_TREE_NODES || !(importers ? IMPORTER_KEY_RE : NAME_RE).test(key)) {
+        return false;
+      }
+      if (
+        !isObject(node) ||
+        !Object.keys(node).every((k) => NODE_KEYS.has(k)) ||
+        typeof node.version !== 'string' ||
+        !VERSION_RE.test(node.version) ||
+        (node.dev !== undefined && typeof node.dev !== 'boolean') ||
+        (node.integrity !== undefined &&
+          !(
+            typeof node.integrity === 'string' &&
+            node.integrity.length <= 1024 &&
+            INTEGRITY_RE.test(node.integrity)
+          )) ||
+        !requiresOk(node.requires, importers)
+      ) {
+        return false;
+      }
+      if (!importers) {
+        const seen = pairs[key] ?? [];
+        if (!seen.includes(node.version)) {
+          seen.push(node.version);
+        }
+        pairs[key] = seen;
+      }
+      if (node.dependencies !== undefined) {
+        if (!isObject(node.dependencies) || !walk(node.dependencies, depth + 1, false)) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+  if (!requiresOk(doc.requires, true) || !walk(doc.dependencies, 0, true)) {
+    return refused;
+  }
+  if (Object.keys(pairs).length === 0) {
+    return 'the audit request names no packages';
+  }
+  return { body: JSON.stringify(doc), pairs };
+}
+
 export function createRegistryProxy(options: {
   listenHost: string;
   listenPort: number;
@@ -708,7 +826,8 @@ export function createRegistryProxy(options: {
   }
 
   /**
-   * `POST …/-/npm/v1/security/advisories/bulk`: `{ "<name>": ["<version>", …], … }`.
+   * `POST …/-/npm/v1/security/advisories/bulk`: `{ "<name>": ["<version>", …], … }`, or
+   * pnpm's dependency tree at `…/audits/quick` and `…/audits` (`checkLegacyAuditBody`).
    *
    * Accepted only when the body is exactly that shape, so it can carry nothing but
    * names and versions. In lockfile mode each pair must also be one the registration
@@ -721,7 +840,8 @@ export function createRegistryProxy(options: {
   async function serveAudit(
     reg: Registration,
     req: http.IncomingMessage,
-    res: http.ServerResponse
+    res: http.ServerResponse,
+    auditPath: string
   ): Promise<void> {
     const defaultRegistry = [...reg.registries.values()].find((r) => r.isDefault);
     if (!defaultRegistry) {
@@ -751,12 +871,18 @@ export function createRegistryProxy(options: {
       sendJson(res, 400, 'the audit request could not be decoded');
       return;
     }
-    const checked = checkAuditBody(text);
+    let checked: { body: string; pairs: Record<string, string[]> } | string;
+    if (auditPath === AUDIT_PATH) {
+      const map = checkAuditBody(text);
+      checked = typeof map === 'string' ? map : { body: JSON.stringify(map), pairs: map };
+    } else {
+      checked = checkLegacyAuditBody(text);
+    }
     if (typeof checked === 'string') {
       sendJson(res, 400, checked);
       return;
     }
-    for (const [name, versions] of Object.entries(checked)) {
+    for (const [name, versions] of Object.entries(checked.pairs)) {
       const owner = routeRegistry(reg, name);
       if (owner?.id !== defaultRegistry.id) {
         sendJson(
@@ -780,9 +906,9 @@ export function createRegistryProxy(options: {
     let upstream: Response;
     try {
       upstream = await upstreamFetchFor(defaultRegistry)(
-        `${defaultRegistry.upstreamUrl}${AUDIT_PATH}`,
+        `${defaultRegistry.upstreamUrl}${auditPath}`,
         {
-          body: JSON.stringify(checked),
+          body: checked.body,
           headers: {
             accept: 'application/json',
             'content-type': 'application/json',
@@ -870,7 +996,7 @@ export function createRegistryProxy(options: {
       sendJson(res, 404, 'unknown registry');
       return;
     }
-    const isAudit = req.method === 'POST' && m[2] === AUDIT_PATH;
+    const isAudit = req.method === 'POST' && isAuditPath(m[2]);
     if (!isAudit && req.method !== 'GET' && req.method !== 'HEAD') {
       sendJson(res, 405, 'read-only: GET and HEAD only (and the bulk advisory query)');
       return;
@@ -880,7 +1006,7 @@ export function createRegistryProxy(options: {
       return;
     }
     if (isAudit) {
-      const audit = serveAudit(reg, req, res).catch(() => {
+      const audit = serveAudit(reg, req, res, m[2] as string).catch(() => {
         sendJson(res, 502, 'the upstream registry could not be reached');
       });
       reg.inFlight.add(audit);
