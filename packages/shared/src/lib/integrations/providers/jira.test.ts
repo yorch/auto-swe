@@ -253,7 +253,10 @@ describe('JiraProvider.searchIssues', () => {
     });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.path).toBe('/rest/api/3/search/jql');
-    expect(calls[0]?.body).toMatchObject({ fields: ['summary', 'project', 'status'], jql: 'status = Open' });
+    expect(calls[0]?.body).toMatchObject({
+      fields: ['summary', 'project', 'status'],
+      jql: 'status = Open',
+    });
   });
 
   it('returns the status name when Jira reports one, and omits it otherwise', async () => {
@@ -261,7 +264,10 @@ describe('JiraProvider.searchIssues', () => {
       {
         isLast: true,
         issues: [
-          { ...hit('AIDEVEX-1'), fields: { ...hit('AIDEVEX-1').fields, status: { name: 'In Review' } } },
+          {
+            ...hit('AIDEVEX-1'),
+            fields: { ...hit('AIDEVEX-1').fields, status: { name: 'In Review' } },
+          },
           hit('AIDEVEX-2'),
         ],
       },

@@ -10,7 +10,12 @@
  */
 import { INBOUND_EVENT, inboundEventSource } from './sources/inboundEvent.js';
 import { ISSUE_LABELED, issueLabeledSource } from './sources/issueLabeled.js';
-import { JIRA_FILTER_NEW_ISSUE, jiraFilterNewIssueSource } from './sources/jiraFilter.js';
+import {
+  JIRA_FILTER_NEW_ISSUE,
+  JIRA_FILTER_STATUS_CHANGED,
+  jiraFilterNewIssueSource,
+  jiraFilterStatusChangedSource,
+} from './sources/jiraFilter.js';
 import { PR_FEEDBACK, prFeedbackSource } from './sources/prFeedback.js';
 import { WORKFLOW_RUN_FAILED, workflowRunFailedSource } from './sources/workflowRunFailed.js';
 import type { EventSource } from './types.js';
@@ -33,6 +38,7 @@ export const EVENT_SOURCES = {
   [PR_FEEDBACK]: prFeedbackSource,
   [INBOUND_EVENT]: inboundEventSource,
   [JIRA_FILTER_NEW_ISSUE]: jiraFilterNewIssueSource,
+  [JIRA_FILTER_STATUS_CHANGED]: jiraFilterStatusChangedSource,
 } as const;
 
 export type EventSourceKey = keyof typeof EVENT_SOURCES;
