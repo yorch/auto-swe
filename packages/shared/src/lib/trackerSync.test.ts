@@ -23,6 +23,8 @@ vi.mock('./integrations/registry.js', () => ({
 import type { ResolvedIssueTrackerConfig } from './integrations/registry.js';
 import {
   isGitHubTicketInScope,
+  isTrackerReadInScope,
+  repoTrackerScope,
   syncTrackerOnEvent,
   TRACKER_SYNC_FAILED,
   TRACKER_SYNC_OUT_OF_SCOPE,
@@ -103,6 +105,62 @@ describe('isGitHubTicketInScope', () => {
     expect(isGitHubTicketInScope('acme/web#1', null, bare)).toBe(false);
     const ftp = scope(repo({ githubUrl: 'ftp://github.com' }));
     expect(isGitHubTicketInScope('acme/web#1', null, ftp)).toBe(false);
+  });
+});
+
+describe('isGitHubTicketInScope with a default repository', () => {
+  const web = { owner: 'acme', repo: 'web' };
+
+  it('resolves a bare number against the default repository and checks that', () => {
+    expect(isGitHubTicketInScope('#7', null, scope(repo()), web)).toBe(true);
+    expect(isGitHubTicketInScope('7', null, scope(repo()), web)).toBe(true);
+    expect(isGitHubTicketInScope('#7', null, scope(), web)).toBe(false);
+    const ghe = scope(repo({ githubUrl: 'https://ghe.corp' }));
+    expect(isGitHubTicketInScope('#7', null, ghe, web)).toBe(false);
+  });
+
+  it('does not let the default repository widen an id that names its own repository', () => {
+    expect(isGitHubTicketInScope('attacker/web#1', null, scope(repo()), web)).toBe(false);
+  });
+});
+
+describe('repoTrackerScope', () => {
+  it('pairs the repositories with the instance host', async () => {
+    const repos = [repo()];
+    expect(await repoTrackerScope(repos)).toEqual({ instanceBaseUrl: DOTCOM, repos });
+  });
+});
+
+describe('isTrackerReadInScope', () => {
+  const GITHUB = { baseUrl: null, provider: 'github' };
+  const web = { owner: 'acme', repo: 'web' };
+
+  it('allows an issue in a repository of the scope', async () => {
+    const load = vi.fn(async () => scope(repo()));
+    expect(await isTrackerReadInScope(GITHUB, 'acme/web#1', load)).toBe(true);
+    expect(await isTrackerReadInScope(GITHUB, '#1', load, web)).toBe(true);
+  });
+
+  it('refuses a foreign repository, a bare number and a host mismatch', async () => {
+    const load = vi.fn(async () => scope(repo()));
+    expect(await isTrackerReadInScope(GITHUB, 'attacker/private#1', load)).toBe(false);
+    expect(await isTrackerReadInScope(GITHUB, '#1', load)).toBe(false);
+    const ghe = { baseUrl: 'https://ghe.corp/api/v3', provider: 'github' };
+    expect(await isTrackerReadInScope(ghe, 'acme/web#1', load)).toBe(false);
+  });
+
+  it.each(['jira', 'linear'])('does not gate %s, nor load a scope for it', async (provider) => {
+    const load = vi.fn(async () => scope());
+    expect(await isTrackerReadInScope({ provider }, 'attacker/private#1', load)).toBe(true);
+    expect(await isTrackerReadInScope({ provider: null }, 'X-1', load)).toBe(true);
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it('refuses, and never throws, when the scope cannot be loaded', async () => {
+    const load = vi.fn(async () => {
+      throw new Error('db down');
+    });
+    expect(await isTrackerReadInScope(GITHUB, 'acme/web#1', load)).toBe(false);
   });
 });
 
