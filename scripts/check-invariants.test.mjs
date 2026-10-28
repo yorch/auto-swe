@@ -75,19 +75,22 @@ describe('optInSuiteViolations', () => {
 });
 
 describe('envCredentialViolations', () => {
+  // Source snippets name template placeholders as `@{x}` so no string here looks like one.
+  const S = (src) => src.replaceAll('@{', '$' + '{');
   const wrap = (env) => `await backend.exec(h, ['sh'], {\n  ${env},\n  heartbeatLabel: 'x',\n});\n`;
 
   it('passes an env list of non-secret pairs, and secretEnv', () => {
     expect(envCredentialViolations(wrap('env: [tag.env]'))).toEqual([]);
-    expect(envCredentialViolations(wrap('env: [`${EXEC_TAG_ENV}=${tag}`, ...extra]'))).toEqual([]);
+    const tagged = S('env: [`@{EXEC_TAG_ENV}=@{tag}`, ...extra]');
+    expect(envCredentialViolations(wrap(tagged))).toEqual([]);
     expect(envCredentialViolations(wrap('secretEnv: { ASW_GIT_AUTH: header }'))).toEqual([]);
   });
 
   it('reports a credential-shaped name in a string, template or identifier', () => {
     for (const env of [
       "env: ['GITHUB_TOKEN=abc']",
-      'env: [`AUTO_SWE_NPMRC=${npmrc}`]',
-      'env: [`X=${apiKey}`]',
+      S('env: [`AUTO_SWE_NPMRC=@{npmrc}`]'),
+      S('env: [`X=@{apiKey}`]'),
       "env: ['A=1', 'Authorization=Bearer x']",
     ]) {
       expect(envCredentialViolations(wrap(env)), env).toHaveLength(1);
@@ -96,9 +99,9 @@ describe('envCredentialViolations', () => {
 
   it('reports an env assignment, a quoted key and leadingEnv', () => {
     for (const src of [
-      'spec.env = [...(spec.env ?? []), `YARN_NPM_AUTH_TOKEN=${t}`];',
+      S('spec.env = [...(spec.env ?? []), `YARN_NPM_AUTH_TOKEN=@{t}`];'),
       "run({ 'env': ['GITHUB_TOKEN=x'] });",
-      'turn.spawn({ leadingEnv: [`GITHUB_TOKEN=${t}`] });',
+      S('turn.spawn({ leadingEnv: [`GITHUB_TOKEN=@{t}`] });'),
     ]) {
       expect(envCredentialViolations(src), src).toHaveLength(1);
     }
@@ -123,14 +126,13 @@ describe('envCredentialViolations', () => {
   });
 
   it('ignores a credential name in a comment, a sibling property, or a nested array', () => {
-    expect(envCredentialViolations('// env: [`TOKEN=${t}`]\nconst a = 1;')).toEqual([]);
+    expect(envCredentialViolations(S('// env: [`TOKEN=@{t}`]\nconst a = 1;'))).toEqual([]);
     expect(envCredentialViolations(wrap('env: [tag.env], token: t'))).toEqual([]);
-    expect(envCredentialViolations('const x = { sudoenv: [`TOKEN=${t}`] };')).toEqual([]);
+    expect(envCredentialViolations(S('const x = { sudoenv: [`TOKEN=@{t}`] };'))).toEqual([]);
   });
 
   it('does not see an env built elsewhere (a documented gap)', () => {
-    expect(envCredentialViolations('const pairs = [`TOKEN=${t}`];\nrun({ env: pairs });')).toEqual(
-      []
-    );
+    const src = S('const pairs = [`TOKEN=@{t}`];\nrun({ env: pairs });');
+    expect(envCredentialViolations(src)).toEqual([]);
   });
 });

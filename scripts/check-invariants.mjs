@@ -660,7 +660,8 @@ function checkComposeProfilesAreAdded() {
 const CREDENTIAL_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|AUTH|CREDENTIAL|NPMRC|YARNRC/i;
 
 /** `env: [`, `'env': [`, `leadingEnv: [` or `x.env = [` — the start of an env list literal. */
-const ENV_LIST = /(?:(?<![.\w])['"]?(?:env|leadingEnv)['"]?\s*:|\.(?:env|leadingEnv)\s*=(?!=))\s*\[/g;
+const ENV_LIST =
+  /(?:(?<![.\w])['"]?(?:env|leadingEnv)['"]?\s*:|\.(?:env|leadingEnv)\s*=(?!=))\s*\[/g;
 
 /** Names that contain a credential word without being one. */
 const NOT_A_CREDENTIAL = /AUTHOR|TOKENS(?![A-Za-z])/gi;
