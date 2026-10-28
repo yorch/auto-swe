@@ -253,7 +253,22 @@ describe('JiraProvider.searchIssues', () => {
     });
     expect(calls).toHaveLength(1);
     expect(calls[0]?.path).toBe('/rest/api/3/search/jql');
-    expect(calls[0]?.body).toMatchObject({ fields: ['summary', 'project'], jql: 'status = Open' });
+    expect(calls[0]?.body).toMatchObject({ fields: ['summary', 'project', 'status'], jql: 'status = Open' });
+  });
+
+  it('returns the status name when Jira reports one, and omits it otherwise', async () => {
+    const { client } = pagedClient([
+      {
+        isLast: true,
+        issues: [
+          { ...hit('AIDEVEX-1'), fields: { ...hit('AIDEVEX-1').fields, status: { name: 'In Review' } } },
+          hit('AIDEVEX-2'),
+        ],
+      },
+    ]);
+    const result = await provider(client).searchIssues('status = Open', { maxResults: 50 });
+    expect(result.issues[0]?.status).toBe('In Review');
+    expect(result.issues[1]).not.toHaveProperty('status');
   });
 
   it('follows nextPageToken until the last page', async () => {

@@ -36,6 +36,8 @@ export interface SearchedIssue {
   key: string;
   summary: string;
   projectKey: string;
+  /// The status name at search time; absent when the tracker did not say.
+  status?: string;
 }
 
 export interface SearchIssuesOptions {

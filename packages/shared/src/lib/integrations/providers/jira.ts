@@ -58,7 +58,10 @@ interface JiraRemoteLink {
 }
 
 interface JiraSearchResponse {
-  issues?: { key?: string; fields?: { summary?: string; project?: { key?: string } } }[];
+  issues?: {
+    key?: string;
+    fields?: { summary?: string; project?: { key?: string }; status?: { name?: string } };
+  }[];
   nextPageToken?: string;
   isLast?: boolean;
 }
@@ -260,7 +263,7 @@ export class JiraProvider implements IssueTrackerProvider {
         break;
       }
       const response = await this.client.post<JiraSearchResponse>('/rest/api/3/search/jql', {
-        fields: ['summary', 'project'],
+        fields: ['summary', 'project', 'status'],
         jql,
         maxResults: SEARCH_PAGE_SIZE,
         ...(nextPageToken ? { nextPageToken } : {}),
@@ -268,7 +271,13 @@ export class JiraProvider implements IssueTrackerProvider {
       for (const hit of response.issues ?? []) {
         const projectKey = hit.fields?.project?.key;
         if (hit.key && projectKey) {
-          issues.push({ key: hit.key, projectKey, summary: hit.fields?.summary ?? '' });
+          const status = hit.fields?.status?.name;
+          issues.push({
+            key: hit.key,
+            projectKey,
+            ...(status ? { status } : {}),
+            summary: hit.fields?.summary ?? '',
+          });
         }
         if (issues.length > opts.maxResults) {
           break;
