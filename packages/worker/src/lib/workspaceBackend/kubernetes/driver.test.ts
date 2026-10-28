@@ -15,6 +15,8 @@ import { buildTar } from './testTar.js';
 const FAKE = `#!/usr/bin/env node
 const fs = require('node:fs');
 const args = process.argv.slice(2);
+// Marks that a client started at all, before it can block reading stdin and log nothing.
+fs.appendFileSync(process.env.FAKE_LOG + '.started', '1');
 const stdinWanted = args.includes('-i') || (args.includes('-f') && args.includes('-'));
 const stdin = stdinWanted ? fs.readFileSync(0, 'utf8') : null;
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ args, stdin }) + '\\n');
@@ -237,6 +239,11 @@ describe('spawn', () => {
         stdio: ['ignore', 'pipe', 'pipe'],
       })
     ).toThrow(/cannot be delivered/);
+    // A client that was started and then abandoned blocks on stdin before it logs a call, so
+    // `calls()` alone cannot see it; the fake writes a start marker first. The wait covers the
+    // fake's node start-up, so a client spawned before the throw would have left the marker.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await expect(fs.access(`${log}.started`)).rejects.toThrow();
     expect(await calls()).toHaveLength(0);
   });
 
