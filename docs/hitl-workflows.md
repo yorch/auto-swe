@@ -403,9 +403,6 @@ lifecycle changes and delegated configuration grants are managed under `/admin/a
   `resolvedBy` or the caller's recorded approval, so on a multi-approver step it includes only
   approvers whose approval was recorded and the user who completed it. If the resolver's account is
   later deleted, `resolvedBy` is cleared and the step no longer matches.
-- **`answeredByMe` is a scan.** It filters on `resolved_by` and on an approval row's `resolved_by`,
-  and neither has a usable index, so each such request scans the caller's visible steps. The Home
-  checklist's request is cached client-side for five minutes for that reason.
 - **A gate answered on a run the viewer can no longer see does not count.** Visibility still applies,
   so after a team change the checklist's gate step can untick.
 - **A parked run holds a Temporal workflow open for its whole timeout.** Long timeouts are cheap but

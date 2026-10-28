@@ -16,8 +16,5 @@ export function useAnsweredGate() {
         '/api/v1/human-steps?status=ALL&answeredByMe=true&limit=1'
       ),
     queryKey: ['approvals', 'answered-by-me'],
-    // The query scans the viewer's visible steps, so Home loads reuse it; the approvals stream
-    // invalidates the key when a gate changes.
-    staleTime: 5 * 60_000,
   });
 }
