@@ -665,7 +665,7 @@ describe('executeImplementation unrunnable test command', () => {
     const eventSpy = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
     failTestRun({
       code: 1,
-      stdout: `HEAD npm error Missing script: "test"${'x'.repeat(2000)}TAIL`,
+      stdout: `HEAD\nnpm error Missing script: "test"${'x'.repeat(2000)}TAIL`,
     });
     await executeImplementation(REQUEST);
     const events = eventSpy.mock.calls

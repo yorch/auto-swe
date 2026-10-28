@@ -110,8 +110,11 @@ async function within<T>(promise: Promise<T>, ms: number): Promise<T | undefined
  *
  * One exec copies the capped delta to a temp file, then prints the session
  * file's path, its size, the delta's size, and the delta — so `bytes` is what
- * was delivered, even when the file grows during the read. A file smaller than
- * `offset` was rewritten: it is read from 0 and the record says `reset`.
+ * was delivered, even when the file grows during the read. A delta cut at the
+ * cap ends at its last newline, so the next read starts on a line boundary
+ * (unless one line alone exceeds the cap, which is delivered cut), and the exec reports that
+ * the cap was hit, so `truncated` holds even when the file grew after its size was read. A
+ * file smaller than `offset` was rewritten: it is read from 0 and the record says `reset`.
  */
 export async function readSessionFileDelta(
   workspace: Workspace,
@@ -126,12 +129,26 @@ export async function readSessionFileDelta(
     `for f in ${HARNESS_HOME}/.claude/projects/*/${sessionId}.jsonl; do`,
     '  [ -f "$f" ] || continue',
     '  t=$(mktemp) || exit 4',
-    `  trap 'rm -f "$t"' EXIT`,
+    `  trap 'rm -f "$t" "$t.cut"' EXIT`,
     '  size=$(($(wc -c < "$f")))',
     `  start=${offset}`,
     '  [ "$size" -lt "$start" ] && start=0',
     `  tail -c +$((start + 1)) "$f" | head -c ${cap} > "$t"`,
-    `  printf '%s\\n%s\\n%s\\n' "$f" "$size" "$(($(wc -c < "$t")))"`,
+    // A delta cut at the cap is trimmed back to its last newline so no line is split across
+    // turns; a single line longer than the cap has no newline to trim to and is delivered as is.
+    '  n=$(($(wc -c < "$t")))',
+    // Whether the read hit the cap with bytes left behind it, judged from this read alone: the
+    // file may have grown since `size` was taken, which would hide the cut from a size compare.
+    '  cut=0',
+    `  more=$(($(tail -c +$((start + ${cap} + 1)) "$f" | head -c 1 | wc -c)))`,
+    `  [ "$n" -ge ${cap} ] && [ "$more" -gt 0 ] && cut=1`,
+    `  if [ "$n" -ge ${cap} ] && [ "$(tail -c 1 "$t" | wc -l)" -eq 0 ]; then`,
+    '    p=$(($(tail -n 1 "$t" | wc -c)))',
+    '    if [ "$p" -lt "$n" ]; then',
+    '      head -c $((n - p)) "$t" > "$t.cut" && cat "$t.cut" > "$t"',
+    '    fi',
+    '  fi',
+    `  printf '%s\\n%s\\n%s %s\\n' "$f" "$size" "$(($(wc -c < "$t")))" "$cut"`,
     '  cat "$t"',
     '  exit 0',
     'done',
@@ -148,9 +165,11 @@ export async function readSessionFileDelta(
     header.push(out.slice(at, end));
     at = end + 1;
   }
-  const [path = '', sizeText = '', deliveredText = ''] = header;
+  const [path = '', sizeText = '', deliveredLine = ''] = header;
+  // The third line is the delivered byte count, then 1 when the read hit the cap with bytes left.
+  const [deliveredText = '', cutText = ''] = deliveredLine.trim().split(/\s+/);
   const size = Number(sizeText.trim());
-  const delivered = Number(deliveredText.trim());
+  const delivered = Number(deliveredText);
   if (!path || !Number.isInteger(size) || !Number.isInteger(delivered)) {
     return undefined;
   }
@@ -174,7 +193,7 @@ export async function readSessionFileDelta(
     ...(reset ? { reset: true as const } : {}),
     runtime: 'claude-code',
     sessionId,
-    truncated: delivered >= cap,
+    truncated: cutText === '1' || (reset ? 0 : offset) + delivered < size,
   };
 }
 

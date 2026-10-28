@@ -42,7 +42,12 @@ import {
 import { normalizeIssueLabeledEvent } from '../lib/automations/issueLabeled.js';
 import { enrichPrFeedbackFacts, normalizePrFeedbackEvent } from '../lib/automations/prFeedback.js';
 import { normalizeWorkflowRunEvent } from '../lib/automations/workflowRunFailed.js';
-import { GITHUB_MAX_PAGES, GITHUB_PER_PAGE, verifyGitHubSignature } from '../lib/github.js';
+import {
+  GITHUB_MAX_PAGES,
+  GITHUB_PER_PAGE,
+  isWellFormedSignature,
+  verifyGitHubSignature,
+} from '../lib/github.js';
 import { resolveWebhookSecret } from '../lib/githubWebhookSecret.js';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
@@ -339,7 +344,18 @@ async function verifyWebhookOrReject(
   request: FastifyRequest & { rawBody?: string | Buffer },
   reply: FastifyReply
 ): Promise<VerifiedWebhook> {
-  const signature = request.headers['x-hub-signature-256'] as string;
+  // The cheap checks come first: the host header below is the sender's to choose, and a request
+  // without a signature of the right shape cannot verify against any secret, so it must not
+  // cost a lookup of one.
+  const signature = request.headers['x-hub-signature-256'];
+  if (signature === undefined || signature === '') {
+    sendError(reply, 401, 'WEBHOOK_AUTH_FAILED', 'Missing signature');
+    return { ok: false };
+  }
+  if (!isWellFormedSignature(signature)) {
+    sendError(reply, 401, 'WEBHOOK_AUTH_FAILED', 'Invalid signature');
+    return { ok: false };
+  }
   const resolved = await resolveWebhookSecret(
     request.server.prisma,
     request.headers['x-github-enterprise-host']
@@ -353,7 +369,7 @@ async function verifyWebhookOrReject(
   }
 
   const { host, secret } = resolved;
-  if (!secret || !signature) {
+  if (!secret) {
     sendError(reply, 401, 'WEBHOOK_AUTH_FAILED', 'Missing signature');
     return { ok: false };
   }

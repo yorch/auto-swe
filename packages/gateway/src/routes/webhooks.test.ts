@@ -255,6 +255,7 @@ import { repositoryHostsAllowed } from '@auto-swe/shared/lib/connectionCredentia
 import { resolveGitHubToken } from '@auto-swe/shared/lib/githubInstallation';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import { AutomationStartError, handleOccurrence } from '../lib/automations/engine.js';
+import { clearWebhookSecretCache } from '../lib/githubWebhookSecret.js';
 import { logRequestError } from '../lib/requestErrorLog.js';
 import { ipRateLimitKey } from '../plugins/auth.js';
 import { webhookRoutes } from './webhooks.js';
@@ -509,6 +510,7 @@ describe('webhook routes', () => {
     signalGoneWorkflowIds.clear();
     evalCreateCalls.length = 0;
     workflowRunRow = null;
+    clearWebhookSecretCache();
     hostSecrets.rows.clear();
     hostCredentials.rows.clear();
     hostCredentials.failWith = null;
@@ -587,6 +589,26 @@ describe('webhook routes', () => {
       const res = await inject('/api/v1/webhooks/git', mergedPayload);
       expect(res.statusCode).toBe(401);
       expect(JSON.parse(res.payload).error.code).toBe('WEBHOOK_AUTH_FAILED');
+    });
+
+    it('rejects a missing or malformed signature before looking up any host secret', async () => {
+      const lookups = vi.spyOn(app.prisma.gitHubHostWebhookSecret, 'findUnique');
+      const host = { 'x-github-enterprise-host': 'ghe.corp' };
+      for (const [signature, message] of [
+        [undefined, 'Missing signature'],
+        ['', 'Missing signature'],
+        ['sha256=abc', 'Invalid signature'],
+        [`sha1=${'a'.repeat(64)}`, 'Invalid signature'],
+        [`sha256=${'g'.repeat(64)}`, 'Invalid signature'],
+        [`sha256=${'A'.repeat(64)}`, 'Invalid signature'],
+        [`sha256=${'a'.repeat(65)}`, 'Invalid signature'],
+      ] as const) {
+        const res = await inject('/api/v1/webhooks/git', mergedPayload, signature, host);
+        expect(res.statusCode).toBe(401);
+        expect(JSON.parse(res.payload).error.message).toBe(message);
+      }
+      expect(lookups).not.toHaveBeenCalled();
+      lookups.mockRestore();
     });
 
     it('returns 401 when the signature is invalid', async () => {

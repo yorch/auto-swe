@@ -28,8 +28,14 @@
  * deployment that never adds a row behaves as it always did. github.com sends
  * no such header and so always uses the instance secret.
  *
- * Read on every delivery, not cached: webhooks are low volume, and a cached
- * secret would keep authenticating a rotated-out one.
+ * The row lookup for a host header is remembered for `HOST_ROW_TTL_MS`
+ * (a few seconds, bounded size, keyed on the normalised header), because the
+ * header is chosen by whoever sends the request and every unauthenticated
+ * delivery naming a host would otherwise cost database reads. A lookup that
+ * fails is never remembered. The approval check and the decryption run on every
+ * delivery, and the admin routes drop the memory on every write, so a rotated
+ * secret stops authenticating at once on the process that took the write and
+ * within the TTL elsewhere.
  */
 import type { PrismaClient } from '@auto-swe/shared';
 import { approvedRepositoryHosts } from '@auto-swe/shared/lib/connectionCredential';
@@ -54,6 +60,65 @@ function hostnameOf(hostPort: string): string {
   }
 }
 
+/** The row a header selects, exact host first, else the one row with its hostname; or null. */
+async function lookupHostRow(prisma: PrismaClient, header: string) {
+  const exact = await prisma.gitHubHostWebhookSecret.findUnique({ where: { host: header } });
+  if (exact) {
+    return exact;
+  }
+  const hostname = hostnameOf(header);
+  const sameHostname = (
+    await prisma.gitHubHostWebhookSecret.findMany({
+      where: { OR: [{ host: hostname }, { host: { startsWith: `${hostname}:` } }] },
+    })
+  ).filter((r) => hostnameOf(r.host) === hostname);
+  return sameHostname.length === 1 ? (sameHostname[0] ?? null) : null;
+}
+
+type HostSecretRow = NonNullable<Awaited<ReturnType<typeof lookupHostRow>>>;
+
+/** How long a host's row lookup, a hit or a miss, is reused. */
+export const HOST_ROW_TTL_MS = 5_000;
+/** The most hosts remembered; past it the oldest entry goes. */
+export const HOST_ROW_CACHE_MAX = 256;
+
+const hostRows = new Map<string, { row: HostSecretRow | null; expires: number }>();
+
+/**
+ * Bumped by every clear, so a lookup that began before one does not remember its answer: the
+ * row it read may be the one the write just replaced.
+ */
+let generation = 0;
+
+/** Forgets every remembered host lookup. The admin routes call it after a write. */
+export function clearWebhookSecretCache(): void {
+  generation++;
+  hostRows.clear();
+}
+
+/** The row a header selects, or null; remembered briefly, a thrown lookup not at all. */
+async function findHostRow(prisma: PrismaClient, header: string): Promise<HostSecretRow | null> {
+  const now = Date.now();
+  const cached = hostRows.get(header);
+  if (cached && cached.expires > now) {
+    return cached.row;
+  }
+  const startedAt = generation;
+  const row = await lookupHostRow(prisma, header);
+  if (generation !== startedAt) {
+    return row;
+  }
+  hostRows.delete(header);
+  hostRows.set(header, { expires: now + HOST_ROW_TTL_MS, row });
+  if (hostRows.size > HOST_ROW_CACHE_MAX) {
+    const oldest = hostRows.keys().next().value;
+    if (oldest !== undefined) {
+      hostRows.delete(oldest);
+    }
+  }
+  return row;
+}
+
 /** The outcome of choosing a secret for a delivery. */
 export type WebhookSecretResolution =
   /**
@@ -75,16 +140,7 @@ export async function resolveWebhookSecret(
 ): Promise<WebhookSecretResolution> {
   const header = enterpriseHostOf(enterpriseHostHeader);
   if (header) {
-    let row = await prisma.gitHubHostWebhookSecret.findUnique({ where: { host: header } });
-    if (!row) {
-      const hostname = hostnameOf(header);
-      const sameHostname = (
-        await prisma.gitHubHostWebhookSecret.findMany({
-          where: { OR: [{ host: hostname }, { host: { startsWith: `${hostname}:` } }] },
-        })
-      ).filter((r) => hostnameOf(r.host) === hostname);
-      row = sameHostname.length === 1 ? sameHostname[0] : null;
-    }
+    const row = await findHostRow(prisma, header);
     if (row) {
       if (!(await approvedRepositoryHosts()).includes(row.host)) {
         return { host: row.host, status: 'host_not_approved' };

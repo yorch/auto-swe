@@ -110,6 +110,13 @@ export interface FetchIssueOptions {
   log?: { warn: (obj: unknown, msg?: string) => void };
 }
 
+/// What reading one issue came to. `refused` is the tracker's definitive answer about this issue
+/// (not visible to the credential, or gone); `unavailable` is anything a later try may change.
+export type FetchIssueOutcome =
+  | { kind: 'found'; issue: FetchedIssue }
+  | { kind: 'refused' }
+  | { kind: 'unavailable' };
+
 export interface SearchOptions {
   maxPages?: number;
   log?: { warn: (obj: unknown, msg?: string) => void };

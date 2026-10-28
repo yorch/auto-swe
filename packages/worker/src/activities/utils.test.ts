@@ -258,6 +258,18 @@ describe('unrunnableTestCause', () => {
     expect(unrunnableTestCause(execError({ code: 1, stdout }))).toBeUndefined();
   });
 
+  it('needs exit 1 and a line-start message: a nested npm run inside a failing suite is not it', () => {
+    const line = 'npm error Missing script: "test"';
+    for (const stdout of [`    ${line}`, `stderr | x > ${line}`, `Tests: 1 failed ${line}`]) {
+      expect(unrunnableTestCause(execError({ code: 1, stdout }))).toBeUndefined();
+    }
+    expect(unrunnableTestCause(execError({ code: 2, stdout: line }))).toBeUndefined();
+    expect(unrunnableTestCause(execError({ stdout: line }))).toBeUndefined();
+    expect(unrunnableTestCause(execError({ code: 1, stdout: `Tests: 1 failed\n${line}` }))).toBe(
+      'npm reports Missing script: "test"'
+    );
+  });
+
   it('does not match other missing scripts or a different npm error', () => {
     expect(
       unrunnableTestCause(execError({ code: 1, stdout: 'npm error Missing script: "build"' }))

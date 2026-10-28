@@ -6,6 +6,7 @@ import type {
   CreatedIssue,
   FetchedIssue,
   FetchIssueOptions,
+  FetchIssueOutcome,
   IssueComment,
   IssueCreateFields,
   IssueParent,
@@ -95,50 +96,7 @@ export class JiraProvider implements IssueTrackerProvider {
 
   async fetchIssue(id: string, opts?: FetchIssueOptions): Promise<FetchedIssue | null> {
     try {
-      const issue = await this.client.get<JiraIssueResponse>(
-        `/rest/api/3/issue/${encodeURIComponent(id)}?fields=summary,description,status,labels,priority,assignee,components${opts?.includeParent ? ',parent' : ''}`
-      );
-
-      // Fetch remote links to find linked Confluence pages — gated behind
-      // opts.fetchLinkedPages to avoid an unconditional extra round-trip for
-      // callers that have no knowledge base configured.
-      let linkedPageIds: string[] = [];
-      if (opts?.fetchLinkedPages) {
-        try {
-          const remoteLinks = await this.client.get<JiraRemoteLink[]>(
-            `/rest/api/3/issue/${encodeURIComponent(id)}/remotelink`
-          );
-          linkedPageIds = (remoteLinks ?? [])
-            .map((rl) => rl.object?.url ?? '')
-            .filter((url) => url.includes('/wiki/'))
-            .map((url) => {
-              const match = /\/pages\/(\d+)/.exec(url);
-              return match?.[1] ?? '';
-            })
-            .filter(Boolean);
-        } catch {
-          // Remote links are optional — ignore errors
-        }
-      }
-
-      const comments = opts?.includeComments ? await this.readComments(id) : undefined;
-      const parent = opts?.includeParent ? await this.readParent(issue) : undefined;
-
-      return {
-        assignee: issue.fields?.assignee?.displayName ?? undefined,
-        ...(comments ? { comments } : {}),
-        components: (issue.fields?.components ?? []).map((c) => c.name ?? '').filter(Boolean),
-        description: adfToPlainText(issue.fields?.description).trim(),
-        id: issue.key ?? id,
-        labels: issue.fields?.labels ?? [],
-        linkedPageIds: linkedPageIds.length > 0 ? linkedPageIds : undefined,
-        ...(parent ? { parent } : {}),
-        priority: issue.fields?.priority?.name ?? undefined,
-        raw: issue,
-        status: issue.fields?.status?.name ?? 'unknown',
-        title: issue.fields?.summary ?? id,
-        url: `${this.client.baseUrl}/browse/${encodeURIComponent(issue.key ?? id)}`,
-      };
+      return await this.readIssue(id, opts);
     } catch (err) {
       if (err instanceof AtlassianError && err.code === 'not_found') {
         return null;
@@ -146,6 +104,73 @@ export class JiraProvider implements IssueTrackerProvider {
       this.log?.warn({ err, issueId: id }, 'Jira fetchIssue failed');
       return null;
     }
+  }
+
+  /**
+   * {@link fetchIssue} with the reason for a miss. Jira Cloud answers 404 for an issue the
+   * credential may not see (issue-level security) or that no longer exists: that answer is about
+   * the issue, and asking again changes nothing, so it is `refused`. A 403 is not read that way:
+   * it is usually about the caller (a Data Center CAPTCHA lockout, an IP allowlist, a firewall),
+   * so it is `unavailable` with every other miss (a 5xx, a timeout, a rate limit, a rejected
+   * credential, a response that does not parse), which a caller retries later.
+   */
+  async fetchIssueOutcome(id: string, opts?: FetchIssueOptions): Promise<FetchIssueOutcome> {
+    try {
+      return { issue: await this.readIssue(id, opts), kind: 'found' };
+    } catch (err) {
+      if (err instanceof AtlassianError && err.status === 404) {
+        return { kind: 'refused' };
+      }
+      this.log?.warn({ err, issueId: id }, 'Jira fetchIssue failed');
+      return { kind: 'unavailable' };
+    }
+  }
+
+  private async readIssue(id: string, opts?: FetchIssueOptions): Promise<FetchedIssue> {
+    const issue = await this.client.get<JiraIssueResponse>(
+      `/rest/api/3/issue/${encodeURIComponent(id)}?fields=summary,description,status,labels,priority,assignee,components${opts?.includeParent ? ',parent' : ''}`
+    );
+
+    // Fetch remote links to find linked Confluence pages — gated behind
+    // opts.fetchLinkedPages to avoid an unconditional extra round-trip for
+    // callers that have no knowledge base configured.
+    let linkedPageIds: string[] = [];
+    if (opts?.fetchLinkedPages) {
+      try {
+        const remoteLinks = await this.client.get<JiraRemoteLink[]>(
+          `/rest/api/3/issue/${encodeURIComponent(id)}/remotelink`
+        );
+        linkedPageIds = (remoteLinks ?? [])
+          .map((rl) => rl.object?.url ?? '')
+          .filter((url) => url.includes('/wiki/'))
+          .map((url) => {
+            const match = /\/pages\/(\d+)/.exec(url);
+            return match?.[1] ?? '';
+          })
+          .filter(Boolean);
+      } catch {
+        // Remote links are optional — ignore errors
+      }
+    }
+
+    const comments = opts?.includeComments ? await this.readComments(id) : undefined;
+    const parent = opts?.includeParent ? await this.readParent(issue) : undefined;
+
+    return {
+      assignee: issue.fields?.assignee?.displayName ?? undefined,
+      ...(comments ? { comments } : {}),
+      components: (issue.fields?.components ?? []).map((c) => c.name ?? '').filter(Boolean),
+      description: adfToPlainText(issue.fields?.description).trim(),
+      id: issue.key ?? id,
+      labels: issue.fields?.labels ?? [],
+      linkedPageIds: linkedPageIds.length > 0 ? linkedPageIds : undefined,
+      ...(parent ? { parent } : {}),
+      priority: issue.fields?.priority?.name ?? undefined,
+      raw: issue,
+      status: issue.fields?.status?.name ?? 'unknown',
+      title: issue.fields?.summary ?? id,
+      url: `${this.client.baseUrl}/browse/${encodeURIComponent(issue.key ?? id)}`,
+    };
   }
 
   /// The newest comments, oldest first. Optional: a failure leaves the ticket without them.

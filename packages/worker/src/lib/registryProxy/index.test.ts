@@ -17,8 +17,17 @@ const REG = {
 };
 
 /** A real proxy on 127.0.0.1:0 with a stub upstreamFetch. */
-async function startProxy(upstream: (url: string, init?: RequestInit) => Promise<Response>) {
+async function startProxy(
+  upstream: (url: string, init?: RequestInit) => Promise<Response>,
+  limits: {
+    maxBufferedFetches?: number;
+    maxQueuedFetches?: number;
+    queueWaitMs?: number;
+    upstreamDeadlineMs?: number;
+  } = {}
+) {
   const proxy = createRegistryProxy({
+    ...limits,
     advertisedUrl: (p) => `http://127.0.0.1:${p}`,
     listenHost: '127.0.0.1',
     listenPort: 0,
@@ -470,6 +479,173 @@ describe('version manifests (Corepack)', () => {
     reg.setAllowlist(new Map([[REG.id, null]]));
     expect((await get(base, `/npm/${REG.id}/pkg/1.0.0/extra`, reg.token)).status).toBe(404);
     expect(called).toBe(false);
+    await proxy.close();
+  });
+});
+
+describe('buffered fetch concurrency', () => {
+  /** An upstream whose packument answers wait on `open()`; tarballs answer at once. */
+  function gatedUpstream() {
+    let started = 0;
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const upstream = async (url: string) => {
+      if (url.endsWith('.tgz')) {
+        return new Response('TARBALL', { status: 200 });
+      }
+      started++;
+      await gate;
+      return new Response('{}', { status: 200 });
+    };
+    return { open: () => open(), started: () => started, upstream };
+  }
+  /** Polls `done` until it holds, so a slow runner waits longer instead of racing a fixed sleep. */
+  async function until(done: () => boolean): Promise<void> {
+    for (let i = 0; i < 1000 && !done(); i++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    }
+    expect(done()).toBe(true);
+  }
+
+  it('holds surplus packument requests, then answers 503 past the bounded queue', async () => {
+    const g = gatedUpstream();
+    const { base, proxy } = await startProxy(g.upstream, {
+      maxBufferedFetches: 1,
+      maxQueuedFetches: 1,
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    const first = get(base, `/npm/${REG.id}/one`, reg.token);
+    await until(() => g.started() === 1);
+    // One fetch holds the slot, one of these two waits for it and the other finds the queue full,
+    // whichever the proxy sees first. The full one answers at once; the waiting one answers only
+    // after the gate opens.
+    const second = get(base, `/npm/${REG.id}/two`, reg.token);
+    const third = get(base, `/npm/${REG.id}/three`, reg.token);
+    const refused = await Promise.race([second, third]);
+    expect(refused.status).toBe(503);
+    expect(refused.headers['retry-after']).toBe('5');
+    expect(g.started()).toBe(1);
+    g.open();
+    expect((await first).status).toBe(200);
+    const waited = refused === (await second) ? await third : await second;
+    expect(waited.status).toBe(200);
+    expect(g.started()).toBe(2);
+    await proxy.close();
+  });
+
+  it('answers 503 to a request that waits longer than the queue allows', async () => {
+    const g = gatedUpstream();
+    const { base, proxy } = await startProxy(g.upstream, {
+      maxBufferedFetches: 1,
+      maxQueuedFetches: 4,
+      queueWaitMs: 40,
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    const first = get(base, `/npm/${REG.id}/one`, reg.token);
+    await until(() => g.started() === 1);
+    expect((await get(base, `/npm/${REG.id}/two`, reg.token)).status).toBe(503);
+    g.open();
+    expect((await first).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('does not count tarballs, which stream, against the limit', async () => {
+    const g = gatedUpstream();
+    const { base, proxy } = await startProxy(g.upstream, {
+      maxBufferedFetches: 1,
+      maxQueuedFetches: 0,
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    const held = get(base, `/npm/${REG.id}/one`, reg.token);
+    await until(() => g.started() === 1);
+    const tarball = await get(base, `/npm/${REG.id}/one/-/one-1.0.0.tgz`, reg.token);
+    expect(tarball.status).toBe(200);
+    expect(tarball.body).toBe('TARBALL');
+    g.open();
+    await held;
+    await proxy.close();
+  });
+
+  it('gives the slot back when a fetch fails, so later requests are served', async () => {
+    let calls = 0;
+    const { base, proxy } = await startProxy(
+      async () => {
+        calls++;
+        if (calls === 1) {
+          throw new Error('connection reset');
+        }
+        return new Response('{}', { status: 200 });
+      },
+      { maxBufferedFetches: 1, maxQueuedFetches: 0 }
+    );
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect((await get(base, `/npm/${REG.id}/pkg`, reg.token)).status).toBe(502);
+    expect((await get(base, `/npm/${REG.id}/pkg`, reg.token)).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('limits each registration separately', async () => {
+    const g = gatedUpstream();
+    const { base, proxy } = await startProxy(g.upstream, {
+      maxBufferedFetches: 1,
+      maxQueuedFetches: 0,
+    });
+    const a = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    const b = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    a.setAllowlist(new Map([[REG.id, null]]));
+    b.setAllowlist(new Map([[REG.id, null]]));
+    const heldA = get(base, `/npm/${REG.id}/one`, a.token);
+    await until(() => g.started() === 1);
+    const heldB = get(base, `/npm/${REG.id}/one`, b.token);
+    await until(() => g.started() === 2);
+    expect((await get(base, `/npm/${REG.id}/two`, a.token)).status).toBe(503);
+    g.open();
+    await Promise.all([heldA, heldB]);
+    await proxy.close();
+  });
+
+  it('answers 502 and frees the slot when the upstream outlasts the deadline', async () => {
+    const hang = (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+    let calls = 0;
+    const { base, proxy } = await startProxy(
+      (url, init) => {
+        calls++;
+        if (calls === 1) {
+          return hang(url, init);
+        }
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      },
+      { maxBufferedFetches: 1, maxQueuedFetches: 0, upstreamDeadlineMs: 30 }
+    );
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect((await get(base, `/npm/${REG.id}/slow`, reg.token)).status).toBe(502);
+    expect((await get(base, `/npm/${REG.id}/fast`, reg.token)).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('does not take a slot for a packument the allowlist denies', async () => {
+    const g = gatedUpstream();
+    const { base, proxy } = await startProxy(g.upstream, {
+      maxBufferedFetches: 1,
+      maxQueuedFetches: 0,
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, new Map([['one', new Set(['1.0.0'])]])]]));
+    const held = get(base, `/npm/${REG.id}/one`, reg.token);
+    await until(() => g.started() === 1);
+    expect((await get(base, `/npm/${REG.id}/other`, reg.token)).status).toBe(403);
+    g.open();
+    await held;
     await proxy.close();
   });
 });

@@ -1,7 +1,6 @@
 import type { Prisma } from '@auto-swe/shared';
 import { JIRA_FILTER_NEW_ISSUE } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
-import type { IssueTrackerProvider } from '@auto-swe/shared/lib/integrations/issueTracker';
 import { createIssueTrackerProvider } from '@auto-swe/shared/lib/integrations/registry';
 import { resolveGitHubConfig, resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
@@ -11,6 +10,7 @@ import { connectionInclude, type EngineConnection } from '../lib/automations/eng
 import {
   connectionOwnerKey,
   engineDecider,
+  type PollDeps,
   type PollOutcome,
   pollAutomation,
 } from '../lib/automations/jiraPoller.js';
@@ -111,7 +111,7 @@ export type PollRow = Omit<
 
 export interface PollTickDeps {
   /** The Jira client, or null when the tracker is not Jira or is not fully configured. */
-  tracker: () => Promise<Pick<IssueTrackerProvider, 'searchIssues' | 'fetchIssue'> | null>;
+  tracker: () => Promise<PollDeps['tracker'] | null>;
   listAutomations: () => Promise<PollRow[]>;
   /**
    * The automation as it is now, or null when it is gone, off, or no longer a Jira filter. A tick
@@ -195,6 +195,7 @@ export async function pollAllJiraAutomations(
               now,
               ownerKey,
             }),
+            log: fastify.log,
             now,
             prisma: fastify.prisma,
             tracker,
