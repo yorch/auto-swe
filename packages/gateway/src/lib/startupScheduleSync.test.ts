@@ -41,6 +41,7 @@ const SYNCS = [
   'syncReportDigestSchedule',
   'syncAuditActivityPruneSchedule',
   'syncRunPlanSweepSchedule',
+  'syncRunHistoryPruneSchedule',
   'syncSkillSourceSyncSchedule',
   'syncMarketplaceSyncSchedule',
   'syncOutcomeReportSchedule',
