@@ -64,7 +64,15 @@ export type PollOutcome =
   | { status: 'skipped'; reason: PollSkipReason }
   | { status: 'error'; code: PollErrorCode }
   | { status: 'baselined'; recorded: number }
-  | { status: 'polled'; started: number; suppressed: number; pending: number };
+  | {
+      status: 'polled';
+      started: number;
+      /** Issues the engine decided without starting a run; each is in the ledger. */
+      suppressed: number;
+      pending: number;
+      /** Issues the tracker refused to show (marked seen, no ledger row). Absent when none. */
+      refused?: number;
+    };
 
 /** An automation as the poller reads it: its filters, and the repository it acts on. */
 export interface PollableAutomation {
@@ -84,6 +92,8 @@ export interface PollDeps {
   /** Decides one new issue: the engine, for the automation being polled. */
   decide: (facts: JiraFilterFacts) => Promise<AutomationResult>;
   now: Date;
+  /** Where a refused issue is named (its key only). */
+  log?: { warn: (obj: unknown, msg?: string) => void };
 }
 
 const KILL_SWITCH = 'workflow.jiraPollAutomationsEnabled';
@@ -299,11 +309,11 @@ const byIssueNumber = (a: { key: string }, b: { key: string }) =>
  * and at most one poll's worth. An issue is marked seen only after the engine has decided it, so a
  * crash between the two is decided again and answered `duplicate`.
  *
- * An issue the tracker definitively refuses to show (403 or 404 on its own read) is marked seen and
- * counted as suppressed, so one unreadable issue cannot hold up the newer ones behind it.
+ * An issue the tracker definitively refuses to show (404 on its own read) is marked seen and
+ * counted as refused, so one unreadable issue cannot hold up the newer ones behind it.
  *
  * What stops the batch is visible, never silent: an issue that cannot be read for now (a 5xx, a
- * timeout, a rejected credential, a tracker that cannot say why), or whose start
+ * timeout, a 403, a rejected credential, a tracker that cannot say why), or whose start
  * failed or was ignored, ends the poll with a fixed error code and stays unseen, because its
  * cause (Jira, a template, Temporal) is not the issue's. Skipping it instead would leave it
  * first in line on every poll and starve the newer issues behind it without a trace.
@@ -333,6 +343,7 @@ async function startNewIssues(
 
   let started = 0;
   let suppressed = 0;
+  let refused = 0;
   let decided = 0;
   for (const match of unseen.slice(0, MAX_ISSUES_PER_POLL)) {
     let read: FetchIssueOutcome;
@@ -346,10 +357,11 @@ async function startNewIssues(
     if (read.kind === 'refused') {
       // The tracker's definitive answer about this issue (issue-level security, or gone): asking
       // again changes nothing, and leaving it unseen would starve every newer issue behind it. It
-      // is counted as suppressed and carries no tracker text.
+      // is counted as refused, not suppressed (no ledger row), and only its key is logged.
       await markSeen(match.key);
       decided++;
-      suppressed++;
+      refused++;
+      deps.log?.warn({ automationId, issueKey: match.key }, 'Jira refused to show an issue');
       continue;
     }
     if (read.kind === 'unavailable') {
@@ -401,7 +413,13 @@ async function startNewIssues(
       }
     }
   }
-  return { pending: unseen.length - decided, started, status: 'polled', suppressed };
+  return {
+    pending: unseen.length - decided,
+    started,
+    status: 'polled',
+    suppressed,
+    ...(refused > 0 ? { refused } : {}),
+  };
 }
 
 /** `host[:port]` of a URL, lowercased, or null when it does not parse. */

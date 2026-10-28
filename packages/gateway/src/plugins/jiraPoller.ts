@@ -195,6 +195,7 @@ export async function pollAllJiraAutomations(
               now,
               ownerKey,
             }),
+            log: fastify.log,
             now,
             prisma: fastify.prisma,
             tracker,

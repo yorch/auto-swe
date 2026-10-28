@@ -153,6 +153,8 @@ const issueFor = (key: string, over: Record<string, unknown> = {}) => ({
 
 const started = (): AutomationResult => ({ automationId: 'auto-1', outcome: 'STARTED' });
 
+const warnLog = vi.fn();
+
 type Extras = {
   fetchIssue?: ReturnType<typeof vi.fn>;
   fetchIssueOutcome?: ReturnType<typeof vi.fn>;
@@ -168,6 +170,7 @@ const run = (
   pollAutomation(
     {
       decide: (extras.decide ?? vi.fn(async () => started())) as never,
+      log: { warn: warnLog },
       now: NOW,
       prisma: fake.prisma as never,
       tracker: {
@@ -180,6 +183,7 @@ const run = (
   );
 
 beforeEach(() => {
+  warnLog.mockReset();
   settings.resolveSetting.mockReset();
   settings.resolveSetting.mockImplementation(async (key: string) =>
     key === 'workflow.jiraPollAutomationsEnabled' ? true : ['PAY', 'OPS']
@@ -721,10 +725,10 @@ describe('pollAutomation: new issues', () => {
     expect(fake.state()?.leaseUntil).toBeNull();
   });
 
-  it('marks seen, counts as suppressed and goes on when the tracker refuses one issue', async () => {
+  it('marks seen, counts as refused and goes on when the tracker refuses one issue', async () => {
     const fake = baselined();
     const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
-    // PAY-1 is under issue-level security: its own read answers 403 however often it is asked.
+    // PAY-1 is under issue-level security: its own read answers 404 however often it is asked.
     const fetchIssueOutcome = vi.fn(async (key: string) =>
       key === 'PAY-1'
         ? { kind: 'refused' as const }
@@ -732,10 +736,20 @@ describe('pollAutomation: new issues', () => {
     );
     const search = vi.fn(async () => found(hit('PAY-1'), hit('PAY-2')));
     const outcome = await run(fake, search, automation(), { decide, fetchIssueOutcome });
-    expect(outcome).toEqual({ pending: 0, started: 1, status: 'polled', suppressed: 1 });
+    expect(outcome).toEqual({
+      pending: 0,
+      refused: 1,
+      started: 1,
+      status: 'polled',
+      suppressed: 0,
+    });
     expect(decide).toHaveBeenCalledTimes(1);
     expect(decide.mock.calls[0]?.[0].issueKey).toBe('PAY-2');
     expect([...fake.seen].sort()).toEqual(['pay-1', 'pay-2']);
+    expect(warnLog).toHaveBeenCalledWith(
+      { automationId: 'auto-1', issueKey: 'PAY-1' },
+      'Jira refused to show an issue'
+    );
   });
 
   it('keeps stopping the batch when the tracker is only unavailable', async () => {
@@ -750,6 +764,15 @@ describe('pollAutomation: new issues', () => {
     const outcome = await run(fake, search, automation(), { decide, fetchIssueOutcome });
     expect(outcome).toEqual({ code: 'TRACKER_UNAVAILABLE', status: 'error' });
     expect([...fake.seen]).toEqual(['pay-1']);
+  });
+
+  it('stops, marking nothing seen, on an answer that is not a refusal (a 403)', async () => {
+    const fake = baselined();
+    const fetchIssueOutcome = vi.fn(async () => ({ kind: 'unavailable' as const }));
+    const search = vi.fn(async () => found(hit('PAY-1')));
+    const outcome = await run(fake, search, automation(), { fetchIssueOutcome });
+    expect(outcome).toEqual({ code: 'TRACKER_UNAVAILABLE', status: 'error' });
+    expect(fake.seen.size).toBe(0);
   });
 
   it('stops with TRACKER_UNAVAILABLE when the richer read throws', async () => {

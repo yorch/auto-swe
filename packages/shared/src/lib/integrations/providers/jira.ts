@@ -107,17 +107,18 @@ export class JiraProvider implements IssueTrackerProvider {
   }
 
   /**
-   * {@link fetchIssue} with the reason for a miss. Jira answers 403 or 404 for an issue the
+   * {@link fetchIssue} with the reason for a miss. Jira Cloud answers 404 for an issue the
    * credential may not see (issue-level security) or that no longer exists: that answer is about
-   * the issue, and asking again changes nothing, so it is `refused`. Anything else (a 5xx, a
-   * timeout, a rate limit, a rejected credential, a response that does not parse) is
-   * `unavailable`, which a caller retries later.
+   * the issue, and asking again changes nothing, so it is `refused`. A 403 is not read that way:
+   * it is usually about the caller (a Data Center CAPTCHA lockout, an IP allowlist, a firewall),
+   * so it is `unavailable` with every other miss (a 5xx, a timeout, a rate limit, a rejected
+   * credential, a response that does not parse), which a caller retries later.
    */
   async fetchIssueOutcome(id: string, opts?: FetchIssueOptions): Promise<FetchIssueOutcome> {
     try {
       return { issue: await this.readIssue(id, opts), kind: 'found' };
     } catch (err) {
-      if (err instanceof AtlassianError && (err.status === 403 || err.status === 404)) {
+      if (err instanceof AtlassianError && err.status === 404) {
         return { kind: 'refused' };
       }
       this.log?.warn({ err, issueId: id }, 'Jira fetchIssue failed');
