@@ -16,6 +16,7 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveGitHubBaseUrl: async () => 'https://github.com',
   resolveIssueTrackerConfig: mocks.resolveTracker,
 }));
 vi.mock('@auto-swe/shared/lib/integrations/registry', () => ({
@@ -339,5 +340,84 @@ describe('loadTicket', () => {
     });
     mocks.fetchIssue.mockResolvedValue(null);
     expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+  });
+
+  describe('on the GitHub tracker', () => {
+    const run = (externalTicketId: string, connection: Record<string, unknown> | null = {}) => ({
+      connection:
+        connection === null
+          ? null
+          : {
+              githubApiUrl: null,
+              githubUrl: null,
+              organizationName: 'acme',
+              repoName: 'api',
+              type: 'git_repo',
+              ...connection,
+            },
+      externalTicketId,
+      knowledgeRepoSources: null,
+      requestedById: 'user-1',
+      ticketIsSynthetic: false,
+    });
+    const events: Array<{ name: string; error?: string }> = [];
+    const tracer = { addActivityEvent: (e: { name: string; error?: string }) => events.push(e) };
+
+    beforeEach(() => {
+      events.length = 0;
+      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      mocks.resolveTracker.mockResolvedValue({ baseUrl: null, provider: 'github' });
+    });
+
+    it('does not fetch an issue from a repository the run does not target', async () => {
+      mocks.runInputFind.mockResolvedValue(run('attacker/private#1'));
+      expect(await loadTicket({ tracer, workRequestId: 'wr-1' })).toBeNull();
+      expect(mocks.createProvider).not.toHaveBeenCalled();
+      expect(mocks.fetchIssue).not.toHaveBeenCalled();
+      expect(mocks.snapshotUpsert).not.toHaveBeenCalled();
+      // Indistinguishable from a ticket that was not found.
+      expect(events).toEqual([
+        expect.objectContaining({
+          error: 'ticket not found or empty',
+          name: 'ticket.context_unavailable',
+        }),
+      ]);
+    });
+
+    it('does not fetch a bare number when the run has no repository', async () => {
+      mocks.runInputFind.mockResolvedValue(run('7', null));
+      expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+      expect(mocks.fetchIssue).not.toHaveBeenCalled();
+    });
+
+    it('does not fetch when the tracker is on another host than the run repository', async () => {
+      mocks.resolveTracker.mockResolvedValue({
+        baseUrl: 'https://ghe.corp/api/v3',
+        provider: 'github',
+      });
+      mocks.runInputFind.mockResolvedValue(run('acme/api#1'));
+      expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+      expect(mocks.fetchIssue).not.toHaveBeenCalled();
+    });
+
+    it('fetches an issue in the run repository, named or bare', async () => {
+      mocks.runInputFind.mockResolvedValue(run('Acme/API#1'));
+      expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
+      mocks.runInputFind.mockResolvedValue(run('7'));
+      expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
+      expect(mocks.fetchIssue).toHaveBeenCalledTimes(2);
+    });
+
+    it('refuses when the run names no repository at all', async () => {
+      mocks.runInputFind.mockResolvedValue({ ...run('acme/api#1'), connection: undefined });
+      expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+      expect(mocks.fetchIssue).not.toHaveBeenCalled();
+    });
+
+    it('leaves Jira and Linear ids alone', async () => {
+      mocks.resolveTracker.mockResolvedValue({ provider: 'linear' });
+      mocks.runInputFind.mockResolvedValue(run('attacker/private#1'));
+      expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
+    });
   });
 });

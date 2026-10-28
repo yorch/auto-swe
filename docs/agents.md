@@ -1049,7 +1049,10 @@ The submitter's description is often a line or two; the ticket holds the require
    tracker (`/admin/integrations → Tracker`) with the platform's tracker token and stores it. For
    Jira it also reads the newest 20 comments and the parent issue (an epic's title, status, type and
    description); Linear and GitHub Issues return the ticket alone. A ticket stored without comments
-   and parent is read again.
+   and parent is read again. On GitHub the id names its own `owner/repo`, so a fetch happens only
+   when that repository is one the run targets, on the tracker's host (a bare number is read from
+   the run's own repository); any other id is treated as a ticket that was not found, with no
+   request made. Jira and Linear are not checked.
 3. It hands the bounded ticket to the `ticketContextGatherer` agent, a persona on the `planner`
    model with no tools, which returns one typed digest: summary, requirements, acceptance criteria,
    constraints, open questions and references.

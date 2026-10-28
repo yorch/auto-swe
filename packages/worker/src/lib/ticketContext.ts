@@ -2,7 +2,14 @@ import type { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { createIssueTrackerProvider } from '@auto-swe/shared/lib/integrations/registry';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import {
+  isTrackerReadInScope,
+  RUN_TRACKER_SCOPE_SELECT,
+  runTrackerScope,
+  TRACKER_READ_OUT_OF_SCOPE,
+} from '@auto-swe/shared/lib/trackerSync';
 import { z } from 'zod';
+import { logWarn } from './activityLog.js';
 import type { AgentTracer } from './agentTracer.js';
 
 const MAX_TITLE_CHARS = 300;
@@ -195,7 +202,7 @@ export async function loadTicket(args: {
   try {
     const input = await prisma.runInput.findUnique({
       select: {
-        connection: { select: { organizationName: true, repoName: true } },
+        ...RUN_TRACKER_SCOPE_SELECT,
         externalTicketId: true,
         requestedById: true,
         ticketIsSynthetic: true,
@@ -227,13 +234,33 @@ export async function loadTicket(args: {
     if (!config.provider) {
       return null;
     }
+    const defaultRepo =
+      input.connection?.organizationName && input.connection.repoName
+        ? { owner: input.connection.organizationName, repo: input.connection.repoName }
+        : undefined;
+    // On GitHub the ticket id names its own `owner/repo`, so it is read only from a repository
+    // the run targets, on the tracker's host, and before any request is made. A refusal looks
+    // like a missing ticket: the same trace event, and nothing fetched or stored.
+    if (
+      !(await isTrackerReadInScope(
+        config,
+        input.externalTicketId,
+        () => runTrackerScope(input),
+        defaultRepo
+      ))
+    ) {
+      logWarn(TRACKER_READ_OUT_OF_SCOPE, { runInputId: workRequestId });
+      tracer?.addActivityEvent({
+        error: 'ticket not found or empty',
+        name: 'ticket.context_unavailable',
+        outputJson: { provider: config.provider, ticketId: base.ticketId },
+      });
+      return null;
+    }
     const provider = createIssueTrackerProvider(config, {});
     const issue = provider
       ? await provider.fetchIssue(input.externalTicketId, {
-          defaultRepo:
-            input.connection?.organizationName && input.connection.repoName
-              ? { owner: input.connection.organizationName, repo: input.connection.repoName }
-              : undefined,
+          defaultRepo,
           ...(rich ? { includeComments: true, includeParent: true } : {}),
         })
       : null;
