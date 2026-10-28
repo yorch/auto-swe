@@ -1566,6 +1566,31 @@ describe('Claude Code turn and session-file records', () => {
     });
   });
 
+  it.each([
+    ['1', true],
+    ['0', false],
+  ])('reads cut flag %s as truncated %s', async (flag, truncated) => {
+    const rec = recorder();
+    const { runtime, exec } = setup({ modelProxy: null });
+    const delta = `${JSON.stringify({ n: 1 })}\n`;
+    // The file grew after its size was read, so the size equals what was delivered.
+    exec.mockImplementation(async (command: string) =>
+      isSessionRead(command)
+        ? `${FILE}\n${Buffer.byteLength(delta)}\n${Buffer.byteLength(delta)} ${flag}\n${delta}`
+        : ''
+    );
+    h.script.push([[init(SESSION), success('one')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U1' });
+    await rec.drain();
+
+    expect(sessionReads(exec)[0]).toContain('cut=1');
+    expect(rec.addHarnessSessionFile.mock.calls[0]?.[0]).toMatchObject({
+      bytes: Buffer.byteLength(delta),
+      truncated,
+    });
+  });
+
   it('reads no session file when the turn is proxied', async () => {
     const rec = recorder();
     const { runtime, exec } = setup({ modelProxy: proxy() });
