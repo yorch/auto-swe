@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   createProvider: vi.fn(),
@@ -361,12 +361,17 @@ describe('loadTicket', () => {
       ticketIsSynthetic: false,
     });
     const events: Array<{ name: string; error?: string }> = [];
+    let warnSpy: ReturnType<typeof vi.spyOn> | undefined;
     const tracer = { addActivityEvent: (e: { name: string; error?: string }) => events.push(e) };
 
     beforeEach(() => {
       events.length = 0;
-      vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       mocks.resolveTracker.mockResolvedValue({ baseUrl: null, provider: 'github' });
+    });
+
+    afterEach(() => {
+      warnSpy?.mockRestore();
     });
 
     it('does not fetch an issue from a repository the run does not target', async () => {
