@@ -7,6 +7,7 @@ import type { PrismaClient } from '../generated/prisma/client.js';
 import { BUILTIN_SKILLS } from '../skills/index.js';
 import { BUILTIN_TEMPLATES } from '../workflow/builtinTemplates.js';
 import { hasAuthoredCode } from '../workflow/containerCode.js';
+import { SWE_INPUT_SCHEMA } from '../workflow/templates/index.js';
 import {
   PREVIOUS_BUILTIN_AGENT_PROMPT_HASHES,
   PREVIOUS_BUILTIN_INPUT_SCHEMAS,
@@ -595,6 +596,30 @@ describe('syncBuiltins — built-in input schemas', () => {
         expect(old, name).not.toEqual(current);
       }
     }
+  });
+
+  it('pins the schema the SWE templates share, so changing it names every template to migrate', () => {
+    // Every template whose `inputSchema` is `SWE_INPUT_SCHEMA` moves with it, but a stored schema
+    // is migrated only through its own PREVIOUS_BUILTIN_INPUT_SCHEMAS entry, which nothing ties to
+    // the shared constant. Changing the constant fails here; update this literal and add the
+    // outgoing schema to the entry of each template named in the failure.
+    const sharing = BUILTIN_TEMPLATES.filter((t) => t.inputSchema === SWE_INPUT_SCHEMA).map(
+      (t) => t.name
+    );
+    expect(
+      SWE_INPUT_SCHEMA,
+      `SWE_INPUT_SCHEMA changed; add the previous schema to PREVIOUS_BUILTIN_INPUT_SCHEMAS for: ${sharing.join(', ')}`
+    ).toEqual({
+      properties: {
+        budget: { enum: ['STANDARD', 'LARGE', 'EPIC'], type: 'string' },
+        connectionId: { connectionType: 'git_repo', type: 'connection' },
+        description: { type: 'string' },
+        ticketId: { type: 'string' },
+      },
+      required: ['ticketId', 'connectionId', 'description'],
+      type: 'object',
+    });
+    expect(sharing).toEqual(['ticket-to-merge', 'ticket-to-merge-qodo']);
   });
 });
 

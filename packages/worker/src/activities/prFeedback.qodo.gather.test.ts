@@ -523,6 +523,28 @@ describe('gatherPrFeedback — a Qodo round only on what the platform may fix', 
     expect(m.client.calls).toHaveLength(0);
   });
 
+  it('is silent while the run is waiting on CI, the status `awaitQodoReview` runs under', async () => {
+    script(ok([finding()]));
+    m.findPr.mockResolvedValue({
+      workflow: { currentStatus: 'AWAITING_CI', temporalWorkflowId: 'wf-original' },
+    });
+    expect(await gatherPrFeedback({ request: request() })).toMatchObject({
+      decision: 'skip',
+      reason: 'the run that opened this pull request is still working on it',
+      silent: true,
+    });
+    expect(m.client.calls).toHaveLength(0);
+  });
+
+  it('proceeds once the run is parked waiting for the merge', async () => {
+    script(ok([finding()]));
+    m.findPr.mockResolvedValue({
+      workflow: { currentStatus: 'AWAITING_HUMAN_MERGE', temporalWorkflowId: 'wf-original' },
+    });
+    expect(await gatherPrFeedback({ request: request() })).toMatchObject({ decision: 'fix' });
+    expect(m.client.calls).toHaveLength(1);
+  });
+
   it('stops at the Qodo round limit, however many rounds the automation allows', async () => {
     script(ok([finding()]));
     // First count: all pushed rounds (1 of 5 used); second: pushes caused by Qodo (2 of 2).
