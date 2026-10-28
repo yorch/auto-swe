@@ -13,7 +13,7 @@ Each decision it makes is one row in the decision ledger, whether it started a r
 This page describes **event automations**, the generic kind, and the contract every event source
 follows. CI-failure triage is the first source ([ci-failure-triggers.md](./ci-failure-triggers.md)
 covers what is specific to it); events other services post to a team's signed endpoints are another
-([inbound-events.md](./inbound-events.md)); a new issue in a Jira filter, found by polling, is a
+([inbound-events.md](./inbound-events.md)); a new issue in a Jira filter, or one whose status changes, found by polling, is a
 third (§3.2). Cron schedules, template webhook URLs and the issue-tracker
 transition hook start runs too; they keep their own configuration (§5).
 
@@ -280,6 +280,7 @@ are environment-only ([configuration.md](./configuration.md)).
 | `github.pull_request.feedback` | A changes-requested review, an `/auto-swe fix` command, or (opt-in) Qodo's review bot reviewing lands on a pull request ([pr-feedback.md](./pr-feedback.md)) | the review or comment / the pull request | `address-pr-feedback` | `github.prFeedbackAutomationsEnabled` (off by default) |
 | `inbound.event` | A verified event posted to one of the team's event endpoints is of a selected type and meets the automation's conditions ([inbound-events.md](./inbound-events.md)); targets a **team** | the event's subject / its scope (from pointers; by default the event id / its type) | none: the automation names one | `workflow.inboundEventsEnabled` (off by default) |
 | `jira.filter.new_issue` | A poll of the automation's Jira filter (a JQL) finds an issue it has not seen (§3.2) | the issue / the issue | `ticket-to-merge` | `workflow.jiraPollAutomationsEnabled` (off by default) |
+| `jira.filter.status_changed` | A poll of the automation's Jira filter finds an issue in a status it has not been seen in (§3.2) | the issue / the issue | `ticket-to-merge` | `workflow.jiraPollAutomationsEnabled` (off by default) |
 
 A source is a pure descriptor (`EventSource` in `@auto-swe/shared/automation`) plus a webhook
 normalizer in the gateway, or, for the Jira source, a poller in the gateway (§3.2). The descriptor
@@ -342,13 +343,20 @@ up to 14 days. A closed issue and a pull request are ignored.
 
 ### 3.2 Jira filter
 
+Two sources poll a Jira filter and differ in one thing, what counts as already seen.
+`jira.filter.new_issue` remembers issue keys: an issue matters once, the first time the filter
+returns it. `jira.filter.status_changed` remembers **(issue, status) pairs**: an issue matters each
+time the filter returns it in a status it has not been seen in. Everything below applies to both
+unless it says otherwise.
+
 A new issue in a Jira filter starts the automation's template on the issue: by default
 `ticket-to-merge`, which implements it and opens a pull request. The automation holds one **JQL**
 (a query, or `filter = <id>` for a saved filter), one repository and one template, so a deployment
 with many repositories has one automation for each. The run's ticket is the Jira key, so the
 ticket-context step and tracker sync work on it. Its description starts with the key and a link to
 the issue, then the summary and the description (the first 4,000 characters) inside a block marked
-as untrusted text.
+as untrusted text. For a status-change automation the block starts with a `Status:` line carrying
+the status name, so a status someone typed in Jira is marked as data like the rest.
 
 **Three settings** govern it. All are ADMIN's:
 
@@ -388,9 +396,20 @@ expires. A round stops starting automations after ten minutes and resumes where 
   run. A trailing `ORDER BY` and the order of the allowlist do not change the query.
 - **New means a key the automation has not seen.** An issue starts a run once. Moving it to
   another project gives it a new key, which is new.
+- **Status change means a pair the automation has not seen.** Under `jira.filter.status_changed`
+  the baseline records each match with the status the search showed for it, and a later poll acts
+  on a match whose (key, status) pair is not recorded: an issue that moved to another status, or
+  one that entered the filter (in whatever status) after the baseline. The JQL says which statuses
+  matter (`status = "Ready for Dev"`); the automation only notices that the issue is in one it
+  was not seen in. A pair is acted on once, whatever its case, and is recorded only after the
+  engine decided it, so a replayed poll or a restart finds it and the ledger answers `duplicate`.
+  The run carries the status from the search, the one the pair was recorded under. A match for
+  which the search shows no status is neither acted on nor recorded.
 - **At most 50 issues a poll,** in key order (by project, then issue number). The rest wait for the
   next poll.
-- **The limits of §2 apply.** An issue the engine suppresses (the daily cap, the budget, an open
+- **The limits of §2 apply.** A status-change run's subject is the issue, so a transition while an
+  earlier run on the issue is open is `SUPPRESSED_IN_FLIGHT` (for up to 14 days), recorded in
+  the ledger and counted as seen. An issue the engine suppresses (the daily cap, the budget, an open
   run) is recorded in the ledger and counted as seen; a manager takes it again with **Decide
   again**. An issue is marked seen only after the engine has decided it, so a poll that stops
   between the two decides it again and the ledger answers `duplicate`.
@@ -586,14 +605,29 @@ recorded as `FAILED_TO_START` with its code.
 
 ## Limitations
 
-- **Five event sources.** Failed GitHub Actions runs, issue labels, pull-request review feedback
-  and new issues in a Jira filter start automations on a repository, and events posted to a team's
+- **Six event sources.** Failed GitHub Actions runs, issue labels, pull-request review feedback,
+  and new issues or status changes in a Jira filter start automations on a repository, and events posted to a team's
   endpoints start automations on a team; a pull request label or a push does not.
 - **Jira polling is Jira Cloud only,** one JQL for each automation, and starts runs on one
   repository. A filter that should feed several repositories is several automations.
-- **A Jira issue is new once.** A ticket starts one run however its status changes later, and an
-  issue that leaves the filter and returns is not new. Moved to another project, it has a new key
-  and starts a run if it is allowed there.
+- **A Jira issue is new once.** Under `jira.filter.new_issue` a ticket starts one run however its
+  status changes later, and an issue that leaves the filter and returns is not new. Moved to
+  another project, it has a new key and starts a run if it is allowed there. Reacting to a status
+  change takes a `jira.filter.status_changed` automation.
+- **A status change is seen by comparing polls, not read from Jira's history.** The automation
+  notices a pair (issue, status) it has not recorded; it does not learn that a transition
+  happened, who made it, or from which status. An issue that passes through several statuses
+  between two polls is seen only in the one it is in at the second poll. An issue that returns to
+  a status it was already seen in (reopened, then done again) starts no second run, because that
+  pair is recorded; a status renamed in Jira is a new status. Two spellings that differ only in
+  case are one status. The interval is the delay (§3.2), and a status-change automation cannot be
+  asked for a transition that no poll saw.
+- **A status change counts for an issue that enters the filter too.** An issue that starts matching
+  the JQL after the baseline (created, edited, or moved into scope) is in a status the automation
+  has not seen it in, so it is an occurrence. Put the statuses that matter in the JQL.
+- **A second transition waits for an open run.** The run's subject is the issue, so a transition
+  while an earlier run on the same issue is open is suppressed and recorded; only **Decide again**
+  takes it afterwards.
 - **Jira polling is not in creation order across projects.** A poll takes issues by project, then
   issue number, so with more than 50 new at once a project that sorts late waits for the next poll.
 - **Jira text is somebody else's.** The summary and description may have been written by anyone
