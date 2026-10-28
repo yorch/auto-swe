@@ -229,6 +229,25 @@ describe('resolveWebhookSecret: the host lookup is remembered briefly', () => {
     expect(findUnique).toHaveBeenCalledTimes(2);
   });
 
+  it('does not remember a lookup that was in flight when the cache was cleared', async () => {
+    const { prisma, findUnique } = prismaWith({ 'ghe.corp': 'host-secret' });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const read = findUnique.getMockImplementation();
+    findUnique.mockImplementationOnce(async (args) => {
+      await gate;
+      return (read as (a: typeof args) => Promise<unknown>)(args) as never;
+    });
+    const pending = resolveWebhookSecret(prisma, 'ghe.corp');
+    clearWebhookSecretCache();
+    release();
+    await pending;
+    await resolveWebhookSecret(prisma, 'ghe.corp');
+    expect(findUnique).toHaveBeenCalledTimes(2);
+  });
+
   it('never remembers a failed lookup', async () => {
     const { prisma, findUnique } = prismaWith({ 'ghe.corp': 'host-secret' });
     findUnique.mockRejectedValueOnce(new Error('database down'));

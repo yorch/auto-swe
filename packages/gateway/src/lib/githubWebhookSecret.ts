@@ -84,8 +84,15 @@ export const HOST_ROW_CACHE_MAX = 256;
 
 const hostRows = new Map<string, { row: HostSecretRow | null; expires: number }>();
 
+/**
+ * Bumped by every clear, so a lookup that began before one does not remember its answer: the
+ * row it read may be the one the write just replaced.
+ */
+let generation = 0;
+
 /** Forgets every remembered host lookup. The admin routes call it after a write. */
 export function clearWebhookSecretCache(): void {
+  generation++;
   hostRows.clear();
 }
 
@@ -96,7 +103,11 @@ async function findHostRow(prisma: PrismaClient, header: string): Promise<HostSe
   if (cached && cached.expires > now) {
     return cached.row;
   }
+  const startedAt = generation;
   const row = await lookupHostRow(prisma, header);
+  if (generation !== startedAt) {
+    return row;
+  }
   hostRows.delete(header);
   hostRows.set(header, { expires: now + HOST_ROW_TTL_MS, row });
   if (hostRows.size > HOST_ROW_CACHE_MAX) {
