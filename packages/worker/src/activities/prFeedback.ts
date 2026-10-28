@@ -525,7 +525,7 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
     );
     const dropped = { overLimit: 0, screened: 0, untrusted: 0 };
     const commentText = (body: string) => visibleIssueText(body).slice(0, MAX_COMMENT_CHARS);
-    const triggerNotes =
+    const rawTriggerNotes =
       payload.feedbackEventKind === 'review' && payload.feedbackTrigger === 'changes_requested'
         ? (visibleIssueText(triggerBody).trim() || '(no review body)').slice(0, MAX_NOTES_CHARS)
         : (parseFeedbackCommand(triggerBody)?.notes ?? '').slice(0, MAX_NOTES_CHARS);
@@ -551,7 +551,7 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
         candidates.push({ comment: c, text: commentText(c.body), thread, trusted });
       }
     }
-    const screenBodies = [triggerNotes, ...candidates.map((c) => c.text)];
+    const screenBodies = [rawTriggerNotes, ...candidates.map((c) => c.text)];
     const unusable = await feedbackInjectionScreen(screenBodies);
     const screenedTrigger = unusable.has(0);
     const screenedComment = new Set<number>();
@@ -560,6 +560,8 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
         screenedComment.add(i);
       }
     });
+    // A trigger the screen refused is dropped, not just counted: the notes reach the fixer.
+    const triggerNotes = screenedTrigger ? '' : rawTriggerNotes;
     if (screenedTrigger) {
       dropped.screened += 1;
     }
