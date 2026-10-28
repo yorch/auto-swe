@@ -34,7 +34,14 @@ export interface Workspace {
    * default 2-minute timeout suits git/file operations — pass `timeoutMs` for
    * anything that legitimately runs longer (test suites, builds).
    */
-  exec: (command: string, options?: { timeoutMs?: number }) => Promise<string>;
+  exec: (
+    command: string,
+    options?: {
+      timeoutMs?: number;
+      /** Values the command reads by name, kept off every command line (see the backend). */
+      secretEnv?: Record<string, string>;
+    }
+  ) => Promise<string>;
   /**
    * Run a command and capture stdout/stderr/exitCode without throwing on
    * non-zero exits. Used by quality-gate activities that interpret exit
@@ -144,6 +151,9 @@ export function splitCloneCredential(authedRepoUrl: string): SplitCloneCredentia
  *  - `protocol.ext.allow=never` — the `ext::` transport runs a command.
  *  - `*.recurseSubmodules` off — a submodule fetch/push would send the header
  *    to whatever host `.gitmodules` names.
+ *  - `gc.auto=0`, `maintenance.auto=false` — no automatic `gc` or `maintenance`
+ *    after a fetch or commit. Either can detach into the background, and the
+ *    detached process keeps the call's environment (the header) after it returns.
  *
  * Keys a `-c` cannot neutralise — `url.<base>.insteadOf` (longest match
  * wins), `http.<url>.proxy` (a URL-specific key beats `http.proxy`),
@@ -160,6 +170,8 @@ const HARDENED_GIT_CONFIG = [
   'submodule.recurse=false',
   'fetch.recurseSubmodules=false',
   'push.recurseSubmodules=no',
+  'gc.auto=0',
+  'maintenance.auto=false',
 ];
 
 /**
@@ -184,12 +196,17 @@ export const GIT_AUTH_ENV = 'ASW_GIT_AUTH';
  * (`?command=…`) recorded in audit logs for as long as they are kept. The script
  * reads the value from {@link GIT_AUTH_ENV}, and the caller delivers it with
  * `secretEnv: gitAuthSecretEnv(header)`, which the driver keeps off every
- * command line. `authed` must match whether the caller passes that env.
+ * command line. `authed` must match whether the caller passes that env: an
+ * unset or empty variable aborts the shell (`${…:?}`) rather than sending the
+ * request unauthenticated.
  */
 export function gitWithAuthHeader(subcommand: string, authed?: boolean): string {
   const flags = HARDENED_GIT_CONFIG.map((kv) => `-c ${kv}`);
   if (authed) {
-    flags.push('-c http.extraheader=', `-c "http.extraheader=$${GIT_AUTH_ENV}"`);
+    flags.push(
+      '-c http.extraheader=',
+      `-c "http.extraheader=\${${GIT_AUTH_ENV}:?git credential not delivered}"`
+    );
   }
   return `${HARDENED_GIT_ENV} git ${flags.join(' ')} ${subcommand}`;
 }
@@ -478,11 +495,12 @@ export function safeDepDirName(name: string): string {
  * `/workspace/deps/<name>` alongside the target repo.
  *
  * Runs *after* `createWorkspace` has cloned and scrubbed the target repo, and
- * applies the same scrub to every dependency clone — the credential is used for
- * the clone itself and then removed from `origin`, so no token survives in the
- * container. Dependency credentials are never attached to the returned
- * `Workspace`: these checkouts are read-only reference material, and nothing in
- * the workspace can push to them.
+ * clones every dependency the same way: from the clean URL, hardened, with the
+ * credential sent for the clone alone as a per-call header delivered through
+ * `secretEnv` (`gitWithAuthHeader`), so it is on no command line outside the
+ * container and no token survives in it. Dependency credentials are never
+ * attached to the returned `Workspace`: these checkouts are read-only reference
+ * material, and nothing in the workspace can push to them.
  *
  * Best-effort per dependency and capped at {@link MAX_DEPENDENCY_CHECKOUTS} —
  * one repo that fails to clone does not fail the run or the other clones.
@@ -501,16 +519,23 @@ export async function cloneDependencyRepos(
     }
     used.add(dir);
     const path = `/workspace/deps/${dir}`;
-    const { cleanUrl } = splitCloneCredential(dep.authedCloneUrl);
+    const { cleanUrl, gitAuthHeader } = splitCloneCredential(dep.authedCloneUrl);
+    const secretEnv = gitAuthSecretEnv(gitAuthHeader);
     const branchArg = dep.branch ? `-b ${shellQuote(dep.branch)} ` : '';
     try {
-      // `--` terminates option parsing: a URL that begins with a dash is then
-      // a path, not a git flag (`--upload-pack=…` and friends).
+      // The clean URL, with the credential as a per-call header read from the
+      // environment: a Kubernetes exec's command is an apiserver URL kept in
+      // audit logs. `--` terminates option parsing: a URL that begins with a
+      // dash is then a path, not a git flag (`--upload-pack=…` and friends).
       await workspace.exec(
-        `git clone --depth=1 ${branchArg}-- ${shellQuote(dep.authedCloneUrl)} ${shellQuote(path)}`
+        gitWithAuthHeader(
+          `clone --depth=1 ${branchArg}-- ${shellQuote(cleanUrl)} ${shellQuote(path)}`,
+          Boolean(gitAuthHeader)
+        ),
+        secretEnv ? { secretEnv } : undefined
       );
-      // Same scrub as the target repo: `git clone` bakes the credential into
-      // `.git/config`, where an agent could read it back out.
+      // Belt and braces, as for the target repo: the clone used the clean URL,
+      // so `origin` holds no credential an agent could read back out.
       await workspace.exec(
         `cd ${shellQuote(path)} && git remote set-url origin ${shellQuote(cleanUrl)}`
       );
@@ -817,6 +842,7 @@ export async function createWorkspace(
         env: [tag.env],
         heartbeatLabel: 'workspace: exec',
         onTimeout: tag.onTimeout,
+        ...(options?.secretEnv ? { secretEnv: options.secretEnv } : {}),
         timeoutMs: options?.timeoutMs,
         workdir: '/workspace/target-repo',
       });

@@ -523,14 +523,22 @@ async function startWorkspace(
       );
     }
   }
-  const shell = async (command: string, o?: { timeoutMs?: number }) =>
-    (
-      await run('docker', ['exec', '-w', WORKSPACE_DIR, name, 'sh', '-c', command], {
-        env: dockerEnv(),
+  // A secret is named with `-e NAME` and resolved from docker's own environment,
+  // so its value is never on the command line.
+  const shell = async (
+    command: string,
+    o?: { timeoutMs?: number; secretEnv?: Record<string, string> }
+  ) => {
+    const secretArgs = Object.keys(o?.secretEnv ?? {}).flatMap((key) => ['-e', key]);
+    const argv = ['exec', '-w', WORKSPACE_DIR, ...secretArgs, name, 'sh', '-c', command];
+    return (
+      await run('docker', argv, {
+        env: { ...dockerEnv(), ...o?.secretEnv },
         maxBuffer: 64 * 1024 * 1024,
         timeout: o?.timeoutMs ?? 120_000,
       })
     ).stdout;
+  };
   return {
     containerId: name,
     exec: shell,

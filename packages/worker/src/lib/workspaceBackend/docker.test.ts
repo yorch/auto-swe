@@ -122,4 +122,24 @@ require('node:fs').appendFileSync(
     expect(JSON.stringify(call?.args)).not.toContain('c2VjcmV0LXRva2Vu');
     expect(call?.secret).toBe(HEADER);
   });
+
+  it('refuses a secret name that is not a plain identifier, before docker runs', async () => {
+    const h = backend.attach('workspace-t1');
+    const opts = (name: string) => ({ heartbeatLabel: 't', secretEnv: { [name]: 'v' } });
+    for (const name of ['A; id', 'A=b', '1A', '']) {
+      await expect(backend.execShell(h, ['sh', '-c', 'true'], opts(name))).rejects.toThrow(
+        /invalid secret environment name/
+      );
+      await expect(backend.exec(h, ['true'], opts(name))).rejects.toThrow(
+        /invalid secret environment name/
+      );
+    }
+    expect(() =>
+      backend.spawn(h, ['true'], { secretEnv: { 'A=b': 'v' }, stdio: ['ignore', 'pipe', 'pipe'] })
+    ).toThrow(/invalid secret environment name/);
+    await expect(
+      backend.runHelper({ image: 'helper:1', secretEnv: { 'A=b': 'v' } }, { heartbeatLabel: 't' })
+    ).rejects.toThrow(/invalid secret environment name/);
+    await expect(fs.access(path.join(dir, 'log.jsonl'))).rejects.toThrow();
+  });
 });

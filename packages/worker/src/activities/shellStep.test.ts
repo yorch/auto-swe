@@ -108,7 +108,7 @@ import { type GitIdentity, resolveGitIdentity } from '../lib/gitIdentity.js';
 import { getScmProvider } from '../lib/scm/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { finalizeScript, runShellStep } from './shellStep.js';
-import { shellQuote } from './workspace.js';
+import { GIT_AUTH_ENV, shellQuote } from './workspace.js';
 
 const findUniqueOrThrow = vi.mocked(prisma.connection.findUniqueOrThrow);
 /**
@@ -467,7 +467,9 @@ describe('runShellStep — clone credential is never persisted in the workspace 
     await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
 
     const finalize = requireCommand('finalize push', (c) => c.includes('push --no-verify'));
-    expect(finalize).toContain('-c "http.extraheader=$ASW_GIT_AUTH"');
+    expect(finalize).toContain(
+      `-c "http.extraheader=\${${GIT_AUTH_ENV}:?git credential not delivered}"`
+    );
     // The header value is handed to the helper as a secret env var, never in the script.
     expect(finalize).not.toContain(AUTH_HEADER);
     const pushSpec = backendRunHelper.mock.calls

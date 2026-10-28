@@ -81,6 +81,30 @@ export function keeperPidProbeScript(): string {
   ].join('\n');
 }
 
+const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * The names of a `secretEnv`. Each is passed as `-e NAME` without a value, so
+ * docker resolves it from the client's own environment and the value is never
+ * on a command line. Anything but a plain identifier is refused: `-e A=b`
+ * would set a literal value instead, and a name also reaches the shell string
+ * of the throwing exec path.
+ */
+function secretEnvNames(secretEnv: Record<string, string> | undefined): string[] {
+  const names = Object.keys(secretEnv ?? {});
+  for (const name of names) {
+    if (!ENV_NAME_RE.test(name)) {
+      throw new Error(`invalid secret environment name: ${JSON.stringify(name)}`);
+    }
+  }
+  return names;
+}
+
+/** `-e NAME` for each name of a `secretEnv` (see {@link secretEnvNames}). */
+function secretEnvFlags(secretEnv: Record<string, string> | undefined): string[] {
+  return secretEnvNames(secretEnv).flatMap((name) => ['-e', name]);
+}
+
 /**
  * The `docker exec` argv for one command in the container. A `secretEnv`
  * contributes names only; the caller hands the values to the docker client's
@@ -102,7 +126,7 @@ function execArgv(
     ...(opts.workdir ? ['-w', opts.workdir] : []),
     ...(opts.env ?? []).flatMap((pair) => ['-e', pair]),
     // Named without a value: docker resolves it from the client's environment.
-    ...Object.keys(opts.secretEnv ?? {}).flatMap((name) => ['-e', name]),
+    ...secretEnvFlags(opts.secretEnv),
     h.id,
     ...argv,
   ];
@@ -122,7 +146,7 @@ function execCommand(h: WorkspaceHandle, argv: string[], opts: WorkspaceExecOpti
   for (const pair of opts.env ?? []) {
     parts.push('-e', pair);
   }
-  for (const name of Object.keys(opts.secretEnv ?? {})) {
+  for (const name of secretEnvNames(opts.secretEnv)) {
     parts.push('-e', shellQuote(name));
   }
   parts.push(h.id, ...argv.slice(0, -1), shellQuote(argv.at(-1) ?? ''));
@@ -234,7 +258,11 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     return { id, keeperPid };
   }
 
-  exec(h: WorkspaceHandle, argv: string[], opts: WorkspaceExecOptions): Promise<CapturedResult> {
+  async exec(
+    h: WorkspaceHandle,
+    argv: string[],
+    opts: WorkspaceExecOptions
+  ): Promise<CapturedResult> {
     const args = execArgv(h, argv, { ...opts, stdin: opts.stdin !== undefined });
     const runOpts = {
       heartbeatLabel: opts.heartbeatLabel,
@@ -248,7 +276,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       : spawnCaptureAsync('docker', args, runOpts);
   }
 
-  execShell(h: WorkspaceHandle, argv: string[], opts: WorkspaceExecOptions): Promise<string> {
+  async execShell(h: WorkspaceHandle, argv: string[], opts: WorkspaceExecOptions): Promise<string> {
     return execShellAsync(execCommand(h, argv, opts), {
       heartbeatLabel: opts.heartbeatLabel,
       onTimeout: opts.onTimeout,
@@ -265,7 +293,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       ...(opts.env ?? []).flatMap((pair) => ['-e', pair]),
       // Named without a value: docker reads it from its own environment below,
       // so a secret never appears on a command line or in `ps`.
-      ...Object.keys(opts.secretEnv ?? {}).flatMap((name) => ['-e', name]),
+      ...secretEnvFlags(opts.secretEnv),
       h.id,
       ...argv,
     ];
@@ -403,7 +431,7 @@ function helperArgs(spec: HelperContainerSpec): string[] {
       `${v.source}:${v.target}:${v.readOnly ? 'ro' : 'rw'}`,
     ]),
     ...(spec.env ?? []).flatMap((pair) => ['-e', pair]),
-    ...Object.keys(spec.secretEnv ?? {}).flatMap((name) => ['-e', name]),
+    ...secretEnvFlags(spec.secretEnv),
     ...(spec.entrypoint ? ['--entrypoint', spec.entrypoint] : []),
     spec.image,
     ...(spec.argv ?? []),
