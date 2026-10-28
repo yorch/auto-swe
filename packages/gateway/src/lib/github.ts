@@ -4,6 +4,17 @@ import { GitHubTokenMissingError, resolveGitHubToken } from './githubAuth.js';
 
 export { GitHubTokenMissingError };
 
+const SIGNATURE_SHAPE = /^sha256=[0-9a-f]{64}$/;
+
+/**
+ * Whether a header value has the shape of GitHub's `X-Hub-Signature-256` (`sha256=` and 64
+ * lowercase hex digits). A cheap check a caller makes before any lookup of the secret: a value
+ * of another shape cannot verify against any secret, and the sender is not yet authenticated.
+ */
+export function isWellFormedSignature(signature: unknown): signature is string {
+  return typeof signature === 'string' && SIGNATURE_SHAPE.test(signature);
+}
+
 /**
  * Verify GitHub webhook HMAC signature.
  * Returns true if the signature is valid.

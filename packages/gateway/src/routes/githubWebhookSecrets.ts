@@ -16,6 +16,7 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
+import { clearWebhookSecretCache } from '../lib/githubWebhookSecret.js';
 import { sendError } from '../lib/httpErrors.js';
 import { isRecordNotFoundError, isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { isGitHubDotComHost } from '../lib/repositoryHost.js';
@@ -107,6 +108,7 @@ export const githubWebhookSecretRoutes: FastifyPluginAsync = async (fastify) => 
         const created = await fastify.prisma.gitHubHostWebhookSecret.create({
           data: { host, ...toColumns(secret) },
         });
+        clearWebhookSecretCache();
         await writeAuditLog(fastify, {
           action: 'CREATE',
           actor: user,
@@ -157,6 +159,7 @@ export const githubWebhookSecretRoutes: FastifyPluginAsync = async (fastify) => 
           data: toColumns(request.body.secret),
           where: { id: existing.id },
         });
+        clearWebhookSecretCache();
         await writeAuditLog(fastify, {
           action: 'UPDATE',
           actor: user,
@@ -185,6 +188,7 @@ export const githubWebhookSecretRoutes: FastifyPluginAsync = async (fastify) => 
         const deleted = await fastify.prisma.gitHubHostWebhookSecret.delete({
           where: { id: request.params.id },
         });
+        clearWebhookSecretCache();
         await writeAuditLog(fastify, {
           action: 'DELETE',
           actor: user,

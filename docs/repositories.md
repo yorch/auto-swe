@@ -137,6 +137,13 @@ GitHub documents the header as a hostname. It is compared lowercase and matches 
 that `host[:port]` first; failing that, the one row whose hostname is the header's, whatever its
 port. A hostname shared by several rows with no exact match matches none of them.
 
+A delivery without an `X-Hub-Signature-256` of the form `sha256=` and 64 lowercase hex digits is
+refused with `401` before any secret is looked up, because the sender, and the host header it
+names, is not yet authenticated. The row lookup for a host header is remembered for a few seconds
+(a bounded set of hosts; a failed lookup is never remembered) and dropped whenever an admin
+creates, rotates or deletes a secret, so a rotated-out secret stops verifying at once on the
+gateway that took the change and within those seconds on any other replica.
+
 A secret proves who sent a delivery, not which repository it may act on, so the verified host is
 carried into the lookup that finds the repository:
 
