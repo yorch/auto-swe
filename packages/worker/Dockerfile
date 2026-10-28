@@ -1,6 +1,6 @@
 # Docker CLI source, as a named stage so Dependabot's docker ecosystem tracks the
 # tag (it reads FROM lines, not COPY --from=<image>). Nothing runs in it.
-FROM docker:29-cli@sha256:6fae2214c3121a28d5aa639d09032f61310b7c9c75ffbad1025f261a1b621800 AS dockercli
+FROM docker:29-cli@sha256:5e6baf67325a79f64ed3bed6863954d5e05d0f3d4e57cbdb14809346814bbfdb AS dockercli
 
 # kubectl, for WORKSPACE_BACKEND=kubernetes (the worker runs `kubectl exec` into workspace pods). Same
 # named-stage trick so Dependabot tracks the tag; the official image is distroless, so only the binary is
