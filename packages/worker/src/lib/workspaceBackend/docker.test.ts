@@ -123,6 +123,30 @@ require('node:fs').appendFileSync(
     expect(call?.secret).toBe(HEADER);
   });
 
+  it('refuses a credential-named plain env pair, before docker runs', async () => {
+    const h = backend.attach('workspace-t1');
+    const pair = 'DEPLOY_TOKEN=value-that-must-not-leak';
+    const opts = { env: [pair], heartbeatLabel: 't' };
+    await expect(backend.exec(h, ['true'], opts)).rejects.toThrow(/DEPLOY_TOKEN.*secretEnv/);
+    await expect(backend.execShell(h, ['true'], opts)).rejects.toThrow(/DEPLOY_TOKEN/);
+    const spawnIt = () =>
+      backend.spawn(h, ['true'], { env: [pair], stdio: ['ignore', 'pipe', 'pipe'] });
+    expect(spawnIt).toThrow(/DEPLOY_TOKEN/);
+    await expect(
+      backend.runHelper({ env: [pair], image: 'helper:1' }, { heartbeatLabel: 't' })
+    ).rejects.toThrow(/DEPLOY_TOKEN/);
+    await expect(fs.access(path.join(dir, 'log.jsonl'))).rejects.toThrow();
+  });
+
+  it('accepts a credential-named variable passed as secretEnv', async () => {
+    await backend.exec(backend.attach('workspace-t1'), ['true'], {
+      env: ['GIT_AUTHOR_NAME=Ada'],
+      heartbeatLabel: 't',
+      secretEnv: { ASW_GIT_AUTH: HEADER },
+    });
+    expect(await calls()).toHaveLength(1);
+  });
+
   it('refuses a secret name that is not a plain identifier, before docker runs', async () => {
     const h = backend.attach('workspace-t1');
     const opts = (name: string) => ({ heartbeatLabel: 't', secretEnv: { [name]: 'v' } });

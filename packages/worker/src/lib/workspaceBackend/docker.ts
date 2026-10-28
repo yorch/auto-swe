@@ -9,6 +9,7 @@ import {
   spawnWithStdinAsync,
 } from '../execUtils.js';
 import { shellQuote } from '../shellQuote.js';
+import { assertNoCredentialEnvPairs } from './credentialEnv.js';
 import { assertSecretEnvName, secretEnvFlags } from './secretEnvName.js';
 import type {
   EphemeralContainerSpec,
@@ -111,6 +112,7 @@ function execArgv(
     stdin?: boolean;
   }
 ): string[] {
+  assertNoCredentialEnvPairs(opts.env, 'docker exec env');
   return [
     'exec',
     ...(opts.stdin ? ['-i'] : []),
@@ -130,6 +132,7 @@ function execArgv(
  * final argument — the script the caller supplied — is shell-quoted.
  */
 function execCommand(h: WorkspaceHandle, argv: string[], opts: WorkspaceExecOptions): string {
+  assertNoCredentialEnvPairs(opts.env, 'docker exec env');
   const parts = ['docker', 'exec'];
   if (opts.workdir) {
     parts.push('-w', opts.workdir);
@@ -190,6 +193,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     // A creation-time secret is named (`-e NAME`) and its value handed to the
     // docker client in its environment, so it is on no command line and in no
     // error text that echoes one.
+    assertNoCredentialEnvPairs(spec.env, 'docker run env');
     const env = [
       ...(spec.env ?? []).map((pair) => ` -e ${shellQuote(pair)}`),
       ...secretEnvNames(spec.secretEnv).map((name) => ` -e ${name}`),
@@ -286,6 +290,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   }
 
   spawn(h: WorkspaceHandle, argv: string[], opts: WorkspaceSpawnOptions) {
+    assertNoCredentialEnvPairs(opts.env, 'docker exec env');
     const args = [
       'exec',
       ...(opts.stdin ? ['-i'] : []),
@@ -425,6 +430,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
  * the lockdown.
  */
 function helperArgs(spec: HelperContainerSpec): string[] {
+  assertNoCredentialEnvPairs(spec.env, 'docker helper env');
   return [
     'run',
     '--rm',
@@ -441,6 +447,8 @@ function helperArgs(spec: HelperContainerSpec): string[] {
 }
 
 export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): string[] {
+  // Deliberately unguarded: `spec.env` carries workflow-author container-step env, where a
+  // variable such as API_TOKEN is legitimate.
   const volumeArgs = (spec.volumes ?? []).flatMap((v) => [
     '-v',
     `${v.source}:${v.target}:${v.readOnly ? 'ro' : 'rw'}`,

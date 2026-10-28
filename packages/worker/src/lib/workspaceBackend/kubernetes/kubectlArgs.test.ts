@@ -38,6 +38,18 @@ describe('execArgs', () => {
     expect(args.slice(-4)).toEqual(['env', 'A=1', 'B=two words', 'ls']);
   });
 
+  it('refuses a credential-named env pair without echoing its value', () => {
+    const value = 'value-that-must-not-leak';
+    const build = () => execArgs(ref, ['ls'], { env: [`DEPLOY_TOKEN=${value}`] });
+    expect(build).toThrow(/DEPLOY_TOKEN/);
+    expect(build).toThrow(/secretEnv/);
+    expect(build).not.toThrow(new RegExp(value));
+  });
+
+  it('accepts the same name when it is a secret', () => {
+    expect(() => execArgs(ref, ['ls'], { secrets: true })).not.toThrow();
+  });
+
   it('asks for stdin only when it is used', () => {
     expect(execArgs(ref, ['cat'], { interactive: true })).toContain('-i');
     expect(execArgs(ref, ['cat'], {})).not.toContain('-i');
