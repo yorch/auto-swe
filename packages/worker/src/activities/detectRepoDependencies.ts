@@ -242,19 +242,11 @@ export async function detectRepoDependencies(
     const packageJson =
       manifestContents.get('package.json') ??
       (await safeFetchFile(provider, repoRef, 'package.json'));
-    let scripts: string[] | undefined;
-    if (packageJson !== null) {
-      try {
-        const parsed = JSON.parse(packageJson) as { scripts?: Record<string, unknown> };
-        scripts = Object.keys(parsed.scripts ?? {});
-      } catch {
-        /* invalid JSON: suggest nothing */
-      }
-    }
     await prisma.connection.update({
       data: {
         detectedStack: detectStack(rootEntries, {
-          packageJsonScripts: scripts,
+          // Its scripts feed the suggestions and its `packageManager` pin names the manager.
+          packageJson: packageJson ?? undefined,
           treeTruncated,
         }) as unknown as Prisma.InputJsonValue,
         detectedStackAt: new Date(),

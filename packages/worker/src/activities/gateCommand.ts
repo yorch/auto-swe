@@ -1,4 +1,4 @@
-import { detectedGateDefaults } from '@auto-swe/shared/lib/stackDetection';
+import { detectedGateDefaults, YARN_GATE_DEFAULTS } from '@auto-swe/shared/lib/stackDetection';
 import type { GateName } from './qualityGates.js';
 
 /**
@@ -7,13 +7,9 @@ import type { GateName } from './qualityGates.js';
  * default comes from its detection first.
  */
 export const DEFAULT_COMMANDS: Record<GateName, string | null> = {
-  runBuild: 'yarn build',
-  runLint: 'yarn lint',
+  ...YARN_GATE_DEFAULTS,
   // runPerfBench has no sensible default: the operator supplies one.
   runPerfBench: null,
-  runTests: 'yarn test',
-  runTypecheck: 'yarn typecheck',
-  runVulnScan: 'yarn npm audit --severity high',
 };
 
 /**

@@ -15,6 +15,7 @@ import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
+import { executorImageFor } from '../lib/executorImage.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
@@ -24,6 +25,7 @@ import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { commitStaged, diffForResult, pushRefspec, startPathGuard } from './allowedPaths.js';
 import {
   detectTestCommand,
+  packageJsonReadCommand,
   parseDiffToFileChanges,
   parseTestOutput,
   TEST_RUN_TIMEOUT_MS,
@@ -148,7 +150,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     authedCloneUrl,
     previousCodeResult.branch,
     baseBranch,
-    repo.executorImage ?? undefined,
+    executorImageFor(repo),
     undefined,
     undefined,
     { teamId: repo.teamId }
@@ -189,7 +191,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       { refuseWorkflowChanges: input.refuseWorkflowChanges }
     );
 
-    const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
+    const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
     const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);
 
     // The session runs as its own persona (ciFixer / reviewFixer / gateFixer):

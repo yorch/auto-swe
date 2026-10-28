@@ -32,6 +32,7 @@ import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
+import { executorImageFor } from '../lib/executorImage.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import {
@@ -57,6 +58,7 @@ import {
 } from './allowedPaths.js';
 import {
   detectTestCommand,
+  packageJsonReadCommand,
   parseDiffToFileChanges,
   parseTestOutput,
   TEST_RUN_TIMEOUT_MS,
@@ -157,7 +159,7 @@ export async function executeImplementation(
     authedCloneUrl,
     branch,
     baseBranch,
-    repo.executorImage ?? undefined,
+    executorImageFor(repo),
     undefined,
     undefined,
     { teamId: repo.teamId }
@@ -206,7 +208,7 @@ export async function executeImplementation(
     pathGuard = await startPathGuard(workspace, baseBranch, allowedPaths, baseSha, guardOptions);
 
     // Detect test framework
-    const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
+    const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
     const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);
 
     // The runtime — the Mastra loop or the Claude Code harness — is chosen first,
