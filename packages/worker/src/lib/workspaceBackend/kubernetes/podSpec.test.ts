@@ -1,7 +1,14 @@
 import type { KubernetesWorkspaceConfig } from '@auto-swe/shared/lib/systemConfig';
 import { describe, expect, it } from 'vitest';
 import type { WorkspaceContainerSpec } from '../types.js';
-import { buildWorkspacePod, dockerMemoryBytes } from './podSpec.js';
+import {
+  buildWorkspacePod,
+  buildWorkspaceSecret,
+  dockerMemoryBytes,
+  workspaceSecretName,
+} from './podSpec.js';
+
+const POD_UID = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
 
 const config: KubernetesWorkspaceConfig = {
   imagePullSecrets: [],
@@ -33,7 +40,7 @@ interface PodShape {
     automountServiceAccountToken: boolean;
     containers: {
       command: string[];
-      env: { name: string; value: string }[];
+      env: { name: string; value?: string; valueFrom?: unknown }[];
       resources: { limits: Record<string, string>; requests: Record<string, string> };
       securityContext: Record<string, unknown>;
       volumeMounts: { mountPath: string; name: string }[];
@@ -164,5 +171,74 @@ describe('buildWorkspacePod', () => {
     expect(json).not.toContain('some-docker-network');
     expect(json).not.toContain('1.1.1.1');
     expect(json).not.toContain('pids');
+  });
+});
+
+describe('secretEnv', () => {
+  const TOKEN = 'tok-s3cret-value';
+  const withSecret: WorkspaceContainerSpec = {
+    ...spec,
+    secretEnv: { COREPACK_NPM_TOKEN: TOKEN, YARN_NPM_AUTH_TOKEN: TOKEN },
+  };
+
+  it('references each secret by key and never carries its value in the Pod', () => {
+    const p = buildWorkspacePod(withSecret, config) as unknown as PodShape;
+    const ref = (name: string) => ({
+      name,
+      valueFrom: {
+        secretKeyRef: { key: name, name: 'workspace-abc123-env', optional: false },
+      },
+    });
+    expect(p.spec.containers[0].env).toEqual([
+      { name: 'FOO', value: 'bar' },
+      { name: 'EMPTY', value: '' },
+      { name: 'WITH_EQ', value: 'a=b' },
+      ref('COREPACK_NPM_TOKEN'),
+      ref('YARN_NPM_AUTH_TOKEN'),
+    ]);
+    expect(JSON.stringify(p)).not.toContain(TOKEN);
+    expect(JSON.stringify(p)).not.toContain(Buffer.from(TOKEN).toString('base64'));
+  });
+
+  it('builds the per-pod Secret with the values, labelled for cleanup', () => {
+    const secret = buildWorkspaceSecret(withSecret, config, POD_UID);
+    expect(workspaceSecretName('workspace-abc123')).toBe('workspace-abc123-env');
+    expect(secret).toEqual({
+      apiVersion: 'v1',
+      data: {
+        COREPACK_NPM_TOKEN: Buffer.from(TOKEN).toString('base64'),
+        YARN_NPM_AUTH_TOKEN: Buffer.from(TOKEN).toString('base64'),
+      },
+      kind: 'Secret',
+      metadata: {
+        labels: {
+          'app.kubernetes.io/managed-by': 'auto-swe',
+          'asw/role': 'workspace-env',
+          'asw/workspace': 'workspace-abc123',
+        },
+        name: 'workspace-abc123-env',
+        namespace: 'auto-swe-workspaces',
+        ownerReferences: [
+          { apiVersion: 'v1', kind: 'Pod', name: 'workspace-abc123', uid: POD_UID },
+        ],
+      },
+      type: 'Opaque',
+    });
+  });
+
+  it('makes no Secret, and no secretKeyRef, without secretEnv', () => {
+    expect(buildWorkspaceSecret(spec, config, POD_UID)).toBeNull();
+    expect(JSON.stringify(pod())).not.toContain('secretKeyRef');
+  });
+
+  it('refuses a name the Secret key cannot carry, and a name that is also plain', () => {
+    const badName = { ...spec, secretEnv: { 'bad name': 'x' } };
+    const digitFirst = { ...spec, secretEnv: { '1X': 'x' } };
+    const clash = { ...spec, secretEnv: { FOO: 'x' } };
+    expect(() => buildWorkspacePod(badName, config)).toThrow(/invalid secret environment name/);
+    expect(() => buildWorkspaceSecret(digitFirst, config, POD_UID)).toThrow(
+      /invalid secret environment/
+    );
+    expect(() => buildWorkspacePod(clash, config)).toThrow(/both plain and secret/);
   });
 });

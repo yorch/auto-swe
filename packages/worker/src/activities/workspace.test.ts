@@ -51,6 +51,12 @@ vi.mock('../lib/gitIdentity.js', async (importOriginal) => {
   return { ...actual, resolveGitIdentity: vi.fn(async () => actual.DEFAULT_GIT_IDENTITY) };
 });
 
+// Wraps the real wiring so a test can make registry resolution reject.
+vi.mock('../lib/registryProxy/workspaceWiring.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../lib/registryProxy/workspaceWiring.js')>();
+  return { ...actual, beginWorkspaceRegistries: vi.fn(actual.beginWorkspaceRegistries) };
+});
+
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { execShellAsync, spawnWithStdinAsync } from '../lib/execUtils.js';
 import {
@@ -59,6 +65,7 @@ import {
   gitIdentityConfigScript,
   resolveGitIdentity,
 } from '../lib/gitIdentity.js';
+import { beginWorkspaceRegistries } from '../lib/registryProxy/workspaceWiring.js';
 import {
   authedGitScript,
   buildMetadataBlockArgs,
@@ -357,6 +364,20 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
     expect(cloneCmd).toContain(`-- ${Q(CLEAN)} /workspace/target-repo`);
     expect(cloneCmd).toContain(`-b ${Q('main')}`);
     await ws.destroy();
+  });
+
+  it('surfaces a registry wiring failure as an Error with the credential redacted', async () => {
+    vi.mocked(beginWorkspaceRegistries).mockRejectedValueOnce(
+      new Error('registry lookup failed for ghp_secret')
+    );
+    const err = await createWorkspace(AUTHED, 'auto/T-1', 'main').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe('registry lookup failed for ***');
+
+    vi.mocked(beginWorkspaceRegistries).mockRejectedValueOnce('plain string failure');
+    const wrapped = await createWorkspace(AUTHED, 'auto/T-1', 'main').catch((e: unknown) => e);
+    expect(wrapped).toBeInstanceOf(Error);
+    expect((wrapped as Error).message).toBe('plain string failure');
   });
 
   it('terminates options with `--` on the pinned-SHA and existing-branch clone paths too', async () => {

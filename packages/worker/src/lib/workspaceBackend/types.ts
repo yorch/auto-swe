@@ -28,6 +28,20 @@ export interface WorkspaceContainerSpec {
   reachWorker: boolean;
   /** Non-secret `NAME=value` pairs, passed to the container as `docker run -e`. */
   env?: string[];
+  /**
+   * Secrets by name → value that must be in the container's environment from
+   * the start, for every process in it (a package-manager token that each
+   * `npm`/`yarn` run reads, whoever launched it). Unlike
+   * {@link WorkspaceExecOptions.secretEnv} this cannot ride one exec's stdin.
+   * Per backend: Docker passes `-e NAME` and hands the value to the docker
+   * client in its environment, so it is not in the client's argv, but
+   * `docker inspect` shows it in `Config.Env`. Kubernetes keeps it in a
+   * per-pod `Secret` and the Pod only names it (`secretKeyRef`), so the Pod
+   * object, its audit-log entries and `kubectl get pod -o yaml` never carry
+   * the value; it is still in the container's process environment, by design.
+   * A name may not also appear in `env`.
+   */
+  secretEnv?: Record<string, string>;
 }
 
 /**
@@ -95,6 +109,11 @@ export interface WorkspaceSpawnOptions {
  *  - create() applies the workspace hardening (init, cap-drop, no-new-privileges,
  *    `sleep infinity` keeper) itself and records the keeper's in-container PID.
  *  - exec/execShell/spawn never place a `secretEnv` *value* on a command line.
+ *  - create() never puts a `WorkspaceContainerSpec.secretEnv` value into the
+ *    workspace object a namespace reader can list (a Kubernetes Pod) or onto a
+ *    command line; a secret object it makes instead is removed by remove() and
+ *    by every create() failure.
+ *    (Docker has no such object: the value is in `Config.Env`, never in an argv.)
  *  - remove() is idempotent.
  */
 export interface WorkspaceBackend {

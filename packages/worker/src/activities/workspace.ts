@@ -13,6 +13,7 @@ import {
   buildRegistryAllowlist,
   renderNpmrc,
   renderYarnrc,
+  splitRegistryWorkspaceEnv,
   type WorkspaceRegistryAccess,
 } from '../lib/registryProxy/workspaceWiring.js';
 import { shellQuote } from '../lib/shellQuote.js';
@@ -670,13 +671,22 @@ export async function createWorkspace(
     // A resolution/registration failure fails workspace creation — a workspace
     // with the wrong registries (or none, when some should apply) is not safe
     // to hand the agent.
-    throw redactExecError(err instanceof Error ? err : new Error(String(err)), cloneSecrets);
+    // redactExecError scrubs in place and returns nothing: throw the error itself.
+    const failure = err instanceof Error ? err : new Error(String(err));
+    redactExecError(failure, cloneSecrets);
+    throw failure;
   }
   let handle: WorkspaceHandle = backend.attach(containerName);
   try {
     const spec = agentWorkspaceSpec(containerName, effectiveImage, infra);
     if (registry) {
-      spec.env = [...(spec.env ?? []), ...registry.env];
+      // The proxy token is a secret the container needs for its whole life
+      // (Corepack and Yarn Berry read it from the environment of every
+      // command), so it goes in `secretEnv`: Docker passes it as `-e`, as
+      // before; Kubernetes keeps it out of the Pod object.
+      const { env, secretEnv } = splitRegistryWorkspaceEnv(registry.env);
+      spec.env = [...(spec.env ?? []), ...env];
+      spec.secretEnv = { ...spec.secretEnv, ...secretEnv };
     }
     handle = await backend.create(spec);
 
@@ -826,7 +836,7 @@ export async function createWorkspace(
     // A failed git command rejects with the full command line in
     // `error.message` (and stdout/stderr/cmd) — scrub the credential before
     // it reaches Temporal history or a log line.
-    redactExecError(err, cloneSecrets);
+    redactExecError(err, [...cloneSecrets, registry?.token]);
     throw err;
   }
 

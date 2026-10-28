@@ -9,8 +9,9 @@ import { buildTar } from './testTar.js';
 
 /**
  * A stand-in `kubectl`: logs every invocation (argv and whatever arrived on
- * stdin) and answers from a plan of `{ match, stdout, stderr, code }` rules,
- * first substring match of the joined argv wins.
+ * stdin) and answers from a plan of `{ match, stdinMatch?, stdout, stderr, code }`
+ * rules, first rule whose `match` is in the joined argv (and `stdinMatch`, when
+ * given, in stdin) wins.
  */
 const FAKE = `#!/usr/bin/env node
 const fs = require('node:fs');
@@ -22,7 +23,10 @@ const stdin = stdinWanted ? fs.readFileSync(0, 'utf8') : null;
 fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ args, stdin }) + '\\n');
 const plan = JSON.parse(fs.readFileSync(process.env.FAKE_PLAN, 'utf8'));
 const joined = args.join(' ');
-const rule = plan.find((r) => joined.includes(r.match)) ?? {};
+const rule =
+  plan.find(
+    (r) => joined.includes(r.match) && (!r.stdinMatch || (stdin ?? '').includes(r.stdinMatch))
+  ) ?? {};
 if (rule.stdout) process.stdout.write(rule.stdout);
 if (rule.stderr) process.stderr.write(rule.stderr);
 process.exit(rule.code ?? 0);
@@ -105,6 +109,123 @@ describe('create', () => {
     await expect(backend.create(spec)).rejects.toThrow(/could not create the pod: quota exceeded/);
     await setPlan([{ code: 1, match: 'wait', stderr: 'timed out waiting' }]);
     await expect(backend.create(spec)).rejects.toThrow(/did not become ready/);
+  });
+});
+
+describe('secretEnv at creation', () => {
+  const TOKEN = 'proxy-tok-s3cret';
+  const UID = '0a1b2c3d-1111-2222-3333-444455556666';
+  const withSecret: WorkspaceContainerSpec = { ...spec, secretEnv: { YARN_NPM_AUTH_TOKEN: TOKEN } };
+  const podUid = { match: 'jsonpath', stdout: UID };
+  const secretCreate = { match: '-f -', stdinMatch: '"kind":"Secret"' };
+  const deleteArgs = (kind: string, name: string) => [
+    'delete',
+    kind,
+    name,
+    '--namespace',
+    'ns',
+    '--ignore-not-found',
+  ];
+  const sawDelete = (all: { args: string[] }[], kind: string, name: string) =>
+    all.some((c) => JSON.stringify(c.args) === JSON.stringify(deleteArgs(kind, name)));
+
+  it('creates the Pod first, then the Secret already owned by it, from stdin', async () => {
+    await setPlan([podUid, { match: 'asw_ppid', stdout: '42\n' }]);
+    await backend.create(withSecret);
+
+    const [podCall, secretCall, wait] = await calls();
+    const pod = JSON.parse(podCall?.stdin ?? '{}');
+    expect(pod.kind).toBe('Pod');
+    expect(podCall?.stdin).not.toContain(TOKEN);
+    expect(podCall?.args.slice(-2)).toEqual(['-o', 'jsonpath={.metadata.uid}']);
+
+    expect(secretCall?.args).toEqual(['create', '--namespace', 'ns', '-f', '-']);
+    const secret = JSON.parse(secretCall?.stdin ?? '{}');
+    expect(secret).toMatchObject({ kind: 'Secret', metadata: { name: 'workspace-t1-env' } });
+    expect(Buffer.from(secret.data.YARN_NPM_AUTH_TOKEN, 'base64').toString()).toBe(TOKEN);
+    // Only `create` is granted, so ownership must be in the manifest; no finalizer-gated fields.
+    expect(secret.metadata.ownerReferences).toEqual([
+      { apiVersion: 'v1', kind: 'Pod', name: 'workspace-t1', uid: UID },
+    ]);
+    expect(secretCall?.stdin).not.toContain('blockOwnerDeletion');
+    expect(secretCall?.stdin).not.toContain('"controller"');
+
+    expect(wait?.args).toContain('pod/workspace-t1');
+    expect((await calls()).some((c) => c.args[0] === 'patch' || c.args[0] === 'get')).toBe(false);
+  });
+
+  it('never puts the value, or its base64, in any argv', async () => {
+    await setPlan([podUid, { match: 'asw_ppid', stdout: '42\n' }]);
+    await backend.create(withSecret);
+    await backend.remove('workspace-t1');
+    const all = await calls();
+    const b64 = Buffer.from(TOKEN).toString('base64');
+    const argv = all.map((c) => c.args.join(' ')).join('\n');
+    expect(argv).not.toContain(TOKEN);
+    expect(argv).not.toContain(b64);
+    // Only the Secret manifest, on stdin, holds it.
+    expect(all.filter((c) => c.stdin?.includes(b64))).toHaveLength(1);
+    expect(all.filter((c) => c.stdin?.includes(TOKEN))).toHaveLength(0);
+  });
+
+  it('makes no Secret without secretEnv', async () => {
+    await setPlan([{ match: 'asw_ppid', stdout: '42\n' }]);
+    await backend.create(spec);
+    const all = await calls();
+    expect(all.filter((c) => c.args[0] === 'create')).toHaveLength(1);
+    expect(all.some((c) => c.args.includes('secret'))).toBe(false);
+  });
+
+  it('has nothing to clean up when the pod cannot be created', async () => {
+    await setPlan([{ code: 1, match: 'jsonpath', stderr: 'quota exceeded' }]);
+    await expect(backend.create(withSecret)).rejects.toThrow(/could not create the pod/);
+    const all = await calls();
+    expect(all).toHaveLength(1);
+    expect(all.some((c) => c.args[0] === 'delete')).toBe(false);
+  });
+
+  it('deletes pod and Secret when the Secret create fails, scrubbing the value', async () => {
+    const b64 = Buffer.from(TOKEN).toString('base64');
+    await setPlan([
+      podUid,
+      { ...secretCreate, code: 1, stderr: `invalid value ${TOKEN} / ${b64}` },
+    ]);
+    const err = await backend.create(withSecret).catch((e: Error) => e);
+    expect((err as Error).message).toMatch(/could not create its secret/);
+    expect((err as Error).message).not.toContain(TOKEN);
+    expect((err as Error).message).not.toContain(b64);
+    const all = await calls();
+    expect(all.some((c) => c.args.includes('wait'))).toBe(false);
+    const podAt = all.findIndex((c) => c.args[0] === 'delete' && c.args.includes('pod'));
+    const secretAt = all.findIndex(
+      (c) => JSON.stringify(c.args) === JSON.stringify(deleteArgs('secret', 'workspace-t1-env'))
+    );
+    expect(podAt).toBeGreaterThan(-1);
+    expect(secretAt).toBeGreaterThan(podAt);
+  });
+
+  it('creates no Secret, and deletes pod and Secret, when the pod uid is unreadable', async () => {
+    await setPlan([{ match: 'jsonpath', stdout: '' }]);
+    await expect(backend.create(withSecret)).rejects.toThrow(/could not read the pod's uid/);
+    const all = await calls();
+    expect(all.some((c) => c.stdin?.includes('"kind":"Secret"'))).toBe(false);
+    expect(all.some((c) => c.args[0] === 'delete' && c.args.includes('pod'))).toBe(true);
+    expect(sawDelete(all, 'secret', 'workspace-t1-env')).toBe(true);
+  });
+
+  it('deletes only the Secret when the pod never becomes ready', async () => {
+    await setPlan([podUid, { code: 1, match: 'wait', stderr: 'timed out' }]);
+    await expect(backend.create(withSecret)).rejects.toThrow(/did not become ready/);
+    const all = await calls();
+    expect(all.at(-1)?.args).toEqual(deleteArgs('secret', 'workspace-t1-env'));
+    expect(all.some((c) => c.args[0] === 'delete' && c.args.includes('pod'))).toBe(false);
+  });
+
+  it('removes the pod, then its Secret', async () => {
+    await backend.remove('workspace-t1');
+    const all = await calls();
+    expect(all.map((c) => c.args[1])).toEqual(['pod', 'secret']);
+    expect(all.every((c) => c.args[0] === 'delete')).toBe(true);
   });
 });
 
@@ -240,10 +361,13 @@ describe('spawn', () => {
       })
     ).toThrow(/cannot be delivered/);
     // A client that was started and then abandoned blocks on stdin before it logs a call, so
-    // `calls()` alone cannot see it; the fake writes a start marker first. The wait covers the
-    // fake's node start-up, so a client spawned before the throw would have left the marker.
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    await expect(fs.access(`${log}.started`)).rejects.toThrow();
+    // `calls()` alone cannot see it; the fake writes a start marker first. The polling covers
+    // the fake's node start-up, so a client spawned before the throw would have left the marker.
+    // Poll for it rather than sleeping once: a slow node start-up must not give a false pass.
+    for (let waited = 0; waited < 1500; waited += 50) {
+      await expect(fs.access(`${log}.started`)).rejects.toThrow();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
     expect(await calls()).toHaveLength(0);
   });
 
@@ -333,6 +457,16 @@ describe('pause and remove', () => {
     await setPlan([{ code: 1, match: 'delete', stderr: 'gone' }]);
     await expect(backend.remove('workspace-t1')).resolves.toBeUndefined();
     expect((await calls())[0]?.args.slice(0, 3)).toEqual(['delete', 'pod', 'workspace-t1']);
+  });
+
+  it('remove also deletes the pod’s Secret, idempotently, even when the pod delete failed', async () => {
+    await setPlan([{ code: 1, match: 'delete pod', stderr: 'forbidden' }]);
+    await backend.remove(backend.attach('workspace-t1'));
+    const [pod, secret] = await calls();
+    expect(pod?.args.slice(0, 3)).toEqual(['delete', 'pod', 'workspace-t1']);
+    expect(secret?.args).toEqual(
+      expect.arrayContaining(['delete', 'secret', 'workspace-t1-env', '--ignore-not-found'])
+    );
   });
 });
 

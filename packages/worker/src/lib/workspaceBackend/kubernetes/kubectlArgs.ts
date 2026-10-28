@@ -96,6 +96,23 @@ export function deletePodArgs(ref: PodRef): string[] {
   ];
 }
 
+/** `kubectl create` of one manifest read from stdin; the manifest is never an argument. */
+export function createFromStdinArgs(namespace: string): string[] {
+  return ['create', '--namespace', namespace, '-f', '-'];
+}
+
+/** `createFromStdinArgs` printing only the new UID, for the pod's Secret to name as owner. */
+export function createPodArgs(namespace: string, printUid: boolean): string[] {
+  return [
+    ...createFromStdinArgs(namespace),
+    ...(printUid ? ['-o', 'jsonpath={.metadata.uid}'] : []),
+  ];
+}
+
+export function deleteSecretArgs(namespace: string, secret: string): string[] {
+  return ['delete', 'secret', secret, '--namespace', namespace, '--ignore-not-found'];
+}
+
 /** Waits until the pod is Ready; it has no probes, so that means its container is running. */
 export function waitRunningArgs(ref: PodRef, timeoutSec: number): string[] {
   return [

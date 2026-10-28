@@ -82,3 +82,32 @@ export function registryWorkspaceEnv(
   env.push(`YARN_NPM_AUTH_TOKEN=${token}`, 'YARN_NPM_ALWAYS_AUTH=true');
   return env;
 }
+
+/** Registry env entries whose value is the proxy token. */
+const TOKEN_ENV_NAMES = new Set(['COREPACK_NPM_TOKEN', 'YARN_NPM_AUTH_TOKEN']);
+
+/**
+ * {@link registryWorkspaceEnv} divided into what is safe on any object that
+ * describes the workspace and the token-bearing entries, which belong in
+ * `WorkspaceContainerSpec.secretEnv`. Corepack and Yarn Berry read the token
+ * from the environment only (the npmrc written into the workspace serves npm,
+ * pnpm and Yarn classic), and they run in the agent's own commands, so it has
+ * to be in the container's environment, not injected per exec.
+ */
+export function splitRegistryWorkspaceEnv(env: string[]): {
+  env: string[];
+  secretEnv: Record<string, string>;
+} {
+  const plain: string[] = [];
+  const secretEnv: Record<string, string> = {};
+  for (const pair of env) {
+    const eq = pair.indexOf('=');
+    const name = eq > 0 ? pair.slice(0, eq) : '';
+    if (TOKEN_ENV_NAMES.has(name)) {
+      secretEnv[name] = pair.slice(eq + 1);
+    } else {
+      plain.push(pair);
+    }
+  }
+  return { env: plain, secretEnv };
+}

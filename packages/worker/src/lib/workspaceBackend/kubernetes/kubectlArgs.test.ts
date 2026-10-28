@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createFromStdinArgs,
+  createPodArgs,
   deletePodArgs,
+  deleteSecretArgs,
   execArgs,
   execPrefix,
   secretStdinPreamble,
@@ -107,5 +110,24 @@ describe('pod lifecycle argv', () => {
   it('execPrefix marks interactivity', () => {
     expect(execPrefix(ref, true)[1]).toBe('-i');
     expect(execPrefix(ref, false)).not.toContain('-i');
+  });
+});
+
+describe('secret and pod lifecycle args', () => {
+  it('creates from stdin, printing the pod uid only when asked', () => {
+    expect(createFromStdinArgs('ns')).toEqual(['create', '--namespace', 'ns', '-f', '-']);
+    expect(createPodArgs('ns', false)).toEqual(createFromStdinArgs('ns'));
+    expect(createPodArgs('ns', true).slice(-2)).toEqual(['-o', 'jsonpath={.metadata.uid}']);
+  });
+
+  it('deletes a secret by name and tolerates a missing one', () => {
+    expect(deleteSecretArgs('ns', 'p-env')).toEqual([
+      'delete',
+      'secret',
+      'p-env',
+      '--namespace',
+      'ns',
+      '--ignore-not-found',
+    ]);
   });
 });

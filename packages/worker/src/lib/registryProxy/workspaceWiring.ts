@@ -16,7 +16,12 @@ import { resolvePackageRegistries } from '@auto-swe/shared/lib/packageRegistry';
 import { logWarn } from '../activityLog.js';
 import { shellQuote } from '../shellQuote.js';
 
-export { registryWorkspaceEnv, renderNpmrc, renderYarnrc } from './render.js';
+export {
+  registryWorkspaceEnv,
+  renderNpmrc,
+  renderYarnrc,
+  splitRegistryWorkspaceEnv,
+} from './render.js';
 
 import type { RegistryRegistration, ResolvedRegistry } from './index.js';
 import { workerRegistryProxy } from './index.js';

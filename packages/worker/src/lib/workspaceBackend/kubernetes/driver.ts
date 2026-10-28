@@ -15,6 +15,7 @@ import {
   spawnToFileCapped,
   spawnWithStdinAsync,
 } from '../../execUtils.js';
+import { redactExecError } from '../../redactToken.js';
 import { shellQuote } from '../../shellQuote.js';
 import { keeperPidProbeScript } from '../docker.js';
 import type {
@@ -28,7 +29,10 @@ import type {
   WorkspaceSpawnOptions,
 } from '../types.js';
 import {
+  createFromStdinArgs,
+  createPodArgs,
   deletePodArgs,
+  deleteSecretArgs,
   execArgs,
   execPrefix,
   type PodRef,
@@ -36,7 +40,12 @@ import {
   tarOutArgs,
   waitRunningArgs,
 } from './kubectlArgs.js';
-import { buildWorkspacePod } from './podSpec.js';
+import {
+  buildWorkspacePod,
+  buildWorkspaceSecret,
+  hasWorkspaceSecret,
+  workspaceSecretName,
+} from './podSpec.js';
 import { assertSafeArchive } from './safeTar.js';
 
 /** `kubectl exec` prints this after a command that exited non-zero; it is noise, not the command's stderr. */
@@ -56,6 +65,14 @@ function unsupported(what: string): Promise<never> {
   return Promise.reject(
     ApplicationFailure.nonRetryable(`${what} ${UNSUPPORTED}`, 'WORKSPACE_BACKEND_UNSUPPORTED')
   );
+}
+
+/** The pod UID goes into the Secret's owner reference, so it must look like one. */
+function assertPodUid(podName: string, uid: string): string {
+  if (!/^[0-9a-f-]{36}$/i.test(uid)) {
+    throw new Error(`workspace ${podName}: could not read the pod's uid to own its secret`);
+  }
+  return uid;
 }
 
 /** Shell-string form of a `kubectl` invocation, for the paths that redirect a file into or out of it. */
@@ -112,15 +129,95 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
 
   async create(spec: WorkspaceContainerSpec): Promise<WorkspaceHandle> {
     const config = this.config();
+    const wantsSecret = hasWorkspaceSecret(spec);
+    // A kubectl error can quote the object it refused: scrub each value and
+    // its base64 form (the Secret's `data`).
+    const values = Object.values(spec.secretEnv ?? {});
+    const scrub = [...values, ...values.map((v) => Buffer.from(v, 'utf8').toString('base64'))];
+    try {
+      // The Pod goes first: its `secretKeyRef` entries hold the container in
+      // CreateContainerConfigError, which the kubelet retries, until the Secret
+      // exists. That order lets the Secret be created already owned by the pod
+      // (its UID is only known now), which needs `create` and no `get` or
+      // `patch`. A pod whose Secret never arrives expires at its deadline.
+      // When this throws there is no pod and no Secret to clean up.
+      const uid = await this.createPod(spec, wantsSecret);
+      if (wantsSecret) {
+        try {
+          const secret = buildWorkspaceSecret(spec, config, assertPodUid(spec.name, uid));
+          if (!secret) {
+            throw new Error(`workspace ${spec.name}: no secret to create`);
+          }
+          await this.createSecret(spec.name, secret);
+        } catch (err) {
+          // remove() deletes the pod, then the Secret (whether or not it was made).
+          await this.remove(spec.name);
+          throw err;
+        }
+      }
+      try {
+        return await this.awaitReady(spec);
+      } catch (err) {
+        // The pod is the caller's to remove() by `spec.name`, which also deletes the Secret.
+        if (wantsSecret) {
+          await this.deleteSecret(spec.name);
+        }
+        throw err;
+      }
+    } catch (err) {
+      redactExecError(err, scrub);
+      throw err;
+    }
+  }
+
+  /** The manifest goes to kubectl on stdin: argv is an apiserver URL and a process-table entry. */
+  private async createSecret(podName: string, manifest: Record<string, unknown>): Promise<void> {
     const created = await spawnWithStdinAsync(
       this.kubectl,
-      ['create', '--namespace', config.namespace, '-f', '-'],
+      createFromStdinArgs(this.config().namespace),
+      JSON.stringify(manifest),
+      { heartbeatLabel: 'workspace: creating secret', timeoutMs: 60_000 }
+    );
+    if (created.exitCode !== 0) {
+      throw new Error(`workspace ${podName}: could not create its secret: ${created.stderr}`);
+    }
+  }
+
+  private async deleteSecret(podName: string): Promise<void> {
+    try {
+      const result = await spawnCaptureAsync(
+        this.kubectl,
+        deleteSecretArgs(this.config().namespace, workspaceSecretName(podName)),
+        { heartbeatLabel: 'workspace: removing secret', timeoutMs: 60_000 }
+      );
+      if (result.exitCode !== 0) {
+        logWarn('kubernetes workspace secret could not be removed', {
+          exitCode: result.exitCode,
+          stderr: result.stderr.slice(0, 500),
+        });
+      }
+    } catch {
+      /* already gone */
+    }
+  }
+
+  /** Creates the pod; returns its UID when `printUid`, else an empty string. */
+  private async createPod(spec: WorkspaceContainerSpec, printUid: boolean): Promise<string> {
+    const config = this.config();
+    const created = await spawnWithStdinAsync(
+      this.kubectl,
+      createPodArgs(config.namespace, printUid),
       JSON.stringify(buildWorkspacePod(spec, config)),
       { heartbeatLabel: 'workspace: creating pod', timeoutMs: 60_000 }
     );
     if (created.exitCode !== 0) {
       throw new Error(`workspace ${spec.name}: could not create the pod: ${created.stderr}`);
     }
+    return created.stdout.trim();
+  }
+
+  /** Waits for the pod to be Ready, then records its keeper PID. */
+  private async awaitReady(spec: WorkspaceContainerSpec): Promise<WorkspaceHandle> {
     const ref = this.ref(spec.name);
     const ready = await spawnCaptureAsync(this.kubectl, waitRunningArgs(ref, READY_TIMEOUT_SEC), {
       heartbeatLabel: 'workspace: waiting for the pod',
@@ -314,6 +411,10 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
     } catch {
       /* already gone */
     }
+    // The pod's own Secret, whether or not one was made: `--ignore-not-found`
+    // makes the common case a no-op, and a pod removed first must not leave
+    // the token behind.
+    await this.deleteSecret(typeof idOrHandle === 'string' ? idOrHandle : idOrHandle.id);
   }
 
   createVolume(_name: string): Promise<void> {

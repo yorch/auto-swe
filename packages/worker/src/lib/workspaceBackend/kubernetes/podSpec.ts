@@ -11,6 +11,13 @@ export const WORKSPACE_MOUNT = '/workspace';
 export const WORKSPACE_ROLE_LABEL = 'asw/role';
 export const MANAGED_BY_LABEL = 'app.kubernetes.io/managed-by';
 
+/** Marks the per-pod `Secret` that carries `secretEnv`, so a sweep can select orphans. */
+export const WORKSPACE_SECRET_ROLE = 'workspace-env';
+/** On the Secret: the pod it belongs to. */
+export const WORKSPACE_POD_LABEL = 'asw/workspace';
+
+const SECRET_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
 const MEMORY_UNITS: Record<string, number> = { '': 1, b: 1, g: 1024 ** 3, k: 1024, m: 1024 ** 2 };
 
 /**
@@ -25,15 +32,98 @@ export function dockerMemoryBytes(memory: string): number {
   return Number(match[1]) * (MEMORY_UNITS[(match[2] ?? '').toLowerCase()] ?? 1);
 }
 
-/** `NAME=value` pairs as Kubernetes `env` entries. */
-function envEntries(pairs: string[] | undefined): { name: string; value: string }[] {
-  return (pairs ?? []).map((pair) => {
+/** The `Secret` holding one pod's `secretEnv`; deterministic, so `remove()` can find it. */
+export function workspaceSecretName(podName: string): string {
+  return `${podName}-env`;
+}
+
+type EnvEntry =
+  | { name: string; value: string }
+  | { name: string; valueFrom: { secretKeyRef: { key: string; name: string; optional: false } } };
+
+/**
+ * `NAME=value` pairs as Kubernetes `env` entries, then one `secretKeyRef` entry
+ * per `secretEnv` name. The secret *values* are never read here: the Pod names
+ * the key and nothing else, so no rendering of the Pod can contain one.
+ */
+function envEntries(spec: WorkspaceContainerSpec): EnvEntry[] {
+  const plain = (spec.env ?? []).map((pair) => {
     const eq = pair.indexOf('=');
     if (eq <= 0) {
       throw new Error(`invalid environment entry (expected NAME=value): ${pair.slice(0, 40)}`);
     }
     return { name: pair.slice(0, eq), value: pair.slice(eq + 1) };
   });
+  const secretNames = secretEnvNames(spec);
+  const clash = plain.find((e) => secretNames.includes(e.name));
+  if (clash) {
+    throw new Error(`environment variable ${clash.name} is both plain and secret`);
+  }
+  const secretName = workspaceSecretName(spec.name);
+  return [
+    ...plain,
+    ...secretNames.map((name) => ({
+      name,
+      valueFrom: { secretKeyRef: { key: name, name: secretName, optional: false as const } },
+    })),
+  ];
+}
+
+/** The validated names of a spec's `secretEnv`, in a stable order. */
+function secretEnvNames(spec: WorkspaceContainerSpec): string[] {
+  const names = Object.keys(spec.secretEnv ?? {}).sort();
+  for (const name of names) {
+    if (!SECRET_KEY_RE.test(name)) {
+      throw new Error(`invalid secret environment name: ${JSON.stringify(name)}`);
+    }
+  }
+  return names;
+}
+
+/** Whether `spec.secretEnv` names anything, so the pod needs a Secret. Validates the names. */
+export function hasWorkspaceSecret(spec: WorkspaceContainerSpec): boolean {
+  return secretEnvNames(spec).length > 0;
+}
+
+/**
+ * The per-pod `Secret` for `spec.secretEnv`, or null when there is none. It is
+ * the only object that carries the values (base64 in `data`, which is encoding,
+ * not protection), and it must reach `kubectl` on stdin, never in argv.
+ *
+ * It is owned by the pod from the moment it exists (`podUid` is the already
+ * created pod's), so Kubernetes garbage-collects it with the pod. The owner
+ * reference has no `controller` or `blockOwnerDeletion`: those would need
+ * `update` on `pods/finalizers` where owner-reference permission enforcement
+ * is on, and nothing here needs the pod to wait for the Secret.
+ */
+export function buildWorkspaceSecret(
+  spec: WorkspaceContainerSpec,
+  config: KubernetesWorkspaceConfig,
+  podUid: string
+): Record<string, unknown> | null {
+  const names = secretEnvNames(spec);
+  if (names.length === 0) {
+    return null;
+  }
+  const secrets = spec.secretEnv ?? {};
+  return {
+    apiVersion: 'v1',
+    data: Object.fromEntries(
+      names.map((name) => [name, Buffer.from(secrets[name] ?? '', 'utf8').toString('base64')])
+    ),
+    kind: 'Secret',
+    metadata: {
+      labels: {
+        [MANAGED_BY_LABEL]: 'auto-swe',
+        [WORKSPACE_POD_LABEL]: spec.name,
+        [WORKSPACE_ROLE_LABEL]: WORKSPACE_SECRET_ROLE,
+      },
+      name: workspaceSecretName(spec.name),
+      namespace: config.namespace,
+      ownerReferences: [{ apiVersion: 'v1', kind: 'Pod', name: spec.name, uid: podUid }],
+    },
+    type: 'Opaque',
+  };
 }
 
 /**
@@ -82,7 +172,7 @@ export function buildWorkspacePod(
       containers: [
         {
           command: ['sleep', 'infinity'],
-          env: envEntries(spec.env),
+          env: envEntries(spec),
           image: spec.image,
           name: WORKSPACE_CONTAINER,
           resources: { limits: resources, requests: resources },
