@@ -5,7 +5,7 @@ FROM docker:29-cli@sha256:6fae2214c3121a28d5aa639d09032f61310b7c9c75ffbad1025f26
 # kubectl, for WORKSPACE_BACKEND=kubernetes (the worker runs `kubectl exec` into workspace pods). Same
 # named-stage trick so Dependabot tracks the tag; the official image is distroless, so only the binary is
 # taken. A client within one minor of the API server is supported, which covers managed clusters either side.
-FROM registry.k8s.io/kubectl:v1.36.5@sha256:0667e3f3e6ef435d7cd4c16684244703ebd67314c17511c2a9f87ea44f6cdf6b AS kubectlcli
+FROM registry.k8s.io/kubectl:v1.37.2@sha256:fe049faa65ae483ac200009a949a68fa4c9985daea12c9cb1195c9c7965301fc AS kubectlcli
 
 # ── Stage 1: Build ──
 FROM node:26-alpine@sha256:143494b1da2945f061539253adc65e4f1569ddf07da2d384c022c791a9d90a4a AS builder
