@@ -242,7 +242,11 @@ export function detectedTargetDir(detected: unknown): string {
   return t !== null && t !== 'ambiguous' ? t.dir : '';
 }
 
-/** `cd '<dir>' && <command>` for a component; the command unchanged at the root. Dir is pre-validated. */
+/**
+ * `cd '<dir>' && <command>` for a component; the command unchanged at the root. The directory
+ * is pre-validated. The result is for a shell of its own, as every gate and the test loop get:
+ * chained in one shell, the first `cd` would move the second command's starting point.
+ */
 export function inDir(dir: string, command: string): string {
   return dir === '' ? command : `cd '${dir}' && ${command}`;
 }

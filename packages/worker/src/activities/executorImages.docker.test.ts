@@ -19,7 +19,11 @@
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { stackGateDefaults } from '@auto-swe/shared/lib/stackDetection';
+import {
+  detectedGateDefaults,
+  detectStack,
+  stackGateDefaults,
+} from '@auto-swe/shared/lib/stackDetection';
 import { beforeAll, describe, expect, it } from 'vitest';
 
 const enabled = process.env.EXECUTOR_IMAGES_DOCKER_TEST === '1';
@@ -119,6 +123,32 @@ describe.skipIf(!enabled)('curated executor images', () => {
       }, 120_000);
     });
   }
+
+  it.skipIf(!STACKS.includes('go'))(
+    'go: the commands for a repository whose only component is a subdirectory run in it',
+    async () => {
+      const gates = detectedGateDefaults(detectStack(['README.md', 'services/api-v2/go.mod']));
+      expect(gates?.runTests).toBe("cd 'services/api-v2' && go test ./...");
+      const script = [
+        'set -e',
+        'mkdir -p /workspace/target-repo/services/api-v2',
+        'cd /workspace/target-repo/services/api-v2',
+        'printf "module example.test/y\\n\\ngo 1.22\\n" > go.mod',
+        'printf "package y\\n\\nimport \\"testing\\"\\n\\nfunc TestY(t *testing.T) {}\\n" > y_test.go',
+        // Each gate runs from the repository root in its own `sh -c`, as the workspace runs it;
+        // a subshell each keeps one command's `cd` from leaking into the next.
+        'cd /workspace/target-repo',
+        `(${gates?.runBuild}) && (${gates?.runLint}) && (${gates?.runTests})`,
+      ].join(' && ');
+      const r = await run('go', script);
+      expect(r.code, r.out).toBe(0);
+      expect(r.out).toMatch(/ok\s+example\.test\/y/);
+      // A directory that is not there fails the gate instead of passing it.
+      const gone = await run('go', `cd /workspace/target-repo && ${gates?.runTests}`);
+      expect(gone.code).not.toBe(0);
+    },
+    300_000
+  );
 
   it.skipIf(!STACKS.includes('go'))(
     'go: the stack’s own gate commands build, vet and test a module, as the executor user',
