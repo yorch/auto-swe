@@ -2174,6 +2174,10 @@ model EvalCase {
   baselineSha   String      @map("baseline_sha")
   /// In-scope golden test command/set used as the execution floor.
   goldenTest    String      @map("golden_test")
+  /// Toolchain the case runs on: 'node' | 'python' | 'jvm' | 'go'; null is node (the image every
+  /// case ran on before this column). The worker maps it to a pinned base image
+  /// (`evalWorkspaceImageFor`) — a case names a toolchain, never an image.
+  stack         String?
   /// Optional golden diff / expected output.
   reference     Json?
   /// Stratification tags, e.g. 'repo:x', 'capability:y' (RFC §9 coverage).

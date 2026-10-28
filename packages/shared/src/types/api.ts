@@ -1168,6 +1168,8 @@ export interface EvalCaseDto {
   repoUrl: string;
   baselineSha: string;
   goldenTest: string;
+  /** The toolchain the case runs on; null/absent is node. */
+  stack?: 'node' | 'python' | 'jvm' | 'go' | null;
   reference: unknown;
   tags: string[];
   flakeScreened: boolean;

@@ -20,7 +20,7 @@ import {
   revalidateDataset,
   runCaseReference,
 } from './evalRevalidate.js';
-import { EVAL_WORKSPACE_IMAGE } from './evalWorkspaceImage.js';
+import { EVAL_WORKSPACE_IMAGE, evalWorkspaceImageFor } from './evalWorkspaceImage.js';
 import type { GateResult } from './qualityGates.js';
 
 const c = (over: Partial<RevalCaseRow>): RevalCaseRow => ({
@@ -122,6 +122,14 @@ describe('defaultSetQuarantined', () => {
 });
 
 describe('runCaseReference', () => {
+  it('runs a case on the pinned image of the stack it names', async () => {
+    await runCaseReference(c({ goldenTest: 'go test ./...', stack: 'go' }));
+    expect(runGateStandalone).toHaveBeenCalledWith(
+      expect.objectContaining({ image: evalWorkspaceImageFor('go') })
+    );
+    expect(evalWorkspaceImageFor('go')).toMatch(/^golang:.*@sha256:/);
+  });
+
   it('runs the golden test at the pinned SHA in the image the harness scores in', async () => {
     await runCaseReference(c({ baselineSha: 'abc', goldenTest: 'yarn test x', repoUrl: 'r1' }));
     expect(runGateStandalone).toHaveBeenCalledWith(

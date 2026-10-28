@@ -15,7 +15,7 @@
 
 import { prisma } from '@auto-swe/shared/db';
 import type { EvalCaseRow } from './evalHarness.js';
-import { EVAL_WORKSPACE_IMAGE } from './evalWorkspaceImage.js';
+import { evalWorkspaceImageFor } from './evalWorkspaceImage.js';
 import type { GateResult } from './qualityGates.js';
 import { runGateStandalone } from './standaloneGateRunner.js';
 
@@ -72,6 +72,7 @@ async function defaultLoadCases(datasetId: string): Promise<RevalCaseRow[]> {
       input: true,
       quarantined: true,
       repoUrl: true,
+      stack: true,
       tags: true,
     },
     where: { datasetId },
@@ -92,7 +93,7 @@ export function runCaseReference(c: EvalCaseRow): Promise<GateResult> {
     command: c.goldenTest,
     defaultBranch: 'main',
     gate: 'runTests',
-    image: EVAL_WORKSPACE_IMAGE,
+    image: evalWorkspaceImageFor(c.stack),
     teamId: c.teamId,
   });
 }

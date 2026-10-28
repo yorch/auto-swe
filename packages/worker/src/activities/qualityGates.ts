@@ -22,7 +22,6 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
 import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
-import { detectedGateDefaults } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { activityInfo, heartbeat } from '@temporalio/activity';
@@ -39,6 +38,7 @@ import { throwIfActivityCancelled } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
+import { DEFAULT_COMMANDS, gateCommandFor } from './gateCommand.js';
 import { runImplementerFixSession } from './implementerSession.js';
 import {
   createWorkspace,
@@ -92,15 +92,7 @@ export interface GateResult {
   gateName?: GateName;
 }
 
-export const DEFAULT_COMMANDS: Record<GateName, string | null> = {
-  runBuild: 'yarn build',
-  runLint: 'yarn lint',
-  // runPerfBench has no sensible default: the operator supplies one.
-  runPerfBench: null,
-  runTests: 'yarn test',
-  runTypecheck: 'yarn typecheck',
-  runVulnScan: 'yarn npm audit --severity high',
-};
+export { DEFAULT_COMMANDS };
 
 type TrustedKnowledgeEvidenceWriter = {
   createMany(args: {
@@ -194,27 +186,7 @@ export async function resolveCommand(
     select: { detectedStack: true, gateCommands: true },
     where: { id: requireRepoId(request, 'qualityGate') },
   });
-  const repoOverrides = (repo.gateCommands ?? null) as Record<string, string> | null;
-  // Whitespace-only counts as absent, like the step override above: a command
-  // that runs nothing must not read as a gate that ran and passed.
-  if (
-    repoOverrides &&
-    typeof repoOverrides[gate] === 'string' &&
-    repoOverrides[gate].trim().length > 0
-  ) {
-    return repoOverrides[gate];
-  }
-
-  // A repository whose root is a non-Node stack gets that stack's command, or
-  // none: the built-in `yarn` commands below belong to Node, and running one in a
-  // Python or JVM workspace exits 127 and reads as broken code. A gate the stack
-  // has no unambiguous command for resolves to null — reported as unconfigured.
-  const stackDefaults = detectedGateDefaults(repo.detectedStack);
-  if (stackDefaults) {
-    return stackDefaults[gate] ?? null;
-  }
-
-  return DEFAULT_COMMANDS[gate];
+  return gateCommandFor(gate, override, repo);
 }
 
 /**

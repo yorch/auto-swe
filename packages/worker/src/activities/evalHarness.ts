@@ -40,7 +40,7 @@ import { type PairedOutcome, regressionVerdict } from '../lib/evalStats.js';
 import { recordRunFinalized } from '../lib/metrics.js';
 import { withRunlessCapScale } from '../lib/runlessBudget.js';
 import { ownerOfDataset, withSpendOwner } from '../lib/spendOwner.js';
-import { EVAL_WORKSPACE_IMAGE } from './evalWorkspaceImage.js';
+import { evalWorkspaceImageFor } from './evalWorkspaceImage.js';
 import { createWorkspace, type Workspace } from './workspace.js';
 
 export interface EvalCaseRow {
@@ -48,6 +48,8 @@ export interface EvalCaseRow {
   repoUrl: string;
   baselineSha: string;
   goldenTest: string;
+  /** The toolchain the case runs on (`EvalCase.stack`); absent or null is node. */
+  stack?: string | null;
   tags: string[];
   input: unknown; // EvalCase.input (Json) — task/prompt payload for the implementer
   /** The owning dataset's team; null for a GLOBAL dataset. */
@@ -132,6 +134,7 @@ async function defaultLoadCases(datasetId: string): Promise<HarnessCaseRow[]> {
         id: true,
         input: true,
         repoUrl: true,
+        stack: true,
         tags: true,
       },
       where: { datasetId, quarantined: false },
@@ -250,7 +253,7 @@ export async function runCaseDefault(
       caseRow.repoUrl,
       'eval-candidate',
       'main',
-      EVAL_WORKSPACE_IMAGE,
+      evalWorkspaceImageFor(caseRow.stack),
       caseRow.baselineSha,
       undefined,
       { teamId: scope.teamId ?? caseRow.teamId ?? null }
