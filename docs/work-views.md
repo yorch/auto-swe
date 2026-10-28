@@ -200,6 +200,17 @@ step in such a run posts nothing and returns `posted: false` with a reason. A Ch
 turn files no request of its own, so there is nothing to flag. The Slack merge note and
 the merge evaluation row do not depend on the tracker and still run.
 
+On the GitHub tracker every write — a `postTicketComment` comment, and the syncs above, which post
+comments, post the pull-request link as a comment and close the issue when the run completes — goes
+only to a repository the run targets, on the host the tracker writes to. A GitHub ticket id
+(`owner/repo#123`) names its own repository and is supplied by whoever launched the run, so the id
+is checked first against the run's repositories: its connection when that is a git repository, and
+the git repositories its launch was authorized against (`knowledgeRepoSources`). Owner and
+repository compare case-insensitively; the host is the tracker's base URL (`api.github.com` when it
+has none) against the repository's API and web URLs (the instance's GitHub URL when it has none),
+with `github.com` and `api.github.com` one host. A write that fails the check is skipped and logged
+with a fixed line; Jira and Linear ids name no repository and are not checked.
+
 **Visibility is per row.** A request is in scope when the caller requested it, when the caller can
 see one of its runs (`buildWorkflowRunVisibilityFilter`, the rule `GET /workflow-runs/requests`
 lists by), or when the caller reaches a repository it has a ledger row on or targets. Within a
@@ -248,10 +259,10 @@ http(s) address.
 
 ## Limitations
 
-- With the GitHub tracker, a `postTicketComment` step posts only to a repository the run targets
-  (its connection and the repositories its launch was authorized against). The tracker has no
-  configured default repository, so a ticket id naming any other repository, or a bare issue
-  number, gets `posted: false`. The tracker syncs are not held to this check.
+- With the GitHub tracker, comments, pull-request links and issue closes go only to a repository
+  the run targets, on the tracker's host. The tracker has no configured default repository, so a
+  ticket id naming any other repository, a repository on another host, or a bare issue number gets
+  no write: `postTicketComment` returns `posted: false`, and the sync is skipped.
 - Outcomes group PRs by the time they were opened and judge them as of now, so a recent cohort
   under-reports merges that have not happened yet and its merge rate rises as its PRs resolve.
 - An outcomes read takes at most 10,000 PRs; beyond that the figures cover only the newest ones
