@@ -1800,7 +1800,7 @@ describe('finalizeWorkflowRun', () => {
     await finalizeRun('run-w', 'SUCCESS', undefined, 'worker');
     expect(tracker).toHaveBeenCalledWith(
       { issueId: 'acme/web#1', type: 'workflow_completed' },
-      expect.anything(),
+      null, // no tracker is configured in this suite; `anything()` never matches null
       expect.objectContaining({ runInputId: 'wr-9' })
     );
     findRun.mockReset();
