@@ -73,6 +73,13 @@ export const PRE_TOOL_USE_TIMEOUT_S = 120;
  */
 const SDK_ENV_NAME = /^CLAUDE_(?:CODE|AGENT_SDK)_[A-Z0-9_]+$/;
 
+/**
+ * A name that carries a credential, so `sdkEnvPairs` never forwards it: an exec
+ * `env` pair is part of the kubectl command and its audit log. Name-based only;
+ * `TOKEN(?!S)` keeps `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, a count, forwarded.
+ */
+const SDK_CREDENTIAL_NAME = /TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API_?KEY|AUTH|CREDENTIAL/i;
+
 const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 
 /** How long reading a turn's session-file delta may take before it is given up. */
@@ -269,7 +276,12 @@ async function prepareContainer(workspace: Workspace): Promise<void> {
 export function sdkEnvPairs(env: Record<string, string | undefined>): string[] {
   const pairs: string[] = [];
   for (const [name, value] of Object.entries(env)) {
-    if (value !== undefined && SDK_ENV_NAME.test(name) && process.env[name] !== value) {
+    if (
+      value !== undefined &&
+      SDK_ENV_NAME.test(name) &&
+      !SDK_CREDENTIAL_NAME.test(name) &&
+      process.env[name] !== value
+    ) {
       pairs.push(`${name}=${value}`);
     }
   }

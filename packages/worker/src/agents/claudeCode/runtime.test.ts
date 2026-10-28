@@ -471,6 +471,35 @@ describe('what the harness is started with', () => {
     }
   });
 
+  it('never forwards a credential the SDK set or changed, but still forwards the switches', () => {
+    const credentials = ['CLAUDE_CODE_OAUTH_TOKEN', 'CLAUDE_CODE_API_KEY', 'CLAUDE_AGENT_SDK_AUTH'];
+    const previous = Object.fromEntries(credentials.map((n) => [n, process.env[n]]));
+    for (const n of credentials) {
+      process.env[n] = 'worker-value';
+    }
+    try {
+      const pairs = sdkEnvPairs({
+        CLAUDE_AGENT_SDK_AUTH: 'sdk-auth', // changed by the SDK
+        CLAUDE_CODE_API_KEY: 'sdk-api-key', // changed by the SDK
+        CLAUDE_CODE_ENTRYPOINT: 'test-entrypoint',
+        CLAUDE_CODE_MAX_OUTPUT_TOKENS: '31999', // a count, not a credential
+        CLAUDE_CODE_OAUTH_TOKEN: 'sdk-token', // changed by the SDK
+      });
+      expect(pairs.sort()).toEqual([
+        'CLAUDE_CODE_ENTRYPOINT=test-entrypoint',
+        'CLAUDE_CODE_MAX_OUTPUT_TOKENS=31999',
+      ]);
+    } finally {
+      for (const [n, value] of Object.entries(previous)) {
+        if (value === undefined) {
+          delete process.env[n];
+        } else {
+          process.env[n] = value;
+        }
+      }
+    }
+  });
+
   it('drains the harness’s stderr and reports its tail when the run ends without a result', async () => {
     const ctx = setup();
     let release: () => void = () => {};
