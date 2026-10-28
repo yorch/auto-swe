@@ -206,6 +206,8 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
   spawn(h: WorkspaceHandle, argv: string[], opts: WorkspaceSpawnOptions) {
     const secrets = opts.secretEnv ?? {};
     const hasSecrets = Object.keys(secrets).length > 0;
+    // Built before kubectl starts: a refused value must not leave a client waiting on stdin.
+    const preamble = hasSecrets ? secretStdinPreamble(secrets) : '';
     const args = execArgs(this.ref(h), argv, {
       env: opts.env,
       interactive: opts.stdin,
@@ -221,7 +223,7 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
     if (hasSecrets && child.stdin) {
       // A kubectl that dies early closes the pipe; that is the exit event's to report.
       child.stdin.on('error', () => undefined);
-      child.stdin.write(secretStdinPreamble(secrets));
+      child.stdin.write(preamble);
       if (!opts.stdin) {
         child.stdin.end();
       }

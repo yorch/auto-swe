@@ -230,6 +230,16 @@ describe('spawn', () => {
     expect((await calls())[0]?.stdin).toBe('K=v\n\n');
   });
 
+  it('refuses an undeliverable secret before kubectl starts', async () => {
+    expect(() =>
+      backend.spawn(backend.attach('p'), ['x'], {
+        secretEnv: { K: '' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    ).toThrow(/cannot be delivered/);
+    expect(await calls()).toHaveLength(0);
+  });
+
   it('uses the plain wrapper, with no stdin, when there are no secrets', async () => {
     const child = backend.spawn(backend.attach('p'), ['x'], {
       stdio: ['ignore', 'pipe', 'pipe'],
