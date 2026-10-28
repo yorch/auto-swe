@@ -51,7 +51,11 @@ import {
   redactToken,
 } from '../lib/redactToken.js';
 import { workerRegistryProxy } from '../lib/registryProxy/index.js';
-import { renderNpmrc, renderYarnrc } from '../lib/registryProxy/render.js';
+import {
+  renderNpmrc,
+  renderYarnrc,
+  splitRegistryWorkspaceEnv,
+} from '../lib/registryProxy/render.js';
 import {
   beginWorkspaceRegistries,
   buildRegistryAllowlist,
@@ -166,15 +170,22 @@ async function runHelper(
     }
     return res.stdout;
   } catch (err) {
-    // The clone runs with the token embedded in the URL (see `loadRepoMeta`),
-    // so a failure could leak it into Temporal history without this.
-    redactExecError(err, [tokenForRedact]);
+    // A failure could echo the token (or the header that encodes it) into
+    // Temporal history; neither is on the command line, but git may print them.
+    const secrets = Object.values(secretEnv ?? {});
+    const headerBase64 = secrets
+      .filter((v) => v.startsWith('AUTHORIZATION: basic '))
+      .map((v) => v.slice(v.lastIndexOf(' ') + 1));
+    redactExecError(err, [tokenForRedact, ...secrets, ...headerBase64]);
     throw err;
   }
 }
 
 interface RepoMeta {
-  /** Credential-embedded clone URL from ScmProvider.cloneCredentials. */
+  /**
+   * Credential-embedded clone URL from ScmProvider.cloneCredentials. Never placed in a
+   * command: the clone uses `cleanUrl` and sends the credential as `gitAuthHeader`.
+   */
   cloneUrl: string;
   /**
    * `cloneUrl` with the credential stripped — what `origin` is reset to right
@@ -258,23 +269,31 @@ async function cloneIntoVolume(
 ): Promise<void> {
   // Every interpolated value stays `shellQuote`d — this string is the
   // injection boundary for the branch name and the remote URL.
+  // The clone uses the CLEAN url and the credential is injected per call through
+  // `http.extraheader`, read from the environment (`gitWithAuthHeader` +
+  // `gitAuthSecretEnv`), so no token is in the script or on the helper's command
+  // line. `--` ends option parsing so a URL beginning with a dash is not a flag.
+  const authed = Boolean(meta.gitAuthHeader);
   // When registry wiring applies the allowlist is built from the base branch,
-  // which the shallow clone never fetched — fetch it before the origin scrub,
-  // while the URL still carries the credential.
+  // which the shallow clone never fetched — fetch it before the origin scrub.
+  // Origin is the clean URL, so this fetch authenticates the same way.
   const fetchBase = forRegistry
-    ? `git fetch --depth=50 origin ${shellQuote(meta.defaultBranch)}:${shellQuote(`refs/remotes/origin/${meta.defaultBranch}`)} && `
+    ? `${gitWithAuthHeader(`fetch --depth=50 origin ${shellQuote(meta.defaultBranch)}:${shellQuote(`refs/remotes/origin/${meta.defaultBranch}`)}`, authed)} && `
     : '';
   // Repo-local, so the author command's own commits carry the resolved identity. `--` ends
   // option parsing: the `git.*` settings allow a name that starts with a dash.
   const identityConfig = gitIdentityEntries(identity)
     .map(([key, value]) => `git config -- ${key} ${shellQuote(value)}`)
     .join(' && ');
+  const cloneSecretEnv = gitAuthSecretEnv(meta.gitAuthHeader);
   const tryClone = (refspec: string): Promise<string> =>
     runHelper(
-      `git clone --depth=50 -b ${shellQuote(refspec)} ${shellQuote(meta.cloneUrl)} /workspace/repo && cd /workspace/repo && ${fetchBase}git remote set-url origin ${shellQuote(meta.cleanUrl)} && ${identityConfig}`,
+      `${gitWithAuthHeader(`clone --depth=50 -b ${shellQuote(refspec)} -- ${shellQuote(meta.cleanUrl)} /workspace/repo`, authed)} && cd /workspace/repo && ${fetchBase}git remote set-url origin ${shellQuote(meta.cleanUrl)} && ${identityConfig}`,
       volumeName,
       image,
-      meta.token
+      meta.token,
+      undefined,
+      cloneSecretEnv
     );
   try {
     await tryClone(branch);
@@ -493,9 +512,8 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
         // container's command line, so the author command cannot read it from
         // /proc. `secretEnv` keeps this write off the docker client's arguments
         // (`-e NAME`, the value in the client's environment): it is the
-        // per-step proxy token. The author container's own env (below) still
-        // carries the same token as COREPACK_NPM_TOKEN / YARN_NPM_AUTH_TOKEN
-        // in plain `-e NAME=value` pairs; see Limitations in docs/architecture.md.
+        // per-step proxy token. The author container's copy of the token
+        // (COREPACK_NPM_TOKEN / YARN_NPM_AUTH_TOKEN) travels the same way.
         const writeRes = await backend.runHelper(
           {
             argv: [
@@ -524,6 +542,9 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
       }
 
       heartbeat('shell-step: running command');
+      // The proxy token (COREPACK_NPM_TOKEN, YARN_NPM_AUTH_TOKEN) travels as
+      // `secretEnv`, so it is on no `docker run` argument.
+      const registryEnv = splitRegistryWorkspaceEnv(registry?.env ?? []);
       const effectiveEgressAllowlist = meta.teamEgressAllowlist;
       result = await runEphemeralContainer({
         command: input.command,
@@ -534,7 +555,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
               env: {
                 HOME: '/workspace/.auto-swe/home',
                 ...Object.fromEntries(
-                  registry.env
+                  registryEnv.env
                     .filter((e) => !e.startsWith('NPM_CONFIG_USERCONFIG='))
                     .map((e) => {
                       const i = e.indexOf('=');
@@ -544,6 +565,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
                 NPM_CONFIG_USERCONFIG: '/workspace/.auto-swe/home/.npmrc',
               },
               reachWorker: true,
+              secretEnv: registryEnv.secretEnv,
             }
           : {}),
         image: input.image,

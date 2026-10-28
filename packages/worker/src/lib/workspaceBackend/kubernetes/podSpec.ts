@@ -1,4 +1,5 @@
 import type { KubernetesWorkspaceConfig } from '@auto-swe/shared/lib/systemConfig';
+import { assertNoCredentialEnvPairs } from '../credentialEnv.js';
 import type { WorkspaceContainerSpec } from '../types.js';
 
 /** The container every exec targets; the pod has no other. */
@@ -47,6 +48,7 @@ type EnvEntry =
  * the key and nothing else, so no rendering of the Pod can contain one.
  */
 function envEntries(spec: WorkspaceContainerSpec): EnvEntry[] {
+  assertNoCredentialEnvPairs(spec.env, 'pod spec env');
   const plain = (spec.env ?? []).map((pair) => {
     const eq = pair.indexOf('=');
     if (eq <= 0) {

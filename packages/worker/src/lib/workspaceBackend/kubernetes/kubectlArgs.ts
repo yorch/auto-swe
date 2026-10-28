@@ -1,3 +1,4 @@
+import { assertNoCredentialEnvPairs } from '../credentialEnv.js';
 import { assertSecretEnvName } from '../secretEnvName.js';
 import { WORKSPACE_CONTAINER } from './podSpec.js';
 
@@ -48,6 +49,7 @@ export function execArgs(
   opts: { workdir?: string; env?: string[]; interactive?: boolean; secrets?: boolean }
 ): string[] {
   const env = opts.env ?? [];
+  assertNoCredentialEnvPairs(env, 'kubectl exec env');
   return [
     ...execPrefix(ref, Boolean(opts.interactive || opts.secrets)),
     'sh',

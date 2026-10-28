@@ -1177,9 +1177,12 @@ audit log — see below); and
 sit on this seam, and so does the ephemeral shell/container-step sandbox:
 - `runEphemeral` and `startDetached` run author commands. They always apply the sandbox lockdown:
   `--read-only`, a `/tmp` tmpfs, `--cap-drop=ALL`, `no-new-privileges` and a PID cap. The caller
-  only chooses the mount, env, resource caps, network mode and resolved egress hosts.
-- `runHelper` runs the shell step's own git clone and finalize containers. These are
-  platform-authored scripts, kept on a separate method so that no flag on a shared spec can drop
+  only chooses the mount, env, resource caps, network mode and resolved egress hosts. A credential
+  (the registry-proxy token) goes in the spec's `secretEnv`, which travels by name like the
+  other secret env.
+- `runHelper` runs the shell step's own git clone and finalize containers. Both
+  clone from the credential-free URL and read the git credential from `$ASW_GIT_AUTH`, supplied as
+  `secretEnv`. These are platform-authored scripts, kept on a separate method so that no flag on a shared spec can drop
   the lockdown from an author command.
 - `createVolume` and `removeVolume` manage the step volumes.
 
@@ -1278,13 +1281,6 @@ Current constraints of the system as built. Deliberate product boundaries are in
   for example after a tool-turn gap longer than the cache TTL, can reach the cap at roughly 1.6M
   raw tokens: the cap is reached above the raw rate as well as below it. A loop of uncached input
   reaches it at the raw rate.
-- **A shell step's author container still receives the registry token as `-e NAME=value`.** The
-  step's helper writes the npmrc and yarnrc through `secretEnv`, but the sandbox container's own
-  environment carries `COREPACK_NPM_TOKEN` and `YARN_NPM_AUTH_TOKEN` as plain pairs, because
-  `EphemeralContainerSpec` has no `secretEnv`. Under Docker the token is therefore visible in `ps`
-  on the worker host for the life of the step. Shell and container steps do not run under the
-  Kubernetes backend, so it never reaches an apiserver audit log. The clone in the same step also
-  passes the credential-bearing URL in the helper's argv.
 - **The Mastra implementer runtime debits once per turn.** Its usage is recorded after the turn
   ends, so one turn can pass the cap before the check fires; the harness runtimes debit each model
   call as they report it.
@@ -1327,17 +1323,20 @@ Current constraints of the system as built. Deliberate product boundaries are in
   sidecars need a volume shared by several containers in turn, which a pod's `emptyDir` cannot
   provide; with `WORKSPACE_BACKEND=kubernetes` they fail with a non-retryable
   `WORKSPACE_BACKEND_UNSUPPORTED` before touching anything. Run them on a Docker worker.
-- **The shell step's clone puts the token on the worker's command line.** `cloneIntoVolume` clones
-  from the credential-embedded URL (and, with registry wiring, fetches the base branch through it
-  before `origin` is scrubbed), so the token is in the `docker run` argv on the worker host and in
-  the helper container's process table for the length of the clone. Shell steps run only on a
-  Docker worker, so no Kubernetes request carries it. The shell step's finalize push, the agent
-  workspace's clone and `gitAuthed` calls, and dependency checkouts do not have this exposure.
 - **Inside a workspace the git credential is visible to the call's own process tree.** The
   in-container shell expands `$ASW_GIT_AUTH` into git's argv, and the variable is in the
   environment of every process the script starts. The stray-process sweep that opens each
   `gitAuthed` call is what keeps an agent's leftover processes from reading either; the initial
   clone and dependency checkouts have no sweep, and rely on running before the agent's first turn.
+- **A shell step's clone helper shows the git credential to the Docker host.** The helper's shell
+  expands `$ASW_GIT_AUTH` into git's argv, so the header is in that process's command line for the
+  length of the clone, visible in `ps` on the worker host. The `docker run` argument list carries
+  only the variable's name. Shell steps do not run under the Kubernetes backend.
+- **The pinned Claude Code settings file is writable by the agent.** When a provider `apiBase` may
+  carry a credential, the highest-priority settings layer is staged as a file under the harness
+  home, owned by the user the agent's shell runs as, and rewritten every turn. The URL and the key
+  are already in the harness's environment, so the file adds no new secret, but an agent that edits
+  it can change what a later read of that layer returns.
 - **A Kubernetes worker is a single replica.** The model proxy and the registry proxy keep their
   token registrations (and the registry allowlist) in the worker's memory, so a pod whose request
   reached another replica would be refused. There is no worker autoscaling until that state is

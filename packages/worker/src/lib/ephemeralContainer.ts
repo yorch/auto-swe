@@ -64,6 +64,13 @@ export interface EphemeralRunInput {
    */
   env?: Record<string, string>;
   /**
+   * Secret environment variables (name → value) for the container. Delivered as
+   * `-e NAME` with the value in the docker client's own environment, so it is on
+   * no command line (`ps`) — use it for any credential. Names follow the same
+   * rule as {@link EphemeralRunInput.env}.
+   */
+  secretEnv?: Record<string, string>;
+  /**
    * The container must reach the worker's package-registry proxy at the
    * address the deployment advertises (the driver wires the alias).
    */
@@ -172,6 +179,14 @@ function lockdownFlags(input: Omit<EphemeralRunInput, 'command'>): {
       throw new Error(`Invalid environment variable name: ${k}`);
     }
     envArgs.push('-e', `${k}=${v}`);
+  }
+  // Names only: a secret's value never goes in an argv. The live runners hand it to
+  // the driver as `EphemeralContainerSpec.secretEnv`; the argv builders below
+  // (`buildDockerArgs`, `buildSidecarDockerArgs`) are not on that path and omit it.
+  for (const k of Object.keys(input.secretEnv ?? {})) {
+    if (!ENV_KEY_RE.test(k)) {
+      throw new Error(`Invalid environment variable name: ${k}`);
+    }
   }
 
   return {
@@ -337,6 +352,9 @@ async function ephemeralSpecFromInput(
     name: containerName,
     network,
     reachWorker: input.reachWorker,
+    ...(input.secretEnv && Object.keys(input.secretEnv).length > 0
+      ? { secretEnv: input.secretEnv }
+      : {}),
     volumes: [{ source: input.workspaceMount, target: '/workspace' }],
     workdir: input.workdir ?? '/workspace',
   };

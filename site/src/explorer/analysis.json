@@ -7741,10 +7741,10 @@
       "title": "The worker decides each Claude Code tool call within the granted tools"
     },
     {
-      "anchor": "secretEnv: { ANTHROPIC_API_KEY: endpoint.apiKey },",
-      "before": 8,
+      "anchor": "ANTHROPIC_API_KEY: endpoint.apiKey,",
+      "before": 9,
       "id": "harnessKeySource",
-      "lines": 11,
+      "lines": 14,
       "path": "packages/worker/src/agents/claudeCode/runtime.ts",
       "title": "The Claude Code API key is handed to the harness process in the container"
     },
