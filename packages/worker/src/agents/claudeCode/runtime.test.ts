@@ -1538,6 +1538,34 @@ describe('Claude Code turn and session-file records', () => {
     });
   });
 
+  it('trims a capped delta back to its last newline and reports it truncated', async () => {
+    const rec = recorder();
+    const { runtime, exec } = setup({ modelProxy: null });
+    const line = `${JSON.stringify({ n: 1 })}\n`;
+    const whole = line.repeat(3);
+    // What the container's trim leaves: whole lines only, short of the cap.
+    exec.mockImplementation(async (command: string) => {
+      if (!isSessionRead(command)) {
+        return '';
+      }
+      const delta = line.repeat(2);
+      return `${FILE}\n${Buffer.byteLength(whole)}\n${Buffer.byteLength(delta)}\n${delta}`;
+    });
+    h.script.push([[init(SESSION), success('one')]]);
+
+    await runtime.runTurn({ system: 'S', user: 'U1' });
+    await rec.drain();
+
+    const script = sessionReads(exec)[0] ?? '';
+    expect(script).toContain('tail -n 1 "$t" | wc -c');
+    expect(script).toContain('head -c $((n - p)) "$t" > "$t.cut"');
+    expect(rec.addHarnessSessionFile.mock.calls[0]?.[0]).toMatchObject({
+      bytes: Buffer.byteLength(line) * 2,
+      offset: 0,
+      truncated: true,
+    });
+  });
+
   it('reads no session file when the turn is proxied', async () => {
     const rec = recorder();
     const { runtime, exec } = setup({ modelProxy: proxy() });
