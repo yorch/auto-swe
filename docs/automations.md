@@ -405,11 +405,21 @@ expires. A round stops starting automations after ten minutes and resumes where 
   engine decided it, so a replayed poll or a restart finds it and the ledger answers `duplicate`.
   The run carries the status from the search, the one the pair was recorded under. A match for
   which the search shows no status is neither acted on nor recorded.
+- **The platform's own transitions are not acted on.** The platform moves a ticket to
+  `In Progress`, `In Review` and `Done` as a run starts, opens its pull request and completes. A
+  status-change automation skips a match in one of those statuses when a run on that ticket
+  (any source, a manual launch or the transition hook) was started on the repository in the last
+  14 days, so the automation's own run does not start another. The pair is marked seen, nothing is
+  written to the ledger, the key is logged as a warning, and the poll's result counts it as a
+  platform transition. A status other than those three is never skipped by this rule.
 - **At most 50 issues a poll,** in key order (by project, then issue number). The rest wait for the
   next poll.
-- **The limits of §2 apply.** A status-change run's subject is the issue, so a transition while an
-  earlier run on the issue is open is `SUPPRESSED_IN_FLIGHT` (for up to 14 days), recorded in
-  the ledger and counted as seen. An issue the engine suppresses (the daily cap, the budget, an open
+- **The limits of §2 apply.** A status-change run's subject is the (issue, status) pair, so each
+  new status can start a run; its scope is the issue, so the cooldown counts one ticket and a
+  transition while an earlier run on the issue is open is `SUPPRESSED_IN_FLIGHT` (looking back up
+  to 14 days), recorded in the ledger and counted as seen. The in-flight check counts runs of
+  both Jira sources, so a ticket a new-issue automation is working on is not also started by a
+  status-change automation on the same repository (and the other way round). An issue the engine suppresses (the daily cap, the budget, an open
   run) is recorded in the ledger and counted as seen; a manager takes it again with **Decide
   again**. An issue is marked seen only after the engine has decided it, so a poll that stops
   between the two decides it again and the ledger answers `duplicate`.
@@ -625,9 +635,31 @@ recorded as `FAILED_TO_START` with its code.
 - **A status change counts for an issue that enters the filter too.** An issue that starts matching
   the JQL after the baseline (created, edited, or moved into scope) is in a status the automation
   has not seen it in, so it is an occurrence. Put the statuses that matter in the JQL.
-- **A second transition waits for an open run.** The run's subject is the issue, so a transition
-  while an earlier run on the same issue is open is suppressed and recorded; only **Decide again**
-  takes it afterwards.
+- **The platform's own transitions are recognised by rule, not by author.** Jira's answer to a
+  search does not say who made a transition, so the skip described in §3.2 is a rule over what the
+  platform writes (the three statuses, on a ticket with a recent run). A person's move to one of
+  those statuses on such a ticket is skipped too, so a status-change automation cannot be
+  triggered by `In Progress`, `In Review` or `Done` on a ticket the platform has worked on in the
+  last 14 days. The platform asks for a transition by name and Jira applies the workflow's own
+  target, so a workflow whose transitions land in other statuses is not recognised; keep the JQL
+  to statuses the platform does not write, since a loop is then still possible.
+- **A second run on a ticket reuses its branch.** Every run on a ticket works on
+  `<BRANCH_PREFIX>/<ticket>`, so a later status-change run starts from the default branch and
+  pushes to the name the earlier run used. If that branch still exists on the remote (the earlier
+  pull request is open and unmerged) the push is rejected as a non-fast-forward and the run
+  fails; nothing is overwritten. Two runs never work on a ticket at once (the in-flight check),
+  and a merged and deleted branch is simply created again.
+- **A new-issue and a status-change automation on one ticket.** They do not run on it at the same
+  time, but each keeps its own subject: a ticket the new-issue automation already started can
+  still be started once by the status-change automation when a transition follows the earlier run's
+  end.
+- **The seen set grows without pruning.** A status-change automation records one row in
+  `automation_seen_issues` for each (issue, status) pair it has seen, kept so a pair is never
+  acted on twice; a new-issue automation records one per issue. Nothing removes them while the
+  automation exists.
+- **An unusable status or key is skipped and logged.** A status over 100 characters, or a key of an
+  unusable shape, can never make valid facts: the pair is marked seen and the issue key is logged
+  as a warning, with no ledger row.
 - **Jira polling is not in creation order across projects.** A poll takes issues by project, then
   issue number, so with more than 50 new at once a project that sorts late waits for the next poll.
 - **Jira text is somebody else's.** The summary and description may have been written by anyone

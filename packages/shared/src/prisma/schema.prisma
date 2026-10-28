@@ -1663,7 +1663,7 @@ model Automation {
   updatedAt       DateTime          @updatedAt @map("updated_at") @db.Timestamptz
 
   fires AutomationFire[]
-  /// Present only for a polling source (`jira.filter.new_issue`).
+  /// Present only for a polling source (`jira.filter.new_issue`, `jira.filter.status_changed`).
   pollState  AutomationPollState?
   seenIssues AutomationSeenIssue[]
 
@@ -1765,7 +1765,7 @@ model AutomationFire {
   @@map("automation_fires")
 }
 
-/// What a polling automation (`jira.filter.new_issue`) remembers between polls. The gateway
+/// What a polling automation (`jira.filter.new_issue` or `jira.filter.status_changed`) remembers between polls. The gateway
 /// poller claims `leaseUntil` with a compare-and-set before it polls, so replicas never poll one
 /// automation at once; `baselinedAt` is empty until the first poll has recorded what already
 /// matched, and that poll starts no run.
@@ -1785,7 +1785,8 @@ model AutomationPollState {
   @@map("automation_poll_states")
 }
 
-/// An issue key a polling automation has already decided on (or baselined). It is kept apart from
+/// An issue key a polling automation has already decided on (or baselined); for
+/// `jira.filter.status_changed` the key is `<issue>#<status>`, one row per pair, never pruned. It is kept apart from
 /// the decision ledger on purpose: the retention sweep deletes decisions that started no run, and
 /// a key kept only there would look new again once pruned. A hand-written CHECK keeps `issueKey`
 /// lower-case, so one issue has one spelling.
