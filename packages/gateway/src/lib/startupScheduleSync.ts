@@ -70,6 +70,9 @@ export async function syncSchedulesOnceConnected(
   app.temporal
     .syncAuditActivityPruneSchedule(sweeps.auditActivityPrune)
     .catch(warn('audit activity prune'));
+  // Deletes finished runs past their (opt-in) retention. On by default, and a no-op until
+  // `workflow.runRetentionDays` is set.
+  app.temporal.syncRunHistoryPruneSchedule(sweeps.runHistoryPrune).catch(warn('run history prune'));
   // One cheap request per tracked source; it only flags. On by default.
   app.temporal.syncSkillSourceSyncSchedule(sweeps.skillSourceSync).catch(warn('skill source sync'));
   // Re-checks channel privacy and records private channels' members. Paused unless enabled:

@@ -211,6 +211,8 @@ export type { PruneAutomationDecisionsResult } from './pruneAutomationDecisions.
 export { pruneAutomationDecisions } from './pruneAutomationDecisions.js';
 export type { PruneCallbackDeliveriesResult } from './pruneCallbackDeliveries.js';
 export { pruneCallbackDeliveries } from './pruneCallbackDeliveries.js';
+export type { PruneRunHistoryResult } from './pruneRunHistory.js';
+export { pruneRunHistory } from './pruneRunHistory.js';
 export type {
   PublishOutcomeInput,
   PublishOutcomeResult,

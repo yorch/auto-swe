@@ -803,6 +803,8 @@ describe('systemConfig resolvers', () => {
       'AGENT_TRACE_ROLLUP_BACKFILL_DAYS',
       'AUDIT_ACTIVITY_PRUNE_ENABLED',
       'AUDIT_ACTIVITY_PRUNE_CRON',
+      'RUN_HISTORY_PRUNE_ENABLED',
+      'RUN_HISTORY_PRUNE_CRON',
       'SLACK_CHANNEL_SYNC_ENABLED',
       'SLACK_CHANNEL_SYNC_CRON',
       'SLACK_CHANNEL_SYNC_STALE_HOURS',
@@ -824,6 +826,7 @@ describe('systemConfig resolvers', () => {
         modelDiscovery: { cronExpression: '17 3 * * *', enabled: true },
         repoAccess: { cronExpression: '23 * * * *', enabled: false },
         repoDependency: { cronExpression: '0 4 * * *', enabled: true },
+        runHistoryPrune: { cronExpression: '17 5 * * *', enabled: true },
         runReaper: { cronExpression: '*/15 * * * *', enabled: true },
         skillSourceSync: { cronExpression: '41 5 * * *', enabled: true },
         slackChannelSync: { cronExpression: '29 * * * *', enabled: false, staleAfterHours: 6 },
@@ -854,6 +857,8 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('AGENT_TRACE_ROLLUP_BACKFILL_DAYS', '90');
       vi.stubEnv('AUDIT_ACTIVITY_PRUNE_ENABLED', 'false');
       vi.stubEnv('AUDIT_ACTIVITY_PRUNE_CRON', '8 8 * * *');
+      vi.stubEnv('RUN_HISTORY_PRUNE_ENABLED', 'false');
+      vi.stubEnv('RUN_HISTORY_PRUNE_CRON', '6 6 * * *');
       vi.stubEnv('SLACK_CHANNEL_SYNC_ENABLED', 'true');
       vi.stubEnv('SLACK_CHANNEL_SYNC_CRON', '4 */2 * * *');
       vi.stubEnv('SLACK_CHANNEL_SYNC_STALE_HOURS', '12');
@@ -867,6 +872,7 @@ describe('systemConfig resolvers', () => {
         modelDiscovery: { cronExpression: '0 5 * * 1', enabled: false },
         repoAccess: { cronExpression: '5 * * * *', enabled: true },
         repoDependency: { cronExpression: '30 2 * * 1', enabled: false },
+        runHistoryPrune: { cronExpression: '6 6 * * *', enabled: false },
         runReaper: { cronExpression: '*/5 * * * *', enabled: false },
         skillSourceSync: { cronExpression: '7 6 * * 2', enabled: false },
         slackChannelSync: { cronExpression: '4 */2 * * *', enabled: true, staleAfterHours: 12 },

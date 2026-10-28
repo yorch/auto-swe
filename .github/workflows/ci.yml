@@ -474,6 +474,15 @@ jobs:
           PINNED_SETTINGS_PG_TEST: '1'
         run: yarn test packages/worker/src/lib/config/pinnedSettings.pg.test.ts
 
+      # The run-history retention sweep deletes data: the keyset read must keep going after a
+      # batch whose every run was deleted (a cursor on a deleted row returns nothing), each keep
+      # rule must hold in real SQL, and the cascade must remove exactly its children. A mocked
+      # Prisma shows none of that.
+      - name: Run-history retention (database-backed tests)
+        env:
+          RUN_HISTORY_PG_TEST: '1'
+        run: yarn test packages/worker/src/activities/pruneRunHistory.pg.test.ts
+
       # The usage report read from the daily rollup must equal the report read from
       # the traces: the rollup sums a Float column into a Decimal one and BigInt
       # sums come back as another JavaScript type, which an in-memory stand-in

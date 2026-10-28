@@ -29,6 +29,19 @@ describe('retention settings', () => {
     expect(SETTING_DEFINITIONS[key].defaultValue).toBe(90);
   });
 
+  it('workflow.runRetentionDays is 0 (forever) or at least 30 days, GLOBAL and ADMIN only', () => {
+    const key = 'workflow.runRetentionDays';
+    for (const ok of [0, 30, 365, 3650]) {
+      expect(accepts(key, ok), String(ok)).toBe(true);
+    }
+    for (const bad of [1, 7, 29, 3651, -1, 30.5, '30', null]) {
+      expect(accepts(key, bad), String(bad)).toBe(false);
+    }
+    expect(SETTING_DEFINITIONS[key].defaultValue).toBe(0);
+    expect(SETTING_DEFINITIONS[key].overridableAt).toEqual([]);
+    expect(SETTING_DEFINITIONS[key].requiredRole).toBe('ADMIN');
+  });
+
   it('page-view events are off by default', () => {
     expect(SETTING_DEFINITIONS['analytics.uiEventsEnabled'].defaultValue).toBe(false);
   });

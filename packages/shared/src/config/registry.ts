@@ -929,6 +929,29 @@ export const SETTING_DEFINITIONS = {
     unit: 'tokens',
   }),
 
+  // ── Run history ────────────────────────────────────────────────────────────
+  // Read by the daily run-history sweep, which has no team: GLOBAL only. `0` keeps every run
+  // forever (the settings form edits numbers, booleans and lists, so "unset" is a number).
+  // A non-zero value is held to at least 30 days: far past the usage rollup's two-day rewrite
+  // window, so the spend of a run is summarised before its traces can be deleted.
+  'workflow.runRetentionDays': defineSetting({
+    defaultValue: 0,
+    description:
+      'How long a finished run (succeeded, failed, cancelled, timed out or skipped) is kept before the daily sweep deletes it with its steps, traces, artifacts, human steps, eval results and callback deliveries. 0 keeps every run forever; otherwise at least 30 days. A run is kept while it is still going, its workflow is live or has an open pull request, a callback for it is pending, it is under a transcript legal hold, a step started or a trace was written within the retention period, its spend is not yet in the usage rollup, or one of its object-store artifacts could not be deleted. With no object store configured, runs that have object-store artifacts are not considered at all. Run analytics and the Slack channel run list read run rows, so a view or comparison window longer than this loses data (the 90-day preset with its previous period needs 180 days).',
+    group: 'workflow',
+    label: 'Run history retention',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z
+      .number()
+      .int()
+      .max(3650)
+      .refine((days) => days === 0 || days >= 30, 'must be 0 (keep forever) or at least 30'),
+    unit: 'days (0 = forever)',
+  }),
+
   // ── Template webhooks ──────────────────────────────────────────────────────
   // Read per call by the public trigger with the template's team and organization.
   'workflow.templateWebhookRequireSignature': defineSetting({

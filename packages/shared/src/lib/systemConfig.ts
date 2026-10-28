@@ -1302,6 +1302,8 @@ export interface ScheduledSweepsConfig {
   callbackDeliveryPrune: SweepSchedule;
   /// Refreshes the repo dependency graph from manifests and git signals.
   repoDependency: SweepSchedule;
+  /// Deletes finished runs past `workflow.runRetentionDays`; a no-op until a retention is set.
+  runHistoryPrune: SweepSchedule;
   /// Asks each tracked skill source which commit its ref names now; only flags, never updates.
   skillSourceSync: SweepSchedule;
   /// Re-checks each Slack channel's privacy and records who is in each private one.
@@ -1373,6 +1375,8 @@ function envCron(name: string, fallback: string): string {
 ///   AGENT_TRACE_ROLLUP_BACKFILL_DAYS default 0 — read by the worker running the sweep
 ///   AUDIT_ACTIVITY_PRUNE_ENABLED  default true — a no-op for the audit log until a retention is set
 ///   AUDIT_ACTIVITY_PRUNE_CRON     default `7 5 * * *`
+///   RUN_HISTORY_PRUNE_ENABLED     default true — a no-op until `workflow.runRetentionDays` is set
+///   RUN_HISTORY_PRUNE_CRON        default `17 5 * * *`
 ///
 /// Lenient, like `resolveWorkspaceInfra`: a bad value falls back to its default.
 /// `assertScheduledSweepsEnv()` is the strict check the gateway runs at boot.
@@ -1414,6 +1418,10 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
     repoDependency: {
       cronExpression: envCron('REPO_DEPENDENCY_SCAN_CRON', '0 4 * * *'),
       enabled: envFlag('REPO_DEPENDENCY_SCAN_ENABLED', true),
+    },
+    runHistoryPrune: {
+      cronExpression: envCron('RUN_HISTORY_PRUNE_CRON', '17 5 * * *'),
+      enabled: envFlag('RUN_HISTORY_PRUNE_ENABLED', true),
     },
     runReaper: {
       cronExpression: envCron('RUN_REAPER_CRON', '*/15 * * * *'),
@@ -1476,6 +1484,8 @@ export function validateScheduledSweepsEnv(): string[] {
   );
   check('AUDIT_ACTIVITY_PRUNE_ENABLED', flag, "'true' or 'false'");
   check('AUDIT_ACTIVITY_PRUNE_CRON', cron, 'a five-field cron expression such as "7 5 * * *"');
+  check('RUN_HISTORY_PRUNE_ENABLED', flag, "'true' or 'false'");
+  check('RUN_HISTORY_PRUNE_CRON', cron, 'a five-field cron expression such as "17 5 * * *"');
   check('SLACK_CHANNEL_SYNC_ENABLED', flag, "'true' or 'false'");
   check('SLACK_CHANNEL_SYNC_CRON', cron, 'a five-field cron expression such as "29 * * * *"');
   check(

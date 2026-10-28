@@ -64,6 +64,7 @@ export const CALLBACK_DELIVERY_PRUNE_SCHEDULE_ID = 'auto-swe-callback-delivery-p
 export const AGENT_TRANSCRIPT_PRUNE_SCHEDULE_ID = 'auto-swe-agent-transcript-prune';
 export const AGENT_TRACE_ROLLUP_SCHEDULE_ID = 'auto-swe-agent-trace-rollup';
 export const AUDIT_ACTIVITY_PRUNE_SCHEDULE_ID = 'auto-swe-audit-activity-prune';
+export const RUN_HISTORY_PRUNE_SCHEDULE_ID = 'auto-swe-run-history-prune';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
 export function workRequestScheduleId(scheduleRowId: string): string {
@@ -242,6 +243,12 @@ export interface AgentTranscriptPruneScheduleConfig {
 
 /** The audit-log and activity-event retention sweep; the workflow reads its settings itself. */
 export interface AuditActivityPruneScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
+/** The finished-run retention sweep; the workflow reads its setting itself. */
+export interface RunHistoryPruneScheduleConfig {
   enabled: boolean;
   cronExpression: string;
 }
@@ -428,6 +435,7 @@ declare module 'fastify' {
       ) => Promise<void>;
       syncAgentTraceRollupSchedule: (config: AgentTraceRollupScheduleConfig) => Promise<void>;
       syncAuditActivityPruneSchedule: (config: AuditActivityPruneScheduleConfig) => Promise<void>;
+      syncRunHistoryPruneSchedule: (config: RunHistoryPruneScheduleConfig) => Promise<void>;
       syncSkillSourceSyncSchedule: (config: SkillSourceSyncScheduleConfig) => Promise<void>;
       syncSlackChannelSyncSchedule: (config: SlackChannelSyncScheduleConfig) => Promise<void>;
       getRepoDependencyScanScheduleStatus: () => Promise<RepoDependencyScanScheduleStatus>;
@@ -1383,6 +1391,14 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       };
       await upsertSchedule(REVALIDATION_SCHEDULE_ID, {
         action: makeRevalidationScheduleAction(input),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    async syncRunHistoryPruneSchedule(config: RunHistoryPruneScheduleConfig): Promise<void> {
+      await upsertSchedule(RUN_HISTORY_PRUNE_SCHEDULE_ID, {
+        action: makeSweepAction('ScheduledRunHistoryPruneWorkflow'),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

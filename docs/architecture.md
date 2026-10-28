@@ -1107,6 +1107,34 @@ ten. The sweep is environment-gated
 [configuration.md](./configuration.md)), and `AGENT_TRACE_ROLLUP_BACKFILL_DAYS` is read by the
 worker that runs it.
 
+**Run history retention.** Run history is kept forever by default. `workflow.runRetentionDays` (ADMIN,
+GLOBAL only; `0`, the default, keeps everything, otherwise at least 30 days) turns on a daily sweep,
+`ScheduledRunHistoryPruneWorkflow` (`RUN_HISTORY_PRUNE_ENABLED`, default `true`, a no-op while the
+setting is `0`; `RUN_HISTORY_PRUNE_CRON`, default `17 5 * * *`; see [configuration.md](./configuration.md)).
+It deletes a `WorkflowRun` whose status is `SUCCESS`, `FAILED`, `TIMED_OUT`, `SKIPPED` or `CANCELLED` and
+whose `endedAt` is older than the cutoff, 100 runs per statement, at most 10,000 deleted per sweep and
+at most 6 minutes per sweep (the next sweep continues). A run still `RUNNING`, including one parked on a human step, is never touched. The
+floor of 30 days sits far past the rollup's two-day rewrite window, so a run's spend is summarised well
+before its traces can go.
+
+The deletion cascades in the database to the run's steps, traces, artifacts, human steps and their
+approvals, eval results, outcome references, autonomy decisions, trusted-knowledge evidence and
+callback deliveries. It sets null on memory items (the lesson stays, minus its link to the run) and on
+agent transcripts (which keep their own retention). Usage rollup rows, the transcript access log,
+audit-log rows, pull requests, work requests, the `ActiveWorkflow` ledger and the monthly usage
+tables have no foreign key to a run and are not touched. An S3 artifact's object is deleted before the
+run, because the cascade removes only the row.
+
+A finished run past the cutoff is **kept** when its `ActiveWorkflow` row is not terminal or has an
+open pull request (PR feedback reads the run that opened the pull request), when a callback delivery
+for it is still pending, when it is under a transcript legal hold, when a step started or a trace was written since the cutoff (a
+re-started workflow id keeps its first execution's end state), when it has LLM traces but no
+usage-rollup row (deleting it would erase its spend from days still read live), or when one of its
+object-store artifacts could not be deleted. While no object store is configured, a run that has
+object-store artifacts is not considered at all (the query leaves it out, and the sweep logs one
+warning saying so). The sweep logs what it deleted and how many runs it kept
+for each reason.
+
 The report's `byUser` ranks the ten users whose launched runs spent most, with a trace attributed to
 `WorkflowRun.launchedById` only when its Temporal run id is the one that wrote the run row (a
 workflow id that is started again does not inherit the earlier launcher's spend). Spend with no
@@ -1284,6 +1312,47 @@ Current constraints of the system as built. Deliberate product boundaries are in
   forced the widening. Rollup rows have no foreign key to a run, so a deleted run keeps its rollup
   spend in the totals and breakdowns but is omitted from `topRuns`; the lookup considers the 200
   costliest ranked runs, so more than 190 deleted runs ahead of the live ones would shorten the list.
+- **Run retention removes history, and the run-level view of spend with it.** A deleted run drops out
+  of the run list, the run viewer, `topRuns`, its eval results and its autonomy decisions. Spend already
+  in the usage rollup, in `ActiveWorkflow` and in the monthly usage tables is kept, so totals and
+  breakdowns do not shrink for a rolled-up day, but a day still read from live traces loses the run's
+  calls.
+- **A window longer than the retention period silently loses data.** The global and per-template
+  analytics (cost, estimated human time saved, success rate, autonomy share, and the previous-period
+  comparison) and the Slack channel run and spend list are computed from `WorkflowRun` rows. The
+  analytics presets are 7, 30 and 90 days and a custom range may reach 365, and each view also reads an
+  equally long previous period. Retention below 90 days truncates the 90-day preset, below 180 its
+  previous-period comparison, and below 365 the longest custom range, with no marker that rows are
+  missing. The 30-day floor is kept because it is the shortest period that is safe for the rollup and
+  for PR feedback; choose a value that covers the windows your operators read.
+- **A run is kept, or deleted, one sweep at a time.** The sweep keeps a run with traces and no rollup
+  row, so with `AGENT_TRACE_ROLLUP_BACKFILL_DAYS` at `0` the runs from before the rollup was first
+  enabled are never deleted until that backfill has built their days; the same holds while
+  `AGENT_TRACE_ROLLUP_ENABLED` is `false`. The check counts a run as rolled up when it has any rollup
+  row, so a run spanning a rolled-up day and one not yet rolled up (a partial backfill) can lose the
+  live spend of the latter. Every sweep starts from the oldest run again and
+  walks forward, reading kept runs as it goes, until it has deleted 10,000, read 500,000 runs or used its
+  6 minutes. A run that is kept for good (no rollup row, or a pending callback that never completes)
+  therefore costs read time in every sweep, and if more kept runs than one sweep can read lie ahead of
+  a deletable run, that run is not reached until they are no longer kept (backfill the rollup, close
+  the pull request, deliver or retire the callback). Runs with object-store artifacts are not even
+  read while no object store is configured, and are kept forever. Pending callbacks and runs
+  with an open pull request are kept only while that is true: once the delivery completes or the pull
+  request closes, the next sweep deletes the run. A run with a step started or a trace written since
+  the cutoff is kept too, because a workflow id that is started again keeps its first execution's end
+  state.
+- **Run retention can leave dangling ids and half-cleaned runs.** `EvalCase.sourceRunId`,
+  `KnowledgeItem.producerRunId`, `TranscriptAccessLog.runId` and audit-log rows keep pointing at the
+  id of a deleted run. Artifact objects are deleted with the currently configured bucket, not the
+  row's `s3Bucket`: with the object store unconfigured, runs that have object-store artifacts are kept
+  forever (the query leaves them out). A run kept after some of its artifacts were deleted has lost
+  those artifacts, and the next sweep retries the rest. A transcript of a deleted run loses its run
+  link and is then readable by an ADMIN only.
+- **A PRD parent that re-runs its launch step can relaunch a child whose run was deleted.** PRD
+  recovery treats "a `WorkflowRun` exists for the child's work request" as proof the child was
+  launched. The sweep cannot tell that a run belongs to a still-running PRD parent: a child's request
+  id is a hash of the parent's request and story index, and its ledger row carries no parent
+  workflow id. Keep `workflow.runRetentionDays` longer than any PRD run can take to finish.
 - **`byUser` scans per run while the sweep is off.** Days without a rollup are grouped by
   (run, Temporal run id) and each run's launcher is read from `workflow_runs`, in chunks, so a long
   window with no rollup costs a scan proportional to the number of runs. Rolled-up days read a
