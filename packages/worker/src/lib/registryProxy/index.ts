@@ -24,11 +24,22 @@ import type { AddressInfo } from 'node:net';
 import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { TarballCache } from './cache.js';
+import { Semaphore } from './semaphore.js';
 
 export { TarballCache } from './cache.js';
 
 /** Packuments are buffered for the tarball-URL rewrite; a bigger one is an upstream bug, not a stream. */
 const MAX_PACKUMENT_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Packument and manifest requests each buffer up to MAX_PACKUMENT_BYTES and then parse and
+ * re-serialise it, so one registration runs at most this many at once; the rest wait in a
+ * bounded queue for at most the wait below, then get a 503 (npm and Yarn retry it).
+ * Tarballs stream and are not counted.
+ */
+const DEFAULT_MAX_BUFFERED_FETCHES = 8;
+const DEFAULT_MAX_QUEUED_FETCHES = 32;
+const DEFAULT_QUEUE_WAIT_MS = 30_000;
 
 /** npm's own package-name shape; nothing here can start with `.` or `_` or carry a separator. */
 const NAME_RE = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/i;
@@ -68,6 +79,8 @@ interface Registration {
   allowlists: Map<string, Map<string, Set<string>> | null> | undefined;
   onDenied(d: RegistryDenial): void;
   inFlight: Set<Promise<void>>;
+  /** Bounds the registration's concurrent buffered (non-tarball) fetches. */
+  buffered: Semaphore;
 }
 
 export interface RegistryRegistration {
@@ -372,6 +385,12 @@ export function createRegistryProxy(options: {
   upstreamFetch?: typeof fetch;
   /** Tarball cache; `createRegistryCache(dir, maxBytes)` when enabled. */
   cache?: TarballCache;
+  /** Concurrent buffered packument/manifest fetches per registration (default 8). */
+  maxBufferedFetches?: number;
+  /** Requests that may wait for one of those slots (default 32); more get a 503. */
+  maxQueuedFetches?: number;
+  /** How long a request waits for a slot before a 503 (default 30 s). */
+  queueWaitMs?: number;
 }): RegistryProxy {
   const registrations = new Map<string, Registration>();
 
@@ -644,11 +663,22 @@ export function createRegistryProxy(options: {
       sendJson(res, 404, `no registry serves ${parsed.name}`);
       return;
     }
-    const call = serve(reg, req, res, registry, parsed.name, parsed.tarball, parsed.version).catch(
-      () => {
-        sendJson(res, 502, 'the upstream registry could not be reached');
+    const call = (async () => {
+      // Tarballs stream; a packument or manifest is buffered, so it takes a slot first.
+      const slot = parsed.tarball ? undefined : await reg.buffered.acquire();
+      if (slot === null) {
+        res.setHeader('retry-after', '5');
+        sendJson(res, 503, 'the registry proxy is busy; retry shortly');
+        return;
       }
-    );
+      try {
+        await serve(reg, req, res, registry, parsed.name, parsed.tarball, parsed.version);
+      } finally {
+        slot?.();
+      }
+    })().catch(() => {
+      sendJson(res, 502, 'the upstream registry could not be reached');
+    });
     reg.inFlight.add(call);
     void call.finally(() => reg.inFlight.delete(call));
   }
@@ -688,6 +718,11 @@ export function createRegistryProxy(options: {
       const key = digest(token);
       const reg: Registration = {
         allowlists: undefined,
+        buffered: new Semaphore(
+          options.maxBufferedFetches ?? DEFAULT_MAX_BUFFERED_FETCHES,
+          options.maxQueuedFetches ?? DEFAULT_MAX_QUEUED_FETCHES,
+          options.queueWaitMs ?? DEFAULT_QUEUE_WAIT_MS
+        ),
         inFlight: new Set(),
         onDenied: AsyncResource.bind(ws.onDenied),
         registries: new Map(ws.registries.map((r) => [r.id, r])),
@@ -699,6 +734,8 @@ export function createRegistryProxy(options: {
         release: () => {
           released ??= (async () => {
             registrations.delete(key);
+            // Requests still waiting for a slot are turned away rather than awaited.
+            reg.buffered.close();
             await Promise.allSettled([...reg.inFlight]);
           })();
           return released;
