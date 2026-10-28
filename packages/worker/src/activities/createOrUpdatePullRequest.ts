@@ -10,6 +10,7 @@ import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, activityInfo } from '@temporalio/activity';
 import { currentWorkflowId, persistActivityTrace } from '../lib/activityContext.js';
+import { logWarn } from '../lib/activityLog.js';
 import { AgentTracer } from '../lib/agentTracer.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { requestedBaseBranch, resolveRunBaseBranch } from '../lib/runBaseBranch.js';
@@ -217,7 +218,8 @@ async function doCreateOrUpdatePullRequest(
         prUrl,
         type: 'pr_opened',
       },
-      trackerConfig
+      trackerConfig,
+      { runInputId: request.workRequestId, warn: logWarn }
     ).catch(() => null);
   }
 

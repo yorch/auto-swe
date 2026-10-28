@@ -155,7 +155,7 @@ register({
     },
   ],
   description:
-    "Post one comment to the run's tracker ticket through the configured issue tracker. Output: `posted`, and a `reason` when it did not post. A run with no ticket, a platform-generated ticket id, no tracker configured, a body that is not text, a comment the tracker refuses, or a step that times out or loses its worker returns `posted: false` without failing the run; after a timeout the comment may or may not have been posted. Credential-shaped text is masked, and on GitHub and Linear @mentions and images are neutralised.",
+    "Post one comment to the run's tracker ticket through the configured issue tracker. Output: `posted`, and a `reason` when it did not post. A run with no ticket, a platform-generated ticket id, no tracker configured, a body that is not text, a comment the tracker refuses, or a step that times out or loses its worker returns `posted: false` without failing the run; after a timeout the comment may or may not have been posted. On the GitHub tracker the ticket id names its own repository, so the step posts only when that repository is one the run targets, on the host the tracker writes to; otherwise it returns `posted: false`. Credential-shaped text is masked, and on GitHub and Linear @mentions and images are neutralised.",
   label: 'Post ticket comment',
   name: 'postTicketComment',
 });

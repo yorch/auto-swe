@@ -2323,7 +2323,7 @@ describe('webhook routes', () => {
         workflow: {
           repository: { githubUrl: null, team: null },
           temporalWorkflowId: 'wf-1',
-          workRequest: { externalTicketId: 'agent-0a1b', ticketIsSynthetic },
+          workRequest: { externalTicketId: 'agent-0a1b', id: 'wr-merge', ticketIsSynthetic },
         },
       });
 
@@ -2343,7 +2343,8 @@ describe('webhook routes', () => {
         await inject('/api/v1/webhooks/git', body, sign(body));
         expect(syncTrackerOnEvent).toHaveBeenCalledWith(
           expect.objectContaining({ issueId: 'agent-0a1b' }),
-          expect.anything()
+          expect.anything(),
+          expect.objectContaining({ runInputId: 'wr-merge' })
         );
       });
 
@@ -2365,6 +2366,25 @@ describe('webhook routes', () => {
         expect(res.statusCode).toBe(200);
         expect(syncTrackerOnEvent).toHaveBeenCalledTimes(calls);
       });
+
+      it("scopes a CI verdict's sync to the PR's run", async () => {
+        openPrs = [
+          {
+            ...openOn('repo-github'),
+            workflow: {
+              temporalWorkflowId: 'wf-ci-1',
+              workRequest: { externalTicketId: 'PROJ-9', id: 'wr-ci', ticketIsSynthetic: false },
+            },
+          },
+        ];
+        const body = checkBody();
+        await inject('/api/v1/webhooks/ci', body, sign(body));
+        expect(syncTrackerOnEvent).toHaveBeenCalledWith(
+          expect.objectContaining({ issueId: 'PROJ-9' }),
+          expect.anything(),
+          expect.objectContaining({ runInputId: 'wr-ci' })
+        );
+      });
     });
 
     describe('the tracker link of a merged PR', () => {
@@ -2381,6 +2401,7 @@ describe('webhook routes', () => {
         await inject('/api/v1/webhooks/git', body, sign(body, 'a-secret'), GHE_A);
         expect(syncTrackerOnEvent).toHaveBeenCalledWith(
           expect.objectContaining({ prUrl: 'https://ghe-a.corp/acme/api/pull/7' }),
+          expect.anything(),
           expect.anything()
         );
       });
@@ -2398,6 +2419,7 @@ describe('webhook routes', () => {
         await inject('/api/v1/webhooks/git', body, sign(body));
         expect(syncTrackerOnEvent).toHaveBeenCalledWith(
           expect.objectContaining({ prUrl: 'https://github.com/acme/api/pull/7' }),
+          expect.anything(),
           expect.anything()
         );
       });

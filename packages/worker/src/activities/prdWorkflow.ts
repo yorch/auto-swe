@@ -16,6 +16,7 @@ import {
   resolveKnowledgeBaseConfig,
 } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { loadRunTrackerScope, type TrackerRepoScope } from '@auto-swe/shared/lib/trackerSync';
 import {
   type CreatedTrackerItem,
   createTrackerEpic,
@@ -26,6 +27,7 @@ import { heartbeat } from '@temporalio/activity';
 import { WorkflowIdReusePolicy } from '@temporalio/client';
 import { WorkflowNotFoundError } from '@temporalio/common';
 import { z } from 'zod';
+import { logWarn } from '../lib/activityLog.js';
 import { resolveAgentSpec } from '../lib/config/agentSpec.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
@@ -438,6 +440,21 @@ export async function createTrackerItems(
 
   const decomposition = parseDecomposition(inputs.decomposition);
   const projectKey = payload.projectKey ?? null;
+  // On GitHub the project key is a caller-supplied `owner/repo` the tracker token creates issues
+  // in, so it is checked against the repositories this run targets. A lookup failure leaves no
+  // scope, which refuses the key: the items count as failed and nothing is retried.
+  let scope: TrackerRepoScope | null = null;
+  if (trackerConfig.provider === 'github' && projectKey) {
+    try {
+      scope = await loadRunTrackerScope(request.workRequestId);
+    } catch {
+      logWarn('Tracker scope lookup failed; continuing', { runInputId: request.workRequestId });
+    }
+  }
+  const writeOpts = {
+    scope,
+    warn: (message: string) => logWarn(message, { runInputId: request.workRequestId }),
+  };
   const createdItems: CreatedTrackerItem[] = [];
   let failedCount = 0;
 
@@ -446,7 +463,8 @@ export async function createTrackerItems(
     const epicItem = await createTrackerEpic(
       trackerConfig,
       { description: epic.description, title: epic.title },
-      projectKey
+      projectKey,
+      writeOpts
     );
     if (epicItem) {
       createdItems.push(epicItem);
@@ -466,7 +484,8 @@ export async function createTrackerItems(
           title: story.title,
         },
         projectKey,
-        epicItem?.id ?? null
+        epicItem?.id ?? null,
+        writeOpts
       );
       if (storyItem) {
         createdItems.push(storyItem);

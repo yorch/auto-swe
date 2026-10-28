@@ -1,6 +1,11 @@
 import { prisma } from '@auto-swe/shared/db';
 import { createIssueTrackerProvider } from '@auto-swe/shared/lib/integrations/registry';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import {
+  isGitHubTicketInScope,
+  RUN_TRACKER_SCOPE_SELECT,
+  runTrackerScope,
+} from '@auto-swe/shared/lib/trackerSync';
 import { logWarn } from '../lib/activityLog.js';
 import { redactCiLog } from '../lib/ciLogGuard.js';
 import { getErrorMessage } from '../lib/errors.js';
@@ -60,7 +65,7 @@ export async function postTicketComment(
   }
   try {
     const run = await prisma.runInput.findUnique({
-      select: { externalTicketId: true, ticketIsSynthetic: true },
+      select: { ...RUN_TRACKER_SCOPE_SELECT, externalTicketId: true, ticketIsSynthetic: true },
       where: { id: input.workRequestId },
     });
     if (!run?.externalTicketId) {
@@ -75,6 +80,18 @@ export async function postTicketComment(
     const config = await resolveIssueTrackerConfig();
     if (!config.provider) {
       return { posted: false, reason: 'no issue tracker is configured' };
+    }
+    // A GitHub ticket id names its own repository, and the id is user-supplied: without this the
+    // instance's tracker token would comment on any repository a launch cared to name. The
+    // tracker has no configured default repository, so only the run's own repositories count,
+    // and only on the host the tracker writes to.
+    if (
+      config.provider === 'github' &&
+      !isGitHubTicketInScope(run.externalTicketId, config.baseUrl, await runTrackerScope(run))
+    ) {
+      const reason = "the ticket's repository is not one this run targets";
+      logWarn(`postTicketComment: ${reason}`, { workRequestId: input.workRequestId });
+      return { posted: false, reason };
     }
     // No provider logger: its warnings carry the raw provider error, which can quote a request.
     const provider = createIssueTrackerProvider(config, {});

@@ -705,6 +705,7 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
               workRequest: {
                 select: {
                   externalTicketId: true,
+                  id: true,
                   slackChannelId: true,
                   slackMessageTs: true,
                   ticketIsSynthetic: true,
@@ -863,7 +864,8 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             prUrl,
             type: 'workflow_completed',
           },
-          trackerConfig
+          trackerConfig,
+          { runInputId: wr.id, warn: (message, meta) => request.log.warn(meta, message) }
         ).catch((err: unknown) => {
           request.log.warn({ err }, 'tracker sync failed (non-fatal)');
           return null;
@@ -994,7 +996,9 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
           },
           workflow: {
             include: {
-              workRequest: { select: { externalTicketId: true, ticketIsSynthetic: true } },
+              workRequest: {
+                select: { externalTicketId: true, id: true, ticketIsSynthetic: true },
+              },
             },
           },
         },
@@ -1220,7 +1224,11 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
             verdictOf.get(pr.id)?.passed
               ? { issueId: ticketId, type: 'ci_passed' }
               : { issueId: ticketId, summary: `CI ${conclusion}`, type: 'ci_failed' },
-            trackerConfig
+            trackerConfig,
+            {
+              runInputId: pr.workflow?.workRequest?.id,
+              warn: (message, meta) => request.log.warn(meta, message),
+            }
           ).catch((err: unknown) => {
             request.log.warn({ err }, 'tracker sync failed (non-fatal)');
             return null;

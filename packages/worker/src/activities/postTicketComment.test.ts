@@ -3,18 +3,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   addComment: vi.fn(async (..._args: unknown[]) => true),
   createProvider: vi.fn(),
+  findConnections: vi.fn(async (..._args: unknown[]) => [] as unknown[]),
   findRunInput: vi.fn(),
+  logWarn: vi.fn(),
   resolveConfig: vi.fn(),
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { runInput: { findUnique: (...args: unknown[]) => mocks.findRunInput(...args) } },
+  prisma: {
+    connection: { findMany: (...args: unknown[]) => mocks.findConnections(...args) },
+    runInput: { findUnique: (...args: unknown[]) => mocks.findRunInput(...args) },
+  },
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveGitHubBaseUrl: async () => 'https://github.com',
   resolveIssueTrackerConfig: () => mocks.resolveConfig(),
 }));
 vi.mock('@auto-swe/shared/lib/integrations/registry', () => ({
   createIssueTrackerProvider: (...args: unknown[]) => mocks.createProvider(...args),
+}));
+vi.mock('../lib/activityLog.js', async (orig) => ({
+  ...(await orig<typeof import('../lib/activityLog.js')>()),
+  logWarn: (...args: unknown[]) => mocks.logWarn(...args),
 }));
 
 import {
@@ -23,7 +33,26 @@ import {
   TICKET_COMMENT_TRUNCATION_MARKER,
 } from './postTicketComment.js';
 
+const GITHUB_ID = 'acme/web#7';
+const OWN_REPO = {
+  githubApiUrl: null,
+  githubUrl: null,
+  organizationName: 'Acme',
+  repoName: 'Web',
+  type: 'git_repo',
+};
 const JIRA = { apiToken: 't', baseUrl: 'https://acme.atlassian.net', provider: 'jira' };
+
+function githubRun(overrides: Record<string, unknown> = {}, baseUrl: string | null = null) {
+  mocks.resolveConfig.mockResolvedValue({ ...JIRA, baseUrl, provider: 'github' });
+  mocks.findRunInput.mockResolvedValue({
+    connection: OWN_REPO,
+    externalTicketId: GITHUB_ID,
+    knowledgeRepoSources: null,
+    ticketIsSynthetic: false,
+    ...overrides,
+  });
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -31,6 +60,7 @@ beforeEach(() => {
   mocks.resolveConfig.mockResolvedValue(JIRA);
   mocks.createProvider.mockReturnValue({ addComment: mocks.addComment });
   mocks.addComment.mockResolvedValue(true);
+  mocks.findConnections.mockResolvedValue([]);
 });
 
 describe('postTicketComment', () => {
@@ -96,34 +126,37 @@ describe('postTicketComment', () => {
     'neutralises @mentions and images in the comment for %s',
     async (provider) => {
       mocks.resolveConfig.mockResolvedValue({ ...JIRA, provider });
+      if (provider === 'github') {
+        githubRun();
+      }
       await postTicketComment({
         body: 'cc @alice and @acme/security, mail bob@example.com\n![x](https://evil.example/p.png)',
         heading: '@here verdict',
         workRequestId: 'wr-1',
       });
       expect(mocks.addComment).toHaveBeenCalledWith(
-        'DEMO-4',
+        provider === 'github' ? GITHUB_ID : 'DEMO-4',
         '@‍here verdict\n\ncc @‍alice and @‍acme/security, mail bob@example.com\n[x](https://evil.example/p.png)'
       );
     }
   );
 
   it('leaves no image behind when several ! precede the bracket', async () => {
-    mocks.resolveConfig.mockResolvedValue({ ...JIRA, provider: 'github' });
+    githubRun();
     await postTicketComment({
       body: '!![x](https://evil.example/p.png) !!![y](u)',
       workRequestId: 'wr-1',
     });
     expect(mocks.addComment).toHaveBeenCalledWith(
-      'DEMO-4',
+      GITHUB_ID,
       '[x](https://evil.example/p.png) [y](u)'
     );
   });
 
   it('neutralises a mention inside emphasis', async () => {
-    mocks.resolveConfig.mockResolvedValue({ ...JIRA, provider: 'github' });
+    githubRun();
     await postTicketComment({ body: '_@alice_ and __@bob__', workRequestId: 'wr-1' });
-    expect(mocks.addComment).toHaveBeenCalledWith('DEMO-4', '_@‍alice_ and __@‍bob__');
+    expect(mocks.addComment).toHaveBeenCalledWith(GITHUB_ID, '_@‍alice_ and __@‍bob__');
   });
 
   it('leaves @mentions and images as written for jira, which posts plain text', async () => {
@@ -136,6 +169,9 @@ describe('postTicketComment', () => {
     'masks credential-shaped text before posting to %s',
     async (provider) => {
       mocks.resolveConfig.mockResolvedValue({ ...JIRA, provider });
+      if (provider === 'github') {
+        githubRun();
+      }
       const token = `ghp_${'A'.repeat(36)}`;
       await postTicketComment({ body: `leaked ${token} here`, workRequestId: 'wr-1' });
       const posted = mocks.addComment.mock.calls[0]?.[1] as string;
@@ -202,5 +238,125 @@ describe('postTicketComment', () => {
     const out = await postTicketComment({ body: '  \n ', workRequestId: 'wr-1' });
     expect(out).toEqual({ posted: false, reason: expect.stringMatching(/empty/) });
     expect(mocks.findRunInput).not.toHaveBeenCalled();
+  });
+});
+
+describe('postTicketComment on the GitHub tracker', () => {
+  const REFUSED = {
+    posted: false,
+    reason: "the ticket's repository is not one this run targets",
+  };
+
+  it('refuses a ticket in a repository the run does not target', async () => {
+    githubRun({ externalTicketId: 'attacker/public#1' });
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
+    expect(mocks.createProvider).not.toHaveBeenCalled();
+    expect(mocks.addComment).not.toHaveBeenCalled();
+  });
+
+  it("allows a ticket in the run's own repository", async () => {
+    githubRun();
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual({
+      posted: true,
+    });
+    expect(mocks.addComment).toHaveBeenCalledWith(GITHUB_ID, 'X');
+  });
+
+  it('matches the owner and repository case-insensitively', async () => {
+    githubRun({ externalTicketId: 'ACME/wEb#7' });
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual({
+      posted: true,
+    });
+  });
+
+  it('allows a repository a multi-repo launch was authorized against', async () => {
+    githubRun({
+      connection: null,
+      externalTicketId: 'acme/api#3',
+      knowledgeRepoSources: [{ orgId: 'o', repoId: 'repo-2', teamId: 't' }, null, { repoId: 4 }],
+    });
+    mocks.findConnections.mockResolvedValue([{ organizationName: 'acme', repoName: 'api' }]);
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual({
+      posted: true,
+    });
+    expect(mocks.findConnections).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: ['repo-2'] }, type: 'git_repo' } })
+    );
+  });
+
+  it('refuses a bare issue number, which names no repository', async () => {
+    githubRun({ externalTicketId: '#7' });
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
+    expect(mocks.addComment).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the run records no repository at all', async () => {
+    githubRun({ connection: null });
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
+  });
+
+  it('reports a failed repository lookup without throwing', async () => {
+    githubRun({ connection: null, knowledgeRepoSources: [{ repoId: 'repo-2' }] });
+    mocks.findConnections.mockRejectedValue(new Error('db down'));
+    const out = await postTicketComment({ body: 'X', workRequestId: 'wr-1' });
+    expect(out).toEqual({ posted: false, reason: expect.stringMatching(/could not be posted/) });
+    expect(mocks.addComment).not.toHaveBeenCalled();
+  });
+
+  it('logs a refusal with a fixed line and no ticket text', async () => {
+    githubRun({ externalTicketId: 'attacker/public#1' });
+    await postTicketComment({ body: 'X', workRequestId: 'wr-1' });
+    expect(mocks.logWarn).toHaveBeenCalledWith(
+      "postTicketComment: the ticket's repository is not one this run targets",
+      { workRequestId: 'wr-1' }
+    );
+  });
+
+  it('refuses a run connection that is not a git repository', async () => {
+    githubRun({ connection: { ...OWN_REPO, type: 'issue_tracker' } });
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
+    expect(mocks.addComment).not.toHaveBeenCalled();
+  });
+
+  it('refuses a GitHub Enterprise repository when the tracker writes to github.com', async () => {
+    githubRun({ connection: { ...OWN_REPO, githubUrl: 'https://ghe.corp' } });
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
+    expect(mocks.addComment).not.toHaveBeenCalled();
+  });
+
+  it('refuses a github.com repository when the tracker writes to GitHub Enterprise', async () => {
+    githubRun({}, 'https://ghe.corp/api/v3');
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
+    expect(mocks.addComment).not.toHaveBeenCalled();
+  });
+
+  it('allows a GitHub Enterprise repository on the host the tracker writes to', async () => {
+    githubRun(
+      {
+        connection: {
+          ...OWN_REPO,
+          githubApiUrl: 'https://GHE.corp/api/v3',
+          githubUrl: 'http://ghe.corp:80',
+        },
+      },
+      'https://ghe.corp:443/api/v3/'
+    );
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual({
+      posted: true,
+    });
+  });
+
+  it.each(['jira', 'linear'])('does not apply the repository check to %s', async (provider) => {
+    mocks.resolveConfig.mockResolvedValue({ ...JIRA, provider });
+    mocks.findRunInput.mockResolvedValue({
+      connection: null,
+      externalTicketId: 'attacker/public#1',
+      knowledgeRepoSources: null,
+      ticketIsSynthetic: false,
+    });
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual({
+      posted: true,
+    });
+    expect(mocks.addComment).toHaveBeenCalledWith('attacker/public#1', 'X');
   });
 });
