@@ -115,7 +115,7 @@ services:
   # surface, NOT the options of a container the worker is allowed to create:
   # see docs/deployment.md. Root only to open the socket; nothing else runs here.
   docker-socket-proxy:
-    image: ${DOCKER_SOCKET_PROXY_IMAGE:-haproxy:3.4-alpine@sha256:251da69821897ec8c4819f12b1babbc4b71f562943addc9b9eb14bb6ece40dc6}
+    image: ${DOCKER_SOCKET_PROXY_IMAGE:-haproxy:3.4-alpine@sha256:2caaf8b1a1ef67f3f1ea9b721f2821675d3ba4500fb518e23884fecb93e8dbaa}
     restart: unless-stopped
     user: root
     read_only: true
