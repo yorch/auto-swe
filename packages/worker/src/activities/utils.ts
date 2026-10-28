@@ -64,8 +64,15 @@ function detectTestCommandFromPackageJson(packageJsonStr: string): string {
   }
 }
 
-/** npm's one well-known "no such script" message, from either its `error` or `ERR!` prefix. */
-const NPM_MISSING_TEST_SCRIPT = /npm (?:error|ERR!) Missing script: "test"/;
+/**
+ * npm's one well-known "no such script" message, from either its `error` or `ERR!` prefix, and
+ * the exit status npm uses for it (1). Both are required, and the line is anchored to the start
+ * of a line: a suite that itself runs `npm test` in a fixture directory prints the same line
+ * (indented or after a reporter prefix) and then fails on an assertion, which is an ordinary
+ * failure the agent can fix.
+ */
+const NPM_MISSING_TEST_SCRIPT_STATUS = 1;
+const NPM_MISSING_TEST_SCRIPT = /^npm (?:error|ERR!) Missing script: "test"/m;
 
 /**
  * What npm 11 prints when the directory has no package.json, as the fallback
@@ -91,7 +98,7 @@ const NPM_NO_PACKAGE_JSON = /^npm error enoent Could not read package\.json: Err
  *   status is read from `code` (what `child_process.exec` sets) or `status`
  *   (the `execSync` shape). Output text is never searched for "not found",
  *   because a runner's own output can say that about a test's subprocess.
- * - npm's `Missing script: "test"` message, which npm reports with exit 1.
+ * - npm's `Missing script: "test"` message at the start of a line with exit 1.
  * - npm's no-package.json message with exit 254 (see `NPM_NO_PACKAGE_JSON`).
  *
  * A caller that stops on this accepts a trade-off: a missing local tool (a
@@ -113,7 +120,7 @@ export function unrunnableTestCause(err: unknown): string | undefined {
     return 'exit status 126: command not executable';
   }
   const output = [e.stdout, e.stderr].filter((v): v is string => typeof v === 'string').join('\n');
-  if (NPM_MISSING_TEST_SCRIPT.test(output)) {
+  if (exitStatus === NPM_MISSING_TEST_SCRIPT_STATUS && NPM_MISSING_TEST_SCRIPT.test(output)) {
     return 'npm reports Missing script: "test"';
   }
   return exitStatus === NPM_NO_PACKAGE_JSON_STATUS && NPM_NO_PACKAGE_JSON.test(output)
