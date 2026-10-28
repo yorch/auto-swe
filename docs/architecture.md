@@ -1278,6 +1278,13 @@ Current constraints of the system as built. Deliberate product boundaries are in
   for example after a tool-turn gap longer than the cache TTL, can reach the cap at roughly 1.6M
   raw tokens: the cap is reached above the raw rate as well as below it. A loop of uncached input
   reaches it at the raw rate.
+- **A shell step's author container still receives the registry token as `-e NAME=value`.** The
+  step's helper writes the npmrc and yarnrc through `secretEnv`, but the sandbox container's own
+  environment carries `COREPACK_NPM_TOKEN` and `YARN_NPM_AUTH_TOKEN` as plain pairs, because
+  `EphemeralContainerSpec` has no `secretEnv`. Under Docker the token is therefore visible in `ps`
+  on the worker host for the life of the step. Shell and container steps do not run under the
+  Kubernetes backend, so it never reaches an apiserver audit log. The clone in the same step also
+  passes the credential-bearing URL in the helper's argv.
 - **The Mastra implementer runtime debits once per turn.** Its usage is recorded after the turn
   ends, so one turn can pass the cap before the check fires; the harness runtimes debit each model
   call as they report it.
