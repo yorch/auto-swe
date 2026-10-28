@@ -65,14 +65,17 @@ function repoOnHost(repo: TrackerScopeRepo, host: string, instanceBaseUrl: strin
  * token would write to any repository a launch cared to name, on its own host. Owner and repo
  * compare case-insensitively, as GitHub resolves them; the host is the tracker's `baseUrl`, or
  * the provider's default when it has none. A bare `#123` names no repository and is refused, as
- * is anything whose host does not parse.
+ * is anything whose host does not parse — unless the caller passes the `defaultRepo` the provider
+ * resolves a bare number against (a read does, a write does not), which is then checked like any
+ * other repository.
  */
 export function isGitHubTicketInScope(
   ticketId: string,
   trackerBaseUrl: string | null | undefined,
-  scope: TrackerRepoScope
+  scope: TrackerRepoScope,
+  defaultRepo?: { owner: string; repo: string }
 ): boolean {
-  const parsed = parseGitHubTicketId(ticketId);
+  const parsed = parseGitHubTicketId(ticketId, defaultRepo);
   const trackerHost = httpHostFamily(trackerBaseUrl ?? GITHUB_ISSUES_DEFAULT_BASE_URL);
   if (!parsed || !trackerHost) {
     return false;
@@ -86,6 +89,40 @@ export function isGitHubTicketInScope(
       repoOnHost(r, trackerHost, scope.instanceBaseUrl)
   );
 }
+
+/** {@link TrackerRepoScope} for repositories already in hand (the one a request targets). */
+export async function repoTrackerScope(
+  repos: ReadonlyArray<TrackerScopeRepo>
+): Promise<TrackerRepoScope> {
+  return { instanceBaseUrl: await resolveGitHubBaseUrl(), repos };
+}
+
+/**
+ * May a tracker READ fetch this user-supplied ticket id? Only the GitHub tracker is gated: its id
+ * names its own `owner/repo`, and the platform's token reads any repository it can see, so the id
+ * must name a repository the request or run targets, on the tracker's host. Jira and Linear ids
+ * name no repository. The scope loads only for GitHub and a failed load refuses, so this never
+ * throws; the caller asks before any network call.
+ */
+export async function isTrackerReadInScope(
+  config: { provider: string | null; baseUrl?: string | null },
+  ticketId: string,
+  loadScope: () => Promise<TrackerRepoScope>,
+  defaultRepo?: { owner: string; repo: string }
+): Promise<boolean> {
+  if (config.provider !== 'github') {
+    return true;
+  }
+  try {
+    return isGitHubTicketInScope(ticketId, config.baseUrl, await loadScope(), defaultRepo);
+  } catch {
+    return false;
+  }
+}
+
+/** The line a refused GitHub-tracker read logs. Fixed: it never carries ticket text. */
+export const TRACKER_READ_OUT_OF_SCOPE =
+  "Tracker read skipped: the ticket's repository is not one this request targets";
 
 const REPO_HOST_SELECT = {
   githubApiUrl: true,

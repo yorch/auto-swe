@@ -200,20 +200,36 @@ step in such a run posts nothing and returns `posted: false` with a reason. A Ch
 turn files no request of its own, so there is nothing to flag. The Slack merge note and
 the merge evaluation row do not depend on the tracker and still run.
 
-On the GitHub tracker every write — a `postTicketComment` comment, the syncs above (which post
-comments, post the pull-request link as a comment and close the issue when the run completes), and
-the issues a PRD run creates for its epics and stories — goes only to a repository the run targets,
-on the host the tracker writes to. A GitHub ticket id
+On the GitHub tracker every read and write — a `postTicketComment` comment, the syncs above (which
+post comments, post the pull-request link as a comment and close the issue when the run completes),
+the issues a PRD run creates for its epics and stories, and the ticket fetched into a request's
+`ContextSnapshot` — stays in a repository the run targets, on the host the tracker is configured
+for. A GitHub ticket id
 (`owner/repo#123`) names its own repository and is supplied by whoever launched the run, so the id
 is checked first against the run's repositories: its connection when that is a git repository, and
-the git repositories its launch was authorized against (`knowledgeRepoSources`). Owner and
-repository compare case-insensitively; the host is the tracker's base URL (`api.github.com` when it
-has none) against the repository's API and web URLs (the instance's GitHub URL when it has none),
-with `github.com` and `api.github.com` one host, and `<t>.ghe.com` and `api.<t>.ghe.com` one host.
-A PRD run's project key (`owner/repo`) is checked the same way, as the issue `<key>#1`; without a
-project key the admin-configured default is used and is not checked. A write that fails the check
-is skipped and logged with a fixed line, and a PRD item that is refused counts as a failed tracker
-item; Jira and Linear ids and project keys name no repository and are not checked.
+the git repositories its launch was authorized against (`knowledgeRepoSources`). At submit time the
+repository is the one the launcher selected, which the route has already checked for membership.
+Owner and repository compare case-insensitively; the host is the tracker's base URL
+(`api.github.com` when it has none) against the repository's API and web URLs (the instance's GitHub
+URL when it has none), with `github.com` and `api.github.com` one host, and `<t>.ghe.com` and
+`api.<t>.ghe.com` one host. A bare issue number names no repository: a write refuses it, and a read
+resolves it against the run's own repository and checks that. A PRD run's project key
+(`owner/repo`) is checked the same way, as the issue `<key>#1`; without a project key the
+admin-configured default is used and is not checked. A write that fails the check is skipped and
+logged with a fixed line, and a PRD item that is refused counts as a failed tracker item. A read
+that fails the check happens before any request and is treated as a ticket that was not found: no
+ticket is fetched or stored, the submission still succeeds and the run continues from its
+description, and a fixed line is logged with ids only. Jira and Linear ids and project keys name no
+repository and are not checked.
+
+The check runs on the repository the ticket id names, and the request then stays there. The
+provider follows a redirect only while its target is still under
+`/repos/<owner>/<repo>/` of the checked repository (case-insensitive), and a fetched issue whose
+`repository_url` names another repository is discarded. Reads and writes therefore never reach a
+repository other than the one checked. GitHub answers a renamed repository or a transferred issue
+with a redirect outside that path, which is not followed: a read treats the ticket as unavailable
+(no ticket is fetched or stored), and a write (comment, close, pull-request link, issue creation) is
+skipped.
 
 **Visibility is per row.** A request is in scope when the caller requested it, when the caller can
 see one of its runs (`buildWorkflowRunVisibilityFilter`, the rule `GET /workflow-runs/requests`
@@ -264,14 +280,21 @@ http(s) address.
 ## Limitations
 
 - With the GitHub tracker, comments, pull-request links, issue closes and PRD issue creation go
-  only to a repository the run targets, on the tracker's host. The tracker has no configured
-  default repository, so a ticket id naming any other repository, a repository on another host,
-  or a bare issue number gets no write: `postTicketComment` returns `posted: false`, and the sync
+  only to a repository the run targets, on the tracker's host, and a ticket is read only from one.
+  The tracker has no configured default repository, so a ticket id naming any other repository, a
+  repository on another host, or a bare issue number gets no write: `postTicketComment` returns
+  `posted: false`, and the sync
   is skipped. A PRD run's project key outside the run's repositories creates no issue.
-- Tracker reads are not scoped. `fetchTicket` (`gateway/src/lib/issueTrackerClient.ts`) and the
-  ticket-context fetch (`worker/src/lib/ticketContext.ts`) read `owner/repo#N` from any repository
-  the tracker token can read at submit time, and the issue content lands in the launcher's
-  `ContextSnapshot`.
+- A ticket already on a `ContextSnapshot` is used as stored; the scope check applies only when the
+  ticket is fetched.
+- A deployment that keeps its tickets in a separate issues repository (for example `org/issues#5`
+  while the run targets `org/app`) gets no ticket context and no tracker writes: the read is
+  treated as a ticket that was not found and logs the fixed skip line, and each write is skipped
+  with its fixed line.
+- A renamed repository or a transferred issue is not followed, so its ticket is unavailable and its
+  writes are skipped until the id names the current repository.
+- A GitHub ticket id on a run with no git repository (no connection, no authorized repository) is
+  never fetched, even a bare number.
 - Outcomes group PRs by the time they were opened and judge them as of now, so a recent cohort
   under-reports merges that have not happened yet and its merge rate rises as its PRs resolve.
 - An outcomes read takes at most 10,000 PRs; beyond that the figures cover only the newest ones

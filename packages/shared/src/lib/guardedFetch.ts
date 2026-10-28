@@ -47,6 +47,11 @@ export interface GuardedFetchOptions {
   /** Credential headers are sent only to this origin; elsewhere only an allowlist of benign headers is. */
   credentialOrigin?: string;
   maxHops?: number;
+  /**
+   * Run on every redirect target (never the first URL), after `check`. Returning false
+   * refuses the redirect. Omitted, every target that passes `check` is followed.
+   */
+  allowRedirect?: (url: URL) => boolean;
   /** Required: there is no bare-`fetch` default, so a caller always names a resolve-and-pin fetch. */
   fetchImpl: typeof fetch;
 }
@@ -104,6 +109,9 @@ export async function fetchGuarded(
       current = new URL(location, current);
     } catch {
       throw new RedirectRefusedError('redirect with an invalid Location header');
+    }
+    if (opts.allowRedirect && !opts.allowRedirect(current)) {
+      throw new RedirectRefusedError('redirect target not allowed');
     }
   }
 }

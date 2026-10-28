@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 // Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
 vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
@@ -9,6 +9,7 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
 }));
 
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
+  resolveGitHubBaseUrl: vi.fn(async () => 'https://github.com'),
   resolveIssueTrackerConfig: vi.fn(async () => ({
     apiToken: null,
     baseUrl: null,
@@ -43,6 +44,7 @@ vi.mock('../lib/issueTrackerClient.js', () => ({
 }));
 
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import { TRACKER_READ_OUT_OF_SCOPE } from '@auto-swe/shared/lib/trackerSync';
 import { experimentBucket } from '../lib/experimentBucket.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
 import { resolveDefaultTemplate, workRequestRoutes } from './workRequests.js';
@@ -634,6 +636,92 @@ describe('POST /api/v1/work-requests', () => {
     });
     expect(res.statusCode).toBe(201);
     expect(snapshotUpserts).toHaveLength(0);
+  });
+
+  describe('GitHub tracker reads', () => {
+    const githubTracker = (baseUrl: string | null = null) => ({
+      allowPrivateNetwork: false,
+      apiToken: 'tok',
+      baseUrl,
+      email: null,
+      provider: 'github' as const,
+    });
+    const submit = (externalTicketId: string) =>
+      app.inject({
+        headers: { authorization: 'Bearer test-token' },
+        method: 'POST',
+        payload: {
+          description: 'Add health endpoint',
+          externalTicketId,
+          repoIds: ['00000000-0000-4000-8000-000000000001'],
+        },
+        url: '/api/v1/work-requests',
+      });
+    const ticket = {
+      description: 'body',
+      labels: [],
+      raw: {},
+      status: 'open',
+      title: 'An issue',
+      url: 'https://github.com/org/test/issues/5',
+    };
+
+    // A queued `Once` value or call history must not reach the next test (mockReset restores
+    // the factory's default implementation).
+    afterEach(() => {
+      resolveIssueTrackerConfigMock.mockReset();
+      fetchTicketMock.mockReset();
+    });
+
+    // Enrichment runs after the response; the fixed warn line proves it ran and refused.
+    const expectRefused = async (externalTicketId: string) => {
+      const warn = vi.spyOn(app.log, 'warn');
+      try {
+        expect((await submit(externalTicketId)).statusCode).toBe(201);
+        await vi.waitFor(() =>
+          expect(warn).toHaveBeenCalledWith(expect.anything(), TRACKER_READ_OUT_OF_SCOPE)
+        );
+        expect(fetchTicketMock).not.toHaveBeenCalled();
+        expect(snapshotUpserts).toHaveLength(0);
+      } finally {
+        warn.mockRestore();
+      }
+    };
+
+    it('does not fetch a ticket from a repository the request does not target', async () => {
+      existingWorkflows = [];
+      snapshotUpserts.length = 0;
+      fetchTicketMock.mockClear();
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(githubTracker());
+
+      await expectRefused('attacker/private#1');
+    });
+
+    it('does not fetch when the tracker is on another host than the repository', async () => {
+      existingWorkflows = [];
+      snapshotUpserts.length = 0;
+      fetchTicketMock.mockClear();
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(githubTracker('https://ghe.corp/api/v3'));
+
+      await expectRefused('org/test#2');
+    });
+
+    it('fetches and stores a ticket in the selected repository, named or bare', async () => {
+      existingWorkflows = [];
+      snapshotUpserts.length = 0;
+      fetchTicketMock.mockClear();
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(githubTracker());
+      fetchTicketMock.mockResolvedValueOnce(ticket);
+      expect((await submit('Org/Test#5')).statusCode).toBe(201);
+      await vi.waitFor(() => expect(snapshotUpserts).toHaveLength(1));
+      expect(fetchTicketMock).toHaveBeenCalledTimes(1);
+
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(githubTracker());
+      fetchTicketMock.mockResolvedValueOnce(ticket);
+      expect((await submit('6')).statusCode).toBe(201);
+      await vi.waitFor(() => expect(snapshotUpserts).toHaveLength(2));
+      expect(fetchTicketMock).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('still returns 201 when the tracker enrichment throws unexpectedly', async () => {

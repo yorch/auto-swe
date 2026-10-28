@@ -146,10 +146,10 @@ describe('redirect behaviour against local servers', () => {
     expect(target.seen).toHaveLength(0);
   });
 
-  it('GitHub Issues: a same-origin redirect is followed with the token', async () => {
+  it('GitHub Issues: a same-origin redirect inside the checked repository is followed', async () => {
     const origin = await listen((req, _seen, res) => {
       if (req.url === '/repos/o/r/issues/1') {
-        res.writeHead(301, { location: '/repositories/5/issues/1' }).end();
+        res.writeHead(301, { location: '/repos/o/r/issues/1?moved=1' }).end();
         return;
       }
       res.setHeader('content-type', 'application/json');
@@ -164,12 +164,56 @@ describe('redirect behaviour against local servers', () => {
     expect(issue?.title).toBe('T');
     expect(origin.seen.map((s) => s.url)).toEqual([
       '/repos/o/r/issues/1',
-      '/repositories/5/issues/1',
+      '/repos/o/r/issues/1?moved=1',
     ]);
     expect(origin.seen[1].authorization).toBe('Bearer secret');
   });
 
-  it('GitHub Issues: a 307 on a write keeps the method and body', async () => {
+  it('GitHub Issues: a redirect out of the checked repository is refused, with no second request', async () => {
+    // GitHub answers a renamed repository or a transferred issue this way.
+    const origin = await listen((req, _seen, res) => {
+      if (req.url === '/repos/o/r/issues/1') {
+        res.writeHead(301, { location: '/repositories/5/issues/1' }).end();
+        return;
+      }
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ number: 1, state: 'open', title: 'private' }));
+    });
+    const provider = new GitHubIssuesProvider({
+      apiToken: 'secret',
+      baseUrl: origin.url,
+      fetchImpl: fetch,
+    });
+    expect(await provider.fetchIssue('o/r#1')).toBeNull();
+    expect(origin.seen.map((s) => s.url)).toEqual(['/repos/o/r/issues/1']);
+  });
+
+  it('GitHub Issues: a 307 on a write inside the repository keeps the method and body', async () => {
+    const origin = await listen((req, _seen, res) => {
+      if (req.url === '/repos/o/r/issues') {
+        res.writeHead(307, { location: '/repos/o/r/issues?retry=1' }).end();
+        return;
+      }
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ html_url: 'u', id: 1, number: 7, title: 'T' }));
+    });
+    const provider = new GitHubIssuesProvider({
+      apiToken: 'secret',
+      baseUrl: origin.url,
+      fetchImpl: fetch,
+    });
+    const created = await provider.createIssue({
+      description: 'd',
+      issueType: 'Story',
+      projectKey: 'o/r',
+      title: 'T',
+    });
+    expect(created?.id).toBe('7');
+    expect(origin.seen[1]).toMatchObject({ method: 'POST', url: '/repos/o/r/issues?retry=1' });
+    expect(JSON.parse(origin.seen[1].body).title).toBe('T');
+  });
+
+  it('GitHub Issues: a 307 on a write out of the repository is refused and nothing is written there', async () => {
     const origin = await listen((req, _seen, res) => {
       if (req.url === '/repos/o/r/issues') {
         res.writeHead(307, { location: '/repositories/5/issues' }).end();
@@ -189,14 +233,13 @@ describe('redirect behaviour against local servers', () => {
       projectKey: 'o/r',
       title: 'T',
     });
-    expect(created?.id).toBe('7');
-    expect(origin.seen[1]).toMatchObject({ method: 'POST', url: '/repositories/5/issues' });
-    expect(JSON.parse(origin.seen[1].body).title).toBe('T');
+    expect(created).toBeNull();
+    expect(origin.seen.map((s) => s.url)).toEqual(['/repos/o/r/issues']);
   });
 
-  it('GitHub Issues: a redirect loop stops at the hop limit', async () => {
+  it('GitHub Issues: a redirect loop inside the repository stops at the hop limit', async () => {
     const origin = await listen((_req, _seen, res) => {
-      res.writeHead(301, { location: '/again' }).end();
+      res.writeHead(301, { location: '/repos/o/r/again' }).end();
     });
     const provider = new GitHubIssuesProvider({
       apiToken: 'secret',

@@ -72,6 +72,74 @@ describe('GitHubIssuesProvider.addComment', () => {
   });
 });
 
+describe('GitHubIssuesProvider redirects stay in the targeted repository', () => {
+  const redirect = (status: number, location: string) =>
+    new Response(null, { headers: { location }, status });
+  const issueJson = (extra: Record<string, unknown> = {}) =>
+    new Response(JSON.stringify({ body: 'b', number: 42, state: 'open', title: 't', ...extra }), {
+      status: 200,
+    });
+  const make = (...responses: Response[]) => {
+    const fetchImpl = vi.fn(async (..._args: unknown[]) => responses.shift() as Response);
+    return {
+      fetchImpl,
+      provider: new GitHubIssuesProvider({ apiToken: 't', fetchImpl: fetchImpl as typeof fetch }),
+    };
+  };
+
+  it('does not follow a read to a transferred issue', async () => {
+    const { fetchImpl, provider } = make(redirect(301, '/repositories/9/issues/1'));
+    await expect(provider.fetchIssue('acme/api#42')).resolves.toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not follow a comment POST or a transition PATCH to another repository', async () => {
+    const post = make(redirect(307, '/repositories/9/issues/1/comments'));
+    await expect(post.provider.addComment('acme/api#42', 'hi')).resolves.toBe(false);
+    expect(post.fetchImpl).toHaveBeenCalledTimes(1);
+    const patch = make(redirect(308, '/repositories/9/issues/1'));
+    await patch.provider.transitionIssue('acme/api#42', 'done');
+    expect(patch.fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not follow a createIssue POST to another repository', async () => {
+    const { fetchImpl, provider } = make(redirect(308, '/repositories/9/issues'));
+    await expect(
+      provider.createIssue({
+        description: 'd',
+        issueType: 'Task',
+        projectKey: 'acme/api',
+        title: 't',
+      })
+    ).resolves.toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('still follows a redirect to the same repository path, ignoring case', async () => {
+    const { fetchImpl, provider } = make(redirect(301, '/repos/ACME/Api/issues/42'), issueJson());
+    await expect(provider.fetchIssue('acme/api#42')).resolves.toMatchObject({ title: 't' });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('refuses a redirect that climbs out of the repository with encoded dots', async () => {
+    const { fetchImpl, provider } = make(redirect(301, '/repos/acme/api/%2e%2e/%2e%2e/x'));
+    await expect(provider.fetchIssue('acme/api#42')).resolves.toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns null when the issue reports a different repository_url', async () => {
+    const { provider } = make(issueJson({ repository_url: 'https://api.github.com/repos/o/r' }));
+    await expect(provider.fetchIssue('acme/api#42')).resolves.toBeNull();
+  });
+
+  it('accepts a repository_url naming the same repository, ignoring case', async () => {
+    const { provider } = make(
+      issueJson({ repository_url: 'https://api.github.com/repos/Acme/API' })
+    );
+    await expect(provider.fetchIssue('acme/api#42')).resolves.toMatchObject({ title: 't' });
+  });
+});
+
 describe('GitHubIssuesProvider.searchIssues', () => {
   it('is not supported: polling a filter is Jira only', async () => {
     const provider = new GitHubIssuesProvider({ apiToken: 't' });

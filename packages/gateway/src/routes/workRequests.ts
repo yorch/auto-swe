@@ -18,6 +18,11 @@ import {
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
 import {
+  isTrackerReadInScope,
+  repoTrackerScope,
+  TRACKER_READ_OUT_OF_SCOPE,
+} from '@auto-swe/shared/lib/trackerSync';
+import {
   generateBranchName,
   generateWorkflowId,
   legacyWorkflowIdBases,
@@ -100,7 +105,12 @@ async function enrichWithTicketData(
   fastify: FastifyInstance,
   args: {
     externalTicketId: string;
-    repo: { organizationName: string; repoName: string };
+    repo: {
+      githubApiUrl?: string | null;
+      githubUrl?: string | null;
+      organizationName: string;
+      repoName: string;
+    };
     workRequestId: string;
   }
 ): Promise<string> {
@@ -108,6 +118,23 @@ async function enrichWithTicketData(
     const tracker = await resolveIssueTrackerConfig();
 
     if (!tracker.provider) {
+      return '';
+    }
+
+    // On GitHub the ticket id names its own `owner/repo` and the tracker token reads any
+    // repository it can see, so the id must name the repository the launcher selected (already
+    // membership-checked), on the tracker's host. Refused before any network call and treated as
+    // a ticket that was not found: nothing is fetched or stored.
+    const defaultRepo = { owner: args.repo.organizationName, repo: args.repo.repoName };
+    if (
+      !(await isTrackerReadInScope(
+        tracker,
+        args.externalTicketId,
+        () => repoTrackerScope([args.repo]),
+        defaultRepo
+      ))
+    ) {
+      fastify.log.warn({ workRequestId: args.workRequestId }, TRACKER_READ_OUT_OF_SCOPE);
       return '';
     }
 
@@ -119,7 +146,7 @@ async function enrichWithTicketData(
     });
 
     const ticket = await fetchTicket(tracker, args.externalTicketId, {
-      defaultRepo: { owner: args.repo.organizationName, repo: args.repo.repoName },
+      defaultRepo,
       fetchLinkedPages: kbConfig?.enabled ?? false,
       log: fastify.log,
     });
@@ -786,11 +813,11 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // they write gates the submission. Design enrichment reuses the fetched
       // ticket text, so the two stay sequential. (The retry endpoint skips this
       // — it reuses the original snapshot.)
-      const { organizationName, repoName } = repo;
+      const { githubApiUrl, githubUrl, organizationName, repoName } = repo;
       void (async () => {
         const ticketText = await enrichWithTicketData(fastify, {
           externalTicketId,
-          repo: { organizationName, repoName },
+          repo: { githubApiUrl, githubUrl, organizationName, repoName },
           workRequestId,
         });
         await enrichWithDesignData(fastify, { description, ticketText, workRequestId });
