@@ -223,12 +223,13 @@ The test loop runs `runTests` when set, else a command guessed from `package.jso
 `npm test`. When the command cannot run in the workspace — exit status 127 or 126, npm's
 `Missing script: "test"` (npm's own line at the start of a line, with exit status 1), or npm's
 missing-`package.json` error (what the `npm test` fallback hits in a repository that is not a Node
-project) — the loop ends after that test run instead of starting another agent pass, records a `tdd.test_unrunnable` event, still commits and pushes the work, and
-says so in the implementation notes. The missing-`package.json` case counts only as npm's own
+project) — the loop ends after that test run instead of starting another agent pass, records a
+`tdd.test_unrunnable` event, still commits and pushes the work, and says so in the implementation
+notes. The missing-`package.json` case counts only as npm's own
 `npm error enoent Could not read package.json` line at the start of a line together with exit status
 254, so a suite that runs npm itself and then fails an assertion keeps iterating. This holds for a
-configured `runTests` too. Set `runTests` to a command the
-workspace can run, or pin an `executorImage` that carries the repository's toolchain.
+configured `runTests` too. Set `runTests` to a command the workspace can run, or pin an
+`executorImage` that carries the repository's toolchain.
 
 A gate command runs in the agent workspace of every run on the repository, so changing the set takes
 the same role as writing a command into a template: a platform admin, or an admin of the team that
