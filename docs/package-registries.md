@@ -19,7 +19,7 @@ starts gets, before the container is created, a random 32-byte token registered 
 generated `npmrc` — to send installs to `http://<proxy>/npm/<registryId>/…` with that bearer
 token. The proxy adds the real upstream credential server-side, so a token read out of the
 container is good only at the proxy, only for that workspace's lifetime, and in lockfile mode
-only for the dependencies committed on the base ref. It is **read-only**: GET and HEAD only.
+only for the dependencies committed on the base ref. It is **read-only**: GET and HEAD only, plus the one POST described under *Audit* in §5.
 
 The threat model covers both accidental leakage and a prompt-injected agent. The real registry
 credential never enters the container, so neither a log line nor an agent can expose it. The
@@ -123,7 +123,20 @@ the allowlist (denied).
 
 A scoped name may be written `@scope/pkg`, `@scope%2fpkg` or `%40scope%2fpkg`.
 
-Anything else, including search, audit and `/-/…` endpoints, is a JSON 404.
+Anything else, including search and other `/-/…` endpoints, is a JSON 404. The one exception is the
+audit query below.
+
+**Audit.** `POST <baseUrl>/npm/<registryId>/-/npm/v1/security/advisories/bulk` — the bulk advisory
+query `npm audit`, `pnpm audit` and `yarn npm audit` send — is relayed to the **default** registry
+with its credential, so a `runVulnScan` gate works in a wired workspace. The body (gzip accepted,
+8 MiB cap) must be exactly a JSON object of package names to non-empty lists of version strings,
+each a valid name and version, so it can carry nothing else. In lockfile mode every name and version
+must also be in the committed lockfiles (otherwise 403, reported like any other denial). A body that
+names a package another registry serves (a claimed private scope) is refused with 403, not trimmed:
+sending it to the default registry would disclose the name, and a trimmed audit would read as a
+complete one. The legacy `/-/npm/v1/security/audits*` endpoints are not served. The answer (8 MiB
+cap) is relayed as JSON with the upstream's status; whether it holds advisories depends on the
+upstream — a mirror that does not implement the endpoint answers an error, and the gate fails.
 
 **A tarball path may carry a prefix.** Up to eight segments are allowed, and none may be `.` or
 `..` in any encoding. The proxy validates the prefix and then ignores it, and it strips an
@@ -141,7 +154,7 @@ packument.
 **Status codes:**
 - unknown token: 401
 - unregistered `registryId`: 404
-- a method other than GET or HEAD: 405
+- a method other than GET or HEAD, except the audit POST above: 405
 
 **The upstream request** carries the routed registry's credential header, the client's `accept`
 header, `accept-encoding: identity` for packuments, and `redirect: 'error'`. It goes through the

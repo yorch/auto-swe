@@ -5,7 +5,10 @@
  * place of every registry's real credential: the container never holds an
  * upstream token, and a token read out of it is good only at this proxy, only
  * for this workspace's lifetime, and — in `lockfile` access mode — only for
- * the package@version pairs committed on the base ref. GET and HEAD only.
+ * the package@version pairs committed on the base ref. GET and HEAD only — plus
+ * one POST, the bulk advisory query `npm audit`, `pnpm audit` and `yarn npm audit`
+ * send, which `serveAudit` accepts only in a shape that carries nothing but
+ * package names and versions the registration may already read.
  *
  * URL layout: `<baseUrl>/npm/<registryId>/<npm path>`, where the npm path is
  * either a packument `/<name>` (`pkg`, `@scope/pkg`, `@scope%2fpkg`), a
@@ -21,6 +24,7 @@ import { AsyncResource } from 'node:async_hooks';
 import { createHash, randomBytes } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { gunzipSync } from 'node:zlib';
 import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { TarballCache } from './cache.js';
@@ -47,6 +51,13 @@ const DEFAULT_MAX_BUFFERED_FETCHES = 8;
 const DEFAULT_MAX_QUEUED_FETCHES = 64;
 const DEFAULT_QUEUE_WAIT_MS = 30_000;
 const DEFAULT_UPSTREAM_DEADLINE_MS = 20_000;
+
+/** The one non-GET path: the bulk advisory query every current package manager's `audit` sends. */
+const AUDIT_PATH = '/-/npm/v1/security/advisories/bulk';
+/** An audit request, compressed or not, and its answer, are bounded: neither is a stream. */
+const MAX_AUDIT_REQUEST_BYTES = 8 * 1024 * 1024;
+const MAX_AUDIT_BODY_BYTES = 8 * 1024 * 1024;
+const MAX_AUDIT_PACKAGES = 20_000;
 
 /** npm's own package-name shape; nothing here can start with `.` or `_` or carry a separator. */
 const NAME_RE = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/i;
@@ -384,6 +395,40 @@ function rewriteDistTarball(
   }
 }
 
+/**
+ * The bulk-advisory body as a name → versions map, or the reason it is refused.
+ * Only that shape passes — an object of valid package names to arrays of
+ * version strings — so the body can carry nothing else.
+ */
+export function checkAuditBody(text: string): Record<string, string[]> | string {
+  let doc: unknown;
+  try {
+    doc = JSON.parse(text);
+  } catch {
+    return 'the audit request is not JSON';
+  }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) {
+    return 'the audit request must be an object of package names to version lists';
+  }
+  const entries = Object.entries(doc as Record<string, unknown>);
+  if (entries.length === 0 || entries.length > MAX_AUDIT_PACKAGES) {
+    return 'the audit request names no packages, or too many';
+  }
+  const out: Record<string, string[]> = Object.create(null);
+  for (const [name, versions] of entries) {
+    if (
+      !NAME_RE.test(name) ||
+      !Array.isArray(versions) ||
+      versions.length === 0 ||
+      !versions.every((v) => typeof v === 'string' && VERSION_RE.test(v))
+    ) {
+      return 'the audit request names a package or version that is not well formed';
+    }
+    out[name] = versions as string[];
+  }
+  return out;
+}
+
 export function createRegistryProxy(options: {
   listenHost: string;
   listenPort: number;
@@ -662,6 +707,126 @@ export function createRegistryProxy(options: {
     res.end(filtered.body);
   }
 
+  /**
+   * `POST …/-/npm/v1/security/advisories/bulk`: `{ "<name>": ["<version>", …], … }`.
+   *
+   * Accepted only when the body is exactly that shape, so it can carry nothing but
+   * names and versions. In lockfile mode each pair must also be one the registration
+   * may already read; in open mode the shape is the whole check. Every name must be
+   * served by the default registry: the query goes there, and sending it a private
+   * scope's package names would disclose them to a registry that does not own them,
+   * so such a body is refused rather than trimmed (a trimmed audit would pass for a
+   * complete one). The answer is relayed as JSON; nothing else of the upstream's is.
+   */
+  async function serveAudit(
+    reg: Registration,
+    req: http.IncomingMessage,
+    res: http.ServerResponse
+  ): Promise<void> {
+    const defaultRegistry = [...reg.registries.values()].find((r) => r.isDefault);
+    if (!defaultRegistry) {
+      sendJson(res, 404, 'no default registry answers audits');
+      return;
+    }
+    const raw: Buffer[] = [];
+    let received = 0;
+    for await (const chunk of req) {
+      received += (chunk as Buffer).length;
+      if (received > MAX_AUDIT_REQUEST_BYTES) {
+        sendJson(res, 413, 'the audit request is too large');
+        req.destroy();
+        return;
+      }
+      raw.push(chunk as Buffer);
+    }
+    let text: string;
+    try {
+      const body = Buffer.concat(raw);
+      text = (
+        req.headers['content-encoding'] === 'gzip'
+          ? gunzipSync(body, { maxOutputLength: MAX_AUDIT_REQUEST_BYTES })
+          : body
+      ).toString('utf8');
+    } catch {
+      sendJson(res, 400, 'the audit request could not be decoded');
+      return;
+    }
+    const checked = checkAuditBody(text);
+    if (typeof checked === 'string') {
+      sendJson(res, 400, checked);
+      return;
+    }
+    for (const [name, versions] of Object.entries(checked)) {
+      const owner = routeRegistry(reg, name);
+      if (owner?.id !== defaultRegistry.id) {
+        sendJson(
+          res,
+          403,
+          `auto-swe: ${name} is served by another registry, so an audit that names it would disclose it to the default registry; audit this repository outside the workspace`
+        );
+        return;
+      }
+      const allowlist = reg.allowlists?.get(owner.id);
+      if (allowlist) {
+        const allowed = allowlist.get(name);
+        const denied = allowed ? versions.find((v) => !allowed.has(v)) : versions[0];
+        if (denied !== undefined || !allowed) {
+          reg.onDenied({ name, reason: 'not-in-lockfile', registryId: owner.id, version: denied });
+          sendJson(res, 403, denyMessage(name, denied));
+          return;
+        }
+      }
+    }
+    let upstream: Response;
+    try {
+      upstream = await upstreamFetchFor(defaultRegistry)(
+        `${defaultRegistry.upstreamUrl}${AUDIT_PATH}`,
+        {
+          body: JSON.stringify(checked),
+          headers: {
+            accept: 'application/json',
+            'content-type': 'application/json',
+            ...(defaultRegistry.token
+              ? {
+                  authorization:
+                    defaultRegistry.authKind === 'basic'
+                      ? `Basic ${Buffer.from(defaultRegistry.token).toString('base64')}`
+                      : `Bearer ${defaultRegistry.token}`,
+                }
+              : {}),
+          },
+          method: 'POST',
+          redirect: 'error',
+        }
+      );
+    } catch {
+      sendJson(res, 502, 'the upstream registry could not be reached');
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    try {
+      if (upstream.body) {
+        for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
+          size += chunk.length;
+          if (size > MAX_AUDIT_BODY_BYTES) {
+            sendJson(res, 502, 'the upstream audit answer is too large to proxy');
+            return;
+          }
+          chunks.push(Buffer.from(chunk));
+        }
+      }
+    } catch {
+      sendJson(res, 502, 'the upstream registry could not be reached');
+      return;
+    }
+    res.writeHead(upstream.status, {
+      'cache-control': 'no-store',
+      'content-type': 'application/json',
+    });
+    res.end(Buffer.concat(chunks));
+  }
+
   const advertised = (): string => {
     if (typeof options.advertisedUrl === 'string') {
       return options.advertisedUrl;
@@ -705,12 +870,21 @@ export function createRegistryProxy(options: {
       sendJson(res, 404, 'unknown registry');
       return;
     }
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      sendJson(res, 405, 'read-only: GET and HEAD only');
+    const isAudit = req.method === 'POST' && m[2] === AUDIT_PATH;
+    if (!isAudit && req.method !== 'GET' && req.method !== 'HEAD') {
+      sendJson(res, 405, 'read-only: GET and HEAD only (and the bulk advisory query)');
       return;
     }
     if (!reg.allowlists) {
       sendJson(res, 503, 'the registry allowlist is not ready yet');
+      return;
+    }
+    if (isAudit) {
+      const audit = serveAudit(reg, req, res).catch(() => {
+        sendJson(res, 502, 'the upstream registry could not be reached');
+      });
+      reg.inFlight.add(audit);
+      void audit.finally(() => reg.inFlight.delete(audit));
       return;
     }
     const parsed = packageNameOf(m[2] ?? '');
