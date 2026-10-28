@@ -627,7 +627,13 @@ an `AssistantAction` the user confirmed on their own session for exactly that me
 the gateway spends it once the body is parsed and refuses the request if it differs. `request.assistant`
 tells a handler the call came from the assistant. A token is also refused once the conversation it
 was minted for is closed or is not its user's, so closing a conversation revokes every token issued
-for it. See [adr/in-app-assistant.md](./adr/in-app-assistant.md).
+for it. The assistant never calls, whatever the user may do, a route that answers a human step or
+confirms an action, that reads, creates or rotates a secret or credential, that manages users, roles,
+memberships or permission grants, or that deletes (the `never` entries of `lib/assistantPolicy.ts`);
+it explains how to do those in the dashboard instead. The assistant is a dashboard panel only: the Slack
+channel assistant and the MCP server keep their own tools, because acting as the invoking user in a shared
+Slack channel has no settled identity or confirmation. The design rationale is frozen in
+[history/in-app-assistant.md](./history/in-app-assistant.md).
 
 The assistant itself runs in the worker. Each conversation is one `AssistantConversationWorkflow`
 (id `assistant-<conversationId>`) that the gateway starts or signals with `signalWithStart` when the

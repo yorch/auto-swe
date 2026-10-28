@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * One assistant turn end to end inside the worker: the real tools, the real `runAgent` and Mastra
  * loop, and the docs the worker image ships, with only the model scripted and the database mocked.
  * The model asks `searchDocs` how to configure an integration and answers by citing the section
- * the tool returned, which is the shape a real answer must have (`docs/adr/in-app-assistant.md`
+ * the tool returned, which is the shape a real answer must have (`docs/history/in-app-assistant.md`
  * D11 item 2).
  */
 

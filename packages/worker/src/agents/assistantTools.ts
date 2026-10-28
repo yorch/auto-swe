@@ -28,7 +28,7 @@ import {
 } from './assistantInventory.js';
 
 /**
- * The in-app assistant's read tools (`docs/adr/in-app-assistant.md` D5). Every one that touches
+ * The in-app assistant's read tools (`docs/history/in-app-assistant.md` D5). Every one that touches
  * platform data goes through the gateway as the user (`assistantGateway.ts`), so nothing here
  * decides who may see what: the routes do. `searchDocs` reads the docs the worker image ships,
  * and `workflowInventory` reads the workflow catalog from code; both are the same for every user.
