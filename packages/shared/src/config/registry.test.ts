@@ -38,7 +38,7 @@ describe('git author settings', () => {
   const accepts = (key: keyof typeof SETTING_DEFINITIONS, value: unknown) =>
     SETTING_DEFINITIONS[key].schema.safeParse(value).success;
 
-  it('are defined in the git group with LEAD role and template/team/org overrides', () => {
+  it('are defined in the git group with template/team/org overrides', () => {
     const defaults = {
       'git.authorEmail': 'auto-swe@localhost',
       'git.authorName': 'auto-swe',
@@ -49,7 +49,9 @@ describe('git author settings', () => {
       expect(def.defaultValue, key).toBe(value);
       expect(def.group, key).toBe('git');
       expect(def.overridableAt, key).toEqual(['WORKFLOW_TEMPLATE', 'TEAM', 'ORGANIZATION']);
-      expect(def.requiredRole, key).toBe('LEAD');
+      // The identity written on every commit is ADMIN-only (a team lead could otherwise forge
+      // provenance); crediting the launcher stays with the team lead.
+      expect(def.requiredRole, key).toBe(key === 'git.launcherAttribution' ? 'LEAD' : 'ADMIN');
       expect(def.runPinned, key).toBe(false);
     }
   });

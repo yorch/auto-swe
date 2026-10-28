@@ -92,14 +92,19 @@ export async function pruneAgentTranscripts(
       // that then fails leaves an orphan the pass below reaps.
       // The hold predicates are repeated in the delete: a hold placed after the batch was
       // selected (the batch takes seconds to minutes) must still protect the transcript.
-      const removed = await prisma.agentTranscript.deleteMany({
-        where: {
-          id: transcript.id,
-          legalHold: false,
-          OR: [{ runId: null }, { run: { transcriptLegalHold: false } }],
-          runLegalHold: false,
-        },
-      });
+      const removed = await runUnscoped(
+        'transcript retention sweep deletes every expired non-held transcript',
+        ['AgentTranscript'],
+        () =>
+          prisma.agentTranscript.deleteMany({
+            where: {
+              id: transcript.id,
+              legalHold: false,
+              OR: [{ runId: null }, { run: { transcriptLegalHold: false } }],
+              runLegalHold: false,
+            },
+          })
+      );
       if (removed.count === 0) {
         continue;
       }
