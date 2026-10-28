@@ -30,7 +30,7 @@ export interface ActivityEventRow {
   props?: Record<string, string | number | boolean | null>;
 }
 
-/** A `read` or `export` row for one actor and route is written at most this often. */
+/** A `read` row for one actor and route is written at most this often. */
 export const READ_DEDUPE_MS = 10 * 60_000;
 /** A `denied` row for one actor, route and status is written at most this often. */
 export const DENIED_DEDUPE_MS = 60_000;
@@ -309,15 +309,21 @@ export const activityEvents = fp<{
         }
         const event = activityEventFor(request, reply);
         if (event) {
-          // A poller refreshing a page does not write a row per refresh.
-          const key =
-            event.kind === 'denied'
-              ? `denied|${event.actorId}|${event.route}|${event.status}`
-              : `${event.kind}|${event.actorId}|${event.route}`;
-          queue.enqueue(event, {
-            key,
-            ttlMs: event.kind === 'denied' ? DENIED_DEDUPE_MS : READ_DEDUPE_MS,
-          });
+          // A poller refreshing a page does not write a row per refresh. An export is
+          // never collapsed: the row is the only trail of what left the platform, and the
+          // per-actor bucket already bounds how many can be written.
+          if (event.kind === 'export') {
+            queue.enqueue(event);
+          } else {
+            const key =
+              event.kind === 'denied'
+                ? `denied|${event.actorId}|${event.route}|${event.status}`
+                : `${event.kind}|${event.actorId}|${event.route}`;
+            queue.enqueue(event, {
+              key,
+              ttlMs: event.kind === 'denied' ? DENIED_DEDUPE_MS : READ_DEDUPE_MS,
+            });
+          }
         }
       } catch (err) {
         request.log.warn({ err }, 'activity event could not be recorded');
