@@ -467,7 +467,13 @@ describe('runShellStep — clone credential is never persisted in the workspace 
     await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
 
     const finalize = requireCommand('finalize push', (c) => c.includes('push --no-verify'));
-    expect(finalize).toContain(escaped(`-c http.extraheader=${shellQuote(AUTH_HEADER)}`));
+    expect(finalize).toContain('-c "http.extraheader=$ASW_GIT_AUTH"');
+    // The header value is handed to the helper as a secret env var, never in the script.
+    expect(finalize).not.toContain(AUTH_HEADER);
+    const pushSpec = backendRunHelper.mock.calls
+      .map(([spec]) => spec as { argv?: string[]; secretEnv?: Record<string, string> })
+      .find((spec) => spec.argv?.[1]?.includes('push --no-verify'));
+    expect(pushSpec?.secretEnv).toEqual({ ASW_GIT_AUTH: AUTH_HEADER });
     // Pushed to the scrubbed URL explicitly, never through the `origin` name
     // the author command could have repointed.
     expect(finalize).toContain(

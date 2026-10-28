@@ -64,6 +64,7 @@ import { workspaceBackend } from '../lib/workspaceBackend/index.js';
 import { recordLessonBackground } from './commitToMemory.js';
 import { truncate } from './qualityGates.js';
 import {
+  gitAuthSecretEnv,
   gitWithAuthHeader,
   sanitizeGitRepoConfigScript,
   shellQuote,
@@ -137,7 +138,8 @@ async function runHelper(
   volumeName: string,
   image: string,
   tokenForRedact?: string | null,
-  maxOutputBytes?: number
+  maxOutputBytes?: number,
+  secretEnv?: Record<string, string>
 ): Promise<string> {
   const backend = workspaceBackend();
   try {
@@ -146,6 +148,7 @@ async function runHelper(
         argv: ['-c', script],
         entrypoint: 'sh',
         image,
+        ...(secretEnv ? { secretEnv } : {}),
         volumes: [{ source: volumeName, target: '/workspace' }],
       },
       { heartbeatLabel: 'shell-step: helper', ...(maxOutputBytes ? { maxOutputBytes } : {}) }
@@ -323,7 +326,8 @@ export function finalizeScript(
     branch: string;
     commandSummary: string;
     cleanUrl: string;
-    gitAuthHeader?: string;
+    /** Whether the caller supplies the push credential through `gitAuthSecretEnv`. */
+    authed?: boolean;
     identity: GitIdentity;
   }
 ): string {
@@ -339,11 +343,11 @@ export function finalizeScript(
     'fi',
     git('add -A'),
     git(`${gitIdentityFlags(opts.identity)} commit -m ${shellQuote(message)}`),
-    // `gitWithAuthHeader` shell-quotes the header; the branch is quoted here.
+    // The header is read from the environment, never embedded; the branch is quoted here.
     // Pushed to the scrubbed URL explicitly, not through the `origin` name.
     gitWithAuthHeader(
       `push --no-verify ${shellQuote(opts.cleanUrl)} HEAD:${shellQuote(opts.branch)}`,
-      opts.gitAuthHeader
+      opts.authed
     ),
     git('rev-parse HEAD'),
     git('diff --name-only HEAD~1 HEAD'),
@@ -377,10 +381,10 @@ async function finalizeWorkspaceVolume(
   gitAuthHeader?: string
 ): Promise<FinalizeResult> {
   const script = finalizeScript('/workspace/repo', {
+    authed: Boolean(gitAuthHeader),
     branch,
     cleanUrl,
     commandSummary,
-    gitAuthHeader,
     identity,
   });
   // `git push` failures can still echo credential material (e.g. a git build
@@ -389,7 +393,14 @@ async function finalizeWorkspaceVolume(
   // it ever reaches the caller. Defense in depth on top of the scrub.
   // `runHelper`'s catch redacts the token before a failure can reach the
   // caller — defense in depth on top of the origin scrub.
-  const out = await runHelper(script, volumeName, image, token);
+  const out = await runHelper(
+    script,
+    volumeName,
+    image,
+    token,
+    undefined,
+    gitAuthSecretEnv(gitAuthHeader)
+  );
   if (out.includes('NO_CHANGES')) {
     return { filesChanged: [] };
   }

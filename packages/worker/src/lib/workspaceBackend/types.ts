@@ -47,6 +47,15 @@ export interface WorkspaceExecOptions {
   workdir?: string;
   /** Non-secret `NAME=value` pairs for `docker exec -e NAME=value`. */
   env?: string[];
+  /**
+   * Secrets by name → value. The driver delivers each as an environment
+   * variable of the command without ever putting the value on a command line
+   * (Docker: `-e NAME` resolved from the client's own environment; Kubernetes:
+   * a stdin preamble, because the exec API's argv is an apiserver URL that
+   * lands in audit logs). Use it for any credential a script needs — never
+   * embed one in `argv`.
+   */
+  secretEnv?: Record<string, string>;
   /** Capture cap on stdout/stderr each (default the capture helper's own). */
   maxOutputBytes?: number;
   /** Streamed to the command's stdin. */
@@ -85,7 +94,7 @@ export interface WorkspaceSpawnOptions {
  * Obligations a driver must meet:
  *  - create() applies the workspace hardening (init, cap-drop, no-new-privileges,
  *    `sleep infinity` keeper) itself and records the keeper's in-container PID.
- *  - exec/spawn never place a `secretEnv` *value* on a command line.
+ *  - exec/execShell/spawn never place a `secretEnv` *value* on a command line.
  *  - remove() is idempotent.
  */
 export interface WorkspaceBackend {
@@ -226,6 +235,8 @@ export interface HelperContainerSpec {
   argv?: string[];
   volumes?: EphemeralVolumeMount[];
   env?: string[];
+  /** Secrets by name → value, delivered as `docker run -e NAME` from the client's environment. */
+  secretEnv?: Record<string, string>;
 }
 
 export interface EphemeralRunOptions {

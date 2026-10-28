@@ -82,20 +82,27 @@ export function keeperPidProbeScript(): string {
 }
 
 /**
- * The `docker exec` argv for one command in the container. Secret env only
- * exists on the streaming `spawn` path (see the interface), where docker can
- * be handed the values to resolve `-e NAME` against.
+ * The `docker exec` argv for one command in the container. A `secretEnv`
+ * contributes names only; the caller hands the values to the docker client's
+ * environment so `-e NAME` resolves against them.
  */
 function execArgv(
   h: WorkspaceHandle,
   argv: string[],
-  opts: { workdir?: string; env?: string[]; stdin?: boolean }
+  opts: {
+    workdir?: string;
+    env?: string[];
+    secretEnv?: Record<string, string>;
+    stdin?: boolean;
+  }
 ): string[] {
   return [
     'exec',
     ...(opts.stdin ? ['-i'] : []),
     ...(opts.workdir ? ['-w', opts.workdir] : []),
     ...(opts.env ?? []).flatMap((pair) => ['-e', pair]),
+    // Named without a value: docker resolves it from the client's environment.
+    ...Object.keys(opts.secretEnv ?? {}).flatMap((name) => ['-e', name]),
     h.id,
     ...argv,
   ];
@@ -114,6 +121,9 @@ function execCommand(h: WorkspaceHandle, argv: string[], opts: WorkspaceExecOpti
   }
   for (const pair of opts.env ?? []) {
     parts.push('-e', pair);
+  }
+  for (const name of Object.keys(opts.secretEnv ?? {})) {
+    parts.push('-e', shellQuote(name));
   }
   parts.push(h.id, ...argv.slice(0, -1), shellQuote(argv.at(-1) ?? ''));
   return parts.join(' ');
@@ -230,6 +240,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       heartbeatLabel: opts.heartbeatLabel,
       ...(opts.maxOutputBytes !== undefined ? { maxBuffer: opts.maxOutputBytes } : {}),
       onTimeout: opts.onTimeout,
+      ...(opts.secretEnv ? { env: opts.secretEnv } : {}),
       timeoutMs: opts.timeoutMs ?? 600_000,
     };
     return opts.stdin !== undefined
@@ -241,6 +252,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     return execShellAsync(execCommand(h, argv, opts), {
       heartbeatLabel: opts.heartbeatLabel,
       onTimeout: opts.onTimeout,
+      ...(opts.secretEnv ? { env: opts.secretEnv } : {}),
       timeoutMs: opts.timeoutMs,
     });
   }
@@ -353,6 +365,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   async runHelper(spec: HelperContainerSpec, opts: EphemeralRunOptions): Promise<CapturedResult> {
     return spawnCaptureAsync('docker', helperArgs(spec), {
       heartbeatLabel: opts.heartbeatLabel,
+      ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
       ...(opts.maxOutputBytes ? { maxBuffer: opts.maxOutputBytes } : {}),
       timeoutMs: opts.timeoutMs,
     });
@@ -390,6 +403,7 @@ function helperArgs(spec: HelperContainerSpec): string[] {
       `${v.source}:${v.target}:${v.readOnly ? 'ro' : 'rw'}`,
     ]),
     ...(spec.env ?? []).flatMap((pair) => ['-e', pair]),
+    ...Object.keys(spec.secretEnv ?? {}).flatMap((name) => ['-e', name]),
     ...(spec.entrypoint ? ['--entrypoint', spec.entrypoint] : []),
     spec.image,
     ...(spec.argv ?? []),

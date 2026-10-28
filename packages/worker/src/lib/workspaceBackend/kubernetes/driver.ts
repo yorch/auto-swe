@@ -162,10 +162,20 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
     argv: string[],
     opts: WorkspaceExecOptions
   ): Promise<CapturedResult> {
-    const stdin = opts.stdin !== undefined;
+    const secrets = opts.secretEnv ?? {};
+    const hasSecrets = Object.keys(secrets).length > 0;
+    // The exec API's argv is an apiserver URL (audit logs), so a secret value
+    // travels as a stdin preamble ahead of the caller's own input, as in `spawn`.
+    const stdin: string | Buffer | undefined = hasSecrets
+      ? Buffer.concat([
+          Buffer.from(secretStdinPreamble(secrets), 'utf8'),
+          opts.stdin === undefined ? Buffer.alloc(0) : Buffer.from(opts.stdin),
+        ])
+      : opts.stdin;
     const args = execArgs(this.ref(h), argv, {
       env: opts.env,
-      interactive: stdin,
+      interactive: stdin !== undefined,
+      secrets: hasSecrets,
       workdir: opts.workdir,
     });
     const runOpts = {
@@ -174,9 +184,10 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
       onTimeout: opts.onTimeout,
       timeoutMs: opts.timeoutMs ?? 600_000,
     };
-    const result = stdin
-      ? await spawnWithStdinAsync(this.kubectl, args, opts.stdin as string | Buffer, runOpts)
-      : await spawnCaptureAsync(this.kubectl, args, runOpts);
+    const result =
+      stdin !== undefined
+        ? await spawnWithStdinAsync(this.kubectl, args, stdin, runOpts)
+        : await spawnCaptureAsync(this.kubectl, args, runOpts);
     return { ...result, stderr: stripTerminated(result.stderr) };
   }
 
