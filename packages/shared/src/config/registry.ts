@@ -678,6 +678,19 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: qodoActionLevel,
   }),
+  'qodo.prFeedbackRunWaitSeconds': defineSetting({
+    defaultValue: 900,
+    description:
+      'How long a Qodo-triggered round waits for the run that opened the pull request to finish its CI wait and park, before it gives up without changing anything. 0 skips at once, as when the run is still working.',
+    group: 'qodo',
+    label: 'Wait for the opening run to finish',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.number().int().min(0).max(900),
+    unit: 'seconds',
+  }),
   'qodo.prFeedbackWaitSeconds': defineSetting({
     defaultValue: 120,
     description:

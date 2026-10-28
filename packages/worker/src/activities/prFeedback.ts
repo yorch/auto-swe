@@ -233,7 +233,8 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
     ) {
       return skip('the pull request is from a fork', { silent: true });
     }
-    const headSha = pr.headSha;
+    // `let`: a Qodo round that waited for the run to park follows the head the run left.
+    let headSha = pr.headSha;
     const headRef = pr.headRef;
 
     // A Qodo nudge is a bot's: it names no person to trust and carries no text to read, so
@@ -328,11 +329,13 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
     }
 
     // ── 5. The pull request's origin, from the database — never the payload ──
-    const prRow = await prisma.pullRequest.findFirst({
-      include: { workflow: true },
-      orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
-      where: { prNumber: payload.pullRequestNumber, repoId, status: 'OPEN' },
-    });
+    const readPrRow = () =>
+      prisma.pullRequest.findFirst({
+        include: { workflow: true },
+        orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+        where: { prNumber: payload.pullRequestNumber, repoId, status: 'OPEN' },
+      });
+    const prRow = await readPrRow();
     let origin: 'workflow' | 'agent_run' | 'other' = 'other';
     let agentRef: string | undefined;
     let originalTask: string | undefined;
@@ -357,17 +360,67 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
       }
       // The run that opened the pull request is still working on it unless it is parked
       // waiting for the merge or has ended: a round now would fight its next commit.
-      const st = prRow.workflow.currentStatus;
-      if (
-        st &&
-        st !== 'AWAITING_HUMAN_MERGE' &&
-        !ACTIVE_WORKFLOW_TERMINAL_STATUSES.has(st as never)
-      ) {
-        return skip('the run that opened this pull request is still working on it', {
-          headRef,
-          origin,
-          silent: isQodo,
+      if (runIsWorking(prRow.workflow.currentStatus)) {
+        // A person's round is skipped at once. A Qodo nudge fires once per head and its
+        // decision is spent when the round skips, and Qodo often comments while CI is still
+        // running — so it waits, bounded, for the run to park.
+        const runWaitSeconds = isQodo
+          ? await resolveSetting('qodo.prFeedbackRunWaitSeconds', ctx)
+          : 0;
+        if (runWaitSeconds <= 0) {
+          return skip(RUN_STILL_WORKING, { headRef, origin, silent: isQodo });
+        }
+        const startedAt = Date.now();
+        const deadline = startedAt + runWaitSeconds * 1_000;
+        const waitedFor = () => Math.round((Date.now() - startedAt) / 1_000);
+        for (;;) {
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) {
+            tracer.addActivityEvent({
+              name: 'pr_feedback.qodo_waited_for_run',
+              outputJson: { outcome: 'timed_out', seconds: waitedFor() },
+            });
+            return skip(RUN_STILL_WORKING, { headRef, origin, silent: true });
+          }
+          await sleep(Math.min(QODO_POLL_INTERVAL_MS, remaining));
+          const current = await readPrRow();
+          if (!current?.workflow) {
+            tracer.addActivityEvent({
+              name: 'pr_feedback.qodo_waited_for_run',
+              outputJson: { outcome: 'gone', seconds: waitedFor() },
+            });
+            return skip('the pull request is no longer open', { headRef, origin, silent: true });
+          }
+          if (!runIsWorking(current.workflow.currentStatus)) {
+            break;
+          }
+        }
+        tracer.addActivityEvent({
+          name: 'pr_feedback.qodo_waited_for_run',
+          outputJson: { outcome: 'parked', seconds: waitedFor() },
         });
+        // The run may have pushed a CI fix while it worked, so the head read in step 2 is stale.
+        // Qodo's comments on the new head arrived while this round was in flight and were
+        // suppressed, so no later nudge will come for it: this round follows the head the run
+        // left, on the same conditions as step 2, and the Qodo read below then requires a
+        // completed review of exactly that commit.
+        const fresh = await scm.pullRequestInfo(repoRef, payload.pullRequestNumber);
+        if (
+          fresh?.state !== 'open' ||
+          fresh.headRef !== payload.baseBranch ||
+          fresh.headRepositoryFullName?.toLowerCase() !==
+            `${repo.organizationName}/${repo.repoName}`.toLowerCase()
+        ) {
+          return skip('the pull request changed while the run was working', {
+            headRef,
+            origin,
+            silent: true,
+          });
+        }
+        if (fresh.headSha !== headSha) {
+          headSha = fresh.headSha;
+          tracer.addActivityEvent({ name: 'pr_feedback.qodo_followed_head', outputJson: {} });
+        }
       }
     }
     if (payload.feedbackOrigin !== origin) {
@@ -717,6 +770,14 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
 
 /** Qodo's review of a head commit can finish a while after its first comment lands. */
 const QODO_POLL_INTERVAL_MS = 10_000;
+
+const RUN_STILL_WORKING = 'the run that opened this pull request is still working on it';
+
+/** The run is working unless it is parked waiting for the merge or has ended. */
+const runIsWorking = (status: string | null): boolean =>
+  Boolean(status) &&
+  status !== 'AWAITING_HUMAN_MERGE' &&
+  !ACTIVE_WORKFLOW_TERMINAL_STATUSES.has(status as never);
 
 const QODO_LEVEL_ORDER = {
   action_required: 3,

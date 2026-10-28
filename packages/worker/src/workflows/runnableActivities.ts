@@ -269,9 +269,9 @@ export const prFeedbackActivities = proxyActivities<
   startToCloseTimeout: T_10M,
 });
 
-// A Qodo-triggered gather waits, inside the activity, for Qodo to finish reviewing the pull
-// request's head commit (`qodo.prFeedbackWaitSeconds`, at most 600 s) and heartbeats while it
-// does. The shared group above would time the wait out at 10 minutes and retry the whole poll
+// A Qodo-triggered gather waits, inside the activity, for the run that opened the pull request
+// to park (`qodo.prFeedbackRunWaitSeconds`, at most 900 s) and then for Qodo to finish reviewing
+// the head commit (`qodo.prFeedbackWaitSeconds`, at most 600 s), and heartbeats while it does. The shared group above would time the wait out at 10 minutes and retry the whole poll
 // up to three times, so this one takes a single attempt and a start-to-close well past the
 // longest wait plus the host reads around it. Only the gather uses it; push and respond keep the
 // shared group's bounds.

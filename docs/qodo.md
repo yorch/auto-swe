@@ -134,7 +134,9 @@ An automation on the `github.pull_request.feedback` source that lists the `qodo_
 makes the platform address the open findings of Qodo's review of a pull request it opened. The bot's
 GitHub comment only triggers a round; the findings are read through the client in section 4, for
 the repository's team, and a round proceeds only when Qodo's completed review is of the pull
-request's current head commit. The settings are:
+request's current head commit. A nudge that arrives while the run that opened the pull request is
+still working on it waits, up to `qodo.prFeedbackRunWaitSeconds`, for that run to park. The settings
+are:
 
 | Setting | Default | Effect |
 |---|---|---|
@@ -143,6 +145,7 @@ request's current head commit. The settings are:
 | `qodo.prFeedbackMinActionLevel` | `remediation_recommended` | Lowest finding level addressed |
 | `qodo.prFeedbackIncludeOnCommand` | off | Whether an `/auto-swe fix` round also reads Qodo once and addresses its open findings |
 | `qodo.prFeedbackMaxRounds` | 2 | Pushed rounds Qodo alone may cause on one pull request |
+| `qodo.prFeedbackRunWaitSeconds` | 900 | How long a round waits for the run that opened the pull request to park before it gives up; 0 skips at once |
 | `qodo.prFeedbackWaitSeconds` | 120 | How long a round waits for Qodo to finish reviewing the head |
 
 Find the bot's id once on the host (for GitHub, `GET /users/<bot login>` returns it as `id`) and
