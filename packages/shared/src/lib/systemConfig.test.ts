@@ -976,6 +976,8 @@ describe('systemConfig resolvers', () => {
       'MODEL_DISCOVERY_CRON',
       'RUN_REAPER_ENABLED',
       'RUN_REAPER_CRON',
+      'WORKSPACE_REAPER_ENABLED',
+      'WORKSPACE_REAPER_CRON',
       'SKILL_SOURCE_SYNC_ENABLED',
       'SKILL_SOURCE_SYNC_CRON',
       'AUTOMATION_DECISION_PRUNE_ENABLED',
@@ -1024,6 +1026,7 @@ describe('systemConfig resolvers', () => {
           enabled: true,
           recomputeDays: 30,
         },
+        workspaceReaper: { cronExpression: '*/15 * * * *', enabled: true },
       });
     });
 
@@ -1036,6 +1039,8 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('MODEL_DISCOVERY_CRON', '0 5 * * 1');
       vi.stubEnv('RUN_REAPER_ENABLED', 'false');
       vi.stubEnv('RUN_REAPER_CRON', '*/5 * * * *');
+      vi.stubEnv('WORKSPACE_REAPER_ENABLED', 'false');
+      vi.stubEnv('WORKSPACE_REAPER_CRON', '*/10 * * * *');
       vi.stubEnv('SKILL_SOURCE_SYNC_ENABLED', 'false');
       vi.stubEnv('SKILL_SOURCE_SYNC_CRON', '7 6 * * 2');
       vi.stubEnv('AUTOMATION_DECISION_PRUNE_ENABLED', 'false');
@@ -1080,6 +1085,7 @@ describe('systemConfig resolvers', () => {
           enabled: false,
           recomputeDays: 45,
         },
+        workspaceReaper: { cronExpression: '*/10 * * * *', enabled: false },
       });
     });
 
@@ -1088,6 +1094,7 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('REPO_DEPENDENCY_SCAN_CRON', 'daily');
       vi.stubEnv('MODEL_DISCOVERY_ENABLED', 'off');
       vi.stubEnv('RUN_REAPER_CRON', 'often');
+      vi.stubEnv('WORKSPACE_REAPER_ENABLED', 'maybe');
       vi.stubEnv('SKILL_SOURCE_SYNC_ENABLED', 'off');
       vi.stubEnv('SLACK_CHANNEL_SYNC_STALE_HOURS', '0');
       const sweeps = resolveScheduledSweeps();
@@ -1095,6 +1102,7 @@ describe('systemConfig resolvers', () => {
       expect(sweeps.repoDependency.cronExpression).toBe('0 4 * * *');
       expect(sweeps.modelDiscovery.enabled).toBe(true);
       expect(sweeps.runReaper.cronExpression).toBe('*/15 * * * *');
+      expect(sweeps.workspaceReaper.enabled).toBe(true);
       expect(sweeps.skillSourceSync.enabled).toBe(true);
       expect(sweeps.slackChannelSync.staleAfterHours).toBe(6);
     });
@@ -1110,6 +1118,8 @@ describe('systemConfig resolvers', () => {
         vi.stubEnv('MODEL_DISCOVERY_CRON', '17 3 * * *');
         vi.stubEnv('RUN_REAPER_ENABLED', 'true');
         vi.stubEnv('RUN_REAPER_CRON', '*/15 * * * *');
+        vi.stubEnv('WORKSPACE_REAPER_ENABLED', 'true');
+        vi.stubEnv('WORKSPACE_REAPER_CRON', '*/15 * * * *');
         vi.stubEnv('SKILL_SOURCE_SYNC_ENABLED', 'true');
         vi.stubEnv('SKILL_SOURCE_SYNC_CRON', '41 5 * * *');
         expect(validateScheduledSweepsEnv()).toEqual([]);

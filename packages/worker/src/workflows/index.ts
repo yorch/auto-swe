@@ -35,6 +35,7 @@ export { ScheduledRunReaperWorkflow } from './scheduledRunReaper.js';
 export { ScheduledSkillSourceSyncWorkflow } from './scheduledSkillSourceSync.js';
 export { ScheduledSlackChannelSyncWorkflow } from './scheduledSlackChannelSync.js';
 export { ScheduledWorkflowRunRollupWorkflow } from './scheduledWorkflowRunRollup.js';
+export { ScheduledWorkspaceReaperWorkflow } from './scheduledWorkspaceReaper.js';
 export { WorkflowAuthorWorkflow } from './workflowAuthor.js';
 export { authorJobProgressQuery, WorkflowAuthorJobWorkflow } from './workflowAuthorJob.js';
 export { WorkflowExplainWorkflow } from './workflowExplain.js';
