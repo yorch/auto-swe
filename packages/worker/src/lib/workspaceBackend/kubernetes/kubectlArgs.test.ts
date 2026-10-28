@@ -46,8 +46,8 @@ describe('execArgs', () => {
     expect(build).not.toThrow(new RegExp(value));
   });
 
-  it('accepts the same name when it is a secret', () => {
-    expect(() => execArgs(ref, ['ls'], { secrets: true })).not.toThrow();
+  it('accepts non-credential env pairs when the exec also carries secrets', () => {
+    expect(() => execArgs(ref, ['ls'], { env: ['A=1'], secrets: true })).not.toThrow();
   });
 
   it('asks for stdin only when it is used', () => {

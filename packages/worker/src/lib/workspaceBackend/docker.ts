@@ -447,8 +447,9 @@ function helperArgs(spec: HelperContainerSpec): string[] {
 }
 
 export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): string[] {
-  // Deliberately unguarded: `spec.env` carries workflow-author container-step env, where a
-  // variable such as API_TOKEN is legitimate.
+  // Its two callers pass `CONTAINER_STEP_INPUT` and the shell step's non-secret registry env;
+  // a registry token travels as `secretEnv`, and this refuses it if it comes back as a pair.
+  assertNoCredentialEnvPairs(spec.env, 'docker ephemeral env');
   const volumeArgs = (spec.volumes ?? []).flatMap((v) => [
     '-v',
     `${v.source}:${v.target}:${v.readOnly ? 'ro' : 'rw'}`,

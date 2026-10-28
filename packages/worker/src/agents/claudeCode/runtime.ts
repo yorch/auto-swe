@@ -32,6 +32,7 @@ import { type HarnessRuntime, harnessRuntime } from '../harness/runtime.js';
 import { runningTotalsUsage, summedCallsUsage, type UsageTotals } from '../harness/usage.js';
 import type { McpTracer } from '../mcpTools.js';
 import { binarySha256, resolveClaudeBinary } from './binary.js';
+import { isCredentialEnvName } from '../../lib/workspaceBackend/credentialEnv.js';
 import { type ModelProxy, workerModelProxy } from './modelProxy.js';
 import {
   CLAUDE_CODE_CAPABILITIES,
@@ -73,13 +74,6 @@ export const PRE_TOOL_USE_TIMEOUT_S = 120;
  * container, and only when the SDK set or changed them — see `sdkEnvPairs`.
  */
 const SDK_ENV_NAME = /^CLAUDE_(?:CODE|AGENT_SDK)_[A-Z0-9_]+$/;
-
-/**
- * A name that carries a credential, so `sdkEnvPairs` never forwards it: an exec
- * `env` pair is part of the kubectl command and its audit log. Name-based only;
- * `TOKEN(?!S)` keeps `CLAUDE_CODE_MAX_OUTPUT_TOKENS`, a count, forwarded.
- */
-const SDK_CREDENTIAL_NAME = /TOKEN(?!S)|SECRET|PASSWORD|PASSWD|API_?KEY|AUTH|CREDENTIAL/i;
 
 const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com';
 
@@ -297,7 +291,7 @@ export function sdkEnvPairs(env: Record<string, string | undefined>): string[] {
     if (
       value !== undefined &&
       SDK_ENV_NAME.test(name) &&
-      !SDK_CREDENTIAL_NAME.test(name) &&
+      !isCredentialEnvName(name) &&
       process.env[name] !== value
     ) {
       pairs.push(`${name}=${value}`);

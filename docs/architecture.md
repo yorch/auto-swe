@@ -1328,6 +1328,15 @@ Current constraints of the system as built. Deliberate product boundaries are in
   environment of every process the script starts. The stray-process sweep that opens each
   `gitAuthed` call is what keeps an agent's leftover processes from reading either; the initial
   clone and dependency checkouts have no sweep, and rely on running before the agent's first turn.
+- **A shell step's clone helper shows the git credential to the Docker host.** The helper's shell
+  expands `$ASW_GIT_AUTH` into git's argv, so the header is in that process's command line for the
+  length of the clone, visible in `ps` on the worker host. The `docker run` argument list carries
+  only the variable's name. Shell steps do not run under the Kubernetes backend.
+- **The pinned Claude Code settings file is writable by the agent.** When a provider `apiBase` may
+  carry a credential, the highest-priority settings layer is staged as a file under the harness
+  home, owned by the user the agent's shell runs as, and rewritten every turn. The URL and the key
+  are already in the harness's environment, so the file adds no new secret, but an agent that edits
+  it can change what a later read of that layer returns.
 - **A Kubernetes worker is a single replica.** The model proxy and the registry proxy keep their
   token registrations (and the registry allowlist) in the worker's memory, so a pod whose request
   reached another replica would be refused. There is no worker autoscaling until that state is

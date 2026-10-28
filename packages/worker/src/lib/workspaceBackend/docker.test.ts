@@ -28,6 +28,17 @@ describe('ephemeralArgs', () => {
     const args = ephemeralArgs({ image: 'img' }, false);
     expect(args.some((a) => a.startsWith('--add-host='))).toBe(false);
   });
+
+  it('refuses a credential-named plain env pair, and passes the registry switches', () => {
+    expect(() => ephemeralArgs({ env: ['YARN_NPM_AUTH_TOKEN=x'], image: 'img' }, false)).toThrow(
+      /YARN_NPM_AUTH_TOKEN/
+    );
+    const args = ephemeralArgs(
+      { env: ['YARN_NPM_ALWAYS_AUTH=true', 'HOME=/h'], image: 'img' },
+      false
+    );
+    expect(args).toEqual(expect.arrayContaining(['YARN_NPM_ALWAYS_AUTH=true', 'HOME=/h']));
+  });
 });
 
 describe('canReachWorkerProxy', () => {
@@ -182,6 +193,7 @@ require('node:fs').appendFileSync(
   const TOKEN = 'proxy-tok-s3cret';
   let dir: string;
   let oldPath: string | undefined;
+  let oldToken: string | undefined;
   const calls = async (): Promise<{ args: string[]; token: string | null }[]> =>
     (await fs.readFile(path.join(dir, 'log.jsonl'), 'utf8'))
       .split('\n')
@@ -200,10 +212,16 @@ require('node:fs').appendFileSync(
     process.env.FAKE_LOG = path.join(dir, 'log.jsonl');
     oldPath = process.env.PATH;
     process.env.PATH = `${dir}${path.delimiter}${oldPath ?? ''}`;
+    oldToken = process.env.YARN_NPM_AUTH_TOKEN;
     delete process.env.YARN_NPM_AUTH_TOKEN;
   });
   afterEach(async () => {
     process.env.PATH = oldPath;
+    if (oldToken === undefined) {
+      delete process.env.YARN_NPM_AUTH_TOKEN;
+    } else {
+      process.env.YARN_NPM_AUTH_TOKEN = oldToken;
+    }
     delete process.env.FAKE_LOG;
     await fs.rm(dir, { force: true, recursive: true });
   });
@@ -256,6 +274,7 @@ if (args[0] === 'exec') process.stdout.write('42\\n');
   const TOKEN = 'proxy-tok-s3cret';
   let dir: string;
   let oldPath: string | undefined;
+  let oldToken: string | undefined;
 
   beforeEach(async () => {
     dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docker-create-'));
@@ -263,10 +282,16 @@ if (args[0] === 'exec') process.stdout.write('42\\n');
     process.env.FAKE_LOG = path.join(dir, 'log.jsonl');
     oldPath = process.env.PATH;
     process.env.PATH = `${dir}${path.delimiter}${oldPath ?? ''}`;
+    oldToken = process.env.YARN_NPM_AUTH_TOKEN;
     delete process.env.YARN_NPM_AUTH_TOKEN;
   });
   afterEach(async () => {
     process.env.PATH = oldPath;
+    if (oldToken === undefined) {
+      delete process.env.YARN_NPM_AUTH_TOKEN;
+    } else {
+      process.env.YARN_NPM_AUTH_TOKEN = oldToken;
+    }
     delete process.env.FAKE_LOG;
     await fs.rm(dir, { force: true, recursive: true });
   });

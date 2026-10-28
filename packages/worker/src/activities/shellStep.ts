@@ -172,7 +172,11 @@ async function runHelper(
   } catch (err) {
     // A failure could echo the token (or the header that encodes it) into
     // Temporal history; neither is on the command line, but git may print them.
-    redactExecError(err, [tokenForRedact, ...Object.values(secretEnv ?? {})]);
+    const secrets = Object.values(secretEnv ?? {});
+    const headerBase64 = secrets
+      .filter((v) => v.startsWith('AUTHORIZATION: basic '))
+      .map((v) => v.slice(v.lastIndexOf(' ') + 1));
+    redactExecError(err, [tokenForRedact, ...secrets, ...headerBase64]);
     throw err;
   }
 }
