@@ -247,6 +247,23 @@ export function normalizeAnthropicBaseUrl(apiBase: string | undefined): string {
 }
 
 /**
+ * Whether a base URL could carry a credential: userinfo, a path beyond the
+ * origin (some LLM gateways put a token there) or a query. Such a URL is
+ * operator-supplied and must stay out of argv and `env`, which a Kubernetes
+ * `exec` sends to the apiserver audit log. An unparseable URL counts.
+ */
+export function baseUrlMayCarryCredential(baseUrl: string): boolean {
+  try {
+    const url = new URL(baseUrl);
+    return Boolean(
+      url.username || url.password || url.search || url.hash || !['', '/'].includes(url.pathname)
+    );
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Make sure bash is there (Claude Code refuses to start a shell tool without
  * it, and Alpine ships only busybox `sh`), and make the harness's home.
  */
@@ -553,6 +570,11 @@ export function claudeCodeAdapter(
       });
     }
 
+    // A base URL that may carry a credential travels as `secretEnv`, never in the
+    // command line or `env`. The harness reads it from the process environment, so
+    // it also stays out of the `--settings` JSON the SDK puts in the args.
+    const baseUrlOffArgv = !endpoint.proxied && baseUrlMayCarryCredential(endpoint.baseUrl);
+
     const stream = query({
       options: {
         abortController: turn.abort,
@@ -598,12 +620,15 @@ export function claudeCodeAdapter(
         // and the harness refuses it as root anyway.
         permissionMode: 'default',
         resume: sessionId,
-        settingSources: loadProjectSettings ? ['project'] : [],
+        // A secret base URL cannot be pinned in the settings layer (that layer is
+        // visible in the args), so a repository's settings could repoint it: they are
+        // not loaded then. Origin-only and proxied URLs keep the pin below.
+        settingSources: loadProjectSettings && !baseUrlOffArgv ? ['project'] : [],
         // The highest-priority settings layer: a repository's own `.claude/settings.json`
         // cannot point the harness (and the key it sends) at another host, nor
         // start it in a mode that grants tool calls without asking.
         settings: {
-          env: { ANTHROPIC_BASE_URL: endpoint.baseUrl },
+          ...(baseUrlOffArgv ? {} : { env: { ANTHROPIC_BASE_URL: endpoint.baseUrl } }),
           permissions: { defaultMode: 'default', disableBypassPermissionsMode: 'disable' },
         },
         // With a custom spawn the SDK never reads stderr (its `stderr` option only
@@ -612,7 +637,7 @@ export function claudeCodeAdapter(
           turn.spawn({
             args: spawnOptions.args,
             env: [
-              `ANTHROPIC_BASE_URL=${endpoint.baseUrl}`,
+              ...(baseUrlOffArgv ? [] : [`ANTHROPIC_BASE_URL=${endpoint.baseUrl}`]),
               // The harness retries a rejected key like any other error, with exponential
               // backoff: its default of 10 holds a turn for about three minutes before a
               // bad key surfaces.
@@ -627,7 +652,11 @@ export function claudeCodeAdapter(
             // Never empty: a credential is only written with a trimmed, non-empty key
             // (gateway modelConfig.ts `min(1)`), and the proxied path's token is minted
             // per turn. The Kubernetes backend refuses an empty secret before it starts.
-            secretEnv: { ANTHROPIC_API_KEY: endpoint.apiKey },
+            // The base URL is likewise never empty: it falls back to the default origin.
+            secretEnv: {
+              ANTHROPIC_API_KEY: endpoint.apiKey,
+              ...(baseUrlOffArgv ? { ANTHROPIC_BASE_URL: endpoint.baseUrl } : {}),
+            },
             signal: spawnOptions.signal,
           }),
         strictMcpConfig: true,

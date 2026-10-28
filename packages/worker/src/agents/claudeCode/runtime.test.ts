@@ -174,7 +174,7 @@ function setup(overrides: Record<string, unknown> = {}) {
   const tracer = { addToolCall: (c: Record<string, unknown>) => toolCalls.push(c) };
   const runtime = claudeCodeRuntime({
     access: {
-      apiBase: 'https://kong.example/anthropic/v1/',
+      apiBase: 'https://kong.example/v1/',
       apiKey: API_KEY,
       modelId: 'claude-opus-5-5',
     },
@@ -330,7 +330,7 @@ describe('what the harness is started with', () => {
       permissionMode: 'default',
       settingSources: ['project'],
       settings: {
-        env: { ANTHROPIC_BASE_URL: 'https://kong.example/anthropic' },
+        env: { ANTHROPIC_BASE_URL: 'https://kong.example' },
         permissions: { defaultMode: 'default', disableBypassPermissionsMode: 'disable' },
       },
       systemPrompt: { append: 'THE SYSTEM PROMPT', preset: 'claude_code', type: 'preset' },
@@ -433,7 +433,7 @@ describe('what the harness is started with', () => {
     expect(args).toContain('CLAUDE_CODE_ENTRYPOINT=sdk-ts');
     expect(args).toContain('ANTHROPIC_API_KEY'); // named, valueless
     expect(args.join(' ')).not.toContain(API_KEY);
-    expect(args).toContain('ANTHROPIC_BASE_URL=https://kong.example/anthropic');
+    expect(args).toContain('ANTHROPIC_BASE_URL=https://kong.example');
     expect(args).toContain('SHELL=/bin/bash');
     expect(args.some((a) => /^AUTO_SWE_EXEC_ID=[0-9a-f]{16}$/.test(a))).toBe(true);
     expect(args.slice(-3)).toEqual([
@@ -1117,7 +1117,7 @@ describe('through the worker’s model proxy', () => {
     expect(register).toHaveBeenCalledWith(
       expect.objectContaining({
         apiKey: API_KEY,
-        upstreamBaseUrl: 'https://kong.example/anthropic',
+        upstreamBaseUrl: 'https://kong.example',
       })
     );
     expect(release).toHaveBeenCalledTimes(1);
@@ -1139,6 +1139,35 @@ describe('through the worker’s model proxy', () => {
     expect(args).toContain(`ANTHROPIC_BASE_URL=${PROXY_URL}`);
     expect(spawnOptions.env.ANTHROPIC_API_KEY).toBe(TOKEN);
     expect(JSON.stringify([args, spawnOptions.env.ANTHROPIC_API_KEY])).not.toContain(API_KEY);
+  });
+
+  it('keeps a base URL that may carry a credential out of argv, env and settings', async () => {
+    const secretUrl = 'https://kong.example/anthropic/tok-SECRET123';
+    const { runtime } = setup({
+      access: { apiBase: `${secretUrl}/v1`, apiKey: API_KEY, modelId: 'claude-opus-5-5' },
+      modelProxy: null,
+    });
+    h.script.push([[init('s1'), success('ok')]]);
+    await runtime.runTurn({ system: 'S', user: 'U' });
+
+    const call = h.queryCalls[0] as (typeof h.queryCalls)[number];
+    expect(call.options.settings).not.toHaveProperty('env');
+    expect(call.options.settingSources).toEqual([]);
+    expect(JSON.stringify(call.options.settings)).not.toContain('SECRET123');
+    call.options.spawnClaudeCodeProcess({
+      args: ['--output-format', 'stream-json'],
+      env: {},
+      signal: new AbortController().signal,
+    });
+    const [, args, spawnOptions] = h.spawn.mock.calls[0] as [
+      string,
+      string[],
+      { env: Record<string, string> },
+    ];
+    expect(args.join(' ')).not.toContain('SECRET123');
+    expect(args.some((a) => a.startsWith('ANTHROPIC_BASE_URL='))).toBe(false);
+    expect(args).toContain('ANTHROPIC_BASE_URL'); // named, valueless
+    expect(spawnOptions.env.ANTHROPIC_BASE_URL).toBe(secretUrl);
   });
 
   it('debits each call the proxy saw end — side calls included — and not the streamed reports', async () => {
