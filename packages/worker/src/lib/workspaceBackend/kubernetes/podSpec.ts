@@ -32,7 +32,7 @@ export function dockerMemoryBytes(memory: string): number {
   return Number(match[1]) * (MEMORY_UNITS[(match[2] ?? '').toLowerCase()] ?? 1);
 }
 
-/** The `Secret` that holds one workspace pod's `secretEnv`; deterministic, so `remove()` can find it. */
+/** The `Secret` holding one pod's `secretEnv`; deterministic, so `remove()` can find it. */
 export function workspaceSecretName(podName: string): string {
   return `${podName}-env`;
 }
@@ -80,14 +80,26 @@ function secretEnvNames(spec: WorkspaceContainerSpec): string[] {
   return names;
 }
 
+/** Whether `spec.secretEnv` names anything, so the pod needs a Secret. Validates the names. */
+export function hasWorkspaceSecret(spec: WorkspaceContainerSpec): boolean {
+  return secretEnvNames(spec).length > 0;
+}
+
 /**
  * The per-pod `Secret` for `spec.secretEnv`, or null when there is none. It is
  * the only object that carries the values (base64 in `data`, which is encoding,
  * not protection), and it must reach `kubectl` on stdin, never in argv.
+ *
+ * It is owned by the pod from the moment it exists (`podUid` is the already
+ * created pod's), so Kubernetes garbage-collects it with the pod. The owner
+ * reference has no `controller` or `blockOwnerDeletion`: those would need
+ * `update` on `pods/finalizers` where owner-reference permission enforcement
+ * is on, and nothing here needs the pod to wait for the Secret.
  */
 export function buildWorkspaceSecret(
   spec: WorkspaceContainerSpec,
-  config: KubernetesWorkspaceConfig
+  config: KubernetesWorkspaceConfig,
+  podUid: string
 ): Record<string, unknown> | null {
   const names = secretEnvNames(spec);
   if (names.length === 0) {
@@ -108,6 +120,7 @@ export function buildWorkspaceSecret(
       },
       name: workspaceSecretName(spec.name),
       namespace: config.namespace,
+      ownerReferences: [{ apiVersion: 'v1', kind: 'Pod', name: spec.name, uid: podUid }],
     },
     type: 'Opaque',
   };

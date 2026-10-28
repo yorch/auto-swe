@@ -6,7 +6,6 @@ import {
   deleteSecretArgs,
   execArgs,
   execPrefix,
-  ownSecretArgs,
   secretStdinPreamble,
   tarOutArgs,
 } from './kubectlArgs.js';
@@ -130,15 +129,5 @@ describe('secret and pod lifecycle args', () => {
       'ns',
       '--ignore-not-found',
     ]);
-  });
-
-  it('owns the secret by the pod’s uid without blocking the pod’s deletion', () => {
-    const args = ownSecretArgs('ns', 'p-env', 'p', 'uid-1');
-    expect(args.slice(0, 3)).toEqual(['patch', 'secret', 'p-env']);
-    expect(args).toContain('--type=merge');
-    expect(JSON.parse(args[7] ?? '{}')).toEqual({
-      metadata: { ownerReferences: [{ apiVersion: 'v1', kind: 'Pod', name: 'p', uid: 'uid-1' }] },
-    });
-    expect(args.join(' ')).not.toContain('blockOwnerDeletion');
   });
 });
