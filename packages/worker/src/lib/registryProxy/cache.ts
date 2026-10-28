@@ -67,6 +67,11 @@ export class TarballCache {
         stream.once('finish', resolve);
       });
     let failed = false;
+    // A write that reported success can still fail later (ENOSPC); without a listener that
+    // 'error' event is uncaught and ends the worker process.
+    stream.on('error', () => {
+      failed = true;
+    });
     const self = this;
     return {
       async abort() {
@@ -74,6 +79,11 @@ export class TarballCache {
         await rm(tmp, { force: true });
       },
       async commit() {
+        if (failed || stream.destroyed) {
+          // Already errored: neither 'finish' nor 'error' would fire again.
+          await rm(tmp, { force: true });
+          return;
+        }
         stream.end();
         await done();
         if (failed) {
@@ -84,13 +94,13 @@ export class TarballCache {
         await self.evict().catch(() => {});
       },
       async write(chunk) {
+        if (failed || stream.destroyed) {
+          throw new Error('cache write failed');
+        }
         if (!stream.write(chunk)) {
           await new Promise<void>((resolve, reject) => {
             stream.once('drain', resolve);
-            stream.once('error', (err) => {
-              failed = true;
-              reject(err);
-            });
+            stream.once('error', reject);
           });
         }
       },
