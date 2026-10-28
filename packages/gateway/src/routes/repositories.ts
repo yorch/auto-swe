@@ -1363,8 +1363,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   // workspace container and running the contract probe inside it. Platform
   // ADMIN only: the image is code that runs next to the platform's git
   // credential, the same authority `executorImageProblem` applies to setting
-  // one. The image defaults to the repository's override, else the worker's
-  // resolved workspace default (the activity resolves it when none is sent).
+  // one. The image defaults to the repository's override. With none, the worker
+  // resolves the one its runs would use — the deployer's image for the detected
+  // stack (sent along), else the workspace default.
   app.post(
     '/:id/executor-image/probe',
     {

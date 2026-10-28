@@ -302,7 +302,7 @@ The scheduled dependency scan also records the repository's stacks on the connec
 (`detectedStack`, with `detectedStackAt`). It reads the repository tree recursively.
 
 - **What it scans.** Stack signals (`package.json`, `pyproject.toml`, `requirements.txt`,
-  `setup.py`, `pom.xml`, `build.gradle[.kts]`, `go.mod`) up to four directories deep. Paths under
+  `setup.py`, `pom.xml`, `build.gradle[.kts]`, `settings.gradle[.kts]`, `go.mod`) up to four directories deep. Paths under
   `node_modules`, `vendor`, `.git`, `dist`, `build` and `target` are ignored.
 - **What it records:**
   - `components`: every directory with a signal and its stacks, capped at 50

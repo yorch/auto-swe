@@ -10,7 +10,8 @@ import { resolveWorkspaceInfra } from './systemConfig.js';
  *    when one is set;
  * 3. `undefined`.
  *
- * Lives in `shared` so the gateway's image probe and the worker's workspaces agree. Pass the
+ * Lives in `shared` beside the detection it reads; the worker's workspaces and its image probe
+ * both use it. Pass the
  * result straight to `createWorkspace`, never `?? '<some image>'` (a literal there
  * wins the `??` inside `createWorkspace` and the deployment's setting is never read).
  *

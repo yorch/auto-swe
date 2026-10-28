@@ -402,6 +402,36 @@ describe('components as the target', () => {
     );
   });
 
+  it('treats a JVM project below another as that parent’s, so a nested build is one component', () => {
+    const gradle = D([
+      'server/settings.gradle.kts',
+      'server/gradlew',
+      'server/app/build.gradle.kts',
+    ]);
+    expect(gradle.components).toEqual([{ path: 'server', stacks: ['jvm'] }]);
+    expect(detectedGateDefaults(gradle)?.runTests).toBe(
+      "cd 'server' && ./gradlew test --no-daemon"
+    );
+    const maven = D(['svc/pom.xml', 'svc/core/pom.xml', 'svc/web/pom.xml']);
+    expect(maven.components).toEqual([{ path: 'svc', stacks: ['jvm'] }]);
+    expect(detectedGateDefaults(maven)?.runTests).toBe("cd 'svc' && mvn -B -q test");
+    // Not a tree: sibling JVM projects, and a JVM project beside a Node one, are still several.
+    expect(detectedTarget(D(['a/pom.xml', 'b/pom.xml']))).toBe('ambiguous');
+    expect(detectedTarget(D(['a/pom.xml', 'b/package.json']))).toBe('ambiguous');
+    // A JVM directory keeps its other stacks.
+    expect(D(['svc/pom.xml', 'svc/ui/package.json']).components).toEqual([
+      { path: 'svc', stacks: ['jvm'] },
+      { path: 'svc/ui', stacks: ['node'] },
+    ]);
+  });
+
+  it('gives a component with two lockfiles the built-in Yarn commands, not a guessed manager', () => {
+    const both = D(['web/package.json', 'web/yarn.lock', 'web/package-lock.json']);
+    expect(detectedGateDefaults(both)?.runTests).toBe("cd 'web' && yarn test");
+    // No lockfile at all is a different case: npm.
+    expect(detectedGateDefaults(D(['web/package.json']))?.runTests).toBe("cd 'web' && npm test");
+  });
+
   it('does not guess from an incomplete listing', () => {
     const files = ['svc/pom.xml'];
     expect(detectedTarget(D(files, { treeTruncated: true }))).toBeNull();

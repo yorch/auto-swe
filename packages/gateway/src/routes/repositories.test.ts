@@ -1333,11 +1333,13 @@ describe('repositoryRoutes', () => {
         payload: { image: 'debian:stable-slim' },
         url: `/api/v1/repositories/${REPO_ID}/executor-image/probe`,
       });
-      for (const [, input] of ctx.mockTemporal.probeExecutorImage.mock.calls as [
+      const calls = ctx.mockTemporal.probeExecutorImage.mock.calls as [
         string,
-        object,
-      ][]) {
-        expect(input).not.toHaveProperty('detectedStack', detectedStack);
+        { detectedStack?: unknown },
+      ][];
+      expect(calls).toHaveLength(2);
+      for (const [, input] of calls) {
+        expect(input.detectedStack).toBeUndefined();
       }
     });
 

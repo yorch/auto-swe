@@ -269,9 +269,11 @@ function targetCommands(t: DetectedTarget): RepoGateCommands | null {
   // A component spells them out, because they must run in its directory. One whose directory
   // has no lockfile at all gets npm's, not Yarn 4's: Yarn 4 refuses a directory that is not
   // part of a project, and `npm run` works without a lockfile. (Its audit then fails honestly,
-  // as `npm audit` needs one.) A component with a `yarn.lock` is Yarn, and Berry unless it says
-  // Classic.
-  return t.packageManager === undefined
+  // as `npm audit` needs one.) One with a `yarn.lock` is Yarn, Berry unless it says Classic, and
+  // one with several lockfiles is unknown like an unknown root — the built-in Yarn commands —
+  // rather than a guess at which of them is live.
+  const hasLockfile = NODE_LOCKFILES.some((l) => t.rootFiles.has(l.file));
+  return t.packageManager === undefined && !hasLockfile
     ? { ...NODE_PM_GATE_DEFAULTS.npm }
     : { ...YARN_GATE_DEFAULTS };
 }
@@ -346,12 +348,26 @@ export function detectStack(
   // directory of a large tree holds files, and capping before the filter drops real components
   // behind a hundred directories of docs — and, since a truncated list is what stops the
   // only-component rule from firing, would switch that rule off for most real repositories.
-  const signalDirs = [...byDir.keys()]
+  const withSignals = [...byDir.keys()]
     .sort()
     .map((dir) => ({
       dir,
       stacks: PRECEDENCE.filter((stack) => SIGNALS[stack].some((f) => byDir.get(dir)?.has(f))),
     }))
+    .filter((c) => c.stacks.length > 0);
+  // A JVM project is a tree: Maven modules and Gradle subprojects sit under a parent that builds
+  // them, and the parent's wrapper or `mvn` is where the build runs. A JVM signal below another
+  // JVM signal is therefore that parent's, not a second component; counting it would make a plain
+  // `server/` (a `settings.gradle.kts` and an `app/build.gradle.kts`) look like two.
+  const jvmDirs = withSignals.filter((c) => c.stacks.includes('jvm')).map((c) => c.dir);
+  const underJvmParent = (dir: string) =>
+    jvmDirs.some((p) => p !== dir && (p === '' || dir.startsWith(`${p}/`)));
+  const signalDirs = withSignals
+    .map((c) =>
+      c.stacks.includes('jvm') && underJvmParent(c.dir)
+        ? { ...c, stacks: c.stacks.filter((s) => s !== 'jvm') }
+        : c
+    )
     .filter((c) => c.stacks.length > 0);
   const componentsTruncated = signalDirs.length > MAX_COMPONENTS;
   // A directory's Node package manager comes from its own lockfile names alone (a component's
