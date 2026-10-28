@@ -243,6 +243,7 @@ describe('POST /api/v1/work-requests', () => {
       syncSkillSourceSyncSchedule: async () => {},
       syncSlackChannelSyncSchedule: async () => {},
       syncWorkRequestSchedule: async () => {},
+      syncWorkspaceReaperSchedule: async () => {},
       triggerConsolidationNow: async () => {},
       triggerEvalNow: async () => {},
       triggerRepoDependencyScanNow: async () => {},

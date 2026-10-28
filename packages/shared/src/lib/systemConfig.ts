@@ -1284,6 +1284,8 @@ export interface ScheduledSweepsConfig {
   repoAccess: SweepSchedule;
   /// Finalizes runs whose workflow ended in Temporal without finalizing them.
   runReaper: SweepSchedule;
+  /// Removes workspace containers and pods that outlived the activity that created them.
+  workspaceReaper: SweepSchedule;
   automationDecisionPrune: SweepSchedule;
   /// Deletes agent transcripts past their retention (never those under legal hold).
   agentTranscriptPrune: SweepSchedule;
@@ -1355,6 +1357,10 @@ function envCron(name: string, fallback: string): string {
 ///   RUN_REAPER_ENABLED            default true — it only reads Temporal and
 ///                                 closes runs that are already over
 ///   RUN_REAPER_CRON               default `*/15 * * * *`
+///   WORKSPACE_REAPER_ENABLED      default true — it removes only containers and pods that
+///                                 carry the auto-swe marker and are older than any
+///                                 activity can run
+///   WORKSPACE_REAPER_CRON         default `*/15 * * * *`
 ///   SKILL_SOURCE_SYNC_ENABLED     default true — one cheap request per source, and
 ///                                 it only flags: it never changes a skill
 ///   SKILL_SOURCE_SYNC_CRON        default `41 5 * * *`
@@ -1428,6 +1434,10 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
       enabled: envFlag('SLACK_CHANNEL_SYNC_ENABLED', false),
       staleAfterHours: envHours('SLACK_CHANNEL_SYNC_STALE_HOURS', 6),
     },
+    workspaceReaper: {
+      cronExpression: envCron('WORKSPACE_REAPER_CRON', '*/15 * * * *'),
+      enabled: envFlag('WORKSPACE_REAPER_ENABLED', true),
+    },
   };
 }
 
@@ -1453,6 +1463,8 @@ export function validateScheduledSweepsEnv(): string[] {
   check('MODEL_DISCOVERY_CRON', cron, 'a five-field cron expression such as "17 3 * * *"');
   check('RUN_REAPER_ENABLED', flag, "'true' or 'false'");
   check('RUN_REAPER_CRON', cron, 'a five-field cron expression such as "*/15 * * * *"');
+  check('WORKSPACE_REAPER_ENABLED', flag, "'true' or 'false'");
+  check('WORKSPACE_REAPER_CRON', cron, 'a five-field cron expression such as "*/15 * * * *"');
   check('AUTOMATION_DECISION_PRUNE_ENABLED', flag, "'true' or 'false'");
   check(
     'AUTOMATION_DECISION_PRUNE_CRON',

@@ -1,5 +1,6 @@
 import type { ChildProcess, StdioOptions } from 'node:child_process';
 import type { CappedFileResult, CapturedResult, OnTimeout } from '../execUtils.js';
+import type { WorkspaceReapResult } from './orphans.js';
 
 /**
  * What it takes to start an agent workspace container. The caller describes
@@ -133,6 +134,15 @@ export interface WorkspaceBackend {
   pause(h: WorkspaceHandle): Promise<void>;
   /** Remove the container; never throws — it may already be gone. */
   remove(idOrHandle: string | WorkspaceHandle): Promise<void>;
+
+  /**
+   * Remove workspaces that carry the auto-swe marker and that no live activity
+   * can still own (see `orphans.ts` for each driver's criterion). Selection
+   * never depends on this process's memory — a workspace started by another
+   * worker sharing the substrate is judged by age alone — and the method
+   * reports failures in its result instead of throwing.
+   */
+  reapOrphans(now: Date): Promise<WorkspaceReapResult>;
 
   /** Create a workspace volume (`docker volume create`). */
   createVolume(name: string): Promise<void>;

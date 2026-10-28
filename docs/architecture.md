@@ -1174,6 +1174,31 @@ sit on this seam, and so does the ephemeral shell/container-step sandbox:
   the lockdown from an author command.
 - `createVolume` and `removeVolume` manage the step volumes.
 
+**Orphaned workspaces.** A workspace is removed in its activity's `finally`, so a worker that is
+killed or crashes first would leave its container or pod behind. The
+`auto-swe-workspace-reaper` Temporal Schedule (`WORKSPACE_REAPER_ENABLED`, default `true`;
+`WORKSPACE_REAPER_CRON`, default every 15 minutes) starts `ScheduledWorkspaceReaperWorkflow`, whose
+one activity (`reapOrphanedWorkspaces`) calls `reapOrphans` on the worker's backend, removing at
+most 25 workspaces per sweep (the rest wait for the next one). It judges from the
+workspace itself, never from the worker's memory, so a workspace belonging to another worker on the
+same Docker host or namespace is safe while it is within its lifetime:
+- Docker: every workspace container, ephemeral step container and sidecar is created with the labels
+  `auto-swe.workspace=true` and `auto-swe.created-at=<epoch seconds>`. The sweep lists
+  (`docker ps --all`) only containers with the marker label and `docker rm -f`s those older than
+  seven hours. That bound is the longest activity that holds a workspace, the agent run step
+  (`T_AGENT_RUN_ACTIVITY`, six hours: the four-hour wall-clock ceiling plus two hours of headroom),
+  plus an hour for clock skew between workers; the other workspace-holding activities (evals, shell
+  and container steps) are shorter. A container with no readable creation label is kept.
+- Kubernetes: the sweep lists pods carrying both `app.kubernetes.io/managed-by=auto-swe` and
+  `asw/role=workspace` in the workspace namespace and deletes those that are `Succeeded` or `Failed`
+  (a deadline kill is `Failed`), or are still not terminal ten minutes past their own
+  `activeDeadlineSeconds`, which means the kubelet did not enforce it. The worker's Role already
+  grants `list` and `delete` on pods.
+
+Each removal and each failure is logged at warn level, and the activity never throws: a sweep that
+cannot list or remove tries again on the next tick. The Docker sweep lists through the socket proxy's
+existing `containers` path.
+
 The dev smoke script `agents/pi/smoke.ts` is the only Docker caller outside the seam.
 
 #### Kubernetes backend
@@ -1319,9 +1344,21 @@ Current constraints of the system as built. Deliberate product boundaries are in
   pool; `WORKSPACE_PIDS_LIMIT` is not applied. The `NET_ADMIN` metadata sidecar: PodSecurity
   `restricted` forbids it, so the NetworkPolicy does that job, and `WORKSPACE_DNS` is not applied
   either (workspaces use cluster DNS so a Service name resolves).
-- **Kubernetes workspace pods are not reaped by the worker.** `activeDeadlineSeconds` makes the
-  kubelet terminate a pod that outlives its limit, but the terminated pod object stays until
-  something deletes it, and a worker that dies mid-run does not delete its workspaces.
+- **The orphaned-workspace sweep is periodic, bounded by age, and runs on one worker.** A Docker
+  container that leaks is removed once it is seven hours old, not when its worker dies. A Kubernetes
+  pod that has failed or been deadline-killed is deleted at the next 15-minute sweep, but a pod
+  orphaned while still running is deleted only once it is terminal or ten minutes past its
+  `activeDeadlineSeconds`, which defaults to 86,400 s, so it can hold its share of the namespace
+  quota for up to that maximum lifetime; `K8S_WORKSPACE_MAX_LIFETIME_SEC` is the lever. A sweep
+  removes at most 25 workspaces and leaves the rest for the next one. The sweep runs wherever the
+  scheduled activity lands, so on a deployment with workers on separate Docker hosts only the host
+  of the worker that picks it up is swept in a given tick.
+- **The Docker sweep trusts its marker label.** Any container on the same daemon carrying
+  `auto-swe.workspace=true` and an old `auto-swe.created-at` (an image `LABEL` run by something other
+  than the worker, say) is treated as a workspace and removed; the worker's own `--label` flags
+  override an image's labels. Containers created before the labels existed carry no marker and are
+  never touched, and neither are the `runHelper` git containers or the step volumes
+  (`createVolume`). The sweep is off with `WORKSPACE_REAPER_ENABLED=false`.
 - **Kubernetes `copyOut` runs the agent's `tar`.** The archive is validated before it is
   extracted anywhere, but the export itself is produced by a binary in the agent-controlled
   container, so a hostile run can make it fail or produce an archive that is refused.

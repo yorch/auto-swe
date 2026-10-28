@@ -7,7 +7,7 @@ export const WORKSPACE_CONTAINER = 'workspace';
 /** Where the agent's working tree lives (an `emptyDir`, so it dies with the pod). */
 export const WORKSPACE_MOUNT = '/workspace';
 
-/** Selects workspace pods for the NetworkPolicy, the janitor and `kubectl get`. */
+/** Selects workspace pods for the NetworkPolicy, the orphan sweep and `kubectl get`. */
 export const WORKSPACE_ROLE_LABEL = 'asw/role';
 export const MANAGED_BY_LABEL = 'app.kubernetes.io/managed-by';
 

@@ -56,6 +56,7 @@ export const REPO_DEPENDENCY_SCAN_SCHEDULE_ID = 'auto-swe-repo-dependency-scan';
 export const REPO_ACCESS_SYNC_SCHEDULE_ID = 'auto-swe-repo-access-sync';
 export const MODEL_DISCOVERY_SCHEDULE_ID = 'auto-swe-model-discovery';
 export const RUN_REAPER_SCHEDULE_ID = 'auto-swe-run-reaper';
+export const WORKSPACE_REAPER_SCHEDULE_ID = 'auto-swe-workspace-reaper';
 export const AUTOMATION_DECISION_PRUNE_SCHEDULE_ID = 'auto-swe-automation-decision-prune';
 export const SKILL_SOURCE_SYNC_SCHEDULE_ID = 'auto-swe-skill-source-sync';
 export const SLACK_CHANNEL_SYNC_SCHEDULE_ID = 'auto-swe-slack-channel-sync';
@@ -218,6 +219,15 @@ export interface ModelDiscoveryScheduleConfig {
  * without finalizing them, so the schedule carries no arguments.
  */
 export interface RunReaperScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
+/**
+ * The orphaned-workspace reaper. The workflow's activity asks the worker's own
+ * backend what to remove, so the schedule carries no arguments.
+ */
+export interface WorkspaceReaperScheduleConfig {
   enabled: boolean;
   cronExpression: string;
 }
@@ -418,6 +428,7 @@ declare module 'fastify' {
       syncRepoAccessSyncSchedule: (config: RepoAccessSyncScheduleConfig) => Promise<void>;
       syncModelDiscoverySchedule: (config: ModelDiscoveryScheduleConfig) => Promise<void>;
       syncRunReaperSchedule: (config: RunReaperScheduleConfig) => Promise<void>;
+      syncWorkspaceReaperSchedule: (config: WorkspaceReaperScheduleConfig) => Promise<void>;
       syncCallbackDeliverySchedule: (config: CallbackDeliveryScheduleConfig) => Promise<void>;
       syncCallbackDeliveryPruneSchedule: (config: CallbackDeliveryScheduleConfig) => Promise<void>;
       syncAutomationDecisionPruneSchedule: (
@@ -590,6 +601,16 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       taskQueue: 'engineering-workflow',
       type: 'startWorkflow' as const,
       workflowType: 'ScheduledRunReaperWorkflow',
+    };
+  }
+
+  // Workspace-reaper action. The activity finds the orphans itself.
+  function makeWorkspaceReaperScheduleAction() {
+    return {
+      args: [] as unknown[],
+      taskQueue: 'engineering-workflow',
+      type: 'startWorkflow' as const,
+      workflowType: 'ScheduledWorkspaceReaperWorkflow',
     };
   }
 
@@ -1423,6 +1444,16 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         action: makeWorkRequestScheduleAction(input),
         cronExpression: input.cronExpression,
         paused: input.paused,
+      });
+    },
+
+    // ── Workspace reaper (one system-wide Temporal Schedule) ──
+
+    async syncWorkspaceReaperSchedule(config: WorkspaceReaperScheduleConfig): Promise<void> {
+      await upsertSchedule(WORKSPACE_REAPER_SCHEDULE_ID, {
+        action: makeWorkspaceReaperScheduleAction(),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
       });
     },
 

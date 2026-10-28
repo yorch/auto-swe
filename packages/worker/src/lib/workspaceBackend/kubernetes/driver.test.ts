@@ -21,9 +21,10 @@ fs.appendFileSync(process.env.FAKE_LOG, JSON.stringify({ args, stdin }) + '\\n')
 const plan = JSON.parse(fs.readFileSync(process.env.FAKE_PLAN, 'utf8'));
 const joined = args.join(' ');
 const rule = plan.find((r) => joined.includes(r.match)) ?? {};
-if (rule.stdout) process.stdout.write(rule.stdout);
 if (rule.stderr) process.stderr.write(rule.stderr);
-process.exit(rule.code ?? 0);
+// Exit only once a large stdout has drained, or a pipe truncates it.
+if (rule.stdout) process.stdout.write(rule.stdout, () => process.exit(rule.code ?? 0));
+else process.exit(rule.code ?? 0);
 `;
 
 let dir: string;
@@ -289,5 +290,91 @@ describe('what the Kubernetes backend does not do yet', () => {
   it('judges a proxy URL reachable unless it uses the Docker host alias', () => {
     expect(backend.canReachWorkerProxy('http://worker-proxy.auto-swe.svc:9000')).toBe(true);
     expect(backend.canReachWorkerProxy('http://host.docker.internal:9000')).toBe(false);
+  });
+});
+
+describe('reapOrphans', () => {
+  const NOW = new Date('2026-01-10T12:00:00Z');
+  const labels = { 'app.kubernetes.io/managed-by': 'auto-swe', 'asw/role': 'workspace' };
+  const item = (name: string, phase: string, ageMs: number) => ({
+    metadata: { creationTimestamp: new Date(NOW.getTime() - ageMs).toISOString(), labels, name },
+    spec: { activeDeadlineSeconds: 600 },
+    status: { phase },
+  });
+
+  it('lists by the marker labels and deletes terminated and overdue pods, keeping live ones', async () => {
+    await setPlan([
+      {
+        match: 'get pods',
+        stdout: JSON.stringify({
+          items: [
+            item('workspace-killed', 'Failed', 60_000),
+            item('workspace-done', 'Succeeded', 60_000),
+            item('workspace-live', 'Running', 60_000),
+            item('workspace-stuck', 'Running', 600_000 + 11 * 60_000),
+          ],
+        }),
+      },
+    ]);
+    const result = await backend.reapOrphans(NOW);
+
+    const [list, ...deletes] = await calls();
+    expect(list?.args).toEqual(
+      expect.arrayContaining([
+        'get',
+        'pods',
+        '--namespace',
+        'ns',
+        '--selector',
+        'app.kubernetes.io/managed-by=auto-swe,asw/role=workspace',
+      ])
+    );
+    expect(deletes.map((c) => c.args[2])).toEqual([
+      'workspace-stuck',
+      'workspace-killed',
+      'workspace-done',
+    ]);
+    expect(result).toEqual({
+      failed: [],
+      removed: ['workspace-stuck', 'workspace-killed', 'workspace-done'],
+      scanned: 4,
+    });
+  });
+
+  it('records a failed delete and reports, never throws, when it cannot list', async () => {
+    await setPlan([
+      { match: 'get pods', stdout: JSON.stringify({ items: [item('workspace-a', 'Failed', 1)] }) },
+      { code: 1, match: 'delete', stderr: 'forbidden' },
+    ]);
+    const result = await backend.reapOrphans(NOW);
+    expect(result.failed).toEqual([{ error: 'forbidden', id: 'workspace-a' }]);
+
+    await setPlan([{ code: 1, match: 'get pods', stderr: 'no route to host' }]);
+    expect(await backend.reapOrphans(NOW)).toEqual({
+      failed: [{ error: 'no route to host', id: '(list)' }],
+      removed: [],
+      scanned: 0,
+    });
+    await setPlan([{ match: 'get pods', stdout: 'not json' }]);
+    expect((await backend.reapOrphans(NOW)).failed[0]?.id).toBe('(list)');
+  });
+
+  it('deletes at most the per-sweep cap of pods, oldest first', async () => {
+    // Listed youngest first: workspace-0 is the youngest, workspace-29 the oldest.
+    const items = Array.from({ length: 30 }, (_, i) =>
+      item(`workspace-${i}`, 'Failed', (i + 1) * 60_000)
+    );
+    await setPlan([{ match: 'get pods', stdout: JSON.stringify({ items }) }]);
+    const result = await backend.reapOrphans(NOW);
+    expect(result.removed).toEqual(Array.from({ length: 25 }, (_, k) => `workspace-${29 - k}`));
+    expect(result.scanned).toBe(30);
+  });
+
+  it('lists with a capture buffer large enough for a big backlog of terminated pods', async () => {
+    const big = { items: [item('workspace-a', 'Failed', 1)], pad: 'x'.repeat(11 * 1024 * 1024) };
+    await setPlan([{ match: 'get pods', stdout: JSON.stringify(big) }]);
+    const result = await backend.reapOrphans(NOW);
+    expect(result.failed).toEqual([]);
+    expect(result.removed).toEqual(['workspace-a']);
   });
 });

@@ -229,6 +229,8 @@ export {
   runTypecheck,
   runVulnScan,
 } from './qualityGates.js';
+export type { ReapOrphanedWorkspacesResult } from './reapOrphanedWorkspaces.js';
+export { reapOrphanedWorkspaces } from './reapOrphanedWorkspaces.js';
 export type { ReapStrandedRunsResult } from './reapStrandedRuns.js';
 export { reapStrandedRuns } from './reapStrandedRuns.js';
 // Channel assistant — admin memory edit-with-reembed

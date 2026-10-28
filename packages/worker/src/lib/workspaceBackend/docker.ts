@@ -9,6 +9,14 @@ import {
   spawnWithStdinAsync,
 } from '../execUtils.js';
 import { shellQuote } from '../shellQuote.js';
+import {
+  dockerListArgs,
+  MAX_REAPED_PER_SWEEP,
+  parseDockerListing,
+  selectExpiredContainers,
+  type WorkspaceReapResult,
+  workspaceLabelArgs,
+} from './orphans.js';
 import type {
   EphemeralContainerSpec,
   EphemeralRunOptions,
@@ -166,7 +174,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     // `memory` is a config string, so shell-quote it (the numeric caps can't
     // carry shell metacharacters); '--' separates docker flags from the image.
     await execShellAsync(
-      `docker run -d --name ${spec.name} --init ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
+      `docker run -d --name ${spec.name} ${workspaceLabelArgs().join(' ')} --init ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
       { heartbeatLabel: 'workspace: starting container' }
     );
 
@@ -315,6 +323,59 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     }
   }
 
+  /**
+   * Remove workspace containers no live activity can still own. Selection is
+   * by the marker label alone, so nothing else on the host is touched, and by
+   * age past the longest lifetime a workspace can have (`DOCKER_WORKSPACE_MAX_AGE_MS`)
+   * rather than by anything in this process, so a young container started by
+   * another worker on the same daemon is never a candidate. Never throws.
+   */
+  async reapOrphans(now: Date): Promise<WorkspaceReapResult> {
+    const result: WorkspaceReapResult = { failed: [], removed: [], scanned: 0 };
+    let stdout: string;
+    try {
+      const listed = await spawnCaptureAsync('docker', dockerListArgs(), {
+        heartbeatLabel: 'workspace reaper: listing containers',
+        timeoutMs: 60_000,
+      });
+      if (listed.exitCode !== 0) {
+        result.failed.push({ error: listed.stderr.trim() || 'docker ps failed', id: '(list)' });
+        return result;
+      }
+      stdout = listed.stdout;
+    } catch (err) {
+      result.failed.push({ error: err instanceof Error ? err.message : String(err), id: '(list)' });
+      return result;
+    }
+    const containers = parseDockerListing(stdout);
+    result.scanned = containers.length;
+    for (const container of selectExpiredContainers(containers, now).slice(
+      0,
+      MAX_REAPED_PER_SWEEP
+    )) {
+      try {
+        const removed = await spawnCaptureAsync('docker', ['rm', '-f', '--', container.id], {
+          heartbeatLabel: 'workspace reaper: removing container',
+          timeoutMs: 60_000,
+        });
+        if (removed.exitCode === 0 || /no such container/i.test(removed.stderr)) {
+          result.removed.push(container.id);
+        } else {
+          result.failed.push({
+            error: removed.stderr.trim() || `docker rm exited ${removed.exitCode}`,
+            id: container.id,
+          });
+        }
+      } catch (err) {
+        result.failed.push({
+          error: err instanceof Error ? err.message : String(err),
+          id: container.id,
+        });
+      }
+    }
+    return result;
+  }
+
   async createVolume(name: string): Promise<void> {
     await execShellAsync(`docker volume create ${shellQuote(name)}`, {
       heartbeatLabel: 'workspace: creating volume',
@@ -422,6 +483,7 @@ export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): 
     ...(detached ? ['-d'] : []),
     '--rm',
     ...(spec.name ? ['--name', spec.name] : []),
+    ...workspaceLabelArgs(),
     ...flags,
     ...(spec.publishPort ? ['-p', `127.0.0.1::${spec.publishPort}/tcp`] : []),
     '--',

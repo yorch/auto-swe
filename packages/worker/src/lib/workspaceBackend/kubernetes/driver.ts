@@ -16,6 +16,12 @@ import {
 } from '../../execUtils.js';
 import { shellQuote } from '../../shellQuote.js';
 import { keeperPidProbeScript } from '../docker.js';
+import {
+  type ListedPod,
+  MAX_REAPED_PER_SWEEP,
+  selectReapablePods,
+  type WorkspaceReapResult,
+} from '../orphans.js';
 import type {
   EphemeralContainerSpec,
   EphemeralRunOptions,
@@ -30,6 +36,7 @@ import {
   deletePodArgs,
   execArgs,
   execPrefix,
+  listWorkspacePodsArgs,
   type PodRef,
   secretStdinPreamble,
   tarOutArgs,
@@ -41,6 +48,9 @@ import { assertSafeArchive } from './safeTar.js';
 /** `kubectl exec` prints this after a command that exited non-zero; it is noise, not the command's stderr. */
 const TERMINATED_LINE = /^command terminated with exit code \d+\s*$/m;
 const stripTerminated = (stderr: string): string => stderr.replace(TERMINATED_LINE, '').trimEnd();
+
+/** Capture limit for the pod listing of the orphan sweep. */
+const LIST_MAX_BUFFER_BYTES = 256 * 1024 * 1024;
 
 /** How long a new pod has to become Ready (image pull included). */
 const READY_TIMEOUT_SEC = 300;
@@ -292,6 +302,69 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
     } catch {
       /* already gone */
     }
+  }
+
+  /**
+   * Delete workspace pods that have terminated (a deadline kill is `Failed`) or
+   * that outlived their own deadline by a grace period, selected by the marker
+   * labels in the one workspace namespace and judged from the pod object alone,
+   * so another worker's live pod is never a candidate. Never throws.
+   */
+  async reapOrphans(now: Date): Promise<WorkspaceReapResult> {
+    const config = this.config();
+    const result: WorkspaceReapResult = { failed: [], removed: [], scanned: 0 };
+    let pods: ListedPod[];
+    try {
+      const listed = await spawnCaptureAsync(
+        this.kubectl,
+        listWorkspacePodsArgs(config.namespace),
+        {
+          heartbeatLabel: 'workspace reaper: listing pods',
+          // A backlog of terminated pods outgrows the default 10 MB capture, which
+          // would truncate the JSON and fail every sweep without progress.
+          maxBuffer: LIST_MAX_BUFFER_BYTES,
+          timeoutMs: 60_000,
+        }
+      );
+      if (listed.exitCode !== 0) {
+        result.failed.push({ error: listed.stderr.trim() || 'kubectl get failed', id: '(list)' });
+        return result;
+      }
+      const parsed: unknown = JSON.parse(listed.stdout);
+      const items = (parsed as { items?: unknown }).items;
+      if (!Array.isArray(items)) {
+        throw new Error('kubectl get pods returned no items array');
+      }
+      pods = items as ListedPod[];
+    } catch (err) {
+      result.failed.push({ error: err instanceof Error ? err.message : String(err), id: '(list)' });
+      return result;
+    }
+    result.scanned = pods.length;
+    for (const pod of selectReapablePods(pods, now, config.maxLifetimeSec).slice(
+      0,
+      MAX_REAPED_PER_SWEEP
+    )) {
+      const name = pod.metadata.name;
+      try {
+        const deleted = await spawnCaptureAsync(
+          this.kubectl,
+          deletePodArgs({ namespace: config.namespace, pod: name }),
+          { heartbeatLabel: 'workspace reaper: deleting pod', timeoutMs: 60_000 }
+        );
+        if (deleted.exitCode === 0) {
+          result.removed.push(name);
+        } else {
+          result.failed.push({
+            error: deleted.stderr.trim() || `kubectl delete exited ${deleted.exitCode}`,
+            id: name,
+          });
+        }
+      } catch (err) {
+        result.failed.push({ error: err instanceof Error ? err.message : String(err), id: name });
+      }
+    }
+    return result;
   }
 
   createVolume(_name: string): Promise<void> {

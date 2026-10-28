@@ -1,4 +1,4 @@
-import { WORKSPACE_CONTAINER } from './podSpec.js';
+import { MANAGED_BY_LABEL, WORKSPACE_CONTAINER, WORKSPACE_ROLE_LABEL } from './podSpec.js';
 
 const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -83,6 +83,20 @@ export function secretStdinPreamble(secrets: Record<string, string>): string {
 /** `kubectl` argv for the pod operations that take no command. */
 export function getPodArgs(ref: PodRef): string[] {
   return ['get', 'pod', ref.pod, '--namespace', ref.namespace, '--ignore-not-found', '-o', 'json'];
+}
+
+/** Every pod in the namespace that carries both workspace marker labels. */
+export function listWorkspacePodsArgs(namespace: string): string[] {
+  return [
+    'get',
+    'pods',
+    '--namespace',
+    namespace,
+    '--selector',
+    `${MANAGED_BY_LABEL}=auto-swe,${WORKSPACE_ROLE_LABEL}=workspace`,
+    '-o',
+    'json',
+  ];
 }
 
 export function deletePodArgs(ref: PodRef): string[] {

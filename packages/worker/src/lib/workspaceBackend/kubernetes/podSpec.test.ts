@@ -70,7 +70,7 @@ describe('dockerMemoryBytes', () => {
 });
 
 describe('buildWorkspacePod', () => {
-  it('names the pod in the workspace namespace with the labels the policy and janitor select on', () => {
+  it('names the pod in the workspace namespace with the labels the policy and orphan sweep select on', () => {
     const p = pod();
     expect(p.metadata.name).toBe('workspace-abc123');
     expect(p.metadata.namespace).toBe('auto-swe-workspaces');

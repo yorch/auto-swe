@@ -68,7 +68,7 @@ spec:
               - fc00::/7
               - fe80::/10
 ---
-# ADJUST: caps what a janitor failure or a burst of runs can hold.
+# ADJUST: caps what pods awaiting the orphan sweep or a burst of runs can hold.
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -82,6 +82,7 @@ spec:
     requests.ephemeral-storage: 500Gi
 ---
 # What the worker needs in this namespace and nothing else: pods, and exec into them.
+# `list` and `delete` on pods are also what the orphan sweep (ScheduledWorkspaceReaperWorkflow) uses.
 # No secrets, no cluster-wide verbs. `pods/exec` is a shell in every workspace, so keep
 # anything else out of this namespace.
 apiVersion: rbac.authorization.k8s.io/v1
