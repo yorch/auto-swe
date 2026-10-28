@@ -389,7 +389,8 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
     }
     expect(caught).toBeDefined();
     expect(caught?.message).toContain('Command failed');
-    expect(caught?.message).toContain('***');
+    // The command line no longer carries the header; stderr is where git could echo it.
+    expect(caught?.stderr).toContain('***');
     for (const field of [caught?.message, caught?.cmd, caught?.stderr]) {
       expect(field).not.toContain('ghp_secret');
       expect(field).not.toContain(HEADER_B64);
@@ -403,16 +404,22 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
     const ws = await createWorkspace(AUTHED, 'auto/TICKET-1', 'main');
     vi.mocked(execShellAsync).mockImplementation(async (cmd: string) => {
       if (cmd.includes('push')) {
-        throw Object.assign(new Error(`Command failed: ${cmd}`), { cmd });
+        // The command line carries no credential; git's own stderr could echo it.
+        throw Object.assign(new Error(`Command failed: ${cmd}`), {
+          cmd,
+          stderr: `fatal: sent header AUTHORIZATION: basic ${HEADER_B64} for ghp_secret`,
+        });
       }
       return okExec(cmd);
     });
     await expect(ws.gitAuthed(`push origin ${shellQuote('auto/TICKET-1')}`)).rejects.toSatisfy(
-      (err: Error & { cmd?: string }) =>
-        err.message.includes('***') &&
+      (err: Error & { cmd?: string; stderr?: string }) =>
+        (err.stderr ?? '').includes('***') &&
         !err.message.includes(HEADER_B64) &&
         !err.message.includes('ghp_secret') &&
-        !(err.cmd ?? '').includes(HEADER_B64)
+        !(err.cmd ?? '').includes(HEADER_B64) &&
+        !(err.stderr ?? '').includes(HEADER_B64) &&
+        !(err.stderr ?? '').includes('ghp_secret')
     );
   });
 
