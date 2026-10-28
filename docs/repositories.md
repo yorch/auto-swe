@@ -267,8 +267,9 @@ reached all fall through to `WORKSPACE_IMAGE`. The stored detection only *select
 deployer configured and never names one, so a committed `go.mod` can move a repository onto the Go
 image but cannot choose which image that is. The images are not built into the platform: build
 `defaults/Dockerfile.<stack>` (see below) and publish it where the workers can pull it. On Kubernetes,
-`K8S_WORKSPACE_IMAGE_PULL_SECRETS` must cover those registries too. Check a candidate with the probe
-below (`{ image }` takes a stack image as well as a repository override).
+`K8S_WORKSPACE_IMAGE_PULL_SECRETS` must cover those registries too. The probe below, run with no image named,
+tests the image the repository's runs would use: its override, else its stack's image, else the
+default.
 
 A platform admin can check a candidate image without waiting for a run: the
 **Check image** button in the repository's connection form, or
@@ -354,9 +355,11 @@ target — it keeps its `package.json` guess.
 - exactly **one** component, with a complete listing (`treeTruncated` and `componentsTruncated` both
   unset), is the target. The stack's default gates and test command run in that directory, so the
   recorded command reads `cd 'backend' && mvn -B -q test` — the directory is visible in the run's gate
-  result. A Node component's manager comes from its own lockfile (and `.yarnrc.yml`) alone, and one with
-  no lockfile gets the Yarn Berry gates; its test command is guessed from the component's own
-  `package.json`.
+  result. A Node component's manager comes from its own lockfile (and `.yarnrc.yml`) alone; one with no
+  lockfile gets npm's commands, because Yarn 4 refuses a directory that is not part of a project (its
+  audit then fails, as `npm audit` needs a lockfile). Its test command is guessed from the component's
+  own `package.json`. A Gradle `settings.gradle[.kts]` makes the root a JVM target, so a subproject is
+  never picked in place of the root's `./gradlew`.
 - **several** components and no root signal is a layout with no single right place: every gate
   resolves as unconfigured instead of running a root command that cannot work there.
 - anything else keeps the built-in behaviour.

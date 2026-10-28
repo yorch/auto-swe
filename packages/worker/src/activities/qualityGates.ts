@@ -22,6 +22,7 @@
 import { randomUUID } from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
 import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { activityInfo, heartbeat } from '@temporalio/activity';
@@ -35,7 +36,6 @@ import { currentNodeTag } from '../lib/activityNodeTag.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { recordGateEval } from '../lib/evalCapture.js';
 import { throwIfActivityCancelled } from '../lib/execUtils.js';
-import { executorImageFor } from '../lib/executorImage.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';

@@ -14,6 +14,7 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import {
   type RegexTarget,
   resolveRegexBudgetMs,
@@ -36,7 +37,6 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import type { ModelBackedAgentKey } from '../lib/config/types.js';
 import { recordEvalResult } from '../lib/evalCapture.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
-import { executorImageFor } from '../lib/executorImage.js';
 import { buildJudgePrompt } from '../lib/judgePrompt.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { resolveAutonomyPolicy } from '../lib/resolveAutonomyPolicy.js';

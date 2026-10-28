@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import type { FigmaDesignSummary } from '@auto-swe/shared/lib/integrations/figmaDesign';
 import {
   resolveIssueTrackerConfig,
@@ -32,7 +33,6 @@ import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
-import { executorImageFor } from '../lib/executorImage.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import {

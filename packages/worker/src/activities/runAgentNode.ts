@@ -1,5 +1,6 @@
 import { resolveSetting } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
 import { grantedWorkspaceToolIds, selectAgentRunTools } from '../agents/agentRunTools.js';
@@ -24,7 +25,6 @@ import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
-import { executorImageFor } from '../lib/executorImage.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';

@@ -28,6 +28,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     network: undefined,
     pidsLimit: 512,
     proxyHostAlias: undefined,
+    stackImages: { go: 'registry.example/executor-go:1' },
   })),
 }));
 
@@ -91,6 +92,28 @@ describe('probeExecutorImage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     backend.create.mockResolvedValue({ id: 'image-probe-1234', keeperPid: 7 });
+  });
+
+  it('probes the stack image for a detected stack when no image is named', async () => {
+    backend.exec
+      .mockResolvedValueOnce({ exitCode: 0, stderr: '', stdout: ALL_OK_STDOUT })
+      .mockResolvedValueOnce({ exitCode: 0, stderr: '', stdout: '' });
+    const go = { components: [{ path: '', stacks: ['go'] }], evidence: ['go.mod'] };
+    expect((await probeExecutorImage({ detectedStack: go })).image).toBe(
+      'registry.example/executor-go:1'
+    );
+    // A stack with no configured image, no detection, and a named image each mean what they did.
+    const py = { components: [{ path: '', stacks: ['python'] }], evidence: [] };
+    backend.exec
+      .mockResolvedValueOnce({ exitCode: 0, stderr: '', stdout: ALL_OK_STDOUT })
+      .mockResolvedValueOnce({ exitCode: 0, stderr: '', stdout: '' });
+    expect((await probeExecutorImage({ detectedStack: py })).image).toBe('node:24-alpine');
+    backend.exec
+      .mockResolvedValueOnce({ exitCode: 0, stderr: '', stdout: ALL_OK_STDOUT })
+      .mockResolvedValueOnce({ exitCode: 0, stderr: '', stdout: '' });
+    expect((await probeExecutorImage({ detectedStack: go, image: 'alpine:3.20' })).image).toBe(
+      'alpine:3.20'
+    );
   });
 
   it('runs the probe script and the keeper check, then removes the container', async () => {

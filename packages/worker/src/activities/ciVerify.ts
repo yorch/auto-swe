@@ -19,12 +19,12 @@ import {
   failingStepRuns,
   normaliseRunCommand,
 } from '@auto-swe/shared/lib/ciWorkflowFile';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
 import { getErrorMessage } from '../lib/errors.js';
-import { executorImageFor } from '../lib/executorImage.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';

@@ -17,8 +17,9 @@ export const TEST_RUN_TIMEOUT_MS = 600_000;
 /**
  * The test command the TDD loop and the fix sessions run.
  *
- * The same chain as the `runTests` quality gate, so the loop and the gate never
- * run different commands: the repository's configured
+ * The same chain as the `runTests` quality gate, so the loop and the gate run the same
+ * command wherever both have one (an ambiguous layout leaves the gate unconfigured and the
+ * loop on its root guess, which then ends the loop as unrunnable): the repository's configured
  * `Connection.gateCommands.runTests` wins; then the default for the stack the
  * repository's root was detected as (a Python, JVM or Go root, not Node), or its only component
  * when the root has no stack (run in that directory); then a guess from package.json's scripts

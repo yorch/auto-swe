@@ -10,6 +10,7 @@ import {
   isLaunchableAgentKey,
 } from '@auto-swe/shared/lib/agentRun';
 import { decideAdmission } from '@auto-swe/shared/lib/agentRunAdmission';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { FileChange, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -35,7 +36,6 @@ import { resolveAgentMcpUrl } from '../lib/config/mcpConnection.js';
 import type { ModelBackedAgentKey, ResolveCtx } from '../lib/config/types.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
-import { executorImageFor } from '../lib/executorImage.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';

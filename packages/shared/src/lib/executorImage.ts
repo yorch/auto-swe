@@ -1,5 +1,5 @@
-import { detectedTarget } from '@auto-swe/shared/lib/stackDetection';
-import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
+import { detectedTarget } from './stackDetection.js';
+import { resolveWorkspaceInfra } from './systemConfig.js';
 
 /**
  * The image a repository's workspace should ask `createWorkspace` for, or `undefined` to take
@@ -10,7 +10,8 @@ import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
  *    when one is set;
  * 3. `undefined`.
  *
- * Pass the result straight to `createWorkspace`, never `?? '<some image>'` (a literal there
+ * Lives in `shared` so the gateway's image probe and the worker's workspaces agree. Pass the
+ * result straight to `createWorkspace`, never `?? '<some image>'` (a literal there
  * wins the `??` inside `createWorkspace` and the deployment's setting is never read).
  *
  * The stored detection only *selects* among images the deployer configured; it never names one.

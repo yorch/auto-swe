@@ -11,6 +11,7 @@
 
 import { prisma } from '@auto-swe/shared/db';
 import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import type {
   DecompositionResult,
   RepoWorkRequest,
@@ -38,7 +39,6 @@ import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { joinSkillPrompts } from '../lib/config/skillPrompt.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage, getExecErrorOutput } from '../lib/errors.js';
-import { executorImageFor } from '../lib/executorImage.js';
 import { withCoAuthorTrailer } from '../lib/gitIdentity.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { resolveSystemPrompt } from '../lib/models.js';
