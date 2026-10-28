@@ -1193,6 +1193,7 @@ runbook.
 | Lifetime | `activeDeadlineSeconds` (`K8S_WORKSPACE_MAX_LIFETIME_SEC`, default 24 h) is a hard limit the kubelet enforces even if the worker dies. `remove()` deletes the pod and is idempotent |
 | Keeper PID | `shareProcessNamespace` makes the pod's `pause` process PID 1 (it reaps orphans, the role `--init` plays), leaving `sleep infinity` as its only child, which the same keeper probe finds. Zero or several candidates fail creation |
 | Secret env | Values travel on the exec's **stdin**: a shell wrapper reads `NAME=value` lines up to a blank line, exports them and `exec`s the command; any stdin of the caller's own follows the blank line. Nothing secret is in argv (so not in the apiserver audit log or the worker's process table) or in a file in the pod. A value that is empty or holds a line break cannot be carried and is refused before `kubectl` starts. Non-secret env goes through `env(1)` in argv |
+| Creation-time secret env | `WorkspaceContainerSpec.secretEnv` (the registry-proxy token, `YARN_NPM_AUTH_TOKEN` and `COREPACK_NPM_TOKEN`, which Yarn Berry and Corepack read from the environment of every command, the agent's own included, so one exec's stdin cannot carry it). The driver creates a per-pod `Secret` (`<pod>-env`, `type: Opaque`, labelled `asw/role=workspace-env` and `asw/workspace=<pod>`) from a manifest on `kubectl`'s stdin **before** the Pod, and the Pod names each variable with `valueFrom.secretKeyRef`, so the value is not in the Pod object, `kubectl get pod -o yaml` or the `pods create` audit entry (default audit policies log Secrets at Metadata level). After the Pod exists the Secret is patched to be owned by it, so deleting the pod object by any means garbage-collects it. `remove()` deletes the Secret (`--ignore-not-found`) whether or not the pod delete worked, and every `create()` failure deletes it. Docker names the variable (`docker run -e NAME`) and hands the value to the client in its environment |
 | Working tree | An `emptyDir` at `/workspace` with a size limit; it dies with the pod |
 | Copy | `copyOut` streams the pod's own `tar` to a file, capped while streaming. Because the agent could have replaced that binary, `copyIn` runs `assertSafeArchive` on the archive first and refuses absolute paths, `..`, hard links, devices, entries below a symlink the archive created, and symlinks that are absolute or climb above the root. `copyFileIn` keeps the file mode so the harness binary stays executable |
 | Pause | `kill -STOP -1` in the pod: SIGSTOP cannot be caught, and the tree is quiescent for the copy |
@@ -1335,6 +1336,14 @@ Current constraints of the system as built. Deliberate product boundaries are in
 - **Kubernetes workspace pods are not reaped by the worker.** `activeDeadlineSeconds` makes the
   kubelet terminate a pod that outlives its limit, but the terminated pod object stays until
   something deletes it, and a worker that dies mid-run does not delete its workspaces.
+- **The registry-proxy token is still readable inside a Kubernetes workspace and to a namespace
+  reader of Secrets.** It is in the process environment of the workspace container by design
+  (Corepack and Yarn Berry read it from there), and anyone with `get secrets` in the workspace
+  namespace can read the per-pod Secret while it exists, as can anyone with etcd access (Secrets
+  are base64 in etcd unless the cluster encrypts them at rest). The token is only valid for that
+  run's registry proxy and its allowlist, and dies with the worker's in-memory registration. A
+  worker that dies between creating the Secret and the pod leaves an unowned, labelled Secret
+  (`asw/role=workspace-env`) until it is swept; no janitor does that.
 - **Kubernetes `copyOut` runs the agent's `tar`.** The archive is validated before it is
   extracted anywhere, but the export itself is produced by a binary in the agent-controlled
   container, so a hostile run can make it fail or produce an archive that is refused.

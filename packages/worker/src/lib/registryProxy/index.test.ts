@@ -7,7 +7,12 @@ import {
   createRegistryProxy,
   tarballVersion,
 } from './index.js';
-import { registryWorkspaceEnv, renderNpmrc, renderYarnrc } from './render.js';
+import {
+  registryWorkspaceEnv,
+  renderNpmrc,
+  renderYarnrc,
+  splitRegistryWorkspaceEnv,
+} from './render.js';
 
 vi.mock('../activityLog.js', () => ({ logWarn: vi.fn() }));
 
@@ -1115,5 +1120,26 @@ describe('registry proxy audit relays share the buffered-fetch limits', () => {
     expect((await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query)).status).toBe(502);
     expect(upstream).toHaveBeenCalledTimes(2);
     await proxy.close();
+  });
+});
+
+describe('splitRegistryWorkspaceEnv', () => {
+  it('moves the token-bearing entries to secretEnv and leaves the rest', () => {
+    const regs = [{ id: 'r1', isDefault: true, scopes: [] }];
+    const all = registryWorkspaceEnv(regs, 'http://h:1', 'tok=with=eq');
+    const { env, secretEnv } = splitRegistryWorkspaceEnv(all);
+    expect(secretEnv).toEqual({
+      COREPACK_NPM_TOKEN: 'tok=with=eq',
+      YARN_NPM_AUTH_TOKEN: 'tok=with=eq',
+    });
+    expect(env.join('\n')).not.toContain('tok=with=eq');
+    expect(env).toContain('NPM_CONFIG_REGISTRY=http://h:1/npm/r1');
+    expect(env).toContain('YARN_NPM_ALWAYS_AUTH=true');
+    expect(env).toContain('COREPACK_ENABLE_DOWNLOAD_PROMPT=0');
+  });
+
+  it('has no Corepack token when there is no default registry', () => {
+    const { secretEnv } = splitRegistryWorkspaceEnv(registryWorkspaceEnv([], 'http://h:1', 'tok'));
+    expect(secretEnv).toEqual({ YARN_NPM_AUTH_TOKEN: 'tok' });
   });
 });
