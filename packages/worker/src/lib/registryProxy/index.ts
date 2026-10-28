@@ -836,6 +836,11 @@ export function createRegistryProxy(options: {
    * scope's package names would disclose them to a registry that does not own them,
    * so such a body is refused rather than trimmed (a trimmed audit would pass for a
    * complete one). The answer is relayed as JSON; nothing else of the upstream's is.
+   *
+   * It is a buffered fetch like a packument, so it follows the same rules: reading the
+   * client's body and the upstream's answer run under the upstream deadline, it takes one of
+   * the registration's buffered-fetch slots only after the cheap checks pass (a refused body
+   * never waits), and a client that hangs up gives its slot back at once.
    */
   async function serveAudit(
     reg: Registration,
@@ -848,16 +853,28 @@ export function createRegistryProxy(options: {
       sendJson(res, 404, 'no default registry answers audits');
       return;
     }
+    const deadlineMs = options.upstreamDeadlineMs ?? DEFAULT_UPSTREAM_DEADLINE_MS;
     const raw: Buffer[] = [];
     let received = 0;
-    for await (const chunk of req) {
-      received += (chunk as Buffer).length;
-      if (received > MAX_AUDIT_REQUEST_BYTES) {
-        sendJson(res, 413, 'the audit request is too large');
-        req.destroy();
-        return;
+    // A client that trickles its body is cut off at the same deadline an upstream is.
+    const bodyDeadline = setTimeout(() => req.destroy(), deadlineMs);
+    try {
+      for await (const chunk of req) {
+        received += (chunk as Buffer).length;
+        if (received > MAX_AUDIT_REQUEST_BYTES) {
+          sendJson(res, 413, 'the audit request is too large');
+          req.destroy();
+          return;
+        }
+        raw.push(chunk as Buffer);
       }
-      raw.push(chunk as Buffer);
+    } catch {
+      if (!res.destroyed) {
+        sendJson(res, 408, 'the audit request was not received in time');
+      }
+      return;
+    } finally {
+      clearTimeout(bodyDeadline);
     }
     let text: string;
     try {
@@ -903,9 +920,27 @@ export function createRegistryProxy(options: {
         }
       }
     }
-    let upstream: Response;
+    const slot = await reg.buffered.acquire();
+    if (slot === null) {
+      res.setHeader('retry-after', '5');
+      sendJson(res, 503, 'the registry proxy is busy; retry shortly');
+      return;
+    }
+    // The client may have hung up while it waited.
+    if (res.destroyed) {
+      slot();
+      return;
+    }
+    const abort = new AbortController();
+    const deadline = setTimeout(() => abort.abort(), deadlineMs);
+    const hangUp = () => abort.abort();
+    res.on('close', hangUp);
+    let status = 0;
+    let failure: string | undefined;
+    const chunks: Buffer[] = [];
+    let size = 0;
     try {
-      upstream = await upstreamFetchFor(defaultRegistry)(
+      const upstream = await upstreamFetchFor(defaultRegistry)(
         `${defaultRegistry.upstreamUrl}${auditPath}`,
         {
           body: checked.body,
@@ -923,30 +958,34 @@ export function createRegistryProxy(options: {
           },
           method: 'POST',
           redirect: 'error',
+          signal: abort.signal,
         }
       );
-    } catch {
-      sendJson(res, 502, 'the upstream registry could not be reached');
-      return;
-    }
-    const chunks: Buffer[] = [];
-    let size = 0;
-    try {
+      status = upstream.status;
       if (upstream.body) {
         for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
           size += chunk.length;
           if (size > MAX_AUDIT_BODY_BYTES) {
-            sendJson(res, 502, 'the upstream audit answer is too large to proxy');
-            return;
+            failure = 'the upstream audit answer is too large to proxy';
+            break;
           }
           chunks.push(Buffer.from(chunk));
         }
       }
     } catch {
-      sendJson(res, 502, 'the upstream registry could not be reached');
+      failure = 'the upstream registry could not be reached';
+    } finally {
+      clearTimeout(deadline);
+      res.off('close', hangUp);
+      slot();
+    }
+    if (failure !== undefined) {
+      if (!res.destroyed) {
+        sendJson(res, 502, failure);
+      }
       return;
     }
-    res.writeHead(upstream.status, {
+    res.writeHead(status, {
       'cache-control': 'no-store',
       'content-type': 'application/json',
     });

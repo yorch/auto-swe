@@ -1014,3 +1014,106 @@ describe('registry proxy legacy (pnpm) audit', () => {
     await proxy.close();
   });
 });
+
+describe('registry proxy audit relays share the buffered-fetch limits', () => {
+  /** An upstream whose audit answers wait on `open()`; everything else answers at once. */
+  function gatedAudit() {
+    let started = 0;
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const upstream = async (url: string) => {
+      if (!url.endsWith(AUDIT)) {
+        return new Response('{}', { status: 200 });
+      }
+      started++;
+      await gate;
+      return new Response('{"left-pad":[]}', { status: 200 });
+    };
+    return { open: () => open(), started: () => started, upstream };
+  }
+  async function until(done: () => boolean): Promise<void> {
+    for (let i = 0; i < 1000 && !done(); i++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    }
+    expect(done()).toBe(true);
+  }
+  const query = JSON.stringify({ 'left-pad': ['1.3.0'] });
+
+  it('answers 503 with Retry-After while the registration’s slots are all held', async () => {
+    const g = gatedAudit();
+    const { base, proxy } = await startProxy(g.upstream, {
+      maxBufferedFetches: 1,
+      maxQueuedFetches: 0,
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    const held = post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query);
+    await until(() => g.started() === 1);
+    const busy = await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query);
+    expect(busy.status).toBe(503);
+    g.open();
+    expect((await held).status).toBe(200);
+    // The slot came back: the next audit is served.
+    expect((await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query)).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('shares the slots with packument fetches, so an audit cannot starve them unbounded', async () => {
+    const g = gatedAudit();
+    const { base, proxy } = await startProxy(g.upstream, {
+      maxBufferedFetches: 1,
+      maxQueuedFetches: 0,
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    const held = post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query);
+    await until(() => g.started() === 1);
+    expect((await get(base, `/npm/${REG.id}/left-pad`, reg.token)).status).toBe(503);
+    g.open();
+    await held;
+    await proxy.close();
+  });
+
+  it('refuses a malformed or denied body without taking a slot', async () => {
+    const g = gatedAudit();
+    const { base, proxy } = await startProxy(g.upstream, {
+      maxBufferedFetches: 1,
+      maxQueuedFetches: 0,
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, new Map([['left-pad', new Set(['1.3.0'])]])]]));
+    const held = post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query);
+    await until(() => g.started() === 1);
+    // The only slot is held, yet these answer on their own merits, not 503.
+    expect((await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, 'garbage')).status).toBe(400);
+    expect(
+      (await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, '{"exfil":["1.0.0"]}')).status
+    ).toBe(403);
+    g.open();
+    await held;
+    await proxy.close();
+  });
+
+  it('ends an upstream that never answers at the deadline with a 502, and frees the slot', async () => {
+    const upstream = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        })
+    );
+    const { base, proxy } = await startProxy(upstream as never, {
+      maxBufferedFetches: 1,
+      maxQueuedFetches: 0,
+      upstreamDeadlineMs: 60,
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect((await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query)).status).toBe(502);
+    // Not 503: the slot was released when the deadline fired.
+    expect((await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query)).status).toBe(502);
+    expect(upstream).toHaveBeenCalledTimes(2);
+    await proxy.close();
+  });
+});

@@ -146,6 +146,12 @@ registry would disclose the name, and a trimmed audit would read as a complete o
 the upstream — a mirror that does not serve the endpoint answers its own error (pnpm reports a 404
 from both of its endpoints as an audit endpoint that does not exist), and the gate fails.
 
+An audit is a buffered fetch like a packument, so it follows the same rules: it takes one of the
+workspace's places only after the body has passed the shape and lockfile checks (a refused body never
+waits), waits for a place and gets `503` with `Retry-After` exactly as a packument does, reads the
+client's body and the upstream's answer within the 20-second deadline (`408` for a client that is too
+slow, `502` for the upstream), and gives its place back at once if the client hangs up.
+
 **A tarball path may carry a prefix.** Up to eight segments are allowed, and none may be `.` or
 `..` in any encoding. The proxy validates the prefix and then ignores it, and it strips an
 `@scope/` prefix from the file name. This is because npm keeps a lockfile `resolved` URL's path
