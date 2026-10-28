@@ -400,6 +400,16 @@ describe("GitHubScmProvider and the run launcher's own credential", () => {
     expect(requireGitHubToken).not.toHaveBeenCalled();
   });
 
+  it('mints the platform token for the one repository it clones', async () => {
+    // The token reaches the workspace; it must not carry the installation's
+    // whole repository scope.
+    await provider.cloneCredentials(REPO);
+    expect(requireGitHubToken).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ repositories: [REPO.repoName] })
+    );
+  });
+
   it('asks nothing about the launcher while the feature is off', async () => {
     // A deployment that never enabled it pays no extra database round trip.
     vi.mocked(resolveUserCredentialPolicy).mockResolvedValue({ enabled: false, hosts: [] });
@@ -810,7 +820,12 @@ describe('the platform credential and the repository host', () => {
           token: 'host-pat',
         });
         expect(JSON.stringify(config)).not.toContain('instance-pat');
-        expect(target).toEqual({ apiUrl: GHE.apiUrl, installationId: '777' });
+        expect(target).toEqual({
+          apiUrl: GHE.apiUrl,
+          installationId: '777',
+          owner: GHE.organizationName,
+          repositories: [GHE.repoName],
+        });
       }
     );
 

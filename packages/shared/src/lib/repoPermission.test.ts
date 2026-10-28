@@ -184,6 +184,36 @@ describe('lookupRepoPermission and the platform credential', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it('mints the App token for the one repository and asks about that repository', async () => {
+    await lookupRepoPermission(
+      repo({ installation: { host: '', installationId: '900005' } }),
+      'octocat'
+    );
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body))).toEqual({ repositories: ['payments'] });
+  });
+
+  it('reports a repository the installation cannot see as not found, failing closed', async () => {
+    // A renamed repository, or one not selected for the App: GitHub answers the
+    // scoped mint with a 422. That is not a rejected credential.
+    fetchSpy.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          message:
+            'There is at least one repository that does not exist or is not accessible to the parent installation.',
+        }),
+        { status: 422 }
+      )
+    );
+    await expect(
+      lookupRepoPermission(
+        repo({ installation: { host: '', installationId: '900006' }, repoName: 'old-name' }),
+        'octocat'
+      )
+    ).resolves.toEqual({ failure: 'repo-not-found', ok: false });
+    expect(fetchRepoPermission).not.toHaveBeenCalled();
+  });
+
   it('sends no instance PAT to a foreign host (PAT mode)', async () => {
     resolveGitHubConfig.mockResolvedValue(instance({ authMode: 'pat' }));
     await expect(lookupRepoPermission(repo(GHE), 'octocat')).resolves.toEqual(HOST_MISMATCH);

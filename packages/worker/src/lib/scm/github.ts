@@ -23,7 +23,10 @@ import {
   resolvePlatformCredential,
 } from '@auto-swe/shared/lib/githubHostCredential';
 import { hostKey, installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
-import { PlatformCredentialHostError } from '@auto-swe/shared/lib/githubInstallation';
+import {
+  PlatformCredentialHostError,
+  RepositoryNotVisibleError,
+} from '@auto-swe/shared/lib/githubInstallation';
 import { fetchRepoPermission } from '@auto-swe/shared/lib/githubPermission';
 import {
   createGuardedFetch,
@@ -108,7 +111,13 @@ async function platformCredential(
 /** Which installation a repository's credential comes from, at its credential set's API host. */
 function installationTarget(repo: RepoRef, credentialConfig: { apiUrl: string }) {
   return installationTargetFor(
-    { apiUrl: repo.apiUrl, baseUrl: repo.baseUrl, installationId: repo.installationId },
+    {
+      apiUrl: repo.apiUrl,
+      baseUrl: repo.baseUrl,
+      installationId: repo.installationId,
+      organizationName: repo.organizationName,
+      repoName: repo.repoName,
+    },
     credentialConfig
   );
 }
@@ -1083,9 +1092,14 @@ export class GitHubScmProvider implements ScmProvider {
       // No usable credential is "could not ask", not "no access". Resolving it
       // to a verdict would write a denial into the projection that GitHub never
       // made, and it would look identical to a real one.
+      // A repository the installation cannot see (renamed, or not selected for
+      // the App) is likewise unanswered, but not a rejected credential.
+      if (err instanceof PlatformCredentialHostError) {
+        return { failure: 'host-mismatch', ok: false };
+      }
       return {
         failure:
-          err instanceof PlatformCredentialHostError ? 'host-mismatch' : 'credential-rejected',
+          err instanceof RepositoryNotVisibleError ? 'repo-not-found' : 'credential-rejected',
         ok: false,
       };
     }

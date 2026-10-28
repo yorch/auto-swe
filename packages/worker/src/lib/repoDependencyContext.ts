@@ -5,7 +5,11 @@ import {
   type RepoDependencyNeighbor,
   resolveRepoDependencyContext,
 } from '@auto-swe/shared/lib/repoDependencyResolver';
-import { cloneDependencyRepos, type Workspace } from '../activities/workspace.js';
+import {
+  cloneDependencyRepos,
+  MAX_DEPENDENCY_CHECKOUTS,
+  type Workspace,
+} from '../activities/workspace.js';
 import { getScmProvider, toRepoRef } from './scm/index.js';
 
 /**
@@ -216,6 +220,13 @@ export async function checkoutUpstreamRepos(
     const deps: { authedCloneUrl: string; branch?: string; name: string }[] = [];
     const usedNames = new Set<string>();
     for (const row of orderedRows) {
+      // Each token is minted for one repository and only the first
+      // MAX_DEPENDENCY_CHECKOUTS that yield one are cloned, so stop minting once
+      // the cap is filled; a dependency with no token is skipped and the next
+      // takes its place.
+      if (deps.length >= MAX_DEPENDENCY_CHECKOUTS) {
+        break;
+      }
       try {
         const ref = toRepoRef(row);
         const { authedCloneUrl } = await getScmProvider(ref).cloneCredentials(ref);

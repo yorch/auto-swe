@@ -44,6 +44,7 @@ const prisma = {
 
 vi.stubGlobal('fetch', m.fetch);
 
+import { installationTargetFor } from '@auto-swe/shared/lib/githubHostScope';
 import { enrichPrFeedbackFacts } from './prFeedback.js';
 
 const CONN = {
@@ -51,6 +52,8 @@ const CONN = {
   githubUrl: null,
   id: 'conn-1',
   installation: { host: null, installationId: 'i1' },
+  organizationName: 'acme',
+  repoName: 'api',
   team: { orgId: 'org-1' },
   teamId: 'team-1',
 };
@@ -129,6 +132,22 @@ describe('enrichPrFeedbackFacts — the host read for `other` origins is gated',
     });
     r = await enrichPrFeedbackFacts(prisma, event() as never, 'github.com');
     expect(r).toMatchObject({ facts: { headRef: 'feature/x' }, type: 'ok' });
+  });
+  it("reads the host with a token restricted to the connection's repository", async () => {
+    m.automationFindMany.mockResolvedValue([
+      { filters: { pullRequests: ['others'], triggers: ['command'] } },
+    ]);
+    m.fetch.mockResolvedValue({ ok: false, status: 404 });
+    await enrichPrFeedbackFacts(prisma, event() as never, 'github.com');
+    // The target is built from the connection's own installation and name.
+    expect(installationTargetFor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        installationId: 'i1',
+        organizationName: 'acme',
+        repoName: 'api',
+      }),
+      expect.anything()
+    );
   });
 });
 

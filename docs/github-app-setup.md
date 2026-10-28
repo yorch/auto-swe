@@ -185,14 +185,63 @@ checks a per-host credential gets — so a credential that could never authentic
 
 ## How installation tokens work
 
-When the worker needs a GitHub token (for git clone or Octokit calls), it calls `requireGitHubToken()` in `packages/worker/src/lib/githubAuth.ts`, which delegates to `resolveGitHubToken()` and converts a missing-config error into a Temporal `ApplicationFailure.nonRetryable` so the workflow fails fast instead of retrying indefinitely:
+Installation tokens are minted by `resolveGitHubToken()` in `packages/shared/src/lib/githubInstallation.ts`, for the worker (git clone, fetch, push and Octokit calls) and for the gateway (webhook-time pull request and check-run reads, repository listing, the sign-in organization check, and permission lookups). The worker calls it through `requireGitHubToken()` in `packages/worker/src/lib/githubAuth.ts`, which converts a missing-config error, a host mismatch, or a repository the installation cannot see into a Temporal `ApplicationFailure.nonRetryable` so the workflow fails fast instead of retrying indefinitely:
 
-1. Checks a module-level in-memory cache keyed by installation id and API host, and validated against a digest of the App id and private key. If a valid cached token exists, returns it immediately.
-2. Otherwise, builds a GitHub App JWT (RS256 via `node:crypto`, 10-minute expiry) and calls `POST /app/installations/:id/access_tokens` on the GitHub API.
+1. Checks a module-level in-memory cache keyed by installation id, API host and the repositories the token is restricted to, and validated against a digest of the App id and private key. If a valid cached token exists, returns it immediately.
+2. Otherwise, builds a GitHub App JWT (RS256 via `node:crypto`, 10-minute expiry) and calls `POST /app/installations/:id/access_tokens` on the GitHub API, with a `repositories` restriction when the caller named repositories (see below).
 3. GitHub returns a token and its `expires_at` timestamp. The worker caches the token until 60 seconds before that expiry — so the effective TTL tracks GitHub's actual token lifetime (typically ~1 hour), not a hardcoded window.
 4. On worker restart the cache is empty and a new token is fetched on the first activity call.
 
-The gateway does **not** generate installation tokens — the connection test for App mode simply validates that the fields are present and returns a descriptive message. Token generation is validated when the worker processes its first activity.
+The connection test for App mode in the admin UI only validates that the fields are present and returns a descriptive message; a token is first minted when the gateway or the worker first needs one.
+
+### Repository scope
+
+An installation token is restricted, with the API's `repositories` parameter, to the repository the
+work is for. Every token minted through a repository's `installationTargetFor(...)` target names that
+one repository: the clone, fetch and push credential that enters an agent workspace, the worker's
+Octokit calls (pull requests, comments, review threads, CI status and logs, permission lookups), and
+the gateway's webhook-time pull-request and check-run reads. A compromised agent holding such a token
+cannot use it against any other repository the App is installed on. The `permissions` of the token are
+not narrowed: it carries the permissions the App was granted.
+
+A run that checks out dependency repositories (`full_checkout`, up to four, under `/workspace/deps`)
+gets one token per repository, not one token for the set, minted only for the dependencies it clones. Each dependency may belong to a different
+installation, which a single token cannot span; and the dependency token is used only for its own
+read-only clone, so it is never the credential the target repository's pushes use. A repository
+whose token cannot be minted is simply not checked out.
+
+Work that spans the installation is not narrowed: listing the installation's repositories, the
+identity and organization-membership checks, skill-source imports, and fetching CI logs for a logs
+URL that arrives without a repository mint an unrestricted token. The
+cache keeps the two apart, so a narrow token is never served for a wider request or the reverse.
+
+---
+
+## Limitations
+
+- A personal access token cannot be narrowed. A PAT (including a host's PAT credential and a user's
+  own saved token) carries all the repositories its owner can reach, and a deployment that uses one
+  gets none of the per-repository restriction above.
+- Only the repository scope is narrowed. The token keeps all of the App's permissions on that
+  repository.
+- The repository is named by the name stored on its connection; no immutable GitHub repository id
+  is stored. When GitHub reports that name as not accessible to the installation, the platform asks
+  GitHub for the repository under that name (GitHub follows a rename), mints once more restricted
+  to its id, and logs a warning naming the stale and the current name so an operator can update the
+  connection. A renamed repository therefore keeps working, at the cost of one extra lookup (made with an
+  unrestricted token that never leaves the minting function) the first time its token is minted.
+  A repository that is not selected for the App, or a request that carries no owner, fails
+  non-retryably: `REPO_NOT_VISIBLE_TO_INSTALLATION` on the worker, and `repo-not-found`
+  (unanswered, so access checks fail closed) for a permission lookup. A `422` whose message does not
+  say the repository is missing or inaccessible (GitHub also uses it for a throttled endpoint) is an
+  ordinary, retryable failure. A repository GitHub reports under a different owner (a transfer) is
+  treated as not visible. After a rename, the token scoped to the renamed repository stays cached
+  under the old name for up to the token's lifetime, so a new repository created later under the old
+  name and selected for the App gets a failing token until it expires; that fails closed.
+- One token is minted per repository, so a run over several repositories makes one
+  `access_tokens` request for each instead of sharing the installation's single cached token.
+- The unrestricted tokens listed above still carry the installation's full repository scope; none of
+  them is placed in an agent workspace.
 
 ---
 

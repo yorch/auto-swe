@@ -4,6 +4,7 @@ import {
   clearInstallationTokenCache,
   GitHubTokenMissingError,
   PlatformCredentialHostError,
+  RepositoryNotVisibleError,
   resolveGitHubToken,
 } from './githubInstallation.js';
 import type { ResolvedGitHubConfig } from './systemConfig.js';
@@ -319,5 +320,285 @@ describe('the credential set carries its own host', () => {
     await expect(
       resolveGitHubToken(set, { apiUrl: 'https://ghe.corp/api/v3', installationId: '7' })
     ).resolves.toBe('tok-7');
+  });
+});
+
+describe('repository-scoped installation tokens', () => {
+  /** Echoes the request body into the token so a response identifies what was asked for. */
+  function bodyEchoingFetch() {
+    const bodies: (string | undefined)[] = [];
+    const spy = vi.fn(async (_url: string, init?: RequestInit) => {
+      const body = typeof init?.body === 'string' ? init.body : undefined;
+      bodies.push(body);
+      return new Response(
+        JSON.stringify({
+          expires_at: new Date(Date.now() + 3_600_000).toISOString(),
+          token: `tok-${body ?? 'unscoped'}`,
+        }),
+        { headers: { 'Content-Type': 'application/json' }, status: 201 }
+      );
+    });
+    vi.stubGlobal('fetch', spy);
+    return { bodies, spy };
+  }
+
+  it('restricts the token to the named repositories', async () => {
+    const { bodies } = bodyEchoingFetch();
+    await resolveGitHubToken(config(), { repositories: ['payments-api'] });
+    expect(JSON.parse(bodies[0] ?? 'null')).toEqual({ repositories: ['payments-api'] });
+  });
+
+  it('sends no body when no repositories are named', async () => {
+    const { bodies } = bodyEchoingFetch();
+    await resolveGitHubToken(config());
+    await resolveGitHubToken(config(), { repositories: [] });
+    expect(bodies).toEqual([undefined]);
+  });
+
+  it('never serves a narrow token for a wider request, or the reverse', async () => {
+    const { spy } = bodyEchoingFetch();
+    const narrow = await resolveGitHubToken(config(), { repositories: ['a'] });
+    const wide = await resolveGitHubToken(config());
+    const other = await resolveGitHubToken(config(), { repositories: ['b'] });
+    const both = await resolveGitHubToken(config(), { repositories: ['a', 'b'] });
+    expect(new Set([narrow, wide, other, both]).size).toBe(4);
+    expect(spy).toHaveBeenCalledTimes(4);
+  });
+
+  it('caches a scoped token, whatever order or case the names arrive in', async () => {
+    const { spy } = bodyEchoingFetch();
+    await resolveGitHubToken(config(), { repositories: ['a', 'B'] });
+    await resolveGitHubToken(config(), { repositories: ['b', 'A'] });
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends repository names as given, and lowercases only for the cache key', async () => {
+    const { bodies } = bodyEchoingFetch();
+    await resolveGitHubToken(config(), { repositories: ['Payments-API'] });
+    expect(JSON.parse(bodies[0] ?? 'null')).toEqual({ repositories: ['Payments-API'] });
+  });
+
+  const NOT_ACCESSIBLE =
+    'There is at least one repository that does not exist or is not accessible to the parent installation.';
+  const json = (status: number, body: unknown, headers: Record<string, string> = {}) =>
+    new Response(JSON.stringify(body), {
+      headers: { 'Content-Type': 'application/json', ...headers },
+      status,
+    });
+  const minted = (token: string) =>
+    json(201, { expires_at: new Date(Date.now() + 3_600_000).toISOString(), token });
+
+  /** Routes by method, path and mint body, recording every call. */
+  function githubDouble(
+    handler: (req: { url: string; method: string; auth: string; body: unknown }) => Response
+  ) {
+    const calls: { url: string; method: string; auth: string; body: unknown }[] = [];
+    const spy = vi.fn(async (url: string, init?: RequestInit) => {
+      const req = {
+        auth: String((init?.headers as Record<string, string> | undefined)?.Authorization ?? ''),
+        body: typeof init?.body === 'string' ? JSON.parse(init.body) : undefined,
+        method: init?.method ?? 'GET',
+        url,
+      };
+      calls.push(req);
+      return handler(req);
+    });
+    vi.stubGlobal('fetch', spy);
+    return { calls, spy };
+  }
+
+  it('raises a typed error when GitHub says the repository is not accessible and none can be found', async () => {
+    githubDouble((req) => {
+      if (req.method === 'POST') {
+        return req.body === undefined
+          ? minted('tok-UNSCOPED')
+          : json(422, { message: NOT_ACCESSIBLE });
+      }
+      return json(404, {});
+    });
+    const err = await resolveGitHubToken(config(), {
+      installationId: '900009',
+      owner: 'acme',
+      repositories: ['gone'],
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RepositoryNotVisibleError);
+    expect(String(err)).toContain('gone');
+    expect(String(err)).toContain('900009');
+  });
+
+  it('raises the typed error without a lookup when the caller gave no owner', async () => {
+    const { calls } = githubDouble(() => json(422, { message: NOT_ACCESSIBLE }));
+    const err = await resolveGitHubToken(config(), {
+      installationId: '900009',
+      repositories: ['gone'],
+    }).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(RepositoryNotVisibleError);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('treats any other 422 as an ordinary failure, without echoing the response', async () => {
+    // GitHub also answers 422 when the endpoint has been spammed.
+    githubDouble(() => json(422, { message: 'Validation Failed: secret-ish detail' }));
+    const err = await resolveGitHubToken(config(), {
+      installationId: '900009',
+      owner: 'acme',
+      repositories: ['fine'],
+    }).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(RepositoryNotVisibleError);
+    expect(err).toBeInstanceOf(Error);
+    expect(String(err)).toContain('422');
+    expect(String(err)).not.toContain('secret-ish');
+  });
+
+  describe('a repository renamed since its name was stored', () => {
+    let warn: ReturnType<typeof vi.spyOn>;
+    beforeEach(() => {
+      warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    });
+    afterEach(() => {
+      warn.mockRestore();
+    });
+
+    const renamed = () =>
+      githubDouble((req) => {
+        if (req.method === 'POST') {
+          const body = req.body as
+            | { repositories?: string[]; repository_ids?: number[] }
+            | undefined;
+          if (body?.repositories) {
+            return json(422, { message: NOT_ACCESSIBLE });
+          }
+          return minted(body?.repository_ids ? 'tok-by-id' : 'tok-UNSCOPED');
+        }
+        if (req.url.endsWith('/repos/acme/old-name')) {
+          return new Response(null, {
+            headers: { Location: 'https://api.github.com/repositories/42' },
+            status: 301,
+          });
+        }
+        if (req.url.endsWith('/repositories/42')) {
+          return json(200, { full_name: 'acme/new-name', id: 42, name: 'new-name' });
+        }
+        return json(404, {});
+      });
+    const target = { installationId: '900010', owner: 'acme', repositories: ['old-name'] };
+
+    it('mints again by immutable id and returns only the id-scoped token', async () => {
+      const { calls } = renamed();
+      await expect(resolveGitHubToken(config(), target)).resolves.toBe('tok-by-id');
+      const mints = calls.filter((c) => c.method === 'POST').map((c) => c.body);
+      expect(mints).toEqual([{ repositories: ['old-name'] }, undefined, { repository_ids: [42] }]);
+      // The unscoped token authenticates the lookup, and goes nowhere else.
+      const lookup = calls.filter((c) => c.method === 'GET');
+      expect(lookup.length).toBeGreaterThan(0);
+      expect(lookup[0].auth).toBe('Bearer tok-UNSCOPED');
+    });
+
+    it('warns with the stale and the current name, and never a token', async () => {
+      renamed();
+      await resolveGitHubToken(config(), target);
+      const line = warn.mock.calls.map((c: unknown[]) => c.join(' ')).join('\n');
+      expect(line).toContain('old-name');
+      expect(line).toContain('new-name');
+      expect(line).not.toContain('tok-');
+    });
+
+    it('keeps serving the id-scoped token from the cache under the stored name', async () => {
+      const { spy } = renamed();
+      await resolveGitHubToken(config(), target);
+      const calls = spy.mock.calls.length;
+      await expect(resolveGitHubToken(config(), target)).resolves.toBe('tok-by-id');
+      expect(spy.mock.calls.length).toBe(calls);
+    });
+
+    it('is not-visible, and mints no id token, when GitHub reports another owner', async () => {
+      // A transfer to another account: the id now belongs elsewhere.
+      const { calls } = githubDouble((req) => {
+        if (req.method === 'POST') {
+          return req.body === undefined
+            ? minted('tok-UNSCOPED')
+            : json(422, { message: NOT_ACCESSIBLE });
+        }
+        return json(200, { full_name: 'elsewhere/old-name', id: 42, name: 'old-name' });
+      });
+      const err = await resolveGitHubToken(config(), target).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(RepositoryNotVisibleError);
+      expect(calls.some((c) => (c.body as { repository_ids?: unknown })?.repository_ids)).toBe(
+        false
+      );
+    });
+
+    it('sends the token to no other origin when the lookup redirects away', async () => {
+      const { calls } = githubDouble((req) => {
+        if (req.method === 'POST') {
+          return req.body === undefined
+            ? minted('tok-UNSCOPED')
+            : json(422, { message: NOT_ACCESSIBLE });
+        }
+        return new Response(null, {
+          headers: { Location: 'https://evil.example/repositories/42' },
+          status: 301,
+        });
+      });
+      const err = await resolveGitHubToken(config(), target).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect(err).not.toBeInstanceOf(RepositoryNotVisibleError);
+      expect(calls.filter((c) => c.url.startsWith('https://evil.example'))).toEqual([]);
+    });
+
+    it.each([500, 403])(
+      'treats a lookup answering %i as an ordinary, retryable failure',
+      async (status) => {
+        githubDouble((req) => {
+          if (req.method === 'POST') {
+            return req.body === undefined
+              ? minted('tok-UNSCOPED')
+              : json(422, { message: NOT_ACCESSIBLE });
+          }
+          return json(status, { message: 'nope' });
+        });
+        const err = await resolveGitHubToken(config(), target).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(Error);
+        expect(err).not.toBeInstanceOf(RepositoryNotVisibleError);
+        expect(String(err)).toContain(String(status));
+      }
+    );
+
+    it('is not-visible when the id mint is refused too (not selected for the App)', async () => {
+      githubDouble((req) => {
+        if (req.method === 'POST') {
+          const body = req.body as { repository_ids?: number[] } | undefined;
+          return body === undefined
+            ? minted('tok-UNSCOPED')
+            : json(422, { message: NOT_ACCESSIBLE });
+        }
+        return req.url.endsWith('/repos/acme/old-name')
+          ? json(200, { full_name: 'acme/old-name', id: 42, name: 'old-name' })
+          : json(404, {});
+      });
+      const err = await resolveGitHubToken(config(), target).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(RepositoryNotVisibleError);
+      expect(String(err)).not.toContain('tok-UNSCOPED');
+    });
+  });
+
+  it('leaves a 422 on an unscoped request a plain error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('{}', { status: 422 }))
+    );
+    const err = await resolveGitHubToken(config()).catch((e: unknown) => e);
+    expect(err).not.toBeInstanceOf(RepositoryNotVisibleError);
+    expect(err).toBeInstanceOf(Error);
+  });
+
+  it('does not narrow a PAT', async () => {
+    const { spy } = bodyEchoingFetch();
+    await expect(
+      resolveGitHubToken(config({ appId: null, authMode: 'pat', token: 'ghp_pat' }), {
+        repositories: ['a'],
+      })
+    ).resolves.toBe('ghp_pat');
+    expect(spy).not.toHaveBeenCalled();
   });
 });

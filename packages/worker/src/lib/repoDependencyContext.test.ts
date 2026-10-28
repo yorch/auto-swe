@@ -12,8 +12,11 @@ const { cloneMock, credentialsMock, prismaMock } = vi.hoisted(() => ({
 
 vi.mock('@auto-swe/shared/db', () => ({ prisma: prismaMock }));
 
-vi.mock('../activities/workspace.js', () => ({
+vi.mock('../activities/workspace.js', async (importOriginal) => ({
   cloneDependencyRepos: cloneMock,
+  // The real cap, so the test follows it; only the cloner is replaced.
+  MAX_DEPENDENCY_CHECKOUTS: (await importOriginal<typeof import('../activities/workspace.js')>())
+    .MAX_DEPENDENCY_CHECKOUTS,
 }));
 
 vi.mock('./scm/index.js', () => ({
@@ -26,6 +29,7 @@ vi.mock('./scm/index.js', () => ({
   },
 }));
 
+import { MAX_DEPENDENCY_CHECKOUTS } from '../activities/workspace.js';
 import {
   checkoutUpstreamRepos,
   formatRepoDependencyContext,
@@ -311,7 +315,22 @@ describe('checkoutUpstreamRepos', () => {
   it('caps the number of repos handed to the cloner', async () => {
     stubUpstream(MAX_CROSS_REPO_NEIGHBORS + 4);
     await checkoutUpstreamRepos(workspace, 'repo-1', 'org-1');
-    expect(cloneMock.mock.calls[0][1]).toHaveLength(MAX_CROSS_REPO_NEIGHBORS);
+    expect(cloneMock.mock.calls[0][1]).toHaveLength(MAX_DEPENDENCY_CHECKOUTS);
+  });
+
+  it('mints a token only for the repositories it can clone', async () => {
+    stubUpstream(MAX_CROSS_REPO_NEIGHBORS);
+    await checkoutUpstreamRepos(workspace, 'repo-1', 'org-1');
+    expect(credentialsMock).toHaveBeenCalledTimes(MAX_DEPENDENCY_CHECKOUTS);
+    expect(cloneMock.mock.calls[0][1]).toHaveLength(MAX_DEPENDENCY_CHECKOUTS);
+  });
+
+  it('reaches past a dependency it has no token for to fill the checkout cap', async () => {
+    stubUpstream(MAX_CROSS_REPO_NEIGHBORS);
+    credentialsMock.mockRejectedValueOnce(new Error('not visible'));
+    await checkoutUpstreamRepos(workspace, 'repo-1', 'org-1');
+    expect(credentialsMock).toHaveBeenCalledTimes(MAX_DEPENDENCY_CHECKOUTS + 1);
+    expect(cloneMock.mock.calls[0][1]).toHaveLength(MAX_DEPENDENCY_CHECKOUTS);
   });
 
   it('returns empty when nothing could be cloned', async () => {

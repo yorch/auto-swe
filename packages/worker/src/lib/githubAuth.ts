@@ -10,6 +10,7 @@ import {
   GitHubTokenMissingError,
   type InstallationTarget,
   PlatformCredentialHostError,
+  RepositoryNotVisibleError,
   resolveGitHubToken,
 } from '@auto-swe/shared/lib/githubInstallation';
 import type { ResolvedGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
@@ -42,6 +43,9 @@ export async function requireGitHubToken(
     }
     if (err instanceof PlatformCredentialHostError) {
       throw ApplicationFailure.nonRetryable(err.message, 'REPO_CREDENTIAL_HOST_MISMATCH');
+    }
+    if (err instanceof RepositoryNotVisibleError) {
+      throw ApplicationFailure.nonRetryable(err.message, 'REPO_NOT_VISIBLE_TO_INSTALLATION');
     }
     throw err;
   }

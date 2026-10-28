@@ -84,6 +84,23 @@ export interface HostScopedRepo {
 }
 
 /**
+ * What {@link installationTargetFor} reads: the host columns plus the
+ * repository's name, so an App token minted for it is restricted to this one
+ * repository. The name is required, so a caller that did not load it is a type
+ * error; null (no repository name to restrict to) leaves the token with the
+ * installation's full scope.
+ */
+export interface InstallationTargetRepo extends HostScopedRepo {
+  /** The repository's name, without the owner. */
+  repoName: string | null;
+  /**
+   * The repository's owner. Optional: it only lets a stale name be resolved by
+   * the repository's id (see `InstallationTarget.owner`).
+   */
+  organizationName?: string | null;
+}
+
+/**
  * {@link HostScopedRepo} as a credential is minted for it. The installation's
  * host is required, so a caller that loads a repository without it does not
  * compile; an installation whose host is absent fails the mint-time check.
@@ -182,12 +199,26 @@ export function installationHostMismatch(
  * its own takes the instance singleton's, which a host's set does not have.
  * Callers must have resolved a set for the repository's scope; the
  * `resolveGitHubToken` guard refuses any other host regardless.
+ *
+ * When the repository's name is known the target also names it, so an App token
+ * is restricted to that one repository. Work that spans the installation does
+ * not build its target here.
  */
 export function installationTargetFor(
-  repo: HostScopedRepo,
+  repo: InstallationTargetRepo,
   config: { apiUrl: string }
-): { installationId: string | null; apiUrl: string } {
-  return { apiUrl: config.apiUrl, installationId: repo.installationId ?? null };
+): {
+  installationId: string | null;
+  apiUrl: string;
+  repositories?: string[];
+  owner?: string;
+} {
+  return {
+    apiUrl: config.apiUrl,
+    installationId: repo.installationId ?? null,
+    ...(repo.repoName && { repositories: [repo.repoName] }),
+    ...(repo.repoName && repo.organizationName && { owner: repo.organizationName }),
+  };
 }
 
 /** The API base of a host family when no repository override states one. */

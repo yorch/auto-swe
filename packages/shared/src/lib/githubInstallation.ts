@@ -17,6 +17,7 @@
  */
 import { createHash, createSign } from 'node:crypto';
 import { hostFamily } from './githubHostScope.js';
+import { fetchGuarded } from './guardedFetch.js';
 import type { ResolvedGitHubConfig } from './systemConfig.js';
 
 export class GitHubTokenMissingError extends Error {
@@ -41,6 +42,24 @@ export class PlatformCredentialHostError extends Error {
   }
 }
 
+/**
+ * A token restricted to one repository was refused: GitHub answers 422 when a
+ * named repository is not one the installation can see — the repository was
+ * renamed (the stored name is stale), or it is not selected for the App.
+ * Standing configuration, not a transient failure.
+ */
+export class RepositoryNotVisibleError extends Error {
+  constructor(
+    readonly repository: string,
+    readonly installationId: string
+  ) {
+    super(
+      `Repository ${repository} is not visible to GitHub App installation ${installationId}: it was renamed, or it is not selected for the App. Check the repository's name and the installation's repository access.`
+    );
+    this.name = 'RepositoryNotVisibleError';
+  }
+}
+
 interface CachedInstallToken {
   token: string;
   /** Epoch ms, already reduced by the safety margin below. */
@@ -50,12 +69,13 @@ interface CachedInstallToken {
 }
 
 /**
- * One entry per installation id.
+ * One entry per installation, host and repository scope.
  *
- * Unbounded in principle; bounded in practice by how many installations an
- * operator configures, each entry being a short string. A `Map` keyed by
- * installation is the whole point: the previous single slot made a second
- * installation evict the first on every alternating call.
+ * Never pruned: an entry is replaced when its token is next minted. Bounded in
+ * practice by the number of repositories the platform works on, each entry being
+ * a short string. A `Map` keyed by installation and scope is the whole point:
+ * the previous single slot made a second installation evict the first on every
+ * alternating call, and a narrow token must never stand in for a wider one.
  */
 const tokenCache = new Map<string, CachedInstallToken>();
 
@@ -99,11 +119,24 @@ function createGitHubAppJwt(appId: string, privateKey: string): string {
 /** Serve a token no closer than this to its declared expiry. */
 const EXPIRY_SAFETY_MARGIN_MS = 60_000;
 
+/** What to restrict a minted token to: names as stored, immutable ids, or nothing. */
+type MintScope = { repositories: readonly string[] } | { repositoryIds: readonly number[] } | null;
+
+/**
+ * GitHub answers 422 to a restricted mint both for "Validation failed, or the
+ * endpoint has been spammed" and for a repository the installation cannot see:
+ * "There is at least one repository that does not exist or is not accessible to
+ * the parent installation." Only the second is a standing condition, so the
+ * message decides; anything else stays an ordinary, retryable failure.
+ */
+const NOT_ACCESSIBLE_RE = /does not exist|not accessible/i;
+
 async function fetchInstallationToken(
   config: ResolvedGitHubConfig,
   installationId: string,
-  apiUrl: string
-): Promise<{ token: string; expiresAt: number }> {
+  apiUrl: string,
+  scope: MintScope
+): Promise<{ token: string; expiresAt: number } | 'not-accessible'> {
   const { appId, appPrivateKey } = config;
   if (!(appId && appPrivateKey)) {
     throw new Error(
@@ -122,21 +155,43 @@ async function fetchInstallationToken(
       `GitHub installation id must be numeric; got '${installationId.slice(0, 32)}'. Check the App installation id on the GitHub integration page.`
     );
   }
+  const body =
+    scope && 'repositories' in scope
+      ? scope.repositories.length > 0
+        ? { repositories: scope.repositories }
+        : null
+      : scope && scope.repositoryIds.length > 0
+        ? { repository_ids: scope.repositoryIds }
+        : null;
   const base = apiUrl.replace(/\/$/, '');
   const res = await fetch(`${base}/app/installations/${installationId}/access_tokens`, {
+    // With a restriction GitHub narrows the token to it; with none the request
+    // has no body and the token carries the installation's full scope.
+    // `permissions` is deliberately not narrowed: the token keeps the App's.
+    ...(body && { body: JSON.stringify(body) }),
     headers: {
       Accept: 'application/vnd.github+json',
       Authorization: `Bearer ${createGitHubAppJwt(appId, appPrivateKey)}`,
+      ...(body && { 'Content-Type': 'application/json' }),
       'User-Agent': 'auto-swe/1.0',
       'X-GitHub-Api-Version': '2022-11-28',
     },
     method: 'POST',
     signal: AbortSignal.timeout(10_000),
   });
+  if (res.status === 422 && body) {
+    // The response is read only to classify it. Its text is never put in an
+    // error or a log.
+    const detail = (await res.json().catch(() => ({}))) as { message?: unknown };
+    if (typeof detail.message === 'string' && NOT_ACCESSIBLE_RE.test(detail.message)) {
+      return 'not-accessible';
+    }
+    throw new Error(`GitHub App installation token request failed: 422 ${res.statusText}`);
+  }
   if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { message?: string };
+    const failure = (await res.json().catch(() => ({}))) as { message?: string };
     throw new Error(
-      `GitHub App installation token request failed: ${res.status} ${body.message ?? res.statusText}`
+      `GitHub App installation token request failed: ${res.status} ${failure.message ?? res.statusText}`
     );
   }
   const data = (await res.json()) as { token: string; expires_at: string };
@@ -144,6 +199,66 @@ async function fetchInstallationToken(
     expiresAt: new Date(data.expires_at).getTime() - EXPIRY_SAFETY_MARGIN_MS,
     token: data.token,
   };
+}
+
+/**
+ * The repository's immutable id, owner and current name, as GitHub knows it now:
+ * `GET /repos/{owner}/{name}`, which follows a rename by redirect. Null when the
+ * repository is not found. Authenticated with `token` — the caller's unscoped
+ * installation token, which is used here and nowhere else — and the request
+ * stays on the API's own origin.
+ */
+async function lookupRepository(
+  base: string,
+  token: string,
+  owner: string,
+  name: string
+): Promise<{ id: number; owner: string; name: string } | null> {
+  const origin = new URL(base).origin;
+  const res = await fetchGuarded(
+    `${base}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`,
+    {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${token}`,
+        'User-Agent': 'auto-swe/1.0',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      signal: AbortSignal.timeout(10_000),
+    },
+    {
+      check: (url) => url.origin === origin,
+      credentialOrigin: origin,
+      // Bare `fetch`, as the mint above: the App JWT already goes to this same
+      // `apiUrl`, whose host is governed by `github.repositoryHosts` and the
+      // credential host guard (a private GHE host is legitimate). Late-bound so
+      // the call goes through whatever `fetch` is current.
+      fetchImpl: (input, init) => fetch(input, init),
+    }
+  );
+  if (res.status === 404) {
+    await res.body?.cancel().catch(() => {});
+    return null;
+  }
+  if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error(`GitHub repository lookup failed: ${res.status}`);
+  }
+  const data = (await res.json().catch(() => null)) as {
+    full_name?: unknown;
+    id?: unknown;
+    name?: unknown;
+    owner?: { login?: unknown } | null;
+  } | null;
+  const resolvedOwner =
+    typeof data?.owner?.login === 'string'
+      ? data.owner.login
+      : typeof data?.full_name === 'string'
+        ? data.full_name.split('/')[0]
+        : '';
+  return typeof data?.id === 'number' && typeof data.name === 'string' && resolvedOwner
+    ? { id: data.id, name: data.name, owner: resolvedOwner }
+    : null;
 }
 
 /** What GitHub says about one installation of an App. */
@@ -214,6 +329,78 @@ export interface InstallationTarget {
   installationId?: string | null;
   /** Per-installation API base, for a GitHub Enterprise host. */
   apiUrl?: string | null;
+  /**
+   * The account the named repositories belong to. Needed only to find a
+   * repository again by its immutable id when its stored name has gone stale
+   * (a rename); without it a stale name is a `RepositoryNotVisibleError`.
+   */
+  owner?: string | null;
+  /**
+   * Repository names (without the owner) the App token is restricted to, all
+   * under the installation's account. Empty or omitted leaves the token with the
+   * installation's full repository scope, which is right only for work that
+   * spans the installation (listing its repositories, an admin sweep). A PAT
+   * cannot be narrowed, so this has no effect on one.
+   */
+  repositories?: readonly string[];
+}
+
+/** The names as given, without blanks or repeats. */
+function requestedRepositories(repositories: readonly string[] | undefined): string[] {
+  return [...new Set((repositories ?? []).filter(Boolean))];
+}
+
+/**
+ * The cache's spelling of a scope: order- and case-insensitive, because GitHub
+ * repository names are case-insensitive. Only the key is folded; the request
+ * carries the names as stored.
+ */
+function scopeKey(repositories: readonly string[]): string {
+  return [...new Set(repositories.map((r) => r.toLowerCase()))].sort().join(',');
+}
+
+/**
+ * The fallback for a scoped mint that GitHub refused as not accessible: resolve
+ * the repository's id with the unscoped token, then mint once more restricted
+ * to that id. The unscoped token stays inside this function. Throws
+ * `RepositoryNotVisibleError` when the repository is not found or the id is
+ * refused too.
+ */
+async function mintByRepositoryId(
+  config: ResolvedGitHubConfig,
+  from: {
+    apiUrl: string;
+    installationId: string;
+    owner: string | null;
+    repositories: readonly string[];
+  }
+): Promise<{ entry: { token: string; expiresAt: number } }> {
+  const { apiUrl, installationId, owner, repositories } = from;
+  const notVisible = new RepositoryNotVisibleError(repositories.join(', '), installationId);
+  // One repository is the only scope this resolves; and the owner is needed to ask.
+  if (!owner || repositories.length !== 1) {
+    throw notVisible;
+  }
+  const name = repositories[0];
+  const unscoped = await resolveGitHubToken(config, { apiUrl, installationId });
+  const found = await lookupRepository(apiUrl.replace(/\/$/, ''), unscoped, owner, name);
+  // A repository GitHub reports under another owner (a transfer) is not the
+  // one this connection means, whatever its id.
+  if (!found || found.owner.toLowerCase() !== owner.toLowerCase()) {
+    throw notVisible;
+  }
+  const entry = await fetchInstallationToken(config, installationId, apiUrl, {
+    repositoryIds: [found.id],
+  });
+  if (entry === 'not-accessible') {
+    throw notVisible;
+  }
+  if (found.name.toLowerCase() !== name.toLowerCase()) {
+    console.warn(
+      `[githubInstallation] repository ${owner}/${name} is now ${found.owner}/${found.name}; update the connection's stored name. Its token is minted by repository id meanwhile.`
+    );
+  }
+  return { entry };
 }
 
 /**
@@ -257,15 +444,37 @@ export async function resolveGitHubToken(
     const apiUrl = target.apiUrl ?? config.apiUrl;
     // Key on the installation *and* where it lives: the same numeric id on two
     // hosts (github.com and a GHE instance) is two different installations.
-    const cacheKey = `${installationId}@${apiUrl}`;
+    // And on the repositories: a token narrowed to one repository must never be
+    // served for a wider request, nor a wide one for a request that asked to be
+    // narrowed. The scope part is empty for the unscoped token.
+    const repositories = requestedRepositories(target.repositories);
+    const cacheKey = `${installationId}@${apiUrl}#${scopeKey(repositories)}`;
     const fingerprint = credentialFingerprint(config);
     const hit = tokenCache.get(cacheKey);
     if (hit && Date.now() < hit.expiresAt && hit.fingerprint === fingerprint) {
       return hit.token;
     }
-    const { token, expiresAt } = await fetchInstallationToken(config, installationId, apiUrl);
-    tokenCache.set(cacheKey, { expiresAt, fingerprint, token });
-    return token;
+    const minted = await fetchInstallationToken(
+      config,
+      installationId,
+      apiUrl,
+      repositories.length > 0 ? { repositories } : null
+    );
+    if (minted !== 'not-accessible') {
+      tokenCache.set(cacheKey, { expiresAt: minted.expiresAt, fingerprint, token: minted.token });
+      return minted.token;
+    }
+    // The stored name is not one the installation can see. A rename leaves the
+    // repository reachable by its id, so find it by id once before concluding
+    // it is not selected for the App.
+    const byId = await mintByRepositoryId(config, {
+      apiUrl,
+      installationId,
+      owner: target.owner ?? null,
+      repositories,
+    });
+    tokenCache.set(cacheKey, { ...byId.entry, fingerprint });
+    return byId.entry.token;
   }
 
   if (config.token) {

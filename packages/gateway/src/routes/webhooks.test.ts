@@ -2576,6 +2576,8 @@ describe('webhook routes', () => {
         githubApiUrl: 'https://api.github.com',
         githubUrl: 'https://github.com',
         installation: { host: '', installationId: '777' },
+        organizationName: 'acme',
+        repoName: 'payments-api',
       });
       vi.mocked(resolveGitHubToken).mockResolvedValueOnce('inst-777-token');
       fetchMock.mockResolvedValueOnce(done);
@@ -2586,6 +2588,8 @@ describe('webhook routes', () => {
       expect(resolveGitHubToken).toHaveBeenCalledWith(expect.anything(), {
         apiUrl: 'https://api.github.com',
         installationId: '777',
+        owner: 'acme',
+        repositories: ['payments-api'],
       });
       expect(fetchMock).toHaveBeenCalledWith(
         `https://api.github.com/repos/acme/payments-api/commits/${HEAD_SHA}/check-runs?per_page=100&page=1`,
@@ -2613,7 +2617,13 @@ describe('webhook routes', () => {
 
     it('asks for the singleton installation on the singleton host when the repository has none and is on it', async () => {
       state.github = { ...state.github, ...APP_MODE };
-      trackRepo({ githubApiUrl: null, githubUrl: null, installation: null });
+      trackRepo({
+        githubApiUrl: null,
+        githubUrl: null,
+        installation: null,
+        organizationName: 'acme',
+        repoName: 'payments-api',
+      });
       vi.mocked(resolveGitHubToken).mockResolvedValueOnce('singleton-token');
       fetchMock.mockResolvedValueOnce(done);
 
@@ -2622,6 +2632,8 @@ describe('webhook routes', () => {
       expect(resolveGitHubToken).toHaveBeenCalledWith(expect.anything(), {
         apiUrl: 'https://api.github.com',
         installationId: null,
+        owner: 'acme',
+        repositories: ['payments-api'],
       });
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining('https://api.github.com/repos/'),

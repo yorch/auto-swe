@@ -15,11 +15,16 @@ import {
 import { resolvePlatformCredential } from './githubHostCredential.js';
 import { installationTargetFor } from './githubHostScope.js';
 import { accountTargets, verifyGithubLoginOwnership } from './githubIdentityCheck.js';
-import { PlatformCredentialHostError, resolveGitHubToken } from './githubInstallation.js';
+import {
+  PlatformCredentialHostError,
+  RepositoryNotVisibleError,
+  resolveGitHubToken,
+} from './githubInstallation.js';
 import {
   fetchOwnRepoPermission,
   fetchRepoPermission,
   type PermissionLookup,
+  type PermissionLookupFailure,
 } from './githubPermission.js';
 import { resolveGitHubConfig } from './systemConfig.js';
 
@@ -35,6 +40,19 @@ export interface PermissionRepo {
   githubApiUrl: string | null;
   githubUrl: string | null;
   installation: { installationId: string; host: string } | null;
+}
+
+/**
+ * Why a platform token could not be minted for a permission lookup. A repository
+ * the installation cannot see is `repo-not-found` — unanswered, so callers fail
+ * closed — rather than a rejected credential, which would send an admin looking
+ * at the App's keys.
+ */
+export function permissionFailureFor(err: unknown): PermissionLookupFailure {
+  if (err instanceof PlatformCredentialHostError) {
+    return 'host-mismatch';
+  }
+  return err instanceof RepositoryNotVisibleError ? 'repo-not-found' : 'credential-rejected';
 }
 
 /** Select exactly the columns `lookupRepoPermission` reads. */
@@ -79,6 +97,8 @@ export async function lookupRepoPermission(
     baseUrl: repo.githubUrl,
     installationHost: repo.installation?.host ?? null,
     installationId: repo.installation?.installationId ?? null,
+    organizationName: repo.organizationName,
+    repoName: repo.repoName,
   };
   let credential: Awaited<ReturnType<typeof resolvePlatformCredential>>;
   try {
@@ -96,10 +116,7 @@ export async function lookupRepoPermission(
   try {
     token = await resolveGitHubToken(credential.config, target);
   } catch (err) {
-    return {
-      failure: err instanceof PlatformCredentialHostError ? 'host-mismatch' : 'credential-rejected',
-      ok: false,
-    };
+    return { failure: permissionFailureFor(err), ok: false };
   }
   return fetchRepoPermission({
     apiUrl: target.apiUrl,
