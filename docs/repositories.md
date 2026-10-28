@@ -262,7 +262,7 @@ hardened workspace container, runs the contract checks inside it, removes the
 container, and returns each check with `required`/`ok`/`detail`.
 
 `defaults/` holds curated executor bases — `Dockerfile.node`, plus
-`Dockerfile.python` (Python slim + `uv`), `Dockerfile.go` (Go on Debian) and `Dockerfile.jvm` (Temurin 21 +
+`Dockerfile.python` (Python slim + `uv`), `Dockerfile.go` (Go on Debian) and `Dockerfile.jvm` (Temurin JDK +
 Maven, daemons off). `build-executor.yml` builds one of them per run: the
 `stack` input (`node`|`python`|`jvm`|`go`, default `node`) selects it, unless
 `use_repo_dockerfile` builds the repository's own Dockerfile instead.

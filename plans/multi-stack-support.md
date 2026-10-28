@@ -18,7 +18,7 @@ resolves it from the detected stack at run time.
 |---|---|---|---|---|---|
 | Node/TS | Curated | Work if repo defines scripts | Good | Proxy | Good |
 | Python | Curated (`uv`) | Need `gateCommands` | Needs `runTests` | Direct egress only | Partial |
-| Java/Kotlin | Curated (Temurin 21, Maven) | Need `gateCommands` | Needs `runTests` | Direct egress only | Weak |
+| Java/Kotlin | Curated (Temurin JDK, Maven) | Need `gateCommands` | Needs `runTests` | Direct egress only | Weak |
 | Go | None | Need `gateCommands` | Needs `runTests` | Direct egress only | Weak |
 | Rust/.NET/Ruby | None | Need `gateCommands` | Needs `runTests` | Direct egress only | Weak |
 
