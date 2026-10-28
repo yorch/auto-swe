@@ -35,13 +35,17 @@ import {
   deleteSecretArgs,
   execArgs,
   execPrefix,
-  ownSecretArgs,
   type PodRef,
   secretStdinPreamble,
   tarOutArgs,
   waitRunningArgs,
 } from './kubectlArgs.js';
-import { buildWorkspacePod, buildWorkspaceSecret, workspaceSecretName } from './podSpec.js';
+import {
+  buildWorkspacePod,
+  buildWorkspaceSecret,
+  hasWorkspaceSecret,
+  workspaceSecretName,
+} from './podSpec.js';
 import { assertSafeArchive } from './safeTar.js';
 
 /** `kubectl exec` prints this after a command that exited non-zero; it is noise, not the command's stderr. */
@@ -61,6 +65,14 @@ function unsupported(what: string): Promise<never> {
   return Promise.reject(
     ApplicationFailure.nonRetryable(`${what} ${UNSUPPORTED}`, 'WORKSPACE_BACKEND_UNSUPPORTED')
   );
+}
+
+/** The pod UID goes into the Secret's owner reference, so it must look like one. */
+function assertPodUid(podName: string, uid: string): string {
+  if (!/^[0-9a-f-]{36}$/i.test(uid)) {
+    throw new Error(`workspace ${podName}: could not read the pod's uid to own its secret`);
+  }
+  return uid;
 }
 
 /** Shell-string form of a `kubectl` invocation, for the paths that redirect a file into or out of it. */
@@ -117,22 +129,43 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
 
   async create(spec: WorkspaceContainerSpec): Promise<WorkspaceHandle> {
     const config = this.config();
-    // The values of `spec.secretEnv` live in one per-pod Secret, created
-    // before the Pod that names it. Whatever fails from here on, the Secret is
-    // deleted again; the Pod is the caller's to remove() by `spec.name`, which
-    // also deletes the Secret.
-    const secret = buildWorkspaceSecret(spec, config);
+    const wantsSecret = hasWorkspaceSecret(spec);
+    // A kubectl error can quote the object it refused: scrub each value and
+    // its base64 form (the Secret's `data`).
+    const values = Object.values(spec.secretEnv ?? {});
+    const scrub = [...values, ...values.map((v) => Buffer.from(v, 'utf8').toString('base64'))];
     try {
-      if (secret) {
-        await this.createSecret(spec.name, secret);
+      // The Pod goes first: its `secretKeyRef` entries hold the container in
+      // CreateContainerConfigError, which the kubelet retries, until the Secret
+      // exists. That order lets the Secret be created already owned by the pod
+      // (its UID is only known now), which needs `create` and no `get` or
+      // `patch`. A pod whose Secret never arrives expires at its deadline.
+      // When this throws there is no pod and no Secret to clean up.
+      const uid = await this.createPod(spec, wantsSecret);
+      if (wantsSecret) {
+        try {
+          const secret = buildWorkspaceSecret(spec, config, assertPodUid(spec.name, uid));
+          if (!secret) {
+            throw new Error(`workspace ${spec.name}: no secret to create`);
+          }
+          await this.createSecret(spec.name, secret);
+        } catch (err) {
+          // remove() deletes the pod, then the Secret (whether or not it was made).
+          await this.remove(spec.name);
+          throw err;
+        }
       }
-      return await this.createPod(spec, secret !== null);
+      try {
+        return await this.awaitReady(spec);
+      } catch (err) {
+        // The pod is the caller's to remove() by `spec.name`, which also deletes the Secret.
+        if (wantsSecret) {
+          await this.deleteSecret(spec.name);
+        }
+        throw err;
+      }
     } catch (err) {
-      if (secret) {
-        await this.deleteSecret(spec.name);
-      }
-      // A kubectl error can quote the object it refused.
-      redactExecError(err, Object.values(spec.secretEnv ?? {}));
+      redactExecError(err, scrub);
       throw err;
     }
   }
@@ -168,23 +201,23 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
     }
   }
 
-  private async createPod(
-    spec: WorkspaceContainerSpec,
-    hasSecret: boolean
-  ): Promise<WorkspaceHandle> {
+  /** Creates the pod; returns its UID when `printUid`, else an empty string. */
+  private async createPod(spec: WorkspaceContainerSpec, printUid: boolean): Promise<string> {
     const config = this.config();
     const created = await spawnWithStdinAsync(
       this.kubectl,
-      createPodArgs(config.namespace, hasSecret),
+      createPodArgs(config.namespace, printUid),
       JSON.stringify(buildWorkspacePod(spec, config)),
       { heartbeatLabel: 'workspace: creating pod', timeoutMs: 60_000 }
     );
     if (created.exitCode !== 0) {
       throw new Error(`workspace ${spec.name}: could not create the pod: ${created.stderr}`);
     }
-    if (hasSecret) {
-      await this.ownSecret(spec.name, created.stdout.trim());
-    }
+    return created.stdout.trim();
+  }
+
+  /** Waits for the pod to be Ready, then records its keeper PID. */
+  private async awaitReady(spec: WorkspaceContainerSpec): Promise<WorkspaceHandle> {
     const ref = this.ref(spec.name);
     const ready = await spawnCaptureAsync(this.kubectl, waitRunningArgs(ref, READY_TIMEOUT_SEC), {
       heartbeatLabel: 'workspace: waiting for the pod',
@@ -215,30 +248,6 @@ export class KubernetesWorkspaceBackend implements WorkspaceBackend {
       );
     }
     return { id: spec.name, keeperPid: candidates[0] ?? 0 };
-  }
-
-  /**
-   * Makes the pod the Secret's owner, so deleting the pod object by any means
-   * (the worker's, an operator's, a namespace sweep) garbage-collects it. Best
-   * effort: without it `remove()` and the create-failure path still delete it.
-   */
-  private async ownSecret(podName: string, uid: string): Promise<void> {
-    if (!/^[0-9a-f-]{36}$/i.test(uid)) {
-      logWarn('kubernetes workspace secret not tied to its pod: no pod uid', { pod: podName });
-      return;
-    }
-    const result = await spawnCaptureAsync(
-      this.kubectl,
-      ownSecretArgs(this.config().namespace, workspaceSecretName(podName), podName, uid),
-      { heartbeatLabel: 'workspace: tying secret to pod', timeoutMs: 60_000 }
-    );
-    if (result.exitCode !== 0) {
-      logWarn('kubernetes workspace secret not tied to its pod', {
-        exitCode: result.exitCode,
-        pod: podName,
-        stderr: result.stderr.slice(0, 500),
-      });
-    }
   }
 
   attach(id: string, keeperPid = 0): WorkspaceHandle {
