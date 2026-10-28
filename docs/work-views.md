@@ -248,6 +248,10 @@ http(s) address.
 
 ## Limitations
 
+- With the GitHub tracker, a `postTicketComment` step posts only to a repository the run targets
+  (its connection and the repositories its launch was authorized against). The tracker has no
+  configured default repository, so a ticket id naming any other repository, or a bare issue
+  number, gets `posted: false`. The tracker syncs are not held to this check.
 - Outcomes group PRs by the time they were opened and judge them as of now, so a recent cohort
   under-reports merges that have not happened yet and its merge rate rises as its PRs resolve.
 - An outcomes read takes at most 10,000 PRs; beyond that the figures cover only the newest ones

@@ -1,6 +1,8 @@
 import { prisma } from '@auto-swe/shared/db';
+import { isGitHubTicketInRepos } from '@auto-swe/shared/lib/integrations/providers/githubIssues';
 import { createIssueTrackerProvider } from '@auto-swe/shared/lib/integrations/registry';
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { logWarn } from '../lib/activityLog.js';
 import { redactCiLog } from '../lib/ciLogGuard.js';
 import { getErrorMessage } from '../lib/errors.js';
@@ -46,6 +48,43 @@ function commentText(body: string, heading: string | undefined, provider: string
 }
 
 /**
+ * The GitHub repositories the run targets: its own connection plus every repository the launch
+ * was authorized against (`knowledgeRepoSources`, which an epic fills for each target).
+ */
+async function runRepositories(run: {
+  connection: { organizationName: string | null; repoName: string | null } | null;
+  knowledgeRepoSources: unknown;
+}): Promise<Array<{ owner: string; repo: string }>> {
+  const repos: Array<{ owner: string; repo: string }> = [];
+  if (run.connection?.organizationName && run.connection.repoName) {
+    repos.push({ owner: run.connection.organizationName, repo: run.connection.repoName });
+  }
+  const repoIds = Array.isArray(run.knowledgeRepoSources)
+    ? run.knowledgeRepoSources.flatMap((source: unknown) => {
+        const id = (source as { repoId?: unknown } | null)?.repoId;
+        return typeof id === 'string' ? [id] : [];
+      })
+    : [];
+  if (repoIds.length > 0) {
+    const rows = await runUnscoped(
+      'ids come from the launch-authorized run input; read only to compare a ticket repo',
+      ['Connection'],
+      () =>
+        prisma.connection.findMany({
+          select: { organizationName: true, repoName: true },
+          where: { id: { in: repoIds }, type: 'git_repo' },
+        })
+    );
+    for (const row of rows) {
+      if (row.organizationName && row.repoName) {
+        repos.push({ owner: row.organizationName, repo: row.repoName });
+      }
+    }
+  }
+  return repos;
+}
+
+/**
  * Post one comment to the run's tracker ticket through the global issue-tracker config.
  *
  * Best-effort, like the tracker sync: every outcome other than a posted comment is returned as
@@ -60,7 +99,12 @@ export async function postTicketComment(
   }
   try {
     const run = await prisma.runInput.findUnique({
-      select: { externalTicketId: true, ticketIsSynthetic: true },
+      select: {
+        connection: { select: { organizationName: true, repoName: true } },
+        externalTicketId: true,
+        knowledgeRepoSources: true,
+        ticketIsSynthetic: true,
+      },
       where: { id: input.workRequestId },
     });
     if (!run?.externalTicketId) {
@@ -75,6 +119,17 @@ export async function postTicketComment(
     const config = await resolveIssueTrackerConfig();
     if (!config.provider) {
       return { posted: false, reason: 'no issue tracker is configured' };
+    }
+    // A GitHub ticket id names its own repository, and the id is user-supplied: without this the
+    // instance's tracker token would comment on any repository a launch cared to name. The
+    // tracker has no configured default repository, so only the run's own repositories count.
+    if (
+      config.provider === 'github' &&
+      !isGitHubTicketInRepos(run.externalTicketId, await runRepositories(run))
+    ) {
+      const reason = "the ticket's repository is not one this run targets";
+      logWarn(`postTicketComment: ${reason}`, { workRequestId: input.workRequestId });
+      return { posted: false, reason };
     }
     // No provider logger: its warnings carry the raw provider error, which can quote a request.
     const provider = createIssueTrackerProvider(config, {});
