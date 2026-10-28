@@ -244,18 +244,19 @@ function wrapMcpTool(
         callTimeoutMs,
         `MCP tool call '${toolName}'`
       );
-      // The trace keeps what the server sent; the agent sees what the screen lets through.
+      let seen = raw;
+      if (screenResults) {
+        const screened = await screenMcpResult(raw, toolName, tracer);
+        seen = screened.blocked ? screened.message : screened.result;
+      }
+      // The trace records what the agent receives, so text the screen withheld is never stored.
       tracer?.addToolCall({
         durationMs: Date.now() - start,
         inputJson: input,
-        outputJson: raw,
+        outputJson: seen,
         toolName: tracedName,
       });
-      if (!screenResults) {
-        return raw;
-      }
-      const screened = await screenMcpResult(raw, toolName, tracer);
-      return screened.blocked ? screened.message : screened.result;
+      return seen;
     } catch (err: unknown) {
       tracer?.addToolCall({
         durationMs: Date.now() - start,

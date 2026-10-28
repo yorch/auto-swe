@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { z } from 'zod';
 import { SETTING_DEFINITIONS } from './registry.js';
 
 describe('retention settings', () => {
@@ -180,6 +181,34 @@ describe('qodo pull-request feedback settings', () => {
     for (const bad of [-1, 601, 900]) {
       expect(accepts('qodo.prFeedbackWaitSeconds', bad)).toBe(false);
     }
+  });
+
+  it('bounds the wait for the run that opened the pull request', () => {
+    const runWait = def['qodo.prFeedbackRunWaitSeconds'];
+    expect(runWait.defaultValue).toBe(900);
+    expect(runWait.requiredRole).toBe('ADMIN');
+    expect(runWait.overridableAt).toEqual([]);
+    for (const ok of [0, 900]) {
+      expect(accepts('qodo.prFeedbackRunWaitSeconds', ok)).toBe(true);
+    }
+    for (const bad of [-1, 901, 1.5]) {
+      expect(accepts('qodo.prFeedbackRunWaitSeconds', bad)).toBe(false);
+    }
+  });
+
+  it('keeps both waits and the Qodo reads inside the gather activity', () => {
+    // runnableActivities.ts: `prFeedbackQodoGatherActivities` has a 30 minute start-to-close.
+    const ACTIVITY_SECONDS = 1_800;
+    const READ_SECONDS = 120;
+    const slack = 120; // the GitHub reads around the two waits
+    const max = (key: 'qodo.prFeedbackRunWaitSeconds' | 'qodo.prFeedbackWaitSeconds') =>
+      (SETTING_DEFINITIONS[key].schema as z.ZodNumber).maxValue ?? Number.POSITIVE_INFINITY;
+    expect(
+      max('qodo.prFeedbackRunWaitSeconds') +
+        max('qodo.prFeedbackWaitSeconds') +
+        READ_SECONDS +
+        slack
+    ).toBeLessThan(ACTIVITY_SECONDS);
   });
 });
 

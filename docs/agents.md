@@ -407,8 +407,10 @@ string is checked on its own, and a text block holding JSON is checked string by
 a string that matches, or whose scan is incomplete, is replaced by a fixed placeholder and the rest
 of the result is returned. A scan that fails outright withholds the whole result with a fixed
 message. Either way an `mcp.output_blocked` activity event is recorded (`{ tool, patterns, reason,
-withheldLeaves }`; never the text). The trace keeps
-what the server sent. Connections that do not opt in are not screened.
+withheldLeaves }`; never the text). The tool call's trace row records what the agent receives, the
+screened result or the withheld message, so a string the screen withheld is never stored; the
+`mcp` workflow node's output is that same screened result. Connections that do not opt in are not
+screened, and their trace row holds the server's raw answer.
 
 **Qodo.** `config.integration: 'qodo'` marks a team's Qodo connection (URL
 `https://sdk.qodo.ai/v1/tools/mcp/` with the trailing slash, since a redirect is refused; the bearer is

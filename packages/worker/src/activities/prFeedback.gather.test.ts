@@ -277,6 +277,27 @@ describe('gatherPrFeedback — origin and the original run', () => {
     m.findPr.mockResolvedValue(prRow('FAILED'));
     expect((await gatherPrFeedback({ request: request() })).decision).toBe('fix');
   });
+  it('skips a human round at once, not silently and without polling, while the run works', async () => {
+    base();
+    m.getIssueComment.mockResolvedValue({
+      authorId: '42',
+      authorLogin: 'reviewer',
+      authorType: 'User',
+      body: '/auto-swe fix please',
+      issueNumber: 9,
+    });
+    const reason = 'the run that opened this pull request is still working on it';
+    for (const over of [{}, { feedbackEventKind: 'issue_comment', feedbackTrigger: 'command' }]) {
+      m.findPr.mockClear();
+      m.findPr.mockResolvedValue(prRow('AWAITING_CI'));
+      expect(await gatherPrFeedback({ request: request(over) })).toMatchObject({
+        decision: 'skip',
+        reason,
+        silent: false,
+      });
+      expect(m.findPr).toHaveBeenCalledTimes(1);
+    }
+  });
   it('other origin requires the command and the setting', async () => {
     base();
     m.findPr.mockResolvedValue(null);

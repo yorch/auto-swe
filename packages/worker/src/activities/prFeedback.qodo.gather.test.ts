@@ -199,6 +199,7 @@ beforeEach(() => {
   m.settings = {
     'qodo.prFeedbackMaxRounds': 2,
     'qodo.prFeedbackMinActionLevel': 'remediation_recommended',
+    'qodo.prFeedbackRunWaitSeconds': 900,
     'qodo.prFeedbackWaitSeconds': 0,
   };
   m.workflowId = WID;
@@ -511,8 +512,9 @@ describe('gatherPrFeedback — a Qodo round only on what the platform may fix', 
     expect(m.client.calls).toHaveLength(0);
   });
 
-  it('is silent while the run that opened the pull request is still working', async () => {
+  it('is silent at once while the run is still working, when the run wait is 0', async () => {
     script(ok([finding()]));
+    m.settings['qodo.prFeedbackRunWaitSeconds'] = 0;
     m.findPr.mockResolvedValue({
       workflow: { currentStatus: 'RUNNING', temporalWorkflowId: 'wf-original' },
     });
@@ -521,6 +523,158 @@ describe('gatherPrFeedback — a Qodo round only on what the platform may fix', 
       silent: true,
     });
     expect(m.client.calls).toHaveLength(0);
+    expect(m.findPr).toHaveBeenCalledTimes(1);
+  });
+
+  it('is silent at once while the run is waiting on CI, when the run wait is 0', async () => {
+    script(ok([finding()]));
+    m.settings['qodo.prFeedbackRunWaitSeconds'] = 0;
+    m.findPr.mockResolvedValue({
+      workflow: { currentStatus: 'AWAITING_CI', temporalWorkflowId: 'wf-original' },
+    });
+    expect(await gatherPrFeedback({ request: request() })).toMatchObject({
+      decision: 'skip',
+      reason: 'the run that opened this pull request is still working on it',
+      silent: true,
+    });
+    expect(m.client.calls).toHaveLength(0);
+    expect(m.findPr).toHaveBeenCalledTimes(1);
+    expect(events.some((e) => e.name === 'pr_feedback.qodo_waited_for_run')).toBe(false);
+  });
+
+  describe('while the run that opened the pull request is still working', () => {
+    const working = {
+      workflow: { currentStatus: 'AWAITING_CI', temporalWorkflowId: 'wf-original' },
+    };
+    const parked = {
+      workflow: { currentStatus: 'AWAITING_HUMAN_MERGE', temporalWorkflowId: 'wf-original' },
+    };
+    const waited = () => events.find((e) => e.name === 'pr_feedback.qodo_waited_for_run');
+
+    it('waits for the run to park, then carries on with the round', async () => {
+      vi.useFakeTimers();
+      script(ok([finding()]));
+      m.findPr
+        .mockResolvedValueOnce(working)
+        .mockResolvedValueOnce(working)
+        .mockResolvedValue(parked);
+      const pending = gatherPrFeedback({ request: request() });
+      await vi.advanceTimersByTimeAsync(30_000);
+      const r = await pending;
+      expect(r.decision).toBe('fix');
+      expect(m.findPr).toHaveBeenCalledTimes(3);
+      expect(m.client.calls).toHaveLength(1);
+      expect(waited()?.outputJson).toMatchObject({
+        outcome: 'parked',
+        seconds: expect.any(Number),
+      });
+    });
+
+    it('gives up silently when the cap passes, without asking Qodo', async () => {
+      vi.useFakeTimers();
+      script(ok([finding()]));
+      m.settings['qodo.prFeedbackRunWaitSeconds'] = 60;
+      m.findPr.mockResolvedValue(working);
+      const pending = gatherPrFeedback({ request: request() });
+      await vi.advanceTimersByTimeAsync(70_000);
+      const r = await pending;
+      expect(r).toMatchObject({
+        decision: 'skip',
+        reason: 'the run that opened this pull request is still working on it',
+        silent: true,
+      });
+      expect(m.client.calls).toHaveLength(0);
+      expect(m.createBranch).not.toHaveBeenCalled();
+      expect(waited()?.outputJson).toMatchObject({ outcome: 'timed_out' });
+    });
+
+    it('skips silently when the pull request row is gone while waiting', async () => {
+      vi.useFakeTimers();
+      script(ok([finding()]));
+      m.findPr.mockResolvedValueOnce(working).mockResolvedValue(null);
+      const pending = gatherPrFeedback({ request: request() });
+      await vi.advanceTimersByTimeAsync(30_000);
+      const r = await pending;
+      expect(r).toMatchObject({
+        decision: 'skip',
+        reason: 'the pull request is no longer open',
+        silent: true,
+      });
+      expect(m.client.calls).toHaveLength(0);
+      expect(waited()?.outputJson).toMatchObject({ outcome: 'gone' });
+    });
+
+    const NEW_HEAD = 'c'.repeat(40);
+
+    it('follows the head the run left, and fixes from Qodo’s review of that commit', async () => {
+      vi.useFakeTimers();
+      script(ok([finding()], { commitSha: NEW_HEAD }));
+      m.findPr.mockResolvedValueOnce(working).mockResolvedValue(parked);
+      m.pullRequestInfo.mockResolvedValueOnce(openPr).mockResolvedValue({
+        ...openPr,
+        headSha: NEW_HEAD,
+      });
+      const pending = gatherPrFeedback({ request: request() });
+      await vi.advanceTimersByTimeAsync(30_000);
+      const r = await pending;
+      expect(r).toMatchObject({ decision: 'fix', headSha: NEW_HEAD });
+      expect(r.codeResult?.baseSha).toBe(NEW_HEAD);
+      expect(m.createBranch).toHaveBeenCalledWith(expect.anything(), expect.any(String), NEW_HEAD);
+      expect(m.client.calls).toHaveLength(1);
+      expect(events.some((e) => e.name === 'pr_feedback.qodo_followed_head')).toBe(true);
+    });
+
+    it('does not fix from a review of the old head once the head has moved', async () => {
+      vi.useFakeTimers();
+      // Qodo's review still describes the commit the nudge was about, not the head now.
+      script(ok([finding()], { commitSha: HEAD }));
+      m.findPr.mockResolvedValueOnce(working).mockResolvedValue(parked);
+      m.pullRequestInfo.mockResolvedValueOnce(openPr).mockResolvedValue({
+        ...openPr,
+        headSha: NEW_HEAD,
+      });
+      const pending = gatherPrFeedback({ request: request() });
+      await vi.advanceTimersByTimeAsync(30_000);
+      const r = await pending;
+      expect(r).toMatchObject({
+        decision: 'skip',
+        reason: 'Qodo has not reviewed the pull request’s current head commit',
+        silent: true,
+      });
+      expect(m.createBranch).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['closed', { state: 'closed' }],
+      ['moved to another branch', { headRef: 'someone/else' }],
+      ['now from a fork', { headRepositoryFullName: 'fork/api' }],
+    ])('skips silently when the pull request is %s after the wait', async (_name, change) => {
+      vi.useFakeTimers();
+      script(ok([finding()], { commitSha: NEW_HEAD }));
+      m.findPr.mockResolvedValueOnce(working).mockResolvedValue(parked);
+      m.pullRequestInfo
+        .mockResolvedValueOnce(openPr)
+        .mockResolvedValue({ ...openPr, headSha: NEW_HEAD, ...change });
+      const pending = gatherPrFeedback({ request: request() });
+      await vi.advanceTimersByTimeAsync(30_000);
+      const r = await pending;
+      expect(r).toMatchObject({
+        decision: 'skip',
+        reason: 'the pull request changed while the run was working',
+        silent: true,
+      });
+      expect(m.client.calls).toHaveLength(0);
+      expect(m.createBranch).not.toHaveBeenCalled();
+    });
+  });
+
+  it('proceeds once the run is parked waiting for the merge', async () => {
+    script(ok([finding()]));
+    m.findPr.mockResolvedValue({
+      workflow: { currentStatus: 'AWAITING_HUMAN_MERGE', temporalWorkflowId: 'wf-original' },
+    });
+    expect(await gatherPrFeedback({ request: request() })).toMatchObject({ decision: 'fix' });
+    expect(m.client.calls).toHaveLength(1);
   });
 
   it('stops at the Qodo round limit, however many rounds the automation allows', async () => {

@@ -46,7 +46,8 @@ a delivery. A round is skipped, without spending a fix, when:
 - the pull request's origin re-derived from the database disagrees with the delivery (the
   payload's origin is never trusted);
 - the run that opened the pull request is still working on it (any status but
-  `AWAITING_HUMAN_MERGE`);
+  `AWAITING_HUMAN_MERGE`); a Qodo-triggered round waits for it first, as described in
+  [§8](#8-qodo-findings);
 - the round would exceed `maxRounds` (each pushed round counts once, default 5, max 20);
 - a `changes_requested` trigger lands on a pull request the platform did not open, or the
   other-pull-requests admin setting is off;
@@ -112,6 +113,7 @@ platform's own output. A refused push is reported and the round ends FAILED.
 | `qodo.prFeedbackMinActionLevel` | ADMIN, TEAM / ORGANIZATION override | `remediation_recommended` | Lowest Qodo action level that is addressed: `action_required`, `remediation_recommended` or `informational` |
 | `qodo.prFeedbackIncludeOnCommand` | ADMIN, TEAM / ORGANIZATION override | off | Whether an `/auto-swe fix` round also reads Qodo once and addresses its open findings (needs `qodo.enabled`) |
 | `qodo.prFeedbackMaxRounds` | ADMIN, TEAM / ORGANIZATION override | 2 | Pushed rounds Qodo's findings alone may cause on one pull request (1–10), on top of `maxRounds` |
+| `qodo.prFeedbackRunWaitSeconds` | ADMIN, platform-wide | 900 | How long a Qodo round waits for the run that opened the pull request to finish its CI wait and park (0–900 s); 0 skips at once |
 | `qodo.prFeedbackWaitSeconds` | ADMIN, platform-wide | 120 | How long a Qodo round waits for Qodo to finish reviewing the head commit (0–600 s) |
 
 Every feedback run uses the platform credential of the repository's host — automation runs
@@ -153,7 +155,16 @@ deliveries of one review, so one review can yield two decisions, one per head.
 
 1. requires the pull request open, not a fork, on the recorded branch, and — derived from the
    database — opened by the platform (never a pull request the platform did not open, and
-   `pullRequests: others` does not apply to this trigger);
+   `pullRequests: others` does not apply to this trigger). If the run that opened it is still
+   working (it holds `AWAITING_CI` from before the pull request opens until CI passes), the round
+   waits for it to park or end rather than skipping, re-reading the pull request about every ten
+   seconds for at most `qodo.prFeedbackRunWaitSeconds`. A pull request that is no longer open, or a
+   wait that runs out, is a silent skip, and so is a pull request that is no longer open, is on
+   another branch or is from a fork once the wait ends. If a CI fix moved the head while the round
+   waited, the round follows the head the run left: Qodo's comments on that head arrived while this
+   round was in flight and were suppressed as in flight, so no later nudge would come for it, and
+   the Qodo read below then needs a completed review of that commit. `0` skips at once. A person's
+   round never waits;
 2. stops at the round limits: the automation's own `maxRounds` and `qodo.prFeedbackMaxRounds`
    (pushed Qodo-triggered rounds on this pull request);
 3. asks Qodo about the pull request, whose URL is built from the repository record, for the
@@ -215,8 +226,9 @@ and the run records no `requestedById`. The organization budget is still checked
 - Thread replies happen on the first report call of a round only and carry a hidden marker,
   so a retried respond skips threads it already answered; the CI update edits the summary
   comment instead.
-- A pull request another platform run is still working on is skipped rather than queued —
-  comment `/auto-swe fix` after it parks to start a round.
+- A pull request another platform run is still working on is skipped rather than queued for a
+  person's round — comment `/auto-swe fix` after it parks to start one. Only a Qodo-triggered
+  round waits (§8).
 - The responder's verdicts are advisory: a thread's outcome is written by the persona, and an
   overclaimed "addressed" is a wording problem, not a safety boundary — the code gate is the
   push, not the reply.
@@ -254,6 +266,12 @@ and the run records no `requestedById`. The organization budget is still checked
   comments of the same review are suppressed as the same subject. A later review of a new head is
   unaffected; `qodo.prFeedbackWaitSeconds` is the lever. The Qodo gather is a single attempt, so a
   transient host or Qodo error also ends that head's decision without a retry.
+- The Qodo round's wait for the run that opened the pull request is capped at 15 minutes
+  (`qodo.prFeedbackRunWaitSeconds`) and holds one activity slot per head while it lasts. A CI that
+  runs longer than the cap still spends that head's one decision. With `ticket-to-merge-qodo`, a
+  person who takes longer than the cap to decide on Qodo's findings means the round has already
+  given up. The cap plus `qodo.prFeedbackWaitSeconds` and the Qodo reads must fit the gather
+  activity's 30-minute limit, which a test enforces on the two maxima.
 - A Qodo nudge arriving while a round on the same pull request runs (including its CI watch, up to
   four hours) is suppressed in flight. Qodo's re-review of the platform's own push usually lands
   then, so convergence may need a later Qodo event or an `/auto-swe fix` comment. That command
