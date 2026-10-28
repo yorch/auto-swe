@@ -2,6 +2,7 @@ import { adfFromText, adfToPlainText } from '../adf.js';
 import type { AtlassianClient } from '../atlassianClient.js';
 import { AtlassianError } from '../atlassianClient.js';
 import type { IssueTrackerProvider } from '../issueTracker.js';
+import { JIRA_SYNC_STATUSES } from '../jiraSyncStatuses.js';
 import type {
   CreatedIssue,
   FetchedIssue,
@@ -349,13 +350,13 @@ export class JiraProvider implements IssueTrackerProvider {
     try {
       switch (event.type) {
         case 'workflow_started':
-          await this.transitionIssue(event.issueId, 'In Progress');
+          await this.transitionIssue(event.issueId, JIRA_SYNC_STATUSES.started);
           break;
         case 'pr_opened':
           if (event.prUrl && event.prTitle) {
             await this.addRemoteLink(event.issueId, event.prUrl, event.prTitle);
           }
-          await this.transitionIssue(event.issueId, 'In Review');
+          await this.transitionIssue(event.issueId, JIRA_SYNC_STATUSES.prOpened);
           break;
         case 'ci_passed':
           await this.addComment(event.issueId, '✅ CI passed');
@@ -370,7 +371,7 @@ export class JiraProvider implements IssueTrackerProvider {
           if (event.prUrl && event.prTitle) {
             await this.addRemoteLink(event.issueId, event.prUrl, event.prTitle);
           }
-          await this.transitionIssue(event.issueId, 'Done');
+          await this.transitionIssue(event.issueId, JIRA_SYNC_STATUSES.completed);
           break;
         case 'workflow_failed':
           await this.addComment(

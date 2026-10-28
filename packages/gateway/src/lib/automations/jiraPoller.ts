@@ -33,6 +33,7 @@ import {
 import { resolveSetting } from '@auto-swe/shared/config';
 import { AtlassianError } from '@auto-swe/shared/lib/integrations/atlassianClient';
 import type { IssueTrackerProvider } from '@auto-swe/shared/lib/integrations/issueTracker';
+import { JIRA_SYNC_STATUS_KEYS } from '@auto-swe/shared/lib/integrations/jiraSyncStatuses';
 import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -81,6 +82,8 @@ export type PollOutcome =
       pending: number;
       /** Issues the tracker refused to show (marked seen, no ledger row). Absent when none. */
       refused?: number;
+      /** Transitions the platform's own Jira sync made (marked seen, no ledger row). Absent when none. */
+      platformTransitions?: number;
     };
 
 /** An automation as the poller reads it: its filters, and the repository it acts on. */
@@ -103,6 +106,11 @@ export interface PollDeps {
   /** Decides one new issue: the engine, for the automation being polled. */
   decide: (facts: JiraFilterFacts | JiraStatusChangedFacts) => Promise<AutomationResult>;
   now: Date;
+  /**
+   * Whether `status` is one the platform itself moved the ticket to (`status_changed` only): see
+   * `platformTransitionCheck`. Absent, nothing is recognised as the platform's own.
+   */
+  platformTransition?: (issueKey: string, status: string) => Promise<boolean>;
   /** Where a refused issue is named (its key only). */
   log?: { warn: (obj: unknown, msg?: string) => void };
 }
@@ -383,8 +391,22 @@ async function startNewIssues(
   let started = 0;
   let suppressed = 0;
   let refused = 0;
+  let platformTransitions = 0;
   let decided = 0;
   for (const match of unseen.slice(0, MAX_ISSUES_PER_POLL)) {
+    if (statusMode && (await deps.platformTransition?.(match.key, match.status ?? ''))) {
+      // The platform's own sync moved this ticket (it has a run here, and the status is one the
+      // sync writes): answering that with another run would loop. Counted and logged, not
+      // recorded in the ledger, and the pair is not looked at again.
+      await markSeen(match);
+      decided++;
+      platformTransitions++;
+      deps.log?.warn(
+        { automationId, issueKey: match.key },
+        'a Jira transition the platform made itself was not acted on'
+      );
+      continue;
+    }
     let read: FetchIssueOutcome;
     try {
       read = deps.tracker.fetchIssueOutcome
@@ -426,10 +448,15 @@ async function startNewIssues(
       ...(statusMode ? { status: match.status } : {}),
     });
     if (!facts.success) {
-      // Facts that can never be valid (a key of an unheard-of shape): retrying changes nothing,
-      // and leaving it unseen would put it first in line on every poll.
+      // Facts that can never be valid (a key of an unheard-of shape, a status over 100
+      // characters): retrying changes nothing, and leaving it unseen would put it first in line
+      // on every poll. Said in the log, by key only, never with Jira's text.
       await markSeen(match);
       decided++;
+      deps.log?.warn(
+        { automationId, issueKey: match.key },
+        'a Jira issue was not acted on: its facts are not valid'
+      );
       continue;
     }
     let result: AutomationResult;
@@ -460,6 +487,7 @@ async function startNewIssues(
     status: 'polled',
     suppressed,
     ...(refused > 0 ? { refused } : {}),
+    ...(platformTransitions > 0 ? { platformTransitions } : {}),
   };
 }
 
@@ -522,4 +550,38 @@ export function engineDecider(
           facts: facts as JiraStatusChangedFacts,
         })
     : (facts) => decideAndStart(fastify, jiraFilterNewIssueSource, { ...common, facts });
+}
+
+/** How long after a run starts the platform may still be writing statuses to its ticket. */
+const PLATFORM_TRANSITION_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * Recognises a transition the platform made itself. Its Jira sync moves a ticket to In Progress,
+ * In Review and Done for a run on that ticket (`JIRA_SYNC_STATUSES`), so an issue in one of those
+ * statuses while a run on it was started on the repository in the last 14 days (by any source, a
+ * manual launch or the transition hook) is taken as the platform's own doing and is not acted on.
+ * It is a rule over what the platform writes, not a view of who made the transition: a person's
+ * move to the same status in that window is skipped too, and a workflow whose transitions land
+ * in other status names is not recognised.
+ */
+export function platformTransitionCheck(
+  prisma: Pick<PrismaClient, 'runInput'>,
+  connectionId: string,
+  now: Date
+): NonNullable<PollDeps['platformTransition']> {
+  return async (issueKey, status) => {
+    if (!JIRA_SYNC_STATUS_KEYS.includes(status.trim().toLowerCase())) {
+      return false;
+    }
+    const run = await prisma.runInput.findFirst({
+      select: { id: true },
+      where: {
+        connectionId,
+        createdAt: { gte: new Date(now.getTime() - PLATFORM_TRANSITION_WINDOW_MS) },
+        externalTicketId: { equals: issueKey, mode: 'insensitive' },
+        ticketIsSynthetic: false,
+      },
+    });
+    return run !== null;
+  };
 }

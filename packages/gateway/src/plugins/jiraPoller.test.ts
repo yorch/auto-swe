@@ -245,6 +245,7 @@ describe('pollAllJiraAutomations', () => {
       filters: { jql: 'status = Open' },
     });
     expect(typeof calls[0]?.[0].decide).toBe('function');
+    expect(typeof calls[0]?.[0].platformTransition).toBe('function');
     expect(calls[0]?.[0].tracker).toBe(tracker);
   });
 

@@ -12,6 +12,7 @@ import {
   engineDecider,
   type PollDeps,
   type PollOutcome,
+  platformTransitionCheck,
   pollAutomation,
 } from '../lib/automations/jiraPoller.js';
 
@@ -197,6 +198,7 @@ export async function pollAllJiraAutomations(
             }),
             log: fastify.log,
             now,
+            platformTransition: platformTransitionCheck(fastify.prisma, row.connection.id, now),
             prisma: fastify.prisma,
             tracker,
           },
