@@ -26,21 +26,21 @@ resolves it from the detected stack at run time.
 
 ### High
 
-- [~] **H1. Built-in gates are all `yarn`.** *Non-Node roots done (stack table in `stackDetection.ts`); npm and pnpm roots done (phase 2). Yarn roots keep the built-ins, so `yarn npm audit` stays Berry-only (the detector sees lockfile names, not the Yarn version).* `DEFAULT_COMMANDS` (`worker/src/activities/qualityGates.ts`)
-  is `yarn build|lint|test|typecheck` and `yarn npm audit`. Non-Node repos with no `gateCommands`
+- [x] **H1. Built-in gates are all `yarn`.** *Done across phases 1–3: non-Node roots, npm and pnpm, and (phase 3) the `packageManager` pin and Yarn flavour. Yarn Classic has the built-ins minus `runVulnScan` by design: `yarn audit` posts to a hard-coded public host, so it can neither use the proxy nor stay private.*
+  Original gap: the built-in gate defaults were `yarn build|lint|test|typecheck` and `yarn npm audit`. Non-Node repos with no `gateCommands`
   exit 127 on every gate; `yarn npm audit` is Berry-only so it also breaks npm, pnpm and Yarn 1.
   Fix: stack-keyed defaults resolved from the detected stack, beneath step config and repo
   `gateCommands`.
-- [ ] **H2. Default workspace image is `node:24-alpine`.** A repo with no `executorImage` gets a
+- [~] **H2. Default workspace image is `node:24-alpine`.** *Mechanism done (phase 3): `WORKSPACE_IMAGE_PYTHON|JVM|GO` map a detected stack to a deployer-chosen image, beneath `executorImage`, and the probe tests it. Still open: nothing publishes the curated images, so a deployer builds and hosts their own.*
   Node image whatever its stack. Fix: resolve a curated image from the detected stack as a
   fallback beneath `executorImage`. (Needs a published image reference per stack; open design
   question below.)
-- [~] **H3. Stack detection is advisory only.** *Gates and the test loop now consume it; the image does not (H2).* `detectedStack` is read by the repo form alone.
+- [x] **H3. Stack detection is advisory only.** *Gates, the test loop and the image now consume it (phases 1–3). Original gap: detection was read by the repo form alone.*
   Fix: H1 and H2 consume it at run time.
 
 ### Medium
 
-- [~] **M4. Test-command detection reads only the root `package.json`.** *Chain done (configured → stack default → package.json); component subdirectories not handled.*
+- [~] **M4. Test-command detection reads only the root `package.json`.** *Done for a repo whose only stack component is a subdirectory (phase 3): the command runs there and reads that directory's `package.json`. Still open: several components with no root signal resolve as unconfigured, and a polyglot root serves only its Node side.*
   (`executeImplementation.ts`, `implementerSession.ts`, `utils.ts#detectTestCommand`.)
   Fix: `gateCommands.runTests` → detected-stack suggestion → `package.json` guess; honour
   component subdirectories in a monorepo.
@@ -206,3 +206,39 @@ Gates after the rebase: install `--immutable`, typecheck, build, biome (explicit
 builds pass. `yarn test`: 2 failures in `workspace.test.ts` that pass alone (80/80). The curated-image
 docker test passes for go, python and jvm (25), and the four audit cases pass with real npm, pnpm
 10.34.7 and Yarn 4.18.1.
+
+### Phase 3 (H1, H2, M4/H3) — reviewed by Opus 5.5 through the `claude` CLI
+
+Unlike phases 1–2, an independent reviewer was available: `claude -p --model claude-opus-5-5` with
+read-only tools (Read, Grep, Glob, `git show/diff/log`, `rg`; no Edit/Write), run three times — on the
+design before any code, on the diff, and on the fixes. Every finding below was checked against the code
+before being accepted or declined.
+
+| Round | Finding | Outcome |
+|---|---|---|
+| Design | Recording the raw `packageManager` string would flip every npm/pnpm repo back to `yarn` gates after its next scan. | Kept the enum; Yarn's flavour is its own field; parsed with the existing `packageManagerPins()`. |
+| Design | Running gates in the only component could verify the wrong directory silently (a Makefile repo with one nested `package.json`). | Fires only with a complete listing, the `cd` shows in the recorded command, and uncertain cases keep today's behaviour. Documented as a limitation. |
+| Design | `cd`-wrapping must not touch admin commands; Node roots must keep the `package.json` guess in the test loop; a component's guess must read the component's file. | Done and tested. |
+| Design | A yarn-berry table duplicates `DEFAULT_COMMANDS`. | One shared table (`YARN_GATE_DEFAULTS`) that `DEFAULT_COMMANDS` is built from. |
+| Design | Yarn Classic audit `test $? -lt 8` would pass a network error (exit 1). | Declined, then the real finding: Yarn 1's audit hard-codes `registry.yarnpkg.com` (read in its source), so it never reaches the proxy and would send private names to a public host. No default; documented. |
+| Design | Pin the target per run. | **Declined** — needs a column, a migration and replay-safe plumbing. Documented limitation: a scan landing mid-run can move later steps. |
+| Design | Cut `WORKSPACE_IMAGE_NODE`. | Done. |
+| Diff | The only-component rule almost never fired: the 50-directory cap counted every directory, not signal directories. | **Real bug, predating this branch** (it also dropped components sorted past the 50th). Filter, then cap; tested with 120 doc directories. |
+| Diff | Gradle multi-project: a root `settings.gradle.kts` with one subproject made the subproject the target, so `./gradlew` was not found. | `settings.gradle[.kts]` is a JVM signal. |
+| Diff | Nothing stops a call site reverting to `repo.executorImage ?? undefined` (both typecheck). | New `invariants:check` rule, proved by deliberately reverting one call site. |
+| Diff | The image probe ignored the stack image. | The gateway passes the detection, the worker resolves it (the gateway may not have the worker's env). |
+| Diff | A Node component with no lockfile got Yarn 4 gates, which fail there. | npm's commands; an ambiguous (two-lockfile) component keeps the built-in Yarn commands. |
+| Fixes | Nested Gradle/Maven projects (`server/settings.gradle.kts` + `server/app/build.gradle.kts`) still read as two components. | A JVM signal below another JVM signal belongs to the parent. |
+
+Found by running things rather than by review: joining a component's gate commands in one shell leaks
+the first `cd` into the second (production runs each gate in its own `sh -c`; the test and the `inDir`
+comment now say so), and the scorer test's `systemConfig` mock lacked `stackImages`, which turned a real
+resolution into a silently failed gate.
+
+Environment notes, not code: the worker image build failed with `cannot allocate memory` in the Docker
+VM — identically on `main` plus a trivial manifest edit — and passed after clearing the builder cache.
+An ad-hoc Yarn 1 `install` through the proxy hung in a locally assembled image; it is unrelated to this
+change (no audit is routed through the proxy for Classic) and not investigated.
+
+Still open after this phase: publishing the curated images (H2), several components with no root signal
+(M4), detect-on-onboard, pinning a run to its detection, M5 (PyPI/Maven/Go proxying), Rust/.NET/Ruby.
