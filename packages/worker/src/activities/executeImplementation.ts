@@ -207,7 +207,7 @@ export async function executeImplementation(
 
     // Detect test framework
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
-    const testCommand = detectTestCommand(packageJson, repo.gateCommands);
+    const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);
 
     // The runtime — the Mastra loop or the Claude Code harness — is chosen first,
     // and only what it needs is built: tool config + skills (WORKFLOW_TEMPLATE →

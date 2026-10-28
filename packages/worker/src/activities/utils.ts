@@ -1,3 +1,4 @@
+import { detectedGateDefaults } from '@auto-swe/shared/lib/stackDetection';
 import type { FileChange, TestRunResult } from '@auto-swe/shared/types/workflow';
 
 /**
@@ -11,19 +12,27 @@ export const TEST_RUN_TIMEOUT_MS = 600_000;
 /**
  * The test command the TDD loop and the fix sessions run.
  *
- * The repository's configured `Connection.gateCommands.runTests` wins — it is
- * the same command the `runTests` quality gate uses, and the only way a
- * non-Node repository (pytest, go test, cargo test) gets a working command.
- * Without one, the command is guessed from package.json's scripts and
- * devDependencies, falling back to `npm test`.
+ * The same chain as the `runTests` quality gate, so the loop and the gate never
+ * run different commands: the repository's configured
+ * `Connection.gateCommands.runTests` wins; then the default for the stack the
+ * repository's root was detected as (a Python, JVM or Go root); then a guess from
+ * package.json's scripts and devDependencies, falling back to `npm test`.
  */
-export function detectTestCommand(packageJsonStr: string, gateCommands?: unknown): string {
+export function detectTestCommand(
+  packageJsonStr: string,
+  gateCommands?: unknown,
+  detectedStack?: unknown
+): string {
   const configured =
     gateCommands && typeof gateCommands === 'object'
       ? (gateCommands as Record<string, unknown>).runTests
       : undefined;
   if (typeof configured === 'string' && configured.trim().length > 0) {
     return configured;
+  }
+  const stackTests = detectedGateDefaults(detectedStack)?.runTests;
+  if (stackTests) {
+    return stackTests;
   }
   return detectTestCommandFromPackageJson(packageJsonStr);
 }

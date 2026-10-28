@@ -190,7 +190,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     );
 
     const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
-    const testCommand = detectTestCommand(packageJson, repo.gateCommands);
+    const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);
 
     // The session runs as its own persona (ciFixer / reviewFixer / gateFixer):
     // that Agent row's prompt, tools, skills and MCP binding, with the model

@@ -106,6 +106,45 @@ describe('resolveCommand precedence', () => {
     expect(cmd).toBe(DEFAULT_COMMANDS.runLint);
   });
 
+  describe('with a detected non-Node root', () => {
+    const detectedStack = {
+      components: [{ path: '', stacks: ['jvm'] }],
+      evidence: ['pom.xml'],
+      primary: 'jvm',
+      stacks: ['jvm'],
+    };
+
+    it("uses the stack's command instead of a yarn one", async () => {
+      mockedFindUnique.mockResolvedValue({ detectedStack, gateCommands: null } as never);
+      expect(await resolveCommand('runTests', baseRequest, undefined)).toBe('mvn -B -q test');
+    });
+
+    it('resolves a gate the stack has no command for to null, never to yarn', async () => {
+      mockedFindUnique.mockResolvedValue({ detectedStack, gateCommands: null } as never);
+      expect(await resolveCommand('runLint', baseRequest, undefined)).toBeNull();
+      expect(await resolveCommand('runVulnScan', baseRequest, undefined)).toBeNull();
+    });
+
+    it('lets step and repository overrides win over the stack default', async () => {
+      mockedFindUnique.mockResolvedValue({
+        detectedStack,
+        gateCommands: { runTests: 'mvn verify' },
+      } as never);
+      expect(await resolveCommand('runTests', baseRequest, undefined)).toBe('mvn verify');
+      expect(await resolveCommand('runTests', baseRequest, 'step')).toBe('step');
+    });
+
+    it('keeps the yarn defaults for a Node root', async () => {
+      mockedFindUnique.mockResolvedValue({
+        detectedStack: { components: [{ path: '', stacks: ['node'] }], evidence: ['package.json'] },
+        gateCommands: null,
+      } as never);
+      expect(await resolveCommand('runLint', baseRequest, undefined)).toBe(
+        DEFAULT_COMMANDS.runLint
+      );
+    });
+  });
+
   it('returns null for gates with no built-in default (runPerfBench)', async () => {
     mockedFindUnique.mockResolvedValue({ gateCommands: null } as never);
     const cmd = await resolveCommand('runPerfBench', baseRequest, undefined);
