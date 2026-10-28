@@ -26,7 +26,7 @@ describe('executorImageFor', () => {
 
   it('picks the deployer’s image for the detected stack', () => {
     process.env.WORKSPACE_IMAGE_PYTHON = 'registry.example/executor-python:1';
-    process.env.WORKSPACE_IMAGE_GO = 'registry.example/executor-go@sha256:' + 'a'.repeat(64);
+    process.env.WORKSPACE_IMAGE_GO = `registry.example/executor-go@sha256:${'a'.repeat(64)}`;
     expect(executorImageFor({ detectedStack: stack('', 'python') })).toBe(
       'registry.example/executor-python:1'
     );
