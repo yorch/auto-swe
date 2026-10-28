@@ -36,10 +36,17 @@ const MAX_PACKUMENT_BYTES = 64 * 1024 * 1024;
  * re-serialise it, so one registration runs at most this many at once; the rest wait in a
  * bounded queue for at most the wait below, then get a 503 (npm and Yarn retry it).
  * Tarballs stream and are not counted.
+ *
+ * The queue holds more than Yarn 4's default `networkConcurrency` (50) so a cold install, which
+ * asks for every packument at once, waits its turn and is not turned away. A slot is held across
+ * the upstream fetch and the whole body read, so both run under a deadline well inside the queue
+ * wait: one slow upstream cannot keep a slot past it, and a client that hangs up frees its slot
+ * at once.
  */
 const DEFAULT_MAX_BUFFERED_FETCHES = 8;
-const DEFAULT_MAX_QUEUED_FETCHES = 32;
+const DEFAULT_MAX_QUEUED_FETCHES = 64;
 const DEFAULT_QUEUE_WAIT_MS = 30_000;
+const DEFAULT_UPSTREAM_DEADLINE_MS = 20_000;
 
 /** npm's own package-name shape; nothing here can start with `.` or `_` or carry a separator. */
 const NAME_RE = /^(?:@[a-z0-9~-][a-z0-9._~-]*\/)?[a-z0-9~-][a-z0-9._~-]*$/i;
@@ -387,8 +394,10 @@ export function createRegistryProxy(options: {
   cache?: TarballCache;
   /** Concurrent buffered packument/manifest fetches per registration (default 8). */
   maxBufferedFetches?: number;
-  /** Requests that may wait for one of those slots (default 32); more get a 503. */
+  /** Requests that may wait for one of those slots (default 64); more get a 503. */
   maxQueuedFetches?: number;
+  /** Longest a buffered upstream fetch and body read may take before a 502 (default 20 s). */
+  upstreamDeadlineMs?: number;
   /** How long a request waits for a slot before a 503 (default 30 s). */
   queueWaitMs?: number;
 }): RegistryProxy {
@@ -479,6 +488,11 @@ export function createRegistryProxy(options: {
           : `Bearer ${registry.token}`;
     }
 
+    if (!tarballFile) {
+      await serveBuffered(reg, req, res, registry, name, versionSeg, upstreamPath, headers);
+      return;
+    }
+
     let upstream: Response;
     try {
       upstream = await upstreamFetchFor(registry)(upstreamPath, {
@@ -490,73 +504,119 @@ export function createRegistryProxy(options: {
       sendJson(res, 502, 'the upstream registry could not be reached');
       return;
     }
-
-    if (tarballFile) {
-      // Streamed, and cached only on a complete 200 GET.
-      res.writeHead(upstream.status, {
-        'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream',
-        ...(upstream.headers.get('content-length')
-          ? { 'content-length': upstream.headers.get('content-length') as string }
-          : {}),
-      });
-      const cacheStream =
-        req.method === 'GET' && upstream.status === 200 && options.cache && upstream.body
-          ? await options.cache.startWrite(registry.id, upstreamPath).catch(() => null)
-          : null;
-      try {
-        if (upstream.body) {
-          for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
-            // A client that hung up never drains again; throwing leaves the loop, which cancels
-            // the upstream body, and the catch below aborts the cache write.
-            if (res.destroyed || res.writableEnded) {
-              throw new Error('client closed');
-            }
-            const wrote = cacheStream ? await cacheStream.write(chunk) : Promise.resolve();
-            const flushed = res.write(chunk);
-            await wrote;
-            if (!flushed && !res.destroyed) {
-              await new Promise<void>((resolve) => {
-                const done = () => {
-                  res.off('drain', done);
-                  res.off('close', done);
-                  resolve();
-                };
-                res.on('drain', done);
-                res.on('close', done);
-              });
-            }
+    // Streamed, and cached only on a complete 200 GET.
+    res.writeHead(upstream.status, {
+      'content-type': upstream.headers.get('content-type') ?? 'application/octet-stream',
+      ...(upstream.headers.get('content-length')
+        ? { 'content-length': upstream.headers.get('content-length') as string }
+        : {}),
+    });
+    const cacheStream =
+      req.method === 'GET' && upstream.status === 200 && options.cache && upstream.body
+        ? await options.cache.startWrite(registry.id, upstreamPath).catch(() => null)
+        : null;
+    try {
+      if (upstream.body) {
+        for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
+          // A client that hung up never drains again; throwing leaves the loop, which cancels
+          // the upstream body, and the catch below aborts the cache write.
+          if (res.destroyed || res.writableEnded) {
+            throw new Error('client closed');
           }
-          res.end();
-          await cacheStream?.commit().catch(() => {});
-        } else {
-          res.end();
-          await cacheStream?.abort().catch(() => {});
+          const wrote = cacheStream ? await cacheStream.write(chunk) : Promise.resolve();
+          const flushed = res.write(chunk);
+          await wrote;
+          if (!flushed && !res.destroyed) {
+            await new Promise<void>((resolve) => {
+              const done = () => {
+                res.off('drain', done);
+                res.off('close', done);
+                resolve();
+              };
+              res.on('drain', done);
+              res.on('close', done);
+            });
+          }
         }
-      } catch {
-        res.destroy();
+        res.end();
+        await cacheStream?.commit().catch(() => {});
+      } else {
+        res.end();
         await cacheStream?.abort().catch(() => {});
       }
+    } catch {
+      res.destroy();
+      await cacheStream?.abort().catch(() => {});
+    }
+  }
+
+  /**
+   * A packument or version manifest: buffered (64 MiB cap), tarball URLs rewritten, allowlist
+   * applied (packuments only: a manifest's version already passed the per-version check). It
+   * takes a slot only once the cheap checks have passed, and holds it across the upstream fetch
+   * and the body read, which run under a deadline and stop when the client hangs up.
+   */
+  async function serveBuffered(
+    reg: Registration,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    registry: ResolvedRegistry,
+    name: string,
+    versionSeg: string | null,
+    upstreamPath: string,
+    headers: Record<string, string>
+  ): Promise<void> {
+    const allowlist = reg.allowlists?.get(registry.id);
+    const slot = await reg.buffered.acquire();
+    if (slot === null) {
+      res.setHeader('retry-after', '5');
+      sendJson(res, 503, 'the registry proxy is busy; retry shortly');
       return;
     }
-
-    // Packument or version manifest: buffered (64 MiB cap), tarball URLs
-    // rewritten, allowlist applied (packuments only — a manifest's version
-    // already passed the per-version check above).
+    // The client may have hung up while it waited.
+    if (res.destroyed) {
+      slot();
+      return;
+    }
+    const abort = new AbortController();
+    const deadline = setTimeout(
+      () => abort.abort(),
+      options.upstreamDeadlineMs ?? DEFAULT_UPSTREAM_DEADLINE_MS
+    );
+    const hangUp = () => abort.abort();
+    res.on('close', hangUp);
+    let upstream: Response | undefined;
+    let failure: string | undefined;
     const chunks: Buffer[] = [];
     let size = 0;
     try {
+      upstream = await upstreamFetchFor(registry)(upstreamPath, {
+        headers,
+        method: req.method ?? 'GET',
+        redirect: 'error',
+        signal: abort.signal,
+      });
       if (upstream.body) {
         for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
           size += chunk.length;
           if (size > MAX_PACKUMENT_BYTES) {
-            sendJson(res, 502, 'the upstream packument is too large to proxy');
-            return;
+            failure = 'the upstream packument is too large to proxy';
+            break;
           }
           chunks.push(Buffer.from(chunk));
         }
       }
     } catch {
-      sendJson(res, 502, 'the upstream registry could not be reached');
+      failure = 'the upstream registry could not be reached';
+    } finally {
+      clearTimeout(deadline);
+      res.off('close', hangUp);
+      slot();
+    }
+    if (failure !== undefined || !upstream) {
+      if (!res.destroyed) {
+        sendJson(res, 502, failure ?? 'the upstream registry could not be reached');
+      }
       return;
     }
     if (upstream.status !== 200) {
@@ -664,18 +724,7 @@ export function createRegistryProxy(options: {
       return;
     }
     const call = (async () => {
-      // Tarballs stream; a packument or manifest is buffered, so it takes a slot first.
-      const slot = parsed.tarball ? undefined : await reg.buffered.acquire();
-      if (slot === null) {
-        res.setHeader('retry-after', '5');
-        sendJson(res, 503, 'the registry proxy is busy; retry shortly');
-        return;
-      }
-      try {
-        await serve(reg, req, res, registry, parsed.name, parsed.tarball, parsed.version);
-      } finally {
-        slot?.();
-      }
+      await serve(reg, req, res, registry, parsed.name, parsed.tarball, parsed.version);
     })().catch(() => {
       sendJson(res, 502, 'the upstream registry could not be reached');
     });

@@ -159,8 +159,11 @@ SSRF-guarded fetch, which honours each registry's `allowPrivateNetwork`.
 rewritten so every `dist.tarball` points back at the proxy, under the routed registry's id;
 nothing else in them changes. In a lockfile-mode packument, versions that aren't allowed are
 filtered out, along with their `dist-tags` and `time` entries. Because each one is held in memory
-and re-serialised, a workspace has at most 8 of them in flight; a request past that waits (up to 32
-waiting, at most 30 seconds) and then gets `503` with `Retry-After`, which npm and Yarn retry.
+and re-serialised, a workspace has at most 8 of them in flight; a request past that waits (up to 64
+waiting, above Yarn's default of 50 concurrent requests, for at most 30 seconds) and then gets `503`
+with `Retry-After`, which npm and Yarn retry. A request takes its place only after the allowlist
+check, so a denied package never waits. The upstream fetch and body read of a held place end at 20
+seconds with a `502`, and a client that hangs up gives its place back at once.
 
 **Tarballs** stream with backpressure.
 
