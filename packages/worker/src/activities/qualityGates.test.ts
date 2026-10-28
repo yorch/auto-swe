@@ -134,6 +134,21 @@ describe('resolveCommand precedence', () => {
       expect(await resolveCommand('runTests', baseRequest, 'step')).toBe('step');
     });
 
+    it('uses npm commands, audit included, for a Node root on npm', async () => {
+      mockedFindUnique.mockResolvedValue({
+        detectedStack: {
+          components: [{ path: '', stacks: ['node'] }],
+          evidence: ['package.json'],
+          packageManager: 'npm',
+        },
+        gateCommands: null,
+      } as never);
+      expect(await resolveCommand('runVulnScan', baseRequest, undefined)).toBe(
+        'npm audit --audit-level=high'
+      );
+      expect(await resolveCommand('runLint', baseRequest, undefined)).toBe('npm run lint');
+    });
+
     it('keeps the yarn defaults for a Node root', async () => {
       mockedFindUnique.mockResolvedValue({
         detectedStack: { components: [{ path: '', stacks: ['node'] }], evidence: ['package.json'] },

@@ -13,7 +13,7 @@ on:
       stack:
         description: 'Curated defaults/Dockerfile.<stack> to build (ignored when use_repo_dockerfile)'
         type: choice
-        options: [node, python, jvm]
+        options: [node, python, jvm, go]
         default: node
   # client_payload: { repo_id, use_repo_dockerfile?, stack? } — stack defaults to node.
   repository_dispatch:
@@ -63,7 +63,7 @@ jobs:
                   {repo_id: .id,
                    stack: .executorImageBuild.stack,
                    use_repo_dockerfile: .executorImageBuild.useRepoDockerfile} |
-                  select(.stack as $s | ["node","python","jvm"] | index($s) != null) |
+                  select(.stack as $s | ["node","python","jvm","go"] | index($s) != null) |
                   select(.use_repo_dockerfile | type == "boolean")]')
               ENTRIES=$(jq -c --argjson a "$ENTRIES" --argjson b "$NEW" '$a + $b' <<< '{}')
               TOTAL=$(echo "$PAGE" | jq -r '.meta.total // 0')
@@ -77,7 +77,7 @@ jobs:
               exit 1
             fi
             STACK="${INPUT_STACK:-${PAYLOAD_STACK:-node}}"
-            case "${STACK}" in node|python|jvm) ;; *) echo "::error::Unknown stack '${STACK}'"; exit 1;; esac
+            case "${STACK}" in node|python|jvm|go) ;; *) echo "::error::Unknown stack '${STACK}'"; exit 1;; esac
             USE_REPO="${INPUT_USE_REPO_DOCKERFILE:-${PAYLOAD_USE_REPO_DOCKERFILE:-false}}"
             case "${USE_REPO}" in true|false) ;; *) echo "::error::use_repo_dockerfile must be true or false"; exit 1;; esac
             ENTRIES=$(jq -cn --arg id "$REPO_ID" --arg s "$STACK" --argjson u "${USE_REPO}" \
@@ -165,9 +165,9 @@ jobs:
             echo "context=." >> "$GITHUB_OUTPUT"
           else
             case "${STACK}" in
-              node|python|jvm) ;;
+              node|python|jvm|go) ;;
               *)
-                echo "::error::Unknown stack '${STACK}' (expected node, python or jvm)"
+                echo "::error::Unknown stack '${STACK}' (expected node, python, jvm or go)"
                 exit 1
                 ;;
             esac

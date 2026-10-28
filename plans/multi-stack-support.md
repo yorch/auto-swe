@@ -26,7 +26,7 @@ resolves it from the detected stack at run time.
 
 ### High
 
-- [~] **H1. Built-in gates are all `yarn`.** *Non-Node roots done (stack table in `stackDetection.ts`); Node still forces `yarn`, and `yarn npm audit` is still Berry-only — package-manager-aware Node defaults remain open.* `DEFAULT_COMMANDS` (`worker/src/activities/qualityGates.ts`)
+- [~] **H1. Built-in gates are all `yarn`.** *Non-Node roots done (stack table in `stackDetection.ts`); npm and pnpm roots done (phase 2). Yarn roots keep the built-ins, so `yarn npm audit` stays Berry-only (the detector sees lockfile names, not the Yarn version).* `DEFAULT_COMMANDS` (`worker/src/activities/qualityGates.ts`)
   is `yarn build|lint|test|typecheck` and `yarn npm audit`. Non-Node repos with no `gateCommands`
   exit 127 on every gate; `yarn npm audit` is Berry-only so it also breaks npm, pnpm and Yarn 1.
   Fix: stack-keyed defaults resolved from the detected stack, beneath step config and repo
@@ -45,15 +45,19 @@ resolves it from the detected stack at run time.
   Fix: `gateCommands.runTests` → detected-stack suggestion → `package.json` guess; honour
   component subdirectories in a monorepo.
 - [ ] M5. Dependency installs are npm-only (no PyPI / Maven / Go module proxy or credentialed path).
-- [ ] M6. No curated Go image (and none for Rust/.NET/Ruby); `build-executor.yml` `stack` input is
-  node|python|jvm.
+- [~] M6. Go image added in phase 2 (`defaults/Dockerfile.go`, `stack` input, gateway enum). None for
+  Rust/.NET/Ruby.
 - [ ] M7. Eval harness pinned to `node:24-alpine` (`EVAL_WORKSPACE_IMAGE`); `gate` scorers and flake
   screens run on a Node image for every stack.
 - [ ] M8. `BUILTIN_SHELL_IMAGES` has no JVM or Go images.
-- [ ] M9. Built-in skills assume TypeScript/Node (`testFirst` → vitest, `noNewDependencies` → npm,
-  `minimalSurfaceArea`).
+- [x] M9. Built-in skills assumed TypeScript/Node (`testFirst`, `noNewDependencies`); made
+  stack-neutral in phase 2. `minimalSurfaceArea` was already hedged per language.
 - [ ] M10. Built-in `CODE_SECURITY` patterns cover JS/Python only (no `Runtime.exec`,
   `ObjectInputStream`, SQL concatenation, Go `InsecureSkipVerify`, `crypto/md5`).
+
+- [ ] M14. `runVulnScan` cannot work behind the registry proxy: it 404s audit endpoints, so
+  `npm audit`/`pnpm audit`/`yarn npm audit` all fail in a wired workspace. Needs either a proxied
+  advisory endpoint or a registry-free scanner default.
 
 ### Low
 
@@ -112,3 +116,22 @@ hostile read of the diff by the author, not an independent review).
 Gate results: typecheck, biome check, docs:check, invariants:check pass. `yarn test`: 7 failures in
 `shellStep.test.ts` / `workspace.test.ts` (real-git suites) that fail identically on a clean tree;
 `pi/runtime.test.ts` failed once under full-suite load and passes alone with and without the change.
+
+### Phase 2 (npm/pnpm gates, Go image, neutral skills)
+
+Same caveat: author self-review, no independent agent.
+
+| # | Challenge | Outcome |
+|---|---|---|
+| 8 | Does `npm run …` change behaviour for an existing npm repo? | `yarn build` already ran the package.json script in an npm repo, so build/lint/test/typecheck are near-neutral. The real fixes are the audit command and no longer needing `yarn` on the image. Said so in the PR rather than claiming a large behaviour change. |
+| 9 | Two root lockfiles (a stale `yarn.lock` beside `package-lock.json`) would flip yarn→npm by list order. | Found in review. The manager is recorded only when exactly one root lockfile exists; otherwise it is unknown and the built-ins stay. Tested. |
+| 10 | Would the Node table replace the test loop's smarter `package.json` guess (`npx vitest run` when no test script)? | Yes, if wired naively. `detectTestCommand` skips Node roots; tested. |
+| 11 | `runVulnScan` for npm/pnpm now works? | No: the registry proxy 404s audit endpoints, so every audit command fails behind it, as `yarn npm audit` already did. Not fixed; added as M14 and documented under Limitations. |
+| 12 | A `packageManager` pin in package.json that disagrees with the lockfile? | Not read; the lockfile wins. Left as is. |
+| 13 | Does the Go image satisfy the executor contract, and does the Claude Code harness have a binary for it? | Built and run: uid 1000, git/tar/rg/bash/sha256sum present, `/workspace` writable, glibc (not musl), `go test`/`build`/`vet` pass as uid 1000. Verified by hand only; no docker-gated CI test exists (L12). |
+| 14 | Does editing built-in skill text break pinned runs or admin edits? | `syncSkills` cuts a new `SkillRevision` per content change, so in-flight runs keep the pinned text; an admin edit to a built-in is overwritten by sync, as before. |
+| 15 | Is `golang:1.26-bookworm` digest-pinned like the other bases? | Yes, the multi-arch index digest. It is not covered by the weekly base-image refresh unless the repo's `executorImageBuild` is recorded. |
+
+Gate results: typecheck, build, biome check, docs:check, invariants:check and the three Docker image
+builds pass. `yarn test`: 6 failures in the real-git suites (`shellStep`, `workspace`) that fail on a
+clean tree; `epics.test.ts` timed out once under full-suite load and passes alone (22/22).

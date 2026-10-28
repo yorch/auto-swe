@@ -18,6 +18,12 @@ describe('detectTestCommand with a detected stack', () => {
     expect(detectTestCommand('{}', { runTests: 'tox' }, python)).toBe('tox');
   });
 
+  it('keeps the package.json guess for an npm Node root, not the manager default', () => {
+    const npm = { ...node, packageManager: 'npm' };
+    const pkg = JSON.stringify({ devDependencies: { vitest: '1' } });
+    expect(detectTestCommand(pkg, null, npm)).toBe('npx vitest run');
+  });
+
   it('keeps the package.json guess for a Node or undetected root', () => {
     const pkg = JSON.stringify({ devDependencies: { vitest: '1' } });
     expect(detectTestCommand(pkg, null, node)).toBe('npx vitest run');

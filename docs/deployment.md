@@ -30,7 +30,7 @@ are approved for sandboxed shell steps, which never hold a credential. `build-ex
 each freshly tagged image to its repository, so its `GATEWAY_TOKEN` must belong to a platform
 admin. It builds `defaults/Dockerfile.node` unless a run sets `use_repo_dockerfile`, which builds the
 repository's own `.auto-swe/Dockerfile` instead. `defaults/` also carries `Dockerfile.python` and
-`Dockerfile.jvm`; the `stack` input (`node`|`python`|`jvm`, default `node`) selects which curated
+`Dockerfile.jvm` and `Dockerfile.go`; the `stack` input (`node`|`python`|`jvm`|`go`, default `node`) selects which curated
 Dockerfile is built.
 
 Each build also records its settings on the connection (`executorImageBuild`). A weekly schedule

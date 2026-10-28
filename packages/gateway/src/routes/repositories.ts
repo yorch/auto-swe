@@ -140,7 +140,7 @@ const UpdateRepoSchema = z.object({
   /** How the executor image was built; only platform admins may set it, anyone may clear. */
   executorImageBuild: z
     .object({
-      stack: z.enum(['node', 'python', 'jvm']),
+      stack: z.enum(['node', 'python', 'jvm', 'go']),
       useRepoDockerfile: z.boolean(),
     })
     .nullable()

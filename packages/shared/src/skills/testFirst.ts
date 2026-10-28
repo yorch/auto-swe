@@ -16,5 +16,5 @@ Write or update tests before or alongside the implementation — never after.
 - For bug fixes: add a failing test that reproduces the bug before fixing it
 - For refactors: confirm existing tests pass before and after the change
 
-Co-locate test files next to the source file they cover (e.g., \`foo.test.ts\` next to \`foo.ts\`). Use \`vitest\` — the project test runner. Do not skip or stub assertions to make tests pass artificially.`,
+Put tests where the repository already puts them (e.g., \`foo.test.ts\` next to \`foo.ts\`, \`test_foo.py\`, \`foo_test.go\`, or \`FooTest.java\` under \`src/test\`) and run them with the project's existing runner — do not add a new test framework. Do not skip or stub assertions to make tests pass artificially.`,
 };
