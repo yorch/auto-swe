@@ -236,6 +236,11 @@ export interface EphemeralContainerSpec {
   reachWorker?: boolean;
   /** Non-secret `NAME=value` pairs. */
   env?: string[];
+  /**
+   * Secrets by name → value, delivered as `docker run -e NAME` from the client's
+   * environment so the value is on no command line.
+   */
+  secretEnv?: Record<string, string>;
   memory?: string;
   cpus?: number;
   pidsLimit?: number;

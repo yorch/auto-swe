@@ -110,6 +110,8 @@ import { recordLessonBackground } from './commitToMemory.js';
 import { finalizeScript, runShellStep } from './shellStep.js';
 import { GIT_AUTH_ENV, shellQuote } from './workspace.js';
 
+// The clone is issued hardened (`git -c … clone --depth=50 …`), so `git clone` never appears.
+const CLONE_MARK = 'clone --depth=50';
 const findUniqueOrThrow = vi.mocked(prisma.connection.findUniqueOrThrow);
 /**
  * Trusted helper calls (clone / finalize / volume ops) arrive at the backend as
@@ -188,7 +190,7 @@ describe('runShellStep — git identity', () => {
   it("clones the volume under the team's resolved identity, not the literal one", async () => {
     await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
 
-    const clone = helperScripts().find((s) => s.includes('git clone')) ?? '';
+    const clone = helperScripts().find((s) => s.includes(CLONE_MARK)) ?? '';
     expect(clone).toContain(`git config -- user.name ${shellQuote(BOT.name)}`);
     expect(clone).toContain(`git config -- user.email ${shellQuote(BOT.email)}`);
     expect(clone).toContain(
@@ -247,7 +249,7 @@ describe('runShellStep — token redaction', () => {
 
   it('passes the token through to the clone step so a clone failure is also redacted', async () => {
     mockedExec.mockImplementation(async (command: string) => {
-      if (command.includes('git clone')) {
+      if (command.includes(CLONE_MARK)) {
         const err = new Error(
           `fatal: unable to access '${CLONE_URL}/': The requested URL returned error: 403`
         ) as Error & { stdout?: string; stderr?: string };
@@ -326,7 +328,7 @@ describe('runShellStep — token redaction', () => {
 
   it('redacts the raw command string on err.cmd from a failed docker exec', async () => {
     mockedExec.mockImplementation(async (command: string) => {
-      if (command.includes('git clone')) {
+      if (command.includes(CLONE_MARK)) {
         const err = new Error('fatal: authentication failed') as Error & {
           cmd?: string;
           stdout?: string;
@@ -420,26 +422,39 @@ describe('runShellStep — clone credential is never persisted in the workspace 
   it('resets origin to the credential-free URL in the same script as the clone', async () => {
     await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
 
-    const clone = requireCommand('git clone', (c) => c.includes('git clone'));
+    const clone = requireCommand('git clone', (c) => c.includes(CLONE_MARK));
     // The scrub must be chained onto the clone itself, so there is no window
     // in which the volume holds a credential-bearing origin — and the URL it
     // installs must be shell-quoted like every other interpolated value.
     expect(clone).toContain(escaped(`git remote set-url origin ${shellQuote(CLEAN_CLONE_URL)}`));
-    expect(clone.indexOf('git remote set-url origin')).toBeGreaterThan(clone.indexOf('git clone'));
+    expect(clone.indexOf('git remote set-url origin')).toBeGreaterThan(clone.indexOf(CLONE_MARK));
   });
 
-  it('leaves the token in the clone argument only, never in what origin keeps', async () => {
+  it('clones the clean URL and keeps the token out of every helper script', async () => {
     await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
 
-    const clone = requireCommand('git clone', (c) => c.includes('git clone'));
-    const scrubAt = clone.indexOf('git remote set-url origin');
-    expect(scrubAt).toBeGreaterThan(-1);
-    // Everything the clone leaves behind on disk — i.e. the origin URL it is
-    // reset to — must be credential-free.
-    expect(clone.slice(scrubAt)).not.toContain(TOKEN);
-    // And the token must reach exactly one docker invocation: the clone that
-    // genuinely needs it. Nothing else may carry it in the clear.
-    expect(dockerCommands().filter((c) => c.includes(TOKEN))).toHaveLength(1);
+    const clone = requireCommand('git clone', (c) => c.includes(CLONE_MARK));
+    // The clone targets the clean URL, after an option terminator.
+    expect(clone).toContain(escaped(`-- ${shellQuote(CLEAN_CLONE_URL)} /workspace/repo`));
+    expect(clone).toContain(
+      `-c "http.extraheader=\${${GIT_AUTH_ENV}:?git credential not delivered}"`
+    );
+    // No script carries the token or its header: the header is the clone's `secretEnv`.
+    expect(dockerCommands().filter((c) => c.includes(TOKEN))).toHaveLength(0);
+    expect(dockerCommands().filter((c) => c.includes(AUTH_HEADER))).toHaveLength(0);
+  });
+
+  it('delivers the clone credential to the clone helper as secretEnv, not argv', async () => {
+    await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
+
+    const cloneSpec = backendRunHelper.mock.calls
+      .map(([spec]) => spec as { argv?: string[]; secretEnv?: Record<string, string> })
+      .find((spec) => spec.argv?.[1]?.includes(CLONE_MARK));
+    expect(cloneSpec?.secretEnv).toEqual({ ASW_GIT_AUTH: AUTH_HEADER });
+    // Neither the token nor its header is anywhere else in the spec.
+    const rest = JSON.stringify({ ...cloneSpec, secretEnv: undefined });
+    expect(rest).not.toContain(TOKEN);
+    expect(rest).not.toContain(AUTH_HEADER);
   });
 
   it('scrubs origin on the default-branch fallback clone too', async () => {
@@ -456,7 +471,7 @@ describe('runShellStep — clone credential is never persisted in the workspace 
 
     const fallbackClone = requireCommand(
       'default-branch clone',
-      (c) => c.includes('git clone') && c.includes(escaped(`-b ${shellQuote('main')}`))
+      (c) => c.includes(CLONE_MARK) && c.includes(escaped(`-b ${shellQuote('main')}`))
     );
     expect(fallbackClone).toContain(
       escaped(`git remote set-url origin ${shellQuote(CLEAN_CLONE_URL)}`)
@@ -531,8 +546,15 @@ describe('runShellStep — clone credential is never persisted in the workspace 
     await runShellStep({ command: 'echo hi', image: 'alpine/git:latest', request: REQUEST });
 
     // The scrub is unconditional — it just installs the same URL back.
-    const clone = requireCommand('git clone', (c) => c.includes('git clone'));
+    const clone = requireCommand('git clone', (c) => c.includes(CLONE_MARK));
     expect(clone).toContain(escaped(`git remote set-url origin ${shellQuote(CLEAN_CLONE_URL)}`));
+    // …the clone sends no header: nothing to name, nothing delivered…
+    expect(clone).not.toContain('http.extraheader');
+    expect(clone).toContain(escaped(`-- ${shellQuote(CLEAN_CLONE_URL)} /workspace/repo`));
+    const cloneSpec = backendRunHelper.mock.calls
+      .map(([spec]) => spec as { argv?: string[]; secretEnv?: Record<string, string> })
+      .find((spec) => spec.argv?.[1]?.includes(CLONE_MARK));
+    expect(cloneSpec?.secretEnv).toBeUndefined();
     // …and with nothing to inject, the push carries no header but stays hardened.
     const finalize = requireCommand('finalize push', (c) => c.includes('push --no-verify'));
     expect(finalize).not.toContain('http.extraheader');
@@ -648,6 +670,8 @@ describe('runShellStep — registry wiring', () => {
     env: [
       'NPM_CONFIG_USERCONFIG=/workspace/.auto-swe/npmrc',
       'NPM_CONFIG_REGISTRY=http://host.docker.internal:8791/npm/r1',
+      'COREPACK_NPM_TOKEN=proxy-tok-1',
+      'YARN_NPM_AUTH_TOKEN=proxy-tok-1',
     ],
     registration: { release: released, setAllowlist },
     registries: [],
@@ -676,7 +700,15 @@ describe('runShellStep — registry wiring', () => {
     const input = vi.mocked(runEphemeralContainer).mock.calls.at(-1)?.[0] as {
       env: Record<string, string>;
       reachWorker: boolean;
+      secretEnv: Record<string, string>;
     };
+    // The proxy token reaches the author container as secretEnv, never as a plain pair.
+    expect(input.secretEnv).toEqual({
+      COREPACK_NPM_TOKEN: 'proxy-tok-1',
+      YARN_NPM_AUTH_TOKEN: 'proxy-tok-1',
+    });
+    expect(input.env.COREPACK_NPM_TOKEN).toBeUndefined();
+    expect(input.env.YARN_NPM_AUTH_TOKEN).toBeUndefined();
     expect(input.env.HOME).toBe('/workspace/.auto-swe/home');
     expect(input.env.NPM_CONFIG_USERCONFIG).toBe('/workspace/.auto-swe/home/.npmrc');
     expect(input.env.NPM_CONFIG_REGISTRY).toContain('npm/r1');
@@ -695,8 +727,11 @@ describe('runShellStep — registry wiring', () => {
       .find((spec) => spec.secretEnv?.AUTO_SWE_NPMRC !== undefined);
     expect(configSpec).toBeDefined();
     expect(configSpec?.env).toBeUndefined();
-    // The clone script fetched the base branch before scrubbing origin.
-    expect(helperScripts().some((c) => c.includes('refs/remotes/origin/main'))).toBe(true);
+    // The clone script fetched the base branch before scrubbing origin, authenticating
+    // through the header from the environment, not a credential URL.
+    const fetchScript = helperScripts().find((c) => c.includes('refs/remotes/origin/main')) ?? '';
+    expect(fetchScript).toContain('fetch --depth=50 origin');
+    expect(fetchScript).not.toContain(TOKEN);
     expect(released).toHaveBeenCalled();
   });
 

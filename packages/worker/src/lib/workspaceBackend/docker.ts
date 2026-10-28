@@ -375,6 +375,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   ): Promise<CapturedResult> {
     return spawnCaptureAsync('docker', ephemeralArgs(spec, false), {
       heartbeatLabel: opts.heartbeatLabel,
+      ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
       ...(opts.onStdoutLine ? { onStdoutLine: opts.onStdoutLine } : {}),
       timeoutMs: opts.timeoutMs,
     });
@@ -386,6 +387,7 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
   ): Promise<CapturedResult> {
     return spawnCaptureAsync('docker', ephemeralArgs(spec, true), {
       heartbeatLabel: opts.heartbeatLabel,
+      ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
       timeoutMs: opts.timeoutMs ?? 60_000,
     });
   }
@@ -456,6 +458,8 @@ export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): 
     ...(spec.addHosts ?? []).map((h) => `--add-host=${h}`),
     ...(spec.reachWorker ? [workerHostEntry()] : []),
     ...(spec.env ?? []).flatMap((pair) => ['-e', pair]),
+    // Named without a value: docker resolves it from the client's environment.
+    ...secretEnvFlags(spec.secretEnv),
     ...volumeArgs,
     ...(spec.workdir ? ['-w', spec.workdir] : []),
   ];

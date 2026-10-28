@@ -36,6 +36,8 @@ import {
 } from './ephemeralContainer.js';
 import { spawnCaptureAsync } from './execUtils.js';
 
+type SpawnCall = [string, string[], { env?: Record<string, string> }];
+
 const BASE = {
   command: 'echo hello',
   image: 'alpine:latest',
@@ -336,6 +338,20 @@ describe('runSidecarContainer request timeouts (docker + fetch mocked)', () => {
     expect(request[1].signal).toBeInstanceOf(AbortSignal);
   });
 
+  it('starts the detached container with a secret by name, its value in the child env', async () => {
+    vi.mocked(spawnCaptureAsync).mockClear();
+    await runSidecarContainer({
+      image: 'node:24-alpine',
+      port: 8080,
+      secretEnv: { YARN_NPM_AUTH_TOKEN: 'proxy-tok-s3cret' },
+      workspaceMount: 'cstep-abc',
+    });
+    const [, args, options] = vi.mocked(spawnCaptureAsync).mock.calls[0] as unknown as SpawnCall;
+    expect(args).toEqual(expect.arrayContaining(['-d', '-e', 'YARN_NPM_AUTH_TOKEN']));
+    expect(JSON.stringify(args)).not.toContain('proxy-tok-s3cret');
+    expect(options.env).toEqual({ YARN_NPM_AUTH_TOKEN: 'proxy-tok-s3cret' });
+  });
+
   it('bounds the request by the step timeoutMs, defaulting to 600s and capped at 50 minutes', async () => {
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
     await runSidecarContainer({
@@ -379,6 +395,29 @@ describe('runSidecarContainer request timeouts (docker + fetch mocked)', () => {
         workspaceMount: 'cstep-abc',
       })
     ).rejects.toThrow(/sidecar not ready within 300ms/);
+  });
+});
+
+describe('secretEnv', () => {
+  const SECRET = 'proxy-tok-s3cret';
+  const withSecret = { ...BASE, secretEnv: { YARN_NPM_AUTH_TOKEN: SECRET } };
+
+  it('runEphemeralContainer names the secret in argv and passes the value as the child env', async () => {
+    vi.mocked(spawnCaptureAsync).mockClear();
+    await runEphemeralContainer(withSecret);
+    const [cmd, args, options] = vi.mocked(spawnCaptureAsync).mock.calls[0] as unknown as SpawnCall;
+    expect(cmd).toBe('docker');
+    expect(args).toEqual(expect.arrayContaining(['-e', 'YARN_NPM_AUTH_TOKEN']));
+    expect(JSON.stringify(args)).not.toContain(SECRET);
+    expect(options.env).toEqual({ YARN_NPM_AUTH_TOKEN: SECRET });
+  });
+
+  it('refuses a secret name that is not a plain identifier, before docker runs', async () => {
+    vi.mocked(spawnCaptureAsync).mockClear();
+    await expect(
+      runEphemeralContainer({ ...BASE, secretEnv: { 'bad-name': SECRET } })
+    ).rejects.toThrow(/environment variable name/);
+    expect(vi.mocked(spawnCaptureAsync)).not.toHaveBeenCalled();
   });
 });
 

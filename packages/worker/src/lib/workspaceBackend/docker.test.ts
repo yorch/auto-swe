@@ -144,6 +144,80 @@ require('node:fs').appendFileSync(
   });
 });
 
+describe('ephemeral containers with secretEnv', () => {
+  // A stand-in `docker`: records argv and the token variable it was handed.
+  const FAKE = `#!/usr/bin/env node
+require('node:fs').appendFileSync(
+  process.env.FAKE_LOG,
+  JSON.stringify({
+    args: process.argv.slice(2),
+    token: process.env.YARN_NPM_AUTH_TOKEN ?? null,
+  }) + '\\n'
+);
+`;
+  const TOKEN = 'proxy-tok-s3cret';
+  let dir: string;
+  let oldPath: string | undefined;
+  const calls = async (): Promise<{ args: string[]; token: string | null }[]> =>
+    (await fs.readFile(path.join(dir, 'log.jsonl'), 'utf8'))
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+  const spec = {
+    env: ['PLAIN=1'],
+    image: 'img:1',
+    name: 'shellstep-t1',
+    secretEnv: { YARN_NPM_AUTH_TOKEN: TOKEN },
+  };
+
+  beforeEach(async () => {
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), 'docker-ephemeral-'));
+    await fs.writeFile(path.join(dir, 'docker'), FAKE, { mode: 0o755 });
+    process.env.FAKE_LOG = path.join(dir, 'log.jsonl');
+    oldPath = process.env.PATH;
+    process.env.PATH = `${dir}${path.delimiter}${oldPath ?? ''}`;
+    delete process.env.YARN_NPM_AUTH_TOKEN;
+  });
+  afterEach(async () => {
+    process.env.PATH = oldPath;
+    delete process.env.FAKE_LOG;
+    await fs.rm(dir, { force: true, recursive: true });
+  });
+
+  it('ephemeralArgs names a secret without its value', () => {
+    for (const detached of [false, true]) {
+      const args = ephemeralArgs(spec, detached);
+      expect(args).toEqual(expect.arrayContaining(['-e', 'YARN_NPM_AUTH_TOKEN', 'PLAIN=1']));
+      expect(JSON.stringify(args)).not.toContain(TOKEN);
+      // Before the `--` that ends the options, like every other flag.
+      expect(args.indexOf('YARN_NPM_AUTH_TOKEN')).toBeLessThan(args.indexOf('--'));
+    }
+  });
+
+  it('ephemeralArgs refuses a secret name that is not a plain identifier', () => {
+    expect(() => ephemeralArgs({ image: 'img:1', secretEnv: { 'A=b': 'v' } }, false)).toThrow(
+      /invalid secret environment name/
+    );
+  });
+
+  it('runEphemeral hands the value over in the client environment only', async () => {
+    await dockerWorkspaceBackend().runEphemeral(spec, { heartbeatLabel: 't' });
+    const [run] = await calls();
+    expect(run?.args).toEqual(expect.arrayContaining(['-e', 'YARN_NPM_AUTH_TOKEN']));
+    expect(JSON.stringify(run?.args)).not.toContain(TOKEN);
+    expect(run?.token).toBe(TOKEN);
+    expect(process.env.YARN_NPM_AUTH_TOKEN).toBeUndefined();
+  });
+
+  it('startDetached does the same', async () => {
+    await dockerWorkspaceBackend().startDetached(spec, { heartbeatLabel: 't' });
+    const [run] = await calls();
+    expect(run?.args).toEqual(expect.arrayContaining(['-d', '-e', 'YARN_NPM_AUTH_TOKEN']));
+    expect(JSON.stringify(run?.args)).not.toContain(TOKEN);
+    expect(run?.token).toBe(TOKEN);
+  });
+});
+
 describe('create with secretEnv', () => {
   // A stand-in `docker`: records argv and the token variable it was handed, and
   // answers the keeper probe so `create` completes.

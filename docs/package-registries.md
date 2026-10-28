@@ -243,10 +243,6 @@ under 90%. Cache errors fall through to the upstream.
   in a shell step can likewise be overridden by the project's `.yarnrc.yml`.
 - **Container steps get no registry access.** A container-contract step has no repository and no
   lockfile.
-- **The step's proxy token passes through the worker's docker client arguments.** The npmrc
-  content reaches a shell step's helper container as an environment value, so it never sits in a
-  command line the author command can read, but it does pass through those arguments, like every
-  step env value.
 - **The cache holds tarballs only**; packuments are always re-fetched.
 - **Denials have no dedicated UI.** They surface as 403s to the installer and as `logWarn`
   entries on the run's activity.
