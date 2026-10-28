@@ -153,13 +153,16 @@ export async function loadRunTrackerScope(runInputId: string): Promise<TrackerRe
 export const TRACKER_SYNC_OUT_OF_SCOPE =
   "Tracker sync skipped: the ticket's repository is not one this run targets";
 
+/** The line a failed tracker sync logs. Fixed: it never carries an error or ticket text. */
+export const TRACKER_SYNC_FAILED = 'Tracker sync failed; continuing';
+
 export interface SyncTrackerOptions {
   /**
    * The run's `RunInput.id`. On the GitHub tracker the write goes only to a repository this run
    * targets; with no id there is no such repository, and nothing is written.
    */
   runInputId: string | null | undefined;
-  /** Receives {@link TRACKER_SYNC_OUT_OF_SCOPE}. Default: the console. */
+  /** Receives {@link TRACKER_SYNC_OUT_OF_SCOPE} and {@link TRACKER_SYNC_FAILED}. */
   warn?: (message: string, meta: Record<string, unknown>) => void;
   /** The provider's logger. Its warnings carry the raw provider error. */
   log?: { warn: (obj: unknown, msg?: string) => void };
@@ -171,9 +174,13 @@ export async function syncTrackerOnEvent(
   opts: SyncTrackerOptions
 ): Promise<void> {
   try {
-    // Every GitHub sync writes (a comment, a PR link posted as one, or closing the issue), and
-    // the ticket id is user-supplied; Jira and Linear ids name no repository.
+    // Every other GitHub sync writes (a comment, a PR link posted as one, or closing the issue),
+    // and the ticket id is user-supplied; Jira and Linear ids name no repository. Starting a
+    // workflow writes nothing on GitHub (it has no 'In Progress' transition), so it needs no check.
     if (config.provider === 'github') {
+      if (event.type === 'workflow_started') {
+        return;
+      }
       const scope = opts.runInputId ? await loadRunTrackerScope(opts.runInputId) : null;
       if (!scope || !isGitHubTicketInScope(event.issueId, config.baseUrl, scope)) {
         (opts.warn ?? console.warn)(TRACKER_SYNC_OUT_OF_SCOPE, {
@@ -188,8 +195,13 @@ export async function syncTrackerOnEvent(
       return;
     }
     await provider.syncOnEvent(event);
-  } catch (err) {
-    opts.log?.warn({ err, event }, 'Tracker sync failed; continuing');
+  } catch {
+    // Reported through `warn`, the sink every caller passes. The error is not logged here: it can
+    // carry provider text, and the provider's own `log` already reports what it chose to.
+    (opts.warn ?? console.warn)(TRACKER_SYNC_FAILED, {
+      event: event.type,
+      runInputId: opts.runInputId ?? null,
+    });
   }
 }
 

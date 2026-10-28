@@ -24,6 +24,7 @@ import type { ResolvedIssueTrackerConfig } from './integrations/registry.js';
 import {
   isGitHubTicketInScope,
   syncTrackerOnEvent,
+  TRACKER_SYNC_FAILED,
   TRACKER_SYNC_OUT_OF_SCOPE,
   type TrackerRepoScope,
   type TrackerScopeRepo,
@@ -188,10 +189,25 @@ describe('syncTrackerOnEvent', () => {
 
   it('writes nothing when the repository lookup fails', async () => {
     mocks.findRunInput.mockRejectedValue(new Error('db down'));
-    const log = { warn: vi.fn() };
-    await syncTrackerOnEvent(EVENT, GITHUB, { log, runInputId: 'wr-1' });
+    const warn = vi.fn();
+    await syncTrackerOnEvent(EVENT, GITHUB, { runInputId: 'wr-1', warn });
     expect(mocks.syncOnEvent).not.toHaveBeenCalled();
-    expect(log.warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(TRACKER_SYNC_FAILED, {
+      event: EVENT.type,
+      runInputId: 'wr-1',
+    });
+  });
+
+  it('does nothing, and reads nothing, for workflow_started on GitHub', async () => {
+    const warn = vi.fn();
+    await syncTrackerOnEvent({ ...EVENT, type: 'workflow_started' }, GITHUB, {
+      runInputId: 'wr-1',
+      warn,
+    });
+    expect(mocks.findRunInput).not.toHaveBeenCalled();
+    expect(mocks.syncOnEvent).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it.each(['jira', 'linear'] as const)('does not apply the repository check to %s', async (p) => {
