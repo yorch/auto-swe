@@ -183,3 +183,26 @@ public registry from inside a build), then running the four audit cases.
 After the fix all four audit cases pass locally with real npm, pnpm and Yarn 4. Not re-run here: the
 rest of that suite (it needs Yarn classic and Corepack from the curated Node image), so a CI run is
 still the authority for it.
+
+### Rebase onto main (after #529–#532)
+
+Read before reapplying: what changed on `main`, and whether it changed an assumption this branch made.
+
+| `main` change | Effect on this branch |
+|---|---|
+| #531: the registry proxy bounds buffered fetches (a per-registration `Semaphore`, 8 slots, 64 queued, 30 s wait), puts the upstream fetch and body read under a 20 s deadline, and frees a slot when the client hangs up. | The audit relay was a new buffered path with none of that: unbounded concurrency, no deadline, and a slot-less body read. Reapplying it as it was would have undone #531 for one route. It now takes a slot after the cheap checks, reads the client's body and the upstream's answer under the deadline, and releases on hang-up; four tests pin that. |
+| `Dockerfile.jvm` back to Temurin 21, Dependabot ignoring major bumps (LTS policy). | Consistent with the eval `jvm` base (the same digest) and the `eclipse-temurin:21-jdk-alpine` shell image. The docs say "Temurin JDK", not a version. |
+| Two new migrations at `20261028000000` and `20261028010000`. | The eval-case-stack migration shared the first prefix; renamed to `20261028020000` so it sorts after everything on `main`, as the Prisma skill requires. `migrations:check` passes. |
+| #530 keeps the git auth header out of exec argv. | Unrelated to this work, but it fixed the real-git suites that used to fail on a clean tree: the full run went from 12 failures to 2, and both pass alone. |
+| #531 `unrunnableTestCause` change in `utils.ts`. | The same file as this branch's `detectTestCommand` edit; separate functions, no interaction. |
+| Doc edits to `package-registries.md` and `repositories.md`. | Merged by hand: both texts kept. |
+
+Conflicts were confined to the proxy source and its test file. The test file's conflict markers cut
+through the end of `main`'s last test, so the file was rebuilt from `main`'s version plus this
+branch's block, not marker-resolved.
+
+Gates after the rebase: install `--immutable`, typecheck, build, biome (explicit dirs + `.github`),
+`docs:check`, `invariants:check`, `migrations:check`, the site build and the gateway/worker/web image
+builds pass. `yarn test`: 2 failures in `workspace.test.ts` that pass alone (80/80). The curated-image
+docker test passes for go, python and jvm (25), and the four audit cases pass with real npm, pnpm
+10.34.7 and Yarn 4.18.1.
