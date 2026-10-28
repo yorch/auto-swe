@@ -66,7 +66,7 @@ export function isGitHubTicketInRepos(
   return allowed.some((a) => a.owner.toLowerCase() === owner && a.repo.toLowerCase() === repo);
 }
 
-export class GitHubIssuesProviderimplements IssueTrackerProvider {
+export class GitHubIssuesProvider implements IssueTrackerProvider {
   private readonly apiToken: string | null;
   private readonly baseUrl: string;
   private readonly defaultRepo: { owner: string; repo: string } | undefined;
