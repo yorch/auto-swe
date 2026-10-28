@@ -81,9 +81,13 @@ spec:
     requests.memory: 200Gi
     requests.ephemeral-storage: 500Gi
 ---
-# What the worker needs in this namespace and nothing else: pods, and exec into them.
-# No secrets, no cluster-wide verbs. `pods/exec` is a shell in every workspace, so keep
-# anything else out of this namespace.
+# What the worker needs in this namespace and nothing else: pods, exec into them, and the
+# one Secret per pod that carries the registry-proxy token (the pod only references it, so
+# the token is not in the Pod object or its audit-log entries). The worker creates, patches
+# (to make the pod the owner, so the Secret is garbage-collected with it) and deletes those
+# Secrets; it never reads one, and no verb here lists or gets them. No cluster-wide verbs.
+# `pods/exec` is a shell in every workspace, so keep anything else out of this namespace
+# and never put another Secret here: anyone with `get secrets` can read the token.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -96,6 +100,9 @@ rules:
   - apiGroups: [""]
     resources: [pods/exec]
     verbs: [create]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, patch, delete]
 ---
 # ADJUST: the ServiceAccount the worker pod runs as.
 apiVersion: rbac.authorization.k8s.io/v1

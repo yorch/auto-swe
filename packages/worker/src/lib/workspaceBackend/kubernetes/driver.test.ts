@@ -108,6 +108,113 @@ describe('create', () => {
   });
 });
 
+describe('secretEnv at creation', () => {
+  const TOKEN = 'proxy-tok-s3cret';
+  const UID = '0a1b2c3d-1111-2222-3333-444455556666';
+  const withSecret: WorkspaceContainerSpec = { ...spec, secretEnv: { YARN_NPM_AUTH_TOKEN: TOKEN } };
+  const everything = async () => JSON.stringify(await calls());
+
+  it('creates the Secret from stdin before the Pod, and ties it to the pod', async () => {
+    await setPlan([
+      { match: 'jsonpath', stdout: UID },
+      { match: 'asw_ppid', stdout: '42\n' },
+    ]);
+    await backend.create(withSecret);
+
+    const [secretCall, podCall, patch, wait] = await calls();
+    expect(secretCall?.args).toEqual(['create', '--namespace', 'ns', '-f', '-']);
+    const secret = JSON.parse(secretCall?.stdin ?? '{}');
+    expect(secret).toMatchObject({ kind: 'Secret', metadata: { name: 'workspace-t1-env' } });
+    expect(Buffer.from(secret.data.YARN_NPM_AUTH_TOKEN, 'base64').toString()).toBe(TOKEN);
+
+    const pod = JSON.parse(podCall?.stdin ?? '{}');
+    expect(pod.kind).toBe('Pod');
+    expect(podCall?.stdin).not.toContain(TOKEN);
+    expect(podCall?.args.slice(-2)).toEqual(['-o', 'jsonpath={.metadata.uid}']);
+
+    expect(patch?.args.slice(0, 3)).toEqual(['patch', 'secret', 'workspace-t1-env']);
+    expect(patch?.args.join(' ')).toContain(UID);
+    expect(wait?.args).toContain('pod/workspace-t1');
+  });
+
+  it('never puts the value, or its base64, in any argv', async () => {
+    await setPlan([
+      { match: 'jsonpath', stdout: UID },
+      { match: 'asw_ppid', stdout: '42\n' },
+    ]);
+    await backend.create(withSecret);
+    await backend.remove('workspace-t1');
+    const all = await calls();
+    const b64 = Buffer.from(TOKEN).toString('base64');
+    const argv = all.map((c) => c.args.join(' ')).join('\n');
+    expect(argv).not.toContain(TOKEN);
+    expect(argv).not.toContain(b64);
+    // Only the Secret manifest, on stdin, holds it.
+    expect(all.filter((c) => c.stdin?.includes(b64))).toHaveLength(1);
+    expect(all.filter((c) => c.stdin?.includes(TOKEN))).toHaveLength(0);
+  });
+
+  it('makes no Secret without secretEnv', async () => {
+    await setPlan([{ match: 'asw_ppid', stdout: '42\n' }]);
+    await backend.create(spec);
+    const all = await calls();
+    expect(all.filter((c) => c.args[0] === 'create')).toHaveLength(1);
+    expect(all.some((c) => c.args.includes('secret'))).toBe(false);
+  });
+
+  it('deletes the Secret when the pod cannot be created', async () => {
+    await setPlan([{ code: 1, match: 'jsonpath', stderr: 'quota exceeded' }]);
+    await expect(backend.create(withSecret)).rejects.toThrow(/could not create the pod/);
+    const last = (await calls()).at(-1);
+    expect(last?.args).toEqual([
+      'delete',
+      'secret',
+      'workspace-t1-env',
+      '--namespace',
+      'ns',
+      '--ignore-not-found',
+    ]);
+  });
+
+  it('deletes the Secret when the pod never becomes ready', async () => {
+    await setPlan([
+      { match: 'jsonpath', stdout: UID },
+      { code: 1, match: 'wait', stderr: 'timed out' },
+    ]);
+    await expect(backend.create(withSecret)).rejects.toThrow(/did not become ready/);
+    expect((await calls()).at(-1)?.args.slice(0, 3)).toEqual([
+      'delete',
+      'secret',
+      'workspace-t1-env',
+    ]);
+  });
+
+  it('stops before the Pod when the Secret cannot be created, and scrubs the value from the error', async () => {
+    await setPlan([{ code: 1, match: 'create', stderr: `invalid value ${TOKEN}` }]);
+    const err = await backend.create(withSecret).catch((e: Error) => e);
+    expect((err as Error).message).toMatch(/could not create its secret/);
+    expect((err as Error).message).not.toContain(TOKEN);
+    expect((await calls()).some((c) => c.args.includes('pod/workspace-t1'))).toBe(false);
+    expect((await calls()).filter((c) => c.stdin?.includes('"Pod"'))).toEqual([]);
+  });
+
+  it('still creates the pod when it cannot be tied to the Secret', async () => {
+    await setPlan([
+      { match: 'jsonpath', stdout: UID },
+      { code: 1, match: 'patch', stderr: 'forbidden' },
+      { match: 'asw_ppid', stdout: '42\n' },
+    ]);
+    await expect(backend.create(withSecret)).resolves.toMatchObject({ id: 'workspace-t1' });
+  });
+
+  it('does not tie the Secret to anything when the pod uid is unreadable', async () => {
+    await setPlan([{ match: 'asw_ppid', stdout: '42\n' }]);
+    await backend.create(withSecret);
+    expect((await calls()).some((c) => c.args[0] === 'patch')).toBe(false);
+    expect(await everything()).not.toContain('ownerReferences');
+  });
+});
+
 describe('exec', () => {
   it('runs the command in the workspace container and returns its output', async () => {
     await setPlan([{ match: 'git status', stdout: 'clean\n' }]);
@@ -333,6 +440,16 @@ describe('pause and remove', () => {
     await setPlan([{ code: 1, match: 'delete', stderr: 'gone' }]);
     await expect(backend.remove('workspace-t1')).resolves.toBeUndefined();
     expect((await calls())[0]?.args.slice(0, 3)).toEqual(['delete', 'pod', 'workspace-t1']);
+  });
+
+  it('remove also deletes the pod’s Secret, idempotently, even when the pod delete failed', async () => {
+    await setPlan([{ code: 1, match: 'delete pod', stderr: 'forbidden' }]);
+    await backend.remove(backend.attach('workspace-t1'));
+    const [pod, secret] = await calls();
+    expect(pod?.args.slice(0, 3)).toEqual(['delete', 'pod', 'workspace-t1']);
+    expect(secret?.args).toEqual(
+      expect.arrayContaining(['delete', 'secret', 'workspace-t1-env', '--ignore-not-found'])
+    );
   });
 });
 

@@ -196,12 +196,21 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
       ...(spec.reachWorker ? [workerHostEntry()] : []),
     ].join(' ');
     const network = spec.network ? ` --network=${shellQuote(spec.network)}` : '';
-    const env = (spec.env ?? []).map((pair) => ` -e ${shellQuote(pair)}`).join('');
+    // A creation-time secret is named (`-e NAME`) and its value handed to the
+    // docker client in its environment, so it is on no command line and in no
+    // error text that echoes one.
+    const env = [
+      ...(spec.env ?? []).map((pair) => ` -e ${shellQuote(pair)}`),
+      ...secretEnvNames(spec.secretEnv).map((name) => ` -e ${name}`),
+    ].join('');
     // `memory` is a config string, so shell-quote it (the numeric caps can't
     // carry shell metacharacters); '--' separates docker flags from the image.
     await execShellAsync(
       `docker run -d --name ${spec.name} --init ${dns} --memory=${shellQuote(spec.memory)} --cpus=${spec.cpus} --pids-limit=${spec.pidsLimit} --cap-drop=ALL --security-opt=no-new-privileges ${addHosts}${network}${env} -- ${shellQuote(spec.image)} sleep infinity`,
-      { heartbeatLabel: 'workspace: starting container' }
+      {
+        heartbeatLabel: 'workspace: starting container',
+        ...(spec.secretEnv ? { env: spec.secretEnv } : {}),
+      }
     );
 
     // Record the keeper PID now, while the `sleep infinity` under `--init` is

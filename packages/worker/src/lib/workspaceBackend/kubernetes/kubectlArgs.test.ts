@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  createFromStdinArgs,
+  createPodArgs,
   deletePodArgs,
+  deleteSecretArgs,
   execArgs,
   execPrefix,
+  ownSecretArgs,
   secretStdinPreamble,
   tarOutArgs,
 } from './kubectlArgs.js';
@@ -107,5 +111,34 @@ describe('pod lifecycle argv', () => {
   it('execPrefix marks interactivity', () => {
     expect(execPrefix(ref, true)[1]).toBe('-i');
     expect(execPrefix(ref, false)).not.toContain('-i');
+  });
+});
+
+describe('secret and pod lifecycle args', () => {
+  it('creates from stdin, printing the pod uid only when asked', () => {
+    expect(createFromStdinArgs('ns')).toEqual(['create', '--namespace', 'ns', '-f', '-']);
+    expect(createPodArgs('ns', false)).toEqual(createFromStdinArgs('ns'));
+    expect(createPodArgs('ns', true).slice(-2)).toEqual(['-o', 'jsonpath={.metadata.uid}']);
+  });
+
+  it('deletes a secret by name and tolerates a missing one', () => {
+    expect(deleteSecretArgs('ns', 'p-env')).toEqual([
+      'delete',
+      'secret',
+      'p-env',
+      '--namespace',
+      'ns',
+      '--ignore-not-found',
+    ]);
+  });
+
+  it('owns the secret by the pod’s uid without blocking the pod’s deletion', () => {
+    const args = ownSecretArgs('ns', 'p-env', 'p', 'uid-1');
+    expect(args.slice(0, 3)).toEqual(['patch', 'secret', 'p-env']);
+    expect(args).toContain('--type=merge');
+    expect(JSON.parse(args[7] ?? '{}')).toEqual({
+      metadata: { ownerReferences: [{ apiVersion: 'v1', kind: 'Pod', name: 'p', uid: 'uid-1' }] },
+    });
+    expect(args.join(' ')).not.toContain('blockOwnerDeletion');
   });
 });

@@ -103,15 +103,22 @@ export async function assertNetworkPolicyEnforced(deps: ReadyDeps): Promise<void
   }
 }
 
+/** The verbs the worker needs, by resource: pods and their exec, and each pod's Secret. */
+const REQUIRED_VERBS: [resource: string, verbs: string[]][] = [
+  ['pods', ['create', 'get', 'delete']],
+  ['pods/exec', ['create']],
+  ['secrets', ['create', 'patch', 'delete']],
+];
+
 /**
  * The worker may create, exec into and delete pods in the workspace
- * namespace. Cheap to check, and a missing verb otherwise surfaces as a
+ * namespace, and create, patch and delete the Secret that carries a pod's
+ * credentials (never read it). Cheap to check, and a missing verb otherwise surfaces as a
  * Forbidden halfway through someone's first run.
  */
 export async function assertWorkspaceRbac(): Promise<void> {
   const { kubectl, namespace } = resolveWorkspaceInfra().kubernetes;
-  for (const resource of ['pods', 'pods/exec']) {
-    const verbs = resource === 'pods' ? ['create', 'get', 'delete'] : ['create'];
+  for (const [resource, verbs] of REQUIRED_VERBS) {
     for (const verb of verbs) {
       const result = await spawnCaptureAsync(
         kubectl,
