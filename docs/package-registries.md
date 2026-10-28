@@ -67,6 +67,13 @@ each scope) a team row beats a global one.
 These env keys beat a project `.npmrc` or `.yarnrc.yml`, which is why the default registry goes
 through env.
 
+The two token variables (`YARN_NPM_AUTH_TOKEN`, `COREPACK_NPM_TOKEN`) are the workspace's
+`secretEnv`, set when the container is created. On Docker they are passed as `-e NAME` with the
+value in the docker client's environment. On Kubernetes they come from a per-pod `Secret` through
+`secretKeyRef`, so the Pod object never holds the token (see
+[`architecture.md`](./architecture.md#kubernetes-backend)). The npmrc, which carries the token
+too, is written into the pod through stdin.
+
 **The generated npmrc** is written `chmod 600` both to `NPM_CONFIG_USERCONFIG` and to the exec
 user's `$HOME/.npmrc`. It holds:
 - a host-level `//host:port/:_authToken` line and `always-auth=true`
