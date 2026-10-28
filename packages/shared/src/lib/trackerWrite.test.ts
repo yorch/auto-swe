@@ -46,17 +46,15 @@ describe('tracker writes on the GitHub tracker', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
-  it.each([
-    'victim-org/private-repo',
-    'acme/web#9',
-    'acme',
-    'acme/web/extra',
-  ])('refuses %j and creates nothing', async (key) => {
-    expect(await createTrackerEpic(GITHUB, EPIC, key, { scope: SCOPE, warn })).toBeNull();
-    expect(await createTrackerStory(GITHUB, STORY, key, null, { scope: SCOPE, warn })).toBeNull();
-    expect(mocks.createIssue).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(TRACKER_PROJECT_OUT_OF_SCOPE);
-  });
+  it.each(['victim-org/private-repo', 'acme/web#9', 'acme', 'acme/web/extra'])(
+    'refuses %j and creates nothing',
+    async (key) => {
+      expect(await createTrackerEpic(GITHUB, EPIC, key, { scope: SCOPE, warn })).toBeNull();
+      expect(await createTrackerStory(GITHUB, STORY, key, null, { scope: SCOPE, warn })).toBeNull();
+      expect(mocks.createIssue).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(TRACKER_PROJECT_OUT_OF_SCOPE);
+    }
+  );
 
   it('refuses a project key when no scope could be loaded', async () => {
     expect(await createTrackerEpic(GITHUB, EPIC, 'acme/web', { scope: null, warn })).toBeNull();
