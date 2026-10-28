@@ -671,7 +671,10 @@ export async function createWorkspace(
     // A resolution/registration failure fails workspace creation — a workspace
     // with the wrong registries (or none, when some should apply) is not safe
     // to hand the agent.
-    throw redactExecError(err instanceof Error ? err : new Error(String(err)), cloneSecrets);
+    // redactExecError scrubs in place and returns nothing: throw the error itself.
+    const failure = err instanceof Error ? err : new Error(String(err));
+    redactExecError(failure, cloneSecrets);
+    throw failure;
   }
   let handle: WorkspaceHandle = backend.attach(containerName);
   try {
