@@ -1779,6 +1779,33 @@ describe('finalizeWorkflowRun', () => {
     findRun.mockReset();
   });
 
+  it("scopes the terminal tracker sync to the run's request", async () => {
+    const findRun = vi.mocked(prisma.workflowRun.findUnique);
+    const tracker = vi.mocked(syncTrackerOnEvent);
+    tracker.mockReset();
+    tracker.mockResolvedValue(undefined as never);
+    updateManyRuns.mockReset();
+    updateManyRuns.mockResolvedValue({ count: 1 } as never);
+    findRun.mockResolvedValue({
+      endedAt: null,
+      workflowId: 'eng-x',
+      workRequest: {
+        activeWorkflows: [],
+        connection: { team: { orgId: 'org-1' } },
+        externalTicketId: 'acme/web#1',
+        payload: null,
+      },
+      workRequestId: 'wr-9',
+    } as never);
+    await finalizeRun('run-w', 'SUCCESS', undefined, 'worker');
+    expect(tracker).toHaveBeenCalledWith(
+      { issueId: 'acme/web#1', type: 'workflow_completed' },
+      expect.anything(),
+      expect.objectContaining({ runInputId: 'wr-9' })
+    );
+    findRun.mockReset();
+  });
+
   it('does not post a reaped channel task into its Slack thread, but the worker finalize does', async () => {
     const findRun = vi.mocked(prisma.workflowRun.findUnique);
     const post = vi.mocked(postSlackThreadMessage);

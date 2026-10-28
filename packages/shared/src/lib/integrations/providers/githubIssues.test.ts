@@ -1,25 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import {
-  GitHubIssuesProvider,
-  isGitHubTicketInRepos,
-  parseGitHubTicketId,
-} from './githubIssues.js';
-
-describe('isGitHubTicketInRepos', () => {
-  const allowed = [{ owner: 'Acme', repo: 'Web' }];
-
-  it('accepts an issue in an allowed repository, ignoring case', () => {
-    expect(isGitHubTicketInRepos('acme/web#1', allowed)).toBe(true);
-    expect(isGitHubTicketInRepos('ACME/WEB#1', allowed)).toBe(true);
-  });
-
-  it('refuses another repository, another owner and a bare number', () => {
-    expect(isGitHubTicketInRepos('attacker/web#1', allowed)).toBe(false);
-    expect(isGitHubTicketInRepos('acme/other#1', allowed)).toBe(false);
-    expect(isGitHubTicketInRepos('#1', allowed)).toBe(false);
-    expect(isGitHubTicketInRepos('acme/web#1', [])).toBe(false);
-  });
-});
+import { GitHubIssuesProvider, parseGitHubTicketId } from './githubIssues.js';
 
 describe('parseGitHubTicketId', () => {
   const defaultRepo = { owner: 'acme', repo: 'api' };

@@ -300,7 +300,8 @@ export async function executeImplementation(
         isTicket
           ? syncTrackerOnEvent(
               { issueId: request.externalTicketId, type: 'workflow_started' },
-              await resolveIssueTrackerConfig()
+              await resolveIssueTrackerConfig(),
+              { runInputId: request.workRequestId, warn: logWarn }
             )
           : undefined
       )

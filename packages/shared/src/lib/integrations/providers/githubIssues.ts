@@ -49,22 +49,8 @@ export function parseGitHubTicketId(
   return null;
 }
 
-/// Does `ticketId` name an issue in one of `allowed`? Owner and repo compare case-insensitively,
-/// as GitHub resolves them. An id with no owner/repo (a bare `#123`) never parses here, so it is
-/// refused. Callers that WRITE to a tracker with a user-supplied id gate on this, so the platform's
-/// tracker token cannot be pointed at a repository the run does not target.
-export function isGitHubTicketInRepos(
-  ticketId: string,
-  allowed: ReadonlyArray<{ owner: string; repo: string }>
-): boolean {
-  const parsed = parseGitHubTicketId(ticketId);
-  if (!parsed) {
-    return false;
-  }
-  const owner = parsed.owner.toLowerCase();
-  const repo = parsed.repo.toLowerCase();
-  return allowed.some((a) => a.owner.toLowerCase() === owner && a.repo.toLowerCase() === repo);
-}
+/** Where the GitHub tracker sends requests when its config names no base URL. */
+export const GITHUB_ISSUES_DEFAULT_BASE_URL = 'https://api.github.com';
 
 export class GitHubIssuesProvider implements IssueTrackerProvider {
   private readonly apiToken: string | null;
@@ -78,7 +64,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
     this.allowPrivate = config.allowPrivateNetwork === true;
     this.fetchImpl = config.fetchImpl;
     this.apiToken = config.apiToken ?? null;
-    this.baseUrl = (config.baseUrl ?? 'https://api.github.com').replace(/\/+$/, '');
+    this.baseUrl = (config.baseUrl ?? GITHUB_ISSUES_DEFAULT_BASE_URL).replace(/\/+$/, '');
     this.defaultRepo = config.defaultRepo;
     this.log = config.log;
   }

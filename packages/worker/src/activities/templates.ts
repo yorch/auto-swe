@@ -1251,7 +1251,8 @@ export async function finalizeRun(
               summary: `Workflow ended with status: ${finalStatus}`,
               type: 'workflow_failed',
             },
-        trackerConfig
+        trackerConfig,
+        { runInputId: run?.workRequestId, warn: logWarn }
       );
     } catch (err) {
       logError(`[finalizeRun] tracker sync failed for run ${runId}:`, {
