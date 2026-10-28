@@ -49,7 +49,24 @@ export function parseGitHubTicketId(
   return null;
 }
 
-export class GitHubIssuesProvider implements IssueTrackerProvider {
+/// Does `ticketId` name an issue in one of `allowed`? Owner and repo compare case-insensitively,
+/// as GitHub resolves them. An id with no owner/repo (a bare `#123`) never parses here, so it is
+/// refused. Callers that WRITE to a tracker with a user-supplied id gate on this, so the platform's
+/// tracker token cannot be pointed at a repository the run does not target.
+export function isGitHubTicketInRepos(
+  ticketId: string,
+  allowed: ReadonlyArray<{ owner: string; repo: string }>
+): boolean {
+  const parsed = parseGitHubTicketId(ticketId);
+  if (!parsed) {
+    return false;
+  }
+  const owner = parsed.owner.toLowerCase();
+  const repo = parsed.repo.toLowerCase();
+  return allowed.some((a) => a.owner.toLowerCase() === owner && a.repo.toLowerCase() === repo);
+}
+
+export class GitHubIssuesProviderimplements IssueTrackerProvider {
   private readonly apiToken: string | null;
   private readonly baseUrl: string;
   private readonly defaultRepo: { owner: string; repo: string } | undefined;
