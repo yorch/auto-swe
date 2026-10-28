@@ -16,6 +16,7 @@ import {
   type HarnessSessionFileRecord,
   type TranscriptRecorder,
 } from '../../lib/transcriptRecorder.js';
+import { isCredentialEnvName } from '../../lib/workspaceBackend/credentialEnv.js';
 import {
   HARNESS_DIR,
   HARNESS_HOME,
@@ -32,7 +33,6 @@ import { type HarnessRuntime, harnessRuntime } from '../harness/runtime.js';
 import { runningTotalsUsage, summedCallsUsage, type UsageTotals } from '../harness/usage.js';
 import type { McpTracer } from '../mcpTools.js';
 import { binarySha256, resolveClaudeBinary } from './binary.js';
-import { isCredentialEnvName } from '../../lib/workspaceBackend/credentialEnv.js';
 import { type ModelProxy, workerModelProxy } from './modelProxy.js';
 import {
   CLAUDE_CODE_CAPABILITIES,
