@@ -615,7 +615,10 @@ export async function decideUnderLock<F, X>(
     automation: Pick<AutomationRow, 'id' | 'cooldownMinutes' | 'maxRunsPerDay'>;
     ownerKey: string;
   },
-  source: Pick<EventSource<F, X>, 'inFlightLookbackMs' | 'key' | 'ownOutputFrom'>,
+  source: Pick<
+    EventSource<F, X>,
+    'inFlightAlsoFrom' | 'inFlightLookbackMs' | 'key' | 'ownOutputFrom'
+  >,
   keys: { scope: string; subject: string },
   now: Date,
   /** Whether Temporal says an execution is over. Throws when Temporal cannot say. */
@@ -675,6 +678,9 @@ export async function decideUnderLock<F, X>(
       ...startedOnRepo,
       createdAt: { gte: new Date(now.getTime() - source.inFlightLookbackMs) },
       scopeKey: keys.scope,
+      // A run another source started on the same scope (a Jira ticket both Jira sources watch)
+      // is as open a run on it as this source's own.
+      source: { in: [source.key, ...(source.inFlightAlsoFrom ?? [])] },
       temporalWorkflowId: { not: null },
     },
   });

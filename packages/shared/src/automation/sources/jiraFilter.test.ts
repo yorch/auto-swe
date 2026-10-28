@@ -159,9 +159,42 @@ describe('jiraFilterStatusChangedSource', () => {
     );
   });
 
-  it('counts one subject and scope per issue, so a second transition waits for an open run', () => {
-    expect(statusSrc.keys(sfacts)).toEqual({ scope: 'jira-pay-12', subject: 'jira-pay-12' });
+  it('makes each (issue, status) its own subject and the issue the scope', () => {
+    expect(statusSrc.keys(sfacts)).toEqual({
+      scope: 'jira-pay-12',
+      subject: 'jira-pay-12#in progress',
+    });
+    expect(statusSrc.keys({ ...sfacts, status: 'Done' }).subject).not.toBe(
+      statusSrc.keys(sfacts).subject
+    );
+    expect(statusSrc.keys({ ...sfacts, status: 'Done' }).scope).toBe(statusSrc.keys(sfacts).scope);
   });
+
+  it('shares its in-flight guard with the new-issue source, in both directions', () => {
+    expect(statusSrc.inFlightAlsoFrom).toEqual([JIRA_FILTER_NEW_ISSUE]);
+    expect(src.inFlightAlsoFrom).toEqual([JIRA_FILTER_STATUS_CHANGED]);
+  });
+
+  it.each(["$'", '$&', '$$', '$`', '$1'])(
+    'keeps a status containing %s as literal text inside the ticket block',
+    (status) => {
+      const run = statusSrc.run({
+        ...sfacts,
+        description: 'Body text',
+        status,
+        summary: 'Health check',
+      });
+      const open = run.description.indexOf('<ticket>');
+      const close = run.description.lastIndexOf('</ticket>');
+      expect(run.description).toContain(`<ticket>\nStatus: ${status}\n\n`);
+      // The text is neither duplicated nor spliced outside the block.
+      expect(run.description.split('Body text')).toHaveLength(2);
+      expect(run.description.indexOf('Body text')).toBeGreaterThan(open);
+      expect(run.description.indexOf('Body text')).toBeLessThan(close);
+      expect(run.description.slice(0, open)).not.toContain('Status:');
+      expect(run.description.slice(close + '</ticket>'.length)).toBe('');
+    }
+  );
 
   it('gives each status its own workflow id and the same status the same one', () => {
     const id = (status: string) => statusSrc.workflowId.part({ ...sfacts, status });

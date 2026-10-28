@@ -232,4 +232,10 @@ export interface EventSource<Filters = unknown, Facts = unknown> {
    * pushed. A source never lists itself — its own output already counts.
    */
   ownOutputFrom?: readonly string[];
+  /**
+   * Other sources whose started runs count as this source's own when asking whether an earlier
+   * run on the same scope is still in progress, so two sources that act on one subject never run
+   * on it at once. Only the in-flight guard reads it; subject, cooldown and cap stay per source.
+   */
+  inFlightAlsoFrom?: readonly string[];
 }

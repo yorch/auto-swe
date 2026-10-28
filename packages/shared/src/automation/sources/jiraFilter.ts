@@ -87,6 +87,7 @@ export const jiraFilterNewIssueSource: EventSource<JiraFilterFilters, JiraFilter
   ],
   filters: JiraFilterFiltersSchema,
   // A run can wait days for review and merge; a ticket is one subject for as long as that.
+  inFlightAlsoFrom: [JIRA_FILTER_STATUS_CHANGED],
   inFlightLookbackMs: 14 * 24 * 60 * 60 * 1000,
   key: JIRA_FILTER_NEW_ISSUE,
   // The issue is both subject and scope: one run per ticket, and a cooldown that never links
@@ -199,20 +200,21 @@ export const jiraFilterStatusChangedSource: EventSource<JiraFilterFilters, JiraS
         label: 'JQL',
       },
     ],
+    // Each (issue, status) is its own subject, so a later transition can start a run of its own;
+    // the issue is the scope, so the cooldown and the in-flight guard still see one ticket.
+    inFlightAlsoFrom: [JIRA_FILTER_NEW_ISSUE],
     key: JIRA_FILTER_STATUS_CHANGED,
-    // The issue is the subject, so one open run per ticket; the status is not part of it.
-    keys: (x) => ({ scope: keyOf(x), subject: keyOf(x) }),
+    keys: (x) => ({ scope: keyOf(x), subject: pairKeyOf(x) }),
     label: 'When an issue in a Jira filter changes status',
     run: (x) => {
       const base = jiraFilterNewIssueSource.run(x);
+      // The status is Jira's own text, typed by an administrator; it sits inside the block that
+      // is marked as data, with the ticket text, and not among the platform's own lines. A
+      // replacer function, because a string replacement would expand `$&` and `$'` in it.
+      const status = `Status: ${statusLine(x.status)}\n\n`;
       return {
         ...base,
-        // The status is Jira's own text, typed by an administrator; it sits inside the block that
-        // is marked as data, with the ticket text, and not among the platform's own lines.
-        description: base.description.replace(
-          '<ticket>\n',
-          `<ticket>\nStatus: ${statusLine(x.status)}\n\n`
-        ),
+        description: base.description.replace('<ticket>\n', () => `<ticket>\n${status}`),
       };
     },
     samples: () => [sampleStatusFacts('PROJ-1')],
