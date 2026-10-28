@@ -22,7 +22,7 @@ import { runAgent } from './runAgent.js';
 /**
  * One turn of an in-app assistant conversation: answer the user's latest message as the
  * `appAssistant` agent, writing the reply into its row as it is produced so the gateway can stream
- * it to the panel (`docs/adr/in-app-assistant.md` D6).
+ * it to the panel (`docs/history/in-app-assistant.md` D6).
  *
  * The tools call the gateway with the turn's assistant token and never read the database. This
  * activity does — the conversation it was handed, and nothing else — because it is the platform

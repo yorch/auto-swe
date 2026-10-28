@@ -16,6 +16,7 @@ import { MockActivityEnvironment } from '@temporalio/testing';
 import { MockLanguageModelV4 } from 'ai/test';
 import { buildMetadataBlockArgs } from '../../activities/workspace.js';
 import type { AgentTracer } from '../../lib/agentTracer.js';
+import { secretEnvFlags } from '../../lib/workspaceBackend/secretEnvName.js';
 import { WORKSPACE_DIR } from '../harness/adapter.js';
 import { piRuntime } from './runtime.js';
 import { DEFAULT_SYSTEM, redactUrlCredentials, type SmokeOptions } from './smokeArgs.js';
@@ -529,7 +530,7 @@ async function startWorkspace(
     command: string,
     o?: { timeoutMs?: number; secretEnv?: Record<string, string> }
   ) => {
-    const secretArgs = Object.keys(o?.secretEnv ?? {}).flatMap((key) => ['-e', key]);
+    const secretArgs = secretEnvFlags(o?.secretEnv);
     const argv = ['exec', '-w', WORKSPACE_DIR, ...secretArgs, name, 'sh', '-c', command];
     return (
       await run('docker', argv, {

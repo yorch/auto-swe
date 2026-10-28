@@ -612,6 +612,9 @@ export function claudeCodeAdapter(
               'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1',
             ],
             leadingEnv: sdkEnvPairs(spawnOptions.env),
+            // Never empty: a credential is only written with a trimmed, non-empty key
+            // (gateway modelConfig.ts `min(1)`), and the proxied path's token is minted
+            // per turn. The Kubernetes backend refuses an empty secret before it starts.
             secretEnv: { ANTHROPIC_API_KEY: endpoint.apiKey },
             signal: spawnOptions.signal,
           }),

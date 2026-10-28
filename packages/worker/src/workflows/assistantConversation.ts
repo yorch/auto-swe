@@ -16,7 +16,7 @@ import { RETRY_RUN_RECORD, RETRY_SINGLE_ATTEMPT, T_2M, T_15M, T_30S } from './pr
 
 /**
  * AssistantConversationWorkflow — one in-app assistant conversation
- * (`docs/adr/in-app-assistant.md` D6).
+ * (`docs/history/in-app-assistant.md` D6).
  *
  * The gateway starts it with `signalWithStart` under the id `assistant-<conversationId>` and hands
  * it each turn as an `assistantTurn` signal: the reply row to fill and the assistant token the

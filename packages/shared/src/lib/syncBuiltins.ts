@@ -561,7 +561,7 @@ export const SWE_AGENTS: ReadonlyArray<SweAgentDef> = [
   {
     // The dashboard's in-app assistant. Acts as the signed-in user through the
     // gateway's own routes, with a token bound to that user and one conversation
-    // (`docs/adr/in-app-assistant.md`). Resolved on demand by the conversation
+    // (`docs/history/in-app-assistant.md`). Resolved on demand by the conversation
     // workflow's turn activity, so not in MODEL_BACKED_AGENT_KEYS: it never gates
     // worker boot. Its tools are bound in code, like the memory tools.
     description: 'Answers questions in the dashboard panel, acting as the signed-in user.',

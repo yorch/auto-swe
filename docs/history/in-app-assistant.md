@@ -1,5 +1,7 @@
 # In-app assistant — decision log
 
+> Frozen decision log for finished work. The code and the living docs in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 A chat assistant in the web dashboard that can answer how the platform works, author and run
 workflows, troubleshoot failed runs and configuration, and take any other action the invoking user
 could take — as that user, never more.

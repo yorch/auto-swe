@@ -21,7 +21,7 @@ import { sendError } from '../lib/httpErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
- * The in-app assistant's conversations (`docs/adr/in-app-assistant.md` D6, D8): the dashboard panel
+ * The in-app assistant's conversations (`docs/history/in-app-assistant.md` D6, D8): the dashboard panel
  * lists, opens and posts to them here, and reads a reply as it streams.
  *
  * A conversation is private to its user: every query here filters on the caller's id, whatever

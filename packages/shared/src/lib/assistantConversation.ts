@@ -5,7 +5,7 @@ import { z } from 'zod';
  * agree on: the conversation workflow's id and signal, the page context a message carries, and the
  * shape of a reply's tool steps. Pure, so the dashboard can import it.
  *
- * See `docs/adr/in-app-assistant.md`.
+ * See `docs/history/in-app-assistant.md`.
  */
 
 /** The workflow type the gateway starts for a conversation. */

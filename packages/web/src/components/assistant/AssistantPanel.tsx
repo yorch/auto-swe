@@ -38,7 +38,7 @@ import { useAssistantStore } from '@/stores/assistantStore';
 export const ASSISTANT_PANEL_ID = 'assistant-panel';
 
 /**
- * The in-app assistant: a slide-out panel on every dashboard page (`docs/adr/in-app-assistant.md`
+ * The in-app assistant: a slide-out panel on every dashboard page (`docs/history/in-app-assistant.md`
  * D8). Each message carries the page it was sent from, the reply streams in as it is written, and
  * the assistant's tool calls show as collapsible steps under it.
  */

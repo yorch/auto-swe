@@ -146,5 +146,6 @@ The original 4-phase plan and its status matrix ([`PLAN.md`](./history/PLAN.md),
 ([`agentic-workflow-platform-prd.md`](./history/agentic-workflow-platform-prd.md)) and the
 configurable-workflow-engine and platform-pivot roadmaps that carried it out, with their per-phase
 build plans, the evals phase plans, the 2026-06 and 2026-07 repository
-reviews, and research on agent dreaming, skills, Claude Tag, and LangChain Deep Agents all live
+reviews, the decision logs of finished features (in-app assistant, GitHub Enterprise sign-in,
+Jira filter polling, Qodo follow-ups, author identity and support info), and research on agent dreaming, skills, Claude Tag, and LangChain Deep Agents all live
 there.

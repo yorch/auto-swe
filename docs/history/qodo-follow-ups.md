@@ -1,5 +1,7 @@
 # Qodo follow-ups — decision log
 
+> Frozen decision log for finished work. The code and the living docs in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 The spec and plan for this work were removed before merge. The pull request description carries the design and the task breakdown, and the decisions below are the lasting record.
 
 ## D1 — 2026-10-27 — Task 1: Set the Qodo fields from the /mcp page

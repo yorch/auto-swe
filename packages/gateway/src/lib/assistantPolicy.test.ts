@@ -22,7 +22,7 @@ const RECEIVERS =
 const ALIASES = /^\/api\/v1\/(admin|inbox)(\/|$)/;
 
 /**
- * Tripwire for the categories the assistant never touches (`docs/adr/in-app-assistant.md` D3). A
+ * Tripwire for the categories the assistant never touches (`docs/history/in-app-assistant.md` D3). A
  * route matching one of these must be refused; a false positive is fixed by narrowing the pattern,
  * never by loosening the table.
  */

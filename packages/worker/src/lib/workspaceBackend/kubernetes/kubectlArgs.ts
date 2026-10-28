@@ -1,6 +1,5 @@
+import { assertSecretEnvName } from '../secretEnvName.js';
 import { WORKSPACE_CONTAINER } from './podSpec.js';
-
-const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /**
  * The shell run in the pod for every exec. `$0` is the working directory;
@@ -69,9 +68,7 @@ export function execArgs(
 export function secretStdinPreamble(secrets: Record<string, string>): string {
   let out = '';
   for (const [name, value] of Object.entries(secrets)) {
-    if (!ENV_NAME_RE.test(name)) {
-      throw new Error(`invalid secret environment name: ${name}`);
-    }
+    assertSecretEnvName(name);
     if (value === '' || /[\r\n\0]/.test(value)) {
       throw new Error(`secret ${name} cannot be delivered: empty or contains a line break`);
     }

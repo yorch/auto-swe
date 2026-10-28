@@ -1,5 +1,7 @@
 # Decision log: whitelabel git author and support info
 
+> Frozen decision log for finished work. The code and the living docs in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 ## D1 — 2026-10-23 — Task 1: Define the `git.*` settings and the `git` group
 
 **Status**: Accepted

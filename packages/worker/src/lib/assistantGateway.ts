@@ -5,7 +5,7 @@ import { resolveGatewayInternalUrl } from '@auto-swe/shared/lib/systemConfig';
  * HTTP, with the assistant token the gateway minted for this turn. The token carries the user's
  * identity and the conversation, so every route's role gate, visibility filter and audit apply to
  * the assistant as they do to the user, and `assistantPolicy.ts` decides which routes it may call
- * at all. The tools never read the database themselves (`docs/adr/in-app-assistant.md` D1, D6).
+ * at all. The tools never read the database themselves (`docs/history/in-app-assistant.md` D1, D6).
  */
 
 export interface GatewayResponse {

@@ -5,7 +5,7 @@ import { stableStringify } from './stableJson.js';
  * The parts of an in-app assistant's request to the gateway that both sides must agree on: the gateway
  * mints and checks the assistant's token, and the worker that runs the assistant presents it.
  *
- * See `docs/adr/in-app-assistant.md`.
+ * See `docs/history/in-app-assistant.md`.
  */
 
 /**

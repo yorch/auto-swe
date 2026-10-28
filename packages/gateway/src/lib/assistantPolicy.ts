@@ -4,7 +4,7 @@
  * The assistant calls the same routes the dashboard does, as the user it acts for, so a route's own
  * role gate, visibility filter and audit apply to it unchanged. This table decides the one thing
  * those checks cannot: whether a call made by the assistant, rather than by the person, is allowed
- * at all, and whether it needs the person's confirmation first (`docs/adr/in-app-assistant.md`).
+ * at all, and whether it needs the person's confirmation first (`docs/history/in-app-assistant.md`).
  *
  * - `read` — the assistant may call it freely. Every GET that is not refused below.
  * - `{ read: reason }` — a non-GET route that stores nothing, so it is treated as a read. The reason

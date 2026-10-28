@@ -4,6 +4,7 @@ import {
   ISSUE_LABELED,
   issueLabeledSource,
   JIRA_FILTER_NEW_ISSUE,
+  PR_FEEDBACK,
   WORKFLOW_RUN_FAILED,
   workflowRunFailedSource,
 } from '@auto-swe/shared/automation';
@@ -542,6 +543,29 @@ describe.skipIf(!enabled)('event-automation decisions against Postgres', () => {
       data: { ...base, filters: { jql: 'project = PAY' } },
     });
     await prisma.automation.delete({ where: { id: ok.id } });
+  });
+
+  it('accepts the Qodo trigger on a pull-request feedback automation, and only known triggers', async () => {
+    const base = { connectionId: repoId, name: 'feedback', source: PR_FEEDBACK };
+    const pullRequests = ['platform'];
+    for (const bad of [
+      { ...base, filters: { pullRequests, triggers: ['qodo_finding'] } },
+      { ...base, filters: { pullRequests, triggers: ['command', 'unknown'] } },
+      { ...base, filters: { pullRequests, triggers: [] } },
+      { ...base, filters: { pullRequests, triggers: 'qodo_findings' } },
+      { ...base, filters: { pullRequests: [], triggers: ['qodo_findings'] } },
+      { ...base, filters: { pullRequests: ['strangers'], triggers: ['qodo_findings'] } },
+      { ...base, filters: { triggers: ['qodo_findings'] } },
+      { ...base, filters: {} },
+    ]) {
+      await expect(prisma.automation.create({ data: bad })).rejects.toThrow();
+    }
+    for (const triggers of [['qodo_findings'], ['changes_requested', 'command', 'qodo_findings']]) {
+      const ok = await prisma.automation.create({
+        data: { ...base, filters: { pullRequests, triggers } },
+      });
+      await prisma.automation.delete({ where: { id: ok.id } });
+    }
   });
 
   it('deletes a Jira automation’s poll state and seen issues with it, and keeps seen keys lower-case', async () => {

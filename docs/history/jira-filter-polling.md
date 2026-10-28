@@ -1,5 +1,7 @@
 # Jira filter polling — decision log
 
+> Frozen decision log for finished work. The code and the living docs in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 ## D1 — 2026-10-27 — Task 1: Add `searchIssues` to the Jira provider
 
 **Status**: Accepted

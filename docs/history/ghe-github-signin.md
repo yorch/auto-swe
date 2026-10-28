@@ -1,5 +1,7 @@
 # GitHub Enterprise sign-in — decision log
 
+> Frozen decision log for finished work. The code and the living docs in [`docs/`](../README.md) are authoritative wherever they diverge.
+
 ## D1 — 2026-10-01 — Task 1: Fetch and map a GHE profile into a better-auth user
 
 **Status**: Accepted

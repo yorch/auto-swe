@@ -12,7 +12,7 @@ import { sendError } from '../lib/httpErrors.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 /**
- * Changes the in-app assistant proposes, and the user's answers to them (`docs/adr/in-app-assistant.md`).
+ * Changes the in-app assistant proposes, and the user's answers to them (`docs/history/in-app-assistant.md`).
  *
  * The assistant proposes; only the person confirms or declines, on their own session. A confirmed
  * action is spent by `requireAuth` when the assistant makes the call it describes, so these routes
