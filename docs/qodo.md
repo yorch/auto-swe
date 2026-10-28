@@ -98,7 +98,8 @@ the `get-pr-review-findings` tool with `{ pr_url }`, bounds the result to 50 fin
 to 200 and descriptions up to 2000 characters, strips control characters, and closes the MCP client
 when done. A finding whose title or description was withheld is still a finding: it is listed and
 counted with the placeholder text, and the severity and status fields it is counted by are not text
-a withheld phrase can hide. The caller passes its tracer, so the MCP loader's events
+a withheld phrase can hide. The tool call's trace row holds the screened result, never the text the
+screen withheld. The caller passes its tracer, so the MCP loader's events
 (`mcp.output_blocked`, `mcp.connect_failed`, `mcp.tools_skipped`) land on the caller's trace, which
 the caller persists. One read is bounded by the loader's list timeout plus its call timeout plus
 5 seconds (80 seconds by default, never above 120), so the loader reports a slow server before the

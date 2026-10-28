@@ -4313,7 +4313,7 @@
     {
       "body": "Qodo's text is screened and fenced, not verified, and a Qodo-triggered round trusts no person.",
       "category": "Trust boundary",
-      "detail": "A finding is derived from the diff Qodo read, so anyone who can push to the pull request's branch can influence it. The INJECTION screen is a pattern tripwire applied string by string, so a phrase split across two fields is not matched, and fencing marks the text as data without making it safe. The containment that remains is the unchanged push gate: a default or protected branch, a non-fast-forward push, and changes to workflow files are refused. A Qodo-triggered round has no requester, so the engine makes no per-actor access decision and no human-author gate applies to its findings; the organization budget is still checked. The run's trace keeps the server's raw answer, because only the agent's view is screened. A review that Qodo has not finished by the end of the wait spends that head's one decision. Reading a review needs Qodo's pull request bot installed on the repository, and the platform cannot ask Qodo to start one. The read list uses the names of Qodo's CLI catalog; a server that advertises them differently binds nothing, which the connection test reports.",
+      "detail": "A finding is derived from the diff Qodo read, so anyone who can push to the pull request's branch can influence it. The INJECTION screen is a pattern tripwire applied string by string, so a phrase split across two fields is not matched, and fencing marks the text as data without making it safe. The containment that remains is the unchanged push gate: a default or protected branch, a non-fast-forward push, and changes to workflow files are refused. A Qodo-triggered round has no requester, so the engine makes no per-actor access decision and no human-author gate applies to its findings; the organization budget is still checked. The run's trace records the screened result the agent receives, so a string the screen withheld is not stored. A review that Qodo has not finished by the end of the wait spends that head's one decision. Reading a review needs Qodo's pull request bot installed on the repository, and the platform cannot ask Qodo to start one. The read list uses the names of Qodo's CLI catalog; a server that advertises them differently binds nothing, which the connection test reports.",
       "id": "qodoBounds",
       "refs": ["qodoScreen", "qodoGather", "qodoActor", "qodoTraceRaw", "qodoAllowlist"],
       "status": "Confirmed boundary",
@@ -10037,12 +10037,12 @@
       "title": "A source with no actor makes no per-actor decision"
     },
     {
-      "anchor": "The trace keeps what the server sent; the agent sees what the screen lets through.",
+      "anchor": "The trace records what the agent receives, so text the screen withheld is never stored.",
       "before": 6,
       "id": "qodoTraceRaw",
       "lines": 18,
       "path": "packages/worker/src/agents/mcpTools.ts",
-      "title": "The trace keeps the server's raw answer; the agent sees the screened one"
+      "title": "The trace records the screened result the agent receives, not the server's raw answer"
     }
   ],
   "usecases": [
