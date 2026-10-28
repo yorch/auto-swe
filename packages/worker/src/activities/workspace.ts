@@ -144,6 +144,9 @@ export function splitCloneCredential(authedRepoUrl: string): SplitCloneCredentia
  *  - `protocol.ext.allow=never` — the `ext::` transport runs a command.
  *  - `*.recurseSubmodules` off — a submodule fetch/push would send the header
  *    to whatever host `.gitmodules` names.
+ *  - `gc.auto=0`, `maintenance.auto=false` — no automatic `gc` or `maintenance`
+ *    after a fetch or commit. Either can detach into the background, and the
+ *    detached process keeps the call's environment (the header) after it returns.
  *
  * Keys a `-c` cannot neutralise — `url.<base>.insteadOf` (longest match
  * wins), `http.<url>.proxy` (a URL-specific key beats `http.proxy`),
@@ -160,6 +163,8 @@ const HARDENED_GIT_CONFIG = [
   'submodule.recurse=false',
   'fetch.recurseSubmodules=false',
   'push.recurseSubmodules=no',
+  'gc.auto=0',
+  'maintenance.auto=false',
 ];
 
 /**
@@ -184,12 +189,17 @@ export const GIT_AUTH_ENV = 'ASW_GIT_AUTH';
  * (`?command=…`) recorded in audit logs for as long as they are kept. The script
  * reads the value from {@link GIT_AUTH_ENV}, and the caller delivers it with
  * `secretEnv: gitAuthSecretEnv(header)`, which the driver keeps off every
- * command line. `authed` must match whether the caller passes that env.
+ * command line. `authed` must match whether the caller passes that env: an
+ * unset or empty variable aborts the shell (`${…:?}`) rather than sending the
+ * request unauthenticated.
  */
 export function gitWithAuthHeader(subcommand: string, authed?: boolean): string {
   const flags = HARDENED_GIT_CONFIG.map((kv) => `-c ${kv}`);
   if (authed) {
-    flags.push('-c http.extraheader=', `-c "http.extraheader=$${GIT_AUTH_ENV}"`);
+    flags.push(
+      '-c http.extraheader=',
+      `-c "http.extraheader=\${${GIT_AUTH_ENV}:?git credential not delivered}"`
+    );
   }
   return `${HARDENED_GIT_ENV} git ${flags.join(' ')} ${subcommand}`;
 }

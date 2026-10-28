@@ -65,6 +65,7 @@ import {
   cloneDependencyRepos,
   createWorkspace,
   fetchBranchesSubcommand,
+  GIT_AUTH_ENV,
   gitBootstrapScript,
   killStrayProcessesScript,
   killTaggedProcessesScript,
@@ -73,6 +74,9 @@ import {
   shellQuote,
   splitCloneCredential,
 } from './workspace.js';
+
+/** How an authenticated git call names its header: read from the environment, never embedded. */
+const AUTH_REF = `-c "http.extraheader=\${${GIT_AUTH_ENV}:?git credential not delivered}"`;
 
 describe('shellQuote', () => {
   it('wraps a plain string', () => expect(shellQuote('abc')).toBe("'abc'"));
@@ -338,7 +342,7 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
     // …the credential travels as a per-call header read from the environment,
     // so not even its base64 form is in the script (which a Kubernetes exec
     // would put in an apiserver URL)…
-    expect(cloneCmd).toContain('-c "http.extraheader=$ASW_GIT_AUTH"');
+    expect(cloneCmd).toContain(AUTH_REF);
     expect(cloneCmd).not.toContain(HEADER_B64);
     const cloneCall = vi
       .mocked(execShellAsync)
@@ -434,7 +438,7 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
     expect(cmd).toContain(`push --no-verify ${Q(CLEAN)} ${Q('auto/TICKET-1')}`);
     expect(cmd).not.toContain('push origin');
     // The credential is neither in the script nor in any form on its command line.
-    expect(cmd).toContain('-c "http.extraheader=$ASW_GIT_AUTH"');
+    expect(cmd).toContain(AUTH_REF);
     expect(cmd).not.toContain(HEADER_B64);
     expect(cmd).not.toContain('ghp_secret');
     const gitOptions = vi.mocked(execShellAsync).mock.calls[0]?.[1] as
@@ -736,6 +740,21 @@ describe('authedGitScript against a real git repository', () => {
     git(work, 'config', 'core.fsmonitor', `echo fsmonitor >> ${loot}; false`);
     return { evil, good, loot, work };
   };
+
+  it('aborts instead of sending the request unauthenticated when the header is missing', () => {
+    const { good, work } = setup();
+    const script = authedGitScript(work, fetchBranchesSubcommand(['main']), {
+      authed: true,
+      cleanUrl: `file://${good}`,
+    });
+    expect(script).not.toContain(HEADER);
+    const { [GIT_AUTH_ENV]: _unset, ...bare } = process.env;
+    for (const env of [bare, { ...bare, [GIT_AUTH_ENV]: '' }]) {
+      const refused = spawnSync('/bin/sh', ['-c', script], { encoding: 'utf8', env });
+      expect(refused.status).not.toBe(0);
+      expect(refused.stderr).toMatch(/git credential not delivered/);
+    }
+  });
 
   it('pushes to the real remote without running a planted hook or following a redirect', () => {
     const { evil, good, loot, work } = setup();
