@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   detectedGateDefaults,
-  detectedRootStack,
   detectedTarget,
   detectedTargetDir,
   detectStack,
@@ -334,7 +333,6 @@ describe('components as the target', () => {
     expect(detectedTarget(D(['svc/api/pom.xml']))).toMatchObject({ dir: 'svc/api', stack: 'jvm' });
     expect(detectedTargetDir(D(['svc/api/pom.xml']))).toBe('svc/api');
     expect(detectedTargetDir(D(['go.mod']))).toBe('');
-    expect(detectedRootStack(D(['svc/api/pom.xml']))).toBeNull();
   });
 
   it('runs the stack defaults in the component, and only the defaults', () => {
@@ -357,15 +355,20 @@ describe('components as the target', () => {
     expect(
       detectedGateDefaults(D(['web/package.json', 'web/package-lock.json']))?.runVulnScan
     ).toBe("cd 'web' && npm audit --audit-level=high");
-    expect(detectedGateDefaults(D(['web/package.json']))?.runVulnScan).toBe(
+    // No lockfile in the directory: npm's commands, which work without one (Yarn 4 would refuse).
+    expect(detectedGateDefaults(D(['web/package.json']))?.runTests).toBe("cd 'web' && npm test");
+    expect(detectedGateDefaults(D(['web/package.json']))?.runBuild).toBe(
+      "cd 'web' && npm run build"
+    );
+    expect(detectedGateDefaults(D(['web/package.json', 'web/yarn.lock']))?.runVulnScan).toBe(
       "cd 'web' && yarn npm audit --severity high"
     );
     expect(
       detectedGateDefaults(D(['web/package.json', 'web/yarn.lock', 'web/.yarnrc.yml']))?.runTests
     ).toBe("cd 'web' && yarn test");
-    // A lockfile beside the root's package.json is not the component's.
+    // A lockfile at the root, where there is no package.json, is not the component's.
     expect(detectedGateDefaults(D(['web/package.json', 'pnpm-lock.yaml']))?.runTests).toBe(
-      "cd 'web' && yarn test"
+      "cd 'web' && npm test"
     );
   });
 
@@ -374,6 +377,29 @@ describe('components as the target', () => {
     expect(detectedTarget(d)).toBe('ambiguous');
     expect(detectedGateDefaults(d)).toEqual({});
     expect(detectedTargetDir(d)).toBe('');
+  });
+
+  it('counts only directories with a stack signal toward the cap, so a big tree still resolves', () => {
+    // 120 directories of docs and one service: none of the docs is a component, so the listing is
+    // complete as far as stacks go. (The cap used to count every directory, which both dropped the
+    // service from `components` and switched this rule off.)
+    const docs = Array.from({ length: 120 }, (_, i) => `docs/d${i}/page.md`);
+    const d = D(['README.md', 'backend/pom.xml', ...docs]);
+    expect(d.componentsTruncated).toBeUndefined();
+    expect(d.components).toEqual([{ path: 'backend', stacks: ['jvm'] }]);
+    expect(detectedGateDefaults(d)?.runTests).toBe("cd 'backend' && mvn -B -q test");
+    // A signal directory sorted behind them is still found.
+    const late = D([...docs, 'zz/go.mod']);
+    expect(late.components).toEqual([{ path: 'zz', stacks: ['go'] }]);
+  });
+
+  it('treats a Gradle settings file as the JVM root, not a subproject as the target', () => {
+    const d = D(['settings.gradle.kts', 'gradlew', 'app/build.gradle.kts']);
+    expect(detectedTarget(d)).toMatchObject({ dir: '', stack: 'jvm' });
+    expect(detectedGateDefaults(d)?.runTests).toBe('./gradlew test --no-daemon');
+    expect(detectedGateDefaults(D(['settings.gradle', 'app/pom.xml']))?.runBuild).toBe(
+      './gradlew build -x test --no-daemon'
+    );
   });
 
   it('does not guess from an incomplete listing', () => {

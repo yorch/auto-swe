@@ -15,7 +15,9 @@ const PRECEDENCE: readonly Stack[] = ['node', 'python', 'jvm', 'go'];
 /** Root filenames that evidence each stack. */
 const SIGNALS: Record<Stack, string[]> = {
   go: ['go.mod'],
-  jvm: ['pom.xml', 'build.gradle', 'build.gradle.kts'],
+  // `settings.gradle*` marks a Gradle multi-project root: its subprojects' `build.gradle*` are not
+  // the place to run the root's `./gradlew`.
+  jvm: ['pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'],
   node: ['package.json'],
   python: ['pyproject.toml', 'requirements.txt', 'setup.py'],
 };
@@ -234,12 +236,6 @@ export function detectedTarget(detected: unknown): DetectedTarget | 'ambiguous' 
   return comps.length === 1 ? pick(comps[0] as (typeof comps)[number]) : 'ambiguous';
 }
 
-/** The stack a stored detection puts at the repository root, or null. Assumes no shape. */
-export function detectedRootStack(detected: unknown): Stack | null {
-  const t = detectedTarget(detected);
-  return t !== null && t !== 'ambiguous' && t.dir === '' ? t.stack : null;
-}
-
 /** The directory the test loop and gates run in: a validated component, else `''` (the root). */
 export function detectedTargetDir(detected: unknown): string {
   const t = detectedTarget(detected);
@@ -262,9 +258,18 @@ function targetCommands(t: DetectedTarget): RepoGateCommands | null {
   if (t.packageManager === 'yarn' && t.yarnFlavor === 'classic') {
     return { ...NODE_PM_GATE_DEFAULTS['yarn-classic'] };
   }
-  // Yarn Berry, or a manager nobody recorded: the root keeps the built-ins (which are this
-  // table), and a component needs them spelled out because they must run in its directory.
-  return t.dir === '' ? null : { ...YARN_GATE_DEFAULTS };
+  if (t.dir === '') {
+    // Yarn Berry, or a manager nobody recorded: the root keeps the built-ins, which are this table.
+    return null;
+  }
+  // A component spells them out, because they must run in its directory. One whose directory
+  // has no lockfile at all gets npm's, not Yarn 4's: Yarn 4 refuses a directory that is not
+  // part of a project, and `npm run` works without a lockfile. (Its audit then fails honestly,
+  // as `npm audit` needs one.) A component with a `yarn.lock` is Yarn, and Berry unless it says
+  // Classic.
+  return t.packageManager === undefined
+    ? { ...NODE_PM_GATE_DEFAULTS.npm }
+    : { ...YARN_GATE_DEFAULTS };
 }
 
 /**
@@ -333,8 +338,18 @@ export function detectStack(
     set.add(base);
     byDir.set(dir, set);
   }
-  const dirs = [...byDir.keys()].sort();
-  const componentsTruncated = dirs.length > MAX_COMPONENTS;
+  // Only directories that carry a stack signal are components, and the cap counts those: every
+  // directory of a large tree holds files, and capping before the filter drops real components
+  // behind a hundred directories of docs — and, since a truncated list is what stops the
+  // only-component rule from firing, would switch that rule off for most real repositories.
+  const signalDirs = [...byDir.keys()]
+    .sort()
+    .map((dir) => ({
+      dir,
+      stacks: PRECEDENCE.filter((stack) => SIGNALS[stack].some((f) => byDir.get(dir)?.has(f))),
+    }))
+    .filter((c) => c.stacks.length > 0);
+  const componentsTruncated = signalDirs.length > MAX_COMPONENTS;
   // A directory's Node package manager comes from its own lockfile names alone (a component's
   // package.json is not fetched): exactly one lockfile names it, none or several leave it unknown.
   const pmOf = (dir: string): { packageManager?: NodePackageManager; yarnFlavor?: YarnFlavor } => {
@@ -348,15 +363,11 @@ export function detectStack(
         : {}),
     };
   };
-  const components = dirs
-    .slice(0, MAX_COMPONENTS)
-    .map((dir) => {
-      const stacks = PRECEDENCE.filter((stack) =>
-        SIGNALS[stack].some((f) => byDir.get(dir)?.has(f))
-      );
-      return { path: dir, stacks, ...(stacks[0] === 'node' ? pmOf(dir) : {}) };
-    })
-    .filter((c) => c.stacks.length > 0);
+  const components = signalDirs.slice(0, MAX_COMPONENTS).map(({ dir, stacks }) => ({
+    path: dir,
+    stacks,
+    ...(stacks[0] === 'node' ? pmOf(dir) : {}),
+  }));
 
   const present = new Set(byDir.get('') ?? []);
   const stacks = PRECEDENCE.filter((stack) => components.some((c) => c.stacks.includes(stack)));
