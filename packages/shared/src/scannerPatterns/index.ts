@@ -458,6 +458,51 @@ export const BUILTIN_SCANNER_PATTERNS: BuiltinScannerPatternDef[] = [
     type: 'CODE_SECURITY',
   },
 
+  // JVM, Go and Python counterparts of the JavaScript-flavoured rules above. The
+  // scan reads added diff lines, so each is a single-line shape; advisory only.
+
+  // Command injection — Java: Runtime.exec / a ProcessBuilder handed a shell
+  {
+    flags: 'i',
+    label: 'code-java-runtime-exec',
+    pattern:
+      'Runtime\\s*\\.\\s*getRuntime\\s*\\(\\s*\\)\\s*\\.\\s*exec\\s*\\(|new\\s+ProcessBuilder\\s*\\(\\s*"(?:/bin/)?(?:sh|bash|cmd(?:\\.exe)?)"',
+    type: 'CODE_SECURITY',
+  },
+  // Command injection — Go: a shell run with -c
+  {
+    flags: 'i',
+    label: 'code-go-exec-shell',
+    pattern:
+      'exec\\.Command(?:Context)?\\s*\\(\\s*(?:\\w+\\s*,\\s*)?"(?:/bin/)?(?:sh|bash)"\\s*,\\s*"-c"',
+    type: 'CODE_SECURITY',
+  },
+  // Unsafe deserialization — Java ObjectInputStream, Python pickle and unsafe yaml.load
+  {
+    flags: 'i',
+    label: 'code-unsafe-deserialization',
+    pattern:
+      'new\\s+ObjectInputStream\\s*\\(|\\bpickle\\.loads?\\s*\\(|\\byaml\\.load\\s*\\((?![^)\\n]*SafeLoader)',
+    type: 'CODE_SECURITY',
+  },
+  // SQL injection — a statement built by concatenation or an f-string at the call
+  {
+    flags: 'i',
+    label: 'code-sql-string-built',
+    // The keyword is anchored to the start of the literal: searching for it inside
+    // the string rescans to the end of the line from every candidate (quadratic).
+    pattern:
+      '\\b(?:executeQuery|executeUpdate|prepareStatement|createQuery|createNativeQuery|Query|QueryRow|Exec|execute)\\s*\\(\\s*(?:f?["\'][ \\t]*(?:select|insert|update|delete)\\b[^"\'\\n]*["\']\\s*\\+|f["\'][ \\t]*(?:select|insert|update|delete)\\b[^"\'\\n]*\\{)',
+    type: 'CODE_SECURITY',
+  },
+  // Weak hash — Java MessageDigest and Go crypto/md5 / crypto/sha1
+  {
+    flags: 'i',
+    label: 'code-weak-hash-jvm-go',
+    pattern: 'MessageDigest\\.getInstance\\s*\\(\\s*"(?:md5|sha-?1)"|"crypto/(?:md5|sha1)"',
+    type: 'CODE_SECURITY',
+  },
+
   // ── Sensitive file patterns ────────────────────────────────────────────────
   // Checked against file paths before each writeFile tool call; hard-block
   // prevents the agent from writing secrets or credentials to the workspace.

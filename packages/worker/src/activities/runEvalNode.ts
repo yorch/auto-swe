@@ -47,6 +47,7 @@ import {
   type ScoreInput,
 } from '../lib/scorerCombination.js';
 import { scoreTrajectory, type TraceLike } from '../lib/trajectoryScorer.js';
+import { gateCommandFor } from './gateCommand.js';
 import type { GateName } from './qualityGates.js';
 import { runAgent } from './runAgent.js';
 import { runGateStandalone } from './standaloneGateRunner.js';
@@ -218,10 +219,16 @@ async function evaluateScorer(
         const branch = candidateRef ?? `${defaults.branchPrefix}/${externalTicketId}`;
         const repoRef = toRepoRef(repo);
         const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
+        // The command the run's own gate would have used (step → repo → stack → built-in),
+        // so a Python or JVM repository is scored by its own gate, not by `yarn`.
+        const command = gateCommandFor(scorer.gate as GateName, scorer.command, repo);
+        if (!command) {
+          return gateFailed;
+        }
         const result = await runGateStandalone({
           authedRepoUrl: authedCloneUrl,
           branch,
-          command: scorer.command,
+          command,
           defaultBranch: repo.defaultBranch,
           // Score the candidate's already-pushed branch (not a fresh branch cut
           // from defaultBranch), on the repo's configured toolchain image.

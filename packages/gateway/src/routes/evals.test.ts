@@ -147,6 +147,37 @@ describe('evalRoutes', () => {
     expect(prisma.configAuditLog.create).toHaveBeenCalledTimes(1);
   });
 
+  it('stores the stack a case names, null when it names none, and refuses an unknown one', async () => {
+    const { app, prisma } = await buildApp();
+    prisma.evalDataset.create.mockResolvedValue({
+      _count: { cases: 2 },
+      createdAt: new Date('2026-06-24T00:00:00Z'),
+      description: null,
+      id: 'd2',
+      name: 'New',
+      scope: 'GLOBAL',
+      slug: 'new-set',
+    });
+    const base = { baselineSha: 'abc', goldenTest: 'pytest', input: {}, repoUrl: 'https://x/y' };
+    const ok = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { cases: [{ ...base, stack: 'python' }, base], name: 'New', slug: 'new-set' },
+      url: '/api/v1/platform/evals',
+    });
+    expect(ok.statusCode).toBe(201);
+    const create = prisma.evalDataset.create.mock.calls[0][0].data.cases.create;
+    expect(create.map((c: { stack: unknown }) => c.stack)).toEqual(['python', null]);
+    const bad = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { cases: [{ ...base, stack: 'ruby' }], name: 'New', slug: 'other' },
+      url: '/api/v1/platform/evals',
+    });
+    expect(bad.statusCode).toBe(400);
+    expect(prisma.evalDataset.create).toHaveBeenCalledTimes(1);
+  });
+
   it('starts a flake screen of the new cases', async () => {
     const { app, prisma, startEvalScreenWorkflow } = await buildApp();
     prisma.evalDataset.create.mockResolvedValue({

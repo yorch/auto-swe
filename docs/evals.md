@@ -81,7 +81,7 @@ were advisory.
 
 | Kind | Family | Fields | What it does |
 |---|---|---|---|
-| `gate` | floor | `gate`, optional `command` | Executes a real quality gate against the candidate's pushed branch on the repo's executor image. A `command` is code the author wrote: saving it takes the shell authoring role and writes a `WorkflowShellAudit` row ([nl-workflow-authoring.md](./nl-workflow-authoring.md#5-design-notes)); without one the repository's configured command runs |
+| `gate` | floor | `gate`, optional `command` | Executes a real quality gate against the candidate's pushed branch on the repo's executor image. A `command` is code the author wrote: saving it takes the shell authoring role and writes a `WorkflowShellAudit` row ([nl-workflow-authoring.md](./nl-workflow-authoring.md#5-design-notes)); without one it runs what the repository's own gate would — its `gateCommands` entry, else the default for its detected stack ([repositories.md](./repositories.md#detected-stack)), else the built-in; a gate with no command resolves to a failed floor |
 | `assert` | floor | `expr` | Evaluates a programmatic expression against the target (`$.`-prefixed paths, the `cond` grammar) |
 | `policy` | floor | `riskClass` | Passes when the run's resolved autonomy policy sets that risk class to `auto`; fails on any other action (`require_approval`, which is also what a class the policy does not name resolves to) or when the eval runs outside a run. It never waits for an approval |
 | `pii` | floor | — | Runs every active `PII` scanner pattern over the target (JSON-encoded when not a string); passes on no match, fails on a match, an incomplete scan, or a scan that skipped a quarantined pattern |
@@ -212,8 +212,14 @@ candidate arm's in `EvalResult.runtime`, the baseline arm's in its `metadata.bas
 verdict's `summary.runtimes` lists the runtimes each side ran on across the completed cases.
 
 **Cases run in a pinned image.** A case is scored, and its reference screened and re-validated,
-in `EVAL_WORKSPACE_IMAGE`, not the operator's configured workspace image, so a score stays
-comparable with its history; moving the image re-baselines every score and calls for a re-screen.
+in a pinned image, not the operator's configured workspace image, so a score stays comparable with
+its history; moving an image re-baselines every score on it and calls for a re-screen. The image
+follows the case's `stack` (`node`, `python`, `jvm` or `go`; set when the dataset is created): `node`,
+and a case with no stack, run in `EVAL_WORKSPACE_IMAGE`; the others run in a digest-pinned upstream
+toolchain base chosen in `evalWorkspaceImageFor`. A case names a stack, never an image, and a stack
+outside that set fails the case instead of falling back to node. Those bases carry the language
+toolchain only: a JVM case brings its own Maven or Gradle wrapper, a Python case installs what its
+golden test needs, and an image without `git` gets one installed when the workspace starts.
 
 **Infrastructure errors throw rather than scoring zero.** A Docker, model, agent, or MCP failure
 marks the `EvalRun` `FAILED`; it never records a false `0` that would poison the regression verdict
@@ -257,7 +263,7 @@ and the screening after it — to the datasets whose slug contains it; unset, a 
 dataset.
 
 **Flake screening.** A case's reference — its golden test at the pinned commit, in the eval
-workspace image the harness scores it in (`EVAL_WORKSPACE_IMAGE`) — is run up to
+workspace image the harness scores it in (the one its `stack` names) — is run up to
 `evals.flakeScreenRuns` times (setting registry, default 3, GLOBAL only, ADMIN to change) by the
 `screenDatasetCasesActivity` activity. The case is marked `flakeScreened` only when every run
 passed; the first failing run ends its screen. Either way `flakeRuns` records the configured number
@@ -352,7 +358,7 @@ verdicts into trends per template, model, and prompt version.
 | `packages/worker/src/activities/evalHarness.ts` | `runCaseDefault`, dataset orchestration |
 | `packages/worker/src/activities/evalRevalidate.ts` | Golden-set re-validation and quarantine |
 | `packages/worker/src/activities/evalFlakeScreen.ts` | Flake screening of never-screened cases, and what counts as an infrastructure failure |
-| `packages/worker/src/activities/evalWorkspaceImage.ts` | `EVAL_WORKSPACE_IMAGE`, the pinned image cases are scored and screened in |
+| `packages/worker/src/activities/evalWorkspaceImage.ts` | `EVAL_WORKSPACE_IMAGE` and `evalWorkspaceImageFor`, the pinned images cases are scored and screened in |
 | `packages/worker/src/lib/evalScreenStart.ts` | Starting or joining a dataset's screen from an activity |
 | `packages/worker/src/activities/prepareScheduledEvalRun.ts` | Scheduled-run setup |
 | `packages/worker/src/workflows/evalRun.ts` | `EvalRunWorkflow` |
@@ -367,6 +373,10 @@ verdicts into trends per template, model, and prompt version.
 
 ## 8. Limitations
 
+- **A case's stack is set through the API only.** `stack` is accepted on a case when a dataset is
+  created; the dashboard has no field for it and a stored case's stack cannot be edited, so changing
+  one means recreating the case. The `gate` scorer is unaffected: it runs on the repository's own
+  executor image.
 - **Historical replay is not built.** Replaying real production tickets against their original
   repository states would need snapshot infrastructure the platform does not have. The regression
   gate rests on the frozen benchmark plus online scoring and canary instead.

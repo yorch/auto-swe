@@ -40,6 +40,22 @@ import { registryWorkspaceEnv, renderNpmrc, renderYarnrc } from './render.js';
 
 const enabled = process.env.REGISTRY_PROXY_DOCKER_TEST === '1';
 const IMAGE = process.env.REGISTRY_PROXY_TEST_IMAGE ?? 'asw-executor-node:ci';
+const AUDIT_PATH = '/-/npm/v1/security/advisories/bulk';
+/** pnpm audit posts its dependency tree here (and to `/audits` if this does not answer 200). */
+const PNPM_AUDIT_PATH = '/-/npm/v1/security/audits/quick';
+/** A clean audit in the legacy report shape pnpm reads. */
+const CLEAN_LEGACY_AUDIT = {
+  actions: [],
+  advisories: {},
+  metadata: {
+    dependencies: 1,
+    devDependencies: 0,
+    optionalDependencies: 0,
+    totalDependencies: 1,
+    vulnerabilities: { critical: 0, high: 0, info: 0, low: 0, moderate: 0 },
+  },
+  muted: [],
+};
 const DENIED = "is not in the repository's committed lockfiles";
 
 /** One tarball built in a temp dir: `package/package.json` gzipped. */
@@ -55,7 +71,7 @@ function buildTarball(name: string, version: string, dir: string): Buffer {
 interface FakeUpstream {
   close(): void;
   port: number;
-  requests: { auth?: string; path: string }[];
+  requests: { auth?: string; method?: string; path: string }[];
 }
 
 /** An npm-shaped upstream gated on `token`, serving packument + tarball. */
@@ -70,10 +86,21 @@ function startUpstream(
 ): Promise<FakeUpstream> {
   const requests: FakeUpstream['requests'] = [];
   const server = http.createServer((req, res) => {
-    requests.push({ auth: req.headers.authorization, path: req.url ?? '' });
+    requests.push({ auth: req.headers.authorization, method: req.method, path: req.url ?? '' });
     if (req.headers.authorization !== `Bearer ${token}`) {
       res.writeHead(401);
       res.end();
+      return;
+    }
+    // The bulk advisory query `npm audit`, `pnpm audit` and `yarn npm audit` send: no
+    // advisories, so a clean audit exits 0.
+    if (req.method === 'POST' && (req.url === AUDIT_PATH || req.url === PNPM_AUDIT_PATH)) {
+      const legacy = req.url === PNPM_AUDIT_PATH;
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(legacy ? CLEAN_LEGACY_AUDIT : {}));
+      });
       return;
     }
     const port = (server.address() as { port: number }).port;
@@ -497,6 +524,97 @@ describe.skipIf(!enabled)('registry proxy against real package managers', () => 
     const denied = await client(dir, ['yarn', 'add', 'asw-fixture-c'], { ignore: true });
     expect(denied.code).not.toBe(0);
     expect(`${denied.err}${denied.out}`).toContain(DENIED);
+    await reg.release();
+  }, 300_000);
+
+  /** A project depending only on `asw-fixture-a`, which the default registry serves. */
+  function writeDefaultOnlyProject(dir: string, packageManager?: string) {
+    writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({
+        dependencies: { 'asw-fixture-a': '1.0.0' },
+        name: 'audit-proj',
+        private: true,
+        ...(packageManager ? { packageManager } : {}),
+      })
+    );
+  }
+
+  const auditPosts = (u: FakeUpstream) => u.requests.filter((q) => q.method === 'POST');
+
+  it('npm audit reaches the default registry through the proxy, with its credential', async () => {
+    const dir = path.join(work, 'audit-npm');
+    mkdirSync(dir, { recursive: true });
+    writeDefaultOnlyProject(dir);
+    await activate(dir, null);
+    await client(dir, ['npm', 'install', '--no-audit', '--no-fund']);
+
+    const reg = await activate(dir, allowlistFor(dir, ['package-lock.json']));
+    const before = auditPosts(upstreamA).length;
+    const r = await client(dir, ['npm', 'audit', '--audit-level=high'], { ignore: true });
+    expect(r.code, `${r.err}${r.out}`).toBe(0);
+    const posts = auditPosts(upstreamA).slice(before);
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ auth: 'Bearer up-A', path: AUDIT_PATH });
+    expect(upstreamA.requests.every((q) => !q.auth?.includes(reg.token))).toBe(true);
+    await reg.release();
+  }, 300_000);
+
+  it('npm audit of a project that names a private-scope package is refused, and nothing is sent', async () => {
+    const dir = path.join(work, 'audit-npm-scoped');
+    mkdirSync(dir, { recursive: true });
+    writeProject(dir);
+    await activate(dir, null);
+    await client(dir, ['npm', 'install', '--no-audit', '--no-fund']);
+
+    const reg = await activate(dir, allowlistFor(dir, ['package-lock.json']));
+    const beforeA = auditPosts(upstreamA).length;
+    const beforeB = auditPosts(upstreamB).length;
+    const r = await client(dir, ['npm', 'audit'], { ignore: true });
+    expect(r.code).not.toBe(0);
+    expect(`${r.err}${r.out}`).toContain('another registry');
+    expect(auditPosts(upstreamA).length).toBe(beforeA);
+    expect(auditPosts(upstreamB).length).toBe(beforeB);
+    await reg.release();
+  }, 300_000);
+
+  it('pnpm audit reaches the default registry through the proxy', async () => {
+    const dir = path.join(work, 'audit-pnpm');
+    mkdirSync(dir, { recursive: true });
+    writeDefaultOnlyProject(dir, 'pnpm@10.34.7');
+    await activate(dir, null);
+    await client(dir, ['pnpm', 'install']);
+
+    const reg = await activate(dir, allowlistFor(dir, ['pnpm-lock.yaml']));
+    const before = auditPosts(upstreamA).length;
+    const r = await client(dir, ['pnpm', 'audit', '--audit-level', 'high'], { ignore: true });
+    expect(r.code, `${r.err}${r.out}`).toBe(0);
+    expect(auditPosts(upstreamA).slice(before)[0]).toMatchObject({
+      auth: 'Bearer up-A',
+      path: PNPM_AUDIT_PATH,
+    });
+    await reg.release();
+  }, 300_000);
+
+  it('yarn npm audit reaches the default registry through the proxy', async () => {
+    const dir = path.join(work, 'audit-berry');
+    mkdirSync(dir, { recursive: true });
+    writeDefaultOnlyProject(dir, 'yarn@4.18.1');
+    await activate(dir, null);
+    writeFileSync(
+      path.join(dir, '.yarnrc.yml'),
+      ['nodeLinker: node-modules', 'enableGlobalCache: false'].join('\n')
+    );
+    await client(dir, ['yarn', 'install']);
+
+    const reg = await activate(dir, allowlistFor(dir, ['yarn.lock']));
+    const before = auditPosts(upstreamA).length;
+    const r = await client(dir, ['yarn', 'npm', 'audit', '--severity', 'high'], { ignore: true });
+    expect(r.code, `${r.err}${r.out}`).toBe(0);
+    expect(auditPosts(upstreamA).slice(before)[0]).toMatchObject({
+      auth: 'Bearer up-A',
+      path: AUDIT_PATH,
+    });
     await reg.release();
   }, 300_000);
 });

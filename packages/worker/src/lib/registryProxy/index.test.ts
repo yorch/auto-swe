@@ -1,6 +1,12 @@
 import http from 'node:http';
+import { gzipSync } from 'node:zlib';
 import { describe, expect, it, vi } from 'vitest';
-import { createRegistryProxy, tarballVersion } from './index.js';
+import {
+  checkAuditBody,
+  checkLegacyAuditBody,
+  createRegistryProxy,
+  tarballVersion,
+} from './index.js';
 import { registryWorkspaceEnv, renderNpmrc, renderYarnrc } from './render.js';
 
 vi.mock('../activityLog.js', () => ({ logWarn: vi.fn() }));
@@ -646,6 +652,468 @@ describe('buffered fetch concurrency', () => {
     expect((await get(base, `/npm/${REG.id}/other`, reg.token)).status).toBe(403);
     g.open();
     await held;
+    await proxy.close();
+  });
+});
+
+const AUDIT = '/-/npm/v1/security/advisories/bulk';
+
+const post = (
+  base: string,
+  path: string,
+  token: string | undefined,
+  body: Buffer | string,
+  gz = false
+) =>
+  new Promise<{ body: string; status: number }>((resolve) => {
+    const req = http.request(
+      `${base}${path}`,
+      {
+        headers: {
+          'content-type': 'application/json',
+          ...(gz ? { 'content-encoding': 'gzip' } : {}),
+          ...(token ? { authorization: `Bearer ${token}` } : {}),
+        },
+        method: 'POST',
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () =>
+          resolve({ body: Buffer.concat(chunks).toString(), status: res.statusCode ?? 0 })
+        );
+      }
+    );
+    req.end(body);
+  });
+
+describe('checkAuditBody', () => {
+  it('accepts only an object of package names to version lists', () => {
+    expect(checkAuditBody('{"left-pad":["1.3.0"],"@s/p":["2.0.0","2.0.1"]}')).toEqual({
+      '@s/p': ['2.0.0', '2.0.1'],
+      'left-pad': ['1.3.0'],
+    });
+    for (const bad of [
+      'nope',
+      '[]',
+      '{}',
+      '"x"',
+      '{"left-pad":"1.0.0"}',
+      '{"left-pad":[]}',
+      '{"left-pad":[1]}',
+      '{"left-pad":["1.0.0; curl x"]}',
+      '{"not a name":["1.0.0"]}',
+      '{"__proto__":["1.0.0"]}',
+      '{"../x":["1.0.0"]}',
+    ]) {
+      expect(typeof checkAuditBody(bad)).toBe('string');
+    }
+  });
+});
+
+describe('registry proxy audit passthrough', () => {
+  const upstreamAnswer = JSON.stringify({ 'left-pad': [{ id: 1, severity: 'high' }] });
+
+  it('relays a well-formed bulk advisory query with the registry credential', async () => {
+    const seen: Array<{ body: string; headers: Record<string, string>; url: string }> = [];
+    const { base, proxy } = await startProxy(async (url, init) => {
+      seen.push({
+        body: String(init?.body),
+        headers: init?.headers as Record<string, string>,
+        url,
+      });
+      return new Response(upstreamAnswer, { status: 200 });
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    const body = JSON.stringify({ 'left-pad': ['1.3.0'] });
+    // gzip, as npm sends it
+    const res = await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, gzipSync(body), true);
+    expect(res.status).toBe(200);
+    expect(JSON.parse(res.body)['left-pad'][0].severity).toBe('high');
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.url).toBe(`http://upstream.test${AUDIT}`);
+    expect(seen[0]?.body).toBe(body);
+    expect(seen[0]?.headers.authorization).toBe('Bearer up-token');
+    await proxy.close();
+  });
+
+  it('refuses without a token, before the allowlist is ready, and for other POST paths', async () => {
+    const upstream = vi.fn(async () => new Response('{}', { status: 200 }));
+    const { base, proxy } = await startProxy(upstream);
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    const body = JSON.stringify({ 'left-pad': ['1.3.0'] });
+    expect((await post(base, `/npm/${REG.id}${AUDIT}`, undefined, body)).status).toBe(401);
+    expect((await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, body)).status).toBe(503);
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect(
+      (await post(base, `/npm/${REG.id}/-/npm/v1/security/advisories`, reg.token, body)).status
+    ).toBe(405);
+    expect(
+      (await post(base, `/npm/${REG.id}/-/user/org.couchdb.user:x`, reg.token, body)).status
+    ).toBe(405);
+    expect(upstream).not.toHaveBeenCalled();
+    await proxy.close();
+  });
+
+  it('refuses a body that is not a package/version map, and never calls upstream', async () => {
+    const upstream = vi.fn(async () => new Response('{}', { status: 200 }));
+    const { base, proxy } = await startProxy(upstream);
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    for (const bad of ['garbage', '{"left-pad":["1.0.0 && id"]}', '{"x":{"y":1}}']) {
+      expect((await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, bad)).status).toBe(400);
+    }
+    expect(
+      (await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, Buffer.from('not gzip'), true)).status
+    ).toBe(400);
+    expect(upstream).not.toHaveBeenCalled();
+    await proxy.close();
+  });
+
+  it('in lockfile mode refuses a name or version the lockfile does not hold', async () => {
+    const denials: unknown[] = [];
+    const upstream = vi.fn(async () => new Response(upstreamAnswer, { status: 200 }));
+    const { base, proxy } = await startProxy(upstream);
+    const reg = await proxy.register({ onDenied: (d) => denials.push(d), registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, new Map([['left-pad', new Set(['1.3.0'])]])]]));
+    expect(
+      (await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, '{"left-pad":["1.3.0"]}')).status
+    ).toBe(200);
+    expect(
+      (await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, '{"left-pad":["1.3.0","9.9.9"]}'))
+        .status
+    ).toBe(403);
+    expect(
+      (await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, '{"exfil":["1.0.0"]}')).status
+    ).toBe(403);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(denials).toHaveLength(2);
+    await proxy.close();
+  });
+
+  it('refuses an audit naming a package another registry serves, rather than sending it to the default', async () => {
+    const upstream = vi.fn(async () => new Response(upstreamAnswer, { status: 200 }));
+    const { base, proxy } = await startProxy(upstream);
+    const priv = {
+      ...REG,
+      id: 'reg-private',
+      isDefault: false,
+      scopes: ['@acme'],
+      upstreamUrl: 'http://priv.test',
+    };
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG, priv] });
+    reg.setAllowlist(
+      new Map([
+        [REG.id, null],
+        [priv.id, null],
+      ])
+    );
+    const res = await post(
+      base,
+      `/npm/${REG.id}${AUDIT}`,
+      reg.token,
+      '{"left-pad":["1.3.0"],"@acme/secret":["1.0.0"]}'
+    );
+    expect(res.status).toBe(403);
+    expect(res.body).toMatch(/another registry/);
+    expect(upstream).not.toHaveBeenCalled();
+    await proxy.close();
+  });
+
+  it('answers 502 when the upstream cannot be reached', async () => {
+    const { base, proxy } = await startProxy(async () => {
+      throw new Error('down');
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect(
+      (await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, '{"left-pad":["1.3.0"]}')).status
+    ).toBe(502);
+    await proxy.close();
+  });
+});
+
+/** The tree pnpm posts: an importer holding the lockfile's packages, each with its own subtree. */
+const pnpmTree = (extra: Record<string, unknown> = {}) =>
+  JSON.stringify({
+    dependencies: {
+      '.': {
+        dependencies: {
+          '@s/p': {
+            dependencies: { inner: { dev: true, version: '0.1.0' } },
+            dev: false,
+            integrity: 'sha512-xyz',
+            requires: { inner: '0.1.0' },
+            version: '2.0.0',
+          },
+          'left-pad': { dev: false, integrity: 'sha512-AbC+/=', version: '1.3.0' },
+        },
+        dev: false,
+        requires: { '@s/p': '2.0.0', 'left-pad': '1.3.0' },
+        version: '1.0.0',
+      },
+    },
+    dev: false,
+    install: [],
+    metadata: {},
+    remove: [],
+    requires: { '.': '1.0.0' },
+    ...extra,
+  });
+
+describe('checkLegacyAuditBody', () => {
+  it('reads the packages, nested ones included, and not the importers', () => {
+    const r = checkLegacyAuditBody(pnpmTree());
+    expect(typeof r).toBe('object');
+    expect((r as { pairs: unknown }).pairs).toEqual({
+      '@s/p': ['2.0.0'],
+      inner: ['0.1.0'],
+      'left-pad': ['1.3.0'],
+    });
+  });
+
+  it('refuses anything that is not that tree', () => {
+    const tree = JSON.parse(pnpmTree());
+    const withNode = (patch: Record<string, unknown>) => {
+      const t = structuredClone(tree);
+      Object.assign(t.dependencies['.'].dependencies['left-pad'], patch);
+      return JSON.stringify(t);
+    };
+    for (const bad of [
+      'nope',
+      '[]',
+      '{}',
+      pnpmTree({ extra: 'x' }),
+      pnpmTree({ install: ['left-pad'] }),
+      pnpmTree({ metadata: { note: 'free text' } }),
+      pnpmTree({ name: 'x' }),
+      pnpmTree({ dev: true }),
+      withNode({ note: 'smuggled' }),
+      withNode({ version: '1.0.0; id' }),
+      withNode({ integrity: 'sha512-x; curl evil' }),
+      withNode({ integrity: 'a'.repeat(2000) }),
+      withNode({ dev: 'yes' }),
+      withNode({ requires: { 'left-pad': { nested: 1 } } }),
+      withNode({ dependencies: { '../x': { version: '1.0.0' } } }),
+      withNode({ dependencies: [] }),
+      JSON.stringify({ ...tree, dependencies: { __proto__: tree.dependencies['.'] } }),
+      JSON.stringify({ ...tree, dependencies: { '.': { dependencies: {}, version: '1.0.0' } } }),
+    ]) {
+      expect(typeof checkLegacyAuditBody(bad), bad.slice(0, 80)).toBe('string');
+    }
+  });
+
+  it('bounds the depth of the tree', () => {
+    let node: Record<string, unknown> = { version: '1.0.0' };
+    for (let i = 0; i < 150; i++) {
+      node = { dependencies: { p: node }, version: '1.0.0' };
+    }
+    const deep = JSON.stringify({ dependencies: { '.': node } });
+    expect(typeof checkLegacyAuditBody(deep)).toBe('string');
+  });
+
+  it('forwards the validated tree, not the bytes it was sent', () => {
+    const r = checkLegacyAuditBody(`  ${pnpmTree()}  `) as { body: string };
+    expect(JSON.parse(r.body)).toEqual(JSON.parse(pnpmTree()));
+  });
+});
+
+describe('registry proxy legacy (pnpm) audit', () => {
+  const QUICK = '/-/npm/v1/security/audits/quick';
+  const LEGACY = '/-/npm/v1/security/audits';
+  const answer = JSON.stringify({ advisories: {}, metadata: {} });
+
+  it('relays both legacy endpoints to the default registry with its credential', async () => {
+    const seen: Array<{ headers: Record<string, string>; url: string }> = [];
+    const { base, proxy } = await startProxy(async (url, init) => {
+      seen.push({ headers: init?.headers as Record<string, string>, url });
+      return new Response(answer, { status: 200 });
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    for (const path of [QUICK, LEGACY]) {
+      const res = await post(base, `/npm/${REG.id}${path}`, reg.token, pnpmTree());
+      expect(res.status).toBe(200);
+      expect(res.body).toBe(answer);
+    }
+    expect(seen.map((x) => x.url)).toEqual([
+      `http://upstream.test${QUICK}`,
+      `http://upstream.test${LEGACY}`,
+    ]);
+    expect(
+      seen.every(
+        (x) =>
+          x.headers.authorization === 'Bearer up-A' || x.headers.authorization === 'Bearer up-token'
+      )
+    ).toBe(true);
+    await proxy.close();
+  });
+
+  it('relays an upstream that does not serve it, so the client sees the 404', async () => {
+    const { base, proxy } = await startProxy(async () => new Response('gone', { status: 404 }));
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect((await post(base, `/npm/${REG.id}${QUICK}`, reg.token, pnpmTree())).status).toBe(404);
+    await proxy.close();
+  });
+
+  it('refuses a malformed tree before the upstream is asked', async () => {
+    const upstream = vi.fn(async () => new Response(answer, { status: 200 }));
+    const { base, proxy } = await startProxy(upstream);
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect(
+      (await post(base, `/npm/${REG.id}${QUICK}`, reg.token, '{"dependencies":{}}')).status
+    ).toBe(400);
+    expect(
+      (await post(base, `/npm/${REG.id}${QUICK}`, reg.token, pnpmTree({ install: ['x'] }))).status
+    ).toBe(400);
+    expect(upstream).not.toHaveBeenCalled();
+    await proxy.close();
+  });
+
+  it('in lockfile mode refuses a package or version the lockfile does not hold', async () => {
+    const upstream = vi.fn(async () => new Response(answer, { status: 200 }));
+    const { base, proxy } = await startProxy(upstream);
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    const all = new Map([
+      ['left-pad', new Set(['1.3.0'])],
+      ['@s/p', new Set(['2.0.0'])],
+      ['inner', new Set(['0.1.0'])],
+    ]);
+    reg.setAllowlist(new Map([[REG.id, all]]));
+    expect((await post(base, `/npm/${REG.id}${QUICK}`, reg.token, pnpmTree())).status).toBe(200);
+    all.set('inner', new Set(['9.9.9']));
+    expect((await post(base, `/npm/${REG.id}${QUICK}`, reg.token, pnpmTree())).status).toBe(403);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    await proxy.close();
+  });
+
+  it('refuses a tree naming a package another registry serves', async () => {
+    const upstream = vi.fn(async () => new Response(answer, { status: 200 }));
+    const { base, proxy } = await startProxy(upstream);
+    const priv = {
+      ...REG,
+      id: 'reg-private',
+      isDefault: false,
+      scopes: ['@s'],
+      upstreamUrl: 'http://priv.test',
+    };
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG, priv] });
+    reg.setAllowlist(
+      new Map([
+        [REG.id, null],
+        [priv.id, null],
+      ])
+    );
+    const res = await post(base, `/npm/${REG.id}${QUICK}`, reg.token, pnpmTree());
+    expect(res.status).toBe(403);
+    expect(res.body).toMatch(/another registry/);
+    expect(upstream).not.toHaveBeenCalled();
+    await proxy.close();
+  });
+});
+
+describe('registry proxy audit relays share the buffered-fetch limits', () => {
+  /** An upstream whose audit answers wait on `open()`; everything else answers at once. */
+  function gatedAudit() {
+    let started = 0;
+    let open: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+    const upstream = async (url: string) => {
+      if (!url.endsWith(AUDIT)) {
+        return new Response('{}', { status: 200 });
+      }
+      started++;
+      await gate;
+      return new Response('{"left-pad":[]}', { status: 200 });
+    };
+    return { open: () => open(), started: () => started, upstream };
+  }
+  async function until(done: () => boolean): Promise<void> {
+    for (let i = 0; i < 1000 && !done(); i++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    }
+    expect(done()).toBe(true);
+  }
+  const query = JSON.stringify({ 'left-pad': ['1.3.0'] });
+
+  it('answers 503 with Retry-After while the registration’s slots are all held', async () => {
+    const g = gatedAudit();
+    const { base, proxy } = await startProxy(g.upstream, {
+      maxBufferedFetches: 1,
+      maxQueuedFetches: 0,
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    const held = post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query);
+    await until(() => g.started() === 1);
+    const busy = await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query);
+    expect(busy.status).toBe(503);
+    g.open();
+    expect((await held).status).toBe(200);
+    // The slot came back: the next audit is served.
+    expect((await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query)).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('shares the slots with packument fetches, so an audit cannot starve them unbounded', async () => {
+    const g = gatedAudit();
+    const { base, proxy } = await startProxy(g.upstream, {
+      maxBufferedFetches: 1,
+      maxQueuedFetches: 0,
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    const held = post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query);
+    await until(() => g.started() === 1);
+    expect((await get(base, `/npm/${REG.id}/left-pad`, reg.token)).status).toBe(503);
+    g.open();
+    await held;
+    await proxy.close();
+  });
+
+  it('refuses a malformed or denied body without taking a slot', async () => {
+    const g = gatedAudit();
+    const { base, proxy } = await startProxy(g.upstream, {
+      maxBufferedFetches: 1,
+      maxQueuedFetches: 0,
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, new Map([['left-pad', new Set(['1.3.0'])]])]]));
+    const held = post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query);
+    await until(() => g.started() === 1);
+    // The only slot is held, yet these answer on their own merits, not 503.
+    expect((await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, 'garbage')).status).toBe(400);
+    expect(
+      (await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, '{"exfil":["1.0.0"]}')).status
+    ).toBe(403);
+    g.open();
+    await held;
+    await proxy.close();
+  });
+
+  it('ends an upstream that never answers at the deadline with a 502, and frees the slot', async () => {
+    const upstream = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        })
+    );
+    const { base, proxy } = await startProxy(upstream as never, {
+      maxBufferedFetches: 1,
+      maxQueuedFetches: 0,
+      upstreamDeadlineMs: 60,
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect((await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query)).status).toBe(502);
+    // Not 503: the slot was released when the deadline fired.
+    expect((await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, query)).status).toBe(502);
+    expect(upstream).toHaveBeenCalledTimes(2);
     await proxy.close();
   });
 });

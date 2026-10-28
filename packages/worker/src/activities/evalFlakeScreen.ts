@@ -187,6 +187,7 @@ async function defaultLoadCases(datasetId: string): Promise<ScreenCaseRow[]> {
       id: true,
       input: true,
       repoUrl: true,
+      stack: true,
       tags: true,
     },
     where: {

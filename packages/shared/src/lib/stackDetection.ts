@@ -19,7 +19,7 @@ const SIGNALS: Record<Stack, string[]> = {
   python: ['pyproject.toml', 'requirements.txt', 'setup.py'],
 };
 
-const NODE_LOCKFILES: Array<{ file: string; pm: 'npm' | 'yarn' | 'pnpm' }> = [
+const NODE_LOCKFILES: Array<{ file: string; pm: NodePackageManager }> = [
   { file: 'package-lock.json', pm: 'npm' },
   { file: 'yarn.lock', pm: 'yarn' },
   { file: 'pnpm-lock.yaml', pm: 'pnpm' },
@@ -78,18 +78,33 @@ export function stackGateDefaults(
   }
 }
 
+type NodePackageManager = 'npm' | 'yarn' | 'pnpm';
+
 /**
- * Stack-derived fallback commands for a repository's stored detection, or null
- * when the built-in (Node) gates apply: no detection, a Node root, or a root with
- * no stack. A non-null result may be sparse — a gate it lacks has no unambiguous
- * command for the stack, and the caller must not substitute another ecosystem's.
- *
- * Only the root counts: a detection with `components` is read from the root
- * component (a polyglot root resolves by the fixed precedence, so node wins),
- * and one from before `components` existed carried a root-only `primary`.
- * The input is a JSON column, so nothing about its shape is assumed.
+ * Gate commands for a Node root whose lockfile names npm or pnpm. Yarn has no
+ * entry: the built-in gates are `yarn` commands, so a Yarn root (or one whose
+ * manager is unknown) keeps them. A script the repository does not declare fails
+ * as `missing script`, exactly as the built-in `yarn lint` does.
  */
-export function detectedGateDefaults(detected: unknown): RepoGateCommands | null {
+const NODE_PM_GATE_DEFAULTS: Record<'npm' | 'pnpm', RepoGateCommands> = {
+  npm: {
+    runBuild: 'npm run build',
+    runLint: 'npm run lint',
+    runTests: 'npm test',
+    runTypecheck: 'npm run typecheck',
+    runVulnScan: 'npm audit --audit-level=high',
+  },
+  pnpm: {
+    runBuild: 'pnpm run build',
+    runLint: 'pnpm run lint',
+    runTests: 'pnpm test',
+    runTypecheck: 'pnpm run typecheck',
+    runVulnScan: 'pnpm audit --audit-level high',
+  },
+};
+
+/** The stack a stored detection puts at the repository's root, or null. Assumes no shape. */
+export function detectedRootStack(detected: unknown): Stack | null {
   if (!detected || typeof detected !== 'object') {
     return null;
   }
@@ -97,8 +112,30 @@ export function detectedGateDefaults(detected: unknown): RepoGateCommands | null
   const root = Array.isArray(d.components)
     ? d.components.find((c) => c?.path === '')?.stacks?.[0]
     : d.primary;
-  if (root !== 'python' && root !== 'jvm' && root !== 'go') {
+  return root === 'node' || root === 'python' || root === 'jvm' || root === 'go' ? root : null;
+}
+
+/**
+ * Stack-derived fallback commands for a repository's stored detection, or null
+ * when the built-in `yarn` gates apply: no detection, a root with no stack, or a
+ * Node root on Yarn (or with no recorded manager). A non-null result may be sparse —
+ * a gate it lacks has no unambiguous command for the stack, and the caller must
+ * not substitute another ecosystem's.
+ *
+ * Only the root counts: a detection with `components` is read from the root
+ * component (a polyglot root resolves by the fixed precedence, so node wins),
+ * and one from before `components` existed carried a root-only `primary`.
+ * The input is a JSON column, so nothing about its shape is assumed.
+ */
+export function detectedGateDefaults(detected: unknown): RepoGateCommands | null {
+  const root = detectedRootStack(detected);
+  if (root === null) {
     return null;
+  }
+  const d = detected as Partial<DetectedStack>;
+  if (root === 'node') {
+    const pm = d.packageManager;
+    return pm === 'npm' || pm === 'pnpm' ? { ...NODE_PM_GATE_DEFAULTS[pm] } : null;
   }
   const evidence = Array.isArray(d.evidence) ? d.evidence : [];
   const rootFiles = new Set(evidence.filter((f) => typeof f === 'string' && !f.includes('/')));
@@ -111,7 +148,7 @@ export function detectedGateDefaults(detected: unknown): RepoGateCommands | null
  * are not needed). Returns every detected stack, the primary one by the fixed
  * precedence above, conservative suggested gate commands (keyed on
  * `Connection.gateCommands` / `REPO_GATE_COMMAND_KEYS`), the curated
- * `defaults/Dockerfile.<stack>` to build (null for go, which has none), and
+ * `defaults/Dockerfile.<stack>` to build (null when no stack was found), and
  * the filenames read as evidence.
  *
  * Suggestions are deliberately conservative — lint/typecheck commands are only
@@ -190,13 +227,21 @@ export function detectStack(
     suggestedGateCommands.runLint = 'ruff check';
   }
 
+  // Recorded only when exactly one root lockfile exists: two (a stale one beside the
+  // live one) leave the manager unknown, and an unknown manager keeps the built-in
+  // gates instead of guessing one that could differ from what the repo runs.
+  const rootLockfiles = NODE_LOCKFILES.filter((l) => present.has(l.file));
+  const packageManager =
+    rootStack === 'node' && rootLockfiles.length === 1 ? rootLockfiles[0]?.pm : undefined;
+
   return {
     ...(components.length > 0 ? { components } : {}),
     ...(componentsTruncated ? { componentsTruncated } : {}),
     evidence,
+    ...(packageManager ? { packageManager } : {}),
     primary,
     stacks,
-    suggestedDockerfile: primary === 'go' || primary === null ? null : primary,
+    suggestedDockerfile: primary,
     suggestedGateCommands,
     ...(opts?.treeTruncated ? { treeTruncated: true } : {}),
   };

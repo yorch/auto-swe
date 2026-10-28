@@ -100,6 +100,7 @@ const CaseInput = z.object({
   input: z.unknown(),
   reference: z.unknown().optional(),
   repoUrl: z.string().min(1).max(2000),
+  stack: z.enum(['node', 'python', 'jvm', 'go']).nullable().optional(),
   tags: z.array(z.string().max(100)).max(50).optional(),
 });
 
@@ -206,6 +207,13 @@ function toRunDto(run: {
   };
 }
 
+const CASE_STACKS = ['node', 'python', 'jvm', 'go'] as const;
+
+/** A stored stack as the DTO's union; a value outside the set (written around the API) reads as unset. */
+function toCaseStack(stack: string | null): (typeof CASE_STACKS)[number] | null {
+  return CASE_STACKS.find((s) => s === stack) ?? null;
+}
+
 function toCaseDto(c: {
   id: string;
   datasetId: string;
@@ -214,6 +222,7 @@ function toCaseDto(c: {
   baselineSha: string;
   goldenTest: string;
   reference: unknown;
+  stack: string | null;
   tags: string[];
   flakeScreened: boolean;
   flakeRuns: number;
@@ -235,6 +244,7 @@ function toCaseDto(c: {
       !c.flakeScreened &&
       c.flakeRuns > 0 &&
       c.flakeScreenInfraErrors >= FLAKE_SCREEN_MAX_INFRA_ERRORS,
+    stack: toCaseStack(c.stack),
     tags: c.tags,
   };
 }
@@ -285,6 +295,7 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
                     input: (c.input ?? {}) as object,
                     reference: (c.reference ?? undefined) as object | undefined,
                     repoUrl: c.repoUrl,
+                    stack: c.stack ?? null,
                     tags: c.tags ?? [],
                   })),
                 },

@@ -23,3 +23,39 @@
  * loading the harness.
  */
 export const EVAL_WORKSPACE_IMAGE = 'node:24-alpine';
+
+/**
+ * The pinned base image for each toolchain an eval case may name, by `EvalCase.stack`.
+ * A case names a stack, never an image: the image is code that runs a repository's
+ * tests, so the set is closed and fixed here, and — like `EVAL_WORKSPACE_IMAGE` — each
+ * entry is a benchmark epoch. `node` is the constant above, so a case with no stack
+ * runs exactly where it always did.
+ *
+ * These are upstream toolchain bases, not the curated executor images (which are built
+ * per repository and have no shared tag). They carry the language toolchain but not a
+ * build tool beyond it: a JVM case brings its Maven or Gradle wrapper, and an image
+ * without `git` gets one installed when the workspace starts.
+ */
+const EVAL_STACK_IMAGES: Readonly<Record<string, string>> = Object.freeze({
+  go: 'golang:1.26-bookworm@sha256:386f0cbb8fb3402ff5a15048c96731e6ff37142d31182f3b72306359a1f5e9b7',
+  jvm: 'eclipse-temurin:21-jdk@sha256:23cc5734ff46e776f51ce66eb9ee08444fd47caabec0a95b7eb6e94be2d3696d',
+  node: EVAL_WORKSPACE_IMAGE,
+  python:
+    'python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f',
+});
+
+/**
+ * The image an eval case runs in. A missing stack is node. A stack outside the set is
+ * an error, not node: scoring a Python case on a Node image would fail it for the
+ * environment and read as the candidate's regression.
+ */
+export function evalWorkspaceImageFor(stack: string | null | undefined): string {
+  if (stack === null || stack === undefined) {
+    return EVAL_WORKSPACE_IMAGE;
+  }
+  const image = Object.hasOwn(EVAL_STACK_IMAGES, stack) ? EVAL_STACK_IMAGES[stack] : undefined;
+  if (!image) {
+    throw new Error(`Unknown eval case stack '${stack}' (expected node, python, jvm or go)`);
+  }
+  return image;
+}

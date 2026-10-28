@@ -69,3 +69,84 @@ describe('pii-us-phone', () => {
     ]);
   });
 });
+
+describe('JVM, Go and Python code-security patterns', () => {
+  it('code-java-runtime-exec flags Runtime.exec and a shell ProcessBuilder only', () => {
+    expectMatches('code-java-runtime-exec', [
+      ['Runtime.getRuntime().exec(cmd);', true],
+      ['Runtime . getRuntime ( ) . exec ("ls")', true],
+      ['new ProcessBuilder("sh", "-c", cmd)', true],
+      ['new ProcessBuilder("/bin/bash", "-c", cmd)', true],
+      ['new ProcessBuilder("git", "status")', false],
+      ['Runtime.getRuntime().availableProcessors()', false],
+    ]);
+  });
+
+  it('code-go-exec-shell flags a shell run with -c, not a plain command', () => {
+    expectMatches('code-go-exec-shell', [
+      ['exec.Command("sh", "-c", script)', true],
+      ['exec.CommandContext(ctx, "bash", "-c", script)', true],
+      ['exec.Command("git", "status")', false],
+      ['exec.Command("sh", script)', false],
+    ]);
+  });
+
+  it('code-unsafe-deserialization flags ObjectInputStream, pickle and an unsafe yaml.load', () => {
+    expectMatches('code-unsafe-deserialization', [
+      ['new ObjectInputStream(socket.getInputStream())', true],
+      ['obj = pickle.loads(data)', true],
+      ['pickle.load(f)', true],
+      ['cfg = yaml.load(text)', true],
+      ['cfg = yaml.load(text, Loader=yaml.SafeLoader)', false],
+      ['cfg = yaml.safe_load(text)', false],
+      ['ObjectOutputStream out = new ObjectOutputStream(s)', false],
+    ]);
+  });
+
+  it('code-sql-string-built flags a statement built at the call, not a parameterised one', () => {
+    expectMatches('code-sql-string-built', [
+      ['stmt.executeQuery("SELECT * FROM users WHERE id = " + id)', true],
+      ['db.Query("select * from t where a = " + a)', true],
+      ["cursor.execute('DELETE FROM t WHERE id = ' + str(i))", true],
+      ['cursor.execute(f"SELECT * FROM t WHERE id = {i}")', true],
+      ['cursor.execute("SELECT * FROM t WHERE id = %s", (i,))', false],
+      ['db.Query("SELECT * FROM t WHERE id = $1", id)', false],
+      ['conn.prepareStatement("SELECT * FROM t WHERE id = ?")', false],
+      ['logger.execute("starting " + name)', false],
+    ]);
+  });
+
+  it('code-weak-hash-jvm-go flags MD5/SHA-1 in Java and the Go packages', () => {
+    expectMatches('code-weak-hash-jvm-go', [
+      ['MessageDigest.getInstance("MD5")', true],
+      ['MessageDigest.getInstance("SHA-1")', true],
+      ['import "crypto/md5"', true],
+      ['MessageDigest.getInstance("SHA-256")', false],
+      ['import "crypto/sha256"', false],
+    ]);
+  });
+
+  it('every pattern added here is linear on adversarial input', () => {
+    const labels = [
+      'code-java-runtime-exec',
+      'code-go-exec-shell',
+      'code-unsafe-deserialization',
+      'code-sql-string-built',
+      'code-weak-hash-jvm-go',
+    ];
+    const hostile = [
+      ' '.repeat(50_000),
+      'execute('.repeat(6_000),
+      'yaml.load('.repeat(5_000),
+      `execute("${'select '.repeat(8_000)}`,
+    ];
+    for (const label of labels) {
+      const re = builtin(label);
+      for (const input of hostile) {
+        const start = performance.now();
+        re.test(input);
+        expect(performance.now() - start, `${label} on ${input.slice(0, 12)}…`).toBeLessThan(250);
+      }
+    }
+  });
+});

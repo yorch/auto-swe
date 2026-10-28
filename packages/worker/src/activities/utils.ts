@@ -1,4 +1,4 @@
-import { detectedGateDefaults } from '@auto-swe/shared/lib/stackDetection';
+import { detectedGateDefaults, detectedRootStack } from '@auto-swe/shared/lib/stackDetection';
 import type { FileChange, TestRunResult } from '@auto-swe/shared/types/workflow';
 
 /**
@@ -15,7 +15,7 @@ export const TEST_RUN_TIMEOUT_MS = 600_000;
  * The same chain as the `runTests` quality gate, so the loop and the gate never
  * run different commands: the repository's configured
  * `Connection.gateCommands.runTests` wins; then the default for the stack the
- * repository's root was detected as (a Python, JVM or Go root); then a guess from
+ * repository's root was detected as (a Python, JVM or Go root, not Node); then a guess from
  * package.json's scripts and devDependencies, falling back to `npm test`.
  */
 export function detectTestCommand(
@@ -30,7 +30,12 @@ export function detectTestCommand(
   if (typeof configured === 'string' && configured.trim().length > 0) {
     return configured;
   }
-  const stackTests = detectedGateDefaults(detectedStack)?.runTests;
+  // A Node root is not given its package manager's `npm test`: the package.json
+  // guess below is better informed (a missing test script, a vitest dependency).
+  const stackTests =
+    detectedRootStack(detectedStack) === 'node'
+      ? undefined
+      : detectedGateDefaults(detectedStack)?.runTests;
   if (stackTests) {
     return stackTests;
   }

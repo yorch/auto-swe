@@ -628,8 +628,8 @@ Seven scanners run during agent execution, each independently advisory or blocki
 | **LLM output** | Post-generate per TDD iteration | Advisory | `scanSkillContent`; wrapped in try/catch — a DB failure must never abort the activity |
 | **Memory content** | Every `memory_items` write + every recall into a prompt | **Hard-block** (refuses the write / drops the item; fails closed) | `INJECTION` patterns only, via `memoryGuard.ts` — memory is replayed into every later run that recalls it |
 
-**Built-in patterns:** 63 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION,
-11 EXFILTRATION, 18 SHELL_COMMAND, 10 CODE_SECURITY, 7 SENSITIVE_FILE, 4 PII. Synced idempotently by
+**Built-in patterns:** 68 patterns in `packages/shared/src/scannerPatterns/index.ts` — 13 INJECTION,
+11 EXFILTRATION, 18 SHELL_COMMAND, 15 CODE_SECURITY, 7 SENSITIVE_FILE, 4 PII. Synced idempotently by
 `syncBuiltins()` at gateway startup and admin-extensible at `/admin/scanner`.
 
 `EXFILTRATION` patterns are written for **prose** — skill text and LLM output — and several are far

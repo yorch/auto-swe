@@ -19,7 +19,7 @@ starts gets, before the container is created, a random 32-byte token registered 
 generated `npmrc` — to send installs to `http://<proxy>/npm/<registryId>/…` with that bearer
 token. The proxy adds the real upstream credential server-side, so a token read out of the
 container is good only at the proxy, only for that workspace's lifetime, and in lockfile mode
-only for the dependencies committed on the base ref. It is **read-only**: GET and HEAD only.
+only for the dependencies committed on the base ref. It is **read-only**: GET and HEAD only, plus the one POST described under *Audit* in §5.
 
 The threat model covers both accidental leakage and a prompt-injected agent. The real registry
 credential never enters the container, so neither a log line nor an agent can expose it. The
@@ -123,7 +123,34 @@ the allowlist (denied).
 
 A scoped name may be written `@scope/pkg`, `@scope%2fpkg` or `%40scope%2fpkg`.
 
-Anything else, including search, audit and `/-/…` endpoints, is a JSON 404.
+Anything else, including search and other `/-/…` endpoints, is a JSON 404. The one exception is the
+audit query below.
+
+**Audit.** Two query shapes are relayed to the **default** registry, with its credential, so a
+`runVulnScan` gate works in a wired workspace. They are the only requests other than GET and HEAD.
+
+| Client | Endpoint | Body |
+|---|---|---|
+| `npm audit`, `yarn npm audit` | `POST …/-/npm/v1/security/advisories/bulk` | a JSON object of package names to non-empty lists of versions |
+| `pnpm audit` | `POST …/-/npm/v1/security/audits/quick`, then `…/audits` if that does not answer 200 | pnpm's dependency tree: importers holding packages with `version`, `integrity`, `dev`, `requires` and nested `dependencies` |
+
+Both bodies (gzip accepted, 8 MiB cap) are held to that shape and nothing else: every key outside
+the known set is refused, every name, version and integrity value is held to its charset, and the
+tree's `install`, `remove` and `metadata` must be empty, so a body can carry nothing but the names
+and versions of a lockfile. What is forwarded is the validated body re-serialised, not the bytes
+received. In lockfile mode every name and version in it must also be in the committed lockfiles
+(otherwise 403, reported like any other denial). A body that names a package another registry
+serves (a claimed private scope) is refused with 403, not trimmed: sending it to the default
+registry would disclose the name, and a trimmed audit would read as a complete one. The answer
+(8 MiB cap) is relayed as JSON with the upstream's status; whether it holds advisories depends on
+the upstream — a mirror that does not serve the endpoint answers its own error (pnpm reports a 404
+from both of its endpoints as an audit endpoint that does not exist), and the gate fails.
+
+An audit is a buffered fetch like a packument, so it follows the same rules: it takes one of the
+workspace's places only after the body has passed the shape and lockfile checks (a refused body never
+waits), waits for a place and gets `503` with `Retry-After` exactly as a packument does, reads the
+client's body and the upstream's answer within the 20-second deadline (`408` for a client that is too
+slow, `502` for the upstream), and gives its place back at once if the client hangs up.
 
 **A tarball path may carry a prefix.** Up to eight segments are allowed, and none may be `.` or
 `..` in any encoding. The proxy validates the prefix and then ignores it, and it strips an
@@ -141,7 +168,7 @@ packument.
 **Status codes:**
 - unknown token: 401
 - unregistered `registryId`: 404
-- a method other than GET or HEAD: 405
+- a method other than GET or HEAD, except the audit POST above: 405
 
 **The upstream request** carries the routed registry's credential header, the client's `accept`
 header, `accept-encoding: identity` for packuments, and `redirect: 'error'`. It goes through the

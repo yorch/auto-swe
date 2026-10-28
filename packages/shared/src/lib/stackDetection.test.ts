@@ -95,7 +95,7 @@ describe('detectStack', () => {
     expect(r).toMatchObject({
       primary: 'go',
       stacks: ['go'],
-      suggestedDockerfile: null,
+      suggestedDockerfile: 'go',
       suggestedGateCommands: {
         runBuild: 'go build ./...',
         runLint: 'go vet ./...',
@@ -122,13 +122,21 @@ describe('detectStack', () => {
 describe('detectedGateDefaults', () => {
   const detect = (files: string[]) => detectStack(files);
 
-  it('is null where the built-in gates apply: nothing, a Node root, a root with no stack', () => {
+  it('is null where the built-in gates apply: nothing, a Node root on Yarn or unknown, no stack', () => {
     expect(detectedGateDefaults(null)).toBeNull();
     expect(detectedGateDefaults(undefined)).toBeNull();
     expect(detectedGateDefaults(detect([]))).toBeNull();
     expect(detectedGateDefaults(detect(['package.json']))).toBeNull();
+    expect(detectedGateDefaults(detect(['package.json', 'yarn.lock']))).toBeNull();
+    // A detection stored before the manager was recorded.
+    expect(
+      detectedGateDefaults({ components: [{ path: '', stacks: ['node'] }], evidence: [] })
+    ).toBeNull();
     // Node outranks Python at a polyglot root, so the Node gates stay.
     expect(detectedGateDefaults(detect(['package.json', 'pyproject.toml']))).toBeNull();
+    expect(
+      detectedGateDefaults({ components: [{ path: '', stacks: ['node'] }], packageManager: 'bun' })
+    ).toBeNull();
     // Only a nested component has a stack: the root is not that stack.
     expect(detectedGateDefaults(detect(['services/api/pom.xml']))).toBeNull();
   });
@@ -185,5 +193,45 @@ describe('detectedGateDefaults', () => {
     ]) {
       expect(detectedGateDefaults(bad)).toBeNull();
     }
+  });
+});
+
+describe('Node package manager', () => {
+  it('records the manager the root lockfile names, and nothing for a non-Node root', () => {
+    expect(detectStack(['package.json', 'package-lock.json']).packageManager).toBe('npm');
+    expect(detectStack(['package.json', 'yarn.lock']).packageManager).toBe('yarn');
+    expect(detectStack(['package.json', 'pnpm-lock.yaml']).packageManager).toBe('pnpm');
+    expect(detectStack(['package.json']).packageManager).toBeUndefined();
+    expect(detectStack(['pyproject.toml', 'package-lock.json']).packageManager).toBeUndefined();
+    // Two root lockfiles: the manager is unknown, not whichever is listed first.
+    expect(
+      detectStack(['package.json', 'package-lock.json', 'yarn.lock']).packageManager
+    ).toBeUndefined();
+    // A nested lockfile is not the root's.
+    expect(detectStack(['package.json', 'web/pnpm-lock.yaml']).packageManager).toBeUndefined();
+  });
+
+  it('gives npm and pnpm roots their own commands, including the audit', () => {
+    const npm = detectedGateDefaults(detectStack(['package.json', 'package-lock.json']));
+    expect(npm).toMatchObject({
+      runTests: 'npm test',
+      runVulnScan: 'npm audit --audit-level=high',
+    });
+    const pnpm = detectedGateDefaults(detectStack(['package.json', 'pnpm-lock.yaml']));
+    expect(pnpm).toMatchObject({
+      runBuild: 'pnpm run build',
+      runVulnScan: 'pnpm audit --audit-level high',
+    });
+    expect(Object.values(npm ?? {}).join(' ')).not.toMatch(/yarn/);
+  });
+
+  it('does not hand out the shared table by reference', () => {
+    const a = detectedGateDefaults(detectStack(['package.json', 'package-lock.json']));
+    if (a) {
+      a.runTests = 'mutated';
+    }
+    expect(detectedGateDefaults(detectStack(['package.json', 'package-lock.json']))?.runTests).toBe(
+      'npm test'
+    );
   });
 });

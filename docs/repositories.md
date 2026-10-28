@@ -262,9 +262,9 @@ hardened workspace container, runs the contract checks inside it, removes the
 container, and returns each check with `required`/`ok`/`detail`.
 
 `defaults/` holds curated executor bases — `Dockerfile.node`, plus
-`Dockerfile.python` (Python slim + `uv`) and `Dockerfile.jvm` (Temurin 21 +
+`Dockerfile.python` (Python slim + `uv`), `Dockerfile.go` (Go on Debian) and `Dockerfile.jvm` (Temurin JDK +
 Maven, daemons off). `build-executor.yml` builds one of them per run: the
-`stack` input (`node`|`python`|`jvm`, default `node`) selects it, unless
+`stack` input (`node`|`python`|`jvm`|`go`, default `node`) selects it, unless
 `use_repo_dockerfile` builds the repository's own Dockerfile instead.
 
 **Recording the build.** A build writes the image back to the connection together with
@@ -313,6 +313,12 @@ A gate the table leaves blank resolves to no command and fails as unconfigured (
 on its node makes it optional); it is never filled with a command from another ecosystem. The
 commands come from this fixed table, not from the stored `suggestedGateCommands`. A Node root, a
 polyglot root (node outranks the rest) and a repository with no detection keep the built-in gates.
+
+A Node root whose lockfile names npm or pnpm runs that manager's commands instead (`npm run build`,
+`npm run lint`, `npm test`, `npm run typecheck`, `npm audit --audit-level=high`; `pnpm …` likewise),
+so its vulnerability scan is not Yarn 4's `yarn npm audit`. The test loop does not take the manager's
+`npm test` — it keeps its `package.json` guess. A Yarn root, or a detection from before the manager
+was recorded, keeps the built-in `yarn` gates.
 
 The repository edit form shows the detection as a suggestion: the detected stacks and components,
 the suggested `defaults/Dockerfile.<stack>` for `build-executor.yml`, and a **Use suggested gate
@@ -446,8 +452,15 @@ longer fit.
   skipped until one dispatched build records it. A scheduled rebuild of an opted-in
   `use_repo_dockerfile` repository builds whatever its default branch holds at that moment, so the
   merge-trust caveat above applies to every scheduled run, not only the first one.
-- **Go has no curated executor image.** Stack detection recognizes `go.mod`, but `defaults/` has
-  no Go Dockerfile, so a Go repository needs its own image or `use_repo_dockerfile`.
+- **Rust, .NET and Ruby have no curated executor image and are not detected.** A repository on
+  one of them needs its own image or `use_repo_dockerfile`, and its own `gateCommands`.
+- **`runVulnScan` relays through the registry proxy only to the default registry.** The proxy serves
+  the audit queries `npm audit`, `pnpm audit` and `yarn npm audit` send (see
+  [`package-registries.md`](./package-registries.md)). An audit that names a private-scope package
+  is refused, and an upstream that does not serve the endpoint a client uses fails the gate — pnpm
+  uses the older `audits` endpoints, which a registry may no longer implement.
+- **The Yarn built-ins assume Yarn 4.** `yarn npm audit` exists only in Yarn Berry; the detector sees
+  lockfile names, not the Yarn version.
 - **The stack fallback follows the stored detection, which is weekly.** A repository onboarded
   since the last scan has none and keeps the built-in `yarn` gates until the next scan; a root that
   changed stack is followed only after a rescan. Only the root counts: a Python or JVM service in a

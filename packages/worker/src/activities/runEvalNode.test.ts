@@ -496,6 +496,55 @@ describe('runEvalNode (gate scorer candidate branch)', () => {
     );
   });
 
+  it('runs the command the repository’s own gate would: its stack default, not yarn', async () => {
+    mocks.connectionFindUniqueOrThrow.mockResolvedValue({
+      defaultBranch: 'main',
+      detectedStack: { components: [{ path: '', stacks: ['go'] }], evidence: ['go.mod'] },
+      executorImage: null,
+      gateCommands: null,
+    });
+    await runEvalNode({ scorers: [gateScorer], targetValue: 'diff' });
+    expect(runGateStandalone).toHaveBeenCalledWith(
+      expect.objectContaining({ command: 'go test ./...' })
+    );
+  });
+
+  it('lets the scorer’s command, then the repository’s, win over the stack default', async () => {
+    mocks.connectionFindUniqueOrThrow.mockResolvedValue({
+      defaultBranch: 'main',
+      detectedStack: { components: [{ path: '', stacks: ['go'] }], evidence: ['go.mod'] },
+      gateCommands: { runTests: 'make test' },
+    });
+    await runEvalNode({ scorers: [gateScorer], targetValue: 'diff' });
+    expect(runGateStandalone).toHaveBeenLastCalledWith(
+      expect.objectContaining({ command: 'make test' })
+    );
+    await runEvalNode({
+      scorers: [{ ...gateScorer, command: 'go test -run Golden ./...' } as EvalScorer],
+      targetValue: 'diff',
+    });
+    expect(runGateStandalone).toHaveBeenLastCalledWith(
+      expect.objectContaining({ command: 'go test -run Golden ./...' })
+    );
+  });
+
+  it('fails the floor, without running anything, for a gate the detected stack has no command for', async () => {
+    mocks.connectionFindUniqueOrThrow.mockResolvedValue({
+      defaultBranch: 'main',
+      detectedStack: {
+        components: [{ path: '', stacks: ['python'] }],
+        evidence: ['pyproject.toml'],
+      },
+      gateCommands: null,
+    });
+    const out = await runEvalNode({
+      scorers: [{ gate: 'runLint', kind: 'gate' } as EvalScorer],
+      targetValue: 'diff',
+    });
+    expect(runGateStandalone).not.toHaveBeenCalled();
+    expect(JSON.stringify(out)).toContain('"passed":false');
+  });
+
   it('falls back to the run’s own work branch when the node names none', async () => {
     await runEvalNode({ scorers: [gateScorer], targetValue: 'diff' });
 

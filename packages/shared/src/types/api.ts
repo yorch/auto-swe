@@ -160,7 +160,12 @@ export interface DetectedStack {
   primary: 'node' | 'python' | 'jvm' | 'go' | null;
   suggestedGateCommands: RepoGateCommands;
   /** Which curated defaults/ Dockerfile to build, or null when none matches. */
-  suggestedDockerfile: 'node' | 'python' | 'jvm' | null;
+  suggestedDockerfile: 'node' | 'python' | 'jvm' | 'go' | null;
+  /**
+   * The Node package manager the root's lockfile names, when the root is a Node
+   * project with one. Absent on a detection from before this was recorded.
+   */
+  packageManager?: 'npm' | 'yarn' | 'pnpm';
   /** The root filenames the detection read as signals. */
   evidence: string[];
   /**
@@ -191,7 +196,10 @@ export interface RepositorySummary {
   consolidationEnabled: boolean;
   executorImage: string | null;
   /** How the executor image was built (for scheduled rebuilds); null when unset. */
-  executorImageBuild?: { stack: 'node' | 'python' | 'jvm'; useRepoDockerfile: boolean } | null;
+  executorImageBuild?: {
+    stack: 'node' | 'python' | 'jvm' | 'go';
+    useRepoDockerfile: boolean;
+  } | null;
   /** Per-gate command overrides; null when the repository overrides none. */
   gateCommands?: RepoGateCommands | null;
   /** Stack detected from root manifests by the dependency scan; null until one ran. */
@@ -1160,6 +1168,8 @@ export interface EvalCaseDto {
   repoUrl: string;
   baselineSha: string;
   goldenTest: string;
+  /** The toolchain the case runs on; null/absent is node. */
+  stack?: 'node' | 'python' | 'jvm' | 'go' | null;
   reference: unknown;
   tags: string[];
   flakeScreened: boolean;
