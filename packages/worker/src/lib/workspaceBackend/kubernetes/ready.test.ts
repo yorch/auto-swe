@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
+import { spawnCaptureAsync } from '../../execUtils.js';
 import type { WorkspaceBackend } from '../types.js';
-import { assertNetworkPolicyEnforced, wasBlocked } from './ready.js';
+import { assertNetworkPolicyEnforced, assertWorkspaceRbac, wasBlocked } from './ready.js';
+
+vi.mock('../../execUtils.js', () => ({ spawnCaptureAsync: vi.fn() }));
+vi.mock('@auto-swe/shared/lib/systemConfig', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/lib/systemConfig')>()),
+  resolveWorkspaceInfra: () => ({ kubernetes: { kubectl: 'kubectl', namespace: 'ns' } }),
+}));
 
 describe('wasBlocked', () => {
   it.each([
@@ -98,5 +105,41 @@ describe('assertNetworkPolicyEnforced', () => {
     exec.mockRejectedValueOnce(new Error('exec failed'));
     await expect(assertNetworkPolicyEnforced({ backend, env: {} })).rejects.toThrow('exec failed');
     expect(remove).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('assertWorkspaceRbac', () => {
+  const answer = (denied?: string) =>
+    vi.mocked(spawnCaptureAsync).mockImplementation(async (_bin, args) => {
+      const asked = `${args[2]} ${args[3]}`;
+      return {
+        exitCode: 0,
+        stderr: '',
+        stdout: asked === denied ? 'no\n' : 'yes\n',
+      };
+    });
+
+  it('checks what kubectl wait and the Secret lifecycle need, and no patch', async () => {
+    answer();
+    await expect(assertWorkspaceRbac()).resolves.toBeUndefined();
+    const asked = vi.mocked(spawnCaptureAsync).mock.calls.map((c) => `${c[1][2]} ${c[1][3]}`);
+    expect(asked).toEqual(
+      expect.arrayContaining([
+        'create pods',
+        'get pods',
+        'list pods',
+        'watch pods',
+        'delete pods',
+        'create pods/exec',
+        'create secrets',
+        'delete secrets',
+      ])
+    );
+    expect(asked.some((a) => a.startsWith('patch'))).toBe(false);
+  });
+
+  it('refuses when a verb is missing', async () => {
+    answer('watch pods');
+    await expect(assertWorkspaceRbac()).rejects.toThrow(/cannot watch pods in namespace ns/);
   });
 });
