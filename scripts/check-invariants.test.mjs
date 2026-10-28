@@ -115,6 +115,10 @@ describe('envCredentialViolations', () => {
       expect(envCredentialViolations(wrap(env)), env).toEqual([]);
     }
     expect(envCredentialViolations(wrap("env: ['MAX_TOKENS=1', 'API_TOKEN=x']"))).toHaveLength(1);
+    // `AUTHOR` is excluded, but it is the front of `AUTHORIZATION`, which is a credential.
+    expect(envCredentialViolations(wrap("env: ['AUTHORIZATION=x']"))).toHaveLength(1);
+    const mixed = wrap("env: ['GIT_AUTHOR_EMAIL=x', 'Authorization=y']");
+    expect(envCredentialViolations(mixed)).toHaveLength(1);
   });
 
   it('does not treat a comparison or another property as an env assignment', () => {

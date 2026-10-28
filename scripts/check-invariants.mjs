@@ -646,8 +646,8 @@ function checkComposeProfilesAreAdded() {
 //
 // Rule: in worker source, an array literal assigned to `env` or `leadingEnv` (as a property,
 // quoted or not, or as `x.env = [ … ]`) does not mention a credential-shaped name (TOKEN, SECRET,
-// PASSWORD, API_KEY, AUTH, CREDENTIAL, NPMRC, YARNRC), in a string or an identifier. `AUTHOR` and
-// `TOKENS` (GIT_AUTHOR_NAME, MAX_OUTPUT_TOKENS) are not credentials and are ignored.
+// PASSWORD, API_KEY, AUTH, CREDENTIAL, NPMRC, YARNRC), in a string or an identifier. `AUTHOR` (but
+// not `AUTHORIZATION`) and `TOKENS` (GIT_AUTHOR_NAME, MAX_OUTPUT_TOKENS) are not credentials.
 //
 // A tripwire over text, not a proof. It does not see an `env` built elsewhere and passed by name
 // (`opts.env.push(…)`, `base.concat([…])`, `cond ? […] : […]`, a `[...registry.env]` spread), an
@@ -664,7 +664,7 @@ const ENV_LIST =
   /(?:(?<![.\w])['"]?(?:env|leadingEnv)['"]?\s*:|\.(?:env|leadingEnv)\s*=(?!=))\s*\[/g;
 
 /** Names that contain a credential word without being one. */
-const NOT_A_CREDENTIAL = /AUTHOR|TOKENS(?![A-Za-z])/gi;
+const NOT_A_CREDENTIAL = /AUTHOR(?!IZ)|TOKENS(?![A-Za-z])/gi;
 
 /** The source of the bracket-balanced array whose `[` is at `open`. */
 function arraySlice(src, open) {
