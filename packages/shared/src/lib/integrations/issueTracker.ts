@@ -2,6 +2,7 @@ import type {
   CreatedIssue,
   FetchedIssue,
   FetchIssueOptions,
+  FetchIssueOutcome,
   IssueCreateFields,
   SearchIssuesOptions,
   SearchIssuesResult,
@@ -10,6 +11,12 @@ import type {
 
 export interface IssueTrackerProvider {
   fetchIssue(id: string, opts?: FetchIssueOptions): Promise<FetchedIssue | null>;
+  /**
+   * {@link fetchIssue} that says why it found nothing. Optional: a provider that does not tell a
+   * refused issue from an unreachable tracker leaves it out, and a caller reads its `null` as
+   * unavailable.
+   */
+  fetchIssueOutcome?(id: string, opts?: FetchIssueOptions): Promise<FetchIssueOutcome>;
   createIssue(fields: IssueCreateFields): Promise<CreatedIssue | null>;
   /** Issues matching a tracker query (JQL for Jira). A tracker's own rejection of the query is thrown. */
   searchIssues(query: string, opts: SearchIssuesOptions): Promise<SearchIssuesResult>;

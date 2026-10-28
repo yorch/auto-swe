@@ -394,8 +394,11 @@ expires. A round stops starting automations after ten minutes and resumes where 
   run) is recorded in the ledger and counted as seen; a manager takes it again with **Decide
   again**. An issue is marked seen only after the engine has decided it, so a poll that stops
   between the two decides it again and the ledger answers `duplicate`.
-- **A stall is visible.** An issue that cannot be read, or whose start failed, ends the poll and
-  stays unseen, so it is tried again at the next poll and the issues behind it wait. An issue that
+- **A stall is visible.** An issue that cannot be read for now (Jira answers 5xx or times out, or
+  rejects the credential), or whose start failed, ends the poll and stays unseen, so it is tried
+  again at the next poll and the issues behind it wait. An issue Jira refuses by itself (its own
+  read answers 403 or 404, as under issue-level security) is marked seen and counted as suppressed,
+  so it cannot hold up the newer issues; nothing from Jira's answer is stored. An issue that
   has moved to another project since the search is marked seen: it has a new key. The tick reads
   each automation again just before polling it, so one switched off in the meantime is not polled,
   and a poll that fails or is abandoned does not keep its place at the front of the order. The
@@ -615,7 +618,9 @@ recorded as `FAILED_TO_START` with its code.
 - **Decide again reads the issue as it was.** Taking a Jira decision again reads the recorded
   occurrence, not the issue now.
 - **Suppressed Jira issues are not taken again by themselves.** Only a manager's **Decide again**
-  does. An automation stalled by an unreadable issue or a failed start waits until that is fixed.
+  does. An automation stalled by a temporarily unreadable issue or a failed start waits until that is
+  fixed. An issue Jira refuses is skipped for good: no automation decision is recorded for it, so
+  it is not offered under **Decide again**.
 - **New event automation starts from a repository.** On the Automations page, **New event
   automation** asks for a repository; a team's automations open from the team's page or from an
   existing team automation's row.

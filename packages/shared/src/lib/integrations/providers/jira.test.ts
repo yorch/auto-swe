@@ -155,6 +155,48 @@ describe('JiraProvider.fetchIssue extras', () => {
   });
 });
 
+describe('JiraProvider.fetchIssueOutcome', () => {
+  it('returns the issue when it is read', async () => {
+    const { client } = stubClient({ '/issue/AIDEVEX-8?': ISSUE });
+    const outcome = await provider(client).fetchIssueOutcome('AIDEVEX-8');
+    expect(outcome.kind).toBe('found');
+    expect(outcome.kind === 'found' && outcome.issue.id).toBe('AIDEVEX-8');
+  });
+
+  it.each([
+    [403, 'auth'],
+    [404, 'not_found'],
+  ] as const)('says refused for a %s on the issue read', async (status, code) => {
+    const { client } = stubClient({ '/issue/': new AtlassianError(status, code, 'denied') });
+    expect(await provider(client).fetchIssueOutcome('AIDEVEX-8')).toEqual({ kind: 'refused' });
+  });
+
+  it.each([
+    [401, 'auth'],
+    [429, 'rate_limited'],
+    [500, 'server'],
+    [503, 'server'],
+    [0, 'network'],
+  ] as const)('says unavailable for %s (%s)', async (status, code) => {
+    const { client } = stubClient({ '/issue/': new AtlassianError(status, code, 'later') });
+    expect(await provider(client).fetchIssueOutcome('AIDEVEX-8')).toEqual({
+      kind: 'unavailable',
+    });
+  });
+
+  it('says unavailable for an error that is not the tracker’s answer', async () => {
+    const { client } = stubClient({ '/issue/': new Error('boom') });
+    expect(await provider(client).fetchIssueOutcome('AIDEVEX-8')).toEqual({
+      kind: 'unavailable',
+    });
+  });
+
+  it('leaves fetchIssue as it was: null for every miss', async () => {
+    const { client } = stubClient({ '/issue/': new AtlassianError(403, 'auth', 'denied') });
+    expect(await provider(client).fetchIssue('AIDEVEX-8')).toBeNull();
+  });
+});
+
 describe('JiraProvider.addComment', () => {
   it('posts the text as an ADF comment and reports it posted', async () => {
     const post = vi.fn(async (..._args: unknown[]) => ({ id: '10001' }));

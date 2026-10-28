@@ -13,7 +13,7 @@
  * taken, it is released, and `lastError` only ever holds one of the fixed codes below, never
  * text from Jira.
  */
-import type { PrismaClient } from '@auto-swe/shared';
+import type { FetchIssueOutcome, PrismaClient } from '@auto-swe/shared';
 import {
   type JiraFilterFacts,
   JiraFilterFactsSchema,
@@ -80,7 +80,7 @@ export interface PollableAutomation {
 
 export interface PollDeps {
   prisma: Pick<PrismaClient, 'automationPollState' | 'automationSeenIssue'>;
-  tracker: Pick<IssueTrackerProvider, 'searchIssues' | 'fetchIssue'>;
+  tracker: Pick<IssueTrackerProvider, 'searchIssues' | 'fetchIssue' | 'fetchIssueOutcome'>;
   /** Decides one new issue: the engine, for the automation being polled. */
   decide: (facts: JiraFilterFacts) => Promise<AutomationResult>;
   now: Date;
@@ -281,6 +281,15 @@ async function poll(
   return startNewIssues(deps, automation.id, inAllowedProjects);
 }
 
+/** A tracker that cannot say why a read found nothing: a miss is read as unavailable. */
+async function readByFetchIssue(
+  tracker: Pick<IssueTrackerProvider, 'fetchIssue'>,
+  key: string
+): Promise<FetchIssueOutcome> {
+  const issue = await tracker.fetchIssue(key);
+  return issue ? { issue, kind: 'found' } : { kind: 'unavailable' };
+}
+
 /** `PAY-2` before `PAY-10`; within a poll, one project after another. */
 const byIssueNumber = (a: { key: string }, b: { key: string }) =>
   a.key.localeCompare(b.key, 'en', { numeric: true });
@@ -290,7 +299,11 @@ const byIssueNumber = (a: { key: string }, b: { key: string }) =>
  * and at most one poll's worth. An issue is marked seen only after the engine has decided it, so a
  * crash between the two is decided again and answered `duplicate`.
  *
- * What stops the batch is visible, never silent: an issue that cannot be read, or whose start
+ * An issue the tracker definitively refuses to show (403 or 404 on its own read) is marked seen and
+ * counted as suppressed, so one unreadable issue cannot hold up the newer ones behind it.
+ *
+ * What stops the batch is visible, never silent: an issue that cannot be read for now (a 5xx, a
+ * timeout, a rejected credential, a tracker that cannot say why), or whose start
  * failed or was ignored, ends the poll with a fixed error code and stays unseen, because its
  * cause (Jira, a template, Temporal) is not the issue's. Skipping it instead would leave it
  * first in line on every poll and starve the newer issues behind it without a trace.
@@ -322,15 +335,27 @@ async function startNewIssues(
   let suppressed = 0;
   let decided = 0;
   for (const match of unseen.slice(0, MAX_ISSUES_PER_POLL)) {
-    let issue: Awaited<ReturnType<PollDeps['tracker']['fetchIssue']>>;
+    let read: FetchIssueOutcome;
     try {
-      issue = await deps.tracker.fetchIssue(match.key);
+      read = deps.tracker.fetchIssueOutcome
+        ? await deps.tracker.fetchIssueOutcome(match.key)
+        : await readByFetchIssue(deps.tracker, match.key);
     } catch {
       return { code: 'TRACKER_UNAVAILABLE', status: 'error' };
     }
-    if (!issue) {
+    if (read.kind === 'refused') {
+      // The tracker's definitive answer about this issue (issue-level security, or gone): asking
+      // again changes nothing, and leaving it unseen would starve every newer issue behind it. It
+      // is counted as suppressed and carries no tracker text.
+      await markSeen(match.key);
+      decided++;
+      suppressed++;
+      continue;
+    }
+    if (read.kind === 'unavailable') {
       return { code: 'TRACKER_UNAVAILABLE', status: 'error' };
     }
+    const { issue } = read;
     // The search approved this key in this project. A read that answers for another issue (one
     // moved to another project since) is not it, and is left for the next search to show.
     if (issue.id.toLowerCase() !== match.key.toLowerCase()) {

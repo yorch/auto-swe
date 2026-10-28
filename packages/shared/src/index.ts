@@ -60,6 +60,7 @@ export type {
   CreatedPage,
   FetchedIssue,
   FetchIssueOptions,
+  FetchIssueOutcome,
   IssueCreateFields,
   KnowledgePage,
   PageCreateFields,
