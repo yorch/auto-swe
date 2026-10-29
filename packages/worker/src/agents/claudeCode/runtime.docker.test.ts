@@ -59,6 +59,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import type { AgentTracer } from '../../lib/agentTracer.js';
+import { HARNESS_HOME } from '../harness/adapter.js';
 import { type MockMessagesApi, startMockMessagesApi } from './mockMessagesApi.js';
 import { createModelProxy, type ModelProxy } from './modelProxy.js';
 import { claudeCodeRuntime } from './runtime.js';
@@ -364,6 +365,61 @@ describe.skipIf(!enabled)('the Claude Code runtime against a real container', ()
     const main = api.requests.find((r) => r.tools.includes('Bash'));
     expect(main?.firstMessage).toContain('PROJECT-RULE-7731');
   }, 180_000);
+
+  it('stages a pathed base URL as a private settings file, off every argv, and the harness still gets it', async () => {
+    // A path on the gateway URL may be a credential, so the adapter stages the pinned
+    // settings as a file and passes its path, and hands the URL over as secret env.
+    const token = 'gwtok-7f3a9c41';
+    const ws = await startWorkspace();
+    const baseUrl = `http://${await hostAddress()}:${api.port}/${token}`;
+    const { runtime } = await makeRuntime(ws, { apiBase: `${baseUrl}/v1` });
+    api.requests.length = 0;
+    const controller = new AbortController();
+    h.cancellation.signal = controller.signal;
+
+    try {
+      const turn = runtime.runTurn({ system: 'S', user: 'HANG forever' }).catch((e) => e);
+      await vi.waitFor(async () => expect(await ws.shell('ps')).toContain('sleep 300'), {
+        interval: 500,
+        timeout: 120_000,
+      });
+
+      // The file: owner-only, owned by the user the harness runs as, and exactly the pinned layer.
+      const settingsPath = `${HARNESS_HOME}/.claude/pinned-settings.json`;
+      const [mode, owner, me] = (
+        await ws.shell(`echo "$(stat -c '%a %u' ${settingsPath}) $(id -u)"`)
+      ).split(/\s+/);
+      expect(mode).toBe('600');
+      expect(owner).toBe(me);
+      expect(JSON.parse(await ws.shell(`cat ${settingsPath}`))).toEqual({
+        env: { ANTHROPIC_BASE_URL: baseUrl },
+        permissions: { defaultMode: 'default', disableBypassPermissionsMode: 'disable' },
+      });
+
+      // No process in the container has the path token in its command line ...
+      expect(await ws.shell(`ps -eo args | grep -F ${token} | grep -v grep || true`)).toBe('');
+      // ... nor does one on the host (the `docker exec` that started the harness).
+      const hostProcesses = await run('ps', ['-eo', 'args']).catch(() => undefined);
+      if (hostProcesses) {
+        expect(hostProcesses.stdout).not.toContain(token);
+      }
+
+      // The harness process itself holds the full pathed URL in its environment.
+      const environments = await ws.shell(
+        "for p in /proc/[0-9]*; do tr '\\0' '\\n' < $p/environ 2>/dev/null | grep '^ANTHROPIC_BASE_URL=' || true; done"
+      );
+      expect(environments).toContain(`ANTHROPIC_BASE_URL=${baseUrl}`);
+
+      // And it reached the model API through that path.
+      expect(api.requests.length).toBeGreaterThan(0);
+      expect(api.requests.every((r) => r.url.startsWith(`/${token}/v1/messages`))).toBe(true);
+
+      controller.abort();
+      expect(await turn).toBeInstanceOf(Error);
+    } finally {
+      h.cancellation.signal = undefined;
+    }
+  }, 240_000);
 
   it('stops what it started when the activity is cancelled', async () => {
     const ws = await startWorkspace();
