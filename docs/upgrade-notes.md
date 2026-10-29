@@ -10,9 +10,14 @@ Read an entry when its **Affected** line matches your deployment. An entry that 
 needs nothing from you.
 
 > **Act first, read second.** Kubernetes, or Docker with command-line or event capture, and a
-> worker built before `3200071c`: rotate PATs, per-host PATs and user tokens now (UN-1 step 1),
-> then read the entries. A Docker worker with no model proxy hands the provider API key to code
-> the agent runs at every commit (UN-5).
+> worker built before `3200071c`: rotate PATs, per-host PATs and user tokens now (UN-1 steps 1
+> and 2), and any provider `apiBase` token that has a path or query (UN-3), then read the
+> entries. A Docker worker with no model proxy hands the provider API key to code the agent runs
+> at every commit (UN-5).
+>
+> **Standing exposure, whatever your build:** host- or node-level process auditing records the git
+> credential from git's own argument list inside each workspace on every authenticated call
+> ([details](#standing-exposure-the-credential-in-a-workspaces-git-argument-list)). Upgrading does not end it.
 
 ---
 
@@ -34,8 +39,31 @@ repository:
 git merge-base --is-ancestor <fix-sha> <your-build-sha> && echo "contains the fix"
 ```
 
-"Contains" means the build commit descends from the fix commit. Only the worker image matters for
-every entry here: the gateway and web images never run a workspace command.
+"Contains" means the build commit descends from the fix commit. An image built by a pull-request
+run takes `COMMIT_HASH` from the pull request's merge ref, which is not a commit on `main`, so the
+command above can fail for it; use an image built from a `main` commit, or compare the source it
+was built from. Only the worker image matters for every entry here: the gateway and web images
+never run a workspace command.
+
+---
+
+## Standing exposure: the credential in a workspace's git argument list
+
+This is current behaviour on every build, including the fixed ones, not a defect with a fix commit.
+Each authenticated git call runs inside the workspace, and the shell there expands
+`$ASW_GIT_AUTH` into git's own argument list as `-c http.extraheader=AUTHORIZATION: basic <base64>`
+(base64 of `x-access-token:<token>`). Container processes are host processes, so anything that
+records process arguments on the Docker host or on a Kubernetes node (`auditd` `EXECVE`, EDR
+agents, Falco `proc.cmdline`) records that header on every authenticated call, at every commit,
+on both backends. The fixes moved the value off the `docker` and `kubectl` command lines; they
+did not remove it from git's. [`architecture.md`](./architecture.md) lists this under its
+Limitations.
+
+- A hit on a `git` process inside a workspace is by design and does not show a vulnerable build.
+- Exclude workspace and container processes from that capture, or treat those logs as
+  credential-bearing: restrict who reads them and apply your retention policy to them.
+- A GitHub App installation token is good for one hour; a PAT is good until revoked. Prefer the
+  App where you can. This repository implements no other mitigation for this path.
 
 ---
 
@@ -43,7 +71,7 @@ every entry here: the gateway and web images never run a workspace command.
 
 | Secret | Where it was exposed | How long the secret is good | Action |
 |---|---|---|---|
-| GitHub PAT (instance, or a per-host PAT for a GitHub Enterprise host) | Kubernetes API-server audit logs, `kubectl` and `docker` process arguments, Docker exec events, and for a while a lingering git process environment (entries 1, 4 and 6) | Until you revoke it or its own expiry on GitHub | Rotate |
+| GitHub PAT (instance, or a per-host PAT for a GitHub Enterprise host) | Kubernetes API-server audit logs, `kubectl` and `docker` process arguments, Docker exec events, and for a while a lingering git process environment (entries 1, 4 and 6). On every build, git's own argument list inside the workspace ([standing exposure](#standing-exposure-the-credential-in-a-workspaces-git-argument-list)) | Until you revoke it or its own expiry on GitHub | Rotate |
 | GitHub App installation token | The same places | One hour (GitHub sets it; the worker reads `expires_at` from GitHub's answer and caches the token until a minute before it) | Nothing to rotate. The token carries the installation's full permissions and audit logs often reach a SIEM within seconds: if anyone outside your trust boundary could read the logs in near real time, review the installation's activity in GitHub's audit log for the exposure window. The App id and private key were never exposed |
 | A user's own GitHub token (`user-github-credentials.md`) | The same places, on runs that user launched | Until the user revokes it or its own expiry on GitHub | The user rotates it |
 | Registry-proxy token | Kubernetes Pod objects, etcd and `kubectl get pod`; `docker run` arguments and `docker inspect` (entries 2 and 4) | One workspace's life, then revoked; every token is also lost when the worker restarts | Usually none; clean up leftovers (entry 2) |
@@ -56,7 +84,9 @@ A command line reaches your logs encoded, so a plain-text search for the readabl
 matches. The Kubernetes API server records the exec command as repeated `command=` query
 parameters, encoded like Go's `url.Values.Encode`: space is `+`, `=` is `%3D`, `:` is `%3A`,
 `'` is `%27`, `"` is `%22`, `/` is `%2F`, `@` is `%40`, `$` is `%24`, `{` is `%7B`. Any one of these
-confirms a token was logged:
+in a `kubectl exec` request, or in a `docker` or `kubectl` process, confirms a token was logged
+by a build without the fix. The same string in a `git` process inside a workspace is by design
+([standing exposure](#standing-exposure-the-credential-in-a-workspaces-git-argument-list)) and says nothing about your build:
 
 | Search for | Meaning |
 |---|---|
@@ -65,13 +95,14 @@ confirms a token was logged:
 | `x-access-token%3A` (decoded: `x-access-token:`) | A clone URL with the token in clear text, `https%3A%2F%2Fx-access-token%3A<token>%40<host>` |
 
 To read a hit, URL-decode it (`+` is a space), then base64-decode what follows `basic `. Do not
-search for the bare word `extraheader`: the fixed commands carry it too, as
-`http.extraheader%3D%22%24%7BASW_GIT_AUTH...`. A fixed command names `ASW_GIT_AUTH` and has no
-`basic <base64>` after it.
+search for the bare word `extraheader`: the fixed commands carry it too. A fixed command names
+`ASW_GIT_AUTH` and has no `basic <base64>` after it. From `d9365e26` the request carries
+`%22http.extraheader%3D%24ASW_GIT_AUTH%22`; from `8e372963` it carries
+`%22http.extraheader%3D%24%7BASW_GIT_AUTH%3A%3Fgit+credential+not+delivered%7D%22`.
 
 Host process records are not URL-encoded but have their own traps. In `ps`, use
 `grep -F 'AUTHORIZATION: basic'` or `grep -F 'x-access-token:'`. In `auditd`, an `EXECVE` argument
-that holds a space or a quote is hex-encoded, and the `sh -c` script always does, so `grep` of
+that holds a space or a double quote is hex-encoded, and the `sh -c` script always does, so `grep` of
 `audit.log` finds nothing: read the records with `ausearch -i`, or search for the hex of the
 string. Verify the method on your own system against a known string before you rely on a
 negative result.
@@ -88,8 +119,7 @@ negative result.
 - A worker image built from a commit that does not contain `8e372963`. `d9365e26` fixes the
   target-repository clone, base fetch, `gitAuthed` fetch and push. It does not fix dependency
   checkouts (`cloneDependencyRepos`, used when a repository has dependency edges), which still
-  logged the clear-text token URL until `8e372963`, three commits later (`9238f60d` and `ea94be99`
-  lie between). A build that contains `d9365e26` but not `8e372963` is partly fixed.
+  logged the clear-text token URL until `8e372963`. A build that contains `d9365e26` but not `8e372963` is partly fixed.
 
 The Kubernetes backend first exists at `68b1dd23`, so no earlier build can be affected.
 
@@ -146,7 +176,8 @@ exposure lasts as long as the credential does:
 **Verify the fix is running.** The worker contains `8e372963`. For a running cluster: run a
 workspace, then look at its `kubectl exec` requests in the audit log. The clone and fetch
 commands contain `ASW_GIT_AUTH` with no `basic <base64>` after it, and none of the searches in
-[Recognising a hit](#recognising-a-hit) matches a request from a new run. A search that finds
+[Recognising a hit](#recognising-a-hit) matches a `kubectl exec` request from a new run. A node-level
+process record of git inside the pod is the standing exposure, not a failure of this check. A search that finds
 nothing proves the fix only if the same search finds a known string in your log pipeline.
 
 ---
@@ -213,8 +244,8 @@ not as `value`, and a Secret named `<pod>-env` exists, owned by the Pod.
 - A worker image built from a commit that does not contain `3200071c`.
 
 On Docker the proxy is optional. On Kubernetes a worker built from `7cccdd43` or later refuses to
-start without it, so the Kubernetes case is a worker older than that commit, or one configured
-before it existed.
+start without it, whatever its configuration, so the Kubernetes case is a worker older than that
+commit.
 
 **What was exposed and where.** The `apiBase` value was passed as an `ANTHROPIC_BASE_URL=...`
 environment pair on the exec command, and as inline JSON in the harness's `--settings` argument.
@@ -225,8 +256,10 @@ log (see UN-1). Under Docker both are `docker exec` arguments, visible in `ps` o
 under Kubernetes, `-e NAME` without a value under Docker). A gateway that authenticates by API key
 only, with an origin-only `apiBase`, exposed nothing.
 
-**Exposure window and lifetime.** From the first Claude Code turn without the model proxy until
-your worker contained the fix. A path token is valid until its issuer rotates it.
+**Exposure window and lifetime.** The harness first passed `apiBase` as `ANTHROPIC_BASE_URL` at
+`2bcc49fd` (2026-10-03), so no earlier build is affected. The window runs from the first Claude
+Code turn without the model proxy until your worker contained `3200071c`. A path token is valid
+until its issuer rotates it.
 
 **Actions.**
 
@@ -239,19 +272,20 @@ your worker contained the fix. A path token is valid until its issuer rotates it
 4. On Docker, treat it like UN-4.
 
 The gateway refuses an `apiBase` that carries a username or password (`credentialInputProblem`);
-the check is present in the oldest commit this repository's history holds (`c1a7fffb`). It does not
-look at the path or query, which is why they needed this fix, and it does not re-check a credential
-saved before it existed. A stored credential with userinfo in its `apiBase` was a credential in a
+since `1d7b03b7` (2026-10-03). It checks the URL's userinfo only (and the API key for whitespace and
+control characters). It does not look at the path or query, which is why they needed this fix, and it
+does not re-check a credential saved before it existed. A stored credential with userinfo in its `apiBase` was a credential in a
 URL: rotate it.
 
 **Verify the fix is running.** The worker contains `3200071c`. A turn with a path-bearing
 `apiBase` then shows no `ANTHROPIC_BASE_URL=` pair and no inline `--settings` JSON on its exec
 command, and the pinned settings layer is a file under the harness home.
 
-As of `3200071c` the same commit adds a run-time guard: the Docker and Kubernetes backends refuse
+`3200071c` also adds a run-time guard: the Docker and Kubernetes backends refuse
 a plain `NAME=value` environment pair whose name contains TOKEN, SECRET, PASSWORD, API_KEY, AUTH,
 CREDENTIAL, NPMRC or YARNRC (an exact exception exists for `YARN_NPM_ALWAYS_AUTH`). Later commits
-widen it (more name words, userinfo in values); the current rule is in the Source invariants
+widen it (more name words, userinfo in values); those are hardening only and need no operator
+action. The current rule is in the Source invariants
 table of `AGENTS.md`. It does not see every credential: one under an innocuous name, or in a form
 it does not look for, passes.
 
@@ -283,9 +317,26 @@ records it:
 | Registry-proxy token (`COREPACK_NPM_TOKEN`, `YARN_NPM_AUTH_TOKEN`) | `c4d1a285` for the workspace container; `83dc2ff5` for the shell-step npmrc helper; `3200071c` for the shell-step sandbox | `docker run -e NAME=value` |
 | Provider `apiBase` with a credential in its path | `3200071c` | `docker exec` |
 
-The history this repository holds starts at a commit that already passes the git header in the
-command, so the start of the window is not known: treat every Docker worker built before the fix
-as affected.
+**When each value first reached a command line** (dates are for orientation only):
+
+| Value | First in a Docker command line | What appeared |
+|---|---|---|
+| Platform GitHub token | `5cdb253d` (2026-02-23) | `docker exec … git clone '<url>'` with `https://x-access-token:<token>@host/…` in clear text. A shell step's clone had the same form from `89573d41` (2026-05-13) |
+| Git header | `4763a611` (2026-07-21) | `-c http.extraheader='AUTHORIZATION: basic <base64>'` on the fetch and push commands; the clone kept the clear-text URL until the fixes in the table above |
+| Registry-proxy token | `e0187a3f` (2026-10-20) | `-e YARN_NPM_AUTH_TOKEN=<token>` and `-e COREPACK_NPM_TOKEN=<token>` |
+| Container-step node inputs | `0e1d9b5b` (2026-06-18) | `-e CONTAINER_STEP_INPUT=<json>` on `docker run`; a credential only if a workflow author routed one into a node input (below) |
+
+The Kubernetes backend exists from `68b1dd23` (2026-10-21), so the Kubernetes entries cannot
+affect an earlier build. A Docker worker built before the fix for a value is affected from that
+value's first commit, not only recent builds. This repository cannot tell how long your own
+deployment ran each build.
+
+**Container-step inputs.** A build whose `containerStep.ts` passes `CONTAINER_STEP_INPUT` in
+`secretEnv` keeps the node inputs out of `docker run` arguments; an older build put them there.
+The inputs are workflow data, so this exposes a credential only if an author routed one into a node
+input. The top box's "built before `3200071c`" cutoff does not cover this item: check the file in
+your build's source. Rotate any credential an input carried, and search host command-line records
+for the input's text.
 
 **What was not exposed.** Docker daemon API request bodies are not normally logged. The Docker
 socket proxy shipped with this project (`infra/docker-socket-proxy/haproxy.cfg`) logs the HTTP
@@ -307,7 +358,8 @@ commands those fixed. Treat that data like command-line audit data in the action
 things remain by design, listed in the Limitations of [`architecture.md`](./architecture.md):
 `docker inspect` of a container shows the `Config.Env` it was created with, which includes the
 registry-proxy token of a workspace; inside the container the git header is in the environment and
-in git's argument list for the length of each call; and a shell step's clone helper shows the
+in git's argument list for the length of each call, which a host process audit also sees (the
+standing exposure); and a shell step's clone helper shows the
 header to a host `ps` for the length of the clone.
 
 **Exposure window and lifetime.** The seconds to minutes each command ran, per command. Lifetimes
@@ -315,10 +367,12 @@ are those in the quick reference.
 
 **Actions.**
 
-1. Upgrade the worker to a build containing `3200071c` (which contains all of the above).
+1. Upgrade the worker to a build containing `3200071c` (which contains the fixes in the table above, but
+   not the container-step item).
 2. Decide whether anyone or anything that could read process arguments on a worker host existed
    in the window, including a consumer of the Docker event stream. If so, rotate the PAT,
-   per-host PATs and per-user tokens as in UN-1 steps 1 and 2. An App installation token needs no
+   per-host PATs and per-user tokens as in UN-1 steps 1 and 2. Process auditing of git inside the
+   workspaces is the standing exposure and continues after the fix. An App installation token needs no
    rotation (see the quick reference for its caveat).
 3. Search host command-line audit data and stored Docker events with the searches in
    [Recognising a hit](#recognising-a-hit) (`AUTHORIZATION: basic`, `eC1hY2Nlc3MtdG9rZW46`,
@@ -329,8 +383,8 @@ are those in the quick reference.
 
 **Verify the fix is running.** The worker contains `3200071c`. While a workspace command runs,
 `ps -eo args | grep -F 'AUTHORIZATION: basic'` and `... | grep -F 'x-access-token:'` on the worker
-host find no `docker` process that carries a value. Do not grep for `extraheader`: the fixed
-commands name `http.extraheader` too. To check an event consumer, look for `ASW_GIT_AUTH` in the
+host find no `docker` process that carries a value. A `git` process inside a workspace that carries the
+header is by design ([standing exposure](#standing-exposure-the-credential-in-a-workspaces-git-argument-list)); only a `docker` process is a failure. To check an event consumer, look for `ASW_GIT_AUTH` in the
 stored exec event with no `basic <base64>` after it.
 
 ---
@@ -422,8 +476,12 @@ operator may already have acted on.
   on GitHub as well as in your cluster.
 - **They cannot enumerate your log sinks.** Load balancers, managed control planes, SIEM
   forwarders, backups and host agents are yours to check.
-- **The start of the Docker window is unknown.** This repository's history begins at a commit that
-  already passed the git header in the command, so earlier builds may be affected in the same way.
+- **How long your deployment ran each build is unknown.** The start commits in UN-4 date the code,
+  not your rollout; only your own deployment records say which build ran when.
+- **Host-level capture of git inside a workspace is standing.** No fix removes the header from
+  git's argument list there; whether your audit pipeline records it is yours to check.
+- **The container-step item has no commit cited.** It is identified by the code marker in UN-4,
+  which you check in your build's source.
 - **The fixes narrow where a value travels; they do not remove every copy.** What remains is
   listed in the Limitations of [`architecture.md`](./architecture.md) and
   [`package-registries.md`](./package-registries.md).
