@@ -59,7 +59,10 @@ async function buildApp(role: Role = 'ADMIN') {
     pullRequest: { findMany: vi.fn().mockResolvedValue([]) },
     teamMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
-    workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
+    workflowTemplate: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   };
   app.decorate('prisma', prisma as unknown as never);
   app.decorate('auth', {
@@ -145,6 +148,14 @@ describe('GET /api/v1/pull-requests/outcomes', () => {
     ]);
     expect(whereOf(b)).toContainEqual({ templateId: UUID_B });
     expect(b.prisma.pullRequest.findMany.mock.calls[0]?.[0].take).toBe(10_001);
+  });
+
+  it('returns 404 when a non-admin filters by an inaccessible template', async () => {
+    const b = await buildApp('ENGINEER');
+    const response = await get(b, `?templateId=${UUID_B}`);
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.message).toBe('Template not found');
+    expect(b.prisma.pullRequest.findMany).not.toHaveBeenCalled();
   });
 
   it('keeps null template attribution in the Unattributed bucket', async () => {

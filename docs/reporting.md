@@ -100,8 +100,14 @@ data; team subscriptions do not. Send-test delivers immediately without changing
 last-sent timestamp.
 
 The weekly sweep runs Mondays at 13:00 UTC when `REPORT_DIGEST_ENABLED` is true. Configure
-`REPORT_DIGEST_CRON` to change the schedule. Email uses the platform SMTP configuration when
-available, otherwise the configured Resend transport.
+`REPORT_DIGEST_CRON` to change the schedule. Digests require workflow-run rollups to be enabled;
+`REPORT_DIGEST_CRON` must run after `WORKFLOW_RUN_ROLLUP_CRON`. The sweep skips delivery and
+retries on its next run when any of the 14 required completed UTC days has no rollup rows. A
+subscription is claimed once per reporting period before delivery, so a failed email or Slack
+channel is recorded but is not retried in the same period. Send-test bypasses the weekly claim and
+does not change the scheduled last-sent timestamp; its one-minute limit is stored in Postgres.
+Email uses the platform SMTP configuration when available, otherwise the configured Resend
+transport.
 
 ## Limitations
 

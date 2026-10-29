@@ -2,6 +2,7 @@
 CREATE TABLE "workflow_run_daily_rollups" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "day" DATE NOT NULL,
+    "dimension_key" TEXT NOT NULL,
     "org_id" UUID,
     "team_id" UUID,
     "template_id" UUID,
@@ -53,3 +54,6 @@ CREATE INDEX "workflow_run_daily_rollups_team_id_day_idx" ON "workflow_run_daily
 
 -- CreateIndex
 CREATE INDEX "workflow_run_daily_rollups_template_id_day_idx" ON "workflow_run_daily_rollups"("template_id", "day");
+
+CREATE UNIQUE INDEX "workflow_run_daily_rollups_day_dimension_key_key"
+  ON "workflow_run_daily_rollups"("day", "dimension_key");

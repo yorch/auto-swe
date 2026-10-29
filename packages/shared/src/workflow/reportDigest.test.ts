@@ -76,7 +76,8 @@ describe('buildReportDigest', () => {
       currentPeriod,
       currentRows,
       now,
-      pendingApprovals: [{ requestedAt: new Date('2026-10-20T10:00:00Z') }],
+      oldestPendingApprovalRequestedAt: new Date('2026-10-20T10:00:00Z'),
+      pendingApprovalCount: 1,
       previousPeriod,
       previousRows,
       reportsUrl: 'https://example.test/admin/reports',
@@ -104,7 +105,8 @@ describe('buildReportDigest', () => {
       currentPeriod,
       currentRows: [],
       now,
-      pendingApprovals: [],
+      oldestPendingApprovalRequestedAt: null,
+      pendingApprovalCount: 0,
       previousPeriod,
       previousRows: [],
       scope: { name: 'Platform', type: 'TEAM' },
@@ -128,7 +130,8 @@ describe('buildReportDigest', () => {
         status: 'SUCCESS',
       }),
       now,
-      pendingApprovals: [],
+      oldestPendingApprovalRequestedAt: null,
+      pendingApprovalCount: 0,
       previousPeriod,
       previousRows: [],
       scope: { name: 'Team', type: 'TEAM' },
@@ -138,5 +141,38 @@ describe('buildReportDigest', () => {
     expect(digest.html).toContain('&lt;img');
     expect(digest.slackMrkdwn).toContain('&lt;img');
     expect(digest.slackMrkdwn).toContain('\\*alert\\*');
+  });
+
+  it('strips line breaks from scope headings and escapes them in every format', () => {
+    const digest = buildReportDigest({
+      currentPeriod,
+      currentRows: [],
+      now,
+      oldestPendingApprovalRequestedAt: null,
+      pendingApprovalCount: 0,
+      previousPeriod,
+      previousRows: [],
+      scope: { name: 'Org\r\n<script>&', type: 'ORGANIZATION' },
+    });
+    expect(digest.subject).not.toMatch(/[\r\n]/);
+    expect(digest.subject).toContain('Org <script>&');
+    expect(digest.html).not.toContain('<script>');
+    expect(digest.html).toContain('&lt;script&gt;&amp;');
+    expect(digest.slackMrkdwn).not.toMatch(/Org\r\n/);
+  });
+
+  it('labels capped gate reads as not computed', () => {
+    const digest = buildReportDigest({
+      currentPeriod,
+      currentRows: [],
+      now,
+      oldestPendingApprovalRequestedAt: null,
+      pendingApprovalCount: 0,
+      previousPeriod,
+      previousRows: [],
+      scope: { name: 'Team', type: 'TEAM' },
+      worstGateNotComputed: true,
+    });
+    expect(digest.text).toContain('Worst gate: not computed');
   });
 });

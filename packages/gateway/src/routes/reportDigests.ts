@@ -1,6 +1,8 @@
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { claimReportDigestTestSend } from '../lib/reportDigestRateLimit.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const paramsSchema = z.object({ id: z.string().uuid() });
@@ -14,28 +16,35 @@ const bodySchema = z
     teamId: z.string().uuid().nullable().optional(),
   })
   .strict();
-const sendTestAt = new Map<string, number>();
+const MAX_SUBSCRIPTIONS_PER_SCOPE = 5;
 
 export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = requireAuth({ requiredRole: 'ENGINEER' });
 
   const membershipScopes = async (userId: string) => {
-    const [orgs, teams] = await Promise.all([
-      fastify.prisma.organizationMembership.findMany({
-        select: { orgId: true },
-        where: { role: 'ORG_ADMIN', userId },
-      }),
-      fastify.prisma.teamMembership.findMany({
-        select: { role: true, teamId: true },
-        where: { role: { in: ['LEAD', 'ADMIN'] }, userId },
-      }),
-    ]);
+    const [orgs, teams] = await runUnscoped(
+      'digest scope authorization reads the caller memberships',
+      ['OrganizationMembership', 'TeamMembership'],
+      () =>
+        Promise.all([
+          fastify.prisma.organizationMembership.findMany({
+            select: { orgId: true },
+            where: { role: 'ORG_ADMIN', userId },
+          }),
+          fastify.prisma.teamMembership.findMany({
+            select: { role: true, teamId: true },
+            where: { role: { in: ['LEAD', 'ADMIN'] }, userId },
+          }),
+        ])
+    );
     const orgTeamIds = orgs.length
-      ? await fastify.prisma.team.findMany({
-          select: { id: true },
-          where: { orgId: { in: orgs.map(({ orgId }) => orgId) } },
-        })
+      ? await runUnscoped('digest scope authorization resolves organization teams', ['Team'], () =>
+          fastify.prisma.team.findMany({
+            select: { id: true },
+            where: { orgId: { in: orgs.map(({ orgId }) => orgId) } },
+          })
+        )
       : [];
     return {
       orgIds: orgs.map(({ orgId }) => orgId),
@@ -82,6 +91,9 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
     if (!value.emailRecipients.length && !value.slackChannelId) {
       return { error: 'At least one email recipient or Slack channel is required' };
     }
+    const emailRecipients = [
+      ...new Set(value.emailRecipients.map((email) => email.trim().toLowerCase())),
+    ];
     let orgId = value.orgId;
     if (value.scope === 'TEAM' && value.teamId) {
       const team = await fastify.prisma.team.findUnique({
@@ -95,18 +107,61 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
     }
     if (value.slackChannelId) {
       const channel = await fastify.prisma.slackChannel.findUnique({
-        select: { orgId: true },
+        select: { orgId: true, teamId: true },
         where: { id: value.slackChannelId },
       });
       if (channel && channel.orgId !== orgId) {
         return { error: 'Slack channel must belong to the same organization' };
       }
+      if (channel && value.scope === 'TEAM' && channel.teamId !== value.teamId) {
+        return { error: 'Slack channel must belong to the same team' };
+      }
       if (!channel) {
         return { error: 'Slack channel not found' };
       }
     }
-    return { orgId };
+    if (emailRecipients.length) {
+      const memberUsers = await fastify.prisma.user.findMany({
+        select: { email: true },
+        where: {
+          email: { in: emailRecipients },
+          isActive: true,
+          ...(value.scope === 'ORGANIZATION'
+            ? { orgMemberships: { some: { orgId: value.orgId as string } } }
+            : { memberships: { some: { teamId: value.teamId as string } } }),
+        },
+      });
+      const memberEmails = new Set(memberUsers.map(({ email }) => email.toLowerCase()));
+      const offendingAddresses = value.emailRecipients.filter(
+        (email) => !memberEmails.has(email.trim().toLowerCase())
+      );
+      if (offendingAddresses.length) {
+        return {
+          error: 'Recipients must be active users who belong to the subscription scope',
+          offendingAddresses,
+        };
+      }
+    }
+    return { emailRecipients, orgId };
   };
+
+  const countScopeSubscriptions = (
+    value: { orgId: string | null; scope: 'ORGANIZATION' | 'TEAM'; teamId: string | null },
+    excludingId?: string
+  ) =>
+    runUnscoped(
+      'digest scope authorization counts subscriptions',
+      ['ReportDigestSubscription'],
+      () =>
+        fastify.prisma.reportDigestSubscription.count({
+          where: {
+            ...(excludingId ? { id: { not: excludingId } } : {}),
+            orgId: value.orgId,
+            scope: value.scope,
+            teamId: value.teamId,
+          },
+        })
+    );
 
   app.get('/', { onRequest: auth }, async (request) => {
     const user = requireUser(request);
@@ -116,31 +171,40 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       ...(scopes.teamIds.length ? [{ teamId: { in: scopes.teamIds } }] : []),
     ];
     const [subscriptions, organizations, teams, channels] = await Promise.all([
-      fastify.prisma.reportDigestSubscription.findMany({
-        include: { organization: true, slackChannel: true, team: true },
-        orderBy: { createdAt: 'desc' },
-        where: user.role === 'ADMIN' ? undefined : { OR },
-      }),
+      runUnscoped(
+        'authorized users list report digest subscriptions',
+        ['ReportDigestSubscription'],
+        () =>
+          fastify.prisma.reportDigestSubscription.findMany({
+            include: { organization: true, slackChannel: true, team: true },
+            orderBy: { createdAt: 'desc' },
+            where: user.role === 'ADMIN' ? undefined : { OR },
+          })
+      ),
       fastify.prisma.organization.findMany({
         orderBy: { name: 'asc' },
         select: { id: true, name: true },
         where: user.role === 'ADMIN' ? undefined : { id: { in: scopes.orgIds } },
       }),
-      fastify.prisma.team.findMany({
-        orderBy: { name: 'asc' },
-        select: { id: true, name: true, orgId: true },
-        where: user.role === 'ADMIN' ? undefined : { id: { in: scopes.teamIds } },
-      }),
-      fastify.prisma.slackChannel.findMany({
-        orderBy: { name: 'asc' },
-        select: { id: true, name: true, orgId: true, teamId: true },
-        where:
-          user.role === 'ADMIN'
-            ? undefined
-            : {
-                OR: [{ orgId: { in: scopes.orgIds } }, { teamId: { in: scopes.teamIds } }],
-              },
-      }),
+      runUnscoped('authorized users list manageable digest teams', ['Team'], () =>
+        fastify.prisma.team.findMany({
+          orderBy: { name: 'asc' },
+          select: { id: true, name: true, orgId: true },
+          where: user.role === 'ADMIN' ? undefined : { id: { in: scopes.teamIds } },
+        })
+      ),
+      runUnscoped('authorized users list manageable digest channels', ['SlackChannel'], () =>
+        fastify.prisma.slackChannel.findMany({
+          orderBy: { name: 'asc' },
+          select: { id: true, name: true, orgId: true, teamId: true },
+          where:
+            user.role === 'ADMIN'
+              ? undefined
+              : {
+                  OR: [{ orgId: { in: scopes.orgIds } }, { teamId: { in: scopes.teamIds } }],
+                },
+        })
+      ),
     ]);
     return {
       data: {
@@ -170,17 +234,25 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       teamId,
     });
     if ('error' in checked) {
-      return reply.status(400).send({ error: checked.error });
+      return reply.status(400).send({
+        error: checked.error,
+        ...('offendingAddresses' in checked
+          ? { offendingAddresses: checked.offendingAddresses }
+          : {}),
+      });
     }
     const candidate = { orgId, scope: body.scope, teamId };
     if (!(await canManage(user, candidate))) {
       return reply.status(403).send({ error: 'Digest scope access is not authorized' });
     }
+    if ((await countScopeSubscriptions(candidate)) >= MAX_SUBSCRIPTIONS_PER_SCOPE) {
+      return reply.status(409).send({ error: 'A scope can have at most 5 digest subscriptions' });
+    }
     return reply.status(201).send({
       data: await fastify.prisma.reportDigestSubscription.create({
         data: {
           createdById: user.sub,
-          emailRecipients,
+          emailRecipients: checked.emailRecipients,
           enabled: body.enabled ?? true,
           orgId,
           scope: body.scope,
@@ -217,15 +289,33 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       } as const;
       const checked = await validateSubscription(value);
       if ('error' in checked) {
-        return reply.status(400).send({ error: checked.error });
+        return reply.status(400).send({
+          error: checked.error,
+          ...('offendingAddresses' in checked
+            ? { offendingAddresses: checked.offendingAddresses }
+            : {}),
+        });
       }
       if (!(await canManage(user, value))) {
         return reply.status(403).send({ error: 'Digest scope access is not authorized' });
+      }
+      if (
+        (await countScopeSubscriptions(
+          value as {
+            orgId: string | null;
+            scope: 'ORGANIZATION' | 'TEAM';
+            teamId: string | null;
+          },
+          existing.id
+        )) >= MAX_SUBSCRIPTIONS_PER_SCOPE
+      ) {
+        return reply.status(409).send({ error: 'A scope can have at most 5 digest subscriptions' });
       }
       return {
         data: await fastify.prisma.reportDigestSubscription.update({
           data: {
             ...request.body,
+            emailRecipients: checked.emailRecipients,
             orgId: value.orgId,
             scope: value.scope,
             teamId: value.teamId,
@@ -269,11 +359,10 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       if (!(await canManage(user, existing))) {
         return reply.status(403).send({ error: 'Digest scope access is not authorized' });
       }
-      const now = Date.now();
-      if (now - (sendTestAt.get(existing.id) ?? 0) < 60_000) {
+      const now = new Date();
+      if (!(await claimReportDigestTestSend(fastify.prisma, existing.id, now))) {
         return reply.status(429).send({ error: 'Send-test is limited to once per minute' });
       }
-      sendTestAt.set(existing.id, now);
       await fastify.temporal.triggerReportDigestTest(existing.id);
       return reply.status(202).send({ data: { accepted: true } });
     }

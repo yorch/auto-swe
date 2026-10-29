@@ -18,6 +18,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { csvRow } from '../lib/csv.js';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
+import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { teamMembershipFilter } from '../lib/templateLaunch.js';
@@ -246,8 +247,22 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
       onRequest: engineerOnly,
       schema: { querystring: OutcomesQuery },
     },
-    async (request) => {
+    async (request, reply) => {
       const user = requireUser(request);
+      if (request.query.templateId && user.role !== 'ADMIN') {
+        const visibleTemplate = await runUnscoped(
+          'outcome template filters must use the workflow-template visibility rule',
+          ['WorkflowTemplate'],
+          () =>
+            fastify.prisma.workflowTemplate.findFirst({
+              select: { id: true },
+              where: { AND: [{ id: request.query.templateId }, teamMembershipFilter(user)] },
+            })
+        );
+        if (!visibleTemplate) {
+          return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+        }
+      }
       const { days, end, previousStart, start } = resolveWindow(
         request.query,
         request.query.window
@@ -395,6 +410,20 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
+      if (request.query.templateId && user.role !== 'ADMIN') {
+        const visibleTemplate = await runUnscoped(
+          'outcome export template filters must use the workflow-template visibility rule',
+          ['WorkflowTemplate'],
+          () =>
+            fastify.prisma.workflowTemplate.findFirst({
+              select: { id: true },
+              where: { AND: [{ id: request.query.templateId }, teamMembershipFilter(user)] },
+            })
+        );
+        if (!visibleTemplate) {
+          return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
+        }
+      }
       const { end, start } = resolveWindow(request.query, request.query.window);
       const where: Prisma.PullRequestWhereInput = {
         AND: outcomesFilters(user, request.repoAccessGate, request.query, start, end),

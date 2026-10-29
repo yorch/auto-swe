@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import {
   type ClosedLedgerStatus,
   closedLedgerStatusFor,
@@ -1479,7 +1478,9 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       await client.workflow.start('ScheduledReportDigestWorkflow', {
         args: [{ sendTest: true, subscriptionId }],
         taskQueue: 'engineering-workflow',
-        workflowId: `report-digest-test-${subscriptionId}-${randomUUID()}`,
+        workflowId: `report-digest-test-${subscriptionId}`,
+        workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE,
       });
     },
 

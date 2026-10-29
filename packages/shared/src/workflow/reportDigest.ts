@@ -5,13 +5,15 @@ export interface ReportDigestInput {
   budget?: { mtdUsd: number; projectedUsd: number; status: string };
   currentPeriod: { end: Date; start: Date };
   currentRows: readonly WorkflowRunRollupRow[];
-  pendingApprovals: readonly { requestedAt: Date }[];
+  oldestPendingApprovalRequestedAt: Date | null;
+  pendingApprovalCount: number;
   previousPeriod: { end: Date; start: Date };
   previousRows: readonly WorkflowRunRollupRow[];
   reportsUrl?: string;
   scope: { name: string; type: 'ORGANIZATION' | 'TEAM' };
   templateNames?: ReadonlyMap<string, string>;
   worstGate?: { finalPassRate: number; name: string; pairs: number };
+  worstGateNotComputed?: boolean;
   now?: Date;
 }
 
@@ -98,18 +100,15 @@ export function buildReportDigest(input: ReportDigestInput): ReportDigest {
     .sort((a, b) => b.runs - a.runs || a.name.localeCompare(b.name))
     .slice(0, 3);
   const now = input.now ?? new Date();
-  const oldestApproval = input.pendingApprovals.reduce<Date | null>(
-    (oldest, approval) =>
-      oldest === null || approval.requestedAt < oldest ? approval.requestedAt : oldest,
-    null
-  );
+  const oldestApproval = input.oldestPendingApprovalRequestedAt;
   const oldestAgeHours =
     oldestApproval === null
       ? null
       : Math.max(0, (now.getTime() - oldestApproval.getTime()) / (60 * 60 * 1000));
-  const subject = `${input.scope.name} weekly report — ${periodLabel(input.currentPeriod)}`;
+  const scopeName = input.scope.name.replace(/[\r\n]+/g, ' ').trim();
+  const subject = `${scopeName} weekly report — ${periodLabel(input.currentPeriod)}`;
   const lines = [
-    `${input.scope.type === 'TEAM' ? 'Team' : 'Organization'}: ${input.scope.name}`,
+    `${input.scope.type === 'TEAM' ? 'Team' : 'Organization'}: ${scopeName}`,
     `Period: ${periodLabel(input.currentPeriod)} (previous: ${periodLabel(input.previousPeriod)})`,
     `Runs: ${current.runs} (${metricDelta(current.runs, previous.runs)})`,
     `Success rate: ${current.successRate === null ? 'n/a' : `${(current.successRate * 100).toFixed(1)}%`} (${metricDelta(current.successRate, previous.successRate, true)})`,
@@ -131,7 +130,8 @@ export function buildReportDigest(input: ReportDigestInput): ReportDigest {
           `Worst gate: ${input.worstGate.name} (${(input.worstGate.finalPassRate * 100).toFixed(1)}% final pass rate)`,
         ]
       : []),
-    `Pending approvals: ${input.pendingApprovals.length}${oldestAgeHours === null ? '' : `; oldest ${oldestAgeHours.toFixed(1)} hours`}`,
+    ...(input.worstGateNotComputed ? ['Worst gate: not computed'] : []),
+    `Pending approvals: ${input.pendingApprovalCount}${oldestAgeHours === null ? '' : `; oldest ${oldestAgeHours.toFixed(1)} hours`}`,
     ...(input.budget
       ? [
           `Budget: ${input.budget.status}`,
@@ -143,7 +143,7 @@ export function buildReportDigest(input: ReportDigestInput): ReportDigest {
   ];
   const text = lines.join('\n');
   const slackMrkdwn = lines.map((line) => escapeSlack(line)).join('\n');
-  const html = `<h1>${escapeHtml(input.scope.name)} weekly report</h1><p>${escapeHtml(periodLabel(input.currentPeriod))} (previous: ${escapeHtml(periodLabel(input.previousPeriod))})</p><ul>${lines
+  const html = `<h1>${escapeHtml(scopeName)} weekly report</h1><p>${escapeHtml(periodLabel(input.currentPeriod))} (previous: ${escapeHtml(periodLabel(input.previousPeriod))})</p><ul>${lines
     .filter((line) => line && !line.startsWith('Top templates:'))
     .map((line) => `<li>${escapeHtml(line)}</li>`)
     .join('')}</ul><h2>Top templates</h2><ul>${topTemplates

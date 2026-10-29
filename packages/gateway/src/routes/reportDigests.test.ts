@@ -19,11 +19,13 @@ async function buildApp(role: string, membership: { orgIds?: string[]; teamIds?:
       findMany: vi.fn().mockResolvedValue((membership.orgIds ?? []).map((orgId) => ({ orgId }))),
     },
     reportDigestSubscription: {
+      count: vi.fn().mockResolvedValue(0),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => data),
       delete: vi.fn().mockResolvedValue(undefined),
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(null),
       update: vi.fn().mockResolvedValue({}),
+      updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     slackChannel: {
       findMany: vi.fn().mockResolvedValue([]),
@@ -39,6 +41,11 @@ async function buildApp(role: string, membership: { orgIds?: string[]; teamIds?:
       findMany: vi
         .fn()
         .mockResolvedValue((membership.teamIds ?? []).map((teamId) => ({ role: 'LEAD', teamId }))),
+    },
+    user: {
+      findMany: vi.fn(async ({ where }: { where: { email: { in: string[] } } }) =>
+        where.email.in.map((email) => ({ email }))
+      ),
     },
   };
   const app = Fastify();
@@ -115,6 +122,75 @@ describe('report digest routes', () => {
     await app.close();
   });
 
+  it('rejects a TEAM digest with another team’s Slack channel', async () => {
+    const { app, prisma } = await buildApp('LEAD', { teamIds: [TEAM_A] });
+    prisma.slackChannel.findUnique.mockResolvedValue({ orgId: ORG_A, teamId: TEAM_B });
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: { scope: 'TEAM', slackChannelId: CHANNEL_B, teamId: TEAM_A },
+      url: '/api/v1/report-digests',
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toContain('same team');
+    await app.close();
+  });
+
+  it('rejects recipients who are not active members of the scope', async () => {
+    const { app, prisma } = await buildApp('ENGINEER', { orgIds: [ORG_A] });
+    prisma.user.findMany.mockResolvedValue([]);
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: {
+        emailRecipients: ['outsider@example.test'],
+        orgId: ORG_A,
+        scope: 'ORGANIZATION',
+      },
+      url: '/api/v1/report-digests',
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().offendingAddresses).toEqual(['outsider@example.test']);
+    await app.close();
+  });
+
+  it('rejects a sixth subscription in one scope', async () => {
+    const { app, prisma } = await buildApp('ENGINEER', { orgIds: [ORG_A] });
+    prisma.reportDigestSubscription.count.mockResolvedValue(5);
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      payload: {
+        emailRecipients: ['reports@example.test'],
+        orgId: ORG_A,
+        scope: 'ORGANIZATION',
+      },
+      url: '/api/v1/report-digests',
+    });
+    expect(response.statusCode).toBe(409);
+    await app.close();
+  });
+
+  it('forbids moving a subscription to a team the caller does not lead', async () => {
+    const { app, prisma } = await buildApp('LEAD', { teamIds: [TEAM_A] });
+    prisma.reportDigestSubscription.findUnique.mockResolvedValue({
+      emailRecipients: ['reports@example.test'],
+      id: SUBSCRIPTION,
+      orgId: null,
+      scope: 'TEAM',
+      slackChannelId: null,
+      teamId: TEAM_A,
+    });
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { teamId: TEAM_B },
+      url: `/api/v1/report-digests/${SUBSCRIPTION}`,
+    });
+    expect(response.statusCode).toBe(403);
+    await app.close();
+  });
+
   it('rate-limits send-test to once per minute per subscription', async () => {
     const { app, prisma, temporal } = await buildApp('ADMIN');
     prisma.reportDigestSubscription.findUnique.mockResolvedValue({
@@ -123,12 +199,24 @@ describe('report digest routes', () => {
       scope: 'ORGANIZATION',
       teamId: null,
     });
+    prisma.reportDigestSubscription.updateMany
+      .mockResolvedValueOnce({ count: 1 })
+      .mockResolvedValueOnce({ count: 0 });
     const url = `/api/v1/report-digests/${SUBSCRIPTION}/send-test`;
     const first = await app.inject({ headers: AUTH, method: 'POST', url });
     const second = await app.inject({ headers: AUTH, method: 'POST', url });
     expect(first.statusCode).toBe(202);
     expect(second.statusCode).toBe(429);
     expect(temporal.triggerReportDigestTest).toHaveBeenCalledTimes(1);
+    expect(prisma.reportDigestSubscription.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ lastTestSentAt: expect.any(Date) }),
+        where: expect.objectContaining({
+          id: SUBSCRIPTION,
+          OR: expect.arrayContaining([expect.objectContaining({ lastTestSentAt: null })]),
+        }),
+      })
+    );
     await app.close();
   });
 });

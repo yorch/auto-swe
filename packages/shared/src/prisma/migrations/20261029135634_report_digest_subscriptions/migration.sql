@@ -10,6 +10,8 @@ CREATE TABLE "report_digest_subscriptions" (
     "enabled" BOOLEAN NOT NULL DEFAULT true,
     "created_by_id" UUID NOT NULL,
     "last_sent_at" TIMESTAMPTZ,
+    "last_test_sent_at" TIMESTAMPTZ,
+    "last_period_start" DATE,
     "last_error" TEXT,
     "created_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at" TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,

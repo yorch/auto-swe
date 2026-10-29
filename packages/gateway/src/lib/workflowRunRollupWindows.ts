@@ -1,11 +1,12 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { DAY_MS } from '@auto-swe/shared/lib/agentTraceRollup';
+import { resolveScheduledSweeps } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS } from '@auto-swe/shared/workflow';
 import type { Range } from './usageWindows.js';
 
 export function workflowRunRollupHorizonMs(nowMs: number): number {
-  return Math.floor(nowMs / DAY_MS) * DAY_MS - WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS * DAY_MS;
+  const recomputeDays = resolveScheduledSweeps().workflowRunRollup.recomputeDays;
+  return Math.floor(nowMs / DAY_MS) * DAY_MS - recomputeDays * DAY_MS;
 }
 
 export async function coveredWorkflowRunRollupDays(

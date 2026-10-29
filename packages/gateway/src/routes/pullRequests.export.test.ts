@@ -50,7 +50,10 @@ async function buildApp(role: Role = 'ADMIN') {
     },
     teamMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
-    workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
+    workflowTemplate: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   };
   app.decorate('prisma', prisma as unknown as never);
   app.decorate('auth', {
@@ -120,6 +123,14 @@ describe('GET /api/v1/pull-requests/outcomes/export', () => {
       templateId: TEAM,
     });
     expect(response.body.trimEnd().split('\n')[1]).toMatch(new RegExp(`,${TEAM},Build$`));
+  });
+
+  it('returns 404 when a non-admin exports an inaccessible template', async () => {
+    const b = await buildApp('ENGINEER');
+    const response = await get(b, `?templateId=${TEAM}`);
+    expect(response.statusCode).toBe(404);
+    expect(response.body).toContain('Template not found');
+    expect(b.prisma.pullRequest.findMany).not.toHaveBeenCalled();
   });
 
   it('uses persisted template attribution in a template-filtered export', async () => {

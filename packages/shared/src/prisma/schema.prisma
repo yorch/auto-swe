@@ -2097,18 +2097,20 @@ model WorkflowRunDailyRollup {
 }
 
 model ReportDigestSubscription {
-  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  scope            ReportDigestScope
-  orgId            String?           @map("org_id") @db.Uuid
-  organization     Organization?     @relation(fields: [orgId], references: [id], onDelete: Cascade)
-  teamId           String?           @map("team_id") @db.Uuid
-  team             Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  slackChannelId   String?           @map("slack_channel_id") @db.Uuid
-  slackChannel     SlackChannel?     @relation(fields: [slackChannelId], references: [id], onDelete: SetNull)
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scope           ReportDigestScope
+  orgId           String?           @map("org_id") @db.Uuid
+  organization    Organization?     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  teamId          String?           @map("team_id") @db.Uuid
+  team            Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  slackChannelId  String?           @map("slack_channel_id") @db.Uuid
+  slackChannel    SlackChannel?     @relation(fields: [slackChannelId], references: [id], onDelete: SetNull)
   emailRecipients String[]          @default([]) @map("email_recipients")
   enabled          Boolean           @default(true)
   createdById      String            @map("created_by_id") @db.Uuid
   lastSentAt       DateTime?         @map("last_sent_at") @db.Timestamptz
+  lastTestSentAt   DateTime?         @map("last_test_sent_at") @db.Timestamptz
+  lastPeriodStart  DateTime?         @map("last_period_start") @db.Date
   lastError        String?           @map("last_error")
   createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
