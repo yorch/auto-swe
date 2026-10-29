@@ -1,12 +1,14 @@
 import { Prisma } from '@auto-swe/shared';
 import { prisma } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { currentRunningWorkflowRunId } from './activityContext.js';
+import { currentTemporalRunId, currentWorkflowId } from './activityContext.js';
 
 /**
  * The stack detection of every connection in `connectionIds`, as `{ id: detectedStack | null }`.
- * A connection with no detection maps to `null` — a real pin meaning "no detection" — and an id
- * that does not exist is left out, so it reads live.
+ * A connection with no detection maps to `null`: nothing was recorded for it when the run began,
+ * which in practice is a repository the scan has not reached yet (a scan always writes a non-null
+ * value). It is pinned anyway, so the run is consistent with itself. An id that does not exist is
+ * left out, so it reads live.
  */
 export async function snapshotDetections(
   connectionIds: readonly string[]
@@ -27,26 +29,37 @@ export async function snapshotDetections(
 }
 
 /**
- * Pin the detections of `connectionIds` on the run, once. The first writer wins: a Temporal retry
- * or a re-entered activity finds the column set and writes nothing, and a row that pre-dates the
- * column is filled the first time it is seen.
+ * Pin the detections of `connectionIds` on the run. A Temporal retry of one execution keeps the
+ * first pin: the column is written only while it is NULL. A LATER execution that reuses the
+ * workflow id takes a fresh snapshot — `createWorkflowRun` writes `temporalRunId` on create only,
+ * so such a row still names the first execution, which differs from the current one and lets the
+ * write through. A row whose `temporalRunId` is NULL never matches that second clause (SQL
+ * `NULL <> x` is not true), so it is filled but never overwritten. Outside an activity there is
+ * no current execution, and only the NULL case writes.
  */
 export async function pinDetectionsOnRun(
   runId: string,
   connectionIds: readonly string[]
 ): Promise<void> {
   const snapshot = await snapshotDetections(connectionIds);
+  const executionId = currentTemporalRunId();
+  const unpinned = { pinnedDetections: { equals: Prisma.DbNull } };
   await prisma.workflowRun.updateMany({
     data: { pinnedDetections: snapshot as Prisma.InputJsonObject },
-    where: { id: runId, pinnedDetections: { equals: Prisma.DbNull } },
+    where: {
+      id: runId,
+      OR: executionId ? [unpinned, { temporalRunId: { not: executionId } }] : [unpinned],
+    },
   });
 }
 
 /**
  * The detection the current run pinned for `repo`, or `repo.detectedStack` when it pinned none.
  *
- * Pinned means an OWN key `repo.id` in the run's `pinnedDetections` — its value may be `null`,
- * which is a real pin ("no detection") and must not fall through to a scan that landed later. The
+ * Pinned means an OWN key `repo.id` in the run's `pinnedDetections`, read from the row with the
+ * run's workflow id (unique per run, and unchanged by a re-run or a Temporal reset). Its value may
+ * be `null` — nothing was recorded when the run began — and that must not fall through to a scan
+ * that landed later. The
  * column is untrusted JSON, so anything but a plain object is ignored. Never throws: outside an
  * activity, with no run row, or with the database down, the live value is what the code read
  * before the pin existed.
@@ -56,13 +69,9 @@ export async function detectedStackForRun(repo: {
   detectedStack?: unknown;
 }): Promise<unknown> {
   try {
-    const runId = await currentRunningWorkflowRunId();
-    if (!runId) {
-      return repo.detectedStack;
-    }
     const run = await prisma.workflowRun.findUnique({
       select: { pinnedDetections: true },
-      where: { id: runId },
+      where: { workflowId: currentWorkflowId() },
     });
     const pinned = run?.pinnedDetections;
     if (pinned && typeof pinned === 'object' && !Array.isArray(pinned)) {

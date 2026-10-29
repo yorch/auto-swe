@@ -16,9 +16,11 @@ vi.mock('@auto-swe/shared/db', () => ({
   },
 }));
 
-const currentRunningWorkflowRunId = vi.fn();
+const currentWorkflowId = vi.fn();
+const currentTemporalRunId = vi.fn();
 vi.mock('./activityContext.js', () => ({
-  currentRunningWorkflowRunId: () => currentRunningWorkflowRunId(),
+  currentTemporalRunId: () => currentTemporalRunId(),
+  currentWorkflowId: () => currentWorkflowId(),
 }));
 
 const { detectedStackForRun, pinDetectionsOnRun, snapshotDetections, withRunDetection } =
@@ -29,7 +31,8 @@ const LIVE = { stacks: ['node'] };
 
 beforeEach(() => {
   vi.clearAllMocks();
-  currentRunningWorkflowRunId.mockResolvedValue('run-1');
+  currentWorkflowId.mockReturnValue('wf-1');
+  currentTemporalRunId.mockReturnValue('exec-2');
   findUnique.mockResolvedValue({ pinnedDetections: {} });
 });
 
@@ -42,11 +45,11 @@ describe('detectedStackForRun', () => {
     expect(findUnique).toHaveBeenCalledTimes(1);
     expect(findUnique).toHaveBeenCalledWith({
       select: { pinnedDetections: true },
-      where: { id: 'run-1' },
+      where: { workflowId: 'wf-1' },
     });
   });
 
-  it('keeps a pinned null as "no detection" over a live non-null', async () => {
+  it('keeps a pinned null over a live non-null', async () => {
     findUnique.mockResolvedValue({ pinnedDetections: { 'repo-1': null } });
     await expect(detectedStackForRun({ detectedStack: LIVE, id: 'repo-1' })).resolves.toBeNull();
   });
@@ -63,8 +66,24 @@ describe('detectedStackForRun', () => {
     await expect(detectedStackForRun({ detectedStack: LIVE, id: 'repo-1' })).resolves.toBe(LIVE);
   });
 
-  it('falls back to the live value with no running run, without reading the column', async () => {
-    currentRunningWorkflowRunId.mockResolvedValue(undefined);
+  it('reads by workflow id alone, so a re-run or a reset still finds its pin', async () => {
+    // The row names the FIRST execution's run id; the lookup must not depend on it or on status.
+    currentTemporalRunId.mockReturnValue('a-later-execution');
+    findUnique.mockResolvedValue({ pinnedDetections: { 'repo-1': PINNED } });
+    await expect(detectedStackForRun({ detectedStack: LIVE, id: 'repo-1' })).resolves.toEqual(
+      PINNED
+    );
+    expect(findUnique).toHaveBeenCalledTimes(1);
+    expect(findUnique.mock.calls[0]?.[0]).toEqual({
+      select: { pinnedDetections: true },
+      where: { workflowId: 'wf-1' },
+    });
+  });
+
+  it('falls back to the live value outside an activity, without reading the column', async () => {
+    currentWorkflowId.mockImplementation(() => {
+      throw new Error('outside of a workflow-scheduled activity');
+    });
     await expect(detectedStackForRun({ detectedStack: LIVE, id: 'repo-1' })).resolves.toBe(LIVE);
     expect(findUnique).not.toHaveBeenCalled();
   });
@@ -76,7 +95,9 @@ describe('detectedStackForRun', () => {
     await expect(detectedStackForRun(repo)).resolves.toBe(LIVE);
 
     findUnique.mockResolvedValue({ pinnedDetections: {} });
-    currentRunningWorkflowRunId.mockRejectedValue(new Error('no activity context'));
+    currentWorkflowId.mockImplementation(() => {
+      throw new Error('no activity context');
+    });
     await expect(detectedStackForRun(repo)).resolves.toBe(LIVE);
   });
 
@@ -140,13 +161,23 @@ describe('snapshotDetections', () => {
 });
 
 describe('pinDetectionsOnRun', () => {
-  it('writes the snapshot only where the column is still unset', async () => {
+  const unpinned = { pinnedDetections: { equals: DB_NULL } };
+
+  it('writes where the column is unset or the row names another execution', async () => {
     findMany.mockResolvedValue([{ detectedStack: PINNED, id: 'a' }]);
     await pinDetectionsOnRun('run-1', ['a']);
     expect(updateMany).toHaveBeenCalledWith({
       data: { pinnedDetections: { a: PINNED } },
-      where: { id: 'run-1', pinnedDetections: { equals: DB_NULL } },
+      where: { id: 'run-1', OR: [unpinned, { temporalRunId: { not: 'exec-2' } }] },
     });
+  });
+
+  it('writes only where the column is unset when there is no current execution', async () => {
+    currentTemporalRunId.mockReturnValue(null);
+    await pinDetectionsOnRun('run-1', []);
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'run-1', OR: [unpinned] } })
+    );
   });
 
   it('pins an empty set rather than leaving the column to be filled later', async () => {

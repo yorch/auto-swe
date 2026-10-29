@@ -39,6 +39,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 vi.mock('../lib/activityContext.js', () => ({
   currentRunningWorkflowRunId: vi.fn(async () => 'db-run'),
   currentTemporalRunId: vi.fn(() => 'temporal-run'),
+  currentWorkflowId: vi.fn(() => 'wf-1'),
   currentWorkflowRunId: vi.fn(async () => 'db-run'),
 }));
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({

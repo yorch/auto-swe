@@ -974,6 +974,43 @@ describe('createWorkflowRun', () => {
       expect(pinDetectionsOnRun).toHaveBeenCalledWith('run-1', ['conn-the-run']);
     });
 
+    it('pins exactly the set the run was upserted with, not only the run’s own connection', async () => {
+      // A version that declares a `connection` input widens the set beyond `runConnectionId`; a
+      // pin built from `[input.runConnectionId]` alone would leave those connections reading live.
+      findVersion.mockResolvedValue({
+        inputSchema: {
+          properties: { docConnectionId: { type: 'connection' } },
+          type: 'object',
+        },
+        spec: validSpec,
+      } as never);
+      await createWorkflowRun({
+        payload: { docConnectionId: 'dddddddd-0000-4000-8000-000000000009' },
+        runConnectionId: 'conn-the-run',
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-1',
+      });
+      const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
+      const authorized = args.create.authorizedConnectionIds;
+      expect(authorized).toEqual(['dddddddd-0000-4000-8000-000000000009', 'conn-the-run']);
+      expect(pinDetectionsOnRun).toHaveBeenCalledTimes(1);
+      expect(pinDetectionsOnRun).toHaveBeenCalledWith('run-1', authorized);
+    });
+
+    it('pins after the run is upserted and before the activity returns', async () => {
+      let pinFinished = false;
+      pinDetectionsOnRun.mockImplementation(async () => {
+        await Promise.resolve();
+        pinFinished = true;
+      });
+      await create();
+      expect(pinFinished).toBe(true);
+      const upsertOrder = upsertRun.mock.invocationCallOrder[0] as number;
+      const pinOrder = pinDetectionsOnRun.mock.invocationCallOrder[0] as number;
+      expect(upsertOrder).toBeLessThan(pinOrder);
+    });
+
     it('does not fail run creation when the pin cannot be written', async () => {
       pinDetectionsOnRun.mockRejectedValue(new Error('db down'));
       await expect(create()).resolves.toMatchObject({ runId: 'run-1' });
