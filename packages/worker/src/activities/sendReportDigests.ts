@@ -456,6 +456,7 @@ export async function sendReportDigests(
             },
           })
       );
+      const deliveredTargets = new Set<string>();
       for (const delivery of deliveries) {
         const target = targetsByKey.get(delivery.target);
         if (!target || delivery.status === 'sent' || delivery.attempts >= MAX_TARGET_ATTEMPTS) {
@@ -491,6 +492,7 @@ export async function sendReportDigests(
                 where: { id: delivery.id },
               })
           );
+          deliveredTargets.add(target.key);
         } catch (error) {
           const code = target.kind === 'email' ? 'email_failed' : 'slack_failed';
           logWarn('report digest target delivery failed', {
@@ -514,7 +516,7 @@ export async function sendReportDigests(
         ['ReportDigestDelivery'],
         () =>
           prisma.reportDigestDelivery.findMany({
-            select: { status: true, target: true },
+            select: { sentAt: true, status: true, target: true },
             where: {
               periodStart: currentStart,
               subscriptionId: subscription.id,
@@ -532,12 +534,24 @@ export async function sendReportDigests(
         failed++;
         continue;
       }
+      const latestDeliverySentAt = completedDeliveries.reduce<Date | null>((latest, delivery) => {
+        if (delivery.status !== 'sent' || delivery.sentAt === null) {
+          return latest;
+        }
+        return latest === null || delivery.sentAt > latest ? delivery.sentAt : latest;
+      }, null);
       await runUnscoped(
         'the report digest records its last fully sent period',
         ['ReportDigestSubscription'],
         () =>
           prisma.reportDigestSubscription.update({
-            data: { lastError: null, lastPeriodStart: currentStart, lastSentAt: now },
+            data: {
+              lastError: null,
+              lastPeriodStart: currentStart,
+              ...(deliveredTargets.size > 0 && latestDeliverySentAt
+                ? { lastSentAt: latestDeliverySentAt }
+                : {}),
+            },
             where: { id: subscription.id },
           })
       );

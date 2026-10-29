@@ -245,6 +245,44 @@ describe('sendReportDigests', () => {
       data: { lastError: null, lastPeriodStart: periodStart, lastSentAt: now },
       id: 'idempotent',
     });
+    expect(mocks.updates.filter(({ data }) => 'lastSentAt' in data)).toHaveLength(1);
+    expect(mocks.updates.at(-1)).toEqual({
+      data: { lastError: null, lastPeriodStart: periodStart },
+      id: 'idempotent',
+    });
+  });
+
+  it('uses the latest delivery sentAt and leaves it unchanged on a no-op retry', async () => {
+    mocks.subscriptions = [
+      subscription('latest-sent-at', {
+        emailRecipients: ['first@example.test', 'second@example.test'],
+      }),
+    ];
+    mocks.failedEmailRecipients = ['second@example.test'];
+    const laterSentAt = new Date('2026-10-20T12:15:00Z');
+    const earlierRetryAt = new Date('2026-10-20T12:10:00Z');
+
+    await expect(
+      sendReportDigests({ now: laterSentAt, periodStart })
+    ).resolves.toMatchObject({ failed: 1, sent: 0 });
+    mocks.failedEmailRecipients = [];
+    await expect(
+      sendReportDigests({ now: earlierRetryAt, periodStart })
+    ).resolves.toMatchObject({ failed: 0, sent: 1 });
+
+    expect(mocks.updates).toContainEqual({
+      data: { lastError: null, lastPeriodStart: periodStart, lastSentAt: laterSentAt },
+      id: 'latest-sent-at',
+    });
+    mocks.updates = [];
+
+    await expect(
+      sendReportDigests({ now: new Date('2026-10-20T12:30:00Z'), periodStart })
+    ).resolves.toMatchObject({ failed: 0, sent: 1 });
+    expect(mocks.updates.at(-1)).toEqual({
+      data: { lastError: null, lastPeriodStart: periodStart },
+      id: 'latest-sent-at',
+    });
   });
 
   it('retries only failed targets and stops after three attempts', async () => {
