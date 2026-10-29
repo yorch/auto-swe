@@ -18,8 +18,9 @@ async function run(
   ticket: { available: boolean; text: string; unavailableReason?: string }
 ) {
   const steps: string[] = [];
+  const implementInputs: Record<string, unknown>[] = [];
   const dispatcher: Dispatcher = {
-    async dispatchStep({ step }) {
+    async dispatchStep({ step, inputs }) {
       steps.push(step);
       switch (step) {
         case 'updateDomainState':
@@ -37,6 +38,7 @@ async function run(
           }
           return { contextSnapshotId: 'cs-1', ...validate };
         case 'executeImplementation':
+          implementInputs.push(inputs);
           throw new Error('REACHED_IMPLEMENT');
         default:
           throw new Error(`unexpected step ${step}`);
@@ -66,7 +68,7 @@ async function run(
       throw err;
     }
   );
-  return { ...outcome, steps };
+  return { ...outcome, implementInputs, steps };
 }
 
 const NO_TICKET = { available: false, text: '' };
@@ -145,5 +147,21 @@ describe('ticket-to-merge stops before implement when the request is not actiona
   it('implements when validate predates the verdict field (an older activity result)', async () => {
     const { reachedImplement } = await run({ successCriteria: [] }, NO_TICKET);
     expect(reachedImplement).toBe(true);
+  });
+});
+
+describe('ticket-to-merge hands the success criteria to implement', () => {
+  it('binds the extracted list, ambiguity entries included, as the successCriteria input', async () => {
+    const successCriteria = ['GET /health returns 200', 'AMBIGUOUS: no auth policy stated'];
+    const { implementInputs } = await run(
+      { actionable: true, ambiguities: ['no auth policy stated'], successCriteria },
+      NO_TICKET
+    );
+    expect(implementInputs[0]).toMatchObject({ successCriteria });
+  });
+
+  it('binds an empty list when validate threw, which adds nothing to the prompt', async () => {
+    const { implementInputs } = await run('throws', NO_TICKET);
+    expect(implementInputs[0]).toMatchObject({ successCriteria: [] });
   });
 });

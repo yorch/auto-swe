@@ -1115,11 +1115,16 @@ handed in as the empty string means the run has none, and neither path fetches a
 **Stopping on an unactionable request.** `ticket-to-merge` does not implement a request that
 validation cannot act on. The `validateContext` activity returns `actionable` and `ambiguities`
 beside `successCriteria`. A request is not actionable when the extraction succeeded and either every
-criterion is an `AMBIGUOUS: <what is unclear>` entry (the format the `context-ambiguity-resolution`
-skill asks for) or it returned no criteria at all. A degraded extraction (the model call failed,
+criterion is an `AMBIGUOUS: <what is unclear>` entry (the one format both validator skills,
+`success-criteria-extraction` and `context-ambiguity-resolution`, ask for) or it returned no criteria at all. A degraded extraction (the model call failed,
 traced `context_validation.degraded`) is not a verdict: its empty list stays actionable. The marker
 is read in one place, `packages/worker/src/lib/contextAmbiguity.ts`, at the start of an entry and
 after the decoration a model adds (backticks, emphasis, a bullet or list number, a colon or dash).
+`Clarify:` is read as an alias of the marker only when what follows it is a question (it ends in a
+question mark, whatever quote or emphasis closes it), so a model that words an open question that
+way does not slip it past the stop. `Clarify: the error message when X is empty` is a criterion,
+and `AMBIGUOUS:` needs no question mark. Neither word counts away from the start of an entry, and
+an entry that is blank is not a criterion: an extraction of only blanks is the same as none.
 The `ambiguities` copied into the result are bounded: at most 10, each cut to 500 characters, and a
 bare marker becomes `no reason given`. A `cond` after `validate` then ends the run `FAILED` at a
 `terminate` node whose result carries `message` and `ambiguities`, which the run page shows, instead
@@ -1169,11 +1174,30 @@ JSON-path filters on the run's snapshots, and at most 25 stops and 25 later runs
 the caller may see are compared (the run visibility filter, which includes shared-repository and
 template-team terms, so it is not limited to the caller's own team).
 
+**What the implementer is told when the run goes on.** A run that continues past the stop has
+concrete criteria, usually beside some ambiguities, and `implement` takes the whole extracted list
+as its `successCriteria` input (`ticket-to-merge` and the Qodo template built on its graph wire it
+from `context.successCriteria`). `executeImplementation` appends an
+`## Acceptance criteria and open questions` section to the implementer's system prompt, after the
+ticket digest and before the cross-repo block. It lists the concrete criteria as what done means
+and the ambiguity entries as open questions. For the open questions it asks the implementer not to
+guess how one is resolved: to implement only what the criteria and the description explicitly
+require, and to leave unchanged anything an open question blocks. When no concrete criterion exists
+it asks for the minimum the description plainly asks. The list is model output derived from ticket
+text, so it is bounded (20 criteria and 10 open questions, each cut to 500 characters and one line,
+within 6,000 characters in all, of which the open questions may always use 2,000; entries past the
+budget are replaced by an `(N more omitted)` line), and it sits inside a `<criteria>` delimiter.
+Every angle bracket in an entry, in any spelling (ASCII, fullwidth, CJK or math), is shown as `‹` or
+`›`, so no entry can contain a tag, however its pieces are nested or spaced. The ticket digest's
+`<ticket>` fence is neutralised the same way (`neutraliseFenceText`), so a legitimate `<` in ticket
+text reads as `‹`. The section is introduced as a description of the task, never as instructions. The step reads only an explicit `successCriteria` input, not
+`context.successCriteria`, so a template that does not bind it prompts exactly as before.
+
 Ticket text is written by people other than the operator, so everything that reaches a prompt is
 bounded (title 300 characters, description 6,000, comments 1,500 each within a 12,000-character
 budget that keeps the newest, parent description 2,000, and at most 12 items of 400 characters in
 each digest list), carries no raw provider payload, sits inside a `<ticket>` delimiter that the
-ticket's own text cannot close, and is introduced as requirements to satisfy, not instructions. The
+ticket's own text cannot contain (its angle brackets are replaced), and is introduced as requirements to satisfy, not instructions. The
 gatherer has no tools, so it reads only the text it is given and cannot be steered into acting on
 the tracker. The trace records `ticket.context_loaded` (the source, `stored` or `tracker`, with the
 ticket id and the provider) or `ticket.context_unavailable` (with the failure `reason`), and its
@@ -1820,11 +1844,20 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   skip the guard.
 - **The gatherer is one `planner`-model call per run**, with no cache across runs.
 - **The unactionable-request stop reads a prompt convention, not a schema field.** It rests on the
-  `validateContext` agent writing `AMBIGUOUS:` entries (or none, for input it cannot read). A model
-  that words an ambiguity differently defeats the marker, and the run implements as before. A model
+  `validateContext` agent writing `AMBIGUOUS:` entries (or `Clarify:`, the accepted alias, or none,
+  for input it cannot read). A model that words an ambiguity any other way defeats the marker, and
+  the run implements as before. A model
   that writes every gap as an `AMBIGUOUS` entry, even one it could assume a default for, stops a
   request the implementer could have handled; the remedy is to add acceptance criteria and re-run.
-  One concrete criterion beside the ambiguities lets a run go on. An admin-edited `validateContext`
+  One concrete criterion beside the ambiguities lets a run go on, and the implementer then sees the
+  ambiguities as open questions, which is an instruction to a model rather than a guarantee: it can
+  still resolve one by assumption. No channel carries the model's assumptions to a reviewer
+  (`implementationNotes` is built from fixed text, not written by the model), and the open questions
+  themselves are not shown to the reviewer, the pull request or the stored lesson either. Built-in
+  skill text reaches a deployment at gateway start (§6.5): the sync cuts a new revision of the skill
+  and replaces its text, so a deployment that never restarted the gateway keeps the previous example.
+  The criteria are handed to the first implementation only; the review-fix and CI-fix steps do not
+  receive them. An admin-edited `validateContext`
   prompt keeps its own text: only an untouched seeded prompt moves to the current one, as a new
   agent version. Only `ticket-to-merge` stops; the other built-in templates still continue past an
   ambiguity verdict, and a custom copy of `ticket-to-merge` keeps its old graph.

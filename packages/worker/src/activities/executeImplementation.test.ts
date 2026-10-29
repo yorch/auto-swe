@@ -385,6 +385,48 @@ describe('executeImplementation tracker ticket context', () => {
   });
 });
 
+describe('executeImplementation success criteria', () => {
+  const run = (criteria?: string[], ticket?: string) =>
+    executeImplementation(
+      { ...REQUEST, workRequestId: 'wr-1' } as RepoWorkRequest,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ticket,
+      criteria
+    );
+
+  it('fences the criteria and the open questions into the implementer system prompt', async () => {
+    await run(['GET /health returns 200', 'AMBIGUOUS: does it need auth?']);
+    const prompt = systemPrompt();
+    expect(prompt.startsWith('BASE_PROMPT')).toBe(true);
+    expect(prompt).toContain('<criteria>');
+    expect(prompt).toContain('- GET /health returns 200');
+    expect(prompt).toContain('- does it need auth?');
+    expect(prompt).toMatch(/do not guess/i);
+  });
+
+  it('places them after the ticket and before the cross-repo block', async () => {
+    loadMock.mockResolvedValue('[CROSS]');
+    await run(['GET /health returns 200'], '[TICKET]');
+    const prompt = systemPrompt();
+    expect(prompt.indexOf('[TICKET]')).toBeLessThan(prompt.indexOf('<criteria>'));
+    expect(prompt.indexOf('<criteria>')).toBeLessThan(prompt.indexOf('[CROSS]'));
+  });
+
+  it('leaves the prompt byte-identical when no criteria were handed over', async () => {
+    await run();
+    expect(systemPrompt()).toBe('BASE_PROMPT');
+  });
+
+  it('leaves the prompt byte-identical for an empty list', async () => {
+    await run([]);
+    expect(systemPrompt()).toBe('BASE_PROMPT');
+  });
+});
+
 describe('executeImplementation cross-repo context', () => {
   it('appends the dependency block to the implementer system prompt', async () => {
     loadMock.mockResolvedValue('\n\n## Cross-Repo Dependency Context\n- acme/web — kinds: code');

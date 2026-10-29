@@ -63,7 +63,12 @@ export function ticketToMergeNodes(passed: string): NodeMap {
       implement: {
         group: 'implement',
         // The gatherer's digest of the run's tracker ticket (`''` when the run has none).
-        inputs: { ticket: { from: 'context.ticket' } },
+        inputs: {
+          // What `validate` extracted, ambiguity entries included: the implementer is told what
+          // done means and which questions are open, and does not guess at them.
+          successCriteria: { default: [], from: 'context.successCriteria' },
+          ticket: { from: 'context.ticket' },
+        },
         next: 'initCounters',
         step: 'executeImplementation',
         title: 'Implement the ticket',

@@ -33,6 +33,7 @@ import { throwIfActivityCancelled } from '../lib/cancellation.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
+import { formatCriteriaContext } from '../lib/criteriaContext.js';
 import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
@@ -141,7 +142,12 @@ export async function executeImplementation(
    * string means the run has none; unset, the ticket is fetched here only when
    * `workflow.ticketContextFallback` is on.
    */
-  ticketFromStep?: string
+  ticketFromStep?: string,
+  /**
+   * The success criteria `validateContext` extracted, ambiguity entries included. The prompt gets
+   * the concrete ones as what to satisfy and the rest as open questions; unset adds nothing.
+   */
+  successCriteria?: readonly string[]
 ): Promise<CodeResult> {
   // First, before a clone or a container exists: an unpriced model under a USD
   // cap is refused here, not after the workspace has been built.
@@ -338,6 +344,7 @@ export async function executeImplementation(
       lessonsContext +
       designContext +
       ticketContext +
+      formatCriteriaContext(successCriteria) +
       crossRepoContext;
 
     // TDD loop — bound by the DB-backed workflow default (falls back to 5).
