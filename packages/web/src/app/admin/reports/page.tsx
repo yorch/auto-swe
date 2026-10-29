@@ -16,6 +16,7 @@ import {
   rangeKey,
   rangeQuery,
 } from '@/lib/dateRange';
+import { HELP_LINKS } from '@/lib/helpLinks';
 import { type ReportTab, type ReportTabData, ReportTabPanel } from './ReportTabPanel';
 import { reportCsv } from './reportCsv';
 
@@ -76,7 +77,7 @@ function ReportsWorkspace() {
             />
           </div>
         }
-        learnMore={{ slug: 'reporting' }}
+        learnMore={{ ...HELP_LINKS.reporting }}
         subtitle="Delivery, quality, budget, automation, and approval outcomes across workflow runs."
         title="Reports"
       />

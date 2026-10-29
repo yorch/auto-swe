@@ -135,7 +135,7 @@ const ADMIN_PAGES: NavItem[] = [
   },
   {
     href: '/admin/reports',
-    icon: 'analytics',
+    icon: 'docs',
     label: 'Reports',
     minRole: 'ENGINEER',
     section: 'Spend & insights',

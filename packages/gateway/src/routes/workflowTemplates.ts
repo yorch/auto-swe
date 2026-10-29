@@ -687,10 +687,15 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         stepsQuery,
       ]);
     const allGroups = [...rawCurrentGroups, ...rawPreviousGroups] as GlobalAnalyticsGroup[];
-    const templateRows = await fastify.prisma.workflowTemplate.findMany({
-      select: { id: true, name: true },
-      where: { id: { in: [...new Set(allGroups.map((group) => group.templateId))] } },
-    });
+    const templateRows = await runUnscoped(
+      'template names for caller-visible analytics groups',
+      ['WorkflowTemplate'],
+      () =>
+        fastify.prisma.workflowTemplate.findMany({
+          select: { id: true, name: true },
+          where: { id: { in: [...new Set(allGroups.map((group) => group.templateId))] } },
+        })
+    );
     const templateNames = new Map(templateRows.map((template) => [template.id, template.name]));
     const groupKey = (group: Pick<GlobalAnalyticsGroup, (typeof GROUP_BY)[number]>) =>
       JSON.stringify(GROUP_BY.map((key) => group[key]));
