@@ -235,6 +235,25 @@ describe('assertNoCredentialEnvPairs', () => {
     }
   });
 
+  it('refuses unencoded passwords that curl and WHATWG URL parsing accept', () => {
+    for (const value of [
+      'http://user:Pa^ss@proxy:3128',
+      'http://user:p{w}d@proxy:3128',
+      'http://user:p|w@proxy',
+      'http://user:pä@proxy',
+      'http://user:p`w@proxy',
+      'http://user:p<w>@proxy',
+      'http://u:p:w@h',
+      'http://user:pa:ss@proxy:3128',
+      'http://u:::@h',
+    ]) {
+      const pair = `X=${value}`;
+      expect(() => assertNoCredentialEnvPairs([pair], 'test'), pair).toThrow(
+        'value carries URL credentials'
+      );
+    }
+  });
+
   it('refuses userinfo with an empty user or password, or a percent-encoded one', () => {
     for (const pair of [
       'X=postgres://u:p@h/db',

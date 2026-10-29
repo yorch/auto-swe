@@ -42,13 +42,17 @@ export function isCredentialEnvName(name: string): boolean {
 
 /**
  * URL userinfo in a value (`scheme://user:pass@host`), e.g. `HTTPS_PROXY=http://u:p@host`.
- * The user and password are limited to RFC 3986 userinfo characters, so JSON, query strings and
- * paths (`"`, `/`, `?`, `#`, `[`, whitespace) end the match. The lookbehind keeps the scan
- * linear: without it, a long value without `://` is rescanned from every letter.
+ * Userinfo ends at whitespace, a quote, a slash, a query or fragment marker, a bracket or a
+ * backslash, so compact JSON, query strings and IPv6 hosts do not match. The username stops at
+ * the first `:` (only the first colon separates user from password), while the password may
+ * contain colons, since a curl or WHATWG-accepted password can. The `@` ends either part. The
+ * lookbehind keeps the scan linear: without it, a long value without `://` is rescanned from
+ * every letter.
  */
-const USERINFO_CHARS = "[A-Za-z0-9\\-._~%!$&'()*+,;=]";
+const USERNAME_CHARS = String.raw`[^\s"/?#@:\[\]\\]`;
+const PASSWORD_CHARS = String.raw`[^\s"/?#@\[\]\\]`;
 const URL_USERINFO = new RegExp(
-  `(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\\/\\/${USERINFO_CHARS}*:${USERINFO_CHARS}*@`,
+  `(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\\/\\/${USERNAME_CHARS}*:${PASSWORD_CHARS}*@`,
   'i'
 );
 
