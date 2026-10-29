@@ -254,6 +254,8 @@ const UNSTEMMED = new Set([
   // Possessive pronouns that end like a plural but are not the plural of `your` or `their`.
   'yours',
   'theirs',
+  // A verb form (`this rests on`), not a plural of the API term `REST`.
+  'rests',
 ]);
 
 /** Words ending -ed that are not a past tense (`embed`, not `emb` + `ed`). */
