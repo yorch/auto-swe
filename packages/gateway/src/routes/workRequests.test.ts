@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
 vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
@@ -69,6 +69,7 @@ import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { TRACKER_READ_OUT_OF_SCOPE } from '@auto-swe/shared/lib/trackerSync';
 import { experimentBucket } from '../lib/experimentBucket.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
+import { clearStopNodeCache } from '../lib/unchangedRerun.js';
 import { resolveDefaultTemplate, workRequestRoutes } from './workRequests.js';
 
 const resolveIssueTrackerConfigMock = vi.mocked(resolveIssueTrackerConfig);
@@ -96,6 +97,24 @@ describe('POST /api/v1/work-requests', () => {
   let orgSpentUsd: number | null = null;
   // The repository's web base override; null is the instance host.
   let repoGithubUrl: string | null = null;
+  // What the not-actionable-stop lookup finds for the next request.
+  let notActionableStops: unknown[] = [];
+  let stopLookups = 0;
+  const createdRunInputs: Record<string, unknown>[] = [];
+  const stoppedRequest = {
+    id: 'run-stopped',
+    startedAt: new Date(),
+    workRequest: {
+      description: 'Add health endpoint',
+      payload: {
+        budget: 'STANDARD',
+        connectionId: 'repo-1',
+        description: 'Add health endpoint',
+        ticketId: 'jira-3',
+      },
+    },
+    workRequestId: 'wr-stopped',
+  };
 
   beforeAll(async () => {
     sameRepositoryIds.mockImplementation(async (_p: unknown, id: string) => [id]);
@@ -166,8 +185,18 @@ describe('POST /api/v1/work-requests', () => {
         findUnique: async () => (orgSpentUsd != null ? { costUsdAccrued: orgSpentUsd } : null),
       },
       runInput: {
-        create: async (args: { data: Record<string, unknown> }) => ({ id: 'wr-1', ...args.data }),
+        create: async (args: { data: Record<string, unknown> }) => {
+          createdRunInputs.push(args.data);
+          return { id: 'wr-1', ...args.data };
+        },
         delete: async () => ({}),
+      },
+      // The first lookup is the stops; the second, the runs after one.
+      workflowRun: {
+        findMany: async () => {
+          stopLookups += 1;
+          return stopLookups % 2 === 1 ? notActionableStops : [];
+        },
       },
       workflowTemplate: {
         findFirst: async () => ({
@@ -175,6 +204,11 @@ describe('POST /api/v1/work-requests', () => {
           id: 'tpl-1',
         }),
         findUnique: async () => ({ inputSchema: templateInputSchema }),
+      },
+      workflowTemplateVersion: {
+        findFirst: async () => ({
+          spec: { nodes: { terminateNotActionable: { status: 'FAILED', type: 'terminate' } } },
+        }),
       },
     };
     app.decorate('prisma', prismaMock as unknown as never);
@@ -262,14 +296,17 @@ describe('POST /api/v1/work-requests', () => {
       syncModelDiscoverySchedule: async () => {},
       syncRepoAccessSyncSchedule: async () => {},
       syncRepoDependencyScanSchedule: async () => {},
+      syncReportDigestSchedule: async () => {},
       syncRevalidationSchedule: async () => {},
       syncRunReaperSchedule: async () => {},
       syncSkillSourceSyncSchedule: async () => {},
       syncSlackChannelSyncSchedule: async () => {},
+      syncWorkflowRunRollupSchedule: async () => {},
       syncWorkRequestSchedule: async () => {},
       triggerConsolidationNow: async () => {},
       triggerEvalNow: async () => {},
       triggerRepoDependencyScanNow: async () => {},
+      triggerReportDigestTest: async () => {},
       triggerRevalidationNow: async () => {},
       triggerWorkRequestSchedule: async () => {},
       workflowSettledStatus: async () => null,
@@ -632,6 +669,50 @@ describe('POST /api/v1/work-requests', () => {
     });
     expect(res.statusCode).toBe(201);
     expect(snapshotUpserts).toHaveLength(0);
+  });
+
+  describe('after a not-actionable stop', () => {
+    const submit = (extra: Record<string, unknown> = {}) =>
+      app.inject({
+        headers: { authorization: 'Bearer test-token' },
+        method: 'POST',
+        payload: {
+          description: 'Add health endpoint',
+          externalTicketId: 'JIRA-3',
+          repoIds: ['00000000-0000-4000-8000-000000000001'],
+          ...extra,
+        },
+        url: '/api/v1/work-requests',
+      });
+
+    beforeEach(() => {
+      clearStopNodeCache();
+      stopLookups = 0;
+      createdRunInputs.length = 0;
+    });
+
+    it('refuses an unchanged request with 409 naming the earlier run, and starts nothing', async () => {
+      existingWorkflows = [];
+      notActionableStops = [stoppedRequest];
+      startedWorkflowIds.length = 0;
+      const res = await submit();
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toMatchObject({
+        code: 'UNCHANGED_AFTER_NOT_ACTIONABLE',
+        details: { previousRunId: 'run-stopped' },
+      });
+      expect(startedWorkflowIds).toHaveLength(0);
+    });
+
+    it('launches when acknowledged, and when the description changed', async () => {
+      existingWorkflows = [];
+      notActionableStops = [stoppedRequest];
+      expect((await submit({ acknowledgeUnchanged: true })).statusCode).toBe(201);
+      expect(String(createdRunInputs[0].requestPayload)).not.toContain('acknowledgeUnchanged');
+      existingWorkflows = [];
+      expect((await submit({ description: 'Add a readiness endpoint' })).statusCode).toBe(201);
+      notActionableStops = [];
+    });
   });
 
   it('still returns 201 and writes no snapshot when the tracker fetch fails', async () => {

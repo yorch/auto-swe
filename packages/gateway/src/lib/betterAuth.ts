@@ -25,7 +25,7 @@ import {
   resolveOktaOAuthConfig,
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
-import { oauthProvider } from '@better-auth/oauth-provider';
+import { oauthDeviceAuthorization, oauthProvider } from '@better-auth/oauth-provider';
 import { betterAuth } from 'better-auth';
 import { prismaAdapter } from 'better-auth/adapters/prisma';
 import { APIError } from 'better-auth/api';
@@ -37,6 +37,7 @@ import { type GithubSignIn, resolveGithubSignIn } from './githubEnterpriseAuth.j
 import { syncGithubLoginForAccount } from './githubIdentity.js';
 import {
   MCP_ACCESS_TOKEN_TTL_SECONDS,
+  MCP_DEVICE_GRANT,
   MCP_JWKS_GRACE_SECONDS,
   MCP_JWKS_ROTATION_SECONDS,
   MCP_REFRESH_TOKEN_TTL_SECONDS,
@@ -571,7 +572,7 @@ function buildAuth() {
           return {};
         },
         // Public clients only, so the default `client_credentials` grant goes.
-        grantTypes: ['authorization_code', 'refresh_token'],
+        grantTypes: ['authorization_code', 'refresh_token', MCP_DEVICE_GRANT],
         loginPage: `${CLIENT_ORIGIN}/login`,
         refreshTokenExpiresIn: MCP_REFRESH_TOKEN_TTL_SECONDS,
         resourcePrivileges: () => false,
@@ -586,6 +587,11 @@ function buildAuth() {
         ],
         // `offline_access` is what makes the plugin issue a refresh token.
         scopes: [...MCP_SCOPES],
+      }),
+      oauthDeviceAuthorization({
+        expiresIn: '10m',
+        interval: '5s',
+        verificationUri: `${CLIENT_ORIGIN}/device`,
       }),
     ],
     // Strict origins for browser-initiated calls. The Slack OAuth flow keeps

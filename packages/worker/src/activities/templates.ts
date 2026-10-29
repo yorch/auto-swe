@@ -15,6 +15,11 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { isTrackerTicket, syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
 import type { WorkflowSpec } from '@auto-swe/shared/workflow';
 import { migrateSpec, parseWorkflowSpec, SPEC_SCHEMA_VERSION } from '@auto-swe/shared/workflow';
+import {
+  attributionTeamSelect,
+  resolveWorkflowRunAttribution,
+  runInputAttributionSelect,
+} from '@auto-swe/shared/workflow/runAttribution';
 import { Context } from '@temporalio/activity';
 import { currentTemporalRunId } from '../lib/activityContext.js';
 import { logError, logWarn } from '../lib/activityLog.js';
@@ -506,6 +511,7 @@ export async function createWorkflowRun(
           estimatedHumanTimeSavedMinutes: true,
           inputSchema: true,
           origin: true,
+          team: { select: attributionTeamSelect },
           workspaceProvider: true,
         },
       },
@@ -586,6 +592,26 @@ export async function createWorkflowRun(
   // and the later execution gets no user credential — never the earlier
   // launcher's.
   const sourceSnapshot = await knowledgeSourceSnapshot(input);
+  const attributionConnectionId = input.runConnectionId ?? input.repoId ?? scheduledRepoId ?? null;
+  const [attributionConnection, attributionWorkRequest] = await Promise.all([
+    attributionConnectionId
+      ? prisma.connection.findUnique({
+          select: { team: { select: attributionTeamSelect } },
+          where: { id: attributionConnectionId },
+        })
+      : null,
+    input.workRequestId
+      ? prisma.runInput.findUnique({
+          select: runInputAttributionSelect,
+          where: { id: input.workRequestId },
+        })
+      : null,
+  ]);
+  const attribution = resolveWorkflowRunAttribution({
+    connection: attributionConnection,
+    template: { team: version.template?.team ?? null },
+    workRequest: attributionWorkRequest,
+  });
   // The connections this run may use, resolved now and pinned on the row. A node that
   // resolves anything else is refused where it is used, which is what makes a template's
   // declared schema a boundary rather than a hint. Computed here because this activity is
@@ -605,6 +631,8 @@ export async function createWorkflowRun(
   const runUpsert: Prisma.WorkflowRunUpsertArgs = {
     create: {
       agentVersions,
+      attributedOrgId: attribution.attributedOrgId,
+      attributedTeamId: attribution.attributedTeamId,
       ...(agentRuntimes ? { agentRuntimes: agentRuntimes as Prisma.InputJsonObject } : {}),
       ...sourceSnapshot,
       authorizedConnectionIds: authorizedConnectionIds as Prisma.InputJsonValue,

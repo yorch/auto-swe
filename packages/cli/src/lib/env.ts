@@ -1,5 +1,5 @@
 /**
- * CLI environment + auth resolution.
+ * REST CLI environment + auth resolution (MCP OAuth uses its own credential store).
  *
  * Auth is `AUTO_SWE_TOKEN` only — a personal access token (`ats_*`, minted
  * at Settings → API tokens in the dashboard) or any bearer the gateway

@@ -1,3 +1,4 @@
+import './mcpDeviceFlow.pg.js';
 import crypto from 'node:crypto';
 import http from 'node:http';
 import { invalidateSettingsCache } from '@auto-swe/shared/config';
@@ -14,6 +15,7 @@ import { registerFormBodyParser } from './formBody.js';
 import { MCP_JWKS_GRACE_SECONDS, mcpIssuerFor } from './mcpOAuth.js';
 import { mcpOAuthGate } from './mcpOAuthGate.js';
 import { mcpOAuthGateOptions } from './mcpOAuthGateOptions.js';
+import './reportDigestRateLimit.pg.js';
 
 /**
  * The authorization server end to end: the real better-auth OAuth provider, through the
@@ -673,7 +675,11 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
       );
       invalidateSettingsCache();
       const real = mcpOAuthGateOptions();
-      expect(await real.getSettings()).toEqual({ enabled: false, writeToolsEnabled: false });
+      expect(await real.getSettings()).toEqual({
+        deviceFlowEnabled: false,
+        enabled: false,
+        writeToolsEnabled: false,
+      });
       await globalSettings(() =>
         prisma.configSetting.createMany({
           data: [
@@ -683,7 +689,11 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
         })
       );
       invalidateSettingsCache();
-      expect(await real.getSettings()).toEqual({ enabled: true, writeToolsEnabled: true });
+      expect(await real.getSettings()).toEqual({
+        deviceFlowEnabled: false,
+        enabled: true,
+        writeToolsEnabled: true,
+      });
       await globalSettings(() =>
         prisma.configSetting.deleteMany({ where: { key: { startsWith: 'mcp.' } } })
       );

@@ -4,7 +4,12 @@ import type {
   WorkflowTemplateSummary,
   WorkflowTemplateVersionDetail,
 } from '@auto-swe/shared/types/api';
-import { apiRequest, runWithExitCodes, UNKNOWN_SUBCOMMAND } from '../lib/api.js';
+import {
+  apiRequest,
+  runWithExitCodes,
+  UNKNOWN_SUBCOMMAND,
+  withAcknowledgeHint,
+} from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { missingValue, parseFlags } from '../lib/flags.js';
 import { pad, parseOptionalPositiveInt } from '../lib/format.js';
@@ -17,7 +22,7 @@ const SUB_HELP = `auto-swe workflows — manage workflow templates
   workflows export <name> [-o <path>]    Write the active spec to a file (or stdout)
   workflows import <path> [--name=NAME] [--team=<slug>]
                                          Create a template (or add a new version if the name already exists)
-  workflows run <name> --payload=<json> [--label=<text>]
+  workflows run <name> --payload=<json> [--label=<text>] [--acknowledge-unchanged]
                                          Start a run with a generic JSON payload
   workflows generate "<description>" [--name=NAME] [--team=<slug>]
                                          Generate a DRAFT template from a plain-language description (AI)
@@ -343,7 +348,7 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
   const name = positional[0];
   if (!name) {
     process.stderr.write(
-      'Usage: workflows run <name> --payload=<json> [--label=<text>] [--team=<slug>|--global]\n'
+      'Usage: workflows run <name> --payload=<json> [--label=<text>] [--team=<slug>|--global] [--acknowledge-unchanged]\n'
     );
     return 1;
   }
@@ -370,16 +375,23 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     }
   }
 
-  const body: { label?: string; payload: Record<string, unknown> } = { payload };
+  const body: { acknowledgeUnchanged?: true; label?: string; payload: Record<string, unknown> } = {
+    payload,
+  };
   if (flags.label && flags.label !== 'true') {
     body.label = flags.label;
+  }
+  if (flags['acknowledge-unchanged']) {
+    body.acknowledgeUnchanged = true;
   }
 
   const res = await apiRequest<{
     temporalWorkflowId: string;
     workflowId: string;
     workRequestId: string;
-  }>(env, 'POST', `/api/v1/workflow-templates/${tpl.id}/runs`, body);
+  }>(env, 'POST', `/api/v1/workflow-templates/${tpl.id}/runs`, body).catch((err: unknown) => {
+    throw withAcknowledgeHint(err);
+  });
 
   process.stdout.write(
     `Started run for "${name}": workRequestId=${res.workRequestId} workflowId=${res.workflowId} temporalWorkflowId=${res.temporalWorkflowId}\n`

@@ -42,6 +42,7 @@ import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { DEFAULT_COMMANDS, gateCommandFor } from './gateCommand.js';
 import { runImplementerFixSession } from './implementerSession.js';
+import { testStatusWord } from './utils.js';
 import {
   createWorkspace,
   fetchBranchesSubcommand,
@@ -687,7 +688,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     lessonQuery: `${gateName}: ${gateLogs.slice(-2_000)}`,
     mode: 'GATE_FIX',
     notes: (testResult, extraNote) =>
-      `Gate fix iteration for ${gateName}. ${extraNote ?? `${gateName} re-run skipped`}. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      `Gate fix iteration for ${gateName}. ${extraNote ?? `${gateName} re-run skipped`}. Tests ${testStatusWord(testResult)}.`,
     previousCodeResult,
     systemPromptOverride,
     usageEventName: 'llm.gate_fix',

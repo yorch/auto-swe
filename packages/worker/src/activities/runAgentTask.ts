@@ -372,7 +372,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     );
   }
   const ledger = await prisma.activeWorkflow.findFirst({
-    select: { id: true, repoId: true },
+    select: { id: true, repoId: true, temporalWorkflowId: true },
     where: { temporalWorkflowId: workflowId },
   });
   if (!ledger?.repoId || ledger.repoId !== repoId) {
@@ -509,6 +509,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
                 ledgerId: ledger.id,
                 prNumber: pr.prNumber,
                 repoId,
+                temporalWorkflowId: ledger.temporalWorkflowId,
                 title,
               },
               pushed.tracer
@@ -684,11 +685,16 @@ async function recordAgentRunPullRequest(
     ledgerId: string;
     prNumber: number;
     repoId: string;
+    temporalWorkflowId: string;
     title: string;
   },
   tracer: AgentTracer
 ): Promise<void> {
   try {
+    const run = await prisma.workflowRun.findUnique({
+      select: { id: true, templateId: true, templateVersion: true },
+      where: { workflowId: args.temporalWorkflowId },
+    });
     await prisma.pullRequest.create({
       data: {
         ciStatus: 'PENDING',
@@ -696,7 +702,10 @@ async function recordAgentRunPullRequest(
         isDraft: args.isDraft,
         prNumber: args.prNumber,
         repoId: args.repoId,
+        runId: run?.id ?? null,
         status: 'OPEN',
+        templateId: run?.templateId ?? null,
+        templateVersion: run?.templateVersion ?? null,
         title: clampPullRequestTitle(args.title),
         workflowId: args.ledgerId,
       },

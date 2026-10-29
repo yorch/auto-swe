@@ -39,6 +39,40 @@ function isSafeWebUrl(value: string): boolean {
   }
 }
 
+/**
+ * Why the tracker ticket could not be read, by the class the gatherer recorded, in words that do
+ * not blame the requester: a refused fetch and a missing ticket look the same to a tracker. A
+ * lookup table, never the stored value, so nothing a run produced is shown beyond a known class.
+ * Its keys are the `TicketFailureClass` set (a test fails when they drift apart).
+ */
+const UNREAD = 'The ticket could not be read from the tracker';
+export const TICKET_UNAVAILABLE_LINES = new Map<string, string>([
+  ['unauthorized', `${UNREAD} (the tracker rejected its credentials).`],
+  ['forbidden', `${UNREAD} (access was refused).`],
+  ['not_found', `${UNREAD} (access was refused, or it does not exist).`],
+  ['rate_limited', `${UNREAD} (the tracker is limiting requests).`],
+  ['server_error', `${UNREAD} (the tracker returned an error).`],
+  ['timeout', `${UNREAD} (the tracker did not answer in time).`],
+  ['network', `${UNREAD} (the tracker could not be reached).`],
+  ['redirect', `${UNREAD} (the tracker address redirects, which is not followed).`],
+  [
+    'rejected',
+    `${UNREAD} (it rejected the request — check the tracker credentials and ticket id).`,
+  ],
+  [
+    'refused',
+    `${UNREAD} (it was blocked by the platform's network policy; ask an administrator to check the tracker's allowed addresses).`,
+  ],
+  ['unconfigured', `${UNREAD} (no ticket tracker is configured).`],
+  ['empty', 'The ticket was read from the tracker but has no text.'],
+  // Also the catch-all for a failure inside the platform (a database error, say): not the tracker.
+  ['unknown', 'The ticket could not be read (the reason is not known).'],
+]);
+
+function ticketUnavailableLine(reason: unknown): string | null {
+  return typeof reason === 'string' ? (TICKET_UNAVAILABLE_LINES.get(reason) ?? null) : null;
+}
+
 function OutcomeLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
@@ -187,9 +221,11 @@ export function RunOutcomeCard({ result, runId, templateName, isAgentRun }: RunO
     const ambiguities = Array.isArray(result.ambiguities)
       ? [...new Set(result.ambiguities.filter((item): item is string => typeof item === 'string'))]
       : [];
+    const ticketLine = ticketUnavailableLine(result.ticketUnavailableReason);
     return (
       <OutcomeShell icon="warning" title="Stopped" tone="warning">
         <OutcomeText runId={runId} value={result.message} />
+        {ticketLine ? <p className="text-sm leading-relaxed text-paper-300">{ticketLine}</p> : null}
         {ambiguities.length > 0 ? (
           <ul className="list-disc space-y-1 pl-5 text-sm leading-relaxed text-paper-300">
             {ambiguities.map((item) => (

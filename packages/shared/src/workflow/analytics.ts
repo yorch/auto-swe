@@ -44,7 +44,8 @@ export interface AnalyticsStepRow {
 }
 
 export interface AnalyticsPullRequestRow {
-  workflowId: string;
+  runId: string | null;
+  templateVersion: number | null;
   status: string;
 }
 
@@ -260,26 +261,21 @@ export function computeAnalytics(
 
   const versionCounts = new Map<number, number>();
   const versionRuns = new Map<number, AnalyticsRunRow[]>();
-  const runByWorkflowId = new Map<string, AnalyticsRunRow>();
   for (const r of runs) {
     versionCounts.set(r.templateVersion, (versionCounts.get(r.templateVersion) ?? 0) + 1);
     const grouped = versionRuns.get(r.templateVersion) ?? [];
     grouped.push(r);
     versionRuns.set(r.templateVersion, grouped);
-    if (r.workflowId) {
-      runByWorkflowId.set(r.workflowId, r);
-    }
   }
   const prsByVersion = new Map<
     number,
     { closedUnmerged: number; merged: number; opened: number; open: number }
   >();
   for (const pr of pullRequests) {
-    const run = runByWorkflowId.get(pr.workflowId);
-    if (!run) {
+    if (!pr.runId || pr.templateVersion === null) {
       continue;
     }
-    const grouped = prsByVersion.get(run.templateVersion) ?? {
+    const grouped = prsByVersion.get(pr.templateVersion) ?? {
       closedUnmerged: 0,
       merged: 0,
       open: 0,
@@ -293,7 +289,7 @@ export function computeAnalytics(
     } else if (pr.status === 'OPEN') {
       grouped.open += 1;
     }
-    prsByVersion.set(run.templateVersion, grouped);
+    prsByVersion.set(pr.templateVersion, grouped);
   }
   const perVersion = Array.from(versionRuns.entries())
     .map(([version, versionRows]) => {

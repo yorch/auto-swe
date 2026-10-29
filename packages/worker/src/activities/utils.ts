@@ -32,12 +32,27 @@ export function detectTestCommand(
   gateCommands?: unknown,
   detectedStack?: unknown
 ): string {
+  return resolveTestCommand(packageJsonStr, gateCommands, detectedStack).command;
+}
+
+/** Where the test command came from: an admin, the detected stack, or the package.json guess. */
+export type TestCommandSource = 'configured' | 'stack' | 'node-guess';
+
+/**
+ * The test command {@link detectTestCommand} returns and the link in its chain that supplied
+ * it. The precedence lives here only: {@link testCommandSource} reads the same chain.
+ */
+function resolveTestCommand(
+  packageJsonStr: string,
+  gateCommands?: unknown,
+  detectedStack?: unknown
+): { command: string; source: TestCommandSource } {
   const configured =
     gateCommands && typeof gateCommands === 'object'
       ? (gateCommands as Record<string, unknown>).runTests
       : undefined;
   if (typeof configured === 'string' && configured.trim().length > 0) {
-    return configured;
+    return { command: configured, source: 'configured' };
   }
   // A Node target is not given its package manager's `npm test`: the package.json
   // guess below is better informed (a missing test script, a vitest dependency).
@@ -48,9 +63,21 @@ export function detectTestCommand(
       ? undefined
       : detectedGateDefaults(detectedStack)?.runTests;
   if (stackTests) {
-    return stackTests;
+    return { command: stackTests, source: 'stack' };
   }
-  return inDir(concrete?.dir ?? '', detectTestCommandFromPackageJson(packageJsonStr));
+  return {
+    command: inDir(concrete?.dir ?? '', detectTestCommandFromPackageJson(packageJsonStr)),
+    source: 'node-guess',
+  };
+}
+
+/** Which link of {@link detectTestCommand}'s chain would supply the command for these inputs. */
+export function testCommandSource(
+  packageJsonStr: string,
+  gateCommands?: unknown,
+  detectedStack?: unknown
+): TestCommandSource {
+  return resolveTestCommand(packageJsonStr, gateCommands, detectedStack).source;
 }
 
 /**
@@ -152,6 +179,91 @@ export function unrunnableTestCause(err: unknown): string | undefined {
   return exitStatus === NPM_NO_PACKAGE_JSON_STATUS && NPM_NO_PACKAGE_JSON.test(output)
     ? 'npm reports no package.json in the workspace'
     : undefined;
+}
+
+/** pytest's exit status when it collected no tests. */
+const PYTEST_NO_TESTS_STATUS = 5;
+
+/**
+ * `none-collected`: the runner looked for tests and found none (pytest's exit 5).
+ * `unreadable`: the run exited 0 but its output carries nothing `parseTestOutput` can read, so
+ * whether tests ran is unknown (`go test`'s `[no test files]`, and also a green quiet
+ * `mvn -B -q test`, a Gradle `BUILD SUCCESSFUL` or a verbose surefire summary).
+ */
+export type NoTestsKind = 'none-collected' | 'unreadable';
+
+/**
+ * Why a run of a stack-derived test command shows no tests, or `undefined`. Such a command in
+ * an image that has the toolchain is not unrunnable (`unrunnableTestCause`) yet the loop would
+ * otherwise spend every remaining agent pass on it. Two signals, both narrow: a rejected run
+ * with pytest's exit status 5 (among the shipped stack defaults only pytest exits 5), and a
+ * run that exited 0 with no counts and no evidence that tests ran. A rejected run with any other
+ * status (a collection or compile error, real failures) is not matched: the agent can fix it. A
+ * configured or package.json command never matches, so their behaviour is unchanged.
+ *
+ * Stopping is a deliberate trade-off, not a claim that no later pass could help: after exit 5
+ * the agent could add a test file, but the implementer already runs the tests itself in its
+ * first pass, so a further pass costs a whole budget for a rarely different outcome, and the
+ * diff is still committed and reviewed.
+ */
+export function noTestsFoundCause(
+  source: TestCommandSource,
+  outcome: { error: unknown } | { result: TestRunResult }
+): { kind: NoTestsKind; reason: string } | undefined {
+  if (source !== 'stack') {
+    return undefined;
+  }
+  if ('result' in outcome) {
+    const r = outcome.result;
+    return !r.passed && r.total === 0 && r.failing === 0
+      ? { kind: 'unreadable', reason: 'the run exited 0 but printed no test counts' }
+      : undefined;
+  }
+  const e = outcome.error as { code?: unknown; status?: unknown } | null;
+  const status = typeof e?.code === 'number' ? e.code : e?.status;
+  return status === PYTEST_NO_TESTS_STATUS
+    ? { kind: 'none-collected', reason: 'exit status 5: no tests ran' }
+    : undefined;
+}
+
+/**
+ * The notes sentence for a stopped run. `stoppedAfterRun` is the 1-based test run that ended
+ * the TDD loop; leave it out in a fix session, which has one test run and no loop.
+ */
+export function noTestsFoundNotes(
+  command: string,
+  kind: NoTestsKind,
+  stoppedAfterRun?: number
+): string {
+  const loop =
+    stoppedAfterRun === undefined ? '' : `the TDD loop stopped after test run ${stoppedAfterRun}`;
+  if (kind === 'none-collected') {
+    return `The test command \`${command}\` found no tests to run${loop ? `, so ${loop}` : ''}; set \`runTests\` for this repository.`;
+  }
+  return `The test command \`${command}\` exited 0 but printed no test counts, so whether tests ran could not be determined${loop ? `; ${loop}.` : '.'} Set \`runTests\` for this repository for a command whose output can be read.`;
+}
+
+/** The activity event naming a stopped run: one per kind, so a trace says which. */
+export function noTestsFoundEvent(
+  kind: NoTestsKind
+): 'tdd.no_tests_found' | 'tdd.tests_unreadable' {
+  return kind === 'none-collected' ? 'tdd.no_tests_found' : 'tdd.tests_unreadable';
+}
+
+/** The result recorded when no test results exist to read: not a failure, nothing ran. */
+export function noTestsRunResult(stdout: string): TestRunResult {
+  return { duration_ms: 0, failing: 0, passed: false, passing: 0, stdout, total: 0 };
+}
+
+/**
+ * How notes and the PR body word a test result. `not run` is a result with no counts and no
+ * failures: nothing was read. The unrunnable shape (`failing: 1, total: 0`) stays `failing`.
+ */
+export function testStatusWord(result: TestRunResult): 'passing' | 'failing' | 'not run' {
+  if (result.passed) {
+    return 'passing';
+  }
+  return result.total === 0 && result.failing === 0 ? 'not run' : 'failing';
 }
 
 /**

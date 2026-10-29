@@ -513,6 +513,18 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.array(z.enum(['none', 'draft_pr', 'branch'])),
   }),
+  'mcp.deviceFlowEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      'Allow registered MCP clients to request device authorization. A signed-in active user approves the exact requested scopes in the browser.',
+    group: 'mcp',
+    label: 'Enable MCP device authorization',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'mcp.enabled': defineSetting({
     defaultValue: false,
     description:

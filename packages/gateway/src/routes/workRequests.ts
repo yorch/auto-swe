@@ -53,6 +53,7 @@ import {
 } from '../lib/templateLaunch.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { ExternalTicketIdSchema, MAX_DESCRIPTION_LENGTH } from '../lib/ticketId.js';
+import { refuseUnchangedRerun } from '../lib/unchangedRerun.js';
 import { allocateWorkflowId, launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -337,6 +338,8 @@ export async function resolveDefaultTemplate(
 }
 
 const CreateWorkRequestSchema = z.object({
+  /** Launch a request that is unchanged since a not-actionable stop (docs/agents.md §3.8). */
+  acknowledgeUnchanged: z.boolean().optional(),
   budgetTier: z.enum(BUDGET_TIERS).optional().default('STANDARD'),
   description: z
     .string()
@@ -423,7 +426,8 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
-      const { externalTicketId, description, repoIds, budgetTier } = request.body;
+      const { acknowledgeUnchanged, externalTicketId, description, repoIds, budgetTier } =
+        request.body;
       const user = requireUser(request);
       const idempotencyKey = request.headers['idempotency-key'];
 
@@ -713,17 +717,35 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
 
+      // An identical request that stopped as not actionable would stop again.
+      if (
+        await refuseUnchangedRerun(
+          { gate: request.repoAccessGate, log: request.log, prisma: fastify.prisma, user },
+          {
+            description,
+            payload,
+            templateId: resolvedTemplate.templateId,
+            templateVersion: resolvedTemplate.version,
+          },
+          reply,
+          acknowledgeUnchanged
+        )
+      ) {
+        return;
+      }
+
       // Ledger rows are written BEFORE the workflow starts, and rolled back if
       // it fails to start — see `launchTrackedWorkflow` for why that ordering
       // is the safe one. The unique index on `temporalWorkflowId` is the
       // atomic dedup gate.
+      const requestPayload = JSON.stringify({ ...request.body, acknowledgeUnchanged: undefined });
       const repoWorkRequest: RepoWorkRequest = {
         budgetTier,
         description,
         externalTicketId,
         launchedById: user.sub,
         repoId: repo.id,
-        requestPayload: JSON.stringify(request.body),
+        requestPayload,
         workRequestId,
         ...(canaryPin ?? {}),
       };
@@ -751,7 +773,7 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             ...(idempotencyKey ? { idempotencyKey } : {}),
             payload,
             requestedById: user.sub,
-            requestPayload: JSON.stringify(request.body),
+            requestPayload,
             templateId: resolvedTemplate.templateId,
             templateVersion: resolvedTemplate.version,
           },
@@ -849,12 +871,20 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
   // Re-run a finished work request: starts a fresh Temporal execution (with
   // an -rN workflow-ID suffix) against the same ticket/repo/branch, reusing
   // the recorded template snapshot so the retry is reproducible.
-  app.post<{ Params: { id: string }; Body: { instructions?: string } | null }>(
+  app.post<{
+    Params: { id: string };
+    Body: { acknowledgeUnchanged?: boolean; instructions?: string } | null;
+  }>(
     '/:id/retry',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: {
-        body: z.object({ instructions: z.string().trim().max(4000).optional() }).nullish(),
+        body: z
+          .object({
+            acknowledgeUnchanged: z.boolean().optional(),
+            instructions: z.string().trim().max(4000).optional(),
+          })
+          .nullish(),
         params: z.object({ id: z.string().uuid() }),
       },
     },
@@ -899,7 +929,8 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
           request,
           reply,
           workRequest,
-          request.body?.instructions
+          request.body?.instructions,
+          request.body?.acknowledgeUnchanged
         );
       }
       if (!workRequest || !latest || !repo) {
@@ -1088,6 +1119,29 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
             ? `Workflow still running for ${workRequest.externalTicketId} for this repository`
             : `Workflow still running for ${workRequest.externalTicketId} (${allocated.conflictWorkflowId})`
         );
+      }
+
+      // Instructions change the request, so only a retry without them can be unchanged. After the
+      // in-flight checks above: a request already running is WORKFLOW_ALREADY_EXISTS first.
+      if (
+        await refuseUnchangedRerun(
+          { gate: request.repoAccessGate, log: request.log, prisma: fastify.prisma, user },
+          {
+            description: workRequest.description,
+            payload:
+              workRequest.payload &&
+              typeof workRequest.payload === 'object' &&
+              !Array.isArray(workRequest.payload)
+                ? (workRequest.payload as Record<string, unknown>)
+                : {},
+            templateId: retryTemplateId,
+            templateVersion: retryTemplateVersion,
+          },
+          reply,
+          request.body?.acknowledgeUnchanged || !!request.body?.instructions
+        )
+      ) {
+        return;
       }
 
       // Canary routing for re-runs: same determinism — same workRequestId

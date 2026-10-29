@@ -339,7 +339,11 @@ export function useRunTemplate(templateId: string) {
   const qc = useQueryClient();
   const submission = useRef<{ body: string; key: string } | null>(null);
   return useMutation({
-    mutationFn: (body: { payload?: Record<string, unknown>; label?: string }) => {
+    mutationFn: (body: {
+      acknowledgeUnchanged?: true;
+      payload?: Record<string, unknown>;
+      label?: string;
+    }) => {
       const serialized = JSON.stringify(body);
       if (!submission.current || submission.current.body !== serialized) {
         submission.current = { body: serialized, key: randomId() };

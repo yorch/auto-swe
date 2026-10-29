@@ -130,7 +130,7 @@ register({
   configFields: [SYSTEM_PROMPT_FIELD],
   costHint: { role: 'planner', tokensIn: 6000, tokensOut: 800 },
   description:
-    "Read the run's tracker ticket, with its newest comments and its parent issue, and digest it into one typed result (summary, requirements, acceptance criteria, constraints, open questions). Output: `available`, `digested`, `text`; later steps take `text`. A run with no ticket returns `available: false` without a model call.",
+    "Read the run's tracker ticket, with its newest comments and its parent issue, and digest it into one typed result (summary, requirements, acceptance criteria, constraints, open questions). Output: `available`, `digested`, `text`, `unavailableReason`; later steps take `text`. A run with no ticket returns `available: false` without a model call, and `unavailableReason` names why the ticket could not be read (a fixed class such as `forbidden` or `not_found`, never tracker text; empty when it was read).",
   label: 'Gather ticket context',
   name: 'gatherTicketContext',
 });

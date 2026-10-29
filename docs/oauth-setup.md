@@ -293,6 +293,7 @@ server that accepts the tokens is described in [mcp-server.md](./mcp-server.md).
 |---|---|---|
 | `mcp.enabled` | `false` | The OAuth endpoints listed below and the discovery document return 404 while it is off. |
 | `mcp.writeToolsEnabled` | `false` | The `mcp:write` scope is refused at authorization while it is off. |
+| `mcp.deviceFlowEnabled` | `false` | RFC 8628 device-code endpoints and the `device_code` grant return 404 while it is off. |
 
 Both are ADMIN-only, GLOBAL-only registry settings read per request through the settings cache, so a
 change applies on every replica within about 30 seconds and needs no restart.
@@ -307,16 +308,17 @@ gateway starts:
 | Resource (RFC 8707) and token audience (`aud`) | `{BETTER_AUTH_URL}/api/v1/mcp` |
 | Scopes | `mcp:read`, `mcp:write` (implies read), `offline_access` |
 | Client registration | Dynamic (RFC 7591), anonymous, public clients only, PKCE `S256` required |
-| Grants | `authorization_code` and `refresh_token` |
+| Grants | `authorization_code`, `refresh_token`, and `urn:ietf:params:oauth:grant-type:device_code` |
 | Access token | JWT (`typ: at+jwt`, `EdDSA`), 10 minutes |
 | Refresh token | Opaque, stored hashed, rotates on use, 14 days; issued only for `offline_access` |
-| Login and consent pages | `{CORS_ORIGIN}/login` and `{CORS_ORIGIN}/oauth/consent` |
+| Login and consent pages | `{CORS_ORIGIN}/login`, `{CORS_ORIGIN}/oauth/consent`, and `{CORS_ORIGIN}/device` |
 
 Policy is applied by one Fastify plugin (`mcpOAuthGate.ts`) in front of better-auth, not by better-auth
 hooks:
 
 - **Allowlist.** Only `authorize`, `consent`, `continue`, `token`, `register`, `revoke` and `public-client`
-  under `/api/auth/oauth2/`, the RFC 8414 document (at the root path above only) and `/api/auth/jwks` are served. Every other path of the
+  under `/api/auth/oauth2/`, `POST /api/auth/device/code`, `GET /api/auth/device`,
+  `POST /api/auth/device/approve`, and `POST /api/auth/device/deny`, the RFC 8414 document (at the root path above only) and `/api/auth/jwks` are served. Every other path of the
   provider (client management, `introspect`, `userinfo`, `end-session`, consent management, the
   `/admin/oauth2/*` endpoints, the OIDC discovery document) and the `jwt` plugin's `GET /api/auth/token`
   are 404. A path is matched in its most generous reading (percent-decoded, case-folded, slashes
@@ -343,6 +345,28 @@ hooks:
 - **No client management.** `clientPrivileges` and `resourcePrivileges` deny every action, so no signed-in
   user can create, change or delete a client or a resource through the plugin.
 - **No session JWT.** The `jwt` plugin does not add a `set-auth-jwt` header to `/get-session`.
+
+### Device authorization
+
+When `mcp.deviceFlowEnabled` is on, a public registered client sends `POST /api/auth/device/code`
+with the exact MCP `resource` and its requested `scope`. The code lasts ten minutes and the client
+polls `POST /api/auth/oauth2/token` with the RFC 8628 grant type no more often than the five-second
+interval returned by the server. The browser verification URL is `{CORS_ORIGIN}/device` (with the
+`user_code` query parameter). Repeated resources, missing resources, unknown scopes, and `mcp:write`
+while writes are disabled are refused. The endpoint is rate limited per IP and the provider's
+`authorization_pending`, `slow_down`, `expired_token`, and `access_denied` responses remain intact.
+
+The signed-in active user reviews the client name, requested scopes, and exact MCP resource at `/device`.
+Approval is all-or-nothing: the page has no write checkbox and grants exactly what the device requested.
+Someone who does not want write access denies this request and asks the client to request read-only
+scopes. Approval creates the same MCP consent record and audit entry as the browser authorization flow.
+The provider then issues the normal audience-bound MCP JWT and rotating refresh token. `/api/auth/device/token`
+is the first-party session-token endpoint and remains blocked; it cannot exchange an MCP device code.
+
+The device page warns users to approve only a code they started themselves. Client names are unverified,
+so a familiar name is not proof of identity. A deployment must use the exact resource URL and must keep
+`mcp.enabled` on; issuance still refuses inactive users, disabled MCP, and write scopes after
+`mcp.writeToolsEnabled` is turned off.
 
 The `jwt` plugin signs with an `EdDSA` key stored in `jwks`, encrypted with `BETTER_AUTH_SECRET`. A key signs
 for 30 days; it stays published for one more hour so a token signed in its last moments still verifies.
@@ -431,6 +455,11 @@ once more.
   issued stays valid until it expires (10 minutes) or the resource server, which must require the consent to
   exist, rejects it.
 - Rate limits are per gateway replica.
+- Device authorization is intended for interactive browser approval of headless clients. It does not
+  provide a headless sign-in shortcut: users still sign in to the web page, cannot approve human workflow
+  steps through MCP, and must deny a write request rather than narrow it on the device page. The device
+  grant is not advertised in discovery while `mcp.deviceFlowEnabled` is off, and `/api/auth/device/token` is never
+  available through the MCP OAuth surface.
 
 ---
 

@@ -3,11 +3,13 @@ import type { AtlassianClient } from '../atlassianClient.js';
 import { AtlassianError } from '../atlassianClient.js';
 import type { IssueTrackerProvider } from '../issueTracker.js';
 import { JIRA_SYNC_STATUSES } from '../jiraSyncStatuses.js';
+import { type TicketFailureClass, ticketFailureFromStatus } from '../ticketFailure.js';
 import type {
   CreatedIssue,
   FetchedIssue,
   FetchIssueOptions,
   FetchIssueOutcome,
+  FetchIssueResult,
   IssueComment,
   IssueCreateFields,
   IssueParent,
@@ -80,6 +82,30 @@ interface JiraCreateResponse {
   self: string;
 }
 
+/** The failure class of an error thrown while reading an issue; never its text. */
+function jiraFailure(err: unknown): TicketFailureClass {
+  if (!(err instanceof AtlassianError)) {
+    return 'unknown';
+  }
+  switch (err.code) {
+    case 'auth':
+    case 'not_found':
+    case 'rate_limited':
+    case 'redirect':
+    case 'server':
+      return ticketFailureFromStatus(err.status);
+    case 'timeout':
+      return 'timeout';
+    case 'network':
+      return 'network';
+  }
+}
+
+/** `refused` for the one class that is the tracker's final word on the issue; see fetchIssueOutcome. */
+export function jiraOutcomeKind(failure: TicketFailureClass): 'refused' | 'unavailable' {
+  return failure === 'not_found' ? 'refused' : 'unavailable';
+}
+
 export class JiraProvider implements IssueTrackerProvider {
   private readonly storyPointsFieldId: string;
   private readonly epicIssueType: string;
@@ -99,38 +125,42 @@ export class JiraProvider implements IssueTrackerProvider {
   }
 
   async fetchIssue(id: string, opts?: FetchIssueOptions): Promise<FetchedIssue | null> {
+    return (await this.readIssue(id, opts)).issue;
+  }
+
+  async readIssue(id: string, opts?: FetchIssueOptions): Promise<FetchIssueResult> {
     try {
-      return await this.readIssue(id, opts);
+      return { issue: await this.loadIssue(id, opts) };
     } catch (err) {
-      if (err instanceof AtlassianError && err.code === 'not_found') {
-        return null;
+      if (!(err instanceof AtlassianError && err.code === 'not_found')) {
+        this.log?.warn({ err, issueId: id }, 'Jira fetchIssue failed');
       }
-      this.log?.warn({ err, issueId: id }, 'Jira fetchIssue failed');
-      return null;
+      return { failure: jiraFailure(err), issue: null };
     }
   }
 
   /**
-   * {@link fetchIssue} with the reason for a miss. Jira Cloud answers 404 for an issue the
-   * credential may not see (issue-level security) or that no longer exists: that answer is about
-   * the issue, and asking again changes nothing, so it is `refused`. A 403 is not read that way:
-   * it is usually about the caller (a Data Center CAPTCHA lockout, an IP allowlist, a firewall),
-   * so it is `unavailable` with every other miss (a 5xx, a timeout, a rate limit, a rejected
-   * credential, a response that does not parse), which a caller retries later.
+   * {@link readIssue} for a caller that decides whether to try again, mapped from the failure
+   * class so the tracker's answer is classified once:
+   *
+   * - `refused`, the tracker's definitive answer about this issue: `not_found`. Jira Cloud answers
+   *   404 for an issue the credential may not see (issue-level security) or that no longer
+   *   exists, and asking again changes nothing.
+   * - `unavailable`, which a later try may change: every other class. A 403 is not read as a
+   *   refusal of the issue: it is usually about the caller (a Data Center CAPTCHA lockout, an IP
+   *   allowlist, a firewall). A 401 is a credential an operator can fix, and `rejected`,
+   *   `rate_limited`, `server_error`, `timeout`, `network`, `redirect`, `refused` (the
+   *   platform's network policy), `empty` and `unknown` are all conditions that pass or are fixed.
    */
   async fetchIssueOutcome(id: string, opts?: FetchIssueOptions): Promise<FetchIssueOutcome> {
-    try {
-      return { issue: await this.readIssue(id, opts), kind: 'found' };
-    } catch (err) {
-      if (err instanceof AtlassianError && err.status === 404) {
-        return { kind: 'refused' };
-      }
-      this.log?.warn({ err, issueId: id }, 'Jira fetchIssue failed');
-      return { kind: 'unavailable' };
+    const read = await this.readIssue(id, opts);
+    if (read.issue) {
+      return { issue: read.issue, kind: 'found' };
     }
+    return { kind: jiraOutcomeKind(read.failure) };
   }
 
-  private async readIssue(id: string, opts?: FetchIssueOptions): Promise<FetchedIssue> {
+  private async loadIssue(id: string, opts?: FetchIssueOptions): Promise<FetchedIssue> {
     const issue = await this.client.get<JiraIssueResponse>(
       `/rest/api/3/issue/${encodeURIComponent(id)}?fields=summary,description,status,labels,priority,assignee,components${opts?.includeParent ? ',parent' : ''}`
     );

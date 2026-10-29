@@ -454,6 +454,13 @@ jobs:
           SKILL_SOURCE_PG_TEST: '1'
         run: yarn test packages/gateway/src/lib/skillSource.pg.test.ts packages/gateway/src/lib/skillSourceBudget.pg.test.ts
 
+      # The unchanged-request guard: its JSON-path filters on a run's snapshots
+      # must be accepted by Prisma and match what a finished run stores.
+      - name: Unchanged-request guard (database-backed tests)
+        env:
+          UNCHANGED_RERUN_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/unchangedRerun.pg.test.ts
+
       # Scoped memory search: a plan that reads the HNSW index applies the
       # repository filter after the index's first candidates, so a small
       # repository beside a crowded one gets nothing back without pgvector's
