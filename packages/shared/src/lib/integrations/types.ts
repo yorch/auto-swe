@@ -1,3 +1,5 @@
+import type { TicketFailureClass } from './ticketFailure.js';
+
 export interface IssueComment {
   author: string;
   body: string;
@@ -30,6 +32,12 @@ export interface FetchedIssue {
   parent?: IssueParent;
   raw: unknown;
 }
+
+/// What reading one ticket came to: the issue, or null with the class of the failure.
+/// A failure never carries provider text; see `TicketFailureClass`.
+export type FetchIssueResult =
+  | { issue: FetchedIssue; failure?: undefined }
+  | { issue: null; failure: TicketFailureClass };
 
 /// One match of a tracker search: enough to decide whether an issue is new, not its content.
 export interface SearchedIssue {

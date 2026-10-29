@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { clearStopNodeCache } from '../lib/unchangedRerun.js';
 import { workRequestRoutes } from './workRequests.js';
 
 /**
@@ -46,8 +47,14 @@ describe('POST /work-requests/:id/retry', () => {
   >;
   let closed: string[];
   let closedStatus: Record<string, string>;
+  /** What the not-actionable-stop lookup finds. */
+  let stops: unknown[];
+  let stopLookups: number;
 
   beforeEach(async () => {
+    stops = [];
+    stopLookups = 0;
+    clearStopNodeCache();
     started = [];
     snapshotTemplate = null;
     launchable = { inputSchema: null };
@@ -146,6 +153,13 @@ describe('POST /work-requests/:id/retry', () => {
           templateVersion: 2,
         }),
       },
+      // The first lookup is the stops; the second, the runs after one.
+      workflowRun: {
+        findMany: async () => {
+          stopLookups += 1;
+          return stopLookups % 2 === 1 ? stops : [];
+        },
+      },
       workflowTemplate: {
         findFirst: async ({ where }: { where: { status?: string } }) => {
           if (where.status) {
@@ -157,6 +171,11 @@ describe('POST /work-requests/:id/retry', () => {
           }
           return snapshotTemplate;
         },
+      },
+      workflowTemplateVersion: {
+        findFirst: async () => ({
+          spec: { nodes: { terminateNotActionable: { status: 'FAILED', type: 'terminate' } } },
+        }),
       },
     };
     app.decorate('prisma', prismaMock as unknown as never);
@@ -195,6 +214,71 @@ describe('POST /work-requests/:id/retry', () => {
     expect(data.temporalWorkflowId).toBe(started[0]);
     expect(data.workRequestId).toBe(WORK_REQUEST_ID);
     expect(data.workflowIds).toEqual(['aw-new']);
+  });
+
+  describe('of a request that stopped as not actionable', () => {
+    const send = (body: Record<string, unknown>) =>
+      app.inject({
+        headers: { authorization: 'Bearer t' },
+        method: 'POST',
+        payload: body,
+        url: `/api/v1/work-requests/${WORK_REQUEST_ID}/retry`,
+      });
+    beforeEach(() => {
+      stops = [
+        {
+          id: 'run-stopped',
+          startedAt: new Date(),
+          workRequest: { description: 'do it', payload: { ticket: 'T-1' } },
+          workRequestId: WORK_REQUEST_ID,
+        },
+      ];
+    });
+
+    it('refuses the unchanged retry with 409 naming the earlier run', async () => {
+      const res = await send({});
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toMatchObject({
+        code: 'UNCHANGED_AFTER_NOT_ACTIONABLE',
+        details: { previousRunId: 'run-stopped' },
+      });
+      expect(started).toHaveLength(0);
+    });
+
+    it('answers WORKFLOW_ALREADY_EXISTS first when the request is already running', async () => {
+      ledger = [
+        {
+          currentStatus: 'IMPLEMENTING',
+          temporalWorkflowId: 'sched-aaaa-2026-10-06T09:00:00Z',
+          updatedAt: OLD,
+          workRequestId: WORK_REQUEST_ID,
+        },
+      ];
+      const res = await send({});
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('WORKFLOW_ALREADY_EXISTS');
+    });
+
+    it('answers the allocator conflict first when another run of the ticket is in flight', async () => {
+      familyRows = [
+        {
+          currentStatus: 'IMPLEMENTING',
+          repoId: REPO_ID,
+          temporalWorkflowId: 'eng-org-test-T-1',
+          updatedAt: OLD,
+          workRequest: { externalTicketId: 'T-1' },
+          workRequestId: null,
+        },
+      ];
+      const res = await send({});
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error.code).toBe('WORKFLOW_ALREADY_EXISTS');
+    });
+
+    it('starts the retry when acknowledged, or when it adds instructions', async () => {
+      expect((await send({ acknowledgeUnchanged: true })).statusCode).toBe(201);
+      expect((await send({ instructions: 'The ticket says: add /health' })).statusCode).toBe(201);
+    });
   });
 
   it('refuses to retry an agent run (its payload is dropped and its branch would collide)', async () => {

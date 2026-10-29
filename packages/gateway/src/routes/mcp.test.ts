@@ -7,7 +7,7 @@ import {
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { SignJWT } from 'jose';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { mcpBridgePlugin } from '../lib/mcp/bridge.js';
 import { createMcpTokenVerifier, type McpTokenRejection } from '../lib/mcpTokenVerifier.js';
@@ -41,6 +41,7 @@ const READ_TOOLS = [
   'list_pending_human_steps',
   'list_repositories',
   'list_runs',
+  'list_templates',
   'list_work_requests',
   'wait_for_run',
 ];
@@ -119,6 +120,10 @@ describe('MCP endpoint', () => {
     settings.writeToolsEnabled = false;
     settingsFail = false;
     rejections = [];
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
   });
 
   const bearer = async (o: Parameters<typeof mintToken>[0] | undefined = undefined) =>
@@ -327,6 +332,115 @@ describe('MCP endpoint', () => {
       expect(res.statusCode).toBe(200);
       expect(String(res.headers['content-type'])).toMatch(/^application\/json/);
       expect(toolNames(rpc(res).result)).toEqual(READ_TOOLS);
+    });
+
+    const waitId = '33333333-3333-4333-8333-333333333333';
+    const waitBody = (status: string) => ({
+      data: {
+        costUsdAccrued: '0',
+        endedAt: null,
+        id: waitId,
+        result: null,
+        startedAt: '2026-10-01T10:00:00.000Z',
+        status,
+        steps: [],
+        templateName: 'UNTRUSTED',
+        tokensInputTotal: 0,
+        tokensOutputTotal: 0,
+        workRequest: null,
+      },
+    });
+    const waitRequest = (progressToken?: string | number, timeoutSeconds = 0) => ({
+      ...modern('tools/call'),
+      params: {
+        _meta: { ...modernMeta, ...(progressToken !== undefined ? { progressToken } : {}) },
+        arguments: { runId: waitId, timeoutSeconds },
+        name: 'wait_for_run',
+      },
+    });
+    const waitHeaders = {
+      'mcp-method': 'tools/call',
+      'mcp-name': 'wait_for_run',
+      'mcp-protocol-version': '2026-07-28',
+    };
+
+    it('streams per-poll progress followed by the result through the stateless route', async () => {
+      const bridge = app.mcpBridge;
+      if (!bridge) {
+        throw new Error('Bridge not registered');
+      }
+      let reads = 0;
+      vi.spyOn(bridge, 'get').mockImplementation(async (_app, _caller, path) => ({
+        body: path.endsWith(waitId) ? waitBody(reads++ ? 'SUCCESS' : 'RUNNING') : { data: [] },
+        status: 200,
+      }));
+      const res = await post(waitRequest('poll-token', 4), waitHeaders);
+      expect(String(res.headers['content-type'])).toMatch(/^text\/event-stream/);
+      const frames = res.body
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => JSON.parse(line.slice(5)));
+      expect(frames.slice(0, -1)).toEqual([
+        {
+          jsonrpc: '2.0',
+          method: 'notifications/progress',
+          params: { message: 'Run status: RUNNING.', progress: 1, progressToken: 'poll-token' },
+        },
+        {
+          jsonrpc: '2.0',
+          method: 'notifications/progress',
+          params: { message: 'Run status: SUCCESS.', progress: 2, progressToken: 'poll-token' },
+        },
+      ]);
+      expect(frames.at(-1).result.structuredContent).toMatchObject({
+        changed: true,
+        status: 'SUCCESS',
+      });
+      expect(JSON.stringify(frames.slice(0, -1))).not.toContain('UNTRUSTED');
+    });
+
+    it('keeps a wait without a progress token as JSON', async () => {
+      const bridge = app.mcpBridge;
+      if (!bridge) {
+        throw new Error('Bridge not registered');
+      }
+      vi.spyOn(bridge, 'get').mockResolvedValue({ body: waitBody('SUCCESS'), status: 200 });
+      const res = await post(waitRequest(), waitHeaders);
+      expect(String(res.headers['content-type'])).toMatch(/^application\/json/);
+      expect(rpc(res).result.structuredContent.status).toBe('SUCCESS');
+      expect(res.body).not.toContain('notifications/progress');
+    });
+
+    it('aborts a long progress wait when the HTTP client disconnects', async () => {
+      const bridge = app.mcpBridge;
+      if (!bridge) {
+        throw new Error('Bridge not registered');
+      }
+      const get = vi.spyOn(bridge, 'get').mockImplementation(async (_app, _caller, path) => ({
+        body: path.endsWith(waitId) ? waitBody('RUNNING') : { data: [] },
+        status: 200,
+      }));
+      const address = await app.listen({ host: '127.0.0.1', port: 0 });
+      const abort = new AbortController();
+      const response = await fetch(`${address}/api/v1/mcp`, {
+        body: JSON.stringify(waitRequest(0, 600)),
+        headers: {
+          ...waitHeaders,
+          accept: 'application/json, text/event-stream',
+          authorization: await bearer(),
+          'content-type': 'application/json',
+        },
+        method: 'POST',
+        signal: abort.signal,
+      });
+      const reader = response.body?.getReader();
+      expect(reader).toBeDefined();
+      const first = await reader?.read();
+      expect(new TextDecoder().decode(first?.value)).toContain('notifications/progress');
+      abort.abort();
+      await reader?.cancel().catch(() => {});
+      await new Promise((resolve) => setTimeout(resolve, 3100));
+      expect(get).toHaveBeenCalledTimes(2);
     });
 
     it('answers GET and DELETE 405 once authenticated, and 401 before', async () => {

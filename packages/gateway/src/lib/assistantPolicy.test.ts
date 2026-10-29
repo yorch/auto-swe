@@ -51,12 +51,19 @@ beforeAll(async () => {
   const seen: Route[] = [];
   app.addHook('onRoute', (route) => {
     for (const method of [route.method].flat()) {
-      if (method !== 'HEAD' && method !== 'OPTIONS') {
+      if (
+        method !== 'HEAD' &&
+        method !== 'OPTIONS' &&
+        (route.url.startsWith('/api/v1/') || route.url === '/api/auth/device/code')
+      ) {
         seen.push({ method, url: route.url });
       }
     }
   });
   await registerApiRoutes(app);
+  // The auth wildcard is registered by the gateway bootstrap; include the new explicit
+  // rate-limited device-code route in this policy walk without importing auth's DB singleton.
+  seen.push({ method: 'POST', url: '/api/auth/device/code' });
   await app.ready();
   await app.close();
   routes = seen;
@@ -83,11 +90,12 @@ describe('assistant route policy', () => {
     expect(stale).toEqual([]);
   });
 
-  it('lists no DELETE and no deprecated alias, which are refused by having no entry', () => {
-    const listed = Object.keys(ASSISTANT_ROUTE_POLICY).filter(
-      (key) => key.startsWith('DELETE ') || ALIASES.test(key.slice(key.indexOf(' ') + 1))
+  it('lists no deprecated alias and requires confirmation for digest deletion', () => {
+    const listed = Object.keys(ASSISTANT_ROUTE_POLICY).filter((key) =>
+      ALIASES.test(key.slice(key.indexOf(' ') + 1))
     );
     expect(listed).toEqual([]);
+    expect(ASSISTANT_ROUTE_POLICY['DELETE /api/v1/report-digests/:id']).toBe('confirm');
   });
 
   it('treats a non-GET as a read only with a stated reason, and a GET only as a plain read', () => {

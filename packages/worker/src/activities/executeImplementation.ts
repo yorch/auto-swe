@@ -33,6 +33,7 @@ import { throwIfActivityCancelled } from '../lib/cancellation.js';
 import { scanDiffForCodeIssues } from '../lib/codeSecurityScanner.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { assertBudgetAvailable } from '../lib/costTracking.js';
+import { formatCriteriaContext } from '../lib/criteriaContext.js';
 import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
@@ -60,11 +61,18 @@ import {
 import {
   boundTestOutput,
   detectTestCommand,
+  type NoTestsKind,
+  noTestsFoundCause,
+  noTestsFoundEvent,
+  noTestsFoundNotes,
+  noTestsRunResult,
   packageJsonReadCommand,
   parseDiffToFileChanges,
   parseTestOutput,
+  testCommandSource,
   testRunCommand,
   testRunTimeoutMs,
+  testStatusWord,
   unrunnableTestCause,
 } from './utils.js';
 import { createWorkspace, fetchBranchesSubcommand, shellQuote } from './workspace.js';
@@ -135,7 +143,12 @@ export async function executeImplementation(
    * string means the run has none; unset, the ticket is fetched here only when
    * `workflow.ticketContextFallback` is on.
    */
-  ticketFromStep?: string
+  ticketFromStep?: string,
+  /**
+   * The success criteria `validateContext` extracted, ambiguity entries included. The prompt gets
+   * the concrete ones as what to satisfy and the rest as open questions; unset adds nothing.
+   */
+  successCriteria?: readonly string[]
 ): Promise<CodeResult> {
   // First, before a clone or a container exists: an unpriced model under a USD
   // cap is refused here, not after the workspace has been built.
@@ -212,6 +225,7 @@ export async function executeImplementation(
     // Detect test framework
     const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
     const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);
+    const testSource = testCommandSource(packageJson, repo.gateCommands, repo.detectedStack);
 
     // The runtime — the Mastra loop or the Claude Code harness — is chosen first,
     // and only what it needs is built: tool config + skills (WORKFLOW_TEMPLATE →
@@ -331,12 +345,31 @@ export async function executeImplementation(
       lessonsContext +
       designContext +
       ticketContext +
+      formatCriteriaContext(successCriteria) +
       crossRepoContext;
 
     // TDD loop — bound by the DB-backed workflow default (falls back to 5).
     const maxTddIterations = workflowDefaults.maxTddIterations;
     // Set when the test command cannot run here: a later iteration cannot fix that.
     let unrunnable: { command: string; cause: string } | undefined;
+    // Set when a stack-derived test command showed no tests: nothing a later pass would verify.
+    let noTestsFound: { kind: NoTestsKind; run: number } | undefined;
+    const recordNoTestsFound = (
+      iteration: number,
+      cause: { kind: NoTestsKind; reason: string },
+      output: string
+    ) => {
+      noTestsFound = { kind: cause.kind, run: iteration + 1 };
+      tracer.addActivityEvent({
+        inputJson: { iteration },
+        name: noTestsFoundEvent(cause.kind),
+        outputJson: {
+          command: testCommand,
+          output: output.trim().slice(-1000),
+          reason: cause.reason,
+        },
+      });
+    };
     for (let iteration = 0; iteration < maxTddIterations; iteration++) {
       heartbeat(`TDD iteration ${iteration + 1}/${maxTddIterations}`);
       // A cancelled run stops here rather than spending another iteration.
@@ -390,21 +423,34 @@ export async function executeImplementation(
         if (testResult.passed) {
           break;
         }
+        const noTests = noTestsFoundCause(testSource, { result: testResult });
+        if (noTests) {
+          recordNoTestsFound(iteration, noTests, testOutput);
+          break;
+        }
       } catch (err: unknown) {
-        testResult = {
-          duration_ms: 0,
-          failing: 1,
-          passed: false,
-          passing: 0,
-          stdout: boundTestOutput(getExecErrorStdout(err, Number.MAX_SAFE_INTEGER)),
-          total: 0,
-        };
+        const noTests = noTestsFoundCause(testSource, { error: err });
+        testResult = noTests
+          ? noTestsRunResult(getExecErrorStdout(err))
+          : {
+              duration_ms: 0,
+              failing: 1,
+              passed: false,
+              passing: 0,
+              // Bounded per component for a composite, as a single run always was.
+              stdout: boundTestOutput(getExecErrorStdout(err, Number.MAX_SAFE_INTEGER)),
+              total: 0,
+            };
         tracer.addActivityEvent({
           error: getExecErrorStdout(err).slice(0, 1000),
           inputJson: { iteration },
           name: 'tdd.test_run',
           outputJson: { passed: false },
         });
+        if (noTests) {
+          recordNoTestsFound(iteration, noTests, getExecErrorStdout(err));
+          break;
+        }
         const cause = unrunnableTestCause(err);
         if (cause) {
           const output = getExecErrorStdout(err).trim();
@@ -468,9 +514,11 @@ export async function executeImplementation(
       diff,
       filesChanged: parseDiffToFileChanges(diff),
       headSha,
-      implementationNotes: unrunnable
-        ? `The test command \`${unrunnable.command}\` could not run in the workspace (${unrunnable.cause}), so the TDD loop stopped after the first test run.`
-        : `Completed in ${testResult.passed ? `≤${maxTddIterations}` : `${maxTddIterations} (max)`} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      implementationNotes: noTestsFound
+        ? noTestsFoundNotes(testCommand, noTestsFound.kind, noTestsFound.run)
+        : unrunnable
+          ? `The test command \`${unrunnable.command}\` could not run in the workspace (${unrunnable.cause}), so the TDD loop stopped after the first test run.`
+          : `Completed in ${testResult.passed ? `≤${maxTddIterations}` : `${maxTddIterations} (max)`} TDD iterations. Tests ${testStatusWord(testResult)}.`,
       repoId: requireRepoId(request, 'executeImplementation'),
       testResults: testResult,
     };

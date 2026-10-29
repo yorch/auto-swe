@@ -544,6 +544,80 @@ describe('runImplementerFixSession', () => {
     expect(testCall?.[0]).toBe('{ pytest -q\n} 2>&1');
   });
 
+  describe('a stack command that finds no tests', () => {
+    const python = { components: [{ path: '', stacks: ['python'] }], evidence: [] };
+    const notesSentence =
+      'The test command `python -m pytest` found no tests to run; set `runTests` for this repository.';
+
+    const base = execMock.getMockImplementation();
+    afterEach(() => {
+      execMock.mockImplementation(base as never);
+    });
+
+    /** Make the test run (and only it) reject like a failed `docker exec`. */
+    function testRunRejects(fields: Record<string, unknown>) {
+      execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) => {
+        if (options?.timeoutMs === 600_000) {
+          throw Object.assign(new Error('Command failed'), fields);
+        }
+        return base?.(cmd, options);
+      }) as never);
+    }
+
+    it('records tdd.no_tests_found, reports not run, and says so in the notes', async () => {
+      const eventSpy = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+      findRepo.mockResolvedValue({ ...REPO, detectedStack: python, executorImage: 'img' } as never);
+      testRunRejects({ code: 5, stdout: 'no tests ran' });
+      const out = await runImplementerFixSession(input());
+      const events = eventSpy.mock.calls
+        .map(([e]) => e)
+        .filter((e) => e.name === 'tdd.no_tests_found');
+      expect(events).toHaveLength(1);
+      expect(events[0].outputJson).toEqual({
+        command: 'python -m pytest',
+        output: 'no tests ran',
+        reason: 'exit status 5: no tests ran',
+      });
+      expect(out.testResults).toMatchObject({ failing: 0, passed: false, total: 0 });
+      expect(out.implementationNotes).toContain(notesSentence);
+      expect(out.implementationNotes).toContain('notes(false)');
+    });
+
+    it('words a zero exit with no counts neutrally, with its own event and no loop wording', async () => {
+      const eventSpy = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+      findRepo.mockResolvedValue({
+        ...REPO,
+        detectedStack: { components: [{ path: '', stacks: ['jvm'] }], evidence: [] },
+        executorImage: 'img',
+      } as never);
+      execMock.mockImplementation((async (cmd: string, options?: { timeoutMs?: number }) =>
+        options?.timeoutMs === 600_000 ? '' : base?.(cmd, options)) as never);
+      const out = await runImplementerFixSession(input());
+      expect(eventSpy.mock.calls.filter(([e]) => e.name === 'tdd.tests_unreadable')).toHaveLength(
+        1
+      );
+      expect(out.implementationNotes).toContain(
+        ' exited 0 but printed no test counts, so whether tests ran could not be determined. Set `runTests`'
+      );
+      expect(out.implementationNotes).not.toContain('loop');
+    });
+
+    it('treats the same exit from a configured command as an ordinary failure', async () => {
+      const eventSpy = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+      findRepo.mockResolvedValue({
+        ...REPO,
+        detectedStack: python,
+        executorImage: 'img',
+        gateCommands: { runTests: 'pytest -q' },
+      } as never);
+      testRunRejects({ code: 5, stdout: 'no tests ran' });
+      const out = await runImplementerFixSession(input());
+      expect(eventSpy.mock.calls.filter(([e]) => e.name === 'tdd.no_tests_found')).toHaveLength(0);
+      expect(out.testResults).toMatchObject({ failing: 1, passed: false });
+      expect(out.implementationNotes).toBe('notes(false)');
+    });
+  });
+
   it('swallows afterGenerate failures (informational hook)', async () => {
     findRepo.mockResolvedValue(REPO as never);
     const out = await runImplementerFixSession(

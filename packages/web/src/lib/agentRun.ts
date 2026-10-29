@@ -165,6 +165,10 @@ export interface LaunchErrorView {
   retryable: boolean;
   /** The launch may already have started a run (an idempotent resubmission). */
   duplicate?: boolean;
+  /** The refusal can be overridden by launching again with `acknowledgeUnchanged`. */
+  runAnyway?: boolean;
+  /** The earlier run that stopped as not actionable, for a link to it. */
+  previousRunId?: string;
 }
 
 /** Explains a failed launch (or re-run) by the gateway's error code. */
@@ -222,6 +226,23 @@ export function describeLaunchError(err: unknown): LaunchErrorView {
         retryable: false,
         title: 'Already started',
       };
+    case 'UNCHANGED_AFTER_NOT_ACTIONABLE': {
+      const details = err instanceof ApiError && isRecord(err.details) ? err.details : {};
+      const stoppedAt =
+        typeof details.stoppedAt === 'string' && !Number.isNaN(Date.parse(details.stoppedAt))
+          ? new Date(details.stoppedAt).toLocaleString()
+          : null;
+      return {
+        hint: 'If you have fixed what stopped it (for example tracker access), choose Run anyway; otherwise add the ticket text or acceptance criteria and submit again.',
+        message: `It stopped as not actionable${stoppedAt ? ` on ${stoppedAt}` : ''}.`,
+        ...(typeof details.previousRunId === 'string'
+          ? { previousRunId: details.previousRunId }
+          : {}),
+        retryable: false,
+        runAnyway: true,
+        title: 'This request stopped before and has not changed',
+      };
+    }
     case 'REPO_HOST_NOT_ALLOWED':
       return { message, retryable: false, title: 'Repository host not approved' };
     case 'NOT_A_GIT_REPO':

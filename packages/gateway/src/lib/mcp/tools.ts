@@ -27,11 +27,14 @@ import {
   restRun,
   restRuns,
   restSubmitted,
+  restTemplates,
   restWorkRequests,
   runOutput,
   runsOutput,
   startAgentRunOutput,
+  startTemplateRunOutput,
   submitOutput,
+  templatesOutput,
   waitOutput,
   workRequestsOutput,
 } from './projections.js';
@@ -193,6 +196,33 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
     }
   );
 
+  readTool(
+    'list_templates',
+    {
+      description:
+        'List active, visible, launchable workflow templates and their reduced input contracts. No workflow spec or prompts. Check repository access and policy when launching; template launches require an administrator opt-in.',
+      input: {},
+      output: templatesOutput,
+      title: 'List workflow templates',
+    },
+    () => get('/api/v1/workflow-templates'),
+    (body) => {
+      const parsed = restTemplates.safeParse(body);
+      return parsed.success
+        ? {
+            templates: parsed.data.data
+              .filter((t) => t.status === 'ACTIVE' && t.activeVersion !== null)
+              .map(({ id, name, description, inputSchema }) => ({
+                description,
+                id,
+                inputSchema,
+                name,
+              })),
+          }
+        : null;
+    }
+  );
+
   const projectRun = async (body: unknown) => {
     const parsed = restRun.safeParse(body);
     if (!parsed.success) {
@@ -226,11 +256,11 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
     {
       annotations: { ...READ_ONLY, title: 'Wait for a run' },
       description:
-        'Wait for a status change, a terminal run or a pending human step. Polls every three seconds, spending the per-IP rate limit on each read. A newly submitted work request may not have a run yet; keep waiting with its workRequestId.',
+        'Wait for a status change, a terminal run or a pending human step. Polls every three seconds, spending the per-IP rate limit on each read. With request _meta.progressToken, reports fixed-vocabulary progress each poll and allows up to 600 seconds; without it, timeoutSeconds is clamped to 50. Default 25 seconds. A newly submitted work request may not have a run yet; keep waiting with its workRequestId.',
       inputSchema: z
         .object({
           runId: z.string().uuid().optional(),
-          timeoutSeconds: z.number().int().min(0).max(50).default(25),
+          timeoutSeconds: z.number().int().min(0).max(600).default(25),
           workRequestId: z.string().uuid().optional(),
         })
         .strict()
@@ -245,8 +275,11 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
       const signal = extra.http?.req
         ? AbortSignal.any([extra.mcpReq.signal, extra.http.req.signal])
         : extra.mcpReq.signal;
+      const progressToken = extra.mcpReq._meta?.progressToken;
       try {
-        const deadline = Date.now() + args.timeoutSeconds * 1000;
+        const deadline =
+          Date.now() + Math.min(args.timeoutSeconds, progressToken === undefined ? 50 : 600) * 1000;
+        let progress = 0;
         let initial: string | null | undefined;
         while (!signal.aborted) {
           let id = args.runId;
@@ -299,6 +332,26 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
             }
           }
           const status = summary?.status ?? null;
+          if (progressToken !== undefined) {
+            const knownStatus =
+              status &&
+              ['RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'SKIPPED'].includes(status)
+                ? status
+                : 'UNKNOWN';
+            await extra.mcpReq.notify({
+              method: 'notifications/progress',
+              params: {
+                message: pendingHumanStep
+                  ? 'Waiting on a human step.'
+                  : summary
+                    ? `Run status: ${knownStatus}.`
+                    : 'Waiting for a run.',
+                progress: ++progress,
+                progressToken,
+              },
+            });
+            signal.throwIfAborted();
+          }
           if (initial === undefined) {
             initial = status;
           }
@@ -462,6 +515,7 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
 
 /** The tools that need `mcp:write`. */
 export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'start_template_run',
   'submit_work_request',
   'start_agent_run',
   'cancel_run',
@@ -492,6 +546,11 @@ function writeFailure(response: BridgeResponse, notFound: string): ToolResult {
         "Your organization's monthly budget is used up, so no new run can start. Nothing was launched."
       );
     case 403:
+      if (code === 'MCP_TEMPLATE_RUNS_DISABLED') {
+        return failure(
+          'Template launches through MCP are turned off. Ask an administrator to enable them. Nothing was launched.'
+        );
+      }
       if (code === 'MCP_DELIVER_MODE_NOT_ALLOWED') {
         return failure('This delivery mode is not allowed through MCP. Nothing was launched.');
       }
@@ -499,9 +558,15 @@ function writeFailure(response: BridgeResponse, notFound: string): ToolResult {
         ? failure('Write access is turned off on this platform.')
         : failureFor(403);
     case 409:
-      return code === 'IDEMPOTENCY_KEY_IN_PROGRESS' || code === 'IDEMPOTENCY_KEY_RETRY'
+      if (code === 'IDEMPOTENCY_KEY_IN_PROGRESS' || code === 'IDEMPOTENCY_KEY_RETRY') {
+        return failure(
+          'A request with this idempotency key is still starting. Retry shortly with the same key.'
+        );
+      }
+      // The override is deliberately not a tool input: a person decides to launch it as it is.
+      return code === 'UNCHANGED_AFTER_NOT_ACTIONABLE'
         ? failure(
-            'A request with this idempotency key is still starting. Retry shortly with the same key.'
+            'This same request stopped as not actionable before and nothing has changed. Change it (add the ticket text or acceptance criteria) and submit again, or have a person launch it as it is from the dashboard or the CLI. Nothing was launched.'
           )
         : failure('The run is not in a state where this can be done.');
     case 422:
@@ -528,6 +593,58 @@ function writeFailure(response: BridgeResponse, notFound: string): ToolResult {
  */
 export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller: McpCaller) {
   const { app, bridge } = deps;
+
+  server.registerTool(
+    'start_template_run',
+    {
+      annotations: { ...WRITE, title: 'Start a template run' },
+      description:
+        'Launch an active workflow template as YOU, under your identity and using your saved credentials where applicable. Templates may push branches or open pull requests; administrator opt-in is required. No callback, approval or merge tool is provided. Build payload from list_templates; launches use STANDARD budget only. Use a fresh idempotencyKey for each distinct task and reuse it only for an identical retry. Follow workRequestId with wait_for_run and get_run.',
+      inputSchema: z
+        .object({
+          idempotencyKey: z.string().regex(/^[A-Za-z0-9._:~-]{8,128}$/),
+          label: z.string().max(200).optional(),
+          payload: z.record(z.string(), z.json()),
+          templateId: z.string().uuid(),
+        })
+        .strict(),
+      outputSchema: startTemplateRunOutput,
+      title: 'Start a template run',
+    },
+    async ({ templateId, idempotencyKey, ...body }): Promise<ToolResult> => {
+      try {
+        const response = await bridge.post(
+          app,
+          caller,
+          `/api/v1/workflow-templates/${templateId}/runs`,
+          { body, idempotencyKey }
+        );
+        if (response.status !== 200 && response.status !== 201) {
+          return writeFailure(response, 'Template not found or not launchable.');
+        }
+        const parsed = z
+          .object({
+            data: z.object({
+              deduplicated: z.boolean().optional(),
+              workRequestId: z.string().uuid(),
+            }),
+          })
+          .safeParse(response.body);
+        if (!parsed.success) {
+          return failure('The platform returned an unexpected response.');
+        }
+        return ok(
+          startTemplateRunOutput.parse({
+            status: parsed.data.data.deduplicated ? 'already_submitted' : 'started',
+            workRequestId: parsed.data.data.workRequestId,
+          })
+        );
+      } catch (err) {
+        app.log.error({ err, tool: 'start_template_run' }, 'mcp: a tool failed');
+        return failureFor(500);
+      }
+    }
+  );
 
   server.registerTool(
     'start_agent_run',

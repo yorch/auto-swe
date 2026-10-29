@@ -23,6 +23,7 @@ import {
 } from './mcpOAuthGate.js';
 
 const RESOURCE = 'http://test.local/api/v1/mcp';
+const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 const REDIRECT = 'http://127.0.0.1:33333/cb';
 
 interface Harness {
@@ -35,6 +36,70 @@ interface Harness {
 }
 
 const apps: FastifyInstance[] = [];
+
+describe('device endpoint gate', () => {
+  it.each(['/device/code', '/device', '/device/approve', '/device/deny', '/device/token'])(
+    'hides %s while device flow is disabled',
+    async (path) => {
+      const h = await makeApp();
+      const response = await h.app.inject({
+        method: path === '/device' ? 'GET' : 'POST',
+        payload: path === '/device' ? undefined : {},
+        url: `/api/auth${path}`,
+      });
+      expect(response.statusCode).toBe(404);
+      expect(h.reached).toHaveLength(0);
+    }
+  );
+  it('never exposes the first-party token endpoint or raw plugin approval', async () => {
+    const h = await makeApp({ deviceFlowEnabled: true });
+    for (const path of ['/device/token', '/device/approve']) {
+      expect(
+        (
+          await h.app.inject({
+            method: 'POST',
+            payload: { userCode: 'ABC' },
+            url: `/api/auth${path}`,
+          })
+        ).statusCode
+      ).toBe(404);
+    }
+    expect(h.reached).toHaveLength(0);
+  });
+  it('hides the device grant at the OAuth token endpoint', async () => {
+    const h = await makeApp();
+    const res = await h.app.inject({
+      method: 'POST',
+      payload: { grant_type: DEVICE_GRANT },
+      url: '/api/auth/oauth2/token',
+    });
+    expect(res.statusCode).toBe(404);
+    expect(h.reached).toHaveLength(0);
+  });
+  it.each([
+    { scope: 'mcp:read' },
+    { resource: 'https://other.invalid', scope: 'mcp:read' },
+    { resource: [RESOURCE, RESOURCE], scope: 'mcp:read' },
+    { resource: RESOURCE, scope: 'mcp:write' },
+    { resource: RESOURCE, scope: ['mcp:read', 'mcp:write'] },
+    { resource: RESOURCE, scope: 'mcp:read', user_id: 'someone' },
+  ])('refuses unsafe device requests: %j', async (payload) => {
+    const h = await makeApp({ deviceFlowEnabled: true });
+    expect(
+      (await h.app.inject({ method: 'POST', payload, url: '/api/auth/device/code' })).statusCode
+    ).toBe(400);
+    expect(h.reached).toHaveLength(0);
+  });
+  it('only advertises device authorization while enabled', () => {
+    const doc = {
+      device_authorization_endpoint: 'https://test/device/code',
+      grant_types_supported: ['authorization_code', DEVICE_GRANT],
+    };
+    expect(narrowMetadata(doc)).not.toHaveProperty('device_authorization_endpoint');
+    expect(narrowMetadata(doc).grant_types_supported).toEqual(['authorization_code']);
+    expect(narrowMetadata(doc, true)).toHaveProperty('device_authorization_endpoint');
+  });
+});
 
 async function makeApp(initial: Partial<McpGateSettings> = {}): Promise<Harness> {
   const h: Harness = {

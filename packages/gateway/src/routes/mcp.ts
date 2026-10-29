@@ -131,8 +131,8 @@ export async function mcpRoutes(app: FastifyInstance, options: McpRouteOptions) 
     onerror: (err) => logSdkError(app.log, err),
     // The default (2025-era) stateless fallback stays on: GET and DELETE are 405 there.
     // `auto` answers a single JSON body unless a handler emits a related message (progress,
-    // logging) before its result, and then streams it. The read tools emit none, so a modern
-    // client gets JSON either way; `json` would instead drop such a message without a word, and
+    // logging) before its result, and then streams it. wait_for_run emits progress on request;
+    // `json` would instead drop such a message without a word, and
     // warns at boot that it does.
     responseMode: 'auto',
   });

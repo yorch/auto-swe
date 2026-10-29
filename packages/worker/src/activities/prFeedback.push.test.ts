@@ -53,6 +53,8 @@ vi.mock('./pushToPullRequest.js', async (orig) => {
   const real = await orig<typeof import('./pushToPullRequest.js')>();
   return { ...real, fastForwardPullRequestBranch: m.ffw };
 });
+const { fixSessionMock } = vi.hoisted(() => ({ fixSessionMock: vi.fn(async () => ({})) }));
+vi.mock('./implementerSession.js', () => ({ runImplementerFixSession: fixSessionMock }));
 vi.mock('../lib/scm/index.js', () => ({
   getScmProvider: () => ({
     branchHeadSha: m.branchHeadSha,
@@ -67,6 +69,7 @@ vi.mock('../lib/scm/index.js', () => ({
 }));
 
 import {
+  executePrFeedbackImplementation,
   finishPrFeedbackPush,
   type GatherResult,
   pushPrFeedbackToPullRequest,
@@ -282,5 +285,24 @@ describe('finishPrFeedbackPush', () => {
     });
     // the recomputed branch is still <prefix>/<ticket>; guard only applies when equal
     expect(typeof r.deleted).toBe('boolean');
+  });
+});
+
+describe('executePrFeedbackImplementation notes', () => {
+  it('words the test outcome as passing, failing or not run', async () => {
+    await executePrFeedbackImplementation({
+      brief: 'b',
+      previousCodeResult: {} as CodeResult,
+    });
+    const { notes } = (
+      fixSessionMock.mock.calls.at(-1) as unknown as [
+        { notes: (t: Record<string, unknown>) => string },
+      ]
+    )[0];
+    expect(notes({ failing: 0, passed: true, total: 2 })).toBe(
+      'Pull-request feedback round. Tests passing.'
+    );
+    expect(notes({ failing: 1, passed: false, total: 2 })).toContain('Tests failing.');
+    expect(notes({ failing: 0, passed: false, total: 0 })).toContain('Tests not run.');
   });
 });

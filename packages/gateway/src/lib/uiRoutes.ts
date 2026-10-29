@@ -44,6 +44,7 @@ export const UI_ROUTE_TEMPLATES: readonly string[] = [
   '/approvals',
   '/bundles',
   '/connections',
+  '/device',
   '/docs',
   '/docs/[slug]',
   '/epics',

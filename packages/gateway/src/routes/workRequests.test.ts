@@ -1,6 +1,6 @@
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Org spend comes from the mock's `orgMonthlyUsage` row (see test/billingMock.ts).
 vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
@@ -42,11 +42,34 @@ vi.mock('@auto-swe/shared/lib/sameRepositoryIds', () => ({ sameRepositoryIds }))
 vi.mock('../lib/issueTrackerClient.js', () => ({
   fetchTicket: vi.fn(async () => null),
 }));
+// Only the tracker allowlist is controllable; every other setting resolves as before.
+const trackerIssueRepositories = vi.hoisted(() => ({
+  ctx: [] as unknown[],
+  fail: false,
+  value: [] as string[],
+}));
+vi.mock('@auto-swe/shared/config', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@auto-swe/shared/config')>();
+  return {
+    ...original,
+    resolveSetting: async (...args: Parameters<typeof original.resolveSetting>) => {
+      if (args[0] !== 'github.trackerIssueRepositories') {
+        return original.resolveSetting(...args);
+      }
+      trackerIssueRepositories.ctx.push(args[1]);
+      if (trackerIssueRepositories.fail) {
+        throw new Error('settings unavailable');
+      }
+      return trackerIssueRepositories.value;
+    },
+  };
+});
 
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { TRACKER_READ_OUT_OF_SCOPE } from '@auto-swe/shared/lib/trackerSync';
 import { experimentBucket } from '../lib/experimentBucket.js';
 import { fetchTicket } from '../lib/issueTrackerClient.js';
+import { clearStopNodeCache } from '../lib/unchangedRerun.js';
 import { resolveDefaultTemplate, workRequestRoutes } from './workRequests.js';
 
 const resolveIssueTrackerConfigMock = vi.mocked(resolveIssueTrackerConfig);
@@ -74,6 +97,24 @@ describe('POST /api/v1/work-requests', () => {
   let orgSpentUsd: number | null = null;
   // The repository's web base override; null is the instance host.
   let repoGithubUrl: string | null = null;
+  // What the not-actionable-stop lookup finds for the next request.
+  let notActionableStops: unknown[] = [];
+  let stopLookups = 0;
+  const createdRunInputs: Record<string, unknown>[] = [];
+  const stoppedRequest = {
+    id: 'run-stopped',
+    startedAt: new Date(),
+    workRequest: {
+      description: 'Add health endpoint',
+      payload: {
+        budget: 'STANDARD',
+        connectionId: 'repo-1',
+        description: 'Add health endpoint',
+        ticketId: 'jira-3',
+      },
+    },
+    workRequestId: 'wr-stopped',
+  };
 
   beforeAll(async () => {
     sameRepositoryIds.mockImplementation(async (_p: unknown, id: string) => [id]);
@@ -144,8 +185,18 @@ describe('POST /api/v1/work-requests', () => {
         findUnique: async () => (orgSpentUsd != null ? { costUsdAccrued: orgSpentUsd } : null),
       },
       runInput: {
-        create: async (args: { data: Record<string, unknown> }) => ({ id: 'wr-1', ...args.data }),
+        create: async (args: { data: Record<string, unknown> }) => {
+          createdRunInputs.push(args.data);
+          return { id: 'wr-1', ...args.data };
+        },
         delete: async () => ({}),
+      },
+      // The first lookup is the stops; the second, the runs after one.
+      workflowRun: {
+        findMany: async () => {
+          stopLookups += 1;
+          return stopLookups % 2 === 1 ? notActionableStops : [];
+        },
       },
       workflowTemplate: {
         findFirst: async () => ({
@@ -153,6 +204,11 @@ describe('POST /api/v1/work-requests', () => {
           id: 'tpl-1',
         }),
         findUnique: async () => ({ inputSchema: templateInputSchema }),
+      },
+      workflowTemplateVersion: {
+        findFirst: async () => ({
+          spec: { nodes: { terminateNotActionable: { status: 'FAILED', type: 'terminate' } } },
+        }),
       },
     };
     app.decorate('prisma', prismaMock as unknown as never);
@@ -241,14 +297,17 @@ describe('POST /api/v1/work-requests', () => {
       syncModelDiscoverySchedule: async () => {},
       syncRepoAccessSyncSchedule: async () => {},
       syncRepoDependencyScanSchedule: async () => {},
+      syncReportDigestSchedule: async () => {},
       syncRevalidationSchedule: async () => {},
       syncRunReaperSchedule: async () => {},
       syncSkillSourceSyncSchedule: async () => {},
       syncSlackChannelSyncSchedule: async () => {},
+      syncWorkflowRunRollupSchedule: async () => {},
       syncWorkRequestSchedule: async () => {},
       triggerConsolidationNow: async () => {},
       triggerEvalNow: async () => {},
       triggerRepoDependencyScanNow: async () => {},
+      triggerReportDigestTest: async () => {},
       triggerRevalidationNow: async () => {},
       triggerWorkRequestSchedule: async () => {},
       workflowSettledStatus: async () => null,
@@ -613,6 +672,50 @@ describe('POST /api/v1/work-requests', () => {
     expect(snapshotUpserts).toHaveLength(0);
   });
 
+  describe('after a not-actionable stop', () => {
+    const submit = (extra: Record<string, unknown> = {}) =>
+      app.inject({
+        headers: { authorization: 'Bearer test-token' },
+        method: 'POST',
+        payload: {
+          description: 'Add health endpoint',
+          externalTicketId: 'JIRA-3',
+          repoIds: ['00000000-0000-4000-8000-000000000001'],
+          ...extra,
+        },
+        url: '/api/v1/work-requests',
+      });
+
+    beforeEach(() => {
+      clearStopNodeCache();
+      stopLookups = 0;
+      createdRunInputs.length = 0;
+    });
+
+    it('refuses an unchanged request with 409 naming the earlier run, and starts nothing', async () => {
+      existingWorkflows = [];
+      notActionableStops = [stoppedRequest];
+      startedWorkflowIds.length = 0;
+      const res = await submit();
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toMatchObject({
+        code: 'UNCHANGED_AFTER_NOT_ACTIONABLE',
+        details: { previousRunId: 'run-stopped' },
+      });
+      expect(startedWorkflowIds).toHaveLength(0);
+    });
+
+    it('launches when acknowledged, and when the description changed', async () => {
+      existingWorkflows = [];
+      notActionableStops = [stoppedRequest];
+      expect((await submit({ acknowledgeUnchanged: true })).statusCode).toBe(201);
+      expect(String(createdRunInputs[0].requestPayload)).not.toContain('acknowledgeUnchanged');
+      existingWorkflows = [];
+      expect((await submit({ description: 'Add a readiness endpoint' })).statusCode).toBe(201);
+      notActionableStops = [];
+    });
+  });
+
   it('still returns 201 and writes no snapshot when the tracker fetch fails', async () => {
     existingWorkflows = [{ currentStatus: 'FAILED', temporalWorkflowId: 'eng-org-test-JIRA-2' }];
     snapshotUpserts.length = 0;
@@ -672,6 +775,9 @@ describe('POST /api/v1/work-requests', () => {
     afterEach(() => {
       resolveIssueTrackerConfigMock.mockReset();
       fetchTicketMock.mockReset();
+      trackerIssueRepositories.ctx = [];
+      trackerIssueRepositories.fail = false;
+      trackerIssueRepositories.value = [];
     });
 
     // Enrichment runs after the response; the fixed warn line proves it ran and refused.
@@ -722,6 +828,39 @@ describe('POST /api/v1/work-requests', () => {
       expect((await submit('6')).statusCode).toBe(201);
       await vi.waitFor(() => expect(snapshotUpserts).toHaveLength(2));
       expect(fetchTicketMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('fetches a ticket from a repository the operator listed, resolved at the repo team', async () => {
+      existingWorkflows = [];
+      snapshotUpserts.length = 0;
+      fetchTicketMock.mockClear();
+      trackerIssueRepositories.value = ['Org/Issues'];
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(githubTracker());
+      fetchTicketMock.mockResolvedValueOnce(ticket);
+      expect((await submit('org/issues#5')).statusCode).toBe(201);
+      await vi.waitFor(() => expect(snapshotUpserts).toHaveLength(1));
+      expect(fetchTicketMock).toHaveBeenCalledTimes(1);
+      expect(trackerIssueRepositories.ctx).toContainEqual({ orgId: 'org-1', teamId: 'team-1' });
+    });
+
+    it('refuses an unlisted repository whatever the list holds', async () => {
+      existingWorkflows = [];
+      snapshotUpserts.length = 0;
+      fetchTicketMock.mockClear();
+      trackerIssueRepositories.value = ['org/issues'];
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(githubTracker());
+
+      await expectRefused('attacker/private#1');
+    });
+
+    it('refuses a listed repository when the setting cannot be read', async () => {
+      existingWorkflows = [];
+      snapshotUpserts.length = 0;
+      fetchTicketMock.mockClear();
+      trackerIssueRepositories.fail = true;
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(githubTracker());
+
+      await expectRefused('org/issues#5');
     });
   });
 

@@ -48,6 +48,31 @@ const githubOrgLogin = z
   .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, 'must be a lowercase GitHub organization login')
   .max(39);
 const ratio = z.number().min(0).max(1);
+/// An `owner/repo` on the GitHub tracker's host. The characters are the ones
+/// `parseGitHubTicketId` accepts in a ticket id, so an entry can only ever name
+/// what a ticket id can; `.` and `..` are legal there but would rewrite the
+/// request path once interpolated. Case is kept as typed (GitHub compares
+/// case-insensitively, and so does the scope check) but a repeat is dropped.
+const trackerIssueRepository = z
+  .string()
+  .trim()
+  .max(200)
+  .regex(/^[\w.-]+\/[\w.-]+$/, 'must be owner/repo')
+  .refine((v) => v.split('/').every((part) => part !== '.' && part !== '..'), 'must be owner/repo');
+const trackerIssueRepositoryList = z
+  .array(trackerIssueRepository)
+  .max(50)
+  .transform((entries) => {
+    const seen = new Set<string>();
+    return entries.filter((entry) => {
+      const key = entry.toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+  });
 /// Git identity fields end up inside a commit header, where a control
 /// character or angle bracket would corrupt the `Name <email>` line. The email
 /// is deliberately not `z.email()`: the default `auto-swe@localhost` has no TLD.
@@ -436,6 +461,19 @@ export const SETTING_DEFINITIONS = {
     schema: z.array(githubOrgLogin).max(50),
     sensitive: true,
   }),
+  'github.trackerIssueRepositories': defineSetting({
+    defaultValue: [],
+    description:
+      "Repositories, as owner/repo on the GitHub issue tracker's own host, whose issues a run may read and write beyond the repositories it targets. A run's ticket may name only a repository the run targets; a deployment that keeps its tickets in a separate issues repository lists it here, so `acme/issues#5` works for a run on `acme/app`. Only an admin can list one, because each entry widens what the platform's tracker token can read and write for every run in scope. A bare issue number still means the run's own repository, never one listed here. The tracker is only ever called at its configured base URL, so an entry cannot reach another host. Up to 50 repositories, compared case-insensitively. Read through a ~30 s cache, so removing an entry takes up to that long to apply. A value that cannot be loaded is treated as an empty list.",
+    group: 'github',
+    label: 'Extra issue-tracker repositories',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: trackerIssueRepositoryList,
+    sensitive: true,
+  }),
   'github.userCredentialHosts': defineSetting({
     defaultValue: ['github.com'],
     description:
@@ -475,6 +513,18 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: z.array(z.enum(['none', 'draft_pr', 'branch'])),
   }),
+  'mcp.deviceFlowEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      'Allow registered MCP clients to request device authorization. A signed-in active user approves the exact requested scopes in the browser.',
+    group: 'mcp',
+    label: 'Enable MCP device authorization',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'mcp.enabled': defineSetting({
     defaultValue: false,
     description:
@@ -499,6 +549,19 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: positiveInt.max(50),
     unit: 'runs',
+  }),
+
+  'mcp.templateRunsEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      'Allow MCP clients to launch workflow templates, which may execute authored code and push branches. Other launch paths are unchanged.',
+    group: 'mcp',
+    label: 'Enable MCP template launches',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
   }),
   'mcp.writeCallsPerMinute': defineSetting({
     defaultValue: 10,

@@ -348,6 +348,22 @@ describe('executeGateFixImplementation re-run', () => {
     return (execCapture.mock.calls[0] as unknown as [string])[0];
   }
 
+  it('words the test outcome in the gate fix notes as passing, failing or not run', async () => {
+    fixSessionMock.mockResolvedValue({});
+    await executeGateFixImplementation({
+      gateName: 'runTests',
+      gateOutput: { exitCode: 1, passed: false, summary: 'boom' },
+      previousCodeResult,
+    });
+    const session = fixSessionMock.mock.calls.at(-1)?.[0] as {
+      notes: (t: Record<string, unknown>, extra: string | null) => string;
+    };
+    const notes = session.notes;
+    expect(notes({ failing: 0, passed: true, total: 1 }, 'x')).toContain('Tests passing.');
+    expect(notes({ failing: 1, passed: false, total: 1 }, 'x')).toContain('Tests failing.');
+    expect(notes({ failing: 0, passed: false, total: 0 }, 'x')).toContain('Tests not run.');
+  });
+
   it('re-runs the command the failed gate ran, including a step-level override', async () => {
     mockedFindUnique.mockResolvedValue({ gateCommands: { runTests: 'repo-tests' } } as never);
     await expect(rerunCommandFor({ command: 'make test-integration' })).resolves.toBe(

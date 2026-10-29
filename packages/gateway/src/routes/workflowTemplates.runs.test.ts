@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { clearStopNodeCache } from '../lib/unchangedRerun.js';
 import { workflowTemplateRoutes } from './workflowTemplates.js';
 
 // A callback's URL is sealed with the config envelope.
@@ -13,6 +14,8 @@ process.env.CONFIG_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
  * written before Temporal starts, and an `Idempotency-Key` collapses a retry
  * onto the original run instead of starting a second one.
  */
+
+beforeEach(() => clearStopNodeCache());
 
 const TEMPLATE_ID = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
 const SHORT_TPL_ID = TEMPLATE_ID.replace(/-/g, '').slice(0, 8);
@@ -38,7 +41,10 @@ function buildHarness(opts?: {
   name?: string;
   /** The template's owning team's org; absent means a global template. */
   teamOrgId?: string;
+  /** What the not-actionable-stop lookup finds; absent means the model lacks the call. */
+  stops?: unknown[] | Error;
 }): Harness {
+  let lookups = 0;
   const h: Harness = {
     activeWorkflows: [],
     app: Fastify(),
@@ -71,6 +77,8 @@ function buildHarness(opts?: {
         h.activeWorkflows = h.activeWorkflows.filter((a) => a.id !== where.id);
         return {};
       },
+      findUnique: async ({ where }: { where: { temporalWorkflowId: string } }) =>
+        h.activeWorkflows.find((a) => a.temporalWorkflowId === where.temporalWorkflowId) ?? null,
     },
     callbackEndpoint: {
       findMany: async ({ where }: { where: { origin?: string } }) =>
@@ -96,6 +104,16 @@ function buildHarness(opts?: {
         return {};
       },
     },
+    workflowRun: {
+      // The first lookup is the stops; the second, the runs after one.
+      findMany: async () => {
+        if (opts?.stops instanceof Error) {
+          throw opts.stops;
+        }
+        lookups += 1;
+        return lookups === 1 ? (opts?.stops ?? []) : [];
+      },
+    },
     workflowTemplate: {
       findFirst: async () => ({
         activeVersion: 3,
@@ -111,6 +129,11 @@ function buildHarness(opts?: {
               teamId: 'team-1',
             }
           : { teamId: null }),
+      }),
+    },
+    workflowTemplateVersion: {
+      findFirst: async () => ({
+        spec: { nodes: { terminateNotActionable: { status: 'FAILED', type: 'terminate' } } },
       }),
     },
   };
@@ -136,14 +159,22 @@ function buildHarness(opts?: {
   return h;
 }
 
-function run(h: Harness, opts?: { key?: string; payload?: Record<string, unknown> }) {
+function run(
+  h: Harness,
+  opts?: { acknowledgeUnchanged?: boolean; key?: string; payload?: Record<string, unknown> }
+) {
   return h.app.inject({
     headers: {
       authorization: 'Bearer t',
       ...(opts?.key ? { 'idempotency-key': opts.key } : {}),
     },
     method: 'POST',
-    payload: { payload: opts?.payload ?? { description: 'do the thing' } },
+    payload: {
+      ...(opts?.acknowledgeUnchanged === undefined
+        ? {}
+        : { acknowledgeUnchanged: opts.acknowledgeUnchanged }),
+      payload: opts?.payload ?? { description: 'do the thing' },
+    },
     url: `/api/v1/workflow-templates/${TEMPLATE_ID}/runs`,
   });
 }
@@ -157,6 +188,57 @@ describe('POST /workflow-templates/:id/runs for the Channel Assistant', () => {
     expect(res.json().error.code).toBe('SYSTEM_MANAGED_TEMPLATE');
     expect(h.started).toHaveLength(0);
     expect(h.runInputs).toHaveLength(0);
+  });
+});
+
+describe('POST /workflow-templates/:id/runs after a not-actionable stop', () => {
+  const stop = {
+    id: 'run-stopped',
+    startedAt: new Date(),
+    workRequest: { description: 'do the thing', payload: { description: 'do the thing' } },
+    workRequestId: 'wr-stopped',
+  };
+
+  it('refuses an identical request with 409 naming the earlier run, and starts nothing', async () => {
+    const h = buildHarness({ stops: [stop] });
+    await h.app.ready();
+    const res = await run(h);
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toMatchObject({
+      code: 'UNCHANGED_AFTER_NOT_ACTIONABLE',
+      details: { previousRunId: 'run-stopped' },
+    });
+    expect(h.started).toHaveLength(0);
+    expect(h.runInputs).toHaveLength(0);
+  });
+
+  it('launches when the caller acknowledges, without storing the flag with the request', async () => {
+    const h = buildHarness({ stops: [stop] });
+    await h.app.ready();
+    expect((await run(h, { acknowledgeUnchanged: true })).statusCode).toBe(201);
+    expect(h.started).toHaveLength(1);
+    expect(String(h.runInputs[0].requestPayload)).not.toContain('acknowledgeUnchanged');
+  });
+
+  it('answers a replayed Idempotency-Key with RUN_CONFLICT, not the refusal', async () => {
+    const h = buildHarness({ stops: [stop] });
+    await h.app.ready();
+    expect((await run(h, { acknowledgeUnchanged: true, key: 'key-1' })).statusCode).toBe(201);
+    const replay = await run(h, { key: 'key-1' });
+    expect(replay.statusCode).toBe(409);
+    expect(replay.json().error.code).toBe('RUN_CONFLICT');
+  });
+
+  it('launches a request that differs from the stopped one', async () => {
+    const h = buildHarness({ stops: [stop] });
+    await h.app.ready();
+    expect((await run(h, { payload: { description: 'do the other thing' } })).statusCode).toBe(201);
+  });
+
+  it('launches when the lookup fails', async () => {
+    const h = buildHarness({ stops: new Error('db down') });
+    await h.app.ready();
+    expect((await run(h)).statusCode).toBe(201);
   });
 });
 

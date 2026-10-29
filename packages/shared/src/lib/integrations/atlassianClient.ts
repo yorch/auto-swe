@@ -1,5 +1,6 @@
 import { SpanStatusCode, trace } from '@opentelemetry/api';
 import { createGuardedFetch } from '../guardedDispatcher.js';
+import { isTimeoutError } from './ticketFailure.js';
 
 const tracer = trace.getTracer('@auto-swe/shared', '0.1.0');
 
@@ -21,7 +22,14 @@ export interface AtlassianClientConfig {
 export class AtlassianError extends Error {
   constructor(
     public readonly status: number,
-    public readonly code: 'auth' | 'not_found' | 'rate_limited' | 'server' | 'network' | 'redirect',
+    public readonly code:
+      | 'auth'
+      | 'not_found'
+      | 'rate_limited'
+      | 'server'
+      | 'network'
+      | 'timeout'
+      | 'redirect',
     message: string
   ) {
     super(message);
@@ -164,7 +172,11 @@ export class AtlassianClient {
             if (err instanceof AtlassianError) {
               throw err;
             }
-            lastError = new AtlassianError(0, 'network', String(err));
+            lastError = new AtlassianError(
+              0,
+              isTimeoutError(err) ? 'timeout' : 'network',
+              String(err)
+            );
           }
         }
         throw lastError ?? new AtlassianError(0, 'network', 'Request failed after retries');

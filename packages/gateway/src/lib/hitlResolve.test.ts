@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
-import { type HitlResolveDeps, resolveHitlStep } from './hitlResolve.js';
+import {
+  type HitlAuthMethod,
+  type HitlResolveDeps,
+  resolvedViaForAuthMethod,
+  resolveHitlStep,
+} from './hitlResolve.js';
 import { TemporalUnavailableError } from './temporalErrors.js';
 
 /**
@@ -9,16 +14,24 @@ import { TemporalUnavailableError } from './temporalErrors.js';
  * interpreter treats it as a malformed signal and fails the run.
  */
 
-const ADMIN = { role: 'ADMIN', sub: 'user-1' };
+const ADMIN = { role: 'ADMIN', sub: 'user-1', via: 'web' as const };
 
 function makeDeps(step: Record<string, unknown>) {
   const updateMany = vi.fn().mockResolvedValue({ count: 1 });
   const signalWorkflow = vi.fn().mockResolvedValue(undefined);
   const prisma = {
+    $queryRaw: vi
+      .fn()
+      .mockResolvedValue([{ id: 'step-1', requiredApprovers: 2, status: 'PENDING' }]),
     autonomyDecision: {
       create: vi.fn().mockResolvedValue({ id: 'audit-1' }),
       deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+    },
+    humanApproval: {
+      count: vi.fn().mockResolvedValue(2),
+      create: vi.fn().mockResolvedValue({ id: 'approval-1' }),
+      deleteMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
     workflowHumanStep: {
       findFirst: vi.fn().mockResolvedValue(step),
@@ -51,6 +64,23 @@ const decisionStep = {
   status: 'PENDING',
   title: 'Ship?',
 };
+
+describe('resolvedViaForAuthMethod', () => {
+  it.each([
+    ['session', 'web'],
+    ['jwt', 'web'],
+    ['pat', 'api_token'],
+    ['mcp', 'mcp'],
+    ['assistant', 'assistant'],
+  ] as const)('maps %s to %s', (method, via) => {
+    expect(resolvedViaForAuthMethod(method)).toBe(via);
+  });
+
+  it('returns null when the auth method is absent or unsupported', () => {
+    expect(resolvedViaForAuthMethod(undefined)).toBeNull();
+    expect(resolvedViaForAuthMethod('service')).toBeNull();
+  });
+});
 
 describe('resolveHitlStep — DECISION value validation', () => {
   it('rejects a value that is not one of the configured options without touching the row', async () => {
@@ -88,9 +118,42 @@ describe('resolveHitlStep — Temporal not connected', () => {
     expect(result).toMatchObject({ code: 'TEMPORAL_UNAVAILABLE', ok: false });
     // Resolved, then put back so the human can answer again once Temporal is up.
     expect(updateMany).toHaveBeenCalledTimes(2);
+    expect(updateMany.mock.calls[1]?.[0].data.resolvedVia).toBeNull();
     expect(updateMany).toHaveBeenLastCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ status: 'PENDING' }) })
     );
+  });
+});
+
+describe('resolveHitlStep — resolution source', () => {
+  it.each([
+    ['session', 'web'],
+    ['jwt', 'web'],
+    ['pat', 'api_token'],
+    ['mcp', 'mcp'],
+    ['assistant', 'assistant'],
+  ] as const)('maps %s authentication to %s', async (method, via) => {
+    const { deps, updateMany } = makeDeps(decisionStep);
+    const actor = { ...ADMIN, via: resolvedViaForAuthMethod(method as HitlAuthMethod) };
+    await resolveHitlStep(deps, 'step-1', 'select', 'ship', actor);
+    expect(updateMany.mock.calls[0]?.[0].data.resolvedVia).toBe(via);
+  });
+
+  it('persists Slack as the resolution source', async () => {
+    const { deps, updateMany } = makeDeps(decisionStep);
+    await resolveHitlStep(deps, 'step-1', 'select', 'ship', { ...ADMIN, via: 'slack' });
+    expect(updateMany.mock.calls[0]?.[0].data.resolvedVia).toBe('slack');
+  });
+
+  it('persists the source on multi-approver rows and the final step resolution', async () => {
+    const { deps, updateMany } = makeDeps(approvalStep({ requiredApprovers: 2 }));
+    const actor = { ...ADMIN, via: 'mcp' as const };
+    await resolveHitlStep(deps, 'step-1', 'approve', undefined, actor);
+    const prisma = deps.prisma as unknown as {
+      humanApproval: { create: ReturnType<typeof vi.fn> };
+    };
+    expect(prisma.humanApproval.create.mock.calls[0]?.[0].data.resolvedVia).toBe('mcp');
+    expect(updateMany.mock.calls[0]?.[0].data.resolvedVia).toBe('mcp');
   });
 });
 

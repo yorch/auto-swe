@@ -810,6 +810,40 @@ describe('syncBuiltins — skill revisions', () => {
     expect(revs[1]?.promptText).toBe(skill.promptText);
   });
 
+  describe('the validator skills share one ambiguity marker', () => {
+    const named = (name: string) =>
+      BUILTIN_SKILLS.find((s) => s.name === name) as { name: string; promptText: string };
+    const OLD_EXTRACTION_TEXT =
+      'If the work request is ambiguous about what "done" means, include a criterion that flags the ambiguity (e.g. "Clarify: does the endpoint require authentication?") rather than silently assuming.';
+
+    it('gives AMBIGUOUS: as the example in both skills, and never Clarify:', () => {
+      for (const name of ['success-criteria-extraction', 'context-ambiguity-resolution']) {
+        expect(named(name).promptText).toContain('AMBIGUOUS:');
+        expect(named(name).promptText).not.toMatch(/Clarify:/i);
+      }
+    });
+
+    it('moves an existing deployment off the Clarify: example, keeping its old revision', async () => {
+      const { prisma, tables } = makeFake();
+      await seedSweStarter(prisma);
+      const def = named('success-criteria-extraction');
+      const skill = tables.skill.find((r) => r.name === def.name) as Row;
+      const oldText = `${def.promptText.split('If the work request')[0]}${OLD_EXTRACTION_TEXT}`;
+      skill.promptText = oldText;
+      const rev1 = revisionsOf(tables, skill.id)[0] as Row;
+      rev1.promptText = oldText;
+
+      await seedSweStarter(prisma);
+
+      expect(skill.promptText).toBe(def.promptText);
+      expect(skill.currentRevision).toBe(2);
+      const revs = revisionsOf(tables, skill.id);
+      expect(revs.map((r) => r.revision)).toEqual([1, 2]);
+      expect(revs[0]?.promptText).toContain('Clarify:');
+      expect(revs[1]?.promptText).toContain('AMBIGUOUS:');
+    });
+  });
+
   it('skips, rather than throws, when another replica cut the revision first', async () => {
     const { prisma, tables } = makeFake();
     await seedSweStarter(prisma);

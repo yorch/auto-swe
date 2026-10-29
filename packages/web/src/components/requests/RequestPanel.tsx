@@ -2,6 +2,7 @@
 
 import type { WorkflowRunDetail } from '@auto-swe/shared/types/api';
 import { parseWorkflowSpec } from '@auto-swe/shared/workflow';
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { UNSAFE_PortalProvider } from 'react-aria';
 import { createPortal } from 'react-dom';
@@ -289,12 +290,13 @@ function AttemptContent({
     ).values(),
   ];
   const activeSteps = currentSteps.filter((step) => step.status === 'RUNNING');
-  async function launchRetry() {
+  async function launchRetry(acknowledgeUnchanged?: true) {
     if (!run.workRequest || retryLock.current || retry.isPending || retry.isSuccess) {
       return;
     }
     retryLock.current = true;
     const input = {
+      ...(acknowledgeUnchanged ? { acknowledgeUnchanged } : {}),
       instructions: instructions.trim() || undefined,
       workRequestId: run.workRequest.id,
     };
@@ -347,7 +349,28 @@ function AttemptContent({
             onChange={(event) => setInstructions(event.target.value)}
             value={instructions}
           />
-          {failure && <Alert title={failure.title}>{failure.message}</Alert>}
+          {failure && (
+            <Alert title={failure.title}>
+              {failure.message}
+              {failure.hint ? ` ${failure.hint}` : ''}
+              {failure.runAnyway && !run.isAgentRun && (
+                <div className="mt-3 flex flex-wrap items-center gap-4">
+                  <Button
+                    disabled={retry.isPending}
+                    onClick={() => launchRetry(true)}
+                    variant="secondary"
+                  >
+                    Run anyway
+                  </Button>
+                  {failure.previousRunId && (
+                    <Link className="underline" href={`/runs/${failure.previousRunId}`}>
+                      View the earlier run
+                    </Link>
+                  )}
+                </div>
+              )}
+            </Alert>
+          )}
           {retry.isSuccess ? (
             <Alert variant="success">
               Another attempt has started.{' '}
@@ -364,7 +387,7 @@ function AttemptContent({
               >
                 Back
               </Button>
-              <Button disabled={retry.isPending} onClick={launchRetry} variant="primary">
+              <Button disabled={retry.isPending} onClick={() => launchRetry()} variant="primary">
                 {retry.isPending ? 'Starting…' : 'Start attempt'}
               </Button>
             </div>

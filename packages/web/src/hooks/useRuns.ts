@@ -317,12 +317,19 @@ export function useCancelWorkflowRun(runId: string) {
 export function useRetryWorkRequest() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: string | { workRequestId: string; instructions?: string }) => {
+    mutationFn: (
+      input: string | { workRequestId: string; instructions?: string; acknowledgeUnchanged?: true }
+    ) => {
       const workRequestId = typeof input === 'string' ? input : input.workRequestId;
       return api
         .post<{ data: RetryWorkRequestResponse }>(
           `/api/v1/work-requests/${workRequestId}/retry`,
-          typeof input === 'string' ? {} : { instructions: input.instructions }
+          typeof input === 'string'
+            ? {}
+            : {
+                instructions: input.instructions,
+                ...(input.acknowledgeUnchanged ? { acknowledgeUnchanged: true } : {}),
+              }
         )
         .then((response) => response.data);
     },

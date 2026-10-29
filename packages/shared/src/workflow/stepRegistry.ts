@@ -130,7 +130,7 @@ register({
   configFields: [SYSTEM_PROMPT_FIELD],
   costHint: { role: 'planner', tokensIn: 6000, tokensOut: 800 },
   description:
-    "Read the run's tracker ticket, with its newest comments and its parent issue, and digest it into one typed result (summary, requirements, acceptance criteria, constraints, open questions). Output: `available`, `digested`, `text`; later steps take `text`. A run with no ticket returns `available: false` without a model call.",
+    "Read the run's tracker ticket, with its newest comments and its parent issue, and digest it into one typed result (summary, requirements, acceptance criteria, constraints, open questions). Output: `available`, `digested`, `text`, `unavailableReason`; later steps take `text`. A run with no ticket returns `available: false` without a model call, and `unavailableReason` names why the ticket could not be read (a fixed class such as `forbidden` or `not_found`, never tracker text; empty when it was read).",
   label: 'Gather ticket context',
   name: 'gatherTicketContext',
 });
@@ -155,7 +155,7 @@ register({
     },
   ],
   description:
-    "Post one comment to the run's tracker ticket through the configured issue tracker. Output: `posted`, and a `reason` when it did not post. A run with no ticket, a platform-generated ticket id, no tracker configured, a body that is not text, a comment the tracker refuses, or a step that times out or loses its worker returns `posted: false` without failing the run; after a timeout the comment may or may not have been posted. On the GitHub tracker the ticket id names its own repository, so the step posts only when that repository is one the run targets, on the host the tracker writes to; otherwise it returns `posted: false`. Credential-shaped text is masked, and on GitHub and Linear @mentions and images are neutralised.",
+    "Post one comment to the run's tracker ticket through the configured issue tracker. Output: `posted`, and a `reason` when it did not post. A run with no ticket, a platform-generated ticket id, no tracker configured, a body that is not text, a comment the tracker refuses, or a step that times out or loses its worker returns `posted: false` without failing the run; after a timeout the comment may or may not have been posted. On the GitHub tracker the ticket id names its own repository, so the step posts only when that repository is one the run targets, on the host the tracker writes to, or one an operator listed in `github.trackerIssueRepositories`; otherwise it returns `posted: false`. Credential-shaped text is masked, and on GitHub and Linear @mentions and images are neutralised.",
   label: 'Post ticket comment',
   name: 'postTicketComment',
 });

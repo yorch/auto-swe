@@ -424,8 +424,8 @@ describe('reporting estimates and per-version intervals', () => {
       30,
       undefined,
       [
-        { status: 'MERGED', workflowId: 'wf-1' },
-        { status: 'CLOSED', workflowId: 'wf-2' },
+        { runId: 'run-1', status: 'MERGED', templateVersion: 1 },
+        { runId: 'run-2', status: 'CLOSED', templateVersion: 1 },
       ]
     );
     expect(out.perVersion[0]).toMatchObject({
@@ -459,8 +459,16 @@ describe('reporting estimates and per-version intervals', () => {
       30,
       undefined,
       [
-        ...Array.from({ length: 2 }, () => ({ status: 'MERGED', workflowId: 'wf-open' })),
-        ...Array.from({ length: 8 }, () => ({ status: 'OPEN', workflowId: 'wf-open' })),
+        ...Array.from({ length: 2 }, () => ({
+          runId: 'run-open',
+          status: 'MERGED',
+          templateVersion: 1,
+        })),
+        ...Array.from({ length: 8 }, () => ({
+          runId: 'run-open',
+          status: 'OPEN',
+          templateVersion: 1,
+        })),
       ]
     );
 

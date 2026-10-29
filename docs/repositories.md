@@ -231,6 +231,25 @@ notes. The missing-`package.json` case counts only as npm's own
 configured `runTests` too. Set `runTests` to a command the workspace can run, or pin an
 `executorImage` that carries the repository's toolchain.
 
+A command derived from the [detected stack](#detected-stack) (pytest, `go test ./...`, `cargo test`,
+`mvn`, `gradle`) can run in an image that has the toolchain and still show no tests. Two outcomes
+end the loop after that test run, which is not always the first. The run is recorded as not run and
+the work is still committed and pushed:
+
+- **Exit status 5** (pytest's no-tests status; among the stack defaults only pytest exits 5): the
+  runner looked for tests and found none. A `tdd.no_tests_found` event is recorded and the
+  implementation notes say the command found no tests and that `runTests` should be set.
+- **Exit 0 with no readable test counts** (`go test` printing `[no test files]`, a Gradle build
+  whose `test` task was up to date, one component of a composite whose output showed no tests):
+  whether tests ran is unknown, and a green suite looks the same. A `tdd.tests_unreadable` event is recorded and the notes say the command exited 0
+  but printed no test counts, so a reviewer is not told tests are missing.
+
+A fix session (CI, review, gate or pull-request feedback) has one test run and no loop; it records
+the same events and appends the same sentences without loop wording. A configured `runTests` and the
+`package.json` guess never take this path. `runTests` is still how a repository gets a real command.
+The pull request body says "No test results could be read" for any not-run result, which also covers
+a `maxTddIterations` of 0 and a configured or Node command whose zero-exit output carries no counts.
+
 A gate command runs in the agent workspace of every run on the repository, so changing the set takes
 the same role as writing a command into a template: a platform admin, or an admin of the team that
 will own the repository (`403 GATE_COMMANDS_FORBIDDEN` otherwise; see
@@ -385,13 +404,14 @@ target — it keeps its `package.json` guess.
   and bash alike):
 
   ```sh
-  rc=0; ur=0; ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }; echo; echo '== auto-swe component: api =='; (cd 'api' && mvn -B -ntp test) 2>&1; ck $?; echo; echo '== auto-swe component: web =='; (cd 'web' && npm test) 2>&1; ck $?; if [ "$rc" -ne 0 ]; then exit $rc; fi; exit $ur
+  rc=0; ur=0; ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ] || [ "$1" -eq 5 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }; echo; echo '== auto-swe component: api =='; (cd 'api' && mvn -B -ntp test) 2>&1; ck $?; echo; echo '== auto-swe component: web =='; (cd 'web' && npm test) 2>&1; ck $?; if [ "$rc" -ne 0 ]; then exit $rc; fi; exit $ur
   ```
 
-  The exit status is the first **real** failure's — any status other than 126 or 127, a missing
-  directory included. A part that is not runnable (126, 127) decides the status only when no part
-  really failed, and then the last of them does, so a missing tool in one component cannot hide
-  another component's failing tests from the test loop. All parts passing is 0.
+  The exit status is the first **real** failure's — any status other than 126, 127 or 5, a missing
+  directory included. A part that is not runnable (126, 127) or that collected no tests (pytest's
+  5) decides the status only when no part really failed, and then the last of them does. Those are
+  the statuses the test loop stops on instead of iterating, so a missing tool or an untested Python
+  component cannot hide another component's failing tests from the loop. All parts passing is 0.
 
   The test loop reads the output per section: every component must show that its tests ran (a
   parsed passing count of at least one, or a runner's own `ok`/`PASS` lines) and none may show a
@@ -533,6 +553,16 @@ longer fit.
   `runTests` falls back to `npm test`, which cannot run there, so the loop stops after one pass until
   `runTests` is set. Only npm 11's output with exit 254 is recognised: yarn, pnpm, bun and older npm
   with no `package.json` still iterate.
+- **A stack-derived test command that shows no tests ends the loop on two signals, as a cost
+  trade-off.** Exit status 5 and a zero exit with no readable counts stop it. After exit 5 the agent
+  could still add a test file, but the implementer already runs the tests itself in its first pass,
+  so a further pass costs a whole budget for a rarely different outcome; the diff is still committed
+  and reviewed. A collection error, a compile error or real failures (any other status) keep
+  iterating, because the agent can fix them, and `go test ./...` in a tree with no Go packages exits
+  1 and iterates. A zero exit counts as unreadable unless the output carries a count, an
+  `ok  <pkg>` / `Ran N tests` line, Surefire's `Tests run:` totals or an executed Gradle `test`
+  task. The default Maven and Gradle commands print those, so a green run of them does not stop the
+  loop; a composite counts as unreadable when any one component shows none.
 - **Gate commands are checked when they are saved or moved, not when a run starts.** The worker runs
   whatever set the row holds, so a command stays in use after the admin who set it loses the role,
   and a value written to the column outside the API has no audit entry.

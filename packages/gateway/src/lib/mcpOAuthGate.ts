@@ -2,7 +2,7 @@ import { fromNodeHeaders } from 'better-auth/node';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import fp from 'fastify-plugin';
 import { isCanonicalRequestPath } from './canonicalPath.js';
-import { AUTH_BASE_PATH, MCP_SCOPE_WRITE } from './mcpOAuth.js';
+import { AUTH_BASE_PATH, MCP_DEVICE_GRANT, MCP_SCOPE_WRITE } from './mcpOAuth.js';
 
 /**
  * Policy for the OAuth authorization server that MCP clients use.
@@ -27,9 +27,11 @@ import { AUTH_BASE_PATH, MCP_SCOPE_WRITE } from './mcpOAuth.js';
 export interface McpGateSettings {
   enabled: boolean;
   writeToolsEnabled: boolean;
+  deviceFlowEnabled?: boolean;
 }
 
 export interface McpOAuthGateOptions {
+  approveDevice?: (request: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
   /** The RFC 8707 resource identifier: the only audience a token may be requested for. */
   resource: string;
   /** Read per request (through the settings cache); an error fails closed. */
@@ -46,12 +48,21 @@ const CONSENT = `${AUTH_BASE_PATH}/oauth2/consent`;
 const CONTINUE = `${AUTH_BASE_PATH}/oauth2/continue`;
 const TOKEN = `${AUTH_BASE_PATH}/oauth2/token`;
 const REGISTER = `${AUTH_BASE_PATH}/oauth2/register`;
+const DEVICE_CODE = `${AUTH_BASE_PATH}/device/code`;
+const DEVICE_APPROVE = `${AUTH_BASE_PATH}/device/approve`;
+const DEVICE_PATHS = new Set([
+  DEVICE_CODE,
+  DEVICE_APPROVE,
+  `${AUTH_BASE_PATH}/device`,
+  `${AUTH_BASE_PATH}/device/deny`,
+]);
 const ALLOWED_PATHS: ReadonlySet<string> = new Set([
   AUTHORIZE,
   CONSENT,
   CONTINUE,
   TOKEN,
   REGISTER,
+  ...DEVICE_PATHS,
   `${AUTH_BASE_PATH}/oauth2/revoke`,
   `${AUTH_BASE_PATH}/oauth2/public-client`,
   `${AUTH_BASE_PATH}/jwks`,
@@ -64,7 +75,7 @@ const ALLOWED_PATHS: ReadonlySet<string> = new Set([
  * `userinfo`, `end-session`, the admin resource endpoints, the OIDC discovery document,
  * and `GET /token`, the jwt plugin's session-to-JWT minting endpoint.
  */
-const OAUTH_NAMESPACES = ['/oauth2', '/admin/oauth2', '/.well-known', '/jwks', '/token'];
+const OAUTH_NAMESPACES = ['/oauth2', '/admin/oauth2', '/.well-known', '/jwks', '/token', '/device'];
 
 /** How an OAuth endpoint reports an error (RFC 6749 section 5.2). */
 function oauthError(reply: FastifyReply, status: number, error: string, description: string) {
@@ -114,7 +125,10 @@ type FormBody = Record<string, unknown>;
  * walk into a 404 or a rejected registration: introspection, back-channel logout, and every
  * client authentication method but "none".
  */
-export function narrowMetadata(doc: Record<string, unknown>): Record<string, unknown> {
+export function narrowMetadata(
+  doc: Record<string, unknown>,
+  deviceFlowEnabled = false
+): Record<string, unknown> {
   const out: Record<string, unknown> = { ...doc };
   for (const key of Object.keys(out)) {
     if (key.startsWith('introspection_') || key.startsWith('backchannel_logout_')) {
@@ -125,6 +139,12 @@ export function narrowMetadata(doc: Record<string, unknown>): Record<string, unk
   out.revocation_endpoint_auth_methods_supported = ['none'];
   delete out.token_endpoint_auth_signing_alg_values_supported;
   delete out.revocation_endpoint_auth_signing_alg_values_supported;
+  if (!deviceFlowEnabled) {
+    delete out.device_authorization_endpoint;
+    if (Array.isArray(out.grant_types_supported)) {
+      out.grant_types_supported = out.grant_types_supported.filter((g) => g !== MCP_DEVICE_GRANT);
+    }
+  }
   return out;
 }
 
@@ -224,7 +244,13 @@ export const mcpOAuthGate = fp<McpOAuthGateOptions>(
       if (!settings) {
         return reply;
       }
-      if (!settings.enabled) {
+      if (!settings.enabled || (DEVICE_PATHS.has(raw) && !settings.deviceFlowEnabled)) {
+        return notFound(reply);
+      }
+      if (
+        DEVICE_PATHS.has(raw) &&
+        request.method !== (raw === `${AUTH_BASE_PATH}/device` ? 'GET' : 'POST')
+      ) {
         return notFound(reply);
       }
     });
@@ -255,7 +281,32 @@ export const mcpOAuthGate = fp<McpOAuthGateOptions>(
         return hardenRegistration(request, reply);
       }
       if (path === TOKEN) {
+        if (
+          bodyParams(request).getAll('grant_type').includes(MCP_DEVICE_GRANT) &&
+          !settings.deviceFlowEnabled
+        ) {
+          return notFound(reply);
+        }
         return checkResources(reply, bodyParams(request), { required: false });
+      }
+      if (path === DEVICE_APPROVE) {
+        return options.approveDevice ? options.approveDevice(request, reply) : notFound(reply);
+      }
+      if (DEVICE_PATHS.has(path)) {
+        if (path === DEVICE_CODE) {
+          const params = bodyParams(request);
+          if (params.has('user_id')) {
+            return oauthError(reply, 400, 'invalid_request', 'user_id is not supported');
+          }
+          return (
+            checkResources(reply, params, { required: true }) ??
+            checkScope(reply, params.getAll('scope'), settings, { required: true })
+          );
+        }
+        const session = await options.getSessionUser(request);
+        if (session && !session.isActive) {
+          return oauthError(reply, 403, 'access_denied', 'This account is not active');
+        }
       }
       if (path === AUTHORIZE || path === CONSENT || path === CONTINUE) {
         return checkAuthorization(request, reply, path, settings);
@@ -426,7 +477,11 @@ export const mcpOAuthGate = fp<McpOAuthGateOptions>(
         }
       });
       const text = await response.text();
-      return reply.send(response.ok ? JSON.stringify(narrowMetadata(JSON.parse(text))) : text);
+      return reply.send(
+        response.ok
+          ? JSON.stringify(narrowMetadata(JSON.parse(text), settings.deviceFlowEnabled))
+          : text
+      );
     });
   },
   { fastify: '5.x', name: 'mcp-oauth-gate' }

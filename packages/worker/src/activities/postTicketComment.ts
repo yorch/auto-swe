@@ -84,12 +84,13 @@ export async function postTicketComment(
     // A GitHub ticket id names its own repository, and the id is user-supplied: without this the
     // instance's tracker token would comment on any repository a launch cared to name. The
     // tracker has no configured default repository, so only the run's own repositories count,
-    // and only on the host the tracker writes to.
+    // and only on the host the tracker writes to, plus any the operator listed in
+    // `github.trackerIssueRepositories` (the scope carries them, resolved at the run's team).
     if (
       config.provider === 'github' &&
       !isGitHubTicketInScope(run.externalTicketId, config.baseUrl, await runTrackerScope(run))
     ) {
-      const reason = "the ticket's repository is not one this run targets";
+      const reason = "the ticket's repository is not one this run targets or the operator allows";
       logWarn(`postTicketComment: ${reason}`, { workRequestId: input.workRequestId });
       return { posted: false, reason };
     }

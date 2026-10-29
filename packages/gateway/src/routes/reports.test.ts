@@ -10,14 +10,26 @@ function mockPrisma() {
     automation: { findMany: vi.fn().mockResolvedValue([]) },
     automationFire: { findMany: vi.fn().mockResolvedValue([]) },
     autonomyDecision: { findMany: vi.fn().mockResolvedValue([]) },
+    connection: { findMany: vi.fn().mockResolvedValue([]) },
     organization: { findMany: vi.fn().mockResolvedValue([]) },
+    organizationMembership: { findMany: vi.fn().mockResolvedValue([]) },
     pullRequest: { findMany: vi.fn().mockResolvedValue([]) },
+    team: {
+      findMany: vi.fn().mockResolvedValue([]),
+      findUnique: vi.fn().mockResolvedValue(null),
+    },
+    teamMembership: { findMany: vi.fn().mockResolvedValue([]) },
     workflowHumanStep: { findMany: vi.fn().mockResolvedValue([]) },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
+    workflowRunDailyRollup: {
+      findMany: vi.fn().mockResolvedValue([]),
+      groupBy: vi.fn().mockResolvedValue([]),
+    },
     workflowStep: {
       findMany: vi.fn().mockResolvedValue([]),
       groupBy: vi.fn().mockResolvedValue([]),
     },
+    workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
   };
 }
 
@@ -46,7 +58,7 @@ describe('report routes', () => {
         method: 'GET',
         url: `/api/v1/reports/${tab}?window=30`,
       });
-      expect(response.statusCode).toBe(200);
+      expect(response.statusCode, response.body).toBe(200);
       expect(response.json().data).toBeTruthy();
       expect(response.json().data.truncated).toBe(false);
     }
@@ -79,28 +91,132 @@ describe('report routes', () => {
     }
   });
 
-  it('keeps non-admin run visibility on delivery, quality, and HITL reads', async () => {
+  it('uses attribution visibility for rollups and legacy visibility for non-rollup reads', async () => {
     const { app, prisma } = await buildApp('ENGINEER');
-    for (const tab of ['delivery', 'quality', 'hitl']) {
-      const response = await app.inject({
-        headers: AUTH,
-        method: 'GET',
-        url: `/api/v1/reports/${tab}?window=30`,
-      });
-      expect(response.statusCode).toBe(200);
-    }
+    const delivery = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/reports/delivery?window=30',
+    });
+    expect(delivery.statusCode, delivery.body).toBe(200);
+    const deliveryRunQuery = prisma.workflowRun.findMany.mock.calls[0]?.[0];
+    expect(deliveryRunQuery?.where.AND).toContainEqual({
+      OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
+    });
 
-    for (const [args] of prisma.workflowRun.findMany.mock.calls) {
-      expect(args.where.AND).toContainEqual(
+    const qualityStart = prisma.workflowRun.findMany.mock.calls.length;
+    const quality = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/reports/quality?window=30',
+    });
+    expect(quality.statusCode, quality.body).toBe(200);
+    const qualityRunQueries = prisma.workflowRun.findMany.mock.calls
+      .slice(qualityStart)
+      .map(([args]) => args);
+    expect(qualityRunQueries[0]?.where.AND).toContainEqual({
+      OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
+    });
+    expect(qualityRunQueries[1]?.where.AND).toContainEqual({
+      OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
+    });
+
+    const hitl = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/reports/hitl?window=30',
+    });
+    expect(hitl.statusCode, hitl.body).toBe(200);
+    for (const [args] of prisma.workflowHumanStep.findMany.mock.calls) {
+      expect(args.where.run.AND).toContainEqual(
         expect.objectContaining({
           OR: expect.arrayContaining([{ workRequest: { requestedById: 'user-1' } }]),
         })
       );
     }
-    for (const [args] of prisma.workflowHumanStep.findMany.mock.calls) {
-      expect(args.where.run.OR).toContainEqual({
-        workRequest: { requestedById: 'user-1' },
+  });
+
+  it('authorizes team filters for members and matching org admins only', async () => {
+    const teamId = '00000000-0000-4000-8000-000000000001';
+    const memberApp = await buildApp('ENGINEER');
+    memberApp.prisma.teamMembership.findMany.mockResolvedValue([{ teamId }]);
+    const memberResponse = await memberApp.app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/reports/delivery?teamId=${teamId}`,
+    });
+    expect(memberResponse.statusCode).toBe(200);
+    expect(memberApp.prisma.workflowRun.findMany.mock.calls[0]?.[0].where.AND).toContainEqual({
+      attributedTeamId: teamId,
+    });
+    const memberHitlResponse = await memberApp.app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/reports/hitl?teamId=${teamId}`,
+    });
+    expect(memberHitlResponse.statusCode).toBe(200);
+    expect(
+      memberApp.prisma.workflowHumanStep.findMany.mock.calls[0]?.[0].where.run.AND
+    ).toContainEqual({
+      attributedTeamId: teamId,
+    });
+
+    const matchingOrgAdmin = await buildApp('ENGINEER');
+    matchingOrgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: 'org-1' }]);
+    matchingOrgAdmin.prisma.team.findUnique.mockResolvedValue({ orgId: 'org-1' });
+    const authorizedResponse = await matchingOrgAdmin.app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/reports/delivery?teamId=${teamId}`,
+    });
+    expect(authorizedResponse.statusCode).toBe(200);
+    expect(
+      matchingOrgAdmin.prisma.workflowRun.findMany.mock.calls[0]?.[0].where.AND
+    ).toContainEqual({
+      attributedTeamId: teamId,
+    });
+
+    const otherOrgAdmin = await buildApp('ENGINEER');
+    otherOrgAdmin.prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: 'org-1' }]);
+    otherOrgAdmin.prisma.team.findUnique.mockResolvedValue({ orgId: 'org-2' });
+    const forbiddenResponse = await otherOrgAdmin.app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/reports/delivery?teamId=${teamId}`,
+    });
+    expect(forbiddenResponse.statusCode).toBe(403);
+
+    const unauthorizedMember = await buildApp('ENGINEER');
+    unauthorizedMember.prisma.team.findUnique.mockResolvedValue({ orgId: 'org-2' });
+    const memberForbidden = await unauthorizedMember.app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/reports/delivery?teamId=${teamId}`,
+    });
+    expect(memberForbidden.statusCode).toBe(403);
+  });
+
+  it('keeps the legacy run filter on non-rollup reads when no report is admin scoped', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    for (const tab of ['quality', 'hitl']) {
+      const response = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: `/api/v1/reports/${tab}?window=30`,
       });
+      expect(response.statusCode, response.body).toBe(200);
+    }
+
+    const qualityRunQuery = prisma.workflowRun.findMany.mock.calls[0]?.[0];
+    expect(qualityRunQuery?.where.AND).toContainEqual({
+      OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
+    });
+    for (const [args] of prisma.workflowHumanStep.findMany.mock.calls) {
+      expect(args.where.run.AND).toContainEqual(
+        expect.objectContaining({
+          OR: expect.arrayContaining([{ workRequest: { requestedById: 'user-1' } }]),
+        })
+      );
     }
   });
 
@@ -125,14 +241,18 @@ describe('report routes', () => {
       url: '/api/v1/reports/automations?window=30',
     });
 
-    expect(response.statusCode).toBe(200);
-    expect(prisma.automation.findMany.mock.calls[0]?.[0].where.OR).toEqual(
+    expect(response.statusCode, response.body).toBe(200);
+    expect(prisma.automation.findMany.mock.calls[0]?.[0].where.AND).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ connection: expect.any(Object) }),
-        {
-          connectionId: null,
-          team: { memberships: { some: { userId: 'user-1' } } },
-        },
+        expect.objectContaining({
+          OR: expect.arrayContaining([
+            expect.objectContaining({ connection: expect.any(Object) }),
+            {
+              connectionId: null,
+              team: { memberships: { some: { userId: 'user-1' } } },
+            },
+          ]),
+        }),
       ])
     );
     expect(prisma.automationFire.findMany.mock.calls[0]?.[0].where).toMatchObject({
@@ -154,38 +274,46 @@ describe('report routes', () => {
     const { app, prisma } = await buildApp();
     const startedAt = new Date('2026-01-01T00:00:00.000Z');
     const repoId = '00000000-0000-4000-8000-000000000001';
-    const otherRepoId = '00000000-0000-4000-8000-000000000002';
     prisma.workflowRun.findMany.mockResolvedValue([
       {
+        attributedOrgId: null,
+        attributedTeamId: null,
         costUsdAccrued: 0,
+        endedAt: new Date('2026-01-01T01:00:00.000Z'),
+        estimatedHumanTimeSaved: null,
+        hadHumanStep: null,
         id: 'run-1',
+        outcomeDomain: null,
+        outcomeType: null,
         startedAt,
         status: 'SUCCESS',
-        template: { name: 'Build' },
         templateId: 'template-1',
+        templateVersion: 1,
+        wasAutonomous: null,
         workflowId: 'workflow-1',
-      },
-    ]);
-    prisma.activeWorkflow.findMany.mockResolvedValue([
-      {
-        costUsdAccrued: 5,
-        repoId,
-        repository: { organizationName: 'acme', repoName: 'api' },
-        temporalWorkflowId: 'workflow-1',
+        workRequest: {
+          activeWorkflows: [
+            {
+              costUsdAccrued: 5,
+              repoId,
+              temporalWorkflowId: 'workflow-1',
+            },
+          ],
+        },
       },
     ]);
     prisma.pullRequest.findMany.mockResolvedValue([
       {
         ciStatus: 'PASSED',
         mergedAt: new Date('2026-01-02T00:00:00.000Z'),
-        repoId: otherRepoId,
-        workflow: { repoId, temporalWorkflowId: 'workflow-1' },
+        runId: null,
+        status: 'MERGED',
       },
       {
         ciStatus: 'PASSED',
         mergedAt: new Date('2026-01-03T00:00:00.000Z'),
-        repoId,
-        workflow: { repoId, temporalWorkflowId: 'workflow-1' },
+        runId: 'run-1',
+        status: 'MERGED',
       },
     ]);
     const response = await app.inject({
@@ -204,7 +332,7 @@ describe('report routes', () => {
       spendUsd: 5,
     });
     expect(prisma.pullRequest.findMany.mock.calls[0]?.[0].where).toEqual({
-      workflow: { temporalWorkflowId: { in: ['workflow-1'] } },
+      runId: { in: ['run-1'] },
     });
   });
 

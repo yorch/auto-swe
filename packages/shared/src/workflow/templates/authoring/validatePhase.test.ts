@@ -127,6 +127,23 @@ describe('validatePhase', () => {
       expectWellFormed(nodes, 'setValidating', ['setImplementing']);
     });
 
+    it('carries why the ticket could not be read, when it gathers the ticket', () => {
+      const nodes = validatePhase({ ...stop, ticketContext: true });
+      expect(nodes.terminateNotActionable).toMatchObject({
+        result: {
+          ticketUnavailableReason: {
+            default: '',
+            from: 'nodes.gatherTicket.output.unavailableReason',
+          },
+        },
+      });
+    });
+
+    it('has no such field when no ticket is gathered', () => {
+      const nodes = validatePhase(stop);
+      expect(nodes.terminateNotActionable).not.toHaveProperty('result.ticketUnavailableReason');
+    });
+
     it('goes straight to `next` when there are no success criteria to keep', () => {
       const nodes = validatePhase({ ...stop, successCriteria: false });
       expect(nodes.checkActionable).toMatchObject({ onFalse: 'setImplementing' });

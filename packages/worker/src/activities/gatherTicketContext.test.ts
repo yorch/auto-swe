@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   cancel: vi.fn(),
-  loadTicket: vi.fn(),
   persist: vi.fn(async (..._args: unknown[]) => {}),
+  readTicket: vi.fn(),
   resolveSpec: vi.fn(async (..._args: unknown[]) => ({ agentKey: 'ticketContextGatherer' })),
   runAgent: vi.fn(),
 }));
@@ -23,7 +23,7 @@ vi.mock('../lib/config/agentSpec.js', () => ({
 vi.mock('../lib/config/contextLookup.js', () => ({ currentRequestContext: async () => ({}) }));
 vi.mock('../lib/ticketContext.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../lib/ticketContext.js')>()),
-  loadTicket: (...args: unknown[]) => mocks.loadTicket(...args),
+  readTicket: (...args: unknown[]) => mocks.readTicket(...args),
 }));
 vi.mock('./runAgent.js', () => ({ runAgent: (...args: unknown[]) => mocks.runAgent(...args) }));
 
@@ -58,14 +58,14 @@ const DIGEST = { acceptanceCriteria: ['200 on GET'], summary: 'Add a health endp
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.loadTicket.mockResolvedValue(LOADED);
+  mocks.readTicket.mockResolvedValue({ reason: null, ticket: LOADED });
   mocks.runAgent.mockResolvedValue({ object: DIGEST });
 });
 
 describe('gatherTicketContext', () => {
   it('reads the ticket rich, hands it to the gatherer, and returns the digest rendered for a prompt', async () => {
     const out = await gatherTicketContext(REQUEST);
-    expect(mocks.loadTicket).toHaveBeenCalledWith(
+    expect(mocks.readTicket).toHaveBeenCalledWith(
       expect.objectContaining({ rich: true, workRequestId: 'wr-1' })
     );
     const spec = mocks.resolveSpec.mock.calls[0]?.[0] as {
@@ -84,13 +84,32 @@ describe('gatherTicketContext', () => {
   });
 
   it('makes no model call and returns nothing when there is no ticket', async () => {
-    mocks.loadTicket.mockResolvedValue(null);
+    mocks.readTicket.mockResolvedValue({ reason: null, ticket: null });
     expect(await gatherTicketContext(REQUEST)).toEqual({
       available: false,
       digested: false,
       text: '',
+      unavailableReason: '',
     });
     expect(mocks.runAgent).not.toHaveBeenCalled();
+  });
+
+  it.each(['forbidden', 'not_found', 'unauthorized', 'unconfigured', 'empty'])(
+    'says why the ticket is unavailable (%s) next to available: false',
+    async (reason) => {
+      mocks.readTicket.mockResolvedValue({ reason, ticket: null });
+      expect(await gatherTicketContext(REQUEST)).toEqual({
+        available: false,
+        digested: false,
+        text: '',
+        unavailableReason: reason,
+      });
+      expect(mocks.runAgent).not.toHaveBeenCalled();
+    }
+  );
+
+  it('has an empty unavailableReason when the ticket was read', async () => {
+    expect((await gatherTicketContext(REQUEST)).unavailableReason).toBe('');
   });
 
   it('falls back to the plain ticket, and says so on the trace, when the gatherer fails', async () => {
@@ -126,10 +145,10 @@ describe('gatherTicketContext', () => {
   });
 
   it('persists its trace when the ticket lookup recorded events, and does not fail when that write does', async () => {
-    mocks.loadTicket.mockImplementation(
+    mocks.readTicket.mockImplementation(
       async (args: { tracer: { addActivityEvent: (e: { name: string }) => void } }) => {
         args.tracer.addActivityEvent({ name: 'ticket.context_loaded' });
-        return LOADED;
+        return { reason: null, ticket: LOADED };
       }
     );
     mocks.persist.mockRejectedValueOnce(new Error('db down'));

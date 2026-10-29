@@ -19,6 +19,7 @@ import prismaPlugin from '../../plugins/prisma.js';
 import { agentRunRoutes } from '../../routes/agentRuns.js';
 import { mcpRoutes } from '../../routes/mcp.js';
 import { workflowRunRoutes } from '../../routes/workflowRuns.js';
+import { workflowTemplateRoutes } from '../../routes/workflowTemplates.js';
 import { workRequestRoutes } from '../../routes/workRequests.js';
 import { initAuth, MCP_RESOURCE } from '../betterAuth.js';
 import { createBetterAuthHandler, registerBetterAuthRoutes } from '../betterAuthHandler.js';
@@ -330,7 +331,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
               type: 'git_repo',
             },
           });
-          await prisma.workflowTemplate.create({
+          const template = await prisma.workflowTemplate.create({
             data: {
               activeVersion: 1,
               isDefault: true,
@@ -339,6 +340,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
               teamId: team.id,
             },
           });
+          ids[key ? 'poorTemplate' : 'template'] = template.id;
           ids[`org${key}`] = org.id;
           ids[`team${key}`] = team.id;
           ids[key ? 'poorRepo' : 'repo'] = repo.id;
@@ -513,6 +515,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
     await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
     await app.register(agentRunRoutes, { prefix: '/api/v1/agent-runs' });
     await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
+    await app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
     await app.ready();
     await fixtures();
   }, 180_000);
@@ -551,7 +554,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       expect(await toolNames(people.alice.token)).toEqual(
         expect.arrayContaining(['cancel_run', 'submit_work_request'])
       );
-      expect(await toolNames(people.alice.readToken as string)).toHaveLength(7);
+      expect(await toolNames(people.alice.readToken as string)).toHaveLength(8);
     });
 
     it('answers a read token that calls a write tool with 403 insufficient_scope for mcp:write', async () => {
@@ -576,7 +579,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
     it('a fresh deployment with no write setting exposes no write tool and refuses mcp:write consent', async () => {
       // Only `mcp.enabled`: every other mcp.* key is absent, so the registry defaults apply.
       await setSettings({ 'mcp.enabled': true });
-      expect(await toolNames(people.alice.token)).toHaveLength(7);
+      expect(await toolNames(people.alice.token)).toHaveLength(8);
       const clientId = await registerClient();
       const challenge = b64url(crypto.createHash('sha256').update('v'.repeat(43)).digest());
       const refused = await call(
@@ -734,6 +737,251 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       });
       expect((rows[0].afterJson as { inputDigest: string }).inputDigest).toMatch(/^[0-9a-f]{64}$/);
       expect(JSON.stringify(rows[0])).not.toContain(SECRET_TEXT);
+    });
+  });
+
+  describe('workflow template MCP tools', () => {
+    const args = () => ({
+      idempotencyKey: crypto.randomUUID(),
+      payload: { connectionId: ids.repo, description: SECRET_TEXT },
+      templateId: ids.template,
+    });
+    const launch = (input = args()) => callTool(people.alice.token, 'start_template_run', input);
+    const enable = (extra: Record<string, unknown> = {}) =>
+      settingsOn({ 'mcp.templateRunsEnabled': true, ...extra });
+
+    it('discovers only visible, active, promoted, non-system templates and reduces the result', async () => {
+      const found = await callTool(people.alice.token, 'list_templates', {});
+      expect(found.result.structuredContent.templates).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: ids.template })])
+      );
+      expect(JSON.stringify(found.result)).not.toContain('Agent Run');
+      expect(
+        Object.keys(
+          found.result.structuredContent.templates.find(
+            (t: { id: string }) => t.id === ids.template
+          )
+        ).sort()
+      ).toEqual(['description', 'id', 'inputSchema', 'name']);
+      const outsider = await callTool(people.erin.token, 'list_templates', {});
+      expect(
+        outsider.result.structuredContent.templates.map((t: { id: string }) => t.id)
+      ).not.toContain(ids.template);
+      for (const change of [{ status: 'DRAFT' as const }, { activeVersion: null }]) {
+        await runUnscoped('test fixture: template availability', ['WorkflowTemplate'], () =>
+          prisma.workflowTemplate.update({ data: change, where: { id: ids.template } })
+        );
+        try {
+          const unavailable = await callTool(people.alice.token, 'list_templates', {});
+          expect(
+            unavailable.result.structuredContent.templates.map((t: { id: string }) => t.id)
+          ).not.toContain(ids.template);
+        } finally {
+          await runUnscoped(
+            'test fixture: restore template availability',
+            ['WorkflowTemplate'],
+            () =>
+              prisma.workflowTemplate.update({
+                data: { activeVersion: 1, status: 'ACTIVE' },
+                where: { id: ids.template },
+              })
+          );
+        }
+      }
+    });
+
+    it('requires the administrator opt-in by default, and audits the refusal', async () => {
+      const result = await launch();
+      expect(result.result.isError).toBe(true);
+      expect(result.result.content[0].text).toContain(
+        'Template launches through MCP are turned off'
+      );
+      expect(started).toHaveLength(0);
+      const audit = await prisma.configAuditLog.findFirstOrThrow({
+        where: { entityType: 'McpToolCall' },
+      });
+      expect(audit.afterJson).toMatchObject({
+        errorCode: 'MCP_TEMPLATE_RUNS_DISABLED',
+        tool: 'start_template_run',
+      });
+    });
+
+    it('starts at STANDARD under the user identity, replays at the cap and never starts twice', async () => {
+      await enable({ 'mcp.maxConcurrentRuns': 1 });
+      const input = args();
+      const first = await launch(input);
+      expect(first.result.structuredContent).toMatchObject({
+        status: 'started',
+        workRequestId: expect.any(String),
+      });
+      const replay = await launch(input);
+      expect(replay.result.structuredContent).toEqual({
+        ...first.result.structuredContent,
+        status: 'already_submitted',
+      });
+      expect(started).toEqual([
+        { budgetTier: 'STANDARD', id: expect.any(String), launchedById: people.alice.id },
+      ]);
+      expect(await inFlight(people.alice.id)).toBe(1);
+      const audit = await prisma.configAuditLog.findMany({ where: { entityType: 'McpToolCall' } });
+      expect(audit).toHaveLength(2);
+      expect(JSON.stringify(audit)).not.toContain(SECRET_TEXT);
+      await settingsOn();
+      expect((await launch(input)).result.isError).toBe(true);
+      expect(started).toHaveLength(1);
+    });
+
+    it('caps parallel different-key launches and deduplicates parallel identical keys', async () => {
+      await enable({ 'mcp.maxConcurrentRuns': 1 });
+      startDelayMs = 100;
+      const inputs = Array.from({ length: 4 }, args);
+      const results = await Promise.all(inputs.map(launch));
+      expect(results.filter((r) => r.result.structuredContent?.status === 'started')).toHaveLength(
+        1
+      );
+      expect(results.filter((r) => r.result.isError)).toHaveLength(3);
+      expect(await inFlight(people.alice.id)).toBe(1);
+      await clearRuns();
+      started.length = 0;
+      const input = args();
+      const repeated = await Promise.all(Array.from({ length: 4 }, () => launch(input)));
+      expect(repeated.filter((r) => r.result.structuredContent?.status === 'started')).toHaveLength(
+        1
+      );
+      expect(
+        repeated.filter((r) => r.result.structuredContent?.status === 'already_submitted')
+      ).toHaveLength(3);
+      expect(started).toHaveLength(1);
+    });
+
+    it.each([false, true])(
+      'rejects different inputs under the same key (racing: %s)',
+      async (racing) => {
+        await enable({ 'mcp.maxConcurrentRuns': 1 });
+        const input = args();
+        const changed = {
+          ...input,
+          payload: { ...input.payload, description: `${SECRET_TEXT} changed` },
+        };
+        const bridge = app.mcpBridge;
+        if (!bridge) {
+          throw new Error('Bridge not registered');
+        }
+        const post = vi.spyOn(bridge, 'post');
+        try {
+          if (racing) {
+            startDelayMs = 100;
+            const results = await Promise.all([launch(input), launch(changed)]);
+            expect(results.filter((r) => r.result.isError)).toHaveLength(1);
+          } else {
+            expect((await launch(input)).result.structuredContent.status).toBe('started');
+            expect((await launch(changed)).result.content[0].text).toContain(
+              'already used for a different request'
+            );
+          }
+          const responses = await Promise.all(post.mock.results.map((r) => r.value));
+          expect(responses).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                body: { error: expect.objectContaining({ code: 'IDEMPOTENCY_KEY_MISMATCH' }) },
+                status: 422,
+              }),
+            ])
+          );
+          expect(started).toHaveLength(1);
+        } finally {
+          post.mockRestore();
+        }
+      }
+    );
+
+    it('compares payload objects independently of key ordering and compares labels', async () => {
+      await enable();
+      const input = { ...args(), label: 'Same task' };
+      expect((await launch(input)).result.structuredContent.status).toBe('started');
+      const reordered = { ...input, payload: { connectionId: ids.repo, description: SECRET_TEXT } };
+      expect((await launch(reordered)).result.structuredContent.status).toBe('already_submitted');
+      const changed = await callTool(people.alice.token, 'start_template_run', {
+        ...input,
+        label: 'Other task',
+      });
+      expect(changed.result.content[0].text).toContain('already used for a different request');
+      expect(started).toHaveLength(1);
+    });
+
+    it('applies guards at the bridged route and preserves ordinary REST launches', async () => {
+      await enable();
+      const bridge = app.mcpBridge;
+      if (!bridge) {
+        throw new Error('Bridge not registered');
+      }
+      const caller = {
+        clientIp: '192.0.2.90',
+        scopes: ['mcp:read', 'mcp:write'],
+        token: people.alice.token,
+        userId: people.alice.id,
+      };
+      const path = `/api/v1/workflow-templates/${ids.template}/runs`;
+      const payload = args().payload;
+      for (const [body, key, code] of [
+        [
+          { payload: { ...payload, budget: 'LARGE' } },
+          crypto.randomUUID(),
+          'MCP_BUDGET_TIER_NOT_ALLOWED',
+        ],
+        [{ payload }, undefined, 'MCP_IDEMPOTENCY_KEY_REQUIRED'],
+        [
+          { callback: { url: 'https://example.com/callback' }, payload },
+          crypto.randomUUID(),
+          'MCP_CALLBACK_NOT_ALLOWED',
+        ],
+      ] as const) {
+        const result = await bridge.post(app, caller, path, { body, idempotencyKey: key });
+        expect(result.body).toMatchObject({ error: { code } });
+      }
+      expect(started).toHaveLength(0);
+      await settingsOn({ 'mcp.writeToolsEnabled': false });
+      const ordinary = await app.inject({
+        headers: {
+          authorization: `Bearer ${app.auth.signAccessToken({ role: 'ENGINEER', sub: people.alice.id })}`,
+        },
+        method: 'POST',
+        payload: { payload: { ...payload, budget: 'LARGE' } },
+        url: path,
+      });
+      expect(ordinary.statusCode, ordinary.body).toBe(201);
+      expect(started).toHaveLength(1);
+    });
+
+    it('refuses inaccessible templates and invalid declared input without leaking details', async () => {
+      await enable();
+      const denied = await callTool(people.erin.token, 'start_template_run', args());
+      expect(denied.result.content[0].text).toBe('Template not found or not launchable.');
+      await runUnscoped('test fixture: declared template input', ['WorkflowTemplate'], () =>
+        prisma.workflowTemplate.update({
+          data: {
+            inputSchema: {
+              properties: { topic: { type: 'string' } },
+              required: ['topic'],
+              type: 'object',
+            },
+          },
+          where: { id: ids.template },
+        })
+      );
+      try {
+        const invalid = await launch();
+        expect(invalid.result.isError).toBe(true);
+        expect(JSON.stringify(invalid.result)).not.toContain('topic');
+      } finally {
+        await runUnscoped('test fixture: restore template input', ['WorkflowTemplate'], () =>
+          prisma.workflowTemplate.update({
+            data: { inputSchema: { properties: {}, type: 'object' } },
+            where: { id: ids.template },
+          })
+        );
+      }
+      expect(started).toHaveLength(0);
     });
   });
 

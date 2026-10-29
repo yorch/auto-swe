@@ -13,6 +13,7 @@ const cases: Array<{
   {
     empty: {
       byRepo: [],
+      byTeam: [],
       byTemplate: [],
       costPerMergedPr: null,
       medianTimeToMergeMs: null,
@@ -26,6 +27,7 @@ const cases: Array<{
     expected: 'By template',
     populated: {
       byRepo: [],
+      byTeam: [{ runsStarted: 2, spendUsd: 8, teamId: 'team-1', teamName: 'Platform' }],
       byTemplate: [{ runsStarted: 2, spendUsd: 8, templateId: 't1', templateName: 'Ticket to PR' }],
       costPerMergedPr: 4,
       medianTimeToMergeMs: 3_600_000,
@@ -112,6 +114,7 @@ const cases: Array<{
       autonomy: { byEvent: {}, byRiskClass: {} },
       byApprover: [],
       byKind: {},
+      byVia: {},
       medianWaitMs: null,
       oldestPendingAgeMs: null,
       p95WaitMs: null,
@@ -121,8 +124,17 @@ const cases: Array<{
     expected: 'By approver',
     populated: {
       autonomy: { byEvent: { approve: 1 }, byRiskClass: { low: 1 } },
-      byApprover: [{ medianWaitMs: 3_600_000, name: 'Ada', resolved: 1 }],
+      byApprover: [
+        {
+          automated: 1,
+          interactive: 1,
+          medianWaitMs: 3_600_000,
+          name: 'Ada',
+          resolved: 2,
+        },
+      ],
       byKind: { PR: { RESOLVED: 1 } },
+      byVia: { api_token: 1, web: 1 },
       medianWaitMs: 3_600_000,
       oldestPendingAgeMs: 86_400_000,
       p95WaitMs: 3_600_000,
@@ -163,4 +175,62 @@ it('keeps the quality report populated when non-verdict rows exist', () => {
   );
 
   expect(screen.getByRole('region', { name: 'Quality report' })).toBeTruthy();
+});
+
+it('renders team delivery and rollup freshness details', () => {
+  render(
+    <ReportTabPanel
+      data={{
+        byRepo: [],
+        byTeam: [{ runsStarted: 2, spendUsd: 8, teamId: 'team-1', teamName: 'Platform' }],
+        byTemplate: [],
+        costPerMergedPr: null,
+        liveDays: 4,
+        medianTimeToMergeMs: null,
+        prsCiPassed: 0,
+        prsMerged: 0,
+        rollupDays: 26,
+        runsStarted: 2,
+        runsSucceeded: 1,
+        runsWithPr: 1,
+        spendUsd: 8,
+      }}
+      tab="delivery"
+    />
+  );
+
+  expect(screen.getByText('Platform: 2 runs · $8.00 spend')).toBeTruthy();
+  expect(screen.getByText(/Duration and merge percentiles are approximate/)).toBeTruthy();
+  expect(screen.getByText(/26 days use daily rollups; 4 days use live data/)).toBeTruthy();
+});
+
+it('renders HITL resolution channels and approver interaction counts', () => {
+  render(
+    <ReportTabPanel
+      data={{
+        autonomy: { byEvent: {}, byRiskClass: {} },
+        byApprover: [
+          {
+            automated: 2,
+            interactive: 1,
+            medianWaitMs: 1000,
+            name: 'Ada',
+            resolved: 3,
+          },
+        ],
+        byKind: {},
+        byVia: { api_token: 2, web: 1 },
+        medianWaitMs: 1000,
+        oldestPendingAgeMs: null,
+        p95WaitMs: 1000,
+        pendingNow: 0,
+        timedOut: 0,
+      }}
+      tab="hitl"
+    />
+  );
+
+  expect(screen.getByText('By resolution channel')).toBeTruthy();
+  expect(screen.getByText(/api_token: 2/)).toBeTruthy();
+  expect(screen.getByText(/Ada: 3 resolved · 1 interactive · 2 automated/)).toBeTruthy();
 });

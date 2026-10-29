@@ -1,4 +1,4 @@
-import type { CodeResult } from '@auto-swe/shared/types/workflow';
+import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const sessionMock = vi.fn(async (..._args: unknown[]) => ({}) as CodeResult);
@@ -27,7 +27,7 @@ const previous = {
 type SessionInput = {
   lessonQuery: string;
   startEvent?: { name: string; outputJson: { logTail: string; activityId?: string } };
-  notes: (t: { passed: boolean }) => string;
+  notes: (t: Partial<TestRunResult>) => string;
   userPayload: { reviewFindings: unknown };
 };
 const sessionInput = () => sessionMock.mock.calls[0]?.[0] as SessionInput;
@@ -49,6 +49,14 @@ describe('executeReviewFixImplementation', () => {
     expect(input.lessonQuery).toBe('needs tests');
     // Building the notes threw on the array, after the fix had already been pushed.
     expect(input.notes({ passed: true })).toContain('1 findings addressed');
+  });
+
+  it('words a result with no tests read as not run, and a failure as failing', async () => {
+    await executeReviewFixImplementation('a', previous);
+    const { notes } = sessionInput();
+    expect(notes({ failing: 0, passed: false, total: 0 })).toContain('Tests not run.');
+    expect(notes({ failing: 1, passed: false, total: 0 })).toContain('Tests failing.');
+    expect(notes({ passed: true })).toContain('Tests passing.');
   });
 
   it('passes a review network summary through unchanged', async () => {

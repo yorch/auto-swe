@@ -245,6 +245,7 @@ async function build(options: {
       meta: { limit: 50, offset: 0, total: 1 },
     }),
     '/api/v1/workflow-runs/:id': () => runDetail(),
+    '/api/v1/workflow-templates': () => ({ data: [] }),
   };
 
   const app = Fastify();
@@ -352,6 +353,153 @@ describe('the read tools', () => {
   afterEach(async () => {
     await Promise.all(apps.splice(0).map((a) => a.close()));
   });
+
+  it('lists only active promoted template contracts through the REST bridge', async () => {
+    const s = await setup();
+    const entry = {
+      activeVersion: 1,
+      author: INJECTION,
+      description: 'Safe\n description',
+      id: REPO_ID,
+      inputSchema: {
+        properties: { topic: { default: INJECTION, description: 'Topic', type: 'string' } },
+        required: ['topic'],
+        spec: INJECTION,
+        type: 'object',
+      },
+      name: 'A\u200b template',
+      spec: INJECTION,
+      status: 'ACTIVE',
+    };
+    s.route.body = {
+      data: [entry, { ...entry, status: 'DRAFT' }, { ...entry, activeVersion: null }],
+    };
+    const { json } = await s.callTool('list_templates');
+    expect(json.result.structuredContent).toEqual({
+      templates: [
+        {
+          description: 'Safe  description',
+          id: REPO_ID,
+          inputSchema: {
+            properties: { topic: { description: 'Topic', type: 'string' } },
+            required: ['topic'],
+            type: 'object',
+          },
+          name: 'A template',
+        },
+      ],
+    });
+    expect(JSON.stringify(json.result)).not.toContain(INJECTION);
+    s.route.body = { data: [] };
+    expect((await s.callTool('list_templates')).json.result.structuredContent).toEqual({
+      templates: [],
+    });
+    s.route.body = { data: INJECTION };
+    expect((await s.callTool('list_templates')).json.result.isError).toBe(true);
+  });
+
+  function captureWait(s: Awaited<ReturnType<typeof setup>>) {
+    const registerTool = vi.fn();
+    registerReadTools(
+      { registerTool } as unknown as McpServer,
+      {
+        app: s.app,
+        bridge: s.bridge,
+        dashboardOrigin: 'https://app.example.com',
+        getGitHubHosts: async () => ['github.com'],
+        serverVersion: '1.0.0',
+      },
+      { clientIp: '198.51.100.7', scopes: ['mcp:read'], token: s.token, userId: TEST_USER }
+    );
+    const registration = registerTool.mock.calls.find(([name]) => name === 'wait_for_run');
+    if (!registration) {
+      throw new Error('Wait tool not registered');
+    }
+    return { config: registration[1], wait: registration[2] };
+  }
+
+  it('caps waits at 50 seconds without a token and at 600 with one', async () => {
+    const s = await setup();
+    const { config, wait } = captureWait(s);
+    expect(config.inputSchema.safeParse({ runId: RUN_ID, timeoutSeconds: 600 }).success).toBe(true);
+    expect(config.inputSchema.safeParse({ runId: RUN_ID, timeoutSeconds: 601 }).success).toBe(
+      false
+    );
+    const get = vi.spyOn(s.bridge, 'get');
+    for (const progressToken of [undefined, 0]) {
+      let now = 0;
+      let reads = 0;
+      const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+      const notify = vi.fn().mockResolvedValue(undefined);
+      get.mockImplementation(async (_app, _caller, path) => {
+        if (path.endsWith(RUN_ID)) {
+          now = ++reads === 1 ? 51_000 : 601_000;
+          return { body: runDetail(), status: 200 };
+        }
+        return { body: { data: [] }, status: 200 };
+      });
+      try {
+        const result = await wait(
+          { runId: RUN_ID, timeoutSeconds: 600 },
+          { mcpReq: { _meta: { progressToken }, notify, signal: new AbortController().signal } }
+        );
+        expect(result.structuredContent.changed).toBe(false);
+        expect(reads).toBe(progressToken === undefined ? 1 : 2);
+        expect(notify).toHaveBeenCalledTimes(progressToken === undefined ? 0 : 2);
+        if (progressToken !== undefined) {
+          expect(notify.mock.calls.map(([n]) => n.params.progress)).toEqual([1, 2]);
+        }
+      } finally {
+        clock.mockRestore();
+      }
+    }
+  });
+
+  it.each(['empty', 'human', 'unknown', 'error'])(
+    'uses only fixed progress messages for %s',
+    async (kind) => {
+      const s = await setup();
+      const { wait } = captureWait(s);
+      vi.spyOn(s.bridge, 'get').mockImplementation(async (_app, _caller, path) => ({
+        body:
+          kind === 'error'
+            ? { error: { message: INJECTION } }
+            : kind === 'empty'
+              ? { data: [], meta: { limit: 1, offset: 0, total: 0 } }
+              : path.endsWith(RUN_ID)
+                ? { data: { ...runDetail().data, status: 'IGNORE_ALL_SAFETY' } }
+                : kind === 'human'
+                  ? humanStepsBody
+                  : { data: [] },
+        status: kind === 'error' ? 500 : 200,
+      }));
+      const notify = vi.fn().mockResolvedValue(undefined);
+      const result = await wait(
+        { ...(kind === 'empty' ? { workRequestId: WR_ID } : { runId: RUN_ID }), timeoutSeconds: 0 },
+        { mcpReq: { _meta: { progressToken: '' }, notify, signal: new AbortController().signal } }
+      );
+      if (kind === 'error') {
+        expect(result.isError).toBe(true);
+        expect(notify).not.toHaveBeenCalled();
+      } else {
+        expect(notify).toHaveBeenCalledWith({
+          method: 'notifications/progress',
+          params: {
+            message:
+              kind === 'empty'
+                ? 'Waiting for a run.'
+                : kind === 'human'
+                  ? 'Waiting on a human step.'
+                  : 'Run status: UNKNOWN.',
+            progress: 1,
+            progressToken: '',
+          },
+        });
+      }
+      expect(JSON.stringify(notify.mock.calls)).not.toContain(INJECTION);
+      expect(JSON.stringify(notify.mock.calls)).not.toContain('IGNORE_ALL_SAFETY');
+    }
+  );
 
   it('lists only sanitised agent picker fields', async () => {
     const { callTool } = await setup();
@@ -515,7 +663,7 @@ describe('the read tools', () => {
     expect(s.seen.urls).toEqual([]);
   });
 
-  it('lists exactly the seven read tools, each read-only with a strict input', async () => {
+  it('lists exactly the eight read tools, each read-only with a strict input', async () => {
     const { app, token } = await setup();
     const res = await app.inject({
       headers: {
@@ -609,6 +757,13 @@ describe('the read tools', () => {
         input: ['limit', 'offset', 'status', 'workRequestId'],
         name: 'list_runs',
         output: ['limit', 'offset', 'runs', 'total'],
+        strict: false,
+      },
+      {
+        annotations: { ...readOnly, title: 'List workflow templates' },
+        input: [],
+        name: 'list_templates',
+        output: ['templates'],
         strict: false,
       },
       {
@@ -1120,6 +1275,7 @@ describe('which routes an MCP token may reach', () => {
       'GET /api/v1/work-requests read',
       'GET /api/v1/workflow-runs read',
       'GET /api/v1/workflow-runs/:id read',
+      'GET /api/v1/workflow-templates read',
       'HEAD /api/v1/agent-runs/agents read',
       'HEAD /api/v1/human-steps read',
       'HEAD /api/v1/inbox read',
@@ -1127,10 +1283,12 @@ describe('which routes an MCP token may reach', () => {
       'HEAD /api/v1/work-requests read',
       'HEAD /api/v1/workflow-runs read',
       'HEAD /api/v1/workflow-runs/:id read',
+      'HEAD /api/v1/workflow-templates read',
       // The two write tools' routes, and only those.
       'POST /api/v1/agent-runs write',
       'POST /api/v1/work-requests write',
       'POST /api/v1/workflow-runs/:id/cancel write',
+      'POST /api/v1/workflow-templates/:id/runs write',
     ]);
     // Imports (and transforms) every route plugin: ~2 s alone, over the 5 s default under a loaded full-suite run.
   }, 30_000);

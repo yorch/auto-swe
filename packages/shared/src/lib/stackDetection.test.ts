@@ -14,6 +14,7 @@ import {
   detectedTargetDir,
   detectStack,
   inDir,
+  PYTEST_NO_TESTS_STATUS,
   YARN_GATE_DEFAULTS,
 } from './stackDetection.js';
 
@@ -524,7 +525,7 @@ describe('composite gates for several components', () => {
 
   it('generates the documented shape', () => {
     expect(cmd(['a', 'go test ./...'], ['b', 'go test ./...'])).toBe(
-      'rc=0; ur=0; ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }; ' +
+      'rc=0; ur=0; ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ] || [ "$1" -eq 5 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }; ' +
         "echo; echo '== auto-swe component: a =='; (cd 'a' && go test ./...) 2>&1; ck $?; " +
         "echo; echo '== auto-swe component: b =='; (cd 'b' && go test ./...) 2>&1; ck $?; " +
         'if [ "$rc" -ne 0 ]; then exit $rc; fi; exit $ur'
@@ -668,8 +669,18 @@ describe('compositeCommand run in a real sh', () => {
   });
 
   it('reports the first real failure when several fail', () => {
-    expect(run([exits('a', 3), exits('b', 5)]).status).toBe(3);
-    expect(run([touch('a'), exits('b', 5), exits('c', 3)]).status).toBe(5);
+    expect(run([exits('a', 3), exits('b', 4)]).status).toBe(3);
+    expect(run([touch('a'), exits('b', 4), exits('c', 3)]).status).toBe(4);
+  });
+
+  it('treats pytest’s exit 5 (collected nothing) like 126 and 127, so it cannot hide a real failure', () => {
+    // A Python component with no tests before a Go component whose tests fail: the loop must keep
+    // going on the failure, not stop on "no tests found" (which #558's rule does for exit 5).
+    expect(run([exits('a', 5), exits('b', 1)]).status).toBe(1);
+    expect(run([exits('a', 1), exits('b', 5)]).status).toBe(1);
+    expect(run([exits('a', 5), touch('b')]).status).toBe(PYTEST_NO_TESTS_STATUS);
+    expect(run([exits('a', 127), exits('b', 5)]).status).toBe(5);
+    expect(run([exits('a', 5), exits('b', 127)]).status).toBe(127);
   });
 
   it('reports the last 126 or 127 when nothing really failed', () => {

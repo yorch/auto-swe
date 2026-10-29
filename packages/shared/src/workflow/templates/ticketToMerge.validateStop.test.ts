@@ -13,22 +13,32 @@ type ValidateOutcome =
  * a marker there, so a run that reaches it fails with that marker and a run that stops earlier
  * ends at a terminate node.
  */
-async function run(validate: ValidateOutcome, ticket: { available: boolean; text: string }) {
+async function run(
+  validate: ValidateOutcome,
+  ticket: { available: boolean; text: string; unavailableReason?: string }
+) {
   const steps: string[] = [];
+  const implementInputs: Record<string, unknown>[] = [];
   const dispatcher: Dispatcher = {
-    async dispatchStep({ step }) {
+    async dispatchStep({ step, inputs }) {
       steps.push(step);
       switch (step) {
         case 'updateDomainState':
           return {};
         case 'gatherTicketContext':
-          return { available: ticket.available, digested: ticket.available, text: ticket.text };
+          return {
+            available: ticket.available,
+            digested: ticket.available,
+            text: ticket.text,
+            unavailableReason: ticket.unavailableReason ?? '',
+          };
         case 'validateContext':
           if (validate === 'throws') {
             throw new Error('provider down');
           }
           return { contextSnapshotId: 'cs-1', ...validate };
         case 'executeImplementation':
+          implementInputs.push(inputs);
           throw new Error('REACHED_IMPLEMENT');
         default:
           throw new Error(`unexpected step ${step}`);
@@ -58,7 +68,7 @@ async function run(validate: ValidateOutcome, ticket: { available: boolean; text
       throw err;
     }
   );
-  return { ...outcome, steps };
+  return { ...outcome, implementInputs, steps };
 }
 
 const NO_TICKET = { available: false, text: '' };
@@ -82,6 +92,30 @@ describe('ticket-to-merge stops before implement when the request is not actiona
       message: expect.stringContaining('not actionable'),
     });
     expect(String(result?.result.message)).toContain('re-run');
+  });
+
+  it('says why the ticket could not be read when the stop follows a refused fetch', async () => {
+    const { result } = await run(
+      {
+        actionable: false,
+        ambiguities: ['only a URL'],
+        successCriteria: ['AMBIGUOUS: only a URL'],
+      },
+      { available: false, text: '', unavailableReason: 'forbidden' }
+    );
+    expect(result?.result).toMatchObject({ ticketUnavailableReason: 'forbidden' });
+  });
+
+  it('leaves that reason empty when no ticket fetch failed', async () => {
+    const { result } = await run(
+      {
+        actionable: false,
+        ambiguities: ['only a URL'],
+        successCriteria: ['AMBIGUOUS: only a URL'],
+      },
+      NO_TICKET
+    );
+    expect(result?.result).toMatchObject({ ticketUnavailableReason: '' });
   });
 
   it('implements when validate found a real criterion', async () => {
@@ -113,5 +147,21 @@ describe('ticket-to-merge stops before implement when the request is not actiona
   it('implements when validate predates the verdict field (an older activity result)', async () => {
     const { reachedImplement } = await run({ successCriteria: [] }, NO_TICKET);
     expect(reachedImplement).toBe(true);
+  });
+});
+
+describe('ticket-to-merge hands the success criteria to implement', () => {
+  it('binds the extracted list, ambiguity entries included, as the successCriteria input', async () => {
+    const successCriteria = ['GET /health returns 200', 'AMBIGUOUS: no auth policy stated'];
+    const { implementInputs } = await run(
+      { actionable: true, ambiguities: ['no auth policy stated'], successCriteria },
+      NO_TICKET
+    );
+    expect(implementInputs[0]).toMatchObject({ successCriteria });
+  });
+
+  it('binds an empty list when validate threw, which adds nothing to the prompt', async () => {
+    const { implementInputs } = await run('throws', NO_TICKET);
+    expect(implementInputs[0]).toMatchObject({ successCriteria: [] });
   });
 });

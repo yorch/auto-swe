@@ -95,7 +95,9 @@ describe('ConsentScreen', () => {
     render(withQuery(<ConsentScreen search={signed('mcp:read offline_access')} />));
 
     expect(
-      await screen.findByText(/see repositories, work requests, runs and pending approvals/i)
+      await screen.findByText(
+        /see repositories, work requests, agents, workflow templates, runs and pending approvals/i
+      )
     ).toBeTruthy();
     expect(screen.queryByRole('checkbox')).toBeNull();
     expect(screen.getByText(/stay connected for up to 14 days/i)).toBeTruthy();
@@ -108,6 +110,7 @@ describe('ConsentScreen', () => {
     const box = (await screen.findByRole('checkbox')) as HTMLInputElement;
     expect(box.checked).toBe(false);
     expect(screen.getByText(/appear as you/i)).toBeTruthy();
+    expect(screen.getByText(/Templates may push branches or open pull requests/i)).toBeTruthy();
   });
 
   it('hides write when the operator has not enabled it, and never sends it', async () => {

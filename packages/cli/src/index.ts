@@ -5,6 +5,7 @@ import { runAgentCommand } from './commands/agent.js';
 import { runBundleCommand } from './commands/bundle.js';
 import { runBundlesCommand } from './commands/bundles.js';
 import { runEvalsCommand } from './commands/evals.js';
+import { runMcpCommand } from './commands/mcp.js';
 import { runReposCommand } from './commands/repos.js';
 import { runRunsCommand } from './commands/runs.js';
 import { runSkillsCommand } from './commands/skills.js';
@@ -20,6 +21,10 @@ USAGE
   auto-swe <command> [subcommand] [args]
 
 COMMANDS
+  mcp login [--url <base>] [--write]  Authorize this headless client in a browser (no PAT needed)
+  mcp token|header [--url <base>]     Print an MCP token or Authorization JSON; refresh when needed
+  mcp logout [--url <base>]          Revoke the refresh token and remove saved MCP credentials
+
   run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
                                        Submit a work request and start a run on the default template
 
@@ -112,6 +117,9 @@ async function main(argv: string[]): Promise<number> {
   // before resolving credentials so it works offline.
   if (cmd === 'bundle') {
     return await runBundleCommand(rest);
+  }
+  if (cmd === 'mcp') {
+    return await runMcpCommand(rest);
   }
   let env: CliEnv;
   try {

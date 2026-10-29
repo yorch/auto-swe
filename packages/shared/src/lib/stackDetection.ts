@@ -294,12 +294,17 @@ export function compositeComponentCount(command: string): number {
   return command.split(`echo '${COMPONENT_MARKER_PREFIX}`).length - 1;
 }
 
+/** pytest's exit status when it collected no tests: the runner ran, and there was nothing to run. */
+export const PYTEST_NO_TESTS_STATUS = 5;
+
 /**
  * One `sh` command (dash, busybox ash and bash alike) that runs each part in its own directory
- * and fails if any part fails. A part that fails with a status other than 126 or 127 is a real
- * failure and the first one's status is the command's; 126 and 127 (not runnable) count only when
- * no part really failed, and then the last of them is. So a missing tool in one component cannot
- * hide another component's failing test from the loop. Every part runs, in the order given, under
+ * and fails if any part fails. A part that fails with a status other than 126, 127 or 5 is a real
+ * failure and the first one's status is the command's; 126 and 127 (not runnable) and 5 (pytest
+ * collected nothing: {@link PYTEST_NO_TESTS_STATUS}) count only when no part really failed, and
+ * then the last of them is. These are the statuses the TDD loop stops on rather than iterates
+ * on, so a missing tool or an untested Python component cannot hide another component's failing
+ * test from the loop. Every part runs, in the order given, under
  * a {@link componentMarker} line so the output says which directory a failure belongs to. Each
  * `cd` is in a subshell: a bare one would carry into the next part, and a missing directory is a
  * real failure. Each part's stderr is merged into its stdout, so a gate summary that shows only
@@ -309,7 +314,7 @@ export function compositeCommand(parts: ReadonlyArray<{ dir: string; command: st
   return [
     'rc=0',
     'ur=0',
-    'ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }',
+    'ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ] || [ "$1" -eq 5 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }',
     ...parts.map(
       // The bare `echo` ends a previous part's output that lacks a trailing newline, so the
       // marker is always a line of its own (the parser reads it line-anchored).

@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { SsrfBlockedError } from '../../guardedDispatcher.js';
+import { RedirectRefusedError } from '../../guardedFetch.js';
 import { GitHubIssuesProvider, parseGitHubTicketId } from './githubIssues.js';
 
 describe('parseGitHubTicketId', () => {
@@ -146,5 +148,103 @@ describe('GitHubIssuesProvider.searchIssues', () => {
     await expect(provider.searchIssues('x', { maxResults: 5 })).rejects.toThrow(
       'searchIssues is not supported by the GitHub Issues provider'
     );
+  });
+});
+
+describe('GitHubIssuesProvider.readIssue failure classes', () => {
+  const make = (respond: () => Promise<Response>) =>
+    new GitHubIssuesProvider({
+      apiToken: 't',
+      fetchImpl: vi.fn(async (..._args: unknown[]) => respond()) as unknown as typeof fetch,
+    });
+
+  it.each([
+    [401, 'unauthorized'],
+    [403, 'forbidden'],
+    [404, 'not_found'],
+    [429, 'rate_limited'],
+    [500, 'server_error'],
+    [422, 'rejected'],
+  ] as const)('maps HTTP %i to %s', async (status, failure) => {
+    const provider = make(async () => new Response('{"message":"SECRET"}', { status }));
+    const result = await provider.readIssue('acme/api#7');
+    expect(result).toEqual({ failure, issue: null });
+    expect(JSON.stringify(result)).not.toContain('SECRET');
+  });
+
+  it('tells an exhausted rate limit (403 with the header or retry-after) from a refusal', async () => {
+    const limited = make(
+      async () => new Response('{}', { headers: { 'x-ratelimit-remaining': '0' }, status: 403 })
+    );
+    expect((await limited.readIssue('acme/api#7')).failure).toBe('rate_limited');
+    const retry = make(
+      async () => new Response('{}', { headers: { 'retry-after': '60' }, status: 403 })
+    );
+    expect((await retry.readIssue('acme/api#7')).failure).toBe('rate_limited');
+    const left = make(
+      async () => new Response('{}', { headers: { 'x-ratelimit-remaining': '12' }, status: 403 })
+    );
+    expect((await left.readIssue('acme/api#7')).failure).toBe('forbidden');
+  });
+
+  it('maps a refused redirect to redirect and a guard refusal to refused, with no host kept', async () => {
+    const redirect = make(async () => {
+      throw new RedirectRefusedError('redirect to https://evil.example/x refused');
+    });
+    expect(await redirect.readIssue('acme/api#7')).toEqual({ failure: 'redirect', issue: null });
+    const blocked = make(async () => {
+      throw new SsrfBlockedError('10.0.0.5 internal.corp is refused');
+    });
+    const direct = await blocked.readIssue('acme/api#7');
+    expect(direct).toEqual({ failure: 'refused', issue: null });
+    expect(JSON.stringify(direct)).not.toMatch(/10\.0|internal/);
+    const carried = make(async () => {
+      throw new TypeError('fetch failed', { cause: new SsrfBlockedError('10.0.0.5') });
+    });
+    expect((await carried.readIssue('acme/api#7')).failure).toBe('refused');
+  });
+
+  it('calls a 200 with an unparseable body unknown, not a network failure', async () => {
+    const provider = make(async () => new Response('<html>nope', { status: 200 }));
+    expect(await provider.readIssue('acme/api#7')).toEqual({ failure: 'unknown', issue: null });
+  });
+
+  it('keeps no error text or URL when a failing fetch carries them', async () => {
+    const provider = make(async () => {
+      throw new TypeError('connect to https://api.github.com/secret-path token=SECRET failed');
+    });
+    const result = await provider.readIssue('acme/api#7');
+    expect(result).toEqual({ failure: 'network', issue: null });
+    expect(JSON.stringify(result)).not.toMatch(/SECRET|secret-path|github/);
+  });
+
+  it('maps an aborted-by-timeout request to timeout and another throw to network', async () => {
+    const timeout = make(async () => {
+      throw new DOMException('timed out', 'TimeoutError');
+    });
+    expect((await timeout.readIssue('acme/api#7')).failure).toBe('timeout');
+    const down = make(async () => {
+      throw new TypeError('fetch failed');
+    });
+    expect((await down.readIssue('acme/api#7')).failure).toBe('network');
+  });
+
+  it('calls an id that names no GitHub issue rejected, without a request', async () => {
+    const fetchImpl = vi.fn(async (..._args: unknown[]) => new Response('{}', { status: 200 }));
+    const provider = new GitHubIssuesProvider({
+      apiToken: 't',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    expect(await provider.readIssue('7')).toEqual({ failure: 'rejected', issue: null });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('reads an issue without a failure, and fetchIssue agrees', async () => {
+    const body = JSON.stringify({ body: 'text', number: 7, state: 'open', title: 'T' });
+    const provider = make(async () => new Response(body, { status: 200 }));
+    const result = await provider.readIssue('acme/api#7');
+    expect(result.failure).toBeUndefined();
+    expect(result.issue?.id).toBe('acme/api#7');
+    expect((await provider.fetchIssue('acme/api#7'))?.id).toBe('acme/api#7');
   });
 });
