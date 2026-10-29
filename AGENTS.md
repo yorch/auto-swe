@@ -143,6 +143,7 @@ Top-level files that matter:
 | In-app assistant conversation workflow ID | `assistant-<conversationId>` | `assistant-0b1c2d3e-…` |
 | CI-failure automation workflow ID / branch | `ci-<automation8>-<runId12>-<attempt>` / `<BRANCH_PREFIX>/ci-<runId>-<attempt>` | `ci-1a2b3c4d-123456789012-1` / `auto/ci-123456789012-1` |
 | PR-feedback automation workflow ID / branch | `prfb-<automation8>-<pr>-<eventId>` / `<BRANCH_PREFIX>/prfb-<pr>-<eventId>` | `prfb-1a2b3c4d-9-777` / `auto/prfb-9-777` |
+| Jira status-change automation workflow ID / branch | `jirapoll-<automation8>-<ticket>-<status8>` / `<BRANCH_PREFIX>/<ticketId>-<status8>` (`<status8>`: 8 hex digits of the lower-cased status) | `jirapoll-1a2b3c4d-pay-12-3fa2c1d9` / `auto/PAY-12-3fa2c1d9` |
 | Docker workspace container    | `workspace-<random-hex>`          | `workspace-a1b2c3d4`                      |
 | Prisma table mapping          | `snake_case` via `@@map`          | `active_workflows`                        |
 | Team slug                     | `lowercase-kebab-case`            | `payments`, `platform-eng`                |
