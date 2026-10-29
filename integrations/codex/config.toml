@@ -2,4 +2,4 @@
 # OAuth: codex mcp login auto-swe --scopes mcp:read,mcp:write,offline_access
 [mcp_servers.auto-swe]
 url = "https://auto-swe.example.com/api/v1/mcp"
-tool_timeout_sec = 60
+tool_timeout_sec = 660

@@ -101,7 +101,7 @@ is refused, not ignored.
 |---|---|---|
 | `list_templates` | `GET /api/v1/workflow-templates` | Only visible ACTIVE, promoted, non-system templates: `id`, sanitised `name`, `description` (500 code points), and reduced `inputSchema`. The schema retains `type: object`, property names/types, `required`, enum values, UUID format, array item types/enums and descriptions (280 code points); no defaults, prompts, nodes, spec or author. Unsupported/absent schemas return null, empty contracts retain empty properties. Contracts are bounded to 100 fields and 50 enum values; unsafe or overlong keys/enums make the schema null rather than changing payload semantics. Repository access and budget are checked at launch. |
 | `list_agents` | `GET /api/v1/agent-runs/agents` | Launchable agents: `key`, `version`, `name`, and a sanitised description clipped to 300 code points. Optional `repoId` resolves organization overrides as the launch does. No prompts, models, skills or tools. |
-| `wait_for_run` | Polls `GET /api/v1/workflow-runs`, `GET /api/v1/workflow-runs/:id`, and `GET /api/v1/human-steps?runId=…` | Exactly one of `runId` or `workRequestId`, and `timeoutSeconds` (default 25, maximum 50). Returns the `get_run` fields plus `changed` and `pendingHumanStep` (`id`, sanitised `title`, `inboxUrl`, or null). Returns on a status change, terminal status, pending human step, or timeout. When no run row exists yet, waits for one; a timeout without a row returns only `changed: false` and `pendingHumanStep: null`. Honors request cancellation. |
+| `wait_for_run` | Polls `GET /api/v1/workflow-runs`, `GET /api/v1/workflow-runs/:id`, and `GET /api/v1/human-steps?runId=…` | Exactly one of `runId` or `workRequestId`, and `timeoutSeconds` (default 25, schema maximum 600). Without request `_meta.progressToken`, clamps the timeout to 50 seconds. With a token, allows 600 seconds and emits progress per poll. Returns the `get_run` fields plus `changed` and `pendingHumanStep` (`id`, sanitised `title`, `inboxUrl`, or null). Returns on a status change, terminal status, pending human step, or timeout. When no run row exists yet, waits for one; a timeout without a row returns only `changed: false` and `pendingHumanStep: null`. Honors request cancellation. |
 | `list_repositories` | `GET /api/v1/repositories` | `id`, `organizationName`, `repoName`, `defaultBranch`, `isActive`, `team` (`id`, `name`, `slug`). Git repositories only. Inputs: `limit` (default 50, max 100), `offset`. |
 | `list_work_requests` | `GET /api/v1/work-requests` | `id`, `externalTicketId`, `createdAt`, `isMine`, and the work request's workflows as `id` and `status`. No description and no requester's name. Inputs: `limit`, `offset`, `ticket` (substring of the ticket id). |
 | `list_runs` | `GET /api/v1/workflow-runs` | `id`, `status`, `templateName`, `startedAt`, `endedAt`, `costUsdAccrued`, `workRequest` (`id`, `externalTicketId`). Inputs: `limit`, `offset`, `status`, `workRequestId`. |
@@ -263,13 +263,29 @@ requests, and there is no session id. It serves two protocol eras from one defin
 - A `POST` whose body is not `application/json` is answered 415; a body that is not valid JSON, 400.
 - `GET` and `DELETE`, the 2025-era session operations, are answered 405 once the caller is authenticated.
 - `subscriptions/listen` is refused (JSON-RPC error `-32603`, not a stream). The server advertises no
-  subscription capability and holds no connection open for a client.
+  subscription capability and holds no persistent subscription connection open for a client.
 - A notification is answered 202 with no body.
 
 The response mode is the SDK's `auto`, not `json`: `json` drops any mid-call message (progress, logging)
 without a word and warns at boot that it does, while `auto` answers a plain JSON body and only streams if
-a handler emits one. The tools emit none, so clients see JSON either way, and a later tool that reports
-progress will work instead of losing it.
+a handler emits one. `wait_for_run` emits `notifications/progress` when the request's `_meta` contains
+a `progressToken` (not a tool argument). Its response is then SSE: progress notifications followed by
+the final tool result. Without a token, modern clients receive JSON as before. Each successful poll,
+including the last, increments `progress` by one; it counts polls, not percent completion, and has no
+`total`. Messages are fixed phrases: `Waiting for a run.`, `Waiting on a human step.`, or `Run status:`
+with one of RUNNING, SUCCESS, FAILED, CANCELLED, TIMED_OUT, SKIPPED, UNKNOWN. No titles, node names,
+errors or other run-derived free text enter notifications. Progress does not change the three-second
+poll interval, rate costs, early-return conditions or human approval boundary. An HTTP disconnect
+aborts the wait. Subscriptions remain refused.
+
+The gateway uses Fastify's disabled request, connection and handler timeout defaults and the MCP
+route adds no deadline. The SDK's default request timeout applies to outgoing requests, not this
+incoming tool handler. Clients and external reverse proxies can still cut a long call: configure
+their total/read deadlines above 600 seconds with overhead headroom (for example 660), preserve SSE
+streaming without buffering, and allow the authentication and initial reads time to produce the
+first notification. Periodic progress is not a guarantee that a client's timeout resets. If these
+limits cannot be configured, keep the default short waits and repeat them. A wait deadline is checked
+between REST reads; slow reads can add overhead.
 
 The transport is `@modelcontextprotocol/server` 2.0.0, mounted as a Fastify route. The route builds a web
 `Request` from the body Fastify has already parsed, calls the SDK's `fetch` handler, and streams the

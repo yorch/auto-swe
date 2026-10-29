@@ -15,7 +15,12 @@ Below, server-qualified tool references are logical notation; use the actual dis
    random UUID per distinct task; save the exact arguments and key. Reuse that key only to retry
    the identical call, never for changed prompts, agents, delivery, branches or repositories.
 3. Save `workRequestId` from `started` or `already_submitted`. Loop `auto-swe.wait_for_run` with
-   exactly one of `workRequestId` or `runId` and `timeoutSeconds: 25`. Keep waiting if no run row
+   exactly one of `workRequestId` or `runId` and `timeoutSeconds: 25`. If the client attaches request
+   `_meta.progressToken` (not a tool argument), it can request up to 600 seconds with per-poll SSE
+   progress; otherwise the server clamps to 50 seconds. Use `tool_timeout_sec = 660` for headroom;
+   do not assume progress resets Codex's timeout. Keep short waits when proxy/client SSE support or
+   deadlines are uncertain. Progress counts polls, not completion, and subscriptions are refused.
+   Keep waiting if no run row
    exists yet. Stop on `SUCCESS`, `FAILED`, `CANCELLED`, `TIMED_OUT`, or a pending human step;
    a status change alone is not completion and a wait timeout is not run failure. Avoid concurrent
    wait loops and tight retries; polling consumes rate quota.

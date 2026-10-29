@@ -34,7 +34,11 @@ boundary instead of uploading secrets or silently substituting a different repos
    repository, delivery or base branch under an existing key.
 3. Save `workRequestId` from either `started` or `already_submitted`. Call
    `auto-swe.wait_for_run` with exactly one of `workRequestId` or `runId`, normally using
-   `timeoutSeconds: 25`. A missing run row immediately after submission is normal. Repeat waits
+   `timeoutSeconds: 25`. Only if the client attaches request `_meta.progressToken`, waits can use up
+   to 600 seconds and receive per-poll progress; otherwise the server clamps to 50 seconds. Metadata
+   is not a tool argument. Progress counts polls, not completion, and is not an event subscription.
+   Keep short waits if client/proxy deadlines or SSE support are uncertain; do not assume progress
+   resets timeouts. A missing run row immediately after submission is normal. Repeat waits
    until status is `SUCCESS`, `FAILED`, `CANCELLED` or `TIMED_OUT`, or a `pendingHumanStep`
    appears. `changed: true` alone is not completion; `changed: false` is a wait timeout, not a
    failed run. Do not run parallel wait loops or tight polls: each inner REST read uses rate quota.
