@@ -543,6 +543,19 @@ older report windows use live reads and remain subject to the live-row cap.
 
 ---
 
+### Workflow-run dirty-day source indexes (`cad3fc2644fd6df8695141de668ce29b5e2fb3d4`)
+
+**Affected.** Deployments applying this commit or a descendant that have not yet applied
+`20261029201256_rollup_dirty_source_timestamps`.
+
+**Expected cost.** The migration creates ordinary, transactional indexes on `workflow_runs`,
+`pull_requests`, `workflow_steps`, and `agent_traces`. PostgreSQL holds write-blocking locks on
+each table while its index is built. On large installations, schedule the migration during a
+maintenance window when workflow, step, and trace writes can pause for the index-build duration.
+
+**Actions.** No manual SQL is required. The standard migration deploy applies the indexes; the
+worker uses them to find changed source rows for frozen rollup days.
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

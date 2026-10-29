@@ -461,8 +461,12 @@ export async function fetchChannelHistory(
  * {@link resolveSlackConfig} (never `process.env`) and throws on a missing token
  * or a `{ok:false}` response so the calling activity can surface it.
  */
-export async function postSlackChannelMessage(slackChannelId: string, text: string): Promise<void> {
-  await postChannelMessage('postSlackChannelMessage', slackChannelId, text, undefined);
+export async function postSlackChannelMessage(
+  slackChannelId: string,
+  text: string,
+  blocks?: unknown[]
+): Promise<void> {
+  await postChannelMessage('postSlackChannelMessage', slackChannelId, text, undefined, blocks);
 }
 
 /**
@@ -476,7 +480,8 @@ async function postChannelMessage(
   label: string,
   slackChannelId: string,
   text: string,
-  threadTs: string | undefined
+  threadTs: string | undefined,
+  blocks?: unknown[]
 ): Promise<{ ts: string | undefined }> {
   const token = await resolveSlackBotTokenForSlackChannel(slackChannelId);
   if (!token) {
@@ -486,6 +491,9 @@ async function postChannelMessage(
   const body: Record<string, unknown> = { channel: slackChannelId, text };
   if (threadTs) {
     body.thread_ts = threadTs;
+  }
+  if (blocks?.length) {
+    body.blocks = blocks;
   }
 
   // AbortController guards against a hung Slack connection holding up the activity.

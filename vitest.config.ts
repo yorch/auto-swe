@@ -88,6 +88,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/crypto.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/reportDigestUnsubscribe',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/reportDigestUnsubscribe.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/shellAudit',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/shellAudit.ts'),
       },

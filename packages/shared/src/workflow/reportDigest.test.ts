@@ -98,6 +98,17 @@ describe('buildReportDigest', () => {
     expect(digest.text).toContain('Month-to-date spend: $20.00');
     expect(digest.text).toContain('Projected monthly spend: $40.00');
     expect(digest.html).toContain('https://example.test/admin/reports');
+    const htmlTags = [...digest.html.matchAll(/<\/?([a-z][a-z0-9]*)\b/gi)].map((match) =>
+      (match[1] ?? '').toLowerCase()
+    );
+    expect(htmlTags.every((tag) => ['a', 'table', 'th', 'tr', 'td'].includes(tag))).toBe(true);
+    expect(digest.html).toContain('style="');
+    expect(digest.html).not.toMatch(/<style\b|class=/i);
+    expect(digest.html).toContain('color:#18794e');
+    expect(digest.html).toContain('color:#b42318');
+    const blockTypes = digest.slackBlocks.map((block) => (block as { type: string }).type);
+    expect(blockTypes).toEqual(['header', 'section', 'section', 'context', 'actions']);
+    expect(digest.slackMrkdwn).toContain('Open reports: https://example.test/admin/reports');
   });
 
   it('handles an empty week without inventing rates or deltas', () => {

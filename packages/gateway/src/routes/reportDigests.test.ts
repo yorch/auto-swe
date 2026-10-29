@@ -3,6 +3,15 @@ import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod
 import { describe, expect, it, vi } from 'vitest';
 import { reportDigestRoutes } from './reportDigests.js';
 
+vi.mock('@auto-swe/shared/lib/reportDigestUnsubscribe', () => ({
+  reportDigestUnsubscribeSubscriptionId: (token: string) =>
+    token === 'valid-token' ? '66666666-6666-4666-8666-666666666666' : null,
+  verifyReportDigestUnsubscribeToken: (token: string, id: string, email: string) =>
+    token === 'valid-token' &&
+    id === '66666666-6666-4666-8666-666666666666' &&
+    email.toLowerCase() === 'digest@example.test',
+}));
+
 const ORG_A = '11111111-1111-4111-8111-111111111111';
 const ORG_B = '22222222-2222-4222-8222-222222222222';
 const TEAM_A = '33333333-3333-4333-8333-333333333333';
@@ -62,6 +71,61 @@ async function buildApp(role: string, membership: { orgIds?: string[]; teamIds?:
 }
 
 describe('report digest routes', () => {
+  it('publicly unsubscribes only the recipient authenticated by the HMAC token', async () => {
+    const { app, prisma } = await buildApp('VIEWER');
+    prisma.reportDigestSubscription.findUnique.mockResolvedValue({
+      emailRecipients: ['digest@example.test'],
+      id: SUBSCRIPTION,
+      optedOutEmails: [],
+    });
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/report-digests/unsubscribe?token=valid-token',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('You have been unsubscribed');
+    expect(prisma.reportDigestSubscription.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { optedOutEmails: { push: 'digest@example.test' } },
+        where: expect.objectContaining({ id: SUBSCRIPTION }),
+      })
+    );
+    await app.close();
+  });
+
+  it('allows a manager to re-add an opted-out recipient', async () => {
+    const { app, prisma } = await buildApp('ADMIN');
+    prisma.reportDigestSubscription.findUnique.mockResolvedValue({
+      emailRecipients: [],
+      id: SUBSCRIPTION,
+      optedOutEmails: ['digest@example.test'],
+      orgId: ORG_A,
+      scope: 'ORGANIZATION',
+      slackChannelId: null,
+      teamId: null,
+    });
+
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: { emailRecipients: ['digest@example.test'] },
+      url: `/api/v1/report-digests/${SUBSCRIPTION}`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(prisma.reportDigestSubscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          emailRecipients: ['digest@example.test'],
+          optedOutEmails: { set: [] },
+        }),
+      })
+    );
+    await app.close();
+  });
+
   it('allows an org admin to create an org digest only for their own organization', async () => {
     const { app, prisma } = await buildApp('ENGINEER', { orgIds: [ORG_A] });
     const own = await app.inject({

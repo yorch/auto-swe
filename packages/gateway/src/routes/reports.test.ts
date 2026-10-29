@@ -141,7 +141,7 @@ describe('report routes', () => {
     });
     expect(hitl.statusCode, hitl.body).toBe(200);
     for (const [args] of prisma.workflowHumanStep.findMany.mock.calls) {
-      expect(args.where.run.AND).toContainEqual(
+      expect(args.where.AND[1].run.AND).toContainEqual(
         expect.objectContaining({
           OR: expect.arrayContaining([{ workRequest: { requestedById: 'user-1' } }]),
         })
@@ -169,7 +169,7 @@ describe('report routes', () => {
     });
     expect(memberHitlResponse.statusCode).toBe(200);
     expect(
-      memberApp.prisma.workflowHumanStep.findMany.mock.calls[0]?.[0].where.run.AND
+      memberApp.prisma.workflowHumanStep.findMany.mock.calls[0]?.[0].where.AND[1].run.AND
     ).toContainEqual({
       attributedTeamId: teamId,
     });
@@ -225,7 +225,7 @@ describe('report routes', () => {
       OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
     });
     for (const [args] of prisma.workflowHumanStep.findMany.mock.calls) {
-      expect(args.where.run.AND).toContainEqual(
+      expect(args.where.AND[1].run.AND).toContainEqual(
         expect.objectContaining({
           OR: expect.arrayContaining([{ workRequest: { requestedById: 'user-1' } }]),
         })
@@ -388,6 +388,97 @@ describe('report routes', () => {
       tracesTruncated: true,
       truncated: true,
     });
+  });
+
+  it('cohorts live HITL steps by requestedAt and preserves exact live wait percentiles', async () => {
+    const { app, prisma } = await buildApp();
+    const requestedAt = new Date('2026-10-01T12:00:00.000Z');
+    prisma.workflowHumanStep.findMany.mockResolvedValueOnce([
+      {
+        kind: 'APPROVAL',
+        requestedAt,
+        resolvedAt: new Date(requestedAt.getTime() + 1),
+        resolvedBy: null,
+        resolvedByUser: { name: null },
+        resolvedVia: 'web',
+        status: 'RESOLVED',
+      },
+      {
+        kind: 'APPROVAL',
+        requestedAt,
+        resolvedAt: new Date(requestedAt.getTime() + 9),
+        resolvedBy: null,
+        resolvedByUser: { name: null },
+        resolvedVia: 'web',
+        status: 'RESOLVED',
+      },
+    ]);
+
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/reports/hitl?since=2026-10-01&until=2026-10-01',
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    const query = prisma.workflowHumanStep.findMany.mock.calls[0]?.[0];
+    expect(query?.where.AND[0].requestedAt).toMatchObject({
+      gte: new Date('2026-10-01T00:00:00.000Z'),
+      lt: new Date('2026-10-02T00:00:00.000Z'),
+    });
+    expect(response.json().data).toMatchObject({
+      medianWaitMs: 5,
+      p95WaitMs: 9,
+    });
+  });
+
+  it('selects live reviewer traces only from the review network node', async () => {
+    const { app, prisma } = await buildApp();
+    const startedAt = new Date('2026-10-01T12:00:00.000Z');
+    prisma.workflowRun.findMany.mockResolvedValue([
+      {
+        attributedOrgId: 'org-1',
+        attributedTeamId: 'team-1',
+        costUsdAccrued: 1,
+        endedAt: new Date(startedAt.getTime() + 60_000),
+        estimatedHumanTimeSaved: null,
+        hadHumanStep: false,
+        id: 'run-1',
+        outcomeDomain: null,
+        outcomeType: null,
+        startedAt,
+        status: 'SUCCESS',
+        template: { name: 'Template' },
+        templateId: 'template-1',
+        templateVersion: 1,
+        wasAutonomous: true,
+        workflowId: 'workflow-1',
+      },
+    ]);
+    prisma.agentTrace.findMany.mockResolvedValue([
+      {
+        error: null,
+        outputJson: {
+          approved: true,
+          findings: [],
+          reviewer: 'SECURITY',
+          severity: 'INFO',
+        },
+        runId: 'run-1',
+      },
+    ]);
+
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/reports/quality?since=2026-10-01&until=2026-10-01',
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(prisma.agentTrace.findMany.mock.calls.length).toBeGreaterThan(0);
+    for (const [args] of prisma.agentTrace.findMany.mock.calls) {
+      expect(args.where).toMatchObject({ nodeId: 'runReviewNetwork' });
+    }
   });
 
   it('reports automation and HITL source truncation flags', async () => {

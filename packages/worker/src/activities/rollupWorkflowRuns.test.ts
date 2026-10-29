@@ -9,7 +9,13 @@ const mocks = vi.hoisted(() => ({
   backfillDays: 0,
   built: [] as Array<{ builtAt: Date | null; day: Date }>,
   createManySizes: [] as number[],
-  dirtyEndedRuns: [] as Array<{ endedAt: Date; startedAt: Date }>,
+  detectionPageSizes: [] as number[],
+  dirtyEndedRuns: [] as Array<{
+    endedAt: Date;
+    id?: string;
+    startedAt: Date;
+    updatedAt?: Date;
+  }>,
   dirtyFixSteps: [] as Array<{ run: { startedAt: Date } }>,
   dirtyHumanSteps: [] as Array<{ requestedAt: Date }>,
   dirtyPullRequests: [] as Array<{
@@ -22,6 +28,7 @@ const mocks = vi.hoisted(() => ({
   failCreateMany: false,
   lastSuccessfulStartAt: null as Date | null,
   oldest: null as Date | null,
+  pendingDirtyDays: [] as Date[],
   present: [] as Date[],
   recomputeDays: 2,
   runsPerDay: 0,
@@ -78,17 +85,30 @@ vi.mock('@auto-swe/shared/db', () => {
       rollupSweepState: {
         findUnique: async () =>
           mocks.lastSuccessfulStartAt
-            ? { lastSuccessfulStartAt: mocks.lastSuccessfulStartAt }
+            ? {
+                lastSuccessfulStartAt: mocks.lastSuccessfulStartAt,
+                pendingDirtyDays: mocks.pendingDirtyDays,
+              }
             : null,
-        updateMany: async ({ data }: { data: { lastSuccessfulStartAt: Date } }) => {
+        updateMany: async ({
+          data,
+        }: {
+          data: { lastSuccessfulStartAt: Date; pendingDirtyDays: Date[] };
+        }) => {
           if (data.lastSuccessfulStartAt) {
             mocks.lastSuccessfulStartAt = data.lastSuccessfulStartAt;
             mocks.stateUpdates.push(data.lastSuccessfulStartAt);
           }
+          mocks.pendingDirtyDays = data.pendingDirtyDays;
           return { count: 1 };
         },
-        upsert: async ({ create }: { create: { lastSuccessfulStartAt: Date; name: string } }) => {
+        upsert: async ({
+          create,
+        }: {
+          create: { lastSuccessfulStartAt: Date; name: string; pendingDirtyDays: Date[] };
+        }) => {
           mocks.lastSuccessfulStartAt ??= create.lastSuccessfulStartAt;
+          mocks.pendingDirtyDays = create.pendingDirtyDays;
           return { name: create.name };
         },
       },
@@ -99,8 +119,14 @@ vi.mock('@auto-swe/shared/db', () => {
       workflowRun: {
         aggregate: async () => ({ _min: { startedAt: mocks.oldest } }),
         findMany: async ({
+          cursor,
+          skip,
+          take,
           where,
         }: {
+          cursor?: { id: string };
+          skip?: number;
+          take?: number;
           where: {
             endedAt?: unknown;
             updatedAt?: unknown;
@@ -111,7 +137,19 @@ vi.mock('@auto-swe/shared/db', () => {
             return mocks.dirtyEndedRuns;
           }
           if (where.updatedAt) {
-            return mocks.dirtyEndedRuns.map((run) => ({ startedAt: run.startedAt }));
+            const pageSize = take ?? mocks.dirtyEndedRuns.length;
+            mocks.detectionPageSizes.push(pageSize);
+            const cursorIndex = cursor
+              ? mocks.dirtyEndedRuns.findIndex(
+                  (run, index) => (run.id ?? `run-${index}`) === cursor.id
+                ) + (skip ?? 0)
+              : 0;
+            return mocks.dirtyEndedRuns
+              .slice(cursorIndex, cursorIndex + pageSize)
+              .map((run, index) => ({
+                id: run.id ?? `run-${cursorIndex + index}`,
+                startedAt: run.startedAt,
+              }));
           }
           const day = where.startedAt?.gte;
           if (!day) {
@@ -185,10 +223,12 @@ beforeEach(() => {
   mocks.failCreateMany = false;
   mocks.lastSuccessfulStartAt = null;
   mocks.oldest = null;
+  mocks.pendingDirtyDays = [];
   mocks.present = [];
   mocks.recomputeDays = 2;
   mocks.runsPerDay = 0;
   mocks.stateUpdates = [];
+  mocks.detectionPageSizes = [];
   mocks.transactionDays = [];
   mocks.transactionOptions = [];
   mocks.createManySizes = [];
@@ -299,7 +339,7 @@ describe('rollupWorkflowRuns', () => {
     );
   });
 
-  it('caps dirty-day work at sixty and leaves the sweep watermark unchanged', async () => {
+  it('caps dirty-day work at sixty and advances the watermark with a durable backlog', async () => {
     mocks.lastSuccessfulStartAt = new Date('2026-10-19T00:00:00.000Z');
     mocks.dirtyEndedRuns = Array.from({ length: 61 }, (_, index) => ({
       endedAt: new Date('2026-10-20T10:00:00.000Z'),
@@ -307,8 +347,44 @@ describe('rollupWorkflowRuns', () => {
     }));
     const result = await rollupWorkflowRuns(NOW);
     expect(result.days).toBe(2 + MAX_DIRTY_DAYS_PER_SWEEP);
-    expect(mocks.stateUpdates).toEqual([]);
-    expect(mocks.lastSuccessfulStartAt).toEqual(new Date('2026-10-19T00:00:00.000Z'));
+    expect(mocks.stateUpdates).toEqual([NOW]);
+    expect(mocks.lastSuccessfulStartAt).toEqual(NOW);
+    expect(mocks.pendingDirtyDays).toEqual([new Date(TODAY - 40 * DAY_MS)]);
+  });
+
+  it('moves through a dirty-day backlog on the next successful sweep', async () => {
+    mocks.lastSuccessfulStartAt = new Date('2026-10-19T00:00:00.000Z');
+    mocks.dirtyEndedRuns = Array.from({ length: 61 }, (_, index) => ({
+      endedAt: new Date('2026-10-20T10:00:00.000Z'),
+      id: `run-${index}`,
+      startedAt: new Date(TODAY - (index + 40) * DAY_MS),
+    }));
+    await rollupWorkflowRuns(NOW);
+    expect(mocks.pendingDirtyDays).toHaveLength(1);
+    const latestDay = mocks.pendingDirtyDays[0];
+    mocks.dirtyEndedRuns = [];
+    mocks.transactionDays = [];
+
+    const nextSweep = new Date(NOW.getTime() + DAY_MS);
+    await rollupWorkflowRuns(nextSweep);
+
+    expect(mocks.transactionDays.map((day) => day.getTime())).toContain(latestDay?.getTime());
+    expect(mocks.pendingDirtyDays).toEqual([]);
+    expect(mocks.lastSuccessfulStartAt).toEqual(nextSweep);
+  });
+
+  it('paginates dirty-source detection with bounded result batches', async () => {
+    mocks.lastSuccessfulStartAt = new Date('2026-10-19T00:00:00.000Z');
+    mocks.dirtyEndedRuns = Array.from({ length: 1_001 }, (_, index) => ({
+      endedAt: NOW,
+      id: `run-${index}`,
+      startedAt: new Date(TODAY - (index + 40) * DAY_MS),
+    }));
+
+    await rollupWorkflowRuns(NOW);
+
+    expect(mocks.detectionPageSizes).toEqual([1_000, 1_000]);
+    expect(mocks.pendingDirtyDays.length).toBeGreaterThan(0);
   });
 
   it('does not advance the sweep watermark when a day rebuild fails', async () => {

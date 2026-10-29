@@ -477,7 +477,83 @@ describe('WorkflowRun daily rollups', () => {
       runs: [{ id: 'run-1' }],
       steps: [],
     }).review;
-    const rollupReview = qualityReviewFromRollups(buildReviewVerdictDailyRollups({ runs, traces }));
+    const reviewerRows = buildReviewVerdictDailyRollups({ runs, traces });
+    expect(reviewerRows[0]).toMatchObject({ orgId: 'org-1', teamId: 'team-1' });
+    const rollupReview = qualityReviewFromRollups(reviewerRows);
     expect(rollupReview).toEqual(liveReview);
+  });
+
+  it('uses safe approver labels and ignores malformed reviewer dimensions and categories', () => {
+    const requestTime = new Date('2026-10-01T10:00:00.000Z');
+    const stepRows = buildHumanStepDailyRollups([
+      {
+        kind: 'APPROVAL',
+        orgId: null,
+        requestedAt: requestTime,
+        resolvedAt: new Date(requestTime.getTime() + 10),
+        resolvedBy: 'deleted-user-id',
+        resolvedVia: 'web',
+        status: 'RESOLVED',
+        teamId: null,
+      },
+    ]);
+    expect(humanStepMetricsFromRollups(stepRows).byApprover[0]?.name).toBe('Unknown approver');
+
+    const runs = [
+      {
+        attributedOrgId: null,
+        attributedTeamId: null,
+        id: 'run-1',
+        startedAt: requestTime,
+      },
+    ];
+    const traces = [
+      {
+        error: null,
+        outputJson: {
+          approved: true,
+          findings: [],
+          reviewer: 'UNKNOWN',
+          severity: 'BLOCKER',
+        },
+        runId: 'run-1',
+      },
+      {
+        error: null,
+        outputJson: {
+          approved: true,
+          findings: [{ category: 4 }],
+          reviewer: 'SECURITY',
+          severity: 'INFO',
+        },
+        runId: 'run-1',
+      },
+    ];
+    const rows = buildReviewVerdictDailyRollups({ runs, traces });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.nonVerdictRows).toBe(2);
+    const review = qualityReviewFromRollups([
+      {
+        approved: true,
+        categoryCounts: null,
+        findings: 1,
+        nonVerdictRows: 0,
+        reviewer: 'SECURITY',
+        severity: 'INFO',
+        verdicts: 1,
+      } as unknown as (typeof rows)[number],
+      {
+        approved: true,
+        categoryCounts: { malformed: '4', valid: 2 },
+        findings: 1,
+        nonVerdictRows: 0,
+        reviewer: 'SECURITY',
+        severity: 'INFO',
+        verdicts: 1,
+      } as unknown as (typeof rows)[number],
+    ]);
+    expect(
+      review.byReviewer.find((reviewer) => reviewer.reviewer === 'SECURITY')?.topCategories
+    ).toEqual([{ category: 'valid', count: 2 }]);
   });
 });

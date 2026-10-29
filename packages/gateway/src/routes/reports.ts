@@ -35,6 +35,7 @@ import {
   coveredHumanStepRollupDays,
   coveredReviewVerdictRollupDays,
   coveredWorkflowRunRollupDays,
+  requestedAtWhere,
   startedAtWhere,
   workflowRunRollupHorizonMs,
 } from '../lib/workflowRunRollupWindows.js';
@@ -388,6 +389,8 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
           fastify.prisma.workflowRun.findMany({
             orderBy: { startedAt: 'desc' },
             select: {
+              attributedOrgId: true,
+              attributedTeamId: true,
               id: true,
               startedAt: true,
               template: { select: { name: true } },
@@ -480,6 +483,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                   where: {
                     agentKey: 'reviewer',
                     error: null,
+                    nodeId: 'runReviewNetwork',
                     runId: { in: liveReviewRunIds },
                     type: 'llm_response',
                   },
@@ -612,6 +616,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                   take: REPORT_ROW_CAP + 1,
                   where: {
                     agentKey: 'reviewer',
+                    nodeId: 'runReviewNetwork',
                     runId: { in: metricRunIds },
                     type: 'llm_response',
                   },
@@ -692,8 +697,8 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
         })),
         ...buildReviewVerdictDailyRollups({
           runs: liveReviewRuns.map((run) => ({
-            attributedOrgId: null,
-            attributedTeamId: null,
+            attributedOrgId: run.attributedOrgId,
+            attributedTeamId: run.attributedTeamId,
             id: run.id,
             startedAt: run.startedAt,
           })),
@@ -1017,7 +1022,6 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
           visibility(user, request.repoAccessGate),
           request.query.teamId
         ),
-        ...startedAtWhere(hitlPlan.live),
       };
       const [windowSteps, pendingCount, pendingOldest, decisions, hitlRollupRows] =
         await Promise.all([
@@ -1035,7 +1039,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
               },
               take: REPORT_ROW_CAP + 1,
               where: {
-                run: visibleRun,
+                AND: [requestedAtWhere(hitlPlan.live), { run: visibleRun }],
               },
             })
           ),
@@ -1161,16 +1165,16 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
           teamId: null,
         }))
       );
-      Object.assign(
-        report,
-        humanStepMetricsFromRollups([...hitlRollupRows, ...liveHumanRows], approverNames),
-        {
-          oldestPendingAgeMs: pendingOldest
-            ? Date.now() - pendingOldest.requestedAt.getTime()
-            : null,
-          pendingNow: pendingCount,
-        }
-      );
+      if (hitlPlan.rollupDays.length) {
+        Object.assign(
+          report,
+          humanStepMetricsFromRollups([...hitlRollupRows, ...liveHumanRows], approverNames)
+        );
+      }
+      Object.assign(report, {
+        oldestPendingAgeMs: pendingOldest ? Date.now() - pendingOldest.requestedAt.getTime() : null,
+        pendingNow: pendingCount,
+      });
       const windowStepsTruncated = windowSteps.length > REPORT_ROW_CAP;
       const decisionsTruncated = decisions.length > REPORT_ROW_CAP;
       return {

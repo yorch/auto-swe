@@ -173,6 +173,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/pull-requests/outcomes': 'read',
   'GET /api/v1/pull-requests/outcomes/export': { never: 'bulkExport' },
   'GET /api/v1/report-digests': 'read',
+  'GET /api/v1/report-digests/unsubscribe': { never: 'secret' },
   'GET /api/v1/reports/automations': 'read',
   'GET /api/v1/reports/budget': 'read',
   'GET /api/v1/reports/delivery': 'read',

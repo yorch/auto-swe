@@ -93,3 +93,12 @@ export function startedAtWhere(
     ? { startedAt: only }
     : { OR: ranges.map((range) => ({ startedAt: range })) };
 }
+
+export function requestedAtWhere(
+  ranges: readonly Range[]
+): { requestedAt: Range } | { OR: { requestedAt: Range }[] } {
+  const [only] = ranges;
+  return ranges.length === 1 && only
+    ? { requestedAt: only }
+    : { OR: ranges.map((range) => ({ requestedAt: range })) };
+}

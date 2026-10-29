@@ -20,112 +20,145 @@ export const MAX_BACKFILL_DAYS_PER_SWEEP = 10;
 export const MAX_DIRTY_DAYS_PER_SWEEP = 60;
 const ROLLUP_SWEEP_NAME = 'workflow_run_daily';
 const DIRTY_DETECTION_OVERLAP_MS = 60 * 60 * 1000;
-const FIX_STEP_NAMES = [
-  'executeCIFixImplementation',
-  'executeGateFixImplementation',
-  'executeReviewFixImplementation',
-] as const;
+const DIRTY_DETECTION_PAGE_SIZE = 1_000;
+const FIX_STEP_NAME = 'executeCIFixImplementation';
+
+async function scanPages<T extends { id: string }>(
+  readPage: (cursorId?: string) => Promise<T[]>,
+  visit: (row: T) => void
+): Promise<void> {
+  let cursorId: string | undefined;
+  while (true) {
+    const page = await readPage(cursorId);
+    for (const row of page) {
+      visit(row);
+    }
+    if (page.length < DIRTY_DETECTION_PAGE_SIZE) {
+      return;
+    }
+    cursorId = page.at(-1)?.id;
+  }
+}
 
 async function dirtyDaysSince(since: Date, now: Date, horizon: Date): Promise<number[]> {
   const lowerBound = new Date(since.getTime() - DIRTY_DETECTION_OVERLAP_MS);
-  const [updatedRuns, changedPullRequests, finishedFixSteps, reviewerTraces, resolvedSteps] =
-    await Promise.all([
-      runUnscoped(
-        'the workflow run rollup finds old run days updated since the previous sweep',
-        ['WorkflowRun'],
-        () =>
-          prisma.workflowRun.findMany({
-            orderBy: [{ startedAt: 'asc' }, { id: 'asc' }],
-            select: { startedAt: true },
-            where: {
-              startedAt: { lt: horizon },
-              updatedAt: { gt: lowerBound, lte: now },
-            },
-          })
-      ),
-      runUnscoped(
-        'the workflow run rollup finds old run days with updated pull requests',
-        ['PullRequest', 'WorkflowRun'],
-        () =>
-          prisma.pullRequest.findMany({
-            select: {
-              run: { select: { startedAt: true } },
-            },
-            where: {
-              run: { is: { startedAt: { lt: horizon } } },
-              runId: { not: null },
-              updatedAt: { gt: lowerBound, lte: now },
-            },
-          })
-      ),
-      runUnscoped(
-        'the workflow run rollup finds old run days with completed fix steps',
-        ['WorkflowStep', 'WorkflowRun'],
-        () =>
-          prisma.workflowStep.findMany({
-            orderBy: [{ endedAt: 'asc' }, { id: 'asc' }],
-            select: { run: { select: { startedAt: true } } },
-            where: {
-              endedAt: { gt: lowerBound, lte: now },
-              run: { startedAt: { lt: horizon } },
-              stepName: { in: [...FIX_STEP_NAMES] },
-            },
-          })
-      ),
-      runUnscoped(
-        'the workflow run rollup finds old run days with new reviewer verdict traces',
-        ['AgentTrace', 'WorkflowRun'],
-        () =>
-          prisma.agentTrace.findMany({
-            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-            select: { run: { select: { startedAt: true } } },
-            where: {
-              agentKey: 'reviewer',
-              createdAt: { gt: lowerBound, lte: now },
-              run: { is: { startedAt: { lt: horizon } } },
-              runId: { not: null },
-              type: 'llm_response',
-            },
-          })
-      ),
-      runUnscoped(
-        'the human-step rollup finds old request days resolved since the previous sweep',
-        ['WorkflowHumanStep'],
-        () =>
-          prisma.workflowHumanStep.findMany({
-            orderBy: [{ requestedAt: 'asc' }, { id: 'asc' }],
-            select: { requestedAt: true },
-            where: {
-              requestedAt: { lt: horizon },
-              resolvedAt: { gt: lowerBound, lte: now },
-            },
-          })
-      ),
-    ]);
-
   const dirtyDays = new Set<number>();
   const recordDay = (startedAt: Date) => {
     dirtyDays.add(Math.floor(startedAt.getTime() / WORKFLOW_RUN_DAY_MS) * WORKFLOW_RUN_DAY_MS);
   };
-  for (const run of updatedRuns) {
-    recordDay(run.startedAt);
-  }
-  for (const pr of changedPullRequests) {
-    if (pr.run) {
-      recordDay(pr.run.startedAt);
-    }
-  }
-  for (const step of finishedFixSteps) {
-    recordDay(step.run.startedAt);
-  }
-  for (const trace of reviewerTraces) {
-    if (trace.run) {
-      recordDay(trace.run.startedAt);
-    }
-  }
-  for (const step of resolvedSteps) {
-    recordDay(step.requestedAt);
-  }
+  await Promise.all([
+    scanPages(
+      (cursorId) =>
+        runUnscoped(
+          'the workflow run rollup finds old run days updated since the previous sweep',
+          ['WorkflowRun'],
+          () =>
+            prisma.workflowRun.findMany({
+              ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+              orderBy: { id: 'asc' },
+              select: { id: true, startedAt: true },
+              take: DIRTY_DETECTION_PAGE_SIZE,
+              where: {
+                startedAt: { lt: horizon },
+                updatedAt: { gt: lowerBound, lte: now },
+              },
+            })
+        ),
+      (run) => recordDay(run.startedAt)
+    ),
+    scanPages(
+      (cursorId) =>
+        runUnscoped(
+          'the workflow run rollup finds old run days with updated pull requests',
+          ['PullRequest', 'WorkflowRun'],
+          () =>
+            prisma.pullRequest.findMany({
+              ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+              orderBy: { id: 'asc' },
+              select: {
+                id: true,
+                run: { select: { startedAt: true } },
+              },
+              take: DIRTY_DETECTION_PAGE_SIZE,
+              where: {
+                run: { is: { startedAt: { lt: horizon } } },
+                runId: { not: null },
+                updatedAt: { gt: lowerBound, lte: now },
+              },
+            })
+        ),
+      (pr) => {
+        if (pr.run) {
+          recordDay(pr.run.startedAt);
+        }
+      }
+    ),
+    scanPages(
+      (cursorId) =>
+        runUnscoped(
+          'the workflow run rollup finds old run days with completed CI-fix steps',
+          ['WorkflowStep', 'WorkflowRun'],
+          () =>
+            prisma.workflowStep.findMany({
+              ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+              orderBy: { id: 'asc' },
+              select: { id: true, run: { select: { startedAt: true } } },
+              take: DIRTY_DETECTION_PAGE_SIZE,
+              where: {
+                endedAt: { gt: lowerBound, lte: now },
+                run: { startedAt: { lt: horizon } },
+                stepName: FIX_STEP_NAME,
+              },
+            })
+        ),
+      (step) => recordDay(step.run.startedAt)
+    ),
+    scanPages(
+      (cursorId) =>
+        runUnscoped(
+          'the workflow run rollup finds old run days with new reviewer verdict traces',
+          ['AgentTrace', 'WorkflowRun'],
+          () =>
+            prisma.agentTrace.findMany({
+              ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+              orderBy: { id: 'asc' },
+              select: { id: true, run: { select: { startedAt: true } } },
+              take: DIRTY_DETECTION_PAGE_SIZE,
+              where: {
+                agentKey: 'reviewer',
+                createdAt: { gt: lowerBound, lte: now },
+                run: { is: { startedAt: { lt: horizon } } },
+                runId: { not: null },
+                type: 'llm_response',
+              },
+            })
+        ),
+      (trace) => {
+        if (trace.run) {
+          recordDay(trace.run.startedAt);
+        }
+      }
+    ),
+    scanPages(
+      (cursorId) =>
+        runUnscoped(
+          'the human-step rollup finds old request days resolved since the previous sweep',
+          ['WorkflowHumanStep'],
+          () =>
+            prisma.workflowHumanStep.findMany({
+              ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+              orderBy: { id: 'asc' },
+              select: { id: true, requestedAt: true },
+              take: DIRTY_DETECTION_PAGE_SIZE,
+              where: {
+                requestedAt: { lt: horizon },
+                resolvedAt: { gt: lowerBound, lte: now },
+              },
+            })
+        ),
+      (step) => recordDay(step.requestedAt)
+    ),
+  ]);
   return [...dirtyDays].sort((a, b) => a - b);
 }
 
@@ -402,7 +435,7 @@ export async function rollupWorkflowRuns(
       }
       await prisma.rollupSweepState.upsert({
         create: {
-          lastSuccessfulStartAt: pendingDirtyDays.length > 0 ? null : now,
+          lastSuccessfulStartAt: now,
           name: ROLLUP_SWEEP_NAME,
           pendingDirtyDays: pendingDirtyDays.map((day) => new Date(day)),
         },
@@ -411,7 +444,7 @@ export async function rollupWorkflowRuns(
       });
       await prisma.rollupSweepState.updateMany({
         data: {
-          ...(pendingDirtyDays.length > 0 ? {} : { lastSuccessfulStartAt: now }),
+          lastSuccessfulStartAt: now,
           pendingDirtyDays: pendingDirtyDays.map((day) => new Date(day)),
         },
         where: {

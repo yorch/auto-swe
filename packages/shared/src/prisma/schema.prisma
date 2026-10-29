@@ -2223,6 +2223,7 @@ model ReportDigestSubscription {
   slackChannelId  String?           @map("slack_channel_id") @db.Uuid
   slackChannel    SlackChannel?     @relation(fields: [slackChannelId], references: [id], onDelete: SetNull)
   emailRecipients String[]          @default([]) @map("email_recipients")
+  optedOutEmails  String[]          @default([]) @map("opted_out_emails")
   enabled          Boolean           @default(true)
   createdById      String            @map("created_by_id") @db.Uuid
   lastSentAt       DateTime?         @map("last_sent_at") @db.Timestamptz
@@ -2231,9 +2232,28 @@ model ReportDigestSubscription {
   lastError        String?           @map("last_error")
   createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
   updatedAt        DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+  deliveries       ReportDigestDelivery[]
 
   @@index([enabled])
   @@map("report_digest_subscriptions")
+}
+
+model ReportDigestDelivery {
+  id             String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  subscriptionId String                  @map("subscription_id") @db.Uuid
+  subscription   ReportDigestSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  periodStart    DateTime                @map("period_start") @db.Date
+  target         String
+  status         String                  @default("failed")
+  attempts       Int                     @default(0)
+  lastError      String?                 @map("last_error")
+  sentAt         DateTime?               @map("sent_at") @db.Timestamptz
+  createdAt      DateTime                @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime                @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@unique([subscriptionId, periodStart, target])
+  @@index([subscriptionId, periodStart, status])
+  @@map("report_digest_deliveries")
 }
 
 /// Audit trail of autonomous governance decisions and human approvals for a run.

@@ -1,6 +1,7 @@
 import { prisma } from '@auto-swe/shared/db';
 import { orgMonthSpend } from '@auto-swe/shared/lib/billing';
 import { forecastMonthlyBudget } from '@auto-swe/shared/lib/budgetForecast';
+import { createReportDigestUnsubscribeToken } from '@auto-swe/shared/lib/reportDigestUnsubscribe';
 import { resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
@@ -18,8 +19,66 @@ export const MAX_REPORT_DIGEST_GATE_ROWS = 50_000;
 
 type DigestErrorCode = 'build_failed' | 'email_failed' | 'rollup_incomplete' | 'slack_failed';
 
+interface DigestTarget {
+  email?: string;
+  kind: 'email' | 'slack';
+  key: string;
+  slackChannelId?: string;
+}
+
+const MAX_TARGET_ATTEMPTS = 3;
+
 function cleanHeading(value: string): string {
   return value.replace(/[\r\n]+/g, ' ').trim();
+}
+
+function digestUnsubscribeUrl(subscriptionId: string, email: string): string {
+  const url = new URL('/api/v1/report-digests/unsubscribe', resolveWebUrl());
+  url.searchParams.set(
+    'token',
+    createReportDigestUnsubscribeToken(subscriptionId, email.trim().toLowerCase())
+  );
+  return url.toString();
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (character) => {
+    const entities: Record<string, string> = {
+      "'": '&#39;',
+      '"': '&quot;',
+      '&': '&amp;',
+      '<': '&lt;',
+      '>': '&gt;',
+    };
+    return entities[character] ?? character;
+  });
+}
+
+function unsubscribeHtml(digestHtml: string, unsubscribeUrl: string): string {
+  return `${digestHtml}<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="font-family:Arial,sans-serif"><tr><td style="padding:12px 0;color:#687386;font-size:12px"><a href="${escapeHtml(unsubscribeUrl)}" style="color:#475467">Unsubscribe from this digest</a></td></tr></table>`;
+}
+
+async function deliverTarget(
+  target: DigestTarget,
+  digest: ReturnType<typeof buildReportDigest>,
+  subscriptionId: string
+): Promise<void> {
+  if (target.kind === 'email' && target.email) {
+    const unsubscribeUrl = digestUnsubscribeUrl(subscriptionId, target.email);
+    await sendReportDigestEmail({
+      html: unsubscribeHtml(digest.html, unsubscribeUrl),
+      listUnsubscribeUrl: unsubscribeUrl,
+      subject: digest.subject,
+      text: `${digest.text}\n\nUnsubscribe from this digest: ${unsubscribeUrl}`,
+      to: target.email,
+    });
+    return;
+  }
+  if (target.kind === 'slack' && target.slackChannelId) {
+    await postSlackChannelMessage(target.slackChannelId, digest.slackMrkdwn, digest.slackBlocks);
+    return;
+  }
+  throw new Error('Invalid report digest target');
 }
 
 export async function sendReportDigests(
@@ -96,25 +155,6 @@ export async function sendReportDigests(
         skipped++;
         continue;
       }
-      if (!input.sendTest) {
-        const claim = await runUnscoped(
-          'the report digest claims one delivery for its reporting period',
-          ['ReportDigestSubscription'],
-          () =>
-            prisma.reportDigestSubscription.updateMany({
-              data: { lastError: null, lastPeriodStart: currentStart },
-              where: {
-                id: subscription.id,
-                OR: [{ lastPeriodStart: null }, { lastPeriodStart: { lt: currentStart } }],
-              },
-            })
-        );
-        if (claim.count === 0) {
-          skipped++;
-          continue;
-        }
-      }
-
       let digest: ReturnType<typeof buildReportDigest>;
       try {
         const scopeFilter =
@@ -293,50 +333,161 @@ export async function sendReportDigests(
         continue;
       }
 
-      let deliveryError: 'email_failed' | 'slack_failed' | null = null;
-      if (subscription.emailRecipients.length) {
-        try {
-          for (const to of subscription.emailRecipients) {
-            await sendReportDigestEmail({
-              html: digest.html,
-              subject: digest.subject,
-              text: digest.text,
-              to,
+      const optedOut = new Set(subscription.optedOutEmails.map((email) => email.toLowerCase()));
+      const targets: DigestTarget[] = subscription.emailRecipients
+        .filter((email) => !optedOut.has(email.trim().toLowerCase()))
+        .map((email) => ({
+          email: email.trim().toLowerCase(),
+          key: `email:${email.trim().toLowerCase()}`,
+          kind: 'email',
+        }));
+      if (subscription.slackChannel) {
+        targets.push({
+          key: 'slack',
+          kind: 'slack',
+          slackChannelId: subscription.slackChannel.slackChannelId,
+        });
+      }
+      if (targets.length === 0) {
+        skipped++;
+        continue;
+      }
+
+      if (input.sendTest) {
+        let deliveryError: DigestErrorCode | null = null;
+        for (const target of targets) {
+          try {
+            await deliverTarget(target, digest, subscription.id);
+          } catch (error) {
+            deliveryError ??= target.kind === 'email' ? 'email_failed' : 'slack_failed';
+            logWarn('report digest test delivery failed', {
+              error: error instanceof Error ? error.message : String(error),
+              subscriptionId: subscription.id,
+              target: target.key,
             });
           }
-        } catch (error) {
-          deliveryError = 'email_failed';
-          logWarn('report digest email delivery failed', {
-            error: error instanceof Error ? error.message : String(error),
-            subscriptionId: subscription.id,
-          });
         }
+        if (deliveryError) {
+          await recordDigestError(subscription.id, deliveryError);
+          failed++;
+          continue;
+        }
+        await clearDigestError(subscription.id);
+        sent++;
+        continue;
       }
-      if (subscription.slackChannel) {
+
+      const targetsByKey = new Map(targets.map((target) => [target.key, target]));
+      const deliveryScope = ['ReportDigestDelivery', 'ReportDigestSubscription'];
+      await runUnscoped(
+        'the report digest creates one durable row for each active target',
+        deliveryScope,
+        () =>
+          prisma.reportDigestDelivery.createMany({
+            data: targets.map((target) => ({
+              periodStart: currentStart,
+              status: 'failed',
+              subscriptionId: subscription.id,
+              target: target.key,
+            })),
+            skipDuplicates: true,
+          })
+      );
+      const deliveries = await runUnscoped(
+        'the report digest loads delivery state for its active targets',
+        ['ReportDigestDelivery'],
+        () =>
+          prisma.reportDigestDelivery.findMany({
+            select: { attempts: true, id: true, status: true, target: true },
+            where: {
+              periodStart: currentStart,
+              subscriptionId: subscription.id,
+              target: { in: [...targetsByKey.keys()] },
+            },
+          })
+      );
+      for (const delivery of deliveries) {
+        const target = targetsByKey.get(delivery.target);
+        if (!target || delivery.status === 'sent' || delivery.attempts >= MAX_TARGET_ATTEMPTS) {
+          continue;
+        }
+        const claim = await runUnscoped(
+          'the report digest claims one target attempt using its observed attempt count',
+          ['ReportDigestDelivery'],
+          () =>
+            prisma.reportDigestDelivery.updateMany({
+              data: { attempts: { increment: 1 }, lastError: null },
+              where: {
+                AND: [
+                  { id: delivery.id },
+                  { status: 'failed' },
+                  { attempts: delivery.attempts },
+                  { attempts: { lt: MAX_TARGET_ATTEMPTS } },
+                ],
+              },
+            })
+        );
+        if (claim.count === 0) {
+          continue;
+        }
         try {
-          await postSlackChannelMessage(
-            subscription.slackChannel.slackChannelId,
-            digest.slackMrkdwn
+          await deliverTarget(target, digest, subscription.id);
+          await runUnscoped(
+            'the report digest records one sent target',
+            ['ReportDigestDelivery'],
+            () =>
+              prisma.reportDigestDelivery.update({
+                data: { lastError: null, sentAt: now, status: 'sent' },
+                where: { id: delivery.id },
+              })
           );
         } catch (error) {
-          deliveryError ??= 'slack_failed';
-          logWarn('report digest Slack delivery failed', {
+          const code = target.kind === 'email' ? 'email_failed' : 'slack_failed';
+          logWarn('report digest target delivery failed', {
             error: error instanceof Error ? error.message : String(error),
             subscriptionId: subscription.id,
+            target: target.key,
           });
+          await runUnscoped(
+            'the report digest records a failed target attempt',
+            ['ReportDigestDelivery'],
+            () =>
+              prisma.reportDigestDelivery.update({
+                data: { lastError: code, status: 'failed' },
+                where: { id: delivery.id },
+              })
+          );
         }
       }
-      if (deliveryError) {
-        await recordDigestError(subscription.id, deliveryError);
+      const completedDeliveries = await runUnscoped(
+        'the report digest checks completion for active targets',
+        ['ReportDigestDelivery'],
+        () =>
+          prisma.reportDigestDelivery.findMany({
+            select: { status: true, target: true },
+            where: {
+              periodStart: currentStart,
+              subscriptionId: subscription.id,
+              target: { in: [...targetsByKey.keys()] },
+            },
+          })
+      );
+      const failedTargets = completedDeliveries.filter((delivery) => delivery.status !== 'sent');
+      if (failedTargets.length > 0) {
+        const failedTarget = targetsByKey.get(failedTargets[0]?.target ?? '');
+        await recordDigestError(
+          subscription.id,
+          failedTarget?.kind === 'slack' ? 'slack_failed' : 'email_failed'
+        );
         failed++;
         continue;
       }
       await runUnscoped(
-        'the report digest sweep records successful delivery',
+        'the report digest records its last fully sent period',
         ['ReportDigestSubscription'],
         () =>
           prisma.reportDigestSubscription.update({
-            data: { lastError: null, ...(!input.sendTest ? { lastSentAt: now } : {}) },
+            data: { lastError: null, lastPeriodStart: currentStart, lastSentAt: now },
             where: { id: subscription.id },
           })
       );
@@ -372,4 +523,16 @@ async function recordDigestError(subscriptionId: string, code: DigestErrorCode):
       subscriptionId,
     });
   }
+}
+
+async function clearDigestError(subscriptionId: string): Promise<void> {
+  await runUnscoped(
+    'the report digest clears the previous delivery error',
+    ['ReportDigestSubscription'],
+    () =>
+      prisma.reportDigestSubscription.update({
+        data: { lastError: null },
+        where: { id: subscriptionId },
+      })
+  );
 }

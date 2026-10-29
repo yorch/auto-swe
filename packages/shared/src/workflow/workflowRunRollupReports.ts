@@ -72,7 +72,7 @@ export function humanStepMetricsFromRollups(
   }
   const byApprover = [...approvers.entries()]
     .map(([resolvedBy, group]) => {
-      const name = names.get(resolvedBy) ?? resolvedBy;
+      const name = names.get(resolvedBy) || 'Unknown approver';
       const resolved = group.waitBuckets.reduce((sum, count) => sum + count, 0);
       return {
         automated: group.automated,
@@ -139,8 +139,16 @@ export function qualityReviewFromRollups(
     group.approved += row.approved ? row.verdicts : 0;
     group.severityCounts[row.severity as (typeof REVIEW_SEVERITIES)[number]] += row.verdicts;
     group.findingsTotal += row.findings;
-    for (const [category, count] of Object.entries(row.categoryCounts)) {
-      group.categories.set(category, (group.categories.get(category) ?? 0) + count);
+    if (
+      row.categoryCounts &&
+      typeof row.categoryCounts === 'object' &&
+      !Array.isArray(row.categoryCounts)
+    ) {
+      for (const [category, count] of Object.entries(row.categoryCounts)) {
+        if (typeof count === 'number' && Number.isFinite(count)) {
+          group.categories.set(category, (group.categories.get(category) ?? 0) + count);
+        }
+      }
     }
   }
   return {

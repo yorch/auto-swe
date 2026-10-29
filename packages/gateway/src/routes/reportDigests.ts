@@ -1,3 +1,7 @@
+import {
+  reportDigestUnsubscribeSubscriptionId,
+  verifyReportDigestUnsubscribeToken,
+} from '@auto-swe/shared/lib/reportDigestUnsubscribe';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -21,6 +25,61 @@ const MAX_SUBSCRIPTIONS_PER_SCOPE = 5;
 export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const auth = requireAuth({ requiredRole: 'ENGINEER' });
+
+  app.get(
+    '/unsubscribe',
+    { schema: { querystring: z.object({ token: z.string().min(1).max(256) }) } },
+    async (request, reply) => {
+      const { token } = request.query;
+      const subscriptionId = reportDigestUnsubscribeSubscriptionId(token);
+      if (!subscriptionId) {
+        return reply.status(400).type('text/plain').send('Invalid unsubscribe link.');
+      }
+      const subscription = await runUnscoped(
+        'the public digest unsubscribe validates only its signed subscription',
+        ['ReportDigestSubscription'],
+        () =>
+          fastify.prisma.reportDigestSubscription.findUnique({
+            select: { emailRecipients: true, id: true, optedOutEmails: true },
+            where: { id: subscriptionId },
+          })
+      );
+      if (!subscription) {
+        return reply.status(400).type('text/plain').send('Invalid unsubscribe link.');
+      }
+      let matchedEmail: string | null = null;
+      for (const email of new Set([
+        ...subscription.emailRecipients,
+        ...subscription.optedOutEmails,
+      ])) {
+        if (verifyReportDigestUnsubscribeToken(token, subscription.id, email)) {
+          matchedEmail = email.trim().toLowerCase();
+        }
+      }
+      if (!matchedEmail) {
+        return reply.status(400).type('text/plain').send('Invalid unsubscribe link.');
+      }
+      if (!subscription.optedOutEmails.some((email) => email.toLowerCase() === matchedEmail)) {
+        await runUnscoped(
+          'the public digest unsubscribe records only its verified recipient',
+          ['ReportDigestSubscription'],
+          () =>
+            fastify.prisma.reportDigestSubscription.updateMany({
+              data: { optedOutEmails: { push: matchedEmail as string } },
+              where: {
+                id: subscription.id,
+                NOT: { optedOutEmails: { has: matchedEmail as string } },
+              },
+            })
+        );
+      }
+      return reply
+        .type('text/html; charset=utf-8')
+        .send(
+          '<!doctype html><html><body><p>You have been unsubscribed from this report digest.</p></body></html>'
+        );
+    }
+  );
 
   const membershipScopes = async (userId: string) => {
     const [orgs, teams] = await runUnscoped(
@@ -315,6 +374,15 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
         data: await fastify.prisma.reportDigestSubscription.update({
           data: {
             ...request.body,
+            ...(request.body.emailRecipients !== undefined
+              ? {
+                  optedOutEmails: {
+                    set: existing.optedOutEmails.filter(
+                      (email) => !checked.emailRecipients.includes(email.toLowerCase())
+                    ),
+                  },
+                }
+              : {}),
             emailRecipients: checked.emailRecipients,
             orgId: value.orgId,
             scope: value.scope,

@@ -26,6 +26,7 @@ function transporterFor(config: ReturnType<typeof resolveAuthEmailConfig>): Tran
 }
 
 export async function sendReportDigestEmail(input: {
+  listUnsubscribeUrl: string;
   html: string;
   subject: string;
   text: string;
@@ -36,6 +37,7 @@ export async function sendReportDigestEmail(input: {
   if (transport) {
     await transport.sendMail({
       from: config.authFromEmail ?? undefined,
+      headers: { 'List-Unsubscribe': `<${input.listUnsubscribeUrl}>` },
       html: input.html,
       subject: input.subject,
       text: input.text,
@@ -51,6 +53,7 @@ export async function sendReportDigestEmail(input: {
   const response = await fetch('https://api.resend.com/emails', {
     body: JSON.stringify({
       from: config.authFromEmail,
+      headers: { 'List-Unsubscribe': `<${input.listUnsubscribeUrl}>` },
       html: input.html,
       subject: input.subject,
       text: input.text,
