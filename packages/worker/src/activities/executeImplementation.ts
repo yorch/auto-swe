@@ -59,11 +59,18 @@ import {
 } from './allowedPaths.js';
 import {
   detectTestCommand,
+  type NoTestsKind,
+  noTestsFoundCause,
+  noTestsFoundEvent,
+  noTestsFoundNotes,
+  noTestsRunResult,
   packageJsonReadCommand,
   parseDiffToFileChanges,
   parseTestOutput,
   TEST_RUN_TIMEOUT_MS,
+  testCommandSource,
   testRunCommand,
+  testStatusWord,
   unrunnableTestCause,
 } from './utils.js';
 import { createWorkspace, fetchBranchesSubcommand, shellQuote } from './workspace.js';
@@ -211,6 +218,7 @@ export async function executeImplementation(
     // Detect test framework
     const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
     const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);
+    const testSource = testCommandSource(packageJson, repo.gateCommands, repo.detectedStack);
 
     // The runtime — the Mastra loop or the Claude Code harness — is chosen first,
     // and only what it needs is built: tool config + skills (WORKFLOW_TEMPLATE →
@@ -336,6 +344,24 @@ export async function executeImplementation(
     const maxTddIterations = workflowDefaults.maxTddIterations;
     // Set when the test command cannot run here: a later iteration cannot fix that.
     let unrunnable: { command: string; cause: string } | undefined;
+    // Set when a stack-derived test command showed no tests: nothing a later pass would verify.
+    let noTestsFound: { kind: NoTestsKind; run: number } | undefined;
+    const recordNoTestsFound = (
+      iteration: number,
+      cause: { kind: NoTestsKind; reason: string },
+      output: string
+    ) => {
+      noTestsFound = { kind: cause.kind, run: iteration + 1 };
+      tracer.addActivityEvent({
+        inputJson: { iteration },
+        name: noTestsFoundEvent(cause.kind),
+        outputJson: {
+          command: testCommand,
+          output: output.trim().slice(-1000),
+          reason: cause.reason,
+        },
+      });
+    };
     for (let iteration = 0; iteration < maxTddIterations; iteration++) {
       heartbeat(`TDD iteration ${iteration + 1}/${maxTddIterations}`);
       // A cancelled run stops here rather than spending another iteration.
@@ -389,21 +415,33 @@ export async function executeImplementation(
         if (testResult.passed) {
           break;
         }
+        const noTests = noTestsFoundCause(testSource, { result: testResult });
+        if (noTests) {
+          recordNoTestsFound(iteration, noTests, testOutput);
+          break;
+        }
       } catch (err: unknown) {
-        testResult = {
-          duration_ms: 0,
-          failing: 1,
-          passed: false,
-          passing: 0,
-          stdout: getExecErrorStdout(err),
-          total: 0,
-        };
+        const noTests = noTestsFoundCause(testSource, { error: err });
+        testResult = noTests
+          ? noTestsRunResult(getExecErrorStdout(err))
+          : {
+              duration_ms: 0,
+              failing: 1,
+              passed: false,
+              passing: 0,
+              stdout: getExecErrorStdout(err),
+              total: 0,
+            };
         tracer.addActivityEvent({
           error: getExecErrorStdout(err).slice(0, 1000),
           inputJson: { iteration },
           name: 'tdd.test_run',
           outputJson: { passed: false },
         });
+        if (noTests) {
+          recordNoTestsFound(iteration, noTests, getExecErrorStdout(err));
+          break;
+        }
         const cause = unrunnableTestCause(err);
         if (cause) {
           const output = getExecErrorStdout(err).trim();
@@ -467,9 +505,11 @@ export async function executeImplementation(
       diff,
       filesChanged: parseDiffToFileChanges(diff),
       headSha,
-      implementationNotes: unrunnable
-        ? `The test command \`${unrunnable.command}\` could not run in the workspace (${unrunnable.cause}), so the TDD loop stopped after the first test run.`
-        : `Completed in ${testResult.passed ? `≤${maxTddIterations}` : `${maxTddIterations} (max)`} TDD iterations. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      implementationNotes: noTestsFound
+        ? noTestsFoundNotes(testCommand, noTestsFound.kind, noTestsFound.run)
+        : unrunnable
+          ? `The test command \`${unrunnable.command}\` could not run in the workspace (${unrunnable.cause}), so the TDD loop stopped after the first test run.`
+          : `Completed in ${testResult.passed ? `≤${maxTddIterations}` : `${maxTddIterations} (max)`} TDD iterations. Tests ${testStatusWord(testResult)}.`,
       repoId: requireRepoId(request, 'executeImplementation'),
       testResults: testResult,
     };

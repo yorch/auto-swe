@@ -21,6 +21,7 @@ import {
 } from '../lib/scm/types.js';
 import { notifySlackPrReady } from '../lib/slackNotify.js';
 import { requestTicketIsSynthetic } from '../lib/trackerTicket.js';
+import { testStatusWord } from './utils.js';
 
 export interface CreatePullRequestOptions {
   /** Open the PR as a draft; a host that cannot fails the step, never falls back. */
@@ -311,9 +312,14 @@ export function formatPRBody(
   codeResult: CodeResult,
   bodyTemplate?: string
 ): string {
-  const testStatus = codeResult.testResults.passed
-    ? `All tests passing (${codeResult.testResults.passing}/${codeResult.testResults.total})`
-    : `Tests failing (${codeResult.testResults.passing}/${codeResult.testResults.total} passing)`;
+  const { passing, total } = codeResult.testResults;
+  const status = testStatusWord(codeResult.testResults);
+  const testStatus =
+    status === 'passing'
+      ? `All tests passing (${passing}/${total})`
+      : status === 'not run'
+        ? 'No test results could be read'
+        : `Tests failing (${passing}/${total} passing)`;
 
   const fileList = codeResult.filesChanged
     .map((f) => `- \`${f.path}\` (${f.operation}, +${f.linesAdded}/-${f.linesRemoved})`)
