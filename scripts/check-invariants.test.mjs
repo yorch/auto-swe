@@ -121,6 +121,24 @@ describe('envCredentialViolations', () => {
     expect(envCredentialViolations(mixed)).toHaveLength(1);
   });
 
+  it('reports the widened credential words, and whole-word PAT, PASS and PWD only', () => {
+    for (const env of [
+      "env: ['DEPLOY_SSH_KEY=x']",
+      "env: ['AWS_ACCESS_KEY=x']",
+      "env: ['SSH_PRIVATE_KEY=x']",
+      "env: ['SESSION_COOKIE=x']",
+      "env: ['SESSION_ID=x']",
+      "env: ['AUTH_BEARER=x']",
+      "env: ['GITHUB_PAT=x']",
+      "env: ['DB_PASS=x']",
+      "env: ['DB_PWD=x']",
+    ]) {
+      expect(envCredentialViolations(wrap(env)), env).toHaveLength(1);
+    }
+    const plain = wrap("env: ['PASSIVE_MODE=1', 'PATH=/x', 'COMPASS_DIR=/y']");
+    expect(envCredentialViolations(plain)).toEqual([]);
+  });
+
   it('does not treat a comparison or another property as an env assignment', () => {
     expect(envCredentialViolations('if (x.env == [`TOKEN`]) {}')).toEqual([]);
   });

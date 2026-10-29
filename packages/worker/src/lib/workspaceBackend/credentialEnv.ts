@@ -11,7 +11,16 @@
  * The rule is the invariant's, copied from `CREDENTIAL_NAME` and
  * `NOT_A_CREDENTIAL` in `scripts/check-invariants.mjs`. Keep the two in step.
  */
-const CREDENTIAL_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|AUTH|CREDENTIAL|NPMRC|YARNRC/i;
+const CREDENTIAL_NAME = new RegExp(
+  [
+    /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|AUTH|CREDENTIAL|NPMRC|YARNRC/,
+    /(?:PRIVATE|ACCESS|SSH)_?KEY|BEARER|COOKIE|SESSION_?ID/,
+    /(?:^|_)(?:PAT|PASS|PWD)(?![A-Za-z])/,
+  ]
+    .map((re) => re.source)
+    .join('|'),
+  'i'
+);
 
 /** Names that contain a credential word without being one. */
 const NOT_A_CREDENTIAL = /AUTHOR(?!IZ)|TOKENS(?![A-Za-z])/gi;
@@ -32,8 +41,15 @@ export function isCredentialEnvName(name: string): boolean {
 }
 
 /**
- * Throws when any `NAME=value` pair names a credential. Only the name (text
- * before the first `=`) is examined, and only the name appears in the error.
+ * URL userinfo in a value (`scheme://user:pass@host`), e.g. `HTTPS_PROXY=http://u:p@host`.
+ * The lookbehind keeps the scan linear: without it, a long value without `://` is rescanned
+ * from every letter.
+ */
+const URL_USERINFO = /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i;
+
+/**
+ * Throws when any `NAME=value` pair names a credential, or its value carries URL userinfo.
+ * The error names the variable and the call site only; it never includes the value.
  */
 export function assertNoCredentialEnvPairs(
   pairs: readonly string[] | undefined,
@@ -46,6 +62,12 @@ export function assertNoCredentialEnvPairs(
       throw new Error(
         `refusing to pass credential-named environment variable ${name} as a plain env ` +
           `pair in ${where}: plain env reaches command lines and audit logs. Pass it as secretEnv.`
+      );
+    }
+    if (eq !== -1 && URL_USERINFO.test(pair.slice(eq + 1))) {
+      throw new Error(
+        `refusing to pass environment variable ${name} as a plain env pair in ${where}: ` +
+          'value carries URL credentials; pass it as secretEnv.'
       );
     }
   }
