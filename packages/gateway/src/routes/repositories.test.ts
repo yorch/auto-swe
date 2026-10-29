@@ -50,6 +50,7 @@ vi.mock('@auto-swe/shared/lib/repoPermission', () => ({
 }));
 
 import '../test/warmAuthImports.js';
+import { resetSweepDebounceForTests } from '../lib/prEvaluationSweep.js';
 import { repositoryRoutes } from './repositories.js';
 
 interface AuthState {
@@ -85,6 +86,7 @@ async function buildApp() {
     },
     connectionTeamShare: { deleteMany: vi.fn() },
     knowledgeItem: { count: vi.fn().mockResolvedValue(0) },
+    prEvaluation: { findMany: vi.fn() },
     team: {
       findUnique: vi.fn(),
     },
@@ -104,6 +106,7 @@ async function buildApp() {
 
   const mockTemporal = {
     probeExecutorImage: vi.fn(),
+    startPrEvaluationWorkflow: vi.fn(),
     startRepoDependencyScan: vi.fn().mockResolvedValue(undefined),
   };
 
@@ -151,6 +154,9 @@ describe('repositoryRoutes', () => {
     ctx.mockPrisma.team.findUnique.mockReset();
     ctx.mockPrisma.teamMembership.findUnique.mockReset();
     ctx.mockPrisma.configAuditLog.create.mockClear();
+    ctx.mockPrisma.prEvaluation.findMany.mockReset().mockResolvedValue([]);
+    ctx.mockTemporal.startPrEvaluationWorkflow.mockReset().mockResolvedValue(undefined);
+    resetSweepDebounceForTests();
     github.verifiedGithubLoginFor.mockReset().mockResolvedValue('octocat');
     github.lookupRepoPermission.mockReset().mockResolvedValue({ ok: true, permission: 'read' });
   });
@@ -908,6 +914,47 @@ describe('repositoryRoutes', () => {
       expect(ok.statusCode).toBe(200);
       expect(bad.statusCode).toBe(400);
       expect(ctx.mockPrisma.connection.update).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('deactivating a repository', () => {
+    const patch = (payload: Record<string, unknown>) =>
+      ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'PATCH',
+        payload,
+        url: `/api/v1/repositories/${REPO_ID}`,
+      });
+    const arrange = () => {
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        executorImage: null,
+        id: REPO_ID,
+        teamId: TEAM_ID,
+      });
+      ctx.mockPrisma.connection.update.mockResolvedValue({ id: REPO_ID, teamId: TEAM_ID });
+    };
+
+    it('starts a disarm sweep for the repository, and not for other updates', async () => {
+      arrange();
+      ctx.mockPrisma.prEvaluation.findMany
+        .mockResolvedValueOnce([{ connectionId: REPO_ID, prNumber: 3 }])
+        .mockResolvedValueOnce([
+          { closedAt: null, connectionId: REPO_ID, mergedAt: null, prNumber: 3 },
+        ]);
+      expect((await patch({ isActive: false })).statusCode).toBe(200);
+      expect(ctx.mockTemporal.startPrEvaluationWorkflow.mock.calls.map((c) => c[1])).toEqual([
+        { connectionId: REPO_ID, prNumber: 3, trigger: 'disarm-sweep' },
+      ]);
+      ctx.mockTemporal.startPrEvaluationWorkflow.mockClear();
+      expect((await patch({ description: 'x' })).statusCode).toBe(200);
+      expect((await patch({ isActive: true })).statusCode).toBe(200);
+      expect(ctx.mockTemporal.startPrEvaluationWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('still answers 200 when the sweep cannot read the database', async () => {
+      arrange();
+      ctx.mockPrisma.prEvaluation.findMany.mockRejectedValue(new Error('db down'));
+      expect((await patch({ isActive: false })).statusCode).toBe(200);
     });
   });
 

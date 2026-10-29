@@ -276,6 +276,7 @@ describe('POST /api/v1/work-requests', () => {
       startEpicWorkflow: async () => {},
       startEvalRunWorkflow: async () => {},
       startEvalScreenWorkflow: async () => {},
+      startPrEvaluationWorkflow: async () => {},
       startReembedMemory: async () => {},
       startReembedStaleMemory: async () => true,
       startRepoDependencyInference: async () => {},

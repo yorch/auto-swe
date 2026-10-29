@@ -24,9 +24,12 @@ assistant starts, watches, and reports on the workflows above, so teams manage t
 from the channel they already work in rather than a separate console.
 
 One constraint runs through everything the platform ships, as a product choice rather than a
-limitation: **nothing auto-merges.** auto-swe operates as a contributor that opens PRs; a human
-always merges. That makes it an *amplifier* of an engineering team rather than a replacement for
-it. (§7 states precisely how far that guarantee reaches.)
+limitation: **by default nothing merges.** auto-swe operates as a contributor that opens PRs; a human
+merges them. The one exception is opt-in and per repository: in `auto` mode the platform asks
+GitHub to auto-merge a provably low-risk pull request once GitHub's own branch rules are met, and
+never calls an immediate-merge API ([pr-evaluation.md](./pr-evaluation.md)). That keeps it an
+*amplifier* of an engineering team rather than a replacement for it. (§7 states precisely how far
+that guarantee reaches.)
 
 ---
 
@@ -202,9 +205,9 @@ Most of these are architecturally enforced rather than policy; where a boundary 
 content instead, it says so.
 
 - **Not a no-code automation tool, a BPM suite, an RPA tool, a chatbot platform, or a personal coding assistant.** Templates, agents, and skills are authored, versioned, governed content — programmable rather than drag-and-drop. It augments execution with agents rather than modelling formal processes. It acts through APIs, connectors, and MCP servers, never by driving a third party's UI. Slack is a control surface, not the product. And it is a team platform for repeatable workflows, not an editor assistant for one engineer.
-- **No auto-merge.** Nothing the platform ships merges a pull request: no activity calls the GitHub merge API, and no seeded template merges. The SWE flow opens a PR and parks until a Temporal signal bridges the GitHub merge webhook to the waiting workflow. This is a property of the activity catalog and the shipped templates — a team that allowlists the GitHub API host for a `shell` or `containerStep` node can author a DAG that merges (see [architecture.md §10](./architecture.md#10-limitations)).
+- **Nothing merges by default.** No activity calls an immediate-merge API, and no seeded template merges. The SWE flow opens a PR and parks until a Temporal signal bridges the GitHub merge webhook to the waiting workflow. The only sanctioned merge path is opt-in and per repository: the `auto` mode of [pull-request evaluation](./pr-evaluation.md) asks GitHub, through `enablePullRequestAutoMerge`, to merge a low-risk pull request later, when GitHub's own branch rules are satisfied. This is a property of the activity catalog and the shipped templates — a team that allowlists the GitHub API host for a `shell` or `containerStep` node can author a DAG that merges (see [architecture.md §10](./architecture.md#10-limitations)).
 - **Kubernetes workspaces cover agent runs only.** Docker-in-Docker is the default workspace substrate and works inside Docker Compose. `WORKSPACE_BACKEND=kubernetes` runs agent workspaces as hardened pods, but shell steps, container steps and sidecars still need the Docker backend ([architecture.md §10](./architecture.md#10-limitations)).
-- **No repo-admin actions.** auto-swe acts as a contributor — no branch-protection bypass, approval, or auto-merge on target repos.
+- **No repo-admin actions.** auto-swe acts as a contributor — no branch-protection bypass and no approval on target repos, and auto-merge only through the opt-in `auto` mode of [pr-evaluation.md](./pr-evaluation.md), which asks GitHub to merge once its own branch rules hold.
 - **No IP-level egress filtering for shell steps.** DNS-based filtering only; IP-direct connections are out of scope (would require host iptables).
 - **No multi-arm A/B.** Exactly two arms per template (active vs experiment).
 - **No cross-process scanner-cache invalidation.** Gateway and worker are separate processes; pattern edits propagate via 60 s TTL.

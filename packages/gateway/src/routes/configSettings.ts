@@ -17,6 +17,11 @@ import {
   setSetting,
 } from '../lib/configSettingsService.js';
 import { sendError } from '../lib/httpErrors.js';
+import {
+  GLOBAL_SWEEP_CAP,
+  isPrEvaluationKillSwitch,
+  sweepArmedPullRequests,
+} from '../lib/prEvaluationSweep.js';
 import { writeSystemConfigAudit } from '../lib/systemConfigService.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -142,6 +147,22 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
     }
   );
 
+  /// Turning pull request evaluation or auto-merge off must also turn off the auto-merge already
+  /// armed on GitHub, which would otherwise merge on its own. Best effort: the sweep never throws,
+  /// and the worker's evaluation of each armed pull request does the disarming.
+  async function sweepOnKillSwitch(
+    key: string,
+    scope: string,
+    value: unknown,
+    log: FastifyInstance['log']
+  ): Promise<void> {
+    if (!isPrEvaluationKillSwitch(key, scope, value)) {
+      return;
+    }
+    const swept = await sweepArmedPullRequests(fastify, log, { cap: GLOBAL_SWEEP_CAP });
+    log.info({ key, ...swept }, 'pull request disarm sweep after a kill switch was thrown');
+  }
+
   f.put(
     '/config/settings/:key',
     {
@@ -188,6 +209,8 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
         entityId: SETTING_AUDIT_ENTITY_ID,
         entityType: 'ConfigSetting',
       });
+
+      await sweepOnKillSwitch(req.params.key, selector.scope, result.after, req.log);
 
       return reply.send({
         data: { key: req.params.key, scope: selector.scope, value: result.after },
@@ -238,6 +261,9 @@ export const configSettingsRoutes: FastifyPluginAsync = async (
           entityId: SETTING_AUDIT_ENTITY_ID,
           entityType: 'ConfigSetting',
         });
+      }
+      if (result.before !== undefined) {
+        await sweepOnKillSwitch(req.params.key, selector.scope, false, req.log);
       }
       return reply.send({ data: { cleared: result.before !== undefined } });
     }

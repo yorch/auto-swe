@@ -12,6 +12,7 @@ import {
   defineSkill,
   signBundle,
   validateBundle,
+  validatePrPolicy,
 } from './index.js';
 
 const keyPair = () => {
@@ -241,5 +242,37 @@ describe('defineContainerStep', () => {
     const node = defineContainerStep({ command: 'node run.js', image: 'ghcr.io/acme/cap:1' });
     expect(node.type).toBe('containerStep');
     expect(node.image).toBe('ghcr.io/acme/cap:1');
+  });
+});
+
+describe('validatePrPolicy', () => {
+  it('accepts a stricter file and returns the parsed policy', () => {
+    const res = validatePrPolicy(
+      'version: 1\nsensitivePaths:\n  - "**/billing/**"\nmaxLowLines: 200\nhighApprovers: 2\n'
+    );
+    expect(res.ok).toBe(true);
+    expect(res.errors).toEqual([]);
+    expect(res.warnings).toEqual([]);
+    expect(res.policy?.maxLowLines).toBe(200);
+  });
+
+  it('names each rule the file tries to loosen as a warning and still passes', () => {
+    const res = validatePrPolicy('version: 1\nmode: auto\nmaxLowLines: 5000\n');
+    expect(res.ok).toBe(true);
+    expect(res.warnings.some((w) => w.startsWith('mode:'))).toBe(true);
+    expect(res.warnings.some((w) => w.startsWith('maxLowLines:'))).toBe(true);
+  });
+
+  it('fails on a file that does not parse or misses version', () => {
+    expect(validatePrPolicy('maxLowLines: 10\n').ok).toBe(false);
+    const bad = validatePrPolicy('version: 1\nhighApprovers: 0\n');
+    expect(bad.ok).toBe(false);
+    expect(bad.errors.length).toBeGreaterThan(0);
+    expect(bad.policy).toBeUndefined();
+  });
+
+  it('refuses YAML aliases', () => {
+    const res = validatePrPolicy('version: 1\nsensitivePaths: &a ["**/x/**"]\nhighRiskPaths: *a\n');
+    expect(res.ok).toBe(false);
   });
 });

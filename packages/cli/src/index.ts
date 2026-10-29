@@ -6,6 +6,7 @@ import { runBundleCommand } from './commands/bundle.js';
 import { runBundlesCommand } from './commands/bundles.js';
 import { runEvalsCommand } from './commands/evals.js';
 import { runMcpCommand } from './commands/mcp.js';
+import { runPrPolicyCommand } from './commands/prPolicy.js';
 import { runReposCommand } from './commands/repos.js';
 import { runRunsCommand } from './commands/runs.js';
 import { runSkillsCommand } from './commands/skills.js';
@@ -79,6 +80,15 @@ COMMANDS
   bundles install-from-url <url> [--overwrite-protected]
                                        Install a bundle from a URL
 
+  pr-policy init [--dir <path>] [--force]
+                                       Write .auto-swe/pr-policy.yml (local, no token); pre-fills
+                                       sensitivePaths from the sensitive directories present
+  pr-policy validate [file]            Validate a PR policy file (local, no token)
+  pr-policy status <repoId>            Show a repository's PR evaluation mode, last evaluation
+                                       and auto-merge evidence
+  pr-policy mode <repoId> <off|advisory|auto|inherit>
+                                       Set a repository's PR evaluation mode
+
   skills sources list                  List tracked external skill sources (admin token)
   skills sources add <owner/repo> --ref=<branch|tag> [--host=H] [--path=DIR]
             [--script-mode=text-only|reject] [--skills=a,b] [--yes]
@@ -120,6 +130,10 @@ async function main(argv: string[]): Promise<number> {
   }
   if (cmd === 'mcp') {
     return await runMcpCommand(rest);
+  }
+  // `pr-policy` init/validate are local too; status/mode load credentials themselves.
+  if (cmd === 'pr-policy') {
+    return await runPrPolicyCommand(rest, loadCliEnv);
   }
   let env: CliEnv;
   try {

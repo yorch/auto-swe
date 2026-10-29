@@ -54,6 +54,7 @@ import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/id
 import { applyInstallationEvent, INSTALLATION_EVENT_TYPES } from '../lib/installationWebhook.js';
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { assertOrgBudget } from '../lib/orgAccess.js';
+import { handlePrEvaluationDelivery } from '../lib/prEvaluationWebhook.js';
 import { parseRateLimitConfig } from '../lib/rateLimitConfig.js';
 import {
   resolveLaunchCallback,
@@ -621,6 +622,18 @@ export const webhookRoutes: FastifyPluginAsync = async (fastify) => {
 
       // The App's own lifecycle events arrive on the same webhook URL.
       const eventType = request.headers['x-github-event'];
+      // Pull-request evaluation is a side effect of the same delivery: it never throws and
+      // never changes what the handlers below answer.
+      if (eventType === 'pull_request' || eventType === 'pull_request_review') {
+        const delivery = request.headers['x-github-delivery'];
+        await handlePrEvaluationDelivery(fastify, {
+          body: request.body,
+          deliveryId: typeof delivery === 'string' ? delivery : '',
+          eventType,
+          log: request.log,
+          verifiedHost: verified.host,
+        });
+      }
       // So do workflow runs: an App has one webhook URL.
       if (eventType === 'workflow_run') {
         return handleWorkflowRunDelivery(fastify, request.body, reply, verified.host);

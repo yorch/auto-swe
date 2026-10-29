@@ -144,6 +144,12 @@ describe('assistantAccess', () => {
     expect(assistantAccess('GET', undefined)).toBe('never');
   });
 
+  it('keeps the pull request evaluation mode out of the assistant, and its reads open', () => {
+    // The body picks the mode, including `auto`, so a confirmation cannot audit it per mode.
+    expect(assistantAccess('PUT', '/api/v1/repositories/:id/pr-evaluation')).toBe('never');
+    expect(assistantAccess('GET', '/api/v1/repositories/:id/pr-evaluation')).toBe('read');
+  });
+
   it('judges HEAD as the GET it mirrors', () => {
     expect(assistantAccess('HEAD', '/api/v1/workflow-runs/:id')).toBe('read');
   });

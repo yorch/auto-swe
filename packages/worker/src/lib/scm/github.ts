@@ -30,6 +30,7 @@ import {
   createOriginScopedFetch,
 } from '@auto-swe/shared/lib/guardedDispatcher';
 import { fetchGuarded } from '@auto-swe/shared/lib/guardedFetch';
+import type { ChangedFile } from '@auto-swe/shared/lib/prEvaluation';
 import { checkProbeUrl, isSafeProbeUrl } from '@auto-swe/shared/lib/ssrfGuard';
 import { resolveGitHubConfig } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
@@ -37,22 +38,29 @@ import { GitHubTokenMissingError, requireGitHubToken, resolveGitHubToken } from 
 import { currentRunLauncherId } from '../runLauncher.js';
 import { normalizeCiStatus, pickLogsUrl } from './ciStatus.js';
 import {
+  type AutoMergeMethod,
   type BranchInfo,
+  type BranchRules,
   type CiStatusResult,
   type CloneCredentials,
   type CommitComparison,
+  type CommitStatusInput,
   type CreateBranchResult,
   type CreatePullRequestInput,
   DraftPullRequestUnsupportedError,
   ExistingPullRequestNotDraftError,
   type IssueCommentInfo,
   type PermissionLookup,
+  type PullRequestDetails,
+  type PullRequestFiles,
   type PullRequestInfo,
   type PullRequestRef,
   type PullRequestReview,
+  type PullRequestReviewSummary,
   type RepoRef,
   type ReviewCommentInfo,
   type ReviewThread,
+  type ScmActionResult,
   type ScmProvider,
   type WorkflowRunFailedJob,
   type WorkflowRunFailure,
@@ -1325,4 +1333,436 @@ export class GitHubScmProvider implements ScmProvider {
       throw err;
     }
   }
+
+  async getPullRequest(repo: RepoRef, prNumber: number): Promise<PullRequestDetails | null> {
+    const octokit = await octokitFor(repo);
+    try {
+      const { data } = await octokit.pulls.get({
+        owner: repo.organizationName,
+        pull_number: prNumber,
+        repo: repo.repoName,
+      });
+      return {
+        author: data.user?.login ?? null,
+        autoMerge: data.auto_merge
+          ? {
+              enabled: true,
+              ...(typeof data.auto_merge.merge_method === 'string' && {
+                method: data.auto_merge.merge_method,
+              }),
+            }
+          : { enabled: false },
+        baseBranch: data.base.ref,
+        draft: data.draft === true,
+        headBranch: data.head.ref,
+        headSha: data.head.sha,
+        merged: data.merged === true,
+        nodeId: data.node_id,
+        number: data.number,
+        state: data.state === 'open' ? 'open' : 'closed',
+        title: data.title,
+      };
+    } catch (err) {
+      if ((err as { status?: number }).status === 404) {
+        return null;
+      }
+      throw err;
+    }
+  }
+
+  async listPullRequestFiles(repo: RepoRef, prNumber: number): Promise<PullRequestFiles> {
+    const octokit = await octokitFor(repo);
+    const where = { owner: repo.organizationName, repo: repo.repoName };
+    const files: ChangedFile[] = [];
+    let truncated = false;
+    for (let page = 1; page <= MAX_FILE_PAGES; page++) {
+      const { data } = await octokit.pulls.listFiles({
+        ...where,
+        page,
+        per_page: 100,
+        pull_number: prNumber,
+      });
+      for (const f of data) {
+        files.push(toChangedFile(f));
+      }
+      if (data.length < 100) {
+        break;
+      }
+      if (page === MAX_FILE_PAGES) {
+        truncated = true;
+      }
+    }
+    if (!truncated) {
+      // The listing can come back short without saying so; the PR's own count is the check.
+      const { data: pr } = await octokit.pulls.get({ ...where, pull_number: prNumber });
+      truncated = files.length < pr.changed_files;
+    }
+    return { files, truncated };
+  }
+
+  async listPullRequestReviews(
+    repo: RepoRef,
+    prNumber: number
+  ): Promise<PullRequestReviewSummary[]> {
+    const octokit = await octokitFor(repo);
+    const reviews: PullRequestReviewSummary[] = [];
+    for (let page = 1; page <= MAX_REVIEW_PAGES; page++) {
+      const { data } = await octokit.pulls.listReviews({
+        owner: repo.organizationName,
+        page,
+        per_page: 100,
+        pull_number: prNumber,
+        repo: repo.repoName,
+      });
+      for (const r of data) {
+        // A deleted account has no login; its review cannot be attributed, so it counts for nothing.
+        if (!r.user?.login) {
+          continue;
+        }
+        reviews.push({
+          commitId: r.commit_id ?? '',
+          login: r.user.login,
+          state: r.state.toUpperCase(),
+          submittedAt: r.submitted_at ?? null,
+        });
+      }
+      if (data.length < 100) {
+        break;
+      }
+    }
+    return reviews;
+  }
+
+  async setCommitStatus(
+    repo: RepoRef,
+    sha: string,
+    input: CommitStatusInput
+  ): Promise<ScmActionResult> {
+    const octokit = await octokitFor(repo);
+    try {
+      await octokit.repos.createCommitStatus({
+        context: input.context,
+        description: input.description.slice(0, COMMIT_STATUS_DESCRIPTION_MAX),
+        owner: repo.organizationName,
+        repo: repo.repoName,
+        sha,
+        state: input.state,
+        ...(input.targetUrl !== undefined && { target_url: input.targetUrl }),
+      });
+      return { ok: true };
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      if (status === 422 || status === 403) {
+        return { ok: false, reason: refusalReason(err) };
+      }
+      throw err;
+    }
+  }
+
+  async readBranchRules(
+    repo: RepoRef,
+    branch: string,
+    context?: string,
+    expectedAppId: number | null = null
+  ): Promise<BranchRules> {
+    const octokit = await octokitFor(repo);
+    const where = { owner: repo.organizationName, repo: repo.repoName };
+    const [protection, rules, allowsAutoMerge] = await Promise.all([
+      readProtection(octokit, where, branch, context, expectedAppId),
+      readRulesetRules(octokit, where, branch, context, expectedAppId),
+      readAllowsAutoMerge(octokit, where),
+    ]);
+    return combineBranchRules(protection, rules, allowsAutoMerge, expectedAppId !== null);
+  }
+
+  async enableAutoMerge(
+    repo: RepoRef,
+    prNumber: number,
+    input: { method: AutoMergeMethod; expectedHeadSha: string }
+  ): Promise<ScmActionResult> {
+    if (!input.expectedHeadSha) {
+      return { ok: false, reason: 'no expected head sha' };
+    }
+    const pr = await this.getPullRequest(repo, prNumber);
+    if (!pr) {
+      return { ok: false, reason: 'pull request not found' };
+    }
+    const octokit = await octokitFor(repo);
+    // `expectedHeadOid` makes the host refuse when the head moved since the caller looked, so
+    // an approval of one commit can never arm the merge of another.
+    return runMutation(() =>
+      octokit.graphql(
+        `mutation($id: ID!, $method: PullRequestMergeMethod!, $oid: GitObjectID!) {
+          enablePullRequestAutoMerge(
+            input: { pullRequestId: $id, mergeMethod: $method, expectedHeadOid: $oid }
+          ) { pullRequest { id } }
+        }`,
+        { id: pr.nodeId, method: input.method, oid: input.expectedHeadSha }
+      )
+    );
+  }
+
+  async disableAutoMerge(repo: RepoRef, prNumber: number): Promise<ScmActionResult> {
+    const pr = await this.getPullRequest(repo, prNumber);
+    if (!pr) {
+      return { ok: false, reason: 'pull request not found' };
+    }
+    const octokit = await octokitFor(repo);
+    return runMutation(() =>
+      octokit.graphql(
+        `mutation($id: ID!) {
+          disablePullRequestAutoMerge(input: { pullRequestId: $id }) { pullRequest { id } }
+        }`,
+        { id: pr.nodeId }
+      )
+    );
+  }
+}
+
+/** GitHub lists at most 3000 files of a pull request: 30 pages of 100. */
+const MAX_FILE_PAGES = 30;
+const MAX_REVIEW_PAGES = 30;
+/** A patch longer than this is treated as absent, so a huge diff never reaches the classifier. */
+const MAX_PATCH_CHARS = 200_000;
+const COMMIT_STATUS_DESCRIPTION_MAX = 140;
+const MAX_REASON_CHARS = 300;
+
+type PullFile = {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch?: string;
+  previous_filename?: string;
+};
+
+function toChangedFile(f: PullFile): ChangedFile {
+  // `copied`, `changed` and `unchanged` become `modified`: a status the evaluator does not know
+  // must never be one it could skim.
+  const status: ChangedFile['status'] =
+    f.status === 'added' || f.status === 'removed' || f.status === 'renamed'
+      ? f.status
+      : 'modified';
+  const patch = f.patch !== undefined && f.patch.length <= MAX_PATCH_CHARS ? f.patch : undefined;
+  const pureRename =
+    status === 'renamed' && f.additions === 0 && f.deletions === 0 && f.changes === 0;
+  return {
+    additions: f.additions,
+    deletions: f.deletions,
+    path: f.filename,
+    status,
+    ...(f.previous_filename !== undefined && { previousPath: f.previous_filename }),
+    ...(pureRename && { similarity: 100 }),
+    ...(patch !== undefined && { patch }),
+  };
+}
+
+function refusalReason(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return message.slice(0, MAX_REASON_CHARS);
+}
+
+/**
+ * Run a GraphQL mutation, turning the host's refusal (a GraphQL error payload, 403, 404, 422)
+ * into a result. Anything else (network, a bad credential) propagates.
+ */
+async function runMutation(call: () => Promise<unknown>): Promise<ScmActionResult> {
+  try {
+    await call();
+    return { ok: true };
+  } catch (err) {
+    const e = err as { status?: number; errors?: unknown };
+    if (Array.isArray(e.errors) || e.status === 403 || e.status === 404 || e.status === 422) {
+      return { ok: false, reason: refusalReason(err) };
+    }
+    throw err;
+  }
+}
+
+type RepoWhere = { owner: string; repo: string };
+type OctokitClient = Awaited<ReturnType<typeof octokitFor>>;
+
+/** What one source reported, or `null` when it could not be read. */
+type ProtectionRules = {
+  active: boolean;
+  requiresReviews: boolean;
+  reviewCount: number;
+  codeOwners: boolean;
+  contexts: string[];
+  /** The configured context: tied to an App, required without one, or not required (null). */
+  pinned: boolean | null;
+};
+
+/**
+ * A required-status entry is pinned only when it names OUR App: any other id (GitHub Actions is
+ * 15368), none, or -1 ("any app") can be satisfied by a token that is not ours. With no expected
+ * id nothing is pinned.
+ */
+function isAppId(value: unknown, expectedAppId: number | null): boolean {
+  return expectedAppId !== null && typeof value === 'number' && value === expectedAppId;
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+async function readProtection(
+  octokit: OctokitClient,
+  where: RepoWhere,
+  branch: string,
+  context: string | undefined,
+  expectedAppId: number | null
+): Promise<ProtectionRules | null> {
+  try {
+    const { data } = await octokit.repos.getBranchProtection({ ...where, branch });
+    const reviews = data.required_pull_request_reviews;
+    const checks = data.required_status_checks;
+    const entry = (checks?.checks ?? []).find((c) => c.context === context);
+    const listed =
+      context !== undefined && (entry !== undefined || checks?.contexts?.includes(context));
+    return {
+      active: true,
+      codeOwners: reviews?.require_code_owner_reviews === true,
+      contexts: [
+        ...new Set([...(checks?.contexts ?? []), ...(checks?.checks ?? []).map((c) => c.context)]),
+      ],
+      pinned: listed ? isAppId(entry?.app_id, expectedAppId) : null,
+      requiresReviews: (reviews?.required_approving_review_count ?? 0) >= 1,
+      reviewCount: reviews?.required_approving_review_count ?? 0,
+    };
+  } catch (err) {
+    const e = err as { status?: number; message?: string };
+    // Only the host's own "Branch not protected" answer says unprotected: a 404 can as well mean
+    // the credential cannot see protection at all.
+    if (e.status === 404 && /branch not protected/i.test(e.message ?? '')) {
+      return {
+        active: false,
+        codeOwners: false,
+        contexts: [],
+        pinned: null,
+        requiresReviews: false,
+        reviewCount: 0,
+      };
+    }
+    return null;
+  }
+}
+
+async function readRulesetRules(
+  octokit: OctokitClient,
+  where: RepoWhere,
+  branch: string,
+  context: string | undefined,
+  expectedAppId: number | null
+): Promise<ProtectionRules | null> {
+  let data: unknown;
+  try {
+    ({ data } = await octokit.request('GET /repos/{owner}/{repo}/rules/branches/{branch}', {
+      ...where,
+      branch,
+    }));
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(data)) {
+    return null;
+  }
+  const out: ProtectionRules = {
+    active: data.length > 0,
+    codeOwners: false,
+    contexts: [],
+    pinned: null,
+    requiresReviews: false,
+    reviewCount: 0,
+  };
+  for (const rule of data) {
+    if (!isRecord(rule) || !isRecord(rule.parameters)) {
+      continue;
+    }
+    const params = rule.parameters;
+    if (rule.type === 'pull_request') {
+      const count = params.required_approving_review_count;
+      out.reviewCount = Math.max(out.reviewCount, typeof count === 'number' ? count : 0);
+      // A pull_request rule with zero required approvals demands a PR, not a review.
+      out.requiresReviews ||= typeof count === 'number' && count >= 1;
+      out.codeOwners ||= params.require_code_owner_review === true;
+    } else if (rule.type === 'required_status_checks') {
+      const checks = params.required_status_checks;
+      for (const c of Array.isArray(checks) ? checks : []) {
+        if (!isRecord(c) || typeof c.context !== 'string') {
+          continue;
+        }
+        if (!out.contexts.includes(c.context)) {
+          out.contexts.push(c.context);
+        }
+        if (c.context === context) {
+          // Two rules requiring the context: it is pinned only if every one of them pins it.
+          out.pinned = (out.pinned ?? true) && isAppId(c.integration_id, expectedAppId);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+async function readAllowsAutoMerge(
+  octokit: OctokitClient,
+  where: RepoWhere
+): Promise<boolean | 'unknown'> {
+  try {
+    const { data } = await octokit.repos.get(where);
+    return typeof data.allow_auto_merge === 'boolean' ? data.allow_auto_merge : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/** Pinned only when every source answered, one requires the context, and each that does pins it. */
+function combinePinned(
+  known: ProtectionRules[],
+  complete: boolean,
+  haveExpectedApp: boolean
+): boolean | 'unknown' {
+  if (!complete || !haveExpectedApp) {
+    return 'unknown';
+  }
+  const listing = known.filter((s) => s.pinned !== null);
+  if (listing.length === 0) {
+    return 'unknown';
+  }
+  return listing.every((s) => s.pinned === true);
+}
+
+function combineBranchRules(
+  protection: ProtectionRules | null,
+  rulesets: ProtectionRules | null,
+  allowsAutoMerge: boolean | 'unknown',
+  haveExpectedApp: boolean
+): BranchRules {
+  const known = [protection, rulesets].filter((s): s is ProtectionRules => s !== null);
+  const complete = known.length === 2;
+  const sourcesWithRules = [
+    protection?.active ? 'protection' : null,
+    rulesets?.active ? 'rulesets' : null,
+  ].filter((s) => s !== null);
+  let source: BranchRules['source'] = 'unknown';
+  if (sourcesWithRules.length === 2) {
+    source = 'both';
+  } else if (sourcesWithRules.length === 1) {
+    source = sourcesWithRules[0] === 'protection' ? 'protection' : 'rulesets';
+  } else if (complete) {
+    source = 'none';
+  }
+  const anyTrue = (pick: (s: ProtectionRules) => boolean): boolean | 'unknown' =>
+    known.some(pick) ? true : complete ? false : 'unknown';
+  return {
+    allowsAutoMerge,
+    requiredReviewCount: complete ? Math.max(...known.map((s) => s.reviewCount)) : 'unknown',
+    requiredStatusContexts: complete ? [...new Set(known.flatMap((s) => s.contexts))] : 'unknown',
+    requiredStatusPinnedToApp: combinePinned(known, complete, haveExpectedApp),
+    requiresCodeOwnerReview: anyTrue((s) => s.codeOwners),
+    requiresReviews: anyTrue((s) => s.requiresReviews),
+    source,
+  };
 }

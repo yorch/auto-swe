@@ -2,7 +2,8 @@
 
 > How an automation acts on review feedback and explicit `/auto-swe fix` commands on a pull
 > request. For event automations in general see [automations.md](./automations.md); for the CI
-> side of the same GitHub App see [ci-failure-triggers.md](./ci-failure-triggers.md).
+> side of the same GitHub App see [ci-failure-triggers.md](./ci-failure-triggers.md); for how
+> the same pull requests are risk-classified see [pr-evaluation.md](./pr-evaluation.md).
 
 ---
 

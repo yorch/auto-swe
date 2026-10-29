@@ -292,3 +292,75 @@ describe('github.trackerIssueRepositories', () => {
     expect(def.schema.safeParse(many(51)).success).toBe(false);
   });
 });
+
+describe('prEvaluation settings', () => {
+  const accepts = (key: keyof typeof SETTING_DEFINITIONS, value: unknown) =>
+    SETTING_DEFINITIONS[key].schema.safeParse(value).success;
+  const keys = Object.keys(SETTING_DEFINITIONS).filter((k) =>
+    k.startsWith('prEvaluation.')
+  ) as (keyof typeof SETTING_DEFINITIONS)[];
+
+  it('are all ADMIN-only, in the prEvaluation group, and not pinned to a run', () => {
+    expect(keys).toHaveLength(13);
+    for (const key of keys) {
+      const def = SETTING_DEFINITIONS[key];
+      expect(def.group, key).toBe('prEvaluation');
+      expect(def.requiredRole, key).toBe('ADMIN');
+      expect(def.runPinned, key).toBe(false);
+      expect(def.schema.safeParse(def.defaultValue).success, key).toBe(true);
+    }
+  });
+
+  it('keeps the kill switch and auto-merge off by default and GLOBAL only', () => {
+    for (const key of ['prEvaluation.enabled', 'prEvaluation.autoMergeAllowed'] as const) {
+      expect(SETTING_DEFINITIONS[key].defaultValue, key).toBe(false);
+      expect(SETTING_DEFINITIONS[key].overridableAt, key).toEqual([]);
+    }
+  });
+
+  it('refuses a default mode of auto', () => {
+    expect(accepts('prEvaluation.defaultMode', 'advisory')).toBe(true);
+    expect(accepts('prEvaluation.defaultMode', 'off')).toBe(true);
+    expect(accepts('prEvaluation.defaultMode', 'auto')).toBe(false);
+  });
+
+  it('bounds every approver count to 1..10', () => {
+    for (const key of [
+      'prEvaluation.lowApprovers',
+      'prEvaluation.standardApprovers',
+      'prEvaluation.highApprovers',
+    ] as const) {
+      expect(accepts(key, 1), key).toBe(true);
+      expect(accepts(key, 10), key).toBe(true);
+      for (const bad of [0, -1, 11, 1.5, '1']) {
+        expect(accepts(key, bad), `${key} ${String(bad)}`).toBe(false);
+      }
+    }
+  });
+
+  it('keeps thresholds positive integers with a ceiling', () => {
+    for (const key of [
+      'prEvaluation.maxLowLines',
+      'prEvaluation.maxLowFiles',
+      'prEvaluation.maxLowDirs',
+      'prEvaluation.highLines',
+      'prEvaluation.autoMinEvidence',
+    ] as const) {
+      expect(accepts(key, 1), key).toBe(true);
+      for (const bad of [0, -5, 2.5, 100_000_000]) {
+        expect(accepts(key, bad), `${key} ${bad}`).toBe(false);
+      }
+    }
+  });
+
+  it('bounds the sensitive path list and the status context', () => {
+    expect(accepts('prEvaluation.sensitivePaths', [])).toBe(true);
+    expect(accepts('prEvaluation.sensitivePaths', ['**/payments/**'])).toBe(true);
+    expect(accepts('prEvaluation.sensitivePaths', [''])).toBe(false);
+    expect(accepts('prEvaluation.sensitivePaths', ['x'.repeat(201)])).toBe(false);
+    expect(accepts('prEvaluation.sensitivePaths', Array(101).fill('a'))).toBe(false);
+    expect(accepts('prEvaluation.requiredStatusContext', 'auto-swe/pr-evaluation')).toBe(true);
+    expect(accepts('prEvaluation.requiredStatusContext', '')).toBe(false);
+    expect(accepts('prEvaluation.requiredStatusContext', ' x')).toBe(false);
+  });
+});

@@ -468,6 +468,37 @@ backups, per your retention policy.
 **Verify the fix is running.** The worker contains `4763a611` and `6b4ee97e`. In a new workspace,
 `git remote get-url origin` prints a URL with no `x-access-token:`.
 
+### UN-8. Pull-request evaluation: migration and the steps that make it enforce
+
+This entry is not a credential defect. It lists what an operator must do, on a deployment that ran
+earlier code, for pull-request evaluation ([`pr-evaluation.md`](./pr-evaluation.md)) to take effect.
+
+**Affected.** Every deployment whose gateway and worker images are built from a commit that contains
+`PR_EVALUATION_COMMIT` (the SHA of the change that adds the feature; fill it in when the change
+lands on `main`). A build before it has none of this.
+
+**What changes.** A migration adds the table `pr_evaluations` and the column
+`connections.pr_evaluation_mode`. The normal migrate step applies it (`prisma migrate deploy`, which the
+gateway image runs before it starts); nothing is run by hand. The feature is **off**: nothing is evaluated and
+no status is posted until an admin sets `prEvaluation.enabled`. No repository is in `auto` mode, and
+`prEvaluation.autoMergeAllowed` is off.
+
+**Actions.**
+
+1. Apply the migration with the normal migrate step.
+2. To use the feature, set `prEvaluation.enabled` at `/admin/platform-settings`, and make sure the
+   GitHub App delivers `pull_request` and `pull_request_review` events.
+3. To make approver counts bind, a repository admin marks the status context
+   `auto-swe/pr-evaluation` (or the value of `prEvaluation.requiredStatusContext`) as a **required**
+   check in branch protection or a ruleset. This binds only for a repository in `auto` mode;
+   `advisory` always reports success.
+4. For `auto` mode, additionally pin that required check to the platform's **GitHub App** (a personal
+   access token cannot be pinned, so `auto` needs App credentials), and allow auto-merge on the
+   repository. Until both are true `auto` is refused.
+
+**Verify.** `auto-swe pr-policy status <repoId>` shows the mode and the last evaluation, and a
+pull request the platform opened shows the status `auto-swe/pr-evaluation` on its head commit.
+
 ---
 
 ### Device authorization codes require the new migration
