@@ -12,6 +12,7 @@ import {
 import { decideAdmission } from '@auto-swe/shared/lib/agentRunAdmission';
 import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 import type { FileChange, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure } from '@temporalio/activity';
 import { grantedWorkspaceToolIds, selectAgentRunTools } from '../agents/agentRunTools.js';
@@ -444,7 +445,7 @@ async function runAgentTaskImpl({ request }: RunAgentTaskInput): Promise<RunAgen
     where: { id: repoId },
   });
   const workflowDefaults = await resolveWorkflowDefaults();
-  const branch = `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
+  const branch = workBranchOf(request, workflowDefaults.branchPrefix);
   // The branch the checkout is cut from and a draft PR targets: the launch's, else the
   // repository's default. Refused before any container exists when it is not one a run
   // may use.

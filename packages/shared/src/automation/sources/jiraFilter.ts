@@ -5,6 +5,17 @@ import type { EventSource } from '../types.js';
 /** The source key stored on an automation that reacts to a new issue in a Jira filter. */
 export const JIRA_FILTER_NEW_ISSUE = 'jira.filter.new_issue';
 
+/** The source key stored on an automation that reacts to an issue in a Jira filter changing status. */
+export const JIRA_FILTER_STATUS_CHANGED = 'jira.filter.status_changed';
+
+/** Both Jira filter sources: polled by the gateway, one JQL on one repository. */
+export const JIRA_FILTER_SOURCES = [JIRA_FILTER_NEW_ISSUE, JIRA_FILTER_STATUS_CHANGED] as const;
+
+/** Whether `source` is one of the polled Jira filter sources. */
+export function isJiraFilterSource(source: string): boolean {
+  return (JIRA_FILTER_SOURCES as readonly string[]).includes(source);
+}
+
 /** The built-in template a Jira filter automation starts by default (`TICKET_TO_MERGE_SPEC`). */
 const TICKET_TO_MERGE = 'ticket-to-merge';
 /** Issue text carried into the run's description, and kept in the ledger for a retry. */
@@ -76,6 +87,7 @@ export const jiraFilterNewIssueSource: EventSource<JiraFilterFilters, JiraFilter
   ],
   filters: JiraFilterFiltersSchema,
   // A run can wait days for review and merge; a ticket is one subject for as long as that.
+  inFlightAlsoFrom: [JIRA_FILTER_STATUS_CHANGED],
   inFlightLookbackMs: 14 * 24 * 60 * 60 * 1000,
   key: JIRA_FILTER_NEW_ISSUE,
   // The issue is both subject and scope: one run per ticket, and a cooldown that never links
@@ -126,3 +138,100 @@ export const jiraFilterNewIssueSource: EventSource<JiraFilterFilters, JiraFilter
   },
   workflowId: { part: (x) => x.issueKey.toLowerCase(), prefix: 'jirapoll' },
 };
+
+const MAX_STATUS_CHARS = 100;
+
+/** One issue in the filter that is in a status the automation has not seen it in. */
+export const JiraStatusChangedFactsSchema = JiraFilterFactsSchema.extend({
+  status: z.string().trim().min(1).max(MAX_STATUS_CHARS),
+});
+export type JiraStatusChangedFacts = z.infer<typeof JiraStatusChangedFactsSchema>;
+
+/** Statuses name one state whatever the case Jira returns them in. */
+const statusOf = (x: JiraStatusChangedFacts) => x.status.trim().toLowerCase();
+
+/** The pair a transition is deduped on: the issue and the status it is now in. */
+const pairKeyOf = (x: JiraStatusChangedFacts) => `${keyOf(x)}#${statusOf(x)}`;
+
+/** A short stable digest (FNV-1a, 32 bits), so a status of any spelling is a safe id segment. */
+function shortDigest(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    h = Math.imul(h ^ text.charCodeAt(i), 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, '0');
+}
+
+/** A status name is a person's typing in Jira: one line, bounded, and never a block closer. */
+const statusLine = (status: string) => withoutClosingTag(status.replace(/\s+/g, ' ').trim());
+
+function sampleStatusFacts(issueKey: string): JiraStatusChangedFacts {
+  return { ...sampleFacts(issueKey), status: 'In Progress' };
+}
+
+/**
+ * An issue in a Jira filter that has moved to a status the automation has not seen it in. The
+ * poller records, for every issue the filter returns, the pair (issue, status); a pair it has not
+ * recorded is an occurrence. So the first poll starts nothing, a transition starts one run per
+ * (issue, status) however often it is polled, and an issue entering the filter in some status is
+ * an occurrence too. The JQL decides which statuses are of interest (`status = "Ready"`); the
+ * occurrence only says which status the issue is in now.
+ */
+export const jiraFilterStatusChangedSource: EventSource<JiraFilterFilters, JiraStatusChangedFacts> =
+  {
+    ...jiraFilterNewIssueSource,
+    // One ticket can have a run for every status it reaches, so each run gets a branch of its
+    // own: a later run never resets to, or pushes onto, an earlier run's branch or pull request.
+    // The tail is the same digest as the workflow id's, so a run's branch and id name one pair.
+    branchSuffix: (x) => `-${shortDigest(statusOf(x))}`,
+    dedupeKey: (ownerKey, x) => `${ownerKey}#${pairKeyOf(x)}`.toLowerCase(),
+    describeOccurrence(f) {
+      const text = (k: string) => (typeof f[k] === 'string' ? String(f[k]) : '');
+      return [
+        text('issueKey') || '?',
+        text('status') ? `→ ${text('status').slice(0, 40)}` : '',
+        text('summary').slice(0, 80),
+      ]
+        .filter(Boolean)
+        .join(' ');
+    },
+    facts: JiraStatusChangedFactsSchema,
+    filterFields: [
+      {
+        hint: 'A Jira query (JQL), or `filter = <id>` for a saved filter. An issue it returns that has moved to a status it was not seen in starts the template, once for each status. Only issues in the projects an admin allows are acted on.',
+        key: 'jql',
+        kind: 'text',
+        label: 'JQL',
+      },
+    ],
+    // Each (issue, status) is its own subject, so a later transition can start a run of its own;
+    // the issue is the scope, so the cooldown and the in-flight guard still see one ticket.
+    inFlightAlsoFrom: [JIRA_FILTER_NEW_ISSUE],
+    key: JIRA_FILTER_STATUS_CHANGED,
+    keys: (x) => ({ scope: keyOf(x), subject: pairKeyOf(x) }),
+    label: 'When an issue in a Jira filter changes status',
+    run: (x) => {
+      const base = jiraFilterNewIssueSource.run(x);
+      // The status is Jira's own text, typed by an administrator; it sits inside the block that
+      // is marked as data, with the ticket text, and not among the platform's own lines. A
+      // replacer function, because a string replacement would expand `$&` and `$'` in it.
+      const status = `Status: ${statusLine(x.status)}\n\n`;
+      return {
+        ...base,
+        description: base.description.replace('<ticket>\n', () => `<ticket>\n${status}`),
+      };
+    },
+    samples: () => [sampleStatusFacts('PROJ-1')],
+    summary: 'An issue in a Jira filter changes status: implement it and open a pull request.',
+    tester: {
+      facts: (v) => {
+        const typed = (v.issueKey ?? '').trim();
+        return sampleStatusFacts(ISSUE_KEY_RE.test(typed) ? typed : 'PROJ-1');
+      },
+      fields: [{ initial: 'PROJ-1', key: 'issueKey', label: 'Issue key' }],
+    },
+    workflowId: {
+      part: (x) => `${x.issueKey.toLowerCase()}-${shortDigest(statusOf(x))}`,
+      prefix: 'jirapoll',
+    },
+  };

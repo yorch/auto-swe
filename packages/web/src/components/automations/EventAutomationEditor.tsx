@@ -5,7 +5,7 @@ import {
   eventSource,
   type FilterField,
   INBOUND_EVENT,
-  JIRA_FILTER_NEW_ISSUE,
+  isJiraFilterSource,
 } from '@auto-swe/shared/automation';
 import type { InputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { useState } from 'react';
@@ -347,7 +347,7 @@ export function EventAutomationEditor({
           )
         )}
         {/* Jira evaluates the JQL, not this form, so a "would this match" answer would mean nothing. */}
-        {!custom && source.key !== JIRA_FILTER_NEW_ISSUE && (
+        {!custom && !isJiraFilterSource(source.key) && (
           <MatchTester filters={filters} source={source} />
         )}
       </fieldset>

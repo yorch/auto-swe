@@ -30,6 +30,7 @@ import {
 } from '@auto-swe/shared/lib/prFeedback';
 import { isRepoMember } from '@auto-swe/shared/lib/repoMembership';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 import { ACTIVE_WORKFLOW_TERMINAL_STATUSES } from '@auto-swe/shared/types/api';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, activityInfo } from '@temporalio/activity';
@@ -484,7 +485,7 @@ async function gatherPrFeedbackImpl(request: RepoWorkRequest): Promise<GatherRes
       triggerLine: string;
     }): Promise<GatherResult> => {
       const { branchPrefix } = await resolveWorkflowDefaults();
-      const workBranch = `${branchPrefix}/${request.externalTicketId}`;
+      const workBranch = workBranchOf(request, branchPrefix);
       if (workBranch === headRef) {
         return skip('the work branch would be the pull request’s own branch', {
           headRef,
@@ -1067,7 +1068,7 @@ async function pushPrFeedbackToPullRequestImpl(input: {
       where: { id: repoId },
     });
     const { branchPrefix } = await resolveWorkflowDefaults();
-    const expectedWorkBranch = `${branchPrefix}/${request.externalTicketId}`;
+    const expectedWorkBranch = workBranchOf(request, branchPrefix);
     if (gather.workBranch !== expectedWorkBranch || codeResult.branch !== expectedWorkBranch) {
       return refuse("the fix is not on this run's work branch");
     }
@@ -1137,7 +1138,7 @@ async function finishPrFeedbackPushImpl(input: {
   });
   const payload = parsePayload(request);
   const { branchPrefix } = await resolveWorkflowDefaults();
-  const workBranch = `${branchPrefix}/${request.externalTicketId}`;
+  const workBranch = workBranchOf(request, branchPrefix);
   // Never the pull request's own branch, whatever the ticket id says.
   if (workBranch === payload.baseBranch) {
     return { deleted: false };

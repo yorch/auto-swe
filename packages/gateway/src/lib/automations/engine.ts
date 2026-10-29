@@ -264,6 +264,13 @@ export async function decideAndStart<F, X>(
      * the team's), recorded as `FAILED_TO_START`. Absent when there is none or it is usable.
      */
     targetUnavailable?: string;
+    /**
+     * A reason the occurrence is the platform's own doing, found by the caller from data the
+     * engine does not read (a Jira transition the platform's sync made). Asked once the
+     * occurrence is past the source's own early exits; a reason is recorded as
+     * `SUPPRESSED_OWN_OUTPUT`, so a person sees it in the history.
+     */
+    ownOutput?: () => Promise<string | null>;
   }
 ): Promise<AutomationResult> {
   const prisma = fastify.prisma;
@@ -328,6 +335,10 @@ export async function decideAndStart<F, X>(
     }
     if (args.targetUnavailable) {
       return recordDecision(prisma, fireBase, 'FAILED_TO_START', args.targetUnavailable);
+    }
+    const own = await args.ownOutput?.();
+    if (own) {
+      return recordDecision(prisma, fireBase, 'SUPPRESSED_OWN_OUTPUT', own);
     }
     // A team automation acting on a repository another team owns (shared with it): the
     // repository's own team must allow the source too, and its organization must have budget.
@@ -456,9 +467,14 @@ export async function decideAndStart<F, X>(
       return { ignored: true, reason: 'the occurrence does not form a ticket id' };
     }
     const payload = built.payload;
+    // Decided here, once: a source that can start several runs on a ticket names a branch of its
+    // own, which the request, the run input and the active workflow all carry.
+    const suffix = source.branchSuffix?.(facts);
+    const workBranch = suffix ? `${branchPrefix}/${run.ticketId}${suffix}` : undefined;
     const workRequestId = crypto.randomUUID();
     const temporalWorkflowId = `${source.workflowId.prefix}-${automation.id.replace(/-/g, '').slice(0, 8)}-${source.workflowId.part(facts)}`;
     const request: RepoWorkRequest = {
+      ...(workBranch ? { branchName: workBranch } : {}),
       budgetTier: 'STANDARD',
       connectionId: connection?.id ?? null,
       description: run.description,
@@ -482,7 +498,7 @@ export async function decideAndStart<F, X>(
           // A run with no repository is the team's: its knowledge source is the team.
           ...(connection ? {} : { knowledgeSourceTeam: { orgId: team.orgId, teamId: team.id } }),
           activeWorkflow: {
-            assignedBranch: `${branchPrefix}/${run.ticketId}`,
+            assignedBranch: workBranch ?? `${branchPrefix}/${run.ticketId}`,
             budgetTier: 'STANDARD',
             currentStatus: 'IMPLEMENTING',
             repoId: connection?.id ?? null,
@@ -505,6 +521,7 @@ export async function decideAndStart<F, X>(
             templateId: template.id,
             templateVersion: template.activeVersion,
             ticketIsSynthetic: run.ticketIsSynthetic,
+            ...(workBranch ? { workBranch } : {}),
           },
         },
         async () => {
@@ -615,7 +632,10 @@ export async function decideUnderLock<F, X>(
     automation: Pick<AutomationRow, 'id' | 'cooldownMinutes' | 'maxRunsPerDay'>;
     ownerKey: string;
   },
-  source: Pick<EventSource<F, X>, 'inFlightLookbackMs' | 'key' | 'ownOutputFrom'>,
+  source: Pick<
+    EventSource<F, X>,
+    'inFlightAlsoFrom' | 'inFlightLookbackMs' | 'key' | 'ownOutputFrom'
+  >,
   keys: { scope: string; subject: string },
   now: Date,
   /** Whether Temporal says an execution is over. Throws when Temporal cannot say. */
@@ -675,6 +695,9 @@ export async function decideUnderLock<F, X>(
       ...startedOnRepo,
       createdAt: { gte: new Date(now.getTime() - source.inFlightLookbackMs) },
       scopeKey: keys.scope,
+      // A run another source started on the same scope (a Jira ticket both Jira sources watch)
+      // is as open a run on it as this source's own.
+      source: { in: [source.key, ...(source.inFlightAlsoFrom ?? [])] },
       temporalWorkflowId: { not: null },
     },
   });

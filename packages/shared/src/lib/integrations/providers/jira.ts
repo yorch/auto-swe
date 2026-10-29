@@ -2,6 +2,7 @@ import { adfFromText, adfToPlainText } from '../adf.js';
 import type { AtlassianClient } from '../atlassianClient.js';
 import { AtlassianError } from '../atlassianClient.js';
 import type { IssueTrackerProvider } from '../issueTracker.js';
+import { JIRA_SYNC_STATUSES } from '../jiraSyncStatuses.js';
 import type {
   CreatedIssue,
   FetchedIssue,
@@ -58,7 +59,10 @@ interface JiraRemoteLink {
 }
 
 interface JiraSearchResponse {
-  issues?: { key?: string; fields?: { summary?: string; project?: { key?: string } } }[];
+  issues?: {
+    key?: string;
+    fields?: { summary?: string; project?: { key?: string }; status?: { name?: string } };
+  }[];
   nextPageToken?: string;
   isLast?: boolean;
 }
@@ -260,7 +264,7 @@ export class JiraProvider implements IssueTrackerProvider {
         break;
       }
       const response = await this.client.post<JiraSearchResponse>('/rest/api/3/search/jql', {
-        fields: ['summary', 'project'],
+        fields: ['summary', 'project', 'status'],
         jql,
         maxResults: SEARCH_PAGE_SIZE,
         ...(nextPageToken ? { nextPageToken } : {}),
@@ -268,7 +272,13 @@ export class JiraProvider implements IssueTrackerProvider {
       for (const hit of response.issues ?? []) {
         const projectKey = hit.fields?.project?.key;
         if (hit.key && projectKey) {
-          issues.push({ key: hit.key, projectKey, summary: hit.fields?.summary ?? '' });
+          const status = hit.fields?.status?.name;
+          issues.push({
+            key: hit.key,
+            projectKey,
+            ...(status ? { status } : {}),
+            summary: hit.fields?.summary ?? '',
+          });
         }
         if (issues.length > opts.maxResults) {
           break;
@@ -340,13 +350,13 @@ export class JiraProvider implements IssueTrackerProvider {
     try {
       switch (event.type) {
         case 'workflow_started':
-          await this.transitionIssue(event.issueId, 'In Progress');
+          await this.transitionIssue(event.issueId, JIRA_SYNC_STATUSES.started);
           break;
         case 'pr_opened':
           if (event.prUrl && event.prTitle) {
             await this.addRemoteLink(event.issueId, event.prUrl, event.prTitle);
           }
-          await this.transitionIssue(event.issueId, 'In Review');
+          await this.transitionIssue(event.issueId, JIRA_SYNC_STATUSES.prOpened);
           break;
         case 'ci_passed':
           await this.addComment(event.issueId, '✅ CI passed');
@@ -361,7 +371,7 @@ export class JiraProvider implements IssueTrackerProvider {
           if (event.prUrl && event.prTitle) {
             await this.addRemoteLink(event.issueId, event.prUrl, event.prTitle);
           }
-          await this.transitionIssue(event.issueId, 'Done');
+          await this.transitionIssue(event.issueId, JIRA_SYNC_STATUSES.completed);
           break;
         case 'workflow_failed':
           await this.addComment(

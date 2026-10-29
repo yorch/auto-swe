@@ -1,11 +1,16 @@
 /**
- * The Jira filter poller (docs/automations.md §3.2): one poll of one
- * `jira.filter.new_issue` automation. It runs the automation's JQL with the platform's Jira
+ * The Jira filter poller (docs/automations.md §3.2): one poll of one `jira.filter.new_issue` or
+ * `jira.filter.status_changed` automation. It runs the automation's JQL with the platform's Jira
  * credential, keeps only the issues in the projects an admin allowed, and compares them with
  * what the automation has already seen.
  *
  * The first poll of an automation records what already matches and starts nothing, so a broad
  * filter cannot launch a backlog the moment it is saved.
+ *
+ * The two sources differ in one thing, what counts as already seen. `new_issue` remembers issue
+ * keys; `status_changed` remembers (issue key, status) pairs, so an issue in a status it has not
+ * been seen in is an occurrence, once per status, and a poll replay or restart finds the pair
+ * recorded. Everything else (lease, allowlist, baseline, fail-closed errors) is shared.
  *
  * Replicas poll one automation at a time through a lease on its poll-state row: a compare-and-set
  * that only one replica wins, which expires on its own if the process dies. (A session advisory
@@ -15,15 +20,20 @@
  */
 import type { FetchIssueOutcome, PrismaClient } from '@auto-swe/shared';
 import {
+  JIRA_FILTER_STATUS_CHANGED,
   type JiraFilterFacts,
   JiraFilterFactsSchema,
   JiraFilterFiltersSchema,
+  type JiraStatusChangedFacts,
+  JiraStatusChangedFactsSchema,
   jiraFilterNewIssueSource,
+  jiraFilterStatusChangedSource,
   repositoryOwnerKey,
 } from '@auto-swe/shared/automation';
 import { resolveSetting } from '@auto-swe/shared/config';
 import { AtlassianError } from '@auto-swe/shared/lib/integrations/atlassianClient';
 import type { IssueTrackerProvider } from '@auto-swe/shared/lib/integrations/issueTracker';
+import { JIRA_SYNC_STATUS_KEYS } from '@auto-swe/shared/lib/integrations/jiraSyncStatuses';
 import { isInstallationRetired } from '@auto-swe/shared/lib/repoAccessDecision';
 import type { FastifyInstance } from 'fastify';
 import {
@@ -77,6 +87,8 @@ export type PollOutcome =
 /** An automation as the poller reads it: its filters, and the repository it acts on. */
 export interface PollableAutomation {
   id: string;
+  /** The source key; anything but `jira.filter.status_changed` polls for new issues. */
+  source?: string;
   filters: unknown;
   connection: {
     id: string;
@@ -90,7 +102,7 @@ export interface PollDeps {
   prisma: Pick<PrismaClient, 'automationPollState' | 'automationSeenIssue'>;
   tracker: Pick<IssueTrackerProvider, 'searchIssues' | 'fetchIssue' | 'fetchIssueOutcome'>;
   /** Decides one new issue: the engine, for the automation being polled. */
-  decide: (facts: JiraFilterFacts) => Promise<AutomationResult>;
+  decide: (facts: JiraFilterFacts | JiraStatusChangedFacts) => Promise<AutomationResult>;
   now: Date;
   /** Where a refused issue is named (its key only). */
   log?: { warn: (obj: unknown, msg?: string) => void };
@@ -252,6 +264,7 @@ async function poll(
     return { code: 'NO_ALLOWED_PROJECTS', status: 'error' };
   }
 
+  const statusMode = automation.source === JIRA_FILTER_STATUS_CHANGED;
   const narrowed = wrapJqlInProjects(filters.data.jql, allowed);
   let found: Awaited<ReturnType<PollDeps['tracker']['searchIssues']>>;
   try {
@@ -265,20 +278,30 @@ async function poll(
     return { code: 'FILTER_TOO_BROAD', status: 'error' };
   }
   // The authoritative check: whatever the JQL selected, only an allowed project is acted on.
-  const inAllowedProjects = found.issues.filter(
-    (i) => ASCII_PROJECT_KEY.test(i.projectKey) && allowed.includes(i.projectKey.toUpperCase())
-  );
+  const inAllowedProjects: Match[] = found.issues
+    .filter(
+      (i) => ASCII_PROJECT_KEY.test(i.projectKey) && allowed.includes(i.projectKey.toUpperCase())
+    )
+    // An issue the search shows no status for cannot be told from itself a moment ago: it is not
+    // acted on, and not recorded, until a search does show one.
+    .filter((i) => !statusMode || (i.status ?? '').trim() !== '')
+    .map((i) => ({
+      key: i.key,
+      projectKey: i.projectKey,
+      ...(i.status ? { status: i.status } : {}),
+    }));
 
   const { automationPollState: states, automationSeenIssue: seenIssues } = deps.prisma;
   const state = await states.findUniqueOrThrow({ where: { automationId: automation.id } });
   // A baseline belongs to the query it was taken for, as Jira is asked it: the JQL and the
   // allowed projects. A different one (an edited JQL, a project added to the allowlist) takes a
-  // new baseline, so what it already matched is recorded and starts nothing.
+  // new baseline, so what it already matched is recorded and starts nothing. Under
+  // `status_changed` that is each match in the status it is in now.
   if (state.baselinedAt === null || state.baselineJql !== narrowed) {
     await seenIssues.createMany({
       data: inAllowedProjects.map((i) => ({
         automationId: automation.id,
-        issueKey: i.key.toLowerCase(),
+        issueKey: seenKeyOf(i, statusMode),
       })),
       skipDuplicates: true,
     });
@@ -288,7 +311,23 @@ async function poll(
     });
     return { recorded: inAllowedProjects.length, status: 'baselined' };
   }
-  return startNewIssues(deps, automation.id, inAllowedProjects);
+  return startNewIssues(deps, automation.id, inAllowedProjects, statusMode);
+}
+
+/** One search match the poll may act on. `status` is set under `status_changed`. */
+interface Match {
+  key: string;
+  projectKey: string;
+  status?: string;
+}
+
+/**
+ * What the automation remembers an issue by: its key, or under `status_changed` its key and the
+ * status it is in. Lower-case, as the seen set requires; `#` cannot occur in a Jira key.
+ */
+export function seenKeyOf(match: Match, statusMode: boolean): string {
+  const key = match.key.toLowerCase();
+  return statusMode ? `${key}#${(match.status ?? '').trim().toLowerCase()}` : key;
 }
 
 /** A tracker that cannot say why a read found nothing: a miss is read as unavailable. */
@@ -321,11 +360,12 @@ const byIssueNumber = (a: { key: string }, b: { key: string }) =>
 async function startNewIssues(
   deps: PollDeps,
   automationId: string,
-  matches: readonly { key: string; projectKey: string }[]
+  matches: readonly Match[],
+  statusMode: boolean
 ): Promise<PollOutcome> {
   const { automationSeenIssue: seenIssues } = deps.prisma;
   // One issue is one key whatever its spelling.
-  const byKey = new Map(matches.map((m) => [m.key.toLowerCase(), m]));
+  const byKey = new Map(matches.map((m) => [seenKeyOf(m, statusMode), m]));
   const seenRows = await seenIssues.findMany({
     select: { issueKey: true },
     where: { automationId, issueKey: { in: [...byKey.keys()] } },
@@ -335,9 +375,9 @@ async function startNewIssues(
     .filter(([key]) => !seen.has(key))
     .map(([, match]) => match)
     .sort(byIssueNumber);
-  const markSeen = (key: string) =>
+  const markSeen = (match: Match) =>
     seenIssues.createMany({
-      data: [{ automationId, issueKey: key.toLowerCase() }],
+      data: [{ automationId, issueKey: seenKeyOf(match, statusMode) }],
       skipDuplicates: true,
     });
 
@@ -358,7 +398,7 @@ async function startNewIssues(
       // The tracker's definitive answer about this issue (issue-level security, or gone): asking
       // again changes nothing, and leaving it unseen would starve every newer issue behind it. It
       // is counted as refused, not suppressed (no ledger row), and only its key is logged.
-      await markSeen(match.key);
+      await markSeen(match);
       decided++;
       refused++;
       deps.log?.warn({ automationId, issueKey: match.key }, 'Jira refused to show an issue');
@@ -373,22 +413,29 @@ async function startNewIssues(
     if (issue.id.toLowerCase() !== match.key.toLowerCase()) {
       // It has a new key now, which the next search shows if it is allowed. Left unseen it would
       // keep its place in the window of 50 on every poll and hide the newer issues behind it.
-      await markSeen(match.key);
+      await markSeen(match);
       decided++;
       continue;
     }
-    const facts = JiraFilterFactsSchema.safeParse({
+    // The status is the search's, the one the pair was recorded under, not a later read's.
+    const facts = (statusMode ? JiraStatusChangedFactsSchema : JiraFilterFactsSchema).safeParse({
       description: issue.description.slice(0, 4_000),
       issueKey: match.key,
       projectKey: match.projectKey,
       summary: issue.title.slice(0, 256),
       url: issue.url.slice(0, 500),
+      ...(statusMode ? { status: match.status } : {}),
     });
     if (!facts.success) {
-      // Facts that can never be valid (a key of an unheard-of shape): retrying changes nothing,
-      // and leaving it unseen would put it first in line on every poll.
-      await markSeen(match.key);
+      // Facts that can never be valid (a key of an unheard-of shape, a status over 100
+      // characters): retrying changes nothing, and leaving it unseen would put it first in line
+      // on every poll. Said in the log, by key only, never with Jira's text.
+      await markSeen(match);
       decided++;
+      deps.log?.warn(
+        { automationId, issueKey: match.key },
+        'a Jira issue was not acted on: its facts are not valid'
+      );
       continue;
     }
     let result: AutomationResult;
@@ -403,7 +450,7 @@ async function startNewIssues(
     if ('ignored' in result || ('outcome' in result && result.outcome === 'FAILED_TO_START')) {
       return { code: 'START_FAILED', status: 'error' };
     }
-    await markSeen(match.key);
+    await markSeen(match);
     decided++;
     if ('outcome' in result) {
       if (result.outcome === 'STARTED') {
@@ -463,17 +510,60 @@ export function engineDecider(
     now: Date;
   }
 ): PollDeps['decide'] {
-  return (facts) =>
-    decideAndStart(fastify, jiraFilterNewIssueSource, {
-      automation: args.automation,
-      connection: args.connection,
-      facts,
-      now: args.now,
-      ownerKey: args.ownerKey,
-      // A poll that decided an issue and crashed before marking it seen decides it again; only a
-      // start that failed is taken again, as for a redelivered webhook.
-      retry: { kind: 'redelivery' },
-      startRetryDelayMs: 1_000,
-      team: args.connection.team,
+  const isPlatformTransition = platformTransitionCheck(fastify.prisma);
+  const common = {
+    automation: args.automation,
+    connection: args.connection,
+    now: args.now,
+    ownerKey: args.ownerKey,
+    // A poll that decided an issue and crashed before marking it seen decides it again; only a
+    // start that failed is taken again, as for a redelivered webhook.
+    retry: { kind: 'redelivery' as const },
+    startRetryDelayMs: 1_000,
+    team: args.connection.team,
+  };
+  return args.automation.source === JIRA_FILTER_STATUS_CHANGED
+    ? (facts) => {
+        const status = facts as JiraStatusChangedFacts;
+        return decideAndStart(fastify, jiraFilterStatusChangedSource, {
+          ...common,
+          facts: status,
+          ownOutput: () => isPlatformTransition(status.issueKey, status.status),
+        });
+      }
+    : (facts) => decideAndStart(fastify, jiraFilterNewIssueSource, { ...common, facts });
+}
+
+/** The reason recorded for a transition the platform made itself. */
+export const PLATFORM_TRANSITION_REASON =
+  'the platform’s own Jira sync moved this ticket to this status for a run on it; it is not acted on again';
+
+/**
+ * Recognises a transition the platform made itself. Its Jira sync moves a ticket to In Progress,
+ * In Review and Done for a run on that ticket (`JIRA_SYNC_STATUSES`), and writes Done when the
+ * pull request merges, which can be weeks after the run began. So an issue in one of those
+ * statuses is taken as the platform's own doing when ANY run on that ticket exists, whatever its
+ * age, repository or source (an automation, a manual launch, the transition hook).
+ *
+ * It is a rule over what the platform writes, not a view of who made the transition: a person's
+ * move to one of those statuses on such a ticket is recognised too, and a workflow whose
+ * transitions land in other status names is not. The ticket id is matched exactly in its usual
+ * spellings (as Jira issues it, upper-case, lower-case) and never as a pattern, because `_` in a
+ * project key is a wildcard to a case-insensitive match. The answer is a yes or no that is only
+ * used to suppress an occurrence; no run, repository or team is named in it.
+ */
+export function platformTransitionCheck(
+  prisma: Pick<PrismaClient, 'runInput'>
+): (issueKey: string, status: string) => Promise<string | null> {
+  return async (issueKey, status) => {
+    if (!JIRA_SYNC_STATUS_KEYS.includes(status.trim().toLowerCase())) {
+      return null;
+    }
+    const spellings = [...new Set([issueKey, issueKey.toUpperCase(), issueKey.toLowerCase()])];
+    const run = await prisma.runInput.findFirst({
+      select: { id: true },
+      where: { externalTicketId: { in: spellings }, ticketIsSynthetic: false },
     });
+    return run ? PLATFORM_TRANSITION_REASON : null;
+  };
 }

@@ -1,3 +1,4 @@
+import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 /**
  * The CI triage steps of the `ci-triage-and-fix` template.
  *
@@ -784,7 +785,7 @@ export async function pushCiFixToPullRequest(input: PushCiFixInput): Promise<Pus
     // The commit must be the one on this run's own work branch: what the built-in template's
     // implementer committed there, under the workflow-file refusal.
     const { branchPrefix } = await resolveWorkflowDefaults();
-    const workBranch = `${branchPrefix}/${request.externalTicketId}`;
+    const workBranch = workBranchOf(request, branchPrefix);
     const pushed = await fastForwardPullRequestBranch({
       branch,
       codeResult,
@@ -828,7 +829,7 @@ export async function finishCiFixPush(input: {
   });
   const payload = parsePayload(request);
   const { branchPrefix } = await resolveWorkflowDefaults();
-  const workBranch = `${branchPrefix}/${request.externalTicketId}`;
+  const workBranch = workBranchOf(request, branchPrefix);
   // Never the pull request's own branch, whatever the ticket id says.
   if (workBranch === payload.baseBranch) {
     return { deleted: false };

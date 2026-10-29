@@ -1,3 +1,4 @@
+import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 /**
  * Phase-6 shell-step activity.
  *
@@ -463,7 +464,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
   }
 
   const { branchPrefix } = await resolveWorkflowDefaults();
-  const branch = input.branch ?? `${branchPrefix}/${input.request.externalTicketId}`;
+  const branch = input.branch ?? workBranchOf(input.request, branchPrefix);
   const helperImage = await gitHelperImage();
   // Resolved before the author command runs: a failure here retries the
   // activity, which is safe only while the command has not yet executed.

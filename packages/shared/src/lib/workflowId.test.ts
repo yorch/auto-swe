@@ -6,6 +6,7 @@ import {
   generateBranchName,
   generateWorkflowId,
   legacyWorkflowIdBases,
+  workBranchOf,
   workflowIdFamilyBases,
 } from './workflowId.js';
 
@@ -336,5 +337,20 @@ describe('chooseWorkflowId — rows of one repository under several ids', () => 
 describe('evalScreenWorkflowId', () => {
   it('is one deterministic id per dataset', () => {
     expect(evalScreenWorkflowId('d1')).toBe('eval-screen-d1');
+  });
+});
+
+describe('workBranchOf', () => {
+  it('is the ticket branch for a request that carries none', () => {
+    expect(workBranchOf({ externalTicketId: 'PAY-1' }, 'auto')).toBe('auto/PAY-1');
+    expect(workBranchOf({ branchName: null, externalTicketId: 'PAY-1' }, 'auto')).toBe(
+      generateBranchName('PAY-1', 'auto')
+    );
+  });
+
+  it('is the branch the request carries, whatever the prefix is now', () => {
+    expect(
+      workBranchOf({ branchName: 'auto/PAY-1-ab12cd34', externalTicketId: 'PAY-1' }, 'x')
+    ).toBe('auto/PAY-1-ab12cd34');
   });
 });

@@ -30,6 +30,15 @@ export function outcomeLabel(outcome: string): string {
   }
 }
 
+/**
+ * A decision's subject as a short reader-facing line. Most subjects are hashes, of which twelve
+ * characters name one; a Jira subject is `jira-<issue>[#<status>]`, readable and short, and its
+ * status is the part that tells two decisions on one issue apart, so it is shown whole.
+ */
+export function subjectLabel(subjectKey: string): string {
+  return subjectKey.startsWith('jira-') ? subjectKey : subjectKey.slice(0, 12);
+}
+
 export function outcomeTone(outcome: string): BadgeTone {
   return OUTCOME_TONE[outcome] ?? 'warning';
 }
@@ -78,7 +87,7 @@ export function AutomationHistory({
                 {descriptor ? descriptor.describeOccurrence(f.facts) : f.scopeKey}
               </div>
               <div className="mt-0.5 text-paper-500">
-                {f.subjectKey.slice(0, 12)}
+                {subjectLabel(f.subjectKey)}
                 {f.reason && ` · ${f.reason}`}
               </div>
             </div>

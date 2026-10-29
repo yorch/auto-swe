@@ -1,3 +1,4 @@
+import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 /**
  * Quality-gate activities — phase 2 of the configurable workflow engine.
  *
@@ -231,7 +232,7 @@ async function provisionGateWorkspace(
     }),
     resolveWorkflowDefaults(),
   ]);
-  const branch = branchOverride ?? `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
+  const branch = branchOverride ?? workBranchOf(request, workflowDefaults.branchPrefix);
 
   const repoRef = toRepoRef(repo);
   const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);

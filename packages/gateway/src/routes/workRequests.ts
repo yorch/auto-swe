@@ -1083,6 +1083,8 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const canaryPin = await resolveCanaryPin(workRequest.id);
 
       const repoWorkRequest: RepoWorkRequest = {
+        // The branch the request was launched with, when it has one of its own: a re-run keeps it.
+        ...(workRequest.workBranch ? { branchName: workRequest.workBranch } : {}),
         budgetTier: latest.budgetTier as RepoWorkRequest['budgetTier'],
         connectionId: repo.id,
         description: request.body?.instructions

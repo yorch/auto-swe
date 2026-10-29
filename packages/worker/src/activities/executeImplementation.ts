@@ -5,6 +5,7 @@ import {
   resolveWorkflowDefaults,
 } from '@auto-swe/shared/lib/systemConfig';
 import { syncTrackerOnEvent } from '@auto-swe/shared/lib/trackerSync';
+import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 import type {
   CodeResult,
   RepoWorkRequest,
@@ -143,7 +144,7 @@ export async function executeImplementation(
   });
 
   const workflowDefaults = await resolveWorkflowDefaults();
-  const featureBranch = `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
+  const featureBranch = workBranchOf(request, workflowDefaults.branchPrefix);
   const branch = subtask ? `${featureBranch}/${subtask.id}` : featureBranch;
 
   const repoRef = toRepoRef(repo);

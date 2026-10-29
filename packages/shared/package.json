@@ -88,6 +88,7 @@
     "./lib/trackerSync": "./dist/lib/trackerSync.js",
     "./lib/integrations/adf": "./dist/lib/integrations/adf.js",
     "./lib/integrations/atlassianClient": "./dist/lib/integrations/atlassianClient.js",
+    "./lib/integrations/jiraSyncStatuses": "./dist/lib/integrations/jiraSyncStatuses.js",
     "./lib/integrations/registry": "./dist/lib/integrations/registry.js",
     "./lib/integrations/issueTracker": "./dist/lib/integrations/issueTracker.js",
     "./lib/scannerCache": "./dist/lib/scannerCache.js",

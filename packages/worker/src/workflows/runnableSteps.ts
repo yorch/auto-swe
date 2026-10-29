@@ -301,7 +301,9 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
         ...input,
         workspace: {
           ...(payloadBaseBranch(request) ? { baseBranch: payloadBaseBranch(request) } : {}),
-          branch: lookupPath(ctx, 'context.currentCodeResult.branch') as string | undefined,
+          branch:
+            (lookupPath(ctx, 'context.currentCodeResult.branch') as string | undefined) ??
+            request.branchName,
           repoId: request.repoId,
           ticketId: request.externalTicketId,
         },
@@ -1144,6 +1146,7 @@ function resolveMergeBindings(
   const targetBranch =
     (inputs.targetBranch as string | undefined) ??
     (config.targetBranch as string | undefined) ??
+    request.branchName ??
     `${branchPrefix}/${request.externalTicketId}`;
   const raw = inputs.sourceBranches;
   if (!Array.isArray(raw) || raw.some((b) => typeof b !== 'string')) {

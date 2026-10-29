@@ -581,6 +581,16 @@ describe('executeImplementation retry safety', () => {
     expect(workspaceMock.gitAuthed).toHaveBeenLastCalledWith("push origin 'auto/JIRA-1'");
   });
 
+  it('works on the branch the request carries, not the ticket’s, and a retry resumes that one', async () => {
+    const request = { ...REQUEST, branchName: 'auto/JIRA-1-ab12cd34' };
+    await executeImplementation(request);
+    expect(workspaceMock.gitAuthed).toHaveBeenLastCalledWith("push origin 'auto/JIRA-1-ab12cd34'");
+    vi.mocked(currentAttempt).mockReturnValue(2);
+    await executeImplementation(request);
+    expect(execCommands()).toContain("git reset --hard origin/'auto/JIRA-1-ab12cd34'");
+    expect(execCommands()).not.toContain("git reset --hard origin/'auto/JIRA-1'");
+  });
+
   it('proceeds from the clone when the retry finds nothing pushed yet', async () => {
     vi.mocked(currentAttempt).mockReturnValue(2);
     workspaceMock.gitAuthed.mockImplementation(async (sub: string) => {
