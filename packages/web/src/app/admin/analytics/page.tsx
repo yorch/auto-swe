@@ -1,11 +1,10 @@
 'use client';
 
+import { getConnectionTypeMetadata, isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
 import {
-  getConnectionTypeMetadata,
   getWorkspaceProviderMetadata,
-  isConnectionType,
   isWorkspaceProviderType,
-} from '@auto-swe/shared';
+} from '@auto-swe/shared/lib/workspaceProviders';
 import Link from 'next/link';
 import { Suspense, useMemo, useState } from 'react';
 import { WorkflowsOverTimeChart } from '@/components/charts/WorkflowsOverTimeChart';
