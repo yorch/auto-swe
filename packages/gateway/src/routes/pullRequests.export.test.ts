@@ -41,11 +41,13 @@ async function buildApp(role: Role = 'ADMIN') {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const prisma = {
+    activeWorkflow: { findMany: vi.fn().mockResolvedValue([]) },
     pullRequest: {
       count: vi.fn().mockResolvedValue(0),
       findMany: vi.fn().mockResolvedValue([]),
     },
     teamMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
+    workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
   };
   app.decorate('prisma', prisma as unknown as never);
   app.decorate('auth', {
@@ -88,13 +90,102 @@ describe('GET /api/v1/pull-requests/outcomes/export', () => {
     expect(res.headers['x-export-truncated']).toBe('false');
     const lines = res.body.trimEnd().split('\n');
     expect(lines[0]).toBe(
-      'pull_request_id,repository_org,repository_name,pr_number,status,is_draft,ci_status,opened_at,merged_at,closed_at,time_to_merge_ms'
+      'pull_request_id,repository_org,repository_name,pr_number,status,is_draft,ci_status,opened_at,merged_at,closed_at,time_to_merge_ms,template_id,template_name'
     );
     expect(lines[1]).toBe(
-      `pr-000001,acme,api,1,MERGED,false,PASSED,${opened.toISOString()},${merged.toISOString()},,3600000`
+      `pr-000001,acme,api,1,MERGED,false,PASSED,${opened.toISOString()},${merged.toISOString()},,3600000,,`
     );
     expect(lines[2]?.startsWith('pr-000002,,,2,OPEN,true,PASSED,')).toBe(true);
     expect(lines).toHaveLength(3);
+  });
+
+  it('filters by repository and template and exports attribution', async () => {
+    const b = await buildApp();
+    b.prisma.pullRequest.findMany.mockResolvedValue([
+      row(1, {
+        repoId: TEAM,
+        workflow: { repoId: TEAM, temporalWorkflowId: 'workflow-1' },
+      }),
+    ]);
+    b.prisma.workflowRun.findMany
+      .mockResolvedValueOnce([{ workflowId: 'workflow-1' }])
+      .mockResolvedValueOnce([
+        { template: { name: 'Build' }, templateId: TEAM, workflowId: 'workflow-1' },
+      ]);
+    b.prisma.activeWorkflow.findMany.mockResolvedValue([
+      { repoId: TEAM, temporalWorkflowId: 'workflow-1' },
+    ]);
+    const response = await get(b, `?templateId=${TEAM}&repoId=${TEAM}`);
+    expect(response.statusCode).toBe(200);
+    expect(b.prisma.pullRequest.findMany.mock.calls[0]?.[0].where.AND).toContainEqual({
+      repoId: TEAM,
+    });
+    expect(b.prisma.pullRequest.findMany.mock.calls[0]?.[0].where.AND).toContainEqual({
+      OR: [
+        {
+          repoId: TEAM,
+          workflow: { temporalWorkflowId: { in: ['workflow-1'] } },
+        },
+      ],
+    });
+    expect(response.body.trimEnd().split('\n')[1]).toMatch(new RegExp(`,${TEAM},Build$`));
+  });
+
+  it('excludes repository-mismatched links from a template-filtered export', async () => {
+    const otherRepo = '00000000-0000-4000-8000-00000000000c';
+    const b = await buildApp();
+    b.prisma.pullRequest.findMany.mockResolvedValue([
+      row(1, {
+        repoId: otherRepo,
+        workflow: { repoId: TEAM, temporalWorkflowId: 'workflow-1' },
+      }),
+      row(2, {
+        repoId: TEAM,
+        workflow: { repoId: TEAM, temporalWorkflowId: 'workflow-1' },
+      }),
+    ]);
+    b.prisma.workflowRun.findMany
+      .mockResolvedValueOnce([
+        { workflowId: 'workflow-1' },
+        { workflowId: 'workflow-2' },
+        { workflowId: 'workflow-3' },
+      ])
+      .mockResolvedValueOnce([
+        { template: { name: 'Build' }, templateId: TEAM, workflowId: 'workflow-1' },
+        { template: { name: 'Build' }, templateId: TEAM, workflowId: 'workflow-2' },
+        { template: { name: 'Build' }, templateId: TEAM, workflowId: 'workflow-3' },
+      ]);
+    b.prisma.activeWorkflow.findMany.mockResolvedValue([
+      { repoId: TEAM, temporalWorkflowId: 'workflow-1' },
+      { repoId: TEAM, temporalWorkflowId: 'workflow-2' },
+      { repoId: otherRepo, temporalWorkflowId: 'workflow-3' },
+    ]);
+
+    const response = await get(b, `?templateId=${TEAM}`);
+    expect(response.statusCode).toBe(200);
+    const lines = response.body.trimEnd().split('\n');
+    expect(lines).toHaveLength(2);
+    expect(lines[1]).toContain(`,${TEAM},Build`);
+    expect(lines[1]).not.toContain('pr-000001');
+    expect(b.prisma.pullRequest.findMany.mock.calls[0]?.[0].where.AND).toContainEqual({
+      OR: [
+        {
+          repoId: TEAM,
+          workflow: { temporalWorkflowId: { in: ['workflow-1', 'workflow-2'] } },
+        },
+        {
+          repoId: otherRepo,
+          workflow: { temporalWorkflowId: { in: ['workflow-3'] } },
+        },
+      ],
+    });
+    expect(b.prisma.workflowRun.findMany.mock.calls[0]?.[0].take).toBe(50_001);
+    expect(b.prisma.workflowRun.findMany.mock.calls[0]?.[0].where.AND).toContainEqual({
+      startedAt: {
+        gte: new Date(WINDOW_START.getTime() - 30 * 24 * 60 * 60 * 1000),
+        lt: WINDOW_END,
+      },
+    });
   });
 
   it('defuses a spreadsheet formula in a text cell', async () => {

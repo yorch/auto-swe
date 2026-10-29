@@ -35,7 +35,7 @@ function newMockPrisma() {
   };
 }
 
-async function buildApp(role: 'ADMIN' | 'LEAD' | 'ENGINEER' = 'ADMIN') {
+async function buildApp(role: 'ADMIN' | 'LEAD' | 'ORG_ADMIN' | 'ENGINEER' = 'ADMIN') {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -53,6 +53,7 @@ const AUTH = { authorization: 'Bearer fake' };
 const TEAM_A = '00000000-0000-4000-8000-00000000000a';
 const TEAM_B = '00000000-0000-4000-8000-00000000000b';
 const ORG_A = '00000000-0000-4000-8000-0000000000a1';
+const ORG_B = '00000000-0000-4000-8000-0000000000a2';
 
 /** One (model, agent, activity) group as Prisma returns it. */
 function group(
@@ -427,6 +428,50 @@ describe('usageRoutes GET /usage', () => {
     const res = await app.inject({ headers: AUTH, method: 'GET', url: '/api/v1/platform/usage' });
 
     expect(res.json().data.unattributed).toEqual({ calls: 4, costUsd: 0.75 });
+  });
+});
+
+describe('usageRoutes GET /usage/export', () => {
+  it('denies a team lead who cannot access the requested team', async () => {
+    const { app } = await buildApp('LEAD');
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/usage/export?teamId=${TEAM_B}`,
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
+  it('denies an organization admin who requests another organization', async () => {
+    const { app, prisma } = await buildApp('ORG_ADMIN');
+    prisma.organizationMembership.findUnique.mockImplementation(
+      async (args: { where: { userId_orgId: { orgId: string } } }) =>
+        args.where.userId_orgId.orgId === ORG_B ? { role: 'ORG_ADMIN' } : null
+    );
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/usage/export?orgId=${ORG_A}`,
+    });
+    expect(response.statusCode).toBe(403);
+    expect(prisma.organizationMembership.findUnique).toHaveBeenCalledWith({
+      where: { userId_orgId: { orgId: ORG_A, userId: 'admin-1' } },
+    });
+  });
+
+  it('exports model, agent and node breakdowns as CSV', async () => {
+    const { app } = await buildApp();
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/usage/export?window=7&format=csv',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toBe('text/csv; charset=utf-8');
+    expect(response.headers['content-disposition']).toContain('platform-usage.csv');
+    expect(response.body.trim()).toBe(
+      'dimension,value,calls,cost_usd,errors,input_tokens,output_tokens,avg_duration_ms'
+    );
   });
 });
 

@@ -1135,6 +1135,16 @@ and a custom `since`/`until` span of the same days report the same numbers, and 
 period is the same number of days directly before. Weekly-bucketed charts (a usage or eval window
 above 90 days) say "week" in their summary, table and tooltips.
 
+Estimated human time saved is the sum of each successful run's estimate, snapshotted from the
+template when the run started. Global analytics groups exact totals by template, workspace provider
+and integration in the database; the run-time series and duration percentiles use at most 50,000
+narrow rows and sets `seriesTruncated` when that cap cuts into the requested window. The legacy
+zero-cost fallback also reads at most 50,000 runs and sets `legacyCostTruncated` if capped. The
+`isTruncated` field remains as a compatibility alias. Analytics exports are available as CSV or
+NDJSON from `/api/v1/workflow-templates/analytics/export`; platform usage exports the model, agent
+and node breakdowns from `/api/v1/platform/usage/export` with the same scope and role checks as
+the usage report.
+
 The global analytics response also carries `approvalLatency`: how long people took to answer the
 human steps (`WorkflowHumanStep`) requested in the window, for the runs the caller may see, overall
 and per template (`computeApprovalLatency()` in `shared/src/workflow/analytics.ts`). The wait is

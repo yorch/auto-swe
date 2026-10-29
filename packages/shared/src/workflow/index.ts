@@ -7,6 +7,7 @@ export type {
   AnalyticsStepRow,
   ApprovalLatencyRow,
   DailyRunCount,
+  GlobalAnalyticsGroup,
   GlobalAnalyticsResult,
   GlobalAnalyticsTemplateRow,
   SignificanceHint,
@@ -17,6 +18,7 @@ export {
   computeApprovalLatency,
   computeDailyRunSeries,
   computeGlobalAnalytics,
+  computeGlobalAnalyticsFromGroups,
   MIN_SAMPLES_FOR_SIGNIFICANCE,
   normalizeRecordingNodeId,
 } from './analytics.js';
@@ -86,6 +88,34 @@ export type {
   StepMetadata,
 } from './registry-types.js';
 export { BUILTIN_STEPS } from './registry-types.js';
+export type {
+  AutomationFireInput,
+  AutomationReportRow,
+  AutonomyDecisionInput,
+  DeliveryMetrics,
+  DeliveryPullRequest,
+  DeliveryReport,
+  DeliveryRun,
+  HitlReport,
+  HumanStepInput,
+  ParsedReviewVerdict,
+  QualityPullRequest,
+  QualityReport,
+  QualityRun,
+  QualityStep,
+  ReviewTrace,
+} from './reports.js';
+export {
+  computeAutomationReport,
+  computeDeliveryReport,
+  computeHitlReport,
+  computeQualityReport,
+  parseReviewVerdict,
+  QUALITY_FIX_STEPS,
+  QUALITY_GATE_STEPS,
+  REVIEW_SEVERITIES,
+  REVIEWER_TYPES,
+} from './reports.js';
 export {
   assertShellImageAllowed,
   BUILTIN_SHELL_IMAGES,

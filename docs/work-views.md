@@ -123,28 +123,35 @@ The cohort is the PRs **opened** in the window, with each one's outcome read as 
 The response `data` holds `window` (`start`, `end`, `days`), `current` for the window and
 `previous` for the same number of days directly before it (null when `previousComplete` is false),
 `previousComplete`, `isTruncated`, and
-`byRepository`: the ten repositories with the most PRs opened, each with its own summary. A summary
+`byRepository`: the ten repositories with the most PRs opened, each with its own summary, plus
+`byTemplate`: PR outcomes attributed through `PullRequest.workflow` → `ActiveWorkflow.temporalWorkflowId`
+→ `WorkflowRun.workflowId`. PRs without a matching visible run appear in the null-id
+“Unattributed” bucket. A summary
 carries `opened`, `merged`, `closedUnmerged`, `open`, `mergeRate` (merged over merged plus closed
 unmerged; null while none has resolved), `timeToMergeMs` (`p50`, `p95` and `count` of merged PRs
 with a valid open-to-merge time), `ciStatusCounts` and `draftCount`. The summaries are computed by
 `summarizePullRequestOutcomes()` in `@auto-swe/shared/lib/pullRequestOutcomes`.
 
+Both outcomes routes accept an optional `templateId` UUID in addition to `repoId`; the export
+includes `template_id` and `template_name` columns.
+
 Visibility is the list's: an ADMIN sees every row, anyone else the PRs of repositories they may
-reach (`reachableConnections`). The read takes at most 10,000 rows, newest first. When that cap
-cuts into the window, `isTruncated` is true and `current` is computed from the rows read; when it
+reach (`reachableConnections`). The read takes at most 10,000 PR rows after filters, newest first.
+When that cap cuts into the window, `isTruncated` is true and `current` is computed from the rows read; when it
 cuts into the previous window only, `previousComplete` is false and `previous` is null.
 
 ### 3.1 `GET /api/v1/pull-requests/outcomes/export`
 
 The same pull requests as a file for a spreadsheet or BI tool: one row per PR **opened in the
 window** (no previous window), newest first. It takes the outcomes read's `window`, `since`/`until`,
-`scope`, `teamId` and `repoId`, plus `format`: `csv` (default) or `ndjson`. Visibility is the
+`scope`, `teamId`, `repoId` and `templateId`, plus `format`: `csv` (default) or `ndjson`. Visibility is the
 outcomes read's, from the same filter function, so an export reaches no row the summary would not.
 ENGINEER and above may call it.
 
 Columns (CSV header, and the keys of each NDJSON object): `pull_request_id`, `repository_org`,
 `repository_name`, `pr_number`, `status`, `is_draft`, `ci_status`, `opened_at`, `merged_at`,
-`closed_at`, `time_to_merge_ms` (merged PRs only). Titles and tickets are not exported. A text cell
+`closed_at`, `time_to_merge_ms` (merged PRs only), `template_id`, `template_name`. Titles and
+tickets are not exported. A text cell
 that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed with `'` so a
 spreadsheet does not run it as a formula (`csvCell()` in `gateway/src/lib/csv.ts`, shared with the
 audit-log export); numbers and booleans are written as they are.
@@ -279,6 +286,9 @@ http(s) address.
 
 ## Limitations
 
+- Template attribution for outcomes is limited to visible workflow runs started within 30 days
+  before the selected outcomes window.
+
 - With the GitHub tracker, comments, pull-request links, issue closes and PRD issue creation go
   only to a repository the run targets, on the tracker's host, and a ticket is read only from one.
   The tracker has no configured default repository, so a ticket id naming any other repository, a
@@ -299,9 +309,8 @@ http(s) address.
   under-reports merges that have not happened yet and its merge rate rises as its PRs resolve.
 - An outcomes read takes at most 10,000 PRs; beyond that the figures cover only the newest ones
   read, and `isTruncated` or `previousComplete` says so.
-- Outcomes are not grouped by workflow template or agent. The only dashboard view is the card on
-  `/admin/analytics`, which follows that page's date range and shows no team, repository or scope
-  filter.
+- Outcomes are grouped by workflow template, but not by agent. The dashboard card on
+  `/admin/analytics` follows that page's date range and offers a repository filter.
 - An export that fails after its first byte cannot change its status: the transfer is aborted and a
   client sees a failed download, not a clean short file. Rows already sent are not marked.
 - The export is a snapshot read in batches of 500 by cursor, not a transaction, so a PR whose state
@@ -310,11 +319,9 @@ http(s) address.
   so the header can disagree with the body when rows are added or removed between them. A row
   deleted between two batches is the cursor for the next, and the file ends there early, with no
   error and `X-Export-Truncated` unchanged.
-- The outcomes read and its export filter on `openedAt` alone and no index leads with it (see the
-  `(status, openedAt)` note above), so on a large table they scan. The analytics
-  approval-latency read filters `workflow_human_steps` on `requested_at`, which is indexed.
-- The read filters on `openedAt` alone, and the only index that leads with a time column is
-  `(status, openedAt)`, so on a large table it scans rather than seeks.
+- The outcomes read and its export filter on `openedAt`; the standalone index supports this
+  cohort query. The analytics approval-latency read filters `workflow_human_steps` on
+  `requested_at`, which is indexed.
 - `scope` defaults to `TEAM` here and to `MINE` on the list, so the same caller sees different
   counts from the two endpoints unless one is set explicitly.
 - A closed draft counts as `closedUnmerged`; the merge rate does not separate drafts from ready PRs.

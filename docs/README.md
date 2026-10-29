@@ -48,6 +48,7 @@ and no roadmap: what shipped when lives in git history, and completed plans live
 | [service-principals.md](./service-principals.md) | Team-owned machine identities that start and follow runs with scoped tokens of their own — the routes that accept them, what a launch checks, granting repositories as a lead's launch decision, attribution, token rotation |
 | [user-github-credentials.md](./user-github-credentials.md) | A user's own GitHub or GitHub Enterprise token for a repository — used only for runs they launch, the host allowlist, and how the access gate judges it |
 | [work-views.md](./work-views.md) | The pull-request and ticket views — the recorded PR lifecycle and its webhook events, the two list APIs, and how visibility is applied to every row and aggregate |
+| [reporting.md](./reporting.md) | Delivery, quality, budget, automation, and approval reports — cohorts, calculations, bounds, and limitations |
 
 ## Configuration & operations
 

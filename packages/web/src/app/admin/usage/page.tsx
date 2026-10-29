@@ -27,8 +27,10 @@ import {
   parseDateRange,
   rangeDays,
   rangePhrase,
+  rangeQuery,
 } from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
+import { downloadFile } from '@/lib/downloadFile';
 import { runHref } from '@/lib/entityLinks';
 import { humanizeKey } from '@/lib/govLabels';
 import {
@@ -370,6 +372,20 @@ function UsageWorkspace() {
       <PageHeader
         actions={
           <div className="flex flex-wrap items-center gap-3">
+            <Button
+              onClick={() => {
+                const query = new URLSearchParams({
+                  ...rangeQuery(range),
+                  ...scopeOf(scopeValue ?? ''),
+                  format: 'csv',
+                });
+                void downloadFile(`/api/v1/platform/usage/export?${query}`, 'platform-usage.csv');
+              }}
+              size="sm"
+              variant="secondary"
+            >
+              Export CSV
+            </Button>
             {scopeOptions && scopeOptions.length > 0 && (
               <Select
                 appearance="pill"

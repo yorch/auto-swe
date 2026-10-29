@@ -1,5 +1,10 @@
 'use client';
 
+import { getConnectionTypeMetadata, isConnectionType } from '@auto-swe/shared/lib/connectionTypes';
+import {
+  getWorkspaceProviderMetadata,
+  isWorkspaceProviderType,
+} from '@auto-swe/shared/lib/workspaceProviders';
 import Link from 'next/link';
 import { Suspense, useMemo, useState } from 'react';
 import { WorkflowsOverTimeChart } from '@/components/charts/WorkflowsOverTimeChart';
@@ -24,8 +29,10 @@ import {
   parseDateRange,
   rangeDays,
   rangePhrase,
+  rangeQuery,
 } from '@/lib/dateRange';
 import { formatDelta } from '@/lib/delta';
+import { downloadFile } from '@/lib/downloadFile';
 import { templateHref } from '@/lib/entityLinks';
 import { outcomeTypeLabel } from '@/lib/govLabels';
 import { successTone } from '@/lib/tone';
@@ -62,6 +69,16 @@ function successRateClass(rate: number): string {
 function formatPoints(diff: number): string {
   const pts = diff * 100;
   return `${pts > 0 ? '+' : ''}${pts.toFixed(1)} pts`;
+}
+
+function workspaceTypeLabel(domain: string): string {
+  return isWorkspaceProviderType(domain) ? getWorkspaceProviderMetadata(domain).label : domain;
+}
+
+function integrationLabel(outcomeType: string): string {
+  return isConnectionType(outcomeType)
+    ? getConnectionTypeMetadata(outcomeType).label
+    : outcomeTypeLabel(outcomeType);
 }
 
 const PAGE_SIZE = 25;
@@ -130,7 +147,7 @@ function AnalyticsWorkspace() {
     const value = (o: NonNullable<typeof data>['perOutcome'][number]): number | string => {
       switch (outcomeSort.key) {
         case 'outcome':
-          return outcomeTypeLabel(o.outcomeType).toLowerCase();
+          return integrationLabel(o.outcomeType).toLowerCase();
         case 'runs':
           return o.runCount;
         case 'cost':
@@ -149,16 +166,31 @@ function AnalyticsWorkspace() {
     <div className="space-y-6">
       <PageHeader
         actions={
-          <DateRangeControl
-            onChange={(r) => {
-              if (r) {
-                update(dateRangePatch(r));
-                setPage(0);
-              }
-            }}
-            rangeIgnored={customRangeIgnored(params)}
-            value={range}
-          />
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              onClick={() => {
+                const query = new URLSearchParams({ ...rangeQuery(range), format: 'csv' });
+                void downloadFile(
+                  `/api/v1/workflow-templates/analytics/export?${query}`,
+                  'workflow-template-analytics.csv'
+                );
+              }}
+              size="sm"
+              variant="secondary"
+            >
+              Export CSV
+            </Button>
+            <DateRangeControl
+              onChange={(r) => {
+                if (r) {
+                  update(dateRangePatch(r));
+                  setPage(0);
+                }
+              }}
+              rangeIgnored={customRangeIgnored(params)}
+              value={range}
+            />
+          </div>
         }
         subtitle="Run volume, outcomes, cost, and time saved across every workflow template on the platform."
         title="Platform analytics"
@@ -183,10 +215,12 @@ function AnalyticsWorkspace() {
           />
         ) : (
           <>
-            {data.isTruncated && (
+            {(data.isTruncated || data.legacyCostTruncated) && (
               <Alert variant="warning">
-                Results capped at the 10,000 most recent runs. Totals and rates reflect the capped
-                window — older runs are omitted.
+                Daily series and duration percentiles use the 50,000 most recent runs; totals and
+                rates are exact.
+                {data.legacyCostTruncated &&
+                  ' The legacy zero-cost fallback is capped at the 50,000 most recent runs; some older fallback cost may be omitted.'}
               </Alert>
             )}
 
@@ -248,8 +282,8 @@ function AnalyticsWorkspace() {
                         )
                       : null
                   }
-                  hint="Estimated from each template's expected human effort"
-                  label="Time saved (estimate)"
+                  hint="Sum of each successful run's estimate, snapshotted from the template when the run started."
+                  label="Est. time saved (successful runs)"
                   tone={(data.estimatedHumanTimeSavedTotal ?? 0) > 0 ? 'success' : 'default'}
                   value={formatMinutes(data.estimatedHumanTimeSavedTotal ?? 0)}
                 />
@@ -429,7 +463,7 @@ function AnalyticsWorkspace() {
             {domains.length > 0 && (
               <Card>
                 <CardHeader>
-                  <CardTitle>By domain</CardTitle>
+                  <CardTitle>By workspace type</CardTitle>
                   <span className="text-xs text-paper-500">
                     Agent vs human compares error rates, in percentage points
                   </span>
@@ -443,7 +477,7 @@ function AnalyticsWorkspace() {
                         sort={domainSort.direction('domain')}
                         variant="compact"
                       >
-                        Domain
+                        Workspace type
                       </Th>
                       <Th
                         align="right"
@@ -506,7 +540,7 @@ function AnalyticsWorkspace() {
                       {domains.map((d) => (
                         <TRow key={d.domain}>
                           <Td className="px-4 py-2.5 font-medium text-paper-100" primary>
-                            {outcomeTypeLabel(d.domain)}
+                            {workspaceTypeLabel(d.domain)}
                           </Td>
                           <Td className="px-4 py-2 text-right tabular-nums" label="Runs">
                             {d.totalRuns}
@@ -564,7 +598,7 @@ function AnalyticsWorkspace() {
             {outcomes.length > 0 && (
               <Card>
                 <CardHeader>
-                  <CardTitle>By outcome</CardTitle>
+                  <CardTitle>By integration</CardTitle>
                 </CardHeader>
                 <div className="-mx-4">
                   <Table>
@@ -575,7 +609,7 @@ function AnalyticsWorkspace() {
                         sort={outcomeSort.direction('outcome')}
                         variant="compact"
                       >
-                        Outcome
+                        Integration
                       </Th>
                       <Th
                         align="right"
@@ -600,7 +634,7 @@ function AnalyticsWorkspace() {
                       {outcomes.map((o) => (
                         <TRow key={o.outcomeType}>
                           <Td className="px-4 py-2.5 font-medium text-paper-100">
-                            {outcomeTypeLabel(o.outcomeType)}
+                            {integrationLabel(o.outcomeType)}
                           </Td>
                           <Td className="px-4 py-2 text-right tabular-nums">{o.runCount}</Td>
                           <Td className="px-4 py-2 text-right tabular-nums">

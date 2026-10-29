@@ -155,6 +155,23 @@ export class ApiClient {
     return this.parseBody<T>(response);
   }
 
+  async download(path: string): Promise<Blob> {
+    const token = this.getToken();
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    let response = await fetch(`${API_BASE}${path}`, { credentials: 'include', headers });
+    if (response.status === 401 && token && (await this.tryRefresh())) {
+      headers.Authorization = `Bearer ${this.accessToken}`;
+      response = await fetch(`${API_BASE}${path}`, { credentials: 'include', headers });
+    }
+    if (response.status === 401) {
+      this.expireSession();
+    }
+    if (!response.ok) {
+      throw await this.toApiError(response);
+    }
+    return response.blob();
+  }
+
   /**
    * Several gateway DELETE routes answer `204 No Content`. Calling `.json()` on
    * an empty body throws, which would reject the mutation *after* the server

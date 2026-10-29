@@ -516,6 +516,20 @@ export interface WorkflowTemplateAnalytics {
     failureRate: number;
   }>;
   perVersionCounts: Array<{ version: number; count: number }>;
+  perVersion: Array<{
+    version: number;
+    runs: number;
+    succeeded: number;
+    successRate: number | null;
+    successRateCi95: [number, number] | null;
+    avgCostPerRun: number | null;
+    p50DurationMs: number | null;
+    prOpened: number;
+    prOpen: number;
+    prMerged: number;
+    mergeRate: number | null;
+    mergeRateCi95: [number, number] | null;
+  }>;
   perOutcome: Array<{ outcomeType: string; runCount: number; totalCost: number }>;
   significanceHint: {
     versionA: number;
@@ -548,7 +562,11 @@ export interface GlobalAnalyticsResponse {
     templateName: string;
     totalRuns: number;
     successRate: number | null;
+    succeeded: number;
+    failed: number;
     totalCost: number;
+    avgCostPerRun: number;
+    autonomyRate: number | null;
     estimatedHumanTimeSavedTotal: number | null;
   }>;
   perDomain: Array<{
@@ -563,6 +581,8 @@ export interface GlobalAnalyticsResponse {
   }>;
   perOutcome: Array<{ outcomeType: string; runCount: number; totalCost: number }>;
   isTruncated: boolean;
+  seriesTruncated: boolean;
+  legacyCostTruncated: boolean;
   /** Headline figures for the window of equal length just before this one; null when unavailable. */
   previous?: {
     totalRuns: number;
@@ -1362,6 +1382,15 @@ export interface PullRequestOutcomesResponse {
     repository: { id: string; name: string; org: string };
     summary: PullRequestOutcomeSummary;
   }[];
+  byTemplate: Array<{
+    templateId: string | null;
+    templateName: string;
+    opened: number;
+    merged: number;
+    closedUnmerged: number;
+    mergeRate: number | null;
+    medianTimeToMergeMs: number | null;
+  }>;
 }
 
 /** A PR as a ticket group lists it. */

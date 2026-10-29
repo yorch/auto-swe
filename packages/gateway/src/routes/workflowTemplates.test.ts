@@ -70,9 +70,11 @@ function buildApp(state: {
   userRole?: string;
   /** Every run-visibility predicate the last-run lookup passed, for assertions. */
   runVisibilityTerms?: Mutable[];
+  analyticsGroupByArgs?: Mutable[];
   teamRole?: string;
   teamAllowlist?: string[];
 }): FastifyInstance {
+  state.analyticsGroupByArgs ??= [];
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -193,7 +195,15 @@ function buildApp(state: {
         // `visibleTo` excludes the caller.
         count: async ({ where }: { where?: Mutable }) =>
           state.runs.filter((r) => !where?.templateId || r.templateId === where.templateId).length,
-        findMany: async ({ where, take }: { where?: Mutable; take?: number }) => {
+        findMany: async ({
+          where,
+          take,
+          orderBy,
+        }: {
+          where?: Mutable;
+          take?: number;
+          orderBy?: Mutable;
+        }) => {
           // Three shapes: a templateId filter (optionally capped with `take`), or
           // the last-run lookup's `OR: [{ templateId, startedAt }]` keys.
           const orClauses = where?.OR as Array<Record<string, unknown>> | undefined;
@@ -208,16 +218,107 @@ function buildApp(state: {
                 keys.some((k) => k.templateId === r.templateId && k.startedAt === r.startedAt)
             );
           }
+          const dateRange = where?.startedAt as { gte?: Date; lt?: Date } | undefined;
           const filtered = state.runs.filter((r) => {
+            if (dateRange?.gte && r.startedAt < dateRange.gte) {
+              return false;
+            }
+            if (dateRange?.lt && r.startedAt >= dateRange.lt) {
+              return false;
+            }
+            if (where?.costUsdAccrued === 0 && (r as Mutable).costUsdAccrued !== 0) {
+              return false;
+            }
             if (!where?.templateId) {
               return true;
             }
             const ids = (where.templateId as { in?: string[] }).in;
             return ids ? ids.includes(r.templateId) : where.templateId === r.templateId;
           });
-          return typeof take === 'number' ? filtered.slice(0, take) : filtered;
+          const sorted =
+            orderBy?.startedAt === 'desc'
+              ? [...filtered].sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
+              : filtered;
+          return typeof take === 'number' ? sorted.slice(0, take) : sorted;
         },
-        groupBy: async ({ where }: { where?: Mutable }) => {
+        groupBy: async (args: {
+          where?: Mutable;
+          by?: string[];
+          _max?: Mutable;
+          _count?: Mutable;
+          _sum?: Mutable;
+        }) => {
+          const { where } = args;
+          if (args._sum) {
+            state.analyticsGroupByArgs?.push(args as unknown as Mutable);
+            const dateRange = where?.startedAt as { gte?: Date; lt?: Date } | undefined;
+            const cells = new Map<
+              string,
+              {
+                templateId: string;
+                status: string;
+                outcomeDomain: string | null;
+                outcomeType: string | null;
+                wasAutonomous: boolean | null;
+                hadHumanStep: boolean | null;
+                hasError: boolean | null;
+                count: number;
+                cost: number;
+                saved: number;
+              }
+            >();
+            for (const run of state.runs) {
+              if (!runVisible(run, where)) {
+                continue;
+              }
+              if (dateRange?.gte && run.startedAt < dateRange.gte) {
+                continue;
+              }
+              if (dateRange?.lt && run.startedAt >= dateRange.lt) {
+                continue;
+              }
+              const value = run as Mutable;
+              const key = JSON.stringify([
+                run.templateId,
+                run.status,
+                value.outcomeDomain ?? null,
+                value.outcomeType ?? null,
+                value.wasAutonomous ?? null,
+                value.hadHumanStep ?? null,
+                value.hasError ?? null,
+              ]);
+              const cell = cells.get(key) ?? {
+                cost: 0,
+                count: 0,
+                hadHumanStep: (value.hadHumanStep as boolean | null) ?? null,
+                hasError: (value.hasError as boolean | null) ?? null,
+                outcomeDomain: (value.outcomeDomain as string | null) ?? null,
+                outcomeType: (value.outcomeType as string | null) ?? null,
+                saved: 0,
+                status: run.status,
+                templateId: run.templateId,
+                wasAutonomous: (value.wasAutonomous as boolean | null) ?? null,
+              };
+              cell.count += 1;
+              cell.cost += Number(value.costUsdAccrued ?? 0);
+              cell.saved += Number(value.estimatedHumanTimeSaved ?? 0);
+              cells.set(key, cell);
+            }
+            return [...cells.values()].map((cell) => ({
+              _count: { _all: cell.count },
+              _sum: {
+                costUsdAccrued: cell.cost,
+                estimatedHumanTimeSaved: cell.saved,
+              },
+              hadHumanStep: cell.hadHumanStep,
+              hasError: cell.hasError,
+              outcomeDomain: cell.outcomeDomain,
+              outcomeType: cell.outcomeType,
+              status: cell.status,
+              templateId: cell.templateId,
+              wasAutonomous: cell.wasAutonomous,
+            }));
+          }
           const ids = (where?.templateId as { in?: string[] } | undefined)?.in;
           const max = new Map<string, Date>();
           for (const r of state.runs) {
@@ -2418,6 +2519,28 @@ describe('computeGlobalAnalytics', () => {
   });
 });
 
+describe('GET /workflow-templates/analytics/export access', () => {
+  it('refuses a viewer', async () => {
+    const app = buildApp({
+      runs: [],
+      templates: [],
+      userRole: 'VIEWER',
+      versions: new Map(),
+    });
+    await app.ready();
+    try {
+      const response = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: '/api/v1/workflow-templates/analytics/export',
+      });
+      expect(response.statusCode).toBe(403);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
 describe('GET /workflow-templates/analytics', () => {
   let app: FastifyInstance;
   let state: Parameters<typeof buildApp>[0];
@@ -2434,7 +2557,20 @@ describe('GET /workflow-templates/analytics', () => {
 
   afterAll(() => app.close());
 
-  it('only marks results truncated when rows exceed the 10k cap', async () => {
+  it('exports per-template analytics as CSV', async () => {
+    const response = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: '/api/v1/workflow-templates/analytics/export?window=30&format=csv',
+    });
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.headers['content-type']).toBe('text/csv; charset=utf-8');
+    expect(response.body.trim()).toBe(
+      'templateId,name,runs,succeeded,failed,successRate,totalCost,avgCostPerRun,timeSavedMinutes,autonomyRate'
+    );
+  });
+
+  it('uses grouped aggregates beyond the duration and series cap', async () => {
     const makeRuns = (length: number) =>
       Array.from({ length }, (_, i) => ({
         costUsdAccrued: 0,
@@ -2451,23 +2587,107 @@ describe('GET /workflow-templates/analytics', () => {
         wasAutonomous: true,
       })) as (typeof state.runs)[number][];
 
-    state.runs = makeRuns(10_000);
+    state.runs = makeRuns(50_000);
     const exact = await app.inject({
       headers: { authorization: 'Bearer x' },
       method: 'GET',
       url: '/api/v1/workflow-templates/analytics?window=30',
     });
+    expect(exact.statusCode, exact.body).toBe(200);
     expect(exact.json().data.isTruncated).toBe(false);
+    expect(exact.json().data.totalRuns).toBe(50_000);
 
-    state.runs = makeRuns(10_001);
+    state.runs = makeRuns(50_001);
     const over = await app.inject({
       headers: { authorization: 'Bearer x' },
       method: 'GET',
       url: '/api/v1/workflow-templates/analytics?window=30',
     });
     expect(over.statusCode).toBe(200);
-    expect(over.json().data.totalRuns).toBe(10_000);
+    expect(over.json().data.totalRuns).toBe(50_001);
     expect(over.json().data.isTruncated).toBe(true);
+    expect(over.json().data.seriesTruncated).toBe(true);
+    expect(state.analyticsGroupByArgs?.length).toBeGreaterThan(0);
+    expect(state.analyticsGroupByArgs?.[0]?.by).toEqual([
+      'templateId',
+      'status',
+      'outcomeDomain',
+      'outcomeType',
+      'wasAutonomous',
+      'hadHumanStep',
+      'hasError',
+    ]);
+  });
+
+  it('counts saved time only from successful runs in grouped cells', async () => {
+    const startedAt = new Date();
+    state.runs = [
+      {
+        costUsdAccrued: 0,
+        endedAt: startedAt,
+        estimatedHumanTimeSaved: 15,
+        hadHumanStep: false,
+        hasError: false,
+        id: 'success',
+        outcomeDomain: 'git_repo',
+        outcomeType: null,
+        startedAt,
+        status: 'SUCCESS',
+        templateId: 'tpl-saved',
+        wasAutonomous: true,
+      },
+      {
+        costUsdAccrued: 0,
+        endedAt: startedAt,
+        estimatedHumanTimeSaved: 45,
+        hadHumanStep: false,
+        hasError: true,
+        id: 'failed',
+        outcomeDomain: 'git_repo',
+        outcomeType: null,
+        startedAt,
+        status: 'FAILED',
+        templateId: 'tpl-saved',
+        wasAutonomous: true,
+      },
+      {
+        costUsdAccrued: 0,
+        endedAt: startedAt,
+        estimatedHumanTimeSaved: 60,
+        hadHumanStep: false,
+        hasError: true,
+        id: 'cancelled',
+        outcomeDomain: 'git_repo',
+        outcomeType: null,
+        startedAt,
+        status: 'CANCELLED',
+        templateId: 'tpl-saved',
+        wasAutonomous: true,
+      },
+      {
+        costUsdAccrued: 0,
+        endedAt: null,
+        estimatedHumanTimeSaved: 75,
+        hadHumanStep: false,
+        hasError: false,
+        id: 'running',
+        outcomeDomain: 'git_repo',
+        outcomeType: null,
+        startedAt,
+        status: 'RUNNING',
+        templateId: 'tpl-saved',
+        wasAutonomous: true,
+      },
+    ] as unknown as (typeof state.runs)[number][];
+    const response = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'GET',
+      url: '/api/v1/workflow-templates/analytics?window=30',
+    });
+    const data = response.json().data;
+    expect(data.estimatedHumanTimeSavedTotal).toBe(15);
+    expect(data.perTemplate[0].estimatedHumanTimeSavedTotal).toBe(15);
+    expect(data.perDomain[0].estimatedHumanTimeSavedTotal).toBe(15);
   });
 });
 
@@ -2654,7 +2874,7 @@ describe('GET /workflow-templates/analytics trend', () => {
     await app.close();
   });
 
-  it('withholds the previous window when the row cap cut into it', async () => {
+  it('includes exact previous-window aggregates alongside the series', async () => {
     const state: Parameters<typeof buildApp>[0] = { runs: [], templates: [], versions: new Map() };
     const app = buildApp(state);
     await app.ready();
@@ -2682,7 +2902,7 @@ describe('GET /workflow-templates/analytics trend', () => {
     const data = res.json().data;
     expect(data.isTruncated).toBe(false);
     expect(data.totalRuns).toBe(5_000);
-    expect(data.previous).toBeNull();
+    expect(data.previous).toMatchObject({ totalRuns: 5_001 });
     await app.close();
   });
 });

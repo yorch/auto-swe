@@ -309,6 +309,7 @@ model PullRequest {
   @@index([repoId])
   // The pull-request list filters by state and pages newest-first.
   @@index([status, openedAt])
+  @@index([openedAt])
   @@map("pull_requests")
 }
 

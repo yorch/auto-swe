@@ -134,6 +134,7 @@ export const SIDEBAR = [
       'docs/service-principals',
       'docs/user-github-credentials',
       'docs/work-views',
+      'docs/reporting',
       'docs/bundles',
       'docs/qodo',
       'docs/transcripts',
