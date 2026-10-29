@@ -35,13 +35,15 @@ export interface HitlActor {
   /** Platform user id (JWT `sub` / `User.id`). */
   sub: string;
   role: string;
-  via: HitlResolvedVia;
+  via: HitlResolvedVia | null;
 }
 
 export type HitlResolvedVia = 'web' | 'api_token' | 'mcp' | 'assistant' | 'slack';
 export type HitlAuthMethod = 'session' | 'jwt' | 'pat' | 'mcp' | 'assistant' | 'service';
 
-export function resolvedViaForAuthMethod(method: HitlAuthMethod | undefined): HitlResolvedVia {
+export function resolvedViaForAuthMethod(
+  method: HitlAuthMethod | undefined
+): HitlResolvedVia | null {
   switch (method) {
     case 'session':
     case 'jwt':
@@ -53,9 +55,9 @@ export function resolvedViaForAuthMethod(method: HitlAuthMethod | undefined): Hi
     case 'assistant':
       return 'assistant';
     case 'service':
-      throw new Error('Service principals cannot resolve human steps');
+      return null;
     default:
-      throw new Error('Authenticated request has no supported auth method');
+      return null;
   }
 }
 

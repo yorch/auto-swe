@@ -1,0 +1,357 @@
+import { parseReviewVerdict } from './reports.js';
+
+export const WORKFLOW_RUN_DAY_MS = 24 * 60 * 60 * 1000;
+export const WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS = 30;
+export const CI_FIX_ROUND_BUCKETS = 21;
+export const CI_FIX_ROUND_OVERFLOW = 20;
+
+export const DURATION_BUCKET_BOUNDS_MS: readonly number[] = (() => {
+  const bounds = [1000];
+  while ((bounds.at(-1) ?? 1000) < 30 * WORKFLOW_RUN_DAY_MS) {
+    bounds.push(Math.min(30 * WORKFLOW_RUN_DAY_MS, Math.round((bounds.at(-1) ?? 1000) * 1.25)));
+  }
+  return bounds;
+})();
+
+export interface WorkflowRunRollupRunInput {
+  attributedOrgId: string | null;
+  attributedTeamId: string | null;
+  costUsdAccrued: number;
+  endedAt: Date | null;
+  estimatedHumanTimeSaved: number | null;
+  hadHumanStep: boolean | null;
+  id: string;
+  legacyCostUsd?: number;
+  outcomeDomain: string | null;
+  outcomeType: string | null;
+  repoId: string | null;
+  startedAt: Date;
+  status: string;
+  templateId: string;
+  templateVersion: number;
+  wasAutonomous: boolean | null;
+}
+
+export interface WorkflowRunRollupPullRequestInput {
+  ciStatus: string;
+  mergedAt: Date | null;
+  runId: string;
+  status: string;
+}
+
+export interface WorkflowRunRollupStepInput {
+  runId: string;
+  status: string;
+  stepName: string | null;
+}
+
+export interface WorkflowRunRollupTraceInput {
+  error: string | null;
+  outputJson: unknown;
+  runId: string | null;
+}
+
+export interface WorkflowRunRollupRow {
+  builtAt: Date;
+  ciFixAttempts: number;
+  ciFixRoundsBuckets: number[];
+  costUsd: number;
+  day: Date;
+  durationBuckets: number[];
+  durationCount: number;
+  durationMsSum: bigint;
+  hadHumanStep: boolean | null;
+  mergeMsBuckets: number[];
+  orgId: string | null;
+  outcomeDomain: string | null;
+  outcomeType: string | null;
+  prsCiPassed: number;
+  prsClosedUnmerged: number;
+  prsMerged: number;
+  prsOpened: number;
+  repoId: string | null;
+  runs: number;
+  runsCiHealed: number;
+  runsReviewRejected: number;
+  runsReviewRejectedMerged: number;
+  runsReviewRejectedWithPr: number;
+  runsWithCiFix: number;
+  runsWithPr: number;
+  runsWithPrMerged: number;
+  status: string;
+  teamId: string | null;
+  templateId: string | null;
+  templateVersion: number | null;
+  timeSavedMinutes: number;
+  wasAutonomous: boolean | null;
+}
+
+export interface BuildWorkflowRunRollupsInput {
+  now?: Date;
+  pullRequests: WorkflowRunRollupPullRequestInput[];
+  runs: WorkflowRunRollupRunInput[];
+  steps: WorkflowRunRollupStepInput[];
+  traces: WorkflowRunRollupTraceInput[];
+}
+
+function bucketIndex(value: number): number {
+  const index = DURATION_BUCKET_BOUNDS_MS.findIndex((bound) => value <= bound);
+  return index === -1 ? DURATION_BUCKET_BOUNDS_MS.length : index;
+}
+
+function durationBuckets(): number[] {
+  return Array.from({ length: DURATION_BUCKET_BOUNDS_MS.length + 1 }, () => 0);
+}
+
+export function durationBucketForMs(value: number): number {
+  return bucketIndex(Math.max(0, value));
+}
+
+export function durationPercentileFromBuckets(
+  buckets: readonly number[],
+  q: number
+): number | null {
+  const total = buckets.reduce((sum, count) => sum + count, 0);
+  if (total === 0) {
+    return null;
+  }
+  const rank = Math.max(0, Math.min(total - 1, Math.ceil(total * q) - 1));
+  let cumulative = 0;
+  for (let i = 0; i < buckets.length; i++) {
+    cumulative += buckets[i] ?? 0;
+    if (cumulative > rank) {
+      if (i === 0) {
+        return (DURATION_BUCKET_BOUNDS_MS[0] ?? 1000) / 2;
+      }
+      const lower = DURATION_BUCKET_BOUNDS_MS[i - 1] ?? 0;
+      const upper =
+        DURATION_BUCKET_BOUNDS_MS[i] ??
+        (DURATION_BUCKET_BOUNDS_MS.at(-1) ?? 30 * WORKFLOW_RUN_DAY_MS) * 1.25;
+      return Math.sqrt(lower * upper);
+    }
+  }
+  return null;
+}
+
+export function ciFixRoundsFromBuckets(buckets: readonly number[]): {
+  avgPerRun: number | null;
+  p95PerRun: number | null;
+} {
+  let total = 0;
+  let weighted = 0;
+  for (let i = 0; i < CI_FIX_ROUND_BUCKETS; i++) {
+    const count = buckets[i] ?? 0;
+    total += count;
+    weighted += i * count;
+  }
+  if (total === 0) {
+    return { avgPerRun: null, p95PerRun: null };
+  }
+  const rank = Math.ceil(total * 0.95) - 1;
+  let cumulative = 0;
+  let p95PerRun: number | null = null;
+  for (let i = 0; i < CI_FIX_ROUND_BUCKETS; i++) {
+    cumulative += buckets[i] ?? 0;
+    if (cumulative > rank) {
+      p95PerRun = i;
+      break;
+    }
+  }
+  return {
+    avgPerRun: weighted / total,
+    p95PerRun,
+  };
+}
+
+const addBucket = (buckets: number[], index: number) => {
+  buckets[index] = (buckets[index] ?? 0) + 1;
+};
+
+export function buildWorkflowRunDailyRollups(
+  input: BuildWorkflowRunRollupsInput
+): WorkflowRunRollupRow[] {
+  const now = input.now ?? new Date();
+  const prsByRun = new Map<string, WorkflowRunRollupPullRequestInput[]>();
+  for (const pr of input.pullRequests) {
+    const prs = prsByRun.get(pr.runId) ?? [];
+    prs.push(pr);
+    prsByRun.set(pr.runId, prs);
+  }
+  const ciFixes = new Map<string, number>();
+  for (const step of input.steps) {
+    if (
+      step.stepName === 'executeCIFixImplementation' &&
+      (step.status === 'PASSED' || step.status === 'FAILED')
+    ) {
+      ciFixes.set(step.runId, (ciFixes.get(step.runId) ?? 0) + 1);
+    }
+  }
+  const rejected = new Set<string>();
+  for (const trace of input.traces) {
+    if (!trace.runId || trace.error) {
+      continue;
+    }
+    const verdict = parseReviewVerdict(trace.outputJson);
+    if (verdict && !verdict.approved) {
+      rejected.add(trace.runId);
+    }
+  }
+  const rows = new Map<string, WorkflowRunRollupRow>();
+  for (const run of input.runs) {
+    const dayMs = Math.floor(run.startedAt.getTime() / WORKFLOW_RUN_DAY_MS) * WORKFLOW_RUN_DAY_MS;
+    const prs = prsByRun.get(run.id) ?? [];
+    const merged = prs.filter((pr) => pr.mergedAt !== null);
+    const runCiFixes = ciFixes.get(run.id) ?? 0;
+    const runRejected = rejected.has(run.id);
+    const key = JSON.stringify([
+      dayMs,
+      run.attributedOrgId,
+      run.attributedTeamId,
+      run.templateId,
+      run.templateVersion,
+      run.repoId,
+      run.status,
+      run.outcomeDomain,
+      run.outcomeType,
+      run.wasAutonomous,
+      run.hadHumanStep,
+    ]);
+    const row = rows.get(key) ?? {
+      builtAt: now,
+      ciFixAttempts: 0,
+      ciFixRoundsBuckets: Array.from({ length: CI_FIX_ROUND_BUCKETS }, () => 0),
+      costUsd: 0,
+      day: new Date(dayMs),
+      durationBuckets: durationBuckets(),
+      durationCount: 0,
+      durationMsSum: 0n,
+      hadHumanStep: run.hadHumanStep,
+      mergeMsBuckets: durationBuckets(),
+      orgId: run.attributedOrgId,
+      outcomeDomain: run.outcomeDomain,
+      outcomeType: run.outcomeType,
+      prsCiPassed: 0,
+      prsClosedUnmerged: 0,
+      prsMerged: 0,
+      prsOpened: 0,
+      repoId: run.repoId,
+      runs: 0,
+      runsCiHealed: 0,
+      runsReviewRejected: 0,
+      runsReviewRejectedMerged: 0,
+      runsReviewRejectedWithPr: 0,
+      runsWithCiFix: 0,
+      runsWithPr: 0,
+      runsWithPrMerged: 0,
+      status: run.status,
+      teamId: run.attributedTeamId,
+      templateId: run.templateId,
+      templateVersion: run.templateVersion,
+      timeSavedMinutes: 0,
+      wasAutonomous: run.wasAutonomous,
+    };
+    row.runs++;
+    row.costUsd += run.costUsdAccrued > 0 ? run.costUsdAccrued : (run.legacyCostUsd ?? 0);
+    if (run.status === 'SUCCESS') {
+      row.timeSavedMinutes += run.estimatedHumanTimeSaved ?? 0;
+    }
+    if (run.endedAt) {
+      const duration = Math.max(0, run.endedAt.getTime() - run.startedAt.getTime());
+      row.durationMsSum += BigInt(Math.trunc(duration));
+      row.durationCount++;
+      addBucket(row.durationBuckets, durationBucketForMs(duration));
+    }
+    row.prsOpened += prs.length;
+    row.runsWithPr += prs.length > 0 ? 1 : 0;
+    row.prsMerged += merged.length;
+    row.prsClosedUnmerged += prs.filter((pr) => pr.status === 'CLOSED' && !pr.mergedAt).length;
+    row.prsCiPassed += prs.filter((pr) => pr.ciStatus === 'PASSED').length;
+    for (const pr of merged) {
+      if (pr.mergedAt) {
+        addBucket(
+          row.mergeMsBuckets,
+          durationBucketForMs(pr.mergedAt.getTime() - run.startedAt.getTime())
+        );
+      }
+    }
+    if (prs.length > 0) {
+      addBucket(row.ciFixRoundsBuckets, Math.min(runCiFixes, CI_FIX_ROUND_OVERFLOW));
+    }
+    row.ciFixAttempts += runCiFixes;
+    row.runsWithCiFix += runCiFixes > 0 ? 1 : 0;
+    row.runsCiHealed +=
+      runCiFixes > 0 && prs.some((pr) => pr.ciStatus === 'PASSED' || pr.mergedAt) ? 1 : 0;
+    row.runsReviewRejected += runRejected ? 1 : 0;
+    row.runsReviewRejectedWithPr += runRejected && prs.length > 0 ? 1 : 0;
+    row.runsReviewRejectedMerged += runRejected && merged.length > 0 ? 1 : 0;
+    row.runsWithPrMerged += merged.length > 0 ? 1 : 0;
+    rows.set(key, row);
+  }
+  return [...rows.values()];
+}
+
+export function combineWorkflowRunRollupRows(rows: readonly WorkflowRunRollupRow[]) {
+  const combined = rows.reduce(
+    (acc, row) => {
+      acc.runs += row.runs;
+      acc.costUsd += row.costUsd;
+      acc.timeSavedMinutes += row.timeSavedMinutes;
+      acc.durationMsSum += row.durationMsSum;
+      acc.durationCount += row.durationCount;
+      acc.prsOpened += row.prsOpened;
+      acc.prsMerged += row.prsMerged;
+      acc.prsClosedUnmerged += row.prsClosedUnmerged;
+      acc.prsCiPassed += row.prsCiPassed;
+      acc.runsWithPr += row.runsWithPr;
+      acc.ciFixAttempts += row.ciFixAttempts;
+      acc.runsWithCiFix += row.runsWithCiFix;
+      acc.runsCiHealed += row.runsCiHealed;
+      acc.runsReviewRejected += row.runsReviewRejected;
+      acc.runsReviewRejectedWithPr += row.runsReviewRejectedWithPr;
+      acc.runsReviewRejectedMerged += row.runsReviewRejectedMerged;
+      acc.runsWithPrMerged += row.runsWithPrMerged;
+      for (let i = 0; i < acc.durationBuckets.length; i++) {
+        acc.durationBuckets[i] = (acc.durationBuckets[i] ?? 0) + (row.durationBuckets[i] ?? 0);
+        acc.mergeMsBuckets[i] = (acc.mergeMsBuckets[i] ?? 0) + (row.mergeMsBuckets[i] ?? 0);
+      }
+      for (let i = 0; i < CI_FIX_ROUND_BUCKETS; i++) {
+        acc.ciFixRoundsBuckets[i] =
+          (acc.ciFixRoundsBuckets[i] ?? 0) + (row.ciFixRoundsBuckets[i] ?? 0);
+      }
+      return acc;
+    },
+    {
+      ciFixAttempts: 0,
+      ciFixRoundsBuckets: Array.from({ length: CI_FIX_ROUND_BUCKETS }, () => 0),
+      costUsd: 0,
+      durationBuckets: durationBuckets(),
+      durationCount: 0,
+      durationMsSum: 0n,
+      mergeMsBuckets: durationBuckets(),
+      prsCiPassed: 0,
+      prsClosedUnmerged: 0,
+      prsMerged: 0,
+      prsOpened: 0,
+      runs: 0,
+      runsCiHealed: 0,
+      runsReviewRejected: 0,
+      runsReviewRejectedMerged: 0,
+      runsReviewRejectedWithPr: 0,
+      runsWithCiFix: 0,
+      runsWithPr: 0,
+      runsWithPrMerged: 0,
+      timeSavedMinutes: 0,
+    }
+  );
+  return {
+    ...combined,
+    averageDurationMs: combined.durationCount
+      ? Number(combined.durationMsSum) / combined.durationCount
+      : null,
+    averageFixRounds: ciFixRoundsFromBuckets(combined.ciFixRoundsBuckets).avgPerRun,
+    p50DurationMs: durationPercentileFromBuckets(combined.durationBuckets, 0.5),
+    p50MergeMs: durationPercentileFromBuckets(combined.mergeMsBuckets, 0.5),
+    p95DurationMs: durationPercentileFromBuckets(combined.durationBuckets, 0.95),
+    p95FixRounds: ciFixRoundsFromBuckets(combined.ciFixRoundsBuckets).p95PerRun,
+  };
+}

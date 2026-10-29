@@ -65,6 +65,9 @@ export async function syncSchedulesOnceConnected(
   app.temporal
     .syncAgentTraceRollupSchedule(sweeps.agentTraceRollup)
     .catch(warn('agent trace rollup'));
+  app.temporal
+    .syncWorkflowRunRollupSchedule(sweeps.workflowRunRollup)
+    .catch(warn('workflow run rollup'));
   // Deletes audit-log rows past their (opt-in) retention and activity events past theirs. On by
   // default; with no audit retention set it only prunes activity events.
   app.temporal

@@ -245,6 +245,7 @@ export type {
 export { resolveWorkspace } from './resolveWorkspace.js';
 export type { RollupAgentTraceUsageResult } from './rollupAgentTraceUsage.js';
 export { rollupAgentTraceUsage } from './rollupAgentTraceUsage.js';
+export { rollupWorkflowRuns } from './rollupWorkflowRuns.js';
 export type { RunAgentNodeInput, RunAgentNodeResult } from './runAgentNode.js';
 export { runAgentNode } from './runAgentNode.js';
 export type { RunAgentTaskInput, RunAgentTaskResult } from './runAgentTask.js';

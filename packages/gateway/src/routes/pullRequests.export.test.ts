@@ -50,6 +50,7 @@ async function buildApp(role: Role = 'ADMIN') {
     },
     teamMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
+    workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
   };
   app.decorate('prisma', prisma as unknown as never);
   app.decorate('auth', {
@@ -135,6 +136,17 @@ describe('GET /api/v1/pull-requests/outcomes/export', () => {
     expect(b.prisma.pullRequest.findMany.mock.calls[0]?.[0].where.AND).toContainEqual({
       templateId: TEAM,
     });
+  });
+
+  it('omits hidden template attribution from a non-admin export', async () => {
+    const b = await buildApp('ENGINEER');
+    b.prisma.pullRequest.findMany.mockResolvedValue([
+      row(1, { template: { name: 'Private template' }, templateId: TEAM }),
+    ]);
+    const response = await get(b, '?format=ndjson');
+    const exported = JSON.parse(response.body.trim().split('\n')[0] ?? '{}');
+    expect(exported).toMatchObject({ template_id: null, template_name: null });
+    expect(b.prisma.workflowTemplate.findMany).toHaveBeenCalledTimes(1);
   });
 
   it('defuses a spreadsheet formula in a text cell', async () => {

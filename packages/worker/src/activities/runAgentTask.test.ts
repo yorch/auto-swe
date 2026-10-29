@@ -73,7 +73,11 @@ vi.mock('@auto-swe/shared/db', () => ({
         templateId: 'template-1',
         templateVersion: 2,
       })),
-      findUnique: vi.fn(async () => m.run),
+      findUnique: vi.fn(async (args: { select: Record<string, unknown> }) =>
+        'template' in args.select
+          ? m.run
+          : { id: 'run-1', templateId: 'template-1', templateVersion: 2 }
+      ),
     },
   },
 }));

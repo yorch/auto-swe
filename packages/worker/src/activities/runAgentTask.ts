@@ -691,8 +691,7 @@ async function recordAgentRunPullRequest(
   tracer: AgentTracer
 ): Promise<void> {
   try {
-    const run = await prisma.workflowRun.findFirst({
-      orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+    const run = await prisma.workflowRun.findUnique({
       select: { id: true, templateId: true, templateVersion: true },
       where: { workflowId: args.temporalWorkflowId },
     });

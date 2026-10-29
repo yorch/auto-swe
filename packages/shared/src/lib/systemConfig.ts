@@ -1315,6 +1315,10 @@ export interface ScheduledSweepsConfig {
     /// the last two completed days, which every sweep rewrites).
     backfillDays: number;
   };
+  workflowRunRollup: SweepSchedule & {
+    backfillDays: number;
+    recomputeDays: number;
+  };
   /// Deletes audit-log rows past `audit.configLogRetentionDays` and activity events past
   /// `analytics.activityRetentionDays`.
   auditActivityPrune: SweepSchedule;
@@ -1393,6 +1397,10 @@ function envCron(name: string, fallback: string): string {
 ///   AGENT_TRACE_ROLLUP_ENABLED    default true — it only derives a summary of rows that stay
 ///   AGENT_TRACE_ROLLUP_CRON       default `13 1 * * *`
 ///   AGENT_TRACE_ROLLUP_BACKFILL_DAYS default 0 — read by the worker running the sweep
+///   WORKFLOW_RUN_ROLLUP_ENABLED    default true — derives reporting summaries from retained runs
+///   WORKFLOW_RUN_ROLLUP_CRON       default `23 1 * * *`
+///   WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS default 30
+///   WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS default 0 — read by the worker running the sweep
 ///   AUDIT_ACTIVITY_PRUNE_ENABLED  default true — a no-op for the audit log until a retention is set
 ///   AUDIT_ACTIVITY_PRUNE_CRON     default `7 5 * * *`
 ///
@@ -1450,6 +1458,12 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
       enabled: envFlag('SLACK_CHANNEL_SYNC_ENABLED', false),
       staleAfterHours: envHours('SLACK_CHANNEL_SYNC_STALE_HOURS', 6),
     },
+    workflowRunRollup: {
+      backfillDays: envDays('WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS', 0),
+      cronExpression: envCron('WORKFLOW_RUN_ROLLUP_CRON', '23 1 * * *'),
+      enabled: envFlag('WORKFLOW_RUN_ROLLUP_ENABLED', true),
+      recomputeDays: envDays('WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS', 30),
+    },
   };
 }
 
@@ -1493,6 +1507,18 @@ export function validateScheduledSweepsEnv(): string[] {
   check('AGENT_TRACE_ROLLUP_CRON', cron, 'a five-field cron expression such as "13 1 * * *"');
   check(
     'AGENT_TRACE_ROLLUP_BACKFILL_DAYS',
+    (raw) => DAYS_RE.test(raw.trim()),
+    'a whole number of days from 0 to 9999'
+  );
+  check('WORKFLOW_RUN_ROLLUP_ENABLED', flag, "'true' or 'false'");
+  check('WORKFLOW_RUN_ROLLUP_CRON', cron, 'a five-field cron expression such as "23 1 * * *"');
+  check(
+    'WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS',
+    (raw) => DAYS_RE.test(raw.trim()) && Number(raw) > 0,
+    'a whole number of days from 1 to 9999'
+  );
+  check(
+    'WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS',
     (raw) => DAYS_RE.test(raw.trim()),
     'a whole number of days from 0 to 9999'
   );

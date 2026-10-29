@@ -205,3 +205,21 @@ export {
   splitGroups,
   validateSpec,
 } from './validateSpec.js';
+export type {
+  BuildWorkflowRunRollupsInput,
+  WorkflowRunRollupPullRequestInput,
+  WorkflowRunRollupRow,
+  WorkflowRunRollupRunInput,
+  WorkflowRunRollupStepInput,
+  WorkflowRunRollupTraceInput,
+} from './workflowRunRollup.js';
+export {
+  buildWorkflowRunDailyRollups,
+  ciFixRoundsFromBuckets,
+  combineWorkflowRunRollupRows,
+  DURATION_BUCKET_BOUNDS_MS,
+  durationBucketForMs,
+  durationPercentileFromBuckets,
+  WORKFLOW_RUN_DAY_MS,
+  WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS,
+} from './workflowRunRollup.js';

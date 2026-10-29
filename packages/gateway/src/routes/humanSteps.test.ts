@@ -122,6 +122,12 @@ describe('human step routes', () => {
       },
     } as unknown as never);
 
+    app.addHook('preHandler', async (request) => {
+      if (request.headers['x-test-auth'] === 'service') {
+        request.authMethod = 'service';
+      }
+    });
+
     await app.register(humanStepRoutes, { prefix: '/api/v1/human-steps' });
     await app.ready();
   });
@@ -496,6 +502,17 @@ describe('human step routes', () => {
         url: `/api/v1/human-steps/${STEP_ID}/respond`,
       });
     }
+
+    it('returns 403 for service principals before resolving a step', async () => {
+      const res = await app.inject({
+        headers: { ...AUTH, 'x-test-auth': 'service' },
+        method: 'POST',
+        payload: { action: 'approve' },
+        url: `/api/v1/human-steps/${STEP_ID}/respond`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(updateManyCalls).toHaveLength(0);
+    });
 
     it('stores an approver comment with the step but keeps it out of the signal', async () => {
       stepRow = pendingStep();

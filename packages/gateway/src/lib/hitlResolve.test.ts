@@ -65,6 +65,23 @@ const decisionStep = {
   title: 'Ship?',
 };
 
+describe('resolvedViaForAuthMethod', () => {
+  it.each([
+    ['session', 'web'],
+    ['jwt', 'web'],
+    ['pat', 'api_token'],
+    ['mcp', 'mcp'],
+    ['assistant', 'assistant'],
+  ] as const)('maps %s to %s', (method, via) => {
+    expect(resolvedViaForAuthMethod(method)).toBe(via);
+  });
+
+  it('returns null when the auth method is absent or unsupported', () => {
+    expect(resolvedViaForAuthMethod(undefined)).toBeNull();
+    expect(resolvedViaForAuthMethod('service')).toBeNull();
+  });
+});
+
 describe('resolveHitlStep — DECISION value validation', () => {
   it('rejects a value that is not one of the configured options without touching the row', async () => {
     const { deps, signalWorkflow, updateMany } = makeDeps(decisionStep);
@@ -137,12 +154,6 @@ describe('resolveHitlStep — resolution source', () => {
     };
     expect(prisma.humanApproval.create.mock.calls[0]?.[0].data.resolvedVia).toBe('mcp');
     expect(updateMany.mock.calls[0]?.[0].data.resolvedVia).toBe('mcp');
-  });
-
-  it('does not map service principals to a resolution source', () => {
-    expect(() => resolvedViaForAuthMethod('service')).toThrow(
-      'Service principals cannot resolve human steps'
-    );
   });
 });
 

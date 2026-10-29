@@ -1152,7 +1152,8 @@ team is available, the work request's billing organization is used. These fields
 visibility.
 
 Pull requests store their template id, template version, and associated run id. A worker links a PR
-only through an active workflow in the same repository and selects that workflow's latest run;
+only through an active workflow in the same repository. `WorkflowRun.workflowId` is unique, so the
+run is resolved by that workflow id rather than by recency;
 historical rows use the same repository guard and selection. Outcomes and template analytics read
 these persisted fields. Human-step resolutions store `resolvedVia` as `web`, `slack`, `api_token`,
 `mcp`, or `assistant`; older rows remain null.

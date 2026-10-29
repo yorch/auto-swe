@@ -19,6 +19,7 @@ import { csvRow } from '../lib/csv.js';
 import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
+import { teamMembershipFilter } from '../lib/templateLaunch.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
@@ -275,8 +276,24 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
       });
       const capped = rows.length > OUTCOMES_ROW_CAP;
       const kept = rows.slice(0, OUTCOMES_ROW_CAP);
+      const visibleTemplateIds =
+        user.role === 'ADMIN'
+          ? null
+          : new Set(
+              (
+                await fastify.prisma.workflowTemplate.findMany({
+                  select: { id: true },
+                  where: {
+                    AND: [
+                      teamMembershipFilter(user),
+                      { id: { in: [...new Set(kept.flatMap((row) => row.templateId ?? []))] } },
+                    ],
+                  },
+                })
+              ).map((template) => template.id)
+            );
       const templateOf = (r: (typeof kept)[number]) =>
-        r.templateId
+        r.templateId && (visibleTemplateIds === null || visibleTemplateIds.has(r.templateId))
           ? { templateId: r.templateId, templateName: r.template?.name ?? 'Unknown' }
           : null;
       // Newest first, so a capped read loses the previous window before this one. The extra row
@@ -400,7 +417,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           where,
         });
       type Batch = Awaited<ReturnType<typeof readBatch>>;
-      const cells = (r: Batch[number]) => [
+      const cells = (r: Batch[number], visibleTemplateIds: Set<string>) => [
         r.id,
         r.repository?.organizationName ?? null,
         r.repository?.repoName ?? null,
@@ -412,14 +429,33 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         r.mergedAt?.toISOString() ?? null,
         r.closedAt?.toISOString() ?? null,
         r.mergedAt ? r.mergedAt.getTime() - r.openedAt.getTime() : null,
-        r.templateId,
-        r.template?.name ?? null,
+        user.role === 'ADMIN' || (r.templateId !== null && visibleTemplateIds.has(r.templateId))
+          ? r.templateId
+          : null,
+        user.role === 'ADMIN' || (r.templateId !== null && visibleTemplateIds.has(r.templateId))
+          ? (r.template?.name ?? null)
+          : null,
       ];
-      const encode = (r: Batch[number]) => {
-        const values = cells(r);
+      const encode = (r: Batch[number], visibleTemplateIds: Set<string>) => {
+        const values = cells(r, visibleTemplateIds);
         return format === 'csv'
           ? csvRow(values)
           : `${JSON.stringify(Object.fromEntries(OUTCOMES_EXPORT_COLUMNS.map((c, i) => [c, values[i]])))}\n`;
+      };
+      const encodeBatch = async (batch: Batch) => {
+        const ids = [...new Set(batch.flatMap((row) => row.templateId ?? []))];
+        const visibleTemplateIds =
+          user.role === 'ADMIN' || ids.length === 0
+            ? new Set(ids)
+            : new Set(
+                (
+                  await fastify.prisma.workflowTemplate.findMany({
+                    select: { id: true },
+                    where: { AND: [teamMembershipFilter(user), { id: { in: ids } }] },
+                  })
+                ).map((template) => template.id)
+              );
+        return batch.map((row) => encode(row, visibleTemplateIds)).join('');
       };
 
       // Everything that can fail before the first byte is awaited here, so a database error is a
@@ -436,7 +472,7 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         let written = 0;
         while (rows.length > 0) {
           const batch = rows.slice(0, OUTCOMES_EXPORT_MAX_ROWS - written);
-          yield batch.map(encode).join('');
+          yield await encodeBatch(batch);
           written += batch.length;
           if (rows.length < OUTCOMES_EXPORT_BATCH || written >= OUTCOMES_EXPORT_MAX_ROWS) {
             return;

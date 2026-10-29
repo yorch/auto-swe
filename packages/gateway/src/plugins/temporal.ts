@@ -63,6 +63,7 @@ export const CALLBACK_DELIVERY_SCHEDULE_ID = 'auto-swe-callback-delivery';
 export const CALLBACK_DELIVERY_PRUNE_SCHEDULE_ID = 'auto-swe-callback-delivery-prune';
 export const AGENT_TRANSCRIPT_PRUNE_SCHEDULE_ID = 'auto-swe-agent-transcript-prune';
 export const AGENT_TRACE_ROLLUP_SCHEDULE_ID = 'auto-swe-agent-trace-rollup';
+export const WORKFLOW_RUN_ROLLUP_SCHEDULE_ID = 'auto-swe-workflow-run-rollup';
 export const AUDIT_ACTIVITY_PRUNE_SCHEDULE_ID = 'auto-swe-audit-activity-prune';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
@@ -255,6 +256,11 @@ export interface AgentTraceRollupScheduleConfig {
   cronExpression: string;
 }
 
+export interface WorkflowRunRollupScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
 /**
  * The run-callback sweeps: one sends due deliveries, one deletes old ones. Each
  * workflow reads the outbox (and its retention setting) itself, so the
@@ -427,6 +433,7 @@ declare module 'fastify' {
         config: AgentTranscriptPruneScheduleConfig
       ) => Promise<void>;
       syncAgentTraceRollupSchedule: (config: AgentTraceRollupScheduleConfig) => Promise<void>;
+      syncWorkflowRunRollupSchedule: (config: WorkflowRunRollupScheduleConfig) => Promise<void>;
       syncAuditActivityPruneSchedule: (config: AuditActivityPruneScheduleConfig) => Promise<void>;
       syncSkillSourceSyncSchedule: (config: SkillSourceSyncScheduleConfig) => Promise<void>;
       syncSlackChannelSyncSchedule: (config: SlackChannelSyncScheduleConfig) => Promise<void>;
@@ -1413,6 +1420,14 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
     async syncSlackChannelSyncSchedule(config: SlackChannelSyncScheduleConfig): Promise<void> {
       await upsertSchedule(SLACK_CHANNEL_SYNC_SCHEDULE_ID, {
         action: makeSlackChannelSyncScheduleAction(),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
+    async syncWorkflowRunRollupSchedule(config: WorkflowRunRollupScheduleConfig): Promise<void> {
+      await upsertSchedule(WORKFLOW_RUN_ROLLUP_SCHEDULE_ID, {
+        action: makeSweepAction('ScheduledWorkflowRunRollupWorkflow'),
         cronExpression: config.cronExpression,
         paused: !config.enabled,
       });

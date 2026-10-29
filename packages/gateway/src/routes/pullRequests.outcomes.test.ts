@@ -59,6 +59,7 @@ async function buildApp(role: Role = 'ADMIN') {
     pullRequest: { findMany: vi.fn().mockResolvedValue([]) },
     teamMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
+    workflowTemplate: { findMany: vi.fn().mockResolvedValue([]) },
   };
   app.decorate('prisma', prisma as unknown as never);
   app.decorate('auth', {
@@ -161,6 +162,30 @@ describe('GET /api/v1/pull-requests/outcomes', () => {
         }),
       ])
     );
+  });
+
+  it('does not attribute a PR to a template hidden by the template-list visibility rule', async () => {
+    const b = await buildApp('ENGINEER');
+    b.prisma.pullRequest.findMany.mockResolvedValue([
+      inCurrent(0, {
+        template: { name: 'Private template' },
+        templateId: UUID_B,
+      }),
+    ]);
+    const { data } = (await get(b)).json();
+    expect(data.byTemplate).toEqual([
+      expect.objectContaining({
+        opened: 1,
+        templateId: null,
+        templateName: 'Unattributed',
+      }),
+    ]);
+    expect(b.prisma.workflowTemplate.findMany).toHaveBeenCalledWith({
+      select: { id: true },
+      where: {
+        AND: [expect.any(Object), { id: { in: [UUID_B] } }],
+      },
+    });
   });
 
   it('bounds openedAt to [previousStart, end) and adds no repository filter for an admin', async () => {

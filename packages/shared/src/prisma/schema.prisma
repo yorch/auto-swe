@@ -2042,6 +2042,50 @@ model WorkflowRun {
   @@map("workflow_runs")
 }
 
+/// Reporting-only daily aggregates derived from WorkflowRun data. These rows do not affect
+/// run visibility and deliberately have no relations so historical aggregates survive deletions.
+model WorkflowRunDailyRollup {
+  id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  day                      DateTime @db.Date
+  orgId                    String?  @map("org_id") @db.Uuid
+  teamId                   String?  @map("team_id") @db.Uuid
+  templateId               String?  @map("template_id") @db.Uuid
+  templateVersion          Int?     @map("template_version")
+  repoId                   String?  @map("repo_id") @db.Uuid
+  status                   String
+  outcomeDomain            String?  @map("outcome_domain")
+  outcomeType              String?  @map("outcome_type")
+  wasAutonomous            Boolean? @map("was_autonomous")
+  hadHumanStep             Boolean? @map("had_human_step")
+  runs                     Int
+  costUsd                  Float    @map("cost_usd")
+  timeSavedMinutes         Float    @map("time_saved_minutes")
+  durationMsSum            BigInt   @map("duration_ms_sum")
+  durationCount            Int      @map("duration_count")
+  durationBuckets          Int[]    @default([]) @map("duration_buckets")
+  runsWithPr               Int      @map("runs_with_pr")
+  prsOpened                Int      @map("prs_opened")
+  prsMerged                Int      @map("prs_merged")
+  prsClosedUnmerged        Int      @map("prs_closed_unmerged")
+  prsCiPassed              Int      @map("prs_ci_passed")
+  mergeMsBuckets           Int[]    @default([]) @map("merge_ms_buckets")
+  ciFixAttempts            Int      @map("ci_fix_attempts")
+  runsWithCiFix            Int      @map("runs_with_ci_fix")
+  ciFixRoundsBuckets       Int[]    @default([]) @map("ci_fix_rounds_buckets")
+  runsCiHealed             Int      @map("runs_ci_healed")
+  runsReviewRejected       Int      @map("runs_review_rejected")
+  runsReviewRejectedWithPr Int      @map("runs_review_rejected_with_pr")
+  runsReviewRejectedMerged Int      @map("runs_review_rejected_merged")
+  runsWithPrMerged         Int      @map("runs_with_pr_merged")
+  builtAt                  DateTime @default(now()) @map("built_at") @db.Timestamptz
+
+  @@index([day])
+  @@index([orgId, day])
+  @@index([teamId, day])
+  @@index([templateId, day])
+  @@map("workflow_run_daily_rollups")
+}
+
 /// Audit trail of autonomous governance decisions and human approvals for a run.
 /// Captures publish/approval/rejection events with the actor, policy, and payload
 /// snapshot so the autonomy path can be replayed and reviewed.

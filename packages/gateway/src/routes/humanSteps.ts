@@ -585,6 +585,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         response: {
           200: RespondResponseSchema,
           400: ErrorResponseSchema,
+          403: ErrorResponseSchema,
           404: ErrorResponseSchema,
           409: ErrorResponseSchema,
           502: ErrorResponseSchema,
@@ -593,6 +594,9 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
+      if (request.authMethod === 'service') {
+        return sendError(reply, 403, 'FORBIDDEN', 'Service principals cannot resolve human steps');
+      }
       const user = requireUser(request);
       const { action, comment, value } = request.body;
 

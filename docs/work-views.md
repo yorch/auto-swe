@@ -297,9 +297,12 @@ http(s) address.
 ## Limitations
 
 - Pull-request attribution is stored when a worker creates or updates a PR and is backfilled from
-  repository-matched active workflows and their latest run. Rows with no matching run keep null
-  attribution and appear as “Unattributed”; reporting reads the stored attribution rather than
-  searching recent runs.
+  repository-matched active workflows. `WorkflowRun.workflowId` is unique, so the run is resolved
+  by that exact workflow id rather than by recency. Rows with no matching run keep null attribution
+  and appear as “Unattributed”; reporting reads the stored attribution rather than searching recent
+  runs. For non-admin outcomes and exports, a template name is included only when the template
+  passes the same team-membership visibility filter as `GET /workflow-templates`; otherwise the PR
+  is included in “Unattributed” with no template name.
 
 - With the GitHub tracker, comments, pull-request links, issue closes and PRD issue creation go
   only to a repository the run targets, on the tracker's host, or one listed in

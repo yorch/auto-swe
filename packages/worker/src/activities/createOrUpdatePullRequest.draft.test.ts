@@ -10,7 +10,7 @@ const m = vi.hoisted(() => ({
     connection: { findUniqueOrThrow: vi.fn() },
     pullRequest: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
     runInput: { findUnique: vi.fn() },
-    workflowRun: { findFirst: vi.fn() },
+    workflowRun: { findUnique: vi.fn() },
   },
 }));
 
@@ -71,7 +71,7 @@ beforeEach(() => {
   m.prisma.connection.findUniqueOrThrow.mockResolvedValue({ defaultBranch: 'main', id: 'repo-1' });
   m.prisma.pullRequest.findFirst.mockResolvedValue(null);
   m.prisma.activeWorkflow.findFirst.mockResolvedValue({ id: 'w1' });
-  m.prisma.workflowRun.findFirst.mockResolvedValue(null);
+  m.prisma.workflowRun.findUnique.mockResolvedValue(null);
   m.createPr.mockResolvedValue({ prNumber: 7, prUrl: 'https://example.test/pull/7' });
 });
 
@@ -181,7 +181,7 @@ describe('which ledger row a new PR is linked to', () => {
       repoId: 'repo-1',
       temporalWorkflowId: 'wf-own',
     });
-    m.prisma.workflowRun.findFirst.mockResolvedValue({
+    m.prisma.workflowRun.findUnique.mockResolvedValue({
       id: 'run-latest',
       templateId: 'template-1',
       templateVersion: 4,
@@ -195,8 +195,7 @@ describe('which ledger row a new PR is linked to', () => {
       templateVersion: 4,
       workflowId: 'own-row',
     });
-    expect(m.prisma.workflowRun.findFirst).toHaveBeenCalledWith({
-      orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+    expect(m.prisma.workflowRun.findUnique).toHaveBeenCalledWith({
       select: { id: true, templateId: true, templateVersion: true },
       where: { workflowId: 'wf-own' },
     });
@@ -418,6 +417,44 @@ describe('which PR is reused, and whose it becomes', () => {
     table([row({ id: 'a', ledger: 'wf-own', status: 'MERGED' })]);
     await run();
     expect(m.prisma.pullRequest.create).toHaveBeenCalled();
+  });
+});
+
+it('preserves adopted PR attribution when the executing workflow has no ledger row', async () => {
+  m.prisma.activeWorkflow.findFirst.mockImplementation(
+    async (args: { where: { temporalWorkflowId?: string } }) =>
+      args.where.temporalWorkflowId
+        ? null
+        : { id: 'fallback-row', repoId: 'repo-1', temporalWorkflowId: 'wf-other' }
+  );
+  m.prisma.workflowRun.findUnique.mockResolvedValue({
+    id: 'fallback-run',
+    templateId: 'fallback-template',
+    templateVersion: 3,
+  });
+  m.prisma.pullRequest.findFirst.mockImplementation(
+    async (args: { where: { workflow?: { temporalWorkflowId?: string } } }) =>
+      args.where.workflow?.temporalWorkflowId
+        ? null
+        : {
+            id: 'adopted-pr',
+            prNumber: 5,
+            runId: 'existing-run',
+            status: 'OPEN',
+            templateId: 'existing-template',
+            templateVersion: 2,
+          }
+  );
+
+  await createOrUpdatePullRequest(request, codeResult);
+
+  expect(m.prisma.pullRequest.update).toHaveBeenCalledWith({
+    data: expect.not.objectContaining({
+      runId: expect.anything(),
+      templateId: expect.anything(),
+      templateVersion: expect.anything(),
+    }),
+    where: { id: 'adopted-pr' },
   });
 });
 

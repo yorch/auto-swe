@@ -14,9 +14,10 @@ that order; the selected team's organization wins, with the work request's billi
 the fallback when no team is available. This attribution does not change run visibility.
 
 Pull requests store their template id, template version and associated run id. Writers and the
-historical backfill associate a PR only through an active workflow in the same repository and use
-the latest run for that workflow. Outcomes, per-version template analytics and report cohorts read
-these persisted fields instead of dynamically joining recent runs.
+historical backfill associate a PR only through an active workflow in the same repository.
+`WorkflowRun.workflowId` is unique, so the associated run is resolved by that exact workflow id,
+not by recency. Outcomes, per-version template analytics and report cohorts read these persisted
+fields instead of dynamically joining recent runs.
 
 ## Delivery
 
@@ -87,9 +88,21 @@ most five runs per organization; each organization indicates when more ranked ru
 
 - Scheduled Slack and email report digests are not available.
 - CLI and MCP report commands are not available.
-- Delivery reports do not include a team slice because workflow runs do not have a reliable
-  run-to-team relationship.
-- Reports use live bounded reads; a daily run-rollup table is not available.
+- Non-ADMIN reporting visibility is based on persisted attribution: a row is included when its
+  `teamId` (`WorkflowRun.attributedTeamId`) is one of the caller's member teams, or its `orgId`
+  (`WorkflowRun.attributedOrgId`) is an organization where the caller is `ORG_ADMIN`. ADMIN sees
+  all rows. The same rule applies to rollup and live slices. A `teamId` filter is allowed only for
+  a team the caller belongs to or whose organization the caller administers; otherwise the route
+  returns 403. This replaces `buildWorkflowRunVisibilityFilter` for rollup-backed reports, while
+  non-rollup reads retain that visibility filter and add the team filter.
+- Run and merge duration percentiles are approximate: values fall into logarithmically spaced
+  buckets and the reader returns the bucket's geometric midpoint. CI-fix p95 and average use an
+  exact attempt-count histogram for 0–19; its 20+ overflow bucket is represented as 20.
+- Rollups are rebuilt daily and recomputed over the configured horizon to include late outcomes.
+  `rollupDays` and `liveDays` show which dates came from each source; truncation flags apply only
+  to live reads. Freshness is bounded by the daily schedule and the recompute window.
+- Approval source counts use `resolvedVia`; historical rows with no source are reported as
+  `unknown`.
 - User records do not expose a service-principal or API-token approver flag, so approval counts
   cannot separate people from machine identities. The human-step HTTP route requires a user
   principal and does not admit service-principal tokens.

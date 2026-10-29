@@ -486,14 +486,15 @@ against an older schema. The normal deployment migration step applies this migra
 
 ### Reporting attribution backfill (`20261029130735_reporting_attribution`)
 
-**Affected.** Deployments that apply the reporting-attribution migration. It adds nullable
+**Affected.** Deployments applying commit `265c2a938f0ca6df969a481643efcf00fae302b3` or a descendant
+that has not yet applied `20261029130735_reporting_attribution`. The migration adds nullable
 WorkflowRun team/organization attribution, PullRequest template/run attribution, and the HITL
 resolution-source columns, then backfills existing workflow runs and repository-matched pull
 requests.
 
-**Expected cost.** The backfill scans existing workflow runs and pull requests and looks up the
-latest run for each repository-matched active workflow. On large tables, expect a migration whose
-runtime grows with the number of stored runs and pull requests.
+**Expected cost.** Runtime scales with the number of stored workflow runs and pull requests. The
+migration blocks writes to `workflow_runs` and `pull_requests` while the backfills run. Large
+deployments should schedule a maintenance window or raise the migration session's statement timeout.
 
 **Actions.** Nothing manual is required beyond the normal `migrate deploy`; the migration performs
 both backfills. No historical HITL source is inferred, so existing resolution-source values remain

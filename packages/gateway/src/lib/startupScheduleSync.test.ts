@@ -14,6 +14,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     runReaper: cfg,
     skillSourceSync: cfg,
     slackChannelSync: cfg,
+    workflowRunRollup: { ...cfg, backfillDays: 0, recomputeDays: 30 },
   }),
 }));
 
@@ -30,6 +31,7 @@ const SYNCS = [
   'syncCallbackDeliveryPruneSchedule',
   'syncAgentTranscriptPruneSchedule',
   'syncAgentTraceRollupSchedule',
+  'syncWorkflowRunRollupSchedule',
   'syncAuditActivityPruneSchedule',
   'syncSkillSourceSyncSchedule',
   'syncSlackChannelSyncSchedule',

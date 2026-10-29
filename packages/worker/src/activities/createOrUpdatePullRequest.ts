@@ -32,8 +32,7 @@ async function pullRequestAttribution(
   if (!activeWorkflow || activeWorkflow.repoId !== repoId) {
     return EMPTY_PR_ATTRIBUTION;
   }
-  const run = await prisma.workflowRun.findFirst({
-    orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+  const run = await prisma.workflowRun.findUnique({
     select: { id: true, templateId: true, templateVersion: true },
     where: { workflowId: activeWorkflow.temporalWorkflowId },
   });
@@ -148,7 +147,7 @@ async function doCreateOrUpdatePullRequest(
     // one, cannot use it.
     await prisma.pullRequest.update({
       data: {
-        ...ownAttribution,
+        ...(ownAttribution.runId ? ownAttribution : {}),
         ciStatus: 'PENDING',
         headSha: codeResult.headSha,
         workflowId: ownWorkflow?.id,
@@ -218,7 +217,7 @@ async function doCreateOrUpdatePullRequest(
       repoId: repo.id,
       status: 'OPEN',
       title: clampPullRequestTitle(title),
-      ...workflowAttribution,
+      ...(workflowAttribution.runId ? workflowAttribution : {}),
       workflowId: workflow?.id,
     },
   });
