@@ -307,8 +307,6 @@ http(s) address.
   never fetched, even a bare number.
 - Outcomes group PRs by the time they were opened and judge them as of now, so a recent cohort
   under-reports merges that have not happened yet and its merge rate rises as its PRs resolve.
-- Template attribution uses visible workflow runs started no earlier than 30 days before the
-  outcomes window. Older run-to-PR links are not included in template-filtered outcomes or exports.
 - An outcomes read takes at most 10,000 PRs; beyond that the figures cover only the newest ones
   read, and `isTruncated` or `previousComplete` says so.
 - Outcomes are grouped by workflow template, but not by agent. The dashboard card on

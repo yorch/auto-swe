@@ -21,11 +21,12 @@ const cases: Array<{
       runsStarted: 0,
       runsSucceeded: 0,
       runsWithPr: 0,
+      spendUsd: 0,
     },
     expected: 'By template',
     populated: {
       byRepo: [],
-      byTemplate: [{ runsStarted: 2, templateId: 't1', templateName: 'Ticket to PR' }],
+      byTemplate: [{ runsStarted: 2, spendUsd: 8, templateId: 't1', templateName: 'Ticket to PR' }],
       costPerMergedPr: 4,
       medianTimeToMergeMs: 3_600_000,
       prsCiPassed: 1,
@@ -33,6 +34,7 @@ const cases: Array<{
       runsStarted: 2,
       runsSucceeded: 1,
       runsWithPr: 1,
+      spendUsd: 10,
     },
     tab: 'delivery',
   },
@@ -41,14 +43,31 @@ const cases: Array<{
       ciSelfHealRate: null,
       fixLoops: [],
       gates: [],
-      review: { byReviewer: [], unparseableRows: 0 },
+      mergeRateByReviewOutcome: {
+        withoutRejectingVerdict: { mergedRuns: 0, mergeRate: null, runsWithPr: 0 },
+        withRejectingVerdict: { mergedRuns: 0, mergeRate: null, runsWithPr: 0 },
+      },
+      review: { byReviewer: [], nonVerdictRows: 0 },
     },
     expected: 'Quality gates',
     populated: {
       ciSelfHealRate: 0.5,
       fixLoops: [],
-      gates: [{ failed: 1, passed: 1, passRate: 0.5, stepName: 'runLint', total: 2 }],
-      review: { byReviewer: [], unparseableRows: 0 },
+      gates: [
+        {
+          attempts: 2,
+          failed: 1,
+          finalPassRate: 0.5,
+          firstAttemptPassRate: 0.5,
+          passed: 1,
+          stepName: 'runLint',
+        },
+      ],
+      mergeRateByReviewOutcome: {
+        withoutRejectingVerdict: { mergedRuns: 0, mergeRate: null, runsWithPr: 0 },
+        withRejectingVerdict: { mergedRuns: 0, mergeRate: null, runsWithPr: 0 },
+      },
+      review: { byReviewer: [], nonVerdictRows: 0 },
     },
     tab: 'quality',
   },
@@ -92,8 +111,10 @@ const cases: Array<{
     empty: {
       autonomy: { byEvent: {}, byRiskClass: {} },
       byApprover: [],
+      byKind: {},
       medianWaitMs: null,
       oldestPendingAgeMs: null,
+      p95WaitMs: null,
       pendingNow: 0,
       timedOut: 0,
     },
@@ -101,8 +122,10 @@ const cases: Array<{
     populated: {
       autonomy: { byEvent: { approve: 1 }, byRiskClass: { low: 1 } },
       byApprover: [{ medianWaitMs: 3_600_000, name: 'Ada', resolved: 1 }],
+      byKind: { PR: { RESOLVED: 1 } },
       medianWaitMs: 3_600_000,
       oldestPendingAgeMs: 86_400_000,
+      p95WaitMs: 3_600_000,
       pendingNow: 1,
       timedOut: 0,
     },
@@ -120,4 +143,24 @@ describe.each(cases)('$tab report tab', ({ empty, expected, populated, tab }) =>
     render(<ReportTabPanel data={populated} tab={tab} />);
     expect(screen.getByText(expected)).toBeTruthy();
   });
+});
+
+it('keeps the quality report populated when non-verdict rows exist', () => {
+  render(
+    <ReportTabPanel
+      data={{
+        ciSelfHealRate: null,
+        fixLoops: [],
+        gates: [],
+        mergeRateByReviewOutcome: {
+          withoutRejectingVerdict: { mergedRuns: 0, mergeRate: null, runsWithPr: 0 },
+          withRejectingVerdict: { mergedRuns: 0, mergeRate: null, runsWithPr: 0 },
+        },
+        review: { byReviewer: [], nonVerdictRows: 1 },
+      }}
+      tab="quality"
+    />
+  );
+
+  expect(screen.getByRole('region', { name: 'Quality report' })).toBeTruthy();
 });

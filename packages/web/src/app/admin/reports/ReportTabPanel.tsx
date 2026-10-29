@@ -6,7 +6,12 @@ export type ReportTab = 'delivery' | 'quality' | 'budget' | 'automations' | 'hit
 
 export interface DeliveryReportData {
   byRepo: Array<{ repoId: string; repositoryName: string; runsStarted: number; spendUsd: number }>;
-  byTemplate: Array<{ templateId: string; templateName: string; runsStarted: number }>;
+  byTemplate: Array<{
+    spendUsd: number;
+    templateId: string;
+    templateName: string;
+    runsStarted: number;
+  }>;
   costPerMergedPr: number | null;
   medianTimeToMergeMs: number | null;
   prsCiPassed: number;
@@ -14,23 +19,33 @@ export interface DeliveryReportData {
   runsStarted: number;
   runsSucceeded: number;
   runsWithPr: number;
+  spendUsd: number;
 }
 
 export interface QualityReportData {
   ciSelfHealRate: number | null;
   fixLoops: Array<{
-    avgRoundsPerRun: number | null;
+    avgAttemptsPerRun: number | null;
     runsWithFix: number;
     stepName: string;
-    totalRounds: number;
+    totalAttempts: number;
   }>;
   gates: Array<{
+    attempts: number;
     failed: number;
-    passRate: number | null;
+    finalPassRate: number | null;
+    firstAttemptPassRate: number | null;
     passed: number;
     stepName: string;
-    total: number;
   }>;
+  mergeRateByReviewOutcome: {
+    withRejectingVerdict: { mergeRate: number | null; mergedRuns: number; runsWithPr: number };
+    withoutRejectingVerdict: {
+      mergeRate: number | null;
+      mergedRuns: number;
+      runsWithPr: number;
+    };
+  };
   review: {
     byReviewer: Array<{
       approvalRate: number | null;
@@ -38,7 +53,7 @@ export interface QualityReportData {
       reviewer: string;
       verdicts: number;
     }>;
-    unparseableRows: number;
+    nonVerdictRows: number;
   };
 }
 
@@ -69,8 +84,10 @@ export interface AutomationReportData {
 export interface HitlReportData {
   autonomy: { byEvent: Record<string, number>; byRiskClass: Record<string, number> };
   byApprover: Array<{ medianWaitMs: number | null; name: string; resolved: number }>;
+  byKind: Record<string, Record<string, number>>;
   medianWaitMs: number | null;
   oldestPendingAgeMs: number | null;
+  p95WaitMs: number | null;
   pendingNow: number;
   timedOut: number;
 }
@@ -112,6 +129,7 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
           <Metric label="Runs succeeded" value={report.runsSucceeded} />
           <Metric label="Runs with PRs" value={report.runsWithPr} />
           <Metric label="Merged PRs" value={report.prsMerged} />
+          <Metric label="Spend" value={`$${report.spendUsd.toFixed(2)}`} />
           <Metric label="CI-passed PRs" value={report.prsCiPassed} />
           <Metric
             label="Cost per merged PR"
@@ -121,7 +139,10 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
         </dl>
         <h2 className="text-lg font-semibold text-paper-100">By template</h2>
         <Rows
-          rows={report.byTemplate.map((row) => `${row.templateName}: ${row.runsStarted} runs`)}
+          rows={report.byTemplate.map(
+            (row) =>
+              `${row.templateName}: ${row.runsStarted} runs · $${row.spendUsd.toFixed(2)} spend`
+          )}
         />
         <h2 className="text-lg font-semibold text-paper-100">By repository</h2>
         <Rows
@@ -137,7 +158,8 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
   if (tab === 'quality') {
     const report = data as QualityReportData;
     const populated =
-      report.gates.some((gate) => gate.total > 0) ||
+      report.review.nonVerdictRows > 0 ||
+      report.gates.some((gate) => gate.attempts > 0) ||
       report.fixLoops.some((loop) => loop.runsWithFix > 0) ||
       report.review.byReviewer.some((reviewer) => reviewer.verdicts > 0);
     if (!populated) {
@@ -154,10 +176,10 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
         <h2 className="text-lg font-semibold text-paper-100">Quality gates</h2>
         <Rows
           rows={report.gates
-            .filter((gate) => gate.total > 0)
+            .filter((gate) => gate.attempts > 0)
             .map(
               (gate) =>
-                `${gate.stepName}: ${gate.passed}/${gate.total} passed (${percent(gate.passRate)})`
+                `${gate.stepName}: ${gate.passed}/${gate.attempts} attempts passed · first-attempt ${percent(gate.firstAttemptPassRate)} · final ${percent(gate.finalPassRate)}`
             )}
         />
         <h2 className="text-lg font-semibold text-paper-100">Fix loops</h2>
@@ -166,7 +188,7 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
             .filter((loop) => loop.runsWithFix > 0)
             .map(
               (loop) =>
-                `${loop.stepName}: ${loop.totalRounds} rounds across ${loop.runsWithFix} runs`
+                `${loop.stepName}: ${loop.totalAttempts} attempts across ${loop.runsWithFix} runs (${loop.avgAttemptsPerRun?.toFixed(1)} average)`
             )}
         />
         <h2 className="text-lg font-semibold text-paper-100">Review network</h2>
@@ -177,6 +199,14 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
               (reviewer) =>
                 `${reviewer.reviewer}: ${reviewer.verdicts} verdicts · ${percent(reviewer.approvalRate)} approved · ${reviewer.findingsTotal} findings`
             )}
+        />
+        <Metric label="Review rows without verdict" value={report.review.nonVerdictRows} />
+        <h2 className="text-lg font-semibold text-paper-100">Merge rate by review outcome</h2>
+        <Rows
+          rows={Object.entries(report.mergeRateByReviewOutcome).map(
+            ([outcome, metrics]) =>
+              `${outcome === 'withRejectingVerdict' ? 'Rejecting verdict' : 'No rejecting verdict'}: ${metrics.mergedRuns}/${metrics.runsWithPr} runs merged · ${percent(metrics.mergeRate)}`
+          )}
         />
       </section>
     );
@@ -242,7 +272,17 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
   }
 
   const report = data as HitlReportData;
-  if (report.pendingNow === 0 && report.timedOut === 0 && report.byApprover.length === 0) {
+  const hasKindActivity = Object.values(report.byKind).some((statuses) =>
+    Object.values(statuses).some((count) => count > 0)
+  );
+  if (
+    report.pendingNow === 0 &&
+    report.timedOut === 0 &&
+    report.byApprover.length === 0 &&
+    !hasKindActivity &&
+    Object.keys(report.autonomy.byEvent).length === 0 &&
+    Object.keys(report.autonomy.byRiskClass).length === 0
+  ) {
     return (
       <EmptyState
         hint="Human-step and autonomy decisions appear here when recorded."
@@ -256,8 +296,15 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
         <Metric label="Pending now" value={report.pendingNow} />
         <Metric label="Timed out in period" value={report.timedOut} />
         <Metric label="Median resolution wait" value={duration(report.medianWaitMs)} />
+        <Metric label="95th percentile wait" value={duration(report.p95WaitMs)} />
         <Metric label="Oldest pending age" value={duration(report.oldestPendingAgeMs)} />
       </dl>
+      <h2 className="text-lg font-semibold text-paper-100">By kind</h2>
+      <Rows
+        rows={Object.entries(report.byKind).flatMap(([kind, statuses]) =>
+          Object.entries(statuses).map(([status, count]) => `${kind} · ${status}: ${count}`)
+        )}
+      />
       <h2 className="text-lg font-semibold text-paper-100">By approver</h2>
       <Rows
         rows={report.byApprover.map(
@@ -268,6 +315,12 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
       <h2 className="text-lg font-semibold text-paper-100">Autonomy decisions</h2>
       <Rows
         rows={Object.entries(report.autonomy.byEvent).map(([event, count]) => `${event}: ${count}`)}
+      />
+      <h2 className="text-lg font-semibold text-paper-100">Autonomy by risk</h2>
+      <Rows
+        rows={Object.entries(report.autonomy.byRiskClass).map(
+          ([riskClass, count]) => `${riskClass}: ${count}`
+        )}
       />
     </section>
   );

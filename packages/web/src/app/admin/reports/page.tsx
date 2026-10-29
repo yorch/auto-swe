@@ -4,10 +4,11 @@ import { useQuery } from '@tanstack/react-query';
 import { Suspense, useState } from 'react';
 import { Button } from '@/components/ui/Button';
 import { DateRangeControl } from '@/components/ui/DateRangeControl';
+import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
-import { api } from '@/lib/api';
+import { ApiError, api } from '@/lib/api';
 import {
   customRangeIgnored,
   dateRangePatch,
@@ -96,18 +97,27 @@ function ReportsWorkspace() {
           </button>
         ))}
       </div>
-      <QueryBoundary
-        error={reportQuery.error}
-        isError={reportQuery.isError}
-        isFetching={reportQuery.isFetching}
-        isLoading={reportQuery.isLoading}
-        label={`${activeDefinition.label.toLowerCase()} report`}
-        onRetry={() => void reportQuery.refetch()}
-        rows={3}
-        shape="cards"
-      >
-        {reportQuery.data && <ReportTabPanel data={reportQuery.data} tab={activeTab} />}
-      </QueryBoundary>
+      {activeTab === 'budget' &&
+      reportQuery.error instanceof ApiError &&
+      reportQuery.error.status === 403 ? (
+        <EmptyState
+          hint="An organization administrator can grant access to budget forecasts."
+          title="Budget forecasts need org admin access"
+        />
+      ) : (
+        <QueryBoundary
+          error={reportQuery.error}
+          isError={reportQuery.isError}
+          isFetching={reportQuery.isFetching}
+          isLoading={reportQuery.isLoading}
+          label={`${activeDefinition.label.toLowerCase()} report`}
+          onRetry={() => void reportQuery.refetch()}
+          rows={3}
+          shape="cards"
+        >
+          {reportQuery.data && <ReportTabPanel data={reportQuery.data} tab={activeTab} />}
+        </QueryBoundary>
+      )}
     </div>
   );
 }
