@@ -18,6 +18,12 @@
  * it answers 503 ("not ready"), a state `createWorkspace` never lets the agent
  * reach because it returns only once the allowlist is in place.
  *
+ * A second route, `<baseUrl>/go/<registryId>/<GOPROXY path>`, serves Go modules the same way
+ * (`goProxy.ts` holds the protocol): GET and HEAD only, the registry credential added
+ * server-side, and in `lockfile` mode only the module versions the base ref's `go.sum` names.
+ * The Go tool sends credentials from a `GOPROXY` URL as Basic auth, so that route accepts the
+ * token as a Basic password as well as a Bearer token; the npm route takes Bearer only.
+ *
  * Modelled on `agents/claudeCode/modelProxy.ts`.
  */
 import { AsyncResource } from 'node:async_hooks';
@@ -28,12 +34,32 @@ import { gunzipSync } from 'node:zlib';
 import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { TarballCache } from './cache.js';
+import {
+  type GoProxyKind,
+  type GoProxyPath,
+  goAllowed,
+  goListBody,
+  goUpstreamPath,
+  parseGoProxyPath,
+} from './goProxy.js';
 import { Semaphore } from './semaphore.js';
 
 export { TarballCache } from './cache.js';
 
 /** Packuments are buffered for the tarball-URL rewrite; a bigger one is an upstream bug, not a stream. */
 const MAX_PACKUMENT_BYTES = 64 * 1024 * 1024;
+
+/** A Go module zip past this is cut off mid-stream, which makes the Go tool fail the download. */
+const MAX_GO_ZIP_BYTES = 512 * 1024 * 1024;
+
+/** What the Go tool is told each kind of answer is; fixed, never the upstream's own header. */
+const GO_CONTENT_TYPES: Record<GoProxyKind, string> = {
+  info: 'application/json',
+  latest: 'application/json',
+  list: 'text/plain; charset=utf-8',
+  mod: 'text/plain; charset=utf-8',
+  zip: 'application/zip',
+};
 
 /**
  * Packument and manifest requests each buffer up to MAX_PACKUMENT_BYTES and then parse and
@@ -88,6 +114,8 @@ const MAX_PREFIX_SEGMENTS = 8;
 /** One upstream registry a registration fronts, with its decrypted credential. */
 export interface ResolvedRegistry {
   id: string;
+  /** Absent means `npm`. A `go` registry is reached only through `/go/<id>`. */
+  ecosystem?: 'npm' | 'go';
   name: string;
   upstreamUrl: string;
   authKind: 'bearer' | 'basic';
@@ -145,20 +173,45 @@ export interface RegistryProxy {
 
 const digest = (token: string) => createHash('sha256').update(token).digest('hex');
 
+/** A registration may hold registries of both ecosystems; npm routing sees only its own. */
+const npmRegistries = (reg: Registration): ResolvedRegistry[] =>
+  [...reg.registries.values()].filter((r) => r.ecosystem !== 'go');
+
+/** The npm default registry — never a go one, whatever `isDefault` says. */
+const npmDefault = (reg: Registration): ResolvedRegistry | undefined =>
+  npmRegistries(reg).find((r) => r.isDefault);
+
 /**
- * Which registered registry serves `name`: a scoped name whose scope a
+ * Which registered npm registry serves `name`: a scoped name whose scope a
  * registry claimed goes there; everything else goes to the default.
  */
 function routeRegistry(reg: Registration, name: string): ResolvedRegistry | undefined {
   const scope = name.startsWith('@') ? `@${name.slice(1).split('/')[0]?.toLowerCase()}` : null;
   if (scope) {
-    for (const r of reg.registries.values()) {
+    for (const r of npmRegistries(reg)) {
       if (r.scopes.includes(scope)) {
         return r;
       }
     }
   }
-  return [...reg.registries.values()].find((r) => r.isDefault);
+  return npmDefault(reg);
+}
+
+/** The token a request presents: `Bearer <token>`, or — Go route only — a Basic password. */
+function presentedToken(auth: string | undefined, allowBasic: boolean): string | undefined {
+  if (typeof auth !== 'string') {
+    return undefined;
+  }
+  if (auth.startsWith('Bearer ')) {
+    return auth.slice(7);
+  }
+  if (allowBasic && auth.startsWith('Basic ')) {
+    // `user:password`; the user name is ignored and the password is the token.
+    const decoded = Buffer.from(auth.slice(6).trim(), 'base64').toString('utf8');
+    const colon = decoded.indexOf(':');
+    return colon < 0 ? undefined : decoded.slice(colon + 1) || undefined;
+  }
+  return undefined;
 }
 
 function sendJson(
@@ -563,6 +616,8 @@ export function createRegistryProxy(options: {
   upstreamDeadlineMs?: number;
   /** How long a request waits for a slot before a 503 (default 30 s). */
   queueWaitMs?: number;
+  /** Largest Go module zip relayed (default 512 MiB); past it the response is cut off. */
+  maxGoZipBytes?: number;
 }): RegistryProxy {
   const registrations = new Map<string, Registration>();
 
@@ -848,7 +903,7 @@ export function createRegistryProxy(options: {
     res: http.ServerResponse,
     auditPath: string
   ): Promise<void> {
-    const defaultRegistry = [...reg.registries.values()].find((r) => r.isDefault);
+    const defaultRegistry = npmDefault(reg);
     if (!defaultRegistry) {
       sendJson(res, 404, 'no default registry answers audits');
       return;
@@ -992,6 +1047,173 @@ export function createRegistryProxy(options: {
     res.end(Buffer.concat(chunks));
   }
 
+  /**
+   * One Go proxy request, already parsed. Lockfile mode answers `list` from the allowlist and
+   * refuses `latest` and anything `go.sum` does not name before any upstream call. Everything
+   * else is a streamed relay: the upstream URL is built from the validated path, the registry
+   * credential is added here, redirects are refused, a 404/410 is relayed as such (the Go tool
+   * treats both as "not found"), and any other upstream outcome is a fixed-message 502 — the
+   * upstream's body and error text never reach the client.
+   */
+  async function serveGo(
+    reg: Registration,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    registry: ResolvedRegistry,
+    p: GoProxyPath
+  ): Promise<void> {
+    const stored = reg.allowlists?.get(registry.id);
+    // `null` opens the registry; a registry the map does not name has an empty lockfile.
+    const allowlist = stored === null ? null : (stored ?? new Map<string, Set<string>>());
+    if (allowlist !== null) {
+      if (p.kind === 'list') {
+        res.writeHead(200, {
+          'cache-control': 'no-store',
+          'content-type': GO_CONTENT_TYPES.list,
+        });
+        res.end(req.method === 'HEAD' ? undefined : goListBody(allowlist, p.module));
+        return;
+      }
+      if (!goAllowed(allowlist, p)) {
+        reg.onDenied({
+          name: p.module,
+          reason: 'not-in-lockfile',
+          registryId: registry.id,
+          version: p.version,
+        });
+        // `@latest` asks for whatever is newest, which no lockfile states.
+        sendJson(res, 403, denyMessage(p.module, p.version));
+        return;
+      }
+    }
+
+    const upstreamPath = `${registry.upstreamUrl}${goUpstreamPath(p)}`;
+    const isZip = p.kind === 'zip';
+    if (isZip && req.method === 'GET' && options.cache) {
+      const hit = await options.cache.get(registry.id, upstreamPath).catch(() => null);
+      if (hit) {
+        res.writeHead(200, { 'content-type': GO_CONTENT_TYPES.zip });
+        const stream = hit.createStream();
+        stream.on('error', () => res.destroy());
+        res.on('close', () => stream.destroy());
+        stream.pipe(res);
+        return;
+      }
+    }
+
+    const headers: Record<string, string> = {
+      accept: GO_CONTENT_TYPES[p.kind],
+      'accept-encoding': 'identity',
+    };
+    if (registry.token) {
+      headers.authorization =
+        registry.authKind === 'basic'
+          ? `Basic ${Buffer.from(registry.token).toString('base64')}`
+          : `Bearer ${registry.token}`;
+    }
+    const maxBytes = isZip ? (options.maxGoZipBytes ?? MAX_GO_ZIP_BYTES) : MAX_PACKUMENT_BYTES;
+
+    const abort = new AbortController();
+    const hangUp = () => abort.abort();
+    res.on('close', hangUp);
+    // Zips stream for as long as they take; the small answers run under the upstream deadline.
+    const deadline = isZip
+      ? undefined
+      : setTimeout(() => abort.abort(), options.upstreamDeadlineMs ?? DEFAULT_UPSTREAM_DEADLINE_MS);
+    let cacheStream: Awaited<ReturnType<TarballCache['startWrite']>> | null = null;
+    try {
+      let upstream: Response;
+      try {
+        upstream = await upstreamFetchFor(registry)(upstreamPath, {
+          headers,
+          method: req.method ?? 'GET',
+          redirect: 'error',
+          signal: abort.signal,
+        });
+      } catch {
+        sendJson(res, 502, 'the upstream Go module proxy could not be reached');
+        return;
+      }
+      if (upstream.status === 404 || upstream.status === 410) {
+        await upstream.body?.cancel().catch(() => {});
+        sendJson(res, upstream.status, 'the upstream Go module proxy does not have this module');
+        return;
+      }
+      const declared = Number(upstream.headers.get('content-length'));
+      if (upstream.status !== 200 || (Number.isFinite(declared) && declared > maxBytes)) {
+        await upstream.body?.cancel().catch(() => {});
+        sendJson(
+          res,
+          502,
+          upstream.status === 200
+            ? 'the upstream Go module is too large to proxy'
+            : 'the upstream Go module proxy answered with an error'
+        );
+        return;
+      }
+      res.writeHead(200, {
+        'content-type': GO_CONTENT_TYPES[p.kind],
+        ...(isZip && Number.isFinite(declared) && upstream.headers.get('content-length')
+          ? { 'content-length': String(declared) }
+          : {}),
+      });
+      if (!upstream.body) {
+        res.end();
+        return;
+      }
+      cacheStream =
+        isZip && req.method === 'GET' && options.cache
+          ? await options.cache.startWrite(registry.id, upstreamPath).catch(() => null)
+          : null;
+      let size = 0;
+      for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
+        // A client that hung up never drains again; throwing leaves the loop, which cancels the
+        // upstream body, and the catch below aborts the cache write.
+        if (res.destroyed || res.writableEnded) {
+          throw new Error('client closed');
+        }
+        size += chunk.length;
+        if (size > maxBytes) {
+          // Cut the client and the upstream now rather than after the iterator's cleanup.
+          res.destroy();
+          abort.abort();
+          throw new Error('too large');
+        }
+        const wrote = cacheStream ? await cacheStream.write(chunk) : Promise.resolve();
+        const flushed = res.write(chunk);
+        await wrote;
+        if (!flushed && !res.destroyed) {
+          await new Promise<void>((resolve) => {
+            const done = () => {
+              res.off('drain', done);
+              res.off('close', done);
+              resolve();
+            };
+            res.on('drain', done);
+            res.on('close', done);
+          });
+        }
+      }
+      res.end();
+      await cacheStream?.commit().catch(() => {});
+    } catch {
+      // Mid-stream (or past the size cap): the status line is gone, so cutting the connection
+      // is the only way left to make the Go tool fail the download.
+      abort.abort();
+      if (res.headersSent) {
+        res.destroy();
+      } else {
+        sendJson(res, 502, 'the upstream Go module proxy could not be reached');
+      }
+      await cacheStream?.abort().catch(() => {});
+    } finally {
+      if (deadline) {
+        clearTimeout(deadline);
+      }
+      res.off('close', hangUp);
+    }
+  }
+
   const advertised = (): string => {
     if (typeof options.advertisedUrl === 'string') {
       return options.advertisedUrl;
@@ -1012,18 +1234,22 @@ export function createRegistryProxy(options: {
   });
 
   function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    const auth = req.headers.authorization;
-    const token =
-      typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
+    // Only the Go route accepts Basic; decided from the raw target so the token check stays first.
+    const token = presentedToken(req.headers.authorization, (req.url ?? '').startsWith('/go/'));
     const reg = token ? registrations.get(digest(token)) : undefined;
     if (!reg) {
       sendJson(res, 401, 'unknown or expired token');
       return;
     }
     const url = new URL(req.url ?? '/', 'http://proxy');
+    const goMatch = /^\/go\/([^/]+)(\/.*)$/.exec(url.pathname);
+    if (goMatch) {
+      handleGo(reg, req, res, goMatch[1] ?? '', goMatch[2] ?? '');
+      return;
+    }
     const m = /^\/npm\/([^/]+)(\/.*)$/.exec(url.pathname);
     if (!m) {
-      sendJson(res, 404, 'only /npm/<registry>/… paths exist here');
+      sendJson(res, 404, 'only /npm/<registry>/… and /go/<registry>/… paths exist here');
       return;
     }
     // The URL's <id> only proves membership — the caller may legitimately
@@ -1031,7 +1257,7 @@ export function createRegistryProxy(options: {
     // replace-registry-host keeps the default registry origin for every
     // resolved URL, scope or not). The upstream is picked by package name.
     const urlRegistry = reg.registries.get(m[1] ?? '');
-    if (!urlRegistry) {
+    if (!urlRegistry || urlRegistry.ecosystem === 'go') {
       sendJson(res, 404, 'unknown registry');
       return;
     }
@@ -1070,6 +1296,39 @@ export function createRegistryProxy(options: {
     reg.inFlight.add(call);
     void call.finally(() => reg.inFlight.delete(call));
   }
+  /** `/go/<registryId><rest>`: the token is already verified. */
+  function handleGo(
+    reg: Registration,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    registryId: string,
+    rest: string
+  ): void {
+    const registry = reg.registries.get(registryId);
+    if (registry?.ecosystem !== 'go') {
+      sendJson(res, 404, 'unknown registry');
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      sendJson(res, 405, 'read-only: GET and HEAD only');
+      return;
+    }
+    if (!reg.allowlists) {
+      sendJson(res, 503, 'the registry allowlist is not ready yet');
+      return;
+    }
+    const parsed = parseGoProxyPath(rest);
+    if (!parsed) {
+      sendJson(res, 404, 'unrecognized Go module path');
+      return;
+    }
+    const call = serveGo(reg, req, res, registry, parsed).catch(() => {
+      sendJson(res, 502, 'the upstream Go module proxy could not be reached');
+    });
+    reg.inFlight.add(call);
+    void call.finally(() => reg.inFlight.delete(call));
+  }
+
   server.requestTimeout = 0;
   server.headersTimeout = 60_000;
 

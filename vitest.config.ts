@@ -354,6 +354,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/packageRegistry.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/goModuleAllowlist',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/goModuleAllowlist.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/guardedFetch',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/guardedFetch.ts'),
       },

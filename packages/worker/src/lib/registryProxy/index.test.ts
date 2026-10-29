@@ -1,10 +1,13 @@
 import http from 'node:http';
+import { Readable } from 'node:stream';
 import { gzipSync } from 'node:zlib';
+import { buildGoAllowlist, parseGoSum } from '@auto-swe/shared/lib/goModuleAllowlist';
 import { describe, expect, it, vi } from 'vitest';
 import {
   checkAuditBody,
   checkLegacyAuditBody,
   createRegistryProxy,
+  type TarballCache,
   tarballVersion,
 } from './index.js';
 import {
@@ -1141,5 +1144,516 @@ describe('splitRegistryWorkspaceEnv', () => {
   it('has no Corepack token when there is no default registry', () => {
     const { secretEnv } = splitRegistryWorkspaceEnv(registryWorkspaceEnv([], 'http://h:1', 'tok'));
     expect(secretEnv).toEqual({ YARN_NPM_AUTH_TOKEN: 'tok' });
+  });
+});
+
+// ---- Go module proxy (`/go/<registryId>/…`) ----
+
+const GO = {
+  ...REG,
+  ecosystem: 'go' as const,
+  id: 'go-1',
+  name: 'goproxy',
+  token: 'go-up-token',
+  upstreamUrl: 'http://goup.test',
+};
+const GO_H = 'h1:Zk9oB1xq3YxQb0m8r4K3tq8o1P0lq4vV2m5z7W9y8X0=';
+const goLockfile = () =>
+  buildGoAllowlist(
+    parseGoSum(
+      [
+        `golang.org/x/text v0.14.0 ${GO_H}`,
+        `golang.org/x/text v0.14.0/go.mod ${GO_H}`,
+        `golang.org/x/text v0.3.0/go.mod ${GO_H}`,
+        `github.com/Azure/go-autorest v14.2.0+incompatible ${GO_H}`,
+      ].join('\n')
+    )
+  );
+
+/** A request with an arbitrary Authorization header; resolves with what arrived, even a cut-off body. */
+const rawGet = (base: string, path: string, authorization?: string, method = 'GET') =>
+  new Promise<{
+    body: string;
+    bytes: number;
+    cutOff: boolean;
+    headers: http.IncomingHttpHeaders;
+    status: number;
+  }>((resolve) => {
+    const req = http.request(
+      `${base}${path}`,
+      { headers: authorization ? { authorization } : {}, method },
+      (res) => {
+        const chunks: Buffer[] = [];
+        let done = false;
+        const finish = (cutOff: boolean) => {
+          if (done) {
+            return;
+          }
+          done = true;
+          const body = Buffer.concat(chunks);
+          resolve({
+            body: body.toString(),
+            bytes: body.length,
+            cutOff,
+            headers: res.headers,
+            status: res.statusCode ?? 0,
+          });
+        };
+        res.on('data', (c) => chunks.push(c));
+        res.on('end', () => finish(false));
+        res.on('aborted', () => finish(true));
+        res.on('error', () => finish(true));
+        res.on('close', () => finish(!res.complete));
+      }
+    );
+    req.on('error', () => {});
+    req.end();
+  });
+
+const bearer = (t: string) => `Bearer ${t}`;
+const basic = (user: string, password: string) =>
+  `Basic ${Buffer.from(`${user}:${password}`).toString('base64')}`;
+
+/** A proxy with no allowlist limits, for the Go relay tests. */
+async function startGoProxy(
+  upstream: (url: string, init?: RequestInit) => Promise<Response>,
+  opts: { cache?: TarballCache; maxGoZipBytes?: number; registry?: typeof GO } = {}
+) {
+  const proxy = createRegistryProxy({
+    advertisedUrl: (p) => `http://127.0.0.1:${p}`,
+    cache: opts.cache,
+    listenHost: '127.0.0.1',
+    listenPort: 0,
+    maxGoZipBytes: opts.maxGoZipBytes,
+    upstreamFetch: upstream as never,
+  });
+  const base = `http://127.0.0.1:${await proxy.listen()}`;
+  const reg = await proxy.register({ onDenied: () => {}, registries: [opts.registry ?? GO] });
+  reg.setAllowlist(new Map([[GO.id, null]]));
+  const call = (path: string, method = 'GET') =>
+    rawGet(base, `/go/go-1${path}`, bearer(reg.token), method);
+  return { base, call, proxy, reg };
+}
+
+describe('go module proxy: access', () => {
+  it('answers 401, 404, 405, 503 and 404 in the npm route’s order', async () => {
+    const { base, proxy } = await startProxy(async () => new Response('x'));
+    const reg = await proxy.register({ onDenied: () => {}, registries: [GO, REG] });
+    const mod = '/golang.org/x/text/@v/v0.14.0.mod';
+    expect((await rawGet(base, `/go/go-1${mod}`)).status).toBe(401);
+    expect((await rawGet(base, `/go/go-1${mod}`, bearer('wrong'))).status).toBe(401);
+    expect((await rawGet(base, `/go/nope${mod}`, bearer(reg.token))).status).toBe(404);
+    // An npm registry id is not a Go registry.
+    expect((await rawGet(base, `/go/${REG.id}${mod}`, bearer(reg.token))).status).toBe(404);
+    expect((await rawGet(base, `/go/go-1${mod}`, bearer(reg.token), 'POST')).status).toBe(405);
+    expect((await rawGet(base, `/go/go-1${mod}`, bearer(reg.token), 'DELETE')).status).toBe(405);
+    expect((await rawGet(base, `/go/go-1${mod}`, bearer(reg.token))).status).toBe(503);
+    reg.setAllowlist(
+      new Map([
+        [GO.id, null],
+        [REG.id, null],
+      ])
+    );
+    const bad = await rawGet(base, '/go/go-1/golang.org/x/text', bearer(reg.token));
+    expect(bad.status).toBe(404);
+    expect(bad.body).toContain('unrecognized Go module path');
+    expect((await rawGet(base, `/go/go-1${mod}`, bearer(reg.token))).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('accepts the token as a Basic password, ignoring the user name', async () => {
+    const { base, proxy, reg } = await startGoProxy(async () => new Response('module x'));
+    const path = '/go/go-1/golang.org/x/text/@v/v0.14.0.mod';
+    expect((await rawGet(base, path, basic('anything', reg.token))).status).toBe(200);
+    expect((await rawGet(base, path, basic('', reg.token))).status).toBe(200);
+    expect((await rawGet(base, path, basic('anything', 'wrong'))).status).toBe(401);
+    expect((await rawGet(base, path, basic('anything', ''))).status).toBe(401);
+    // The token as the user name is not the password.
+    expect((await rawGet(base, path, basic(reg.token, 'x'))).status).toBe(401);
+    expect(
+      (await rawGet(base, path, `Basic ${Buffer.from(reg.token).toString('base64')}`)).status
+    ).toBe(401);
+    expect((await rawGet(base, path, 'Basic !!!')).status).toBe(401);
+    await proxy.close();
+  });
+
+  it('keeps the npm route Bearer-only', async () => {
+    const { base, proxy } = await startProxy(async () => new Response('{}'));
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    expect((await rawGet(base, `/npm/${REG.id}/pkg`, basic('u', reg.token))).status).toBe(401);
+    expect((await rawGet(base, `/npm/${REG.id}/pkg`, bearer(reg.token))).status).toBe(200);
+    await proxy.close();
+  });
+});
+
+describe('go module proxy: lockfile mode', () => {
+  const setup = async (upstream: (url: string, init?: RequestInit) => Promise<Response>) => {
+    const denials: unknown[] = [];
+    const { base, proxy } = await startProxy(upstream);
+    const reg = await proxy.register({ onDenied: (d) => denials.push(d), registries: [GO] });
+    reg.setAllowlist(new Map([[GO.id, goLockfile()]]));
+    const call = (path: string, method = 'GET') =>
+      rawGet(base, `/go/go-1${path}`, bearer(reg.token), method);
+    return { base, call, denials, proxy, reg };
+  };
+
+  it('allows exactly the go.sum versions: zip only for a plain line, mod and info for either', async () => {
+    const upstream = vi.fn(async () => new Response('ok'));
+    const { call, proxy } = await setup(upstream);
+    expect((await call('/golang.org/x/text/@v/v0.14.0.zip')).status).toBe(200);
+    expect((await call('/golang.org/x/text/@v/v0.14.0.mod')).status).toBe(200);
+    expect((await call('/golang.org/x/text/@v/v0.14.0.info')).status).toBe(200);
+    expect((await call('/golang.org/x/text/@v/v0.3.0.mod')).status).toBe(200);
+    expect((await call('/golang.org/x/text/@v/v0.3.0.info')).status).toBe(200);
+    expect((await call('/github.com/!azure/go-autorest/@v/v14.2.0+incompatible.zip')).status).toBe(
+      200
+    );
+    expect(upstream).toHaveBeenCalledTimes(6);
+    await proxy.close();
+  });
+
+  it('denies the rest with a 403 and reports it', async () => {
+    const upstream = vi.fn(async () => new Response('ok'));
+    const { call, denials, proxy } = await setup(upstream);
+    // A go.mod-only line does not make the module's source available.
+    const zip = await call('/golang.org/x/text/@v/v0.3.0.zip');
+    expect(zip.status).toBe(403);
+    expect(zip.body).toContain('golang.org/x/text@v0.3.0 is not in the repository');
+    expect((await call('/golang.org/x/text/@v/v0.15.0.mod')).status).toBe(403);
+    expect((await call('/golang.org/x/net/@v/v0.14.0.info')).status).toBe(403);
+    // Case matters: go.sum names `Azure`, and `azure` is another module.
+    expect((await call('/github.com/azure/go-autorest/@v/v14.2.0+incompatible.mod')).status).toBe(
+      403
+    );
+    expect(upstream).not.toHaveBeenCalled();
+    expect(denials[0]).toEqual({
+      name: 'golang.org/x/text',
+      reason: 'not-in-lockfile',
+      registryId: 'go-1',
+      version: 'v0.3.0',
+    });
+    expect(denials).toHaveLength(4);
+    await proxy.close();
+  });
+
+  it('answers list locally, with no upstream call', async () => {
+    const upstream = vi.fn(async () => new Response('ok'));
+    const { call, proxy } = await setup(upstream);
+    const list = await call('/golang.org/x/text/@v/list');
+    expect(list.status).toBe(200);
+    expect(list.headers['content-type']).toBe('text/plain; charset=utf-8');
+    expect(list.body).toBe('v0.14.0\n');
+    expect((await call('/golang.org/x/net/@v/list')).body).toBe('');
+    expect((await call('/golang.org/x/text/@v/list', 'HEAD')).status).toBe(200);
+    expect(upstream).not.toHaveBeenCalled();
+    await proxy.close();
+  });
+
+  it('denies @latest', async () => {
+    const upstream = vi.fn(async () => new Response('ok'));
+    const { call, denials, proxy } = await setup(upstream);
+    const latest = await call('/golang.org/x/text/@latest');
+    expect(latest.status).toBe(403);
+    expect(latest.body).toContain('golang.org/x/text is not in the repository');
+    expect(denials).toHaveLength(1);
+    expect(upstream).not.toHaveBeenCalled();
+    await proxy.close();
+  });
+
+  it('treats a registry the allowlist map omits as an empty lockfile', async () => {
+    const upstream = vi.fn(async () => new Response('ok'));
+    const { base, proxy } = await startProxy(upstream);
+    const reg = await proxy.register({ onDenied: () => {}, registries: [GO] });
+    reg.setAllowlist(new Map());
+    expect(
+      (await rawGet(base, '/go/go-1/golang.org/x/text/@v/v0.14.0.mod', bearer(reg.token))).status
+    ).toBe(403);
+    expect(upstream).not.toHaveBeenCalled();
+    await proxy.close();
+  });
+});
+
+describe('go module proxy: open mode and relay', () => {
+  it('passes list and latest through, with a fixed content type per kind', async () => {
+    const urls: string[] = [];
+    const { call, proxy } = await startGoProxy(async (url) => {
+      urls.push(url);
+      return new Response('upstream-body', { headers: { 'content-type': 'text/html' } });
+    });
+    const list = await call('/github.com/!azure/go-autorest/@v/list');
+    expect(list.body).toBe('upstream-body');
+    expect(list.headers['content-type']).toBe('text/plain; charset=utf-8');
+    const latest = await call('/golang.org/x/text/@latest');
+    expect(latest.headers['content-type']).toBe('application/json');
+    expect((await call('/golang.org/x/text/@v/v1.0.0.info')).headers['content-type']).toBe(
+      'application/json'
+    );
+    expect((await call('/golang.org/x/text/@v/v1.0.0.mod')).headers['content-type']).toBe(
+      'text/plain; charset=utf-8'
+    );
+    expect((await call('/golang.org/x/text/@v/v1.0.0.zip')).headers['content-type']).toBe(
+      'application/zip'
+    );
+    expect(urls).toEqual([
+      'http://goup.test/github.com/!azure/go-autorest/@v/list',
+      'http://goup.test/golang.org/x/text/@latest',
+      'http://goup.test/golang.org/x/text/@v/v1.0.0.info',
+      'http://goup.test/golang.org/x/text/@v/v1.0.0.mod',
+      'http://goup.test/golang.org/x/text/@v/v1.0.0.zip',
+    ]);
+    await proxy.close();
+  });
+
+  it('sends the registry credential and a fixed accept; never the proxy token', async () => {
+    const seen: Array<Record<string, string>> = [];
+    const { call, proxy, reg } = await startGoProxy(async (_url, init) => {
+      seen.push(init?.headers as Record<string, string>);
+      expect(init?.redirect).toBe('error');
+      return new Response('ok');
+    });
+    await call('/golang.org/x/text/@v/v1.0.0.mod');
+    expect(seen[0]?.authorization).toBe('Bearer go-up-token');
+    expect(seen[0]?.accept).toBe('text/plain; charset=utf-8');
+    expect(JSON.stringify(seen)).not.toContain(reg.token);
+    await proxy.close();
+  });
+
+  it('sends a basic credential as Basic', async () => {
+    const seen: Array<Record<string, string>> = [];
+    const { call, proxy } = await startGoProxy(
+      async (_url, init) => {
+        seen.push(init?.headers as Record<string, string>);
+        return new Response('ok');
+      },
+      { registry: { ...GO, authKind: 'basic' as never, token: 'svc:secret' } }
+    );
+    await call('/a/b/@v/v1.0.0.mod');
+    expect(seen[0]?.authorization).toBe(`Basic ${Buffer.from('svc:secret').toString('base64')}`);
+    await proxy.close();
+  });
+
+  it('relays a 404 and a 410 as such, with a fixed body', async () => {
+    const { call, proxy } = await startGoProxy(async (url) =>
+      url.endsWith('.info')
+        ? new Response('SECRET-UPSTREAM-404', { status: 404 })
+        : new Response('SECRET-UPSTREAM-410', { status: 410 })
+    );
+    const notFound = await call('/golang.org/x/text/@v/v1.0.0.info');
+    expect(notFound.status).toBe(404);
+    expect(notFound.body).not.toContain('SECRET');
+    const gone = await call('/golang.org/x/text/@v/v1.0.0.mod');
+    expect(gone.status).toBe(410);
+    expect(gone.body).not.toContain('SECRET');
+    await proxy.close();
+  });
+
+  it('turns any other upstream status, a redirect and a fetch failure into a fixed 502', async () => {
+    let mode: 'redirect' | 'error' | 'throw' = 'error';
+    const { call, proxy } = await startGoProxy(async () => {
+      if (mode === 'throw') {
+        throw new Error('SECRET connect ECONNREFUSED 10.0.0.1');
+      }
+      if (mode === 'redirect') {
+        // What undici raises for `redirect: 'error'`.
+        throw new TypeError('fetch failed', { cause: new Error('SECRET unexpected redirect') });
+      }
+      return new Response('SECRET upstream 500 body', { status: 500 });
+    });
+    for (const m of ['error', 'redirect', 'throw'] as const) {
+      mode = m;
+      const res = await call('/golang.org/x/text/@v/v1.0.0.mod');
+      expect(res.status, m).toBe(502);
+      expect(res.body, m).not.toContain('SECRET');
+      expect(JSON.parse(res.body).error).toMatch(/^the upstream Go module proxy/);
+    }
+    await proxy.close();
+  });
+
+  it('streams a zip and relays HEAD without a body', async () => {
+    const { call, proxy } = await startGoProxy(async (_url, init) =>
+      init?.method === 'HEAD'
+        ? new Response(null, { headers: { 'content-length': '9' }, status: 200 })
+        : new Response('ZIPBYTES!', { status: 200 })
+    );
+    const zip = await call('/golang.org/x/text/@v/v1.0.0.zip');
+    expect(zip.body).toBe('ZIPBYTES!');
+    const head = await call('/golang.org/x/text/@v/v1.0.0.zip', 'HEAD');
+    expect(head.status).toBe(200);
+    expect(head.body).toBe('');
+    await proxy.close();
+  });
+
+  it('refuses a zip whose content-length is over the cap, before streaming', async () => {
+    const { call, proxy } = await startGoProxy(
+      async () => new Response('x'.repeat(100), { headers: { 'content-length': '100' } }),
+      { maxGoZipBytes: 50 }
+    );
+    const res = await call('/golang.org/x/text/@v/v1.0.0.zip');
+    expect(res.status).toBe(502);
+    expect(res.cutOff).toBe(false);
+    await proxy.close();
+  });
+
+  it('cuts a zip off once it passes the cap without a content-length', async () => {
+    const aborted = vi.fn();
+    const { call, proxy } = await startGoProxy(
+      async (_url, init) => {
+        init?.signal?.addEventListener('abort', aborted);
+        const chunk = new Uint8Array(40).fill(65);
+        const body = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.enqueue(chunk);
+            // Like a network body, each chunk arrives in a later turn of the event loop.
+            return new Promise((r) => setTimeout(r, 1));
+          },
+        });
+        return new Response(body, { status: 200 });
+      },
+      { maxGoZipBytes: 100 }
+    );
+    const res = await call('/golang.org/x/text/@v/v1.0.0.zip');
+    expect(res.cutOff).toBe(true);
+    expect(res.bytes).toBeLessThanOrEqual(100);
+    await vi.waitFor(() => expect(aborted).toHaveBeenCalled());
+    await proxy.close();
+  });
+
+  it('stops the upstream when the client hangs up, and release() waits for the request', async () => {
+    let cancelled = false;
+    const { base, proxy, reg } = await startGoProxy(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            cancel() {
+              cancelled = true;
+            },
+            pull(controller) {
+              controller.enqueue(new Uint8Array(1024));
+              return new Promise((r) => setTimeout(r, 5));
+            },
+          })
+        )
+    );
+    await new Promise<void>((resolve) => {
+      const req = http.request(
+        `${base}/go/go-1/a/b/@v/v1.0.0.zip`,
+        { headers: { authorization: bearer(reg.token) } },
+        (res) => {
+          res.once('data', () => {
+            req.destroy();
+            resolve();
+          });
+        }
+      );
+      req.on('error', () => {});
+      req.end();
+    });
+    await reg.release();
+    expect(cancelled).toBe(true);
+    await proxy.close();
+  });
+
+  it('serves a cached zip without an upstream call, and caches only zips', async () => {
+    const store = new Map<string, Buffer>();
+    const cache = {
+      get: async (id: string, key: string) => {
+        const hit = store.get(`${id} ${key}`);
+        return hit ? { createStream: () => Readable.from([hit]) } : null;
+      },
+      startWrite: async (id: string, key: string) => {
+        const parts: Buffer[] = [];
+        return {
+          abort: async () => {},
+          commit: async () => {
+            store.set(`${id} ${key}`, Buffer.concat(parts));
+          },
+          write: async (c: Uint8Array) => {
+            parts.push(Buffer.from(c));
+          },
+        };
+      },
+    } as unknown as TarballCache;
+    const upstream = vi.fn(async () => new Response('ZIPDATA'));
+    const { call, proxy } = await startGoProxy(upstream, { cache });
+    expect((await call('/a/b/@v/v1.0.0.zip')).body).toBe('ZIPDATA');
+    expect((await call('/a/b/@v/v1.0.0.zip')).body).toBe('ZIPDATA');
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(store.has('go-1 http://goup.test/a/b/@v/v1.0.0.zip')).toBe(true);
+    await call('/a/b/@v/v1.0.0.mod');
+    expect(store.size).toBe(1);
+    await proxy.close();
+  });
+});
+
+describe('go and npm registries in one registration', () => {
+  const NPM_PLAIN = { ...REG, isDefault: false, scopes: ['@acme'] };
+  const both = new Map([
+    [GO.id, null],
+    [REG.id, null],
+  ]);
+
+  it('keeps each route to its own ecosystem', async () => {
+    const urls: string[] = [];
+    const { base, proxy } = await startProxy(async (url) => {
+      urls.push(url);
+      return new Response('{}');
+    });
+    const reg = await proxy.register({ onDenied: () => {}, registries: [GO, REG] });
+    reg.setAllowlist(both);
+    expect((await rawGet(base, `/npm/${GO.id}/pkg`, bearer(reg.token))).status).toBe(404);
+    expect((await rawGet(base, `/go/${REG.id}/a/b/@latest`, bearer(reg.token))).status).toBe(404);
+    expect((await rawGet(base, `/npm/${REG.id}/pkg`, bearer(reg.token))).status).toBe(200);
+    expect((await rawGet(base, `/go/${GO.id}/a/b/@latest`, bearer(reg.token))).status).toBe(200);
+    expect(urls).toEqual(['http://upstream.test/pkg', 'http://goup.test/a/b/@latest']);
+    await proxy.close();
+  });
+
+  it('never makes a go registry npm’s default, even one flagged isDefault', async () => {
+    const urls: string[] = [];
+    const { base, proxy } = await startProxy(async (url) => {
+      urls.push(url);
+      return new Response('{}');
+    });
+    // The only default-flagged registry is the go one.
+    const reg = await proxy.register({ onDenied: () => {}, registries: [GO, NPM_PLAIN] });
+    reg.setAllowlist(both);
+    const res = await rawGet(base, `/npm/${REG.id}/left-pad`, bearer(reg.token));
+    expect(res.status).toBe(404);
+    expect(res.body).toContain('no registry serves left-pad');
+    // The scoped one still routes to its own registry.
+    expect((await rawGet(base, `/npm/${REG.id}/@acme%2fx`, bearer(reg.token))).status).toBe(200);
+    expect(urls).toEqual(['http://upstream.test/@acme%2fx']);
+    await proxy.close();
+  });
+
+  it('does not offer a go registry for an npm scope', async () => {
+    const urls: string[] = [];
+    const { base, proxy } = await startProxy(async (url) => {
+      urls.push(url);
+      return new Response('{}');
+    });
+    const claimsScope = { ...GO, isDefault: false, scopes: ['@acme'] };
+    const reg = await proxy.register({ onDenied: () => {}, registries: [claimsScope, REG] });
+    reg.setAllowlist(both);
+    expect((await rawGet(base, `/npm/${REG.id}/@acme%2fx`, bearer(reg.token))).status).toBe(200);
+    expect(urls).toEqual(['http://upstream.test/@acme%2fx']);
+    await proxy.close();
+  });
+
+  it('never sends an audit to a go registry', async () => {
+    const upstream = vi.fn(async () => new Response('{}'));
+    const { base, proxy } = await startProxy(upstream);
+    const reg = await proxy.register({ onDenied: () => {}, registries: [GO, NPM_PLAIN] });
+    reg.setAllowlist(both);
+    const res = await post(base, `/npm/${REG.id}${AUDIT}`, reg.token, '{"left-pad":["1.0.0"]}');
+    expect(res.status).toBe(404);
+    expect(res.body).toContain('no default registry answers audits');
+    expect(upstream).not.toHaveBeenCalled();
+    // And a Go path rejects POST rather than treating it as an audit.
+    expect((await rawGet(base, `/go/${GO.id}${AUDIT}`, bearer(reg.token), 'POST')).status).toBe(
+      405
+    );
+    await proxy.close();
   });
 });
