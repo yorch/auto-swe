@@ -2,6 +2,8 @@
 
 End-to-end runbook for taking auto-swe from a fresh clone to a running production deployment. For local development, use the quickstart in [`README.md`](../README.md). For OAuth provider configuration, see [`oauth-setup.md`](./oauth-setup.md).
 
+> **Before and after you upgrade, read [`upgrade-notes.md`](./upgrade-notes.md).** It lists fixed defects that exposed credentials in earlier builds (Kubernetes audit logs, Docker host process arguments, Pod objects) and the rotation and clean-up each one needs. Check which entries match your backend and the commit your worker image was built from.
+
 ---
 
 ## 0. What you're deploying

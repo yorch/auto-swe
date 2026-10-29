@@ -144,6 +144,7 @@ export const SIDEBAR = [
     slugs: [
       'docs/configuration',
       'docs/deployment',
+      'docs/upgrade-notes',
       'docs/audit-log',
       'docs/user-activity',
       'docs/model-configuration',

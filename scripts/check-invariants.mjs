@@ -646,18 +646,32 @@ function checkComposeProfilesAreAdded() {
 //
 // Rule: in worker source, an array literal assigned to `env` or `leadingEnv` (as a property,
 // quoted or not, or as `x.env = [ … ]`) does not mention a credential-shaped name (TOKEN, SECRET,
-// PASSWORD, API_KEY, AUTH, CREDENTIAL, NPMRC, YARNRC), in a string or an identifier. `AUTHOR` (but
-// not `AUTHORIZATION`) and `TOKENS` (GIT_AUTHOR_NAME, MAX_OUTPUT_TOKENS) are not credentials.
+// PASSWORD, API_KEY, AUTH, CREDENTIAL, NPMRC, YARNRC, PRIVATE_KEY, ACCESS_KEY, SSH_KEY, DEPLOY_KEY,
+// SIGNING_KEY, BEARER, COOKIE, PASSPHRASE, and PAT, PASS or PWD as a whole word), in a string or an
+// identifier. The source rule scans the whole list text, so a value or identifier containing a
+// whole-word PAT, PASS or PWD (e.g. `MODE=pass`) is also flagged; that is a CI failure, never a
+// production error.
+// `AUTHOR` (but not `AUTHORIZATION`) and `TOKENS` (GIT_AUTHOR_NAME, MAX_OUTPUT_TOKENS) are not
+// credentials.
 //
 // A tripwire over text, not a proof. It does not see an `env` built elsewhere and passed by name
 // (`opts.env.push(…)`, `base.concat([…])`, `cond ? […] : […]`, a `[...registry.env]` spread), an
 // object-valued `env` (the ephemeral container spec's `env: Record`), a secret whose name is
-// innocuous (`GH_PAT`), a trailing `//` comment inside the list (a false positive), a `]` inside a
-// regex literal or nested template in the list (the scanner closes the list early), or a script or
-// argv that interpolates a credential into its own text. Those are reviewed by hand.
+// innocuous (`SERVICE_LOGIN`), a trailing `//` comment inside the list (a false positive), a `]`
+// inside a regex literal or nested template in the list (the scanner closes the list early), or a
+// script or argv that interpolates a credential into its own text. Those are reviewed by hand.
 // ---------------------------------------------------------------------------
 
-const CREDENTIAL_NAME = /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|AUTH|CREDENTIAL|NPMRC|YARNRC/i;
+const CREDENTIAL_NAME = new RegExp(
+  [
+    /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|AUTH|CREDENTIAL|NPMRC|YARNRC/,
+    /(?:PRIVATE|ACCESS|SSH|DEPLOY|SIGNING)_?KEY|BEARER|COOKIE|PASSPHRASE/,
+    /(?<![A-Za-z0-9])(?:PAT|PASS|PWD)(?![A-Za-z])/,
+  ]
+    .map((re) => re.source)
+    .join('|'),
+  'i'
+);
 
 /** `env: [`, `'env': [`, `leadingEnv: [` or `x.env = [` — the start of an env list literal. */
 const ENV_LIST =

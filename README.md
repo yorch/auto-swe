@@ -124,7 +124,7 @@ The full walkthrough, through connecting a repository and starting a first run, 
 
 Temporal Web UI is available at `http://localhost:8233` (local dev only: it sits behind the `temporal-ui` Compose profile, which `yarn docker:*` and `just` enable and production does not).
 
-For production deployment, see [`docs/deployment.md`](./docs/deployment.md) — end-to-end runbook covering env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, backup, and a hardening checklist.
+For production deployment, see [`docs/deployment.md`](./docs/deployment.md) — end-to-end runbook covering env vars, DB + Temporal setup, image build, service layout, smoke test, day-2 ops, backup, and a hardening checklist. Upgrading a deployment that ran earlier code: read [`docs/upgrade-notes.md`](./docs/upgrade-notes.md) for fixed defects that need you to rotate a credential or clean up logs.
 
 ## Usage
 

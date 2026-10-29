@@ -19,4 +19,8 @@ Out of scope:
 - Vulnerabilities requiring an already-compromised host or admin credentials.
 - Findings in target repositories that the agents operate on.
 
+## Fixed defects that need action from you
+
+A fix that changes what an earlier build already did to your deployment (a credential that reached a log, a Pod object or a process list) cannot be undone by upgrading alone. [`docs/upgrade-notes.md`](./docs/upgrade-notes.md) lists each one by the condition that makes you affected and the fixing commit, with what to rotate or purge and how to verify the fix is running.
+
 Of particular interest: auth/RBAC bypasses, secret exposure (`CONFIG_ENCRYPTION_KEY`-encrypted credentials, tokens), Docker workspace sandbox escapes, webhook signature bypasses, and prompt-injection paths that defeat the runtime security scanners.
