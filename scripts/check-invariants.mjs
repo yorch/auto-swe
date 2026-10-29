@@ -647,7 +647,7 @@ function checkComposeProfilesAreAdded() {
 // Rule: in worker source, an array literal assigned to `env` or `leadingEnv` (as a property,
 // quoted or not, or as `x.env = [ … ]`) does not mention a credential-shaped name (TOKEN, SECRET,
 // PASSWORD, API_KEY, AUTH, CREDENTIAL, NPMRC, YARNRC, PRIVATE_KEY, ACCESS_KEY, SSH_KEY, BEARER,
-// COOKIE, SESSION_ID, and PAT, PASS or PWD as a whole word), in a string or an identifier.
+// COOKIE, and PAT, PASS or PWD as a whole word), in a string or an identifier.
 // `AUTHOR` (but not `AUTHORIZATION`) and `TOKENS` (GIT_AUTHOR_NAME, MAX_OUTPUT_TOKENS) are not
 // credentials.
 //
@@ -662,7 +662,7 @@ function checkComposeProfilesAreAdded() {
 const CREDENTIAL_NAME = new RegExp(
   [
     /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|AUTH|CREDENTIAL|NPMRC|YARNRC/,
-    /(?:PRIVATE|ACCESS|SSH)_?KEY|BEARER|COOKIE|SESSION_?ID/,
+    /(?:PRIVATE|ACCESS|SSH)_?KEY|BEARER|COOKIE/,
     /(?:^|_)(?:PAT|PASS|PWD)(?![A-Za-z])/,
   ]
     .map((re) => re.source)

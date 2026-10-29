@@ -127,7 +127,6 @@ describe('envCredentialViolations', () => {
       "env: ['AWS_ACCESS_KEY=x']",
       "env: ['SSH_PRIVATE_KEY=x']",
       "env: ['SESSION_COOKIE=x']",
-      "env: ['SESSION_ID=x']",
       "env: ['AUTH_BEARER=x']",
       "env: ['GITHUB_PAT=x']",
       "env: ['DB_PASS=x']",

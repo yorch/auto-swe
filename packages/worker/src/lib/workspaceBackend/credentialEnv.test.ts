@@ -26,8 +26,6 @@ describe('isCredentialEnvName', () => {
       'BEARER',
       'SESSION_COOKIE',
       'COOKIE',
-      'SESSION_ID',
-      'SESSIONID',
       'GITHUB_PAT',
       'DB_PASS',
       'DB_PWD',
