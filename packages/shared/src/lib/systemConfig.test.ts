@@ -823,6 +823,12 @@ describe('systemConfig resolvers', () => {
       'AGENT_TRACE_ROLLUP_ENABLED',
       'AGENT_TRACE_ROLLUP_CRON',
       'AGENT_TRACE_ROLLUP_BACKFILL_DAYS',
+      'REPORT_DIGEST_ENABLED',
+      'REPORT_DIGEST_CRON',
+      'WORKFLOW_RUN_ROLLUP_ENABLED',
+      'WORKFLOW_RUN_ROLLUP_CRON',
+      'WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS',
+      'WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS',
       'AUDIT_ACTIVITY_PRUNE_ENABLED',
       'AUDIT_ACTIVITY_PRUNE_CRON',
       'SLACK_CHANNEL_SYNC_ENABLED',
@@ -846,9 +852,16 @@ describe('systemConfig resolvers', () => {
         modelDiscovery: { cronExpression: '17 3 * * *', enabled: true },
         repoAccess: { cronExpression: '23 * * * *', enabled: false },
         repoDependency: { cronExpression: '0 4 * * *', enabled: true },
+        reportDigest: { cronExpression: '0 13 * * 1', enabled: true },
         runReaper: { cronExpression: '*/15 * * * *', enabled: true },
         skillSourceSync: { cronExpression: '41 5 * * *', enabled: true },
         slackChannelSync: { cronExpression: '29 * * * *', enabled: false, staleAfterHours: 6 },
+        workflowRunRollup: {
+          backfillDays: 0,
+          cronExpression: '23 1 * * *',
+          enabled: true,
+          recomputeDays: 30,
+        },
       });
     });
 
@@ -874,6 +887,12 @@ describe('systemConfig resolvers', () => {
       vi.stubEnv('AGENT_TRACE_ROLLUP_ENABLED', 'false');
       vi.stubEnv('AGENT_TRACE_ROLLUP_CRON', '2 2 * * *');
       vi.stubEnv('AGENT_TRACE_ROLLUP_BACKFILL_DAYS', '90');
+      vi.stubEnv('REPORT_DIGEST_ENABLED', 'false');
+      vi.stubEnv('REPORT_DIGEST_CRON', '0 14 * * 1');
+      vi.stubEnv('WORKFLOW_RUN_ROLLUP_ENABLED', 'false');
+      vi.stubEnv('WORKFLOW_RUN_ROLLUP_CRON', '15 2 * * *');
+      vi.stubEnv('WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS', '90');
+      vi.stubEnv('WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS', '45');
       vi.stubEnv('AUDIT_ACTIVITY_PRUNE_ENABLED', 'false');
       vi.stubEnv('AUDIT_ACTIVITY_PRUNE_CRON', '8 8 * * *');
       vi.stubEnv('SLACK_CHANNEL_SYNC_ENABLED', 'true');
@@ -889,9 +908,16 @@ describe('systemConfig resolvers', () => {
         modelDiscovery: { cronExpression: '0 5 * * 1', enabled: false },
         repoAccess: { cronExpression: '5 * * * *', enabled: true },
         repoDependency: { cronExpression: '30 2 * * 1', enabled: false },
+        reportDigest: { cronExpression: '0 14 * * 1', enabled: false },
         runReaper: { cronExpression: '*/5 * * * *', enabled: false },
         skillSourceSync: { cronExpression: '7 6 * * 2', enabled: false },
         slackChannelSync: { cronExpression: '4 */2 * * *', enabled: true, staleAfterHours: 12 },
+        workflowRunRollup: {
+          backfillDays: 90,
+          cronExpression: '15 2 * * *',
+          enabled: false,
+          recomputeDays: 45,
+        },
       });
     });
 

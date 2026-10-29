@@ -133,7 +133,7 @@ export function DigestsTab() {
           </button>
         </div>
         {create.error && (
-          <p className="mt-2 text-red-300" role="alert">
+          <p className="mt-2 text-danger-400" role="alert">
             {create.error.message}
           </p>
         )}
@@ -174,7 +174,7 @@ export function DigestsTab() {
                       Send test
                     </button>
                     <button
-                      className="rounded border border-red-700 px-3 py-1"
+                      className="rounded border border-danger-400/30 px-3 py-1"
                       onClick={() => remove.mutate(digest.id)}
                       type="button"
                     >
