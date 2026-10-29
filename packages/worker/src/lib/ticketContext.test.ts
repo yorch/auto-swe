@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   createProvider: vi.fn(),
   fetchIssue: vi.fn(),
+  resolveSetting: vi.fn(),
   resolveTracker: vi.fn(),
   runInputFind: vi.fn(),
   snapshotFind: vi.fn(),
@@ -14,6 +15,10 @@ vi.mock('@auto-swe/shared/db', () => ({
     contextSnapshot: { findUnique: mocks.snapshotFind, upsert: mocks.snapshotUpsert },
     runInput: { findUnique: mocks.runInputFind },
   },
+}));
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/config')>()),
+  resolveSetting: mocks.resolveSetting,
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveGitHubBaseUrl: async () => 'https://github.com',
@@ -368,6 +373,7 @@ describe('loadTicket', () => {
       events.length = 0;
       warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
       mocks.resolveTracker.mockResolvedValue({ baseUrl: null, provider: 'github' });
+      mocks.resolveSetting.mockResolvedValue([]);
     });
 
     afterEach(() => {
@@ -411,6 +417,47 @@ describe('loadTicket', () => {
       mocks.runInputFind.mockResolvedValue(run('7'));
       expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
       expect(mocks.fetchIssue).toHaveBeenCalledTimes(2);
+    });
+
+    it('fetches an issue in a repository the operator listed, resolved at the run team', async () => {
+      mocks.resolveSetting.mockResolvedValue(['Acme/Issues']);
+      mocks.runInputFind.mockResolvedValue(
+        run('acme/issues#5', { team: { orgId: 'org-1' }, teamId: 'team-1' })
+      );
+      expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
+      expect(mocks.resolveSetting).toHaveBeenCalledWith('github.trackerIssueRepositories', {
+        orgId: 'org-1',
+        teamId: 'team-1',
+      });
+    });
+
+    it('refuses an unlisted repository, and a listed one when the list cannot be read', async () => {
+      mocks.resolveSetting.mockResolvedValue(['acme/issues']);
+      mocks.runInputFind.mockResolvedValue(run('acme/elsewhere#5', { teamId: 'team-1' }));
+      expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+      mocks.resolveSetting.mockRejectedValue(new Error('settings unavailable'));
+      mocks.runInputFind.mockResolvedValue(run('acme/issues#5', { teamId: 'team-1' }));
+      expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+      expect(mocks.fetchIssue).not.toHaveBeenCalled();
+    });
+
+    it('does not resolve a bare number against the list', async () => {
+      mocks.resolveSetting.mockResolvedValue(['acme/issues']);
+      mocks.runInputFind.mockResolvedValue(run('7', { teamId: 'team-1' }));
+      expect((await loadTicket({ workRequestId: 'wr-1' }))?.source).toBe('tracker');
+      expect(mocks.resolveSetting).toHaveBeenCalled();
+      expect(mocks.fetchIssue).toHaveBeenCalledTimes(1);
+      expect(mocks.fetchIssue).toHaveBeenCalledWith('7', {
+        defaultRepo: { owner: 'acme', repo: 'api' },
+      });
+    });
+
+    it('refuses a listed repository on a run with no connection, reading no list', async () => {
+      mocks.resolveSetting.mockResolvedValue(['acme/issues']);
+      mocks.runInputFind.mockResolvedValue(run('acme/issues#5', null));
+      expect(await loadTicket({ workRequestId: 'wr-1' })).toBeNull();
+      expect(mocks.resolveSetting).not.toHaveBeenCalled();
+      expect(mocks.fetchIssue).not.toHaveBeenCalled();
     });
 
     it('refuses when the run names no repository at all', async () => {

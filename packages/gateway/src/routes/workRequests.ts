@@ -110,6 +110,9 @@ async function enrichWithTicketData(
       githubUrl?: string | null;
       organizationName: string;
       repoName: string;
+      /** Where the extra-repositories setting resolves: the selected repository's team and org. */
+      team?: { orgId?: string | null } | null;
+      teamId?: string | null;
     };
     workRequestId: string;
   }
@@ -123,8 +126,10 @@ async function enrichWithTicketData(
 
     // On GitHub the ticket id names its own `owner/repo` and the tracker token reads any
     // repository it can see, so the id must name the repository the launcher selected (already
-    // membership-checked), on the tracker's host. Refused before any network call and treated as
-    // a ticket that was not found: nothing is fetched or stored.
+    // membership-checked), on the tracker's host, or a repository the operator listed in
+    // `github.trackerIssueRepositories` (resolved at the selected repository's team and
+    // organization). Refused before any network call and treated as a ticket that was not found:
+    // nothing is fetched or stored.
     const defaultRepo = { owner: args.repo.organizationName, repo: args.repo.repoName };
     if (
       !(await isTrackerReadInScope(
@@ -813,11 +818,18 @@ export const workRequestRoutes: FastifyPluginAsync = async (fastify) => {
       // they write gates the submission. Design enrichment reuses the fetched
       // ticket text, so the two stay sequential. (The retry endpoint skips this
       // — it reuses the original snapshot.)
-      const { githubApiUrl, githubUrl, organizationName, repoName } = repo;
+      const { githubApiUrl, githubUrl, organizationName, repoName, team, teamId } = repo;
       void (async () => {
         const ticketText = await enrichWithTicketData(fastify, {
           externalTicketId,
-          repo: { githubApiUrl, githubUrl, organizationName, repoName },
+          repo: {
+            githubApiUrl,
+            githubUrl,
+            organizationName,
+            repoName,
+            team,
+            teamId,
+          },
           workRequestId,
         });
         await enrichWithDesignData(fastify, { description, ticketText, workRequestId });

@@ -56,6 +56,20 @@ describe('tracker writes on the GitHub tracker', () => {
     }
   );
 
+  it('creates in a repository the operator listed, and refuses one that is not', async () => {
+    const listed: TrackerRepoScope = { ...SCOPE, extraRepos: ['Acme/Issues'] };
+    expect(
+      await createTrackerEpic(GITHUB, EPIC, 'acme/issues', { scope: listed, warn })
+    ).not.toBeNull();
+    expect(
+      await createTrackerStory(GITHUB, STORY, 'ACME/ISSUES', null, { scope: listed, warn })
+    ).not.toBeNull();
+    expect(mocks.createIssue).toHaveBeenCalledTimes(2);
+    expect(warn).not.toHaveBeenCalled();
+    expect(await createTrackerEpic(GITHUB, EPIC, 'acme/other', { scope: listed, warn })).toBeNull();
+    expect(warn).toHaveBeenCalledWith(TRACKER_PROJECT_OUT_OF_SCOPE);
+  });
+
   it('refuses a project key when no scope could be loaded', async () => {
     expect(await createTrackerEpic(GITHUB, EPIC, 'acme/web', { scope: null, warn })).toBeNull();
     expect(await createTrackerEpic(GITHUB, EPIC, 'acme/web')).toBeNull();

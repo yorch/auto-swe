@@ -211,7 +211,7 @@ On the GitHub tracker every read and write — a `postTicketComment` comment, th
 post comments, post the pull-request link as a comment and close the issue when the run completes),
 the issues a PRD run creates for its epics and stories, and the ticket fetched into a request's
 `ContextSnapshot` — stays in a repository the run targets, on the host the tracker is configured
-for. A GitHub ticket id
+for, or in one an operator listed in `github.trackerIssueRepositories`. A GitHub ticket id
 (`owner/repo#123`) names its own repository and is supplied by whoever launched the run, so the id
 is checked first against the run's repositories: its connection when that is a git repository, and
 the git repositories its launch was authorized against (`knowledgeRepoSources`). At submit time the
@@ -220,7 +220,18 @@ Owner and repository compare case-insensitively; the host is the tracker's base 
 (`api.github.com` when it has none) against the repository's API and web URLs (the instance's GitHub
 URL when it has none), with `github.com` and `api.github.com` one host, and `<t>.ghe.com` and
 `api.<t>.ghe.com` one host. A bare issue number names no repository: a write refuses it, and a read
-resolves it against the run's own repository and checks that. A PRD run's project key
+resolves it against the run's own repository and checks that.
+
+A deployment that keeps its tickets in a separate issues repository (`org/issues#5` while the run
+targets `org/app`) lists `org/issues` in `github.trackerIssueRepositories`
+([`configuration.md` §9](./configuration.md#9-extra-issue-tracker-repositories)). A ticket id that
+names a listed repository is then in scope for reads and writes alike. The setting is ADMIN-only and
+resolves at the team and organization of the run's own repository, never from anything a launcher
+supplies. Listed entries are on the tracker's host by definition, so the host comparison applies
+only to a run's repositories; the provider still calls only the tracker's own base URL. A bare issue
+number never resolves against the list. A setting that cannot be read is an empty list, so the
+check fails closed. A run with no git repository connection has no team to resolve at and gets no
+list. A PRD run's project key
 (`owner/repo`) is checked the same way, as the issue `<key>#1`; without a project key the
 admin-configured default is used and is not checked. A write that fails the check is skipped and
 logged with a fixed line, and a PRD item that is refused counts as a failed tracker item. A read
@@ -290,17 +301,19 @@ http(s) address.
   before the selected outcomes window.
 
 - With the GitHub tracker, comments, pull-request links, issue closes and PRD issue creation go
-  only to a repository the run targets, on the tracker's host, and a ticket is read only from one.
-  The tracker has no configured default repository, so a ticket id naming any other repository, a
-  repository on another host, or a bare issue number gets no write: `postTicketComment` returns
-  `posted: false`, and the sync
-  is skipped. A PRD run's project key outside the run's repositories creates no issue.
+  only to a repository the run targets, on the tracker's host, or one listed in
+  `github.trackerIssueRepositories`, and a ticket is read only from one. The tracker has no
+  configured default repository, so a ticket id naming any other repository, a repository on
+  another host, or a bare issue number gets no write: `postTicketComment` returns `posted: false`,
+  and the sync is skipped. A PRD run's project key outside the run's repositories and the list
+  creates no issue.
 - A ticket already on a `ContextSnapshot` is used as stored; the scope check applies only when the
   ticket is fetched.
-- A deployment that keeps its tickets in a separate issues repository (for example `org/issues#5`
-  while the run targets `org/app`) gets no ticket context and no tracker writes: the read is
-  treated as a ticket that was not found and logs the fixed skip line, and each write is skipped
-  with its fixed line.
+- A listed issues repository must be on the tracker's own host and is listed by an admin; there is
+  no per-request or per-launcher way to name one. A `TEAM` or `ORGANIZATION` value applies to every
+  run on that team's repositories, including runs by other teams on a repository shared with it,
+  because the list resolves at the repository's owning team; shares and membership decide that
+  audience.
 - A renamed repository or a transferred issue is not followed, so its ticket is unavailable and its
   writes are skipped until the id names the current repository.
 - A GitHub ticket id on a run with no git repository (no connection, no authorized repository) is

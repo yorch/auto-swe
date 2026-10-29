@@ -420,6 +420,33 @@ each distinct message. The rest still show. With none set, nothing is rendered. 
 the awaiting-approval screen, on the error and not-found pages, and in the sidebar footer. The
 compose files pass the three variables through, because the web container does not receive `.env`.
 
+## 9. Extra issue-tracker repositories
+
+With the GitHub issue tracker, a run reads and writes tickets only in the repositories it targets.
+A deployment that keeps its tickets in a separate issues repository lists that repository in one
+setting, in the `github` group:
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `github.trackerIssueRepositories` | `[]` | `owner/repo` entries on the tracker's own host, up to 50. A ticket that names one of them (`acme/issues#5`) is read and written for a run on any other repository, for example `acme/app`. |
+
+Only an ADMIN can change it, at `TEAM`, `ORGANIZATION` or globally: every entry widens what the
+platform's tracker token can read and write for the runs it covers, so a team lead cannot add one.
+A launcher cannot supply or override it. It resolves at the team and organization of the run's own
+repository (the repository the launcher selected, at submit time), so a `TEAM` or `ORGANIZATION`
+value applies to every run on that team's repositories, including runs by members of other teams on
+a repository shared with it (`ConnectionTeamShare`). The team's lead controls that audience through
+shares and membership. A run with no git repository connection resolves no list. The value names
+internal repositories, so it is sensitive: a reader below ADMIN sees the setting but not its value.
+
+An entry is trimmed and must be ASCII letters, digits, `_`, `.` and `-` on each side of one `/`,
+with no `.` or `..` segment. A repeat that differs only in case is dropped, and comparison with a
+ticket is case-insensitive. A bare issue number (`5`) still means the run's own repository and never
+a listed one. Entries are taken to be on the tracker's host, so the host comparison applied to a run
+repository is not applied to them, but the tracker is only ever called at its configured base URL:
+an entry cannot reach another host. An unreadable value is treated as an empty list. How the scope
+applies to reads and writes is in [`work-views.md`](./work-views.md).
+
 ---
 
 ## Limitations
