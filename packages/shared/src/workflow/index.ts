@@ -209,6 +209,11 @@ export {
 } from './validateSpec.js';
 export type {
   BuildWorkflowRunRollupsInput,
+  HumanStepDailyRollupInput,
+  HumanStepDailyRollupRow,
+  ReviewVerdictDailyRollupRow,
+  ReviewVerdictDailyRollupRunInput,
+  ReviewVerdictDailyRollupTraceInput,
   WorkflowRunRollupPullRequestInput,
   WorkflowRunRollupRow,
   WorkflowRunRollupRunInput,
@@ -216,6 +221,8 @@ export type {
   WorkflowRunRollupTraceInput,
 } from './workflowRunRollup.js';
 export {
+  buildHumanStepDailyRollups,
+  buildReviewVerdictDailyRollups,
   buildWorkflowRunDailyRollups,
   CI_FIX_ROUND_BUCKETS,
   CI_FIX_ROUND_OVERFLOW,
@@ -237,7 +244,9 @@ export {
   dailyRunSeriesFromRollups,
   deliveryReportFromRollups,
   emptyCiFixRoundsBuckets,
+  humanStepMetricsFromRollups,
   qualityMetricsFromRollups,
+  qualityReviewFromRollups,
   workflowRunDurationStatsFromRollups,
   workflowTemplatePerVersionFromRollups,
 } from './workflowRunRollupReports.js';

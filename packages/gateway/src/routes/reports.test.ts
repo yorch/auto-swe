@@ -11,15 +11,28 @@ function mockPrisma() {
     automationFire: { findMany: vi.fn().mockResolvedValue([]) },
     autonomyDecision: { findMany: vi.fn().mockResolvedValue([]) },
     connection: { findMany: vi.fn().mockResolvedValue([]) },
+    humanStepDailyRollup: {
+      findMany: vi.fn().mockResolvedValue([]),
+      groupBy: vi.fn().mockResolvedValue([]),
+    },
     organization: { findMany: vi.fn().mockResolvedValue([]) },
     organizationMembership: { findMany: vi.fn().mockResolvedValue([]) },
     pullRequest: { findMany: vi.fn().mockResolvedValue([]) },
+    reviewVerdictDailyRollup: {
+      findMany: vi.fn().mockResolvedValue([]),
+      groupBy: vi.fn().mockResolvedValue([]),
+    },
     team: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue(null),
     },
     teamMembership: { findMany: vi.fn().mockResolvedValue([]) },
-    workflowHumanStep: { findMany: vi.fn().mockResolvedValue([]) },
+    user: { findMany: vi.fn().mockResolvedValue([]) },
+    workflowHumanStep: {
+      count: vi.fn().mockResolvedValue(0),
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
     workflowRunDailyRollup: {
       findMany: vi.fn().mockResolvedValue([]),

@@ -10,11 +10,14 @@ const mocks = vi.hoisted(() => ({
   built: [] as Array<{ builtAt: Date | null; day: Date }>,
   createManySizes: [] as number[],
   dirtyEndedRuns: [] as Array<{ endedAt: Date; startedAt: Date }>,
+  dirtyFixSteps: [] as Array<{ run: { startedAt: Date } }>,
+  dirtyHumanSteps: [] as Array<{ requestedAt: Date }>,
   dirtyPullRequests: [] as Array<{
     closedAt: Date | null;
     mergedAt: Date | null;
     run: { startedAt: Date };
   }>,
+  dirtyReviewerTraces: [] as Array<{ run: { startedAt: Date } }>,
   events: [] as string[],
   failCreateMany: false,
   lastSuccessfulStartAt: null as Date | null,
@@ -33,6 +36,22 @@ vi.mock('@temporalio/activity', () => ({
 
 vi.mock('@auto-swe/shared/db', () => {
   const txClient = {
+    humanStepDailyRollup: {
+      createMany: async ({ data }: { data: unknown[] }) => {
+        mocks.createManySizes.push(data.length);
+      },
+      deleteMany: async ({ where }: { where: { day: Date } }) => {
+        mocks.transactionDays.push(where.day);
+      },
+    },
+    reviewVerdictDailyRollup: {
+      createMany: async ({ data }: { data: unknown[] }) => {
+        mocks.createManySizes.push(data.length);
+      },
+      deleteMany: async ({ where }: { where: { day: Date } }) => {
+        mocks.transactionDays.push(where.day);
+      },
+    },
     workflowRunDailyRollup: {
       createMany: async ({ data }: { data: unknown[] }) => {
         mocks.createManySizes.push(data.length);
@@ -54,7 +73,7 @@ vi.mock('@auto-swe/shared/db', () => {
         mocks.transactionOptions.push(options);
         return callback(txClient);
       },
-      agentTrace: { findMany: async () => [] },
+      agentTrace: { findMany: async () => mocks.dirtyReviewerTraces },
       pullRequest: { findMany: async () => mocks.dirtyPullRequests },
       rollupSweepState: {
         findUnique: async () =>
@@ -62,8 +81,10 @@ vi.mock('@auto-swe/shared/db', () => {
             ? { lastSuccessfulStartAt: mocks.lastSuccessfulStartAt }
             : null,
         updateMany: async ({ data }: { data: { lastSuccessfulStartAt: Date } }) => {
-          mocks.lastSuccessfulStartAt = data.lastSuccessfulStartAt;
-          mocks.stateUpdates.push(data.lastSuccessfulStartAt);
+          if (data.lastSuccessfulStartAt) {
+            mocks.lastSuccessfulStartAt = data.lastSuccessfulStartAt;
+            mocks.stateUpdates.push(data.lastSuccessfulStartAt);
+          }
           return { count: 1 };
         },
         upsert: async ({ create }: { create: { lastSuccessfulStartAt: Date; name: string } }) => {
@@ -71,7 +92,10 @@ vi.mock('@auto-swe/shared/db', () => {
           return { name: create.name };
         },
       },
-      workflowHumanStep: { findMany: async () => [] },
+      workflowHumanStep: {
+        findMany: async ({ where }: { where: { resolvedAt?: unknown } }) =>
+          where.resolvedAt ? mocks.dirtyHumanSteps : [],
+      },
       workflowRun: {
         aggregate: async () => ({ _min: { startedAt: mocks.oldest } }),
         findMany: async ({
@@ -79,11 +103,15 @@ vi.mock('@auto-swe/shared/db', () => {
         }: {
           where: {
             endedAt?: unknown;
+            updatedAt?: unknown;
             startedAt?: { gte?: Date; lt?: Date };
           };
         }) => {
           if (where.endedAt) {
             return mocks.dirtyEndedRuns;
+          }
+          if (where.updatedAt) {
+            return mocks.dirtyEndedRuns.map((run) => ({ startedAt: run.startedAt }));
           }
           const day = where.startedAt?.gte;
           if (!day) {
@@ -117,7 +145,10 @@ vi.mock('@auto-swe/shared/db', () => {
             ? mocks.built.filter((row) => where.day?.in?.includes(row.day))
             : mocks.present.map((day) => ({ day })),
       },
-      workflowStep: { findMany: async () => [] },
+      workflowStep: {
+        findMany: async ({ where }: { where: { endedAt?: unknown } }) =>
+          where.endedAt ? mocks.dirtyFixSteps : [],
+      },
     },
   };
 });
@@ -147,7 +178,10 @@ beforeEach(() => {
   mocks.built = [];
   mocks.events = [];
   mocks.dirtyEndedRuns = [];
+  mocks.dirtyFixSteps = [];
+  mocks.dirtyHumanSteps = [];
   mocks.dirtyPullRequests = [];
+  mocks.dirtyReviewerTraces = [];
   mocks.failCreateMany = false;
   mocks.lastSuccessfulStartAt = null;
   mocks.oldest = null;
@@ -183,13 +217,19 @@ describe('rollupWorkflowRuns', () => {
     const result = await rollupWorkflowRuns(NOW);
     expect(result.rows).toBe(501);
     expect(mocks.createManySizes).toEqual([500, 1]);
-    expect(mocks.transactionDays).toEqual([new Date(TODAY - DAY_MS)]);
+    expect(mocks.transactionDays).toEqual([
+      new Date(TODAY - DAY_MS),
+      new Date(TODAY - DAY_MS),
+      new Date(TODAY - DAY_MS),
+    ]);
     expect(mocks.transactionOptions).toEqual([{ maxWait: 30_000, timeout: TX_TIMEOUT_MS }]);
   });
 
   it('heartbeats before and after every selected day', async () => {
     await rollupWorkflowRuns(NOW);
     expect(mocks.events.filter((event) => event.startsWith('heartbeat:'))).toEqual([
+      'heartbeat:checking workflow rollup dirty days',
+      'heartbeat:finished checking workflow rollup dirty days',
       `heartbeat:rolling up workflow runs for ${new Date(TODAY - 2 * DAY_MS).toISOString().slice(0, 10)}`,
       `heartbeat:finished workflow run rollup for ${new Date(TODAY - 2 * DAY_MS).toISOString().slice(0, 10)}`,
       `heartbeat:rolling up workflow runs for ${new Date(TODAY - DAY_MS).toISOString().slice(0, 10)}`,
@@ -231,6 +271,34 @@ describe('rollupWorkflowRuns', () => {
     expect(mocks.stateUpdates).toEqual([NOW]);
   });
 
+  it('rebuilds days changed by PR updates, fix steps, reviewer traces, and human resolution', async () => {
+    mocks.recomputeDays = 1;
+    mocks.lastSuccessfulStartAt = new Date('2026-10-19T00:00:00.000Z');
+    mocks.dirtyPullRequests = [
+      {
+        closedAt: null,
+        mergedAt: null,
+        run: { startedAt: new Date(TODAY - 40 * DAY_MS) },
+      },
+    ];
+    mocks.dirtyFixSteps = [{ run: { startedAt: new Date(TODAY - 41 * DAY_MS) } }];
+    mocks.dirtyReviewerTraces = [{ run: { startedAt: new Date(TODAY - 42 * DAY_MS) } }];
+    mocks.dirtyHumanSteps = [{ requestedAt: new Date(TODAY - 43 * DAY_MS) }];
+
+    const result = await rollupWorkflowRuns(NOW);
+
+    expect(result.days).toBe(5);
+    expect(new Set(mocks.transactionDays.map((day) => day.getTime()))).toEqual(
+      new Set([
+        TODAY - DAY_MS,
+        TODAY - 40 * DAY_MS,
+        TODAY - 41 * DAY_MS,
+        TODAY - 42 * DAY_MS,
+        TODAY - 43 * DAY_MS,
+      ])
+    );
+  });
+
   it('caps dirty-day work at sixty and leaves the sweep watermark unchanged', async () => {
     mocks.lastSuccessfulStartAt = new Date('2026-10-19T00:00:00.000Z');
     mocks.dirtyEndedRuns = Array.from({ length: 61 }, (_, index) => ({
@@ -250,5 +318,21 @@ describe('rollupWorkflowRuns', () => {
     await expect(rollupWorkflowRuns(NOW)).rejects.toThrow('createMany failed');
     expect(mocks.stateUpdates).toEqual([]);
     expect(mocks.lastSuccessfulStartAt).toBeNull();
+  });
+
+  it('detects a source change committed after the previous day read through the overlap', async () => {
+    mocks.recomputeDays = 1;
+    await rollupWorkflowRuns(NOW);
+    mocks.transactionDays = [];
+    mocks.dirtyEndedRuns = [
+      {
+        endedAt: new Date(NOW.getTime() + 10 * 60_000),
+        startedAt: new Date(TODAY - 50 * DAY_MS),
+      },
+    ];
+
+    await rollupWorkflowRuns(new Date(NOW.getTime() + 30 * 60_000));
+
+    expect(mocks.transactionDays.map((day) => day.getTime())).toContain(TODAY - 50 * DAY_MS);
   });
 });

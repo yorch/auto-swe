@@ -348,6 +348,177 @@ export function buildWorkflowRunDailyRollups(
   return [...rows.values()];
 }
 
+export interface HumanStepDailyRollupInput {
+  kind: string;
+  orgId: string | null;
+  requestedAt: Date;
+  resolvedAt: Date | null;
+  resolvedBy: string | null;
+  resolvedVia: string | null;
+  status: string;
+  teamId: string | null;
+}
+
+export interface HumanStepDailyRollupRow {
+  bucketVersion: number;
+  day: Date;
+  dimensionKey: string;
+  kind: string;
+  orgId: string | null;
+  resolvedBy: string | null;
+  resolvedVia: string;
+  status: string;
+  steps: number;
+  teamId: string | null;
+  timedOut: number;
+  waitBuckets: number[];
+  waitMsSum: bigint;
+}
+
+export function buildHumanStepDailyRollups(
+  steps: readonly HumanStepDailyRollupInput[]
+): HumanStepDailyRollupRow[] {
+  const rows = new Map<string, HumanStepDailyRollupRow>();
+  for (const step of steps) {
+    const dayMs =
+      Math.floor(step.requestedAt.getTime() / WORKFLOW_RUN_DAY_MS) * WORKFLOW_RUN_DAY_MS;
+    const resolvedVia =
+      step.resolvedVia &&
+      ['web', 'slack', 'api_token', 'mcp', 'assistant'].includes(step.resolvedVia)
+        ? step.resolvedVia
+        : 'unknown';
+    const dimensions = [
+      step.orgId,
+      step.teamId,
+      step.kind,
+      step.status,
+      resolvedVia,
+      step.resolvedBy,
+    ];
+    const dimensionKey = JSON.stringify(dimensions);
+    const key = `${dayMs}:${dimensionKey}`;
+    const row = rows.get(key) ?? {
+      bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
+      day: new Date(dayMs),
+      dimensionKey,
+      kind: step.kind,
+      orgId: step.orgId,
+      resolvedBy: step.resolvedBy,
+      resolvedVia,
+      status: step.status,
+      steps: 0,
+      teamId: step.teamId,
+      timedOut: 0,
+      waitBuckets: durationBuckets(),
+      waitMsSum: 0n,
+    };
+    row.steps++;
+    if (step.status === 'TIMED_OUT') {
+      row.timedOut++;
+    }
+    if (step.status === 'RESOLVED' && step.resolvedAt) {
+      const waitMs = step.resolvedAt.getTime() - step.requestedAt.getTime();
+      row.waitMsSum += BigInt(Math.trunc(waitMs));
+      addBucket(row.waitBuckets, durationBucketForMs(waitMs));
+    }
+    rows.set(key, row);
+  }
+  return [...rows.values()];
+}
+
+export interface ReviewVerdictDailyRollupRunInput {
+  attributedOrgId: string | null;
+  attributedTeamId: string | null;
+  id: string;
+  startedAt: Date;
+}
+
+export interface ReviewVerdictDailyRollupTraceInput {
+  error: string | null;
+  outputJson: unknown;
+  runId: string | null;
+}
+
+export interface ReviewVerdictDailyRollupRow {
+  approved: boolean | null;
+  bucketVersion: number;
+  categoryCounts: Record<string, number>;
+  day: Date;
+  dimensionKey: string;
+  findings: number;
+  nonVerdictRows: number;
+  orgId: string | null;
+  reviewer: string | null;
+  severity: string | null;
+  teamId: string | null;
+  verdicts: number;
+}
+
+export function buildReviewVerdictDailyRollups(input: {
+  runs: readonly ReviewVerdictDailyRollupRunInput[];
+  traces: readonly ReviewVerdictDailyRollupTraceInput[];
+}): ReviewVerdictDailyRollupRow[] {
+  const runs = new Map(input.runs.map((run) => [run.id, run]));
+  const rows = new Map<string, ReviewVerdictDailyRollupRow>();
+  for (const trace of input.traces) {
+    if (
+      trace.error ||
+      !trace.runId ||
+      !trace.outputJson ||
+      typeof trace.outputJson !== 'object' ||
+      Array.isArray(trace.outputJson) ||
+      !Object.hasOwn(trace.outputJson, 'approved')
+    ) {
+      continue;
+    }
+    const run = runs.get(trace.runId);
+    if (!run) {
+      continue;
+    }
+    const verdict = parseReviewVerdict(trace.outputJson);
+    const reviewer = verdict?.reviewer ?? null;
+    const severity = verdict?.severity ?? null;
+    const approved = verdict?.approved ?? null;
+    const dayMs = Math.floor(run.startedAt.getTime() / WORKFLOW_RUN_DAY_MS) * WORKFLOW_RUN_DAY_MS;
+    const dimensionKey = JSON.stringify([
+      run.attributedOrgId,
+      run.attributedTeamId,
+      reviewer,
+      severity,
+      approved,
+    ]);
+    const key = `${dayMs}:${dimensionKey}`;
+    const row = rows.get(key) ?? {
+      approved,
+      bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
+      categoryCounts: Object.create(null) as Record<string, number>,
+      day: new Date(dayMs),
+      dimensionKey,
+      findings: 0,
+      nonVerdictRows: 0,
+      orgId: run.attributedOrgId,
+      reviewer,
+      severity,
+      teamId: run.attributedTeamId,
+      verdicts: 0,
+    };
+    if (!verdict) {
+      row.nonVerdictRows++;
+    } else {
+      row.verdicts++;
+      row.findings += verdict.findings.length;
+      for (const finding of verdict.findings) {
+        row.categoryCounts[finding.category] =
+          (Object.hasOwn(row.categoryCounts, finding.category)
+            ? row.categoryCounts[finding.category]
+            : 0) + 1;
+      }
+    }
+    rows.set(key, row);
+  }
+  return [...rows.values()];
+}
+
 export function combineWorkflowRunRollupRows(rows: readonly WorkflowRunRollupRow[]) {
   const combined = rows.reduce(
     (acc, row) => {

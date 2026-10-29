@@ -314,6 +314,7 @@ model PullRequest {
   openedAt   DateTime        @default(now()) @map("opened_at") @db.Timestamptz
   mergedAt   DateTime?       @map("merged_at") @db.Timestamptz
   closedAt   DateTime?       @map("closed_at") @db.Timestamptz
+  updatedAt  DateTime        @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
 
   @@index([workflowId])
   @@index([repoId])
@@ -323,6 +324,7 @@ model PullRequest {
   @@index([openedAt])
   @@index([mergedAt, runId])
   @@index([closedAt, runId])
+  @@index([updatedAt, runId])
   @@map("pull_requests")
 }
 
@@ -2042,6 +2044,7 @@ model WorkflowRun {
   status            WorkflowRunStatus @default(RUNNING)
   startedAt         DateTime          @default(now()) @map("started_at") @db.Timestamptz
   endedAt           DateTime?         @map("ended_at") @db.Timestamptz
+  updatedAt         DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
   /// When the run reaper last asked Temporal about this run and found it still
   /// running. The sweep orders by it (never-checked first), so a crowd of
   /// long-lived live runs cannot keep newer stranded ones out of its batch.
@@ -2102,6 +2105,7 @@ model WorkflowRun {
   @@index([startedAt])
   @@index([status, startedAt])
   @@index([endedAt, startedAt])
+  @@index([updatedAt, startedAt])
   @@map("workflow_runs")
 }
 
@@ -2152,11 +2156,59 @@ model WorkflowRunDailyRollup {
   @@map("workflow_run_daily_rollups")
 }
 
+model HumanStepDailyRollup {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  day            DateTime @db.Date
+  bucketVersion  Int      @default(2) @map("bucket_version")
+  dimensionKey   String   @map("dimension_key")
+  orgId          String?  @map("org_id") @db.Uuid
+  teamId         String?  @map("team_id") @db.Uuid
+  kind           String
+  status         String
+  resolvedVia    String   @map("resolved_via")
+  resolvedBy     String?  @map("resolved_by") @db.Uuid
+  steps          Int
+  waitMsSum      BigInt   @map("wait_ms_sum")
+  waitBuckets    Int[]    @default([]) @map("wait_buckets")
+  timedOut       Int      @map("timed_out")
+  builtAt        DateTime @default(now()) @map("built_at") @db.Timestamptz
+
+  @@unique([day, dimensionKey])
+  @@index([day])
+  @@index([orgId, day])
+  @@index([teamId, day])
+  @@map("human_step_daily_rollups")
+}
+
+model ReviewVerdictDailyRollup {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  day             DateTime @db.Date
+  bucketVersion   Int      @default(2) @map("bucket_version")
+  dimensionKey    String   @map("dimension_key")
+  orgId           String?  @map("org_id") @db.Uuid
+  teamId          String?  @map("team_id") @db.Uuid
+  reviewer        String?
+  severity        String?
+  approved        Boolean?
+  verdicts        Int
+  findings        Int
+  categoryCounts Json     @default("{}") @map("category_counts")
+  nonVerdictRows  Int      @map("non_verdict_rows")
+  builtAt         DateTime @default(now()) @map("built_at") @db.Timestamptz
+
+  @@unique([day, dimensionKey])
+  @@index([day])
+  @@index([orgId, day])
+  @@index([teamId, day])
+  @@map("review_verdict_daily_rollups")
+}
+
 /// Watermark for a scheduled derived-data sweep. A capped rollup sweep keeps the
 /// previous start time until every dirty day from that interval has been rebuilt.
 model RollupSweepState {
   name                  String    @id
   lastSuccessfulStartAt DateTime? @map("last_successful_start_at") @db.Timestamptz
+  pendingDirtyDays      DateTime[] @default([]) @map("pending_dirty_days") @db.Date
 
   @@map("rollup_sweep_states")
 }
@@ -2502,6 +2554,7 @@ model AgentTrace {
 
   @@index([runId, nodeId])
   @@index([runId, createdAt])
+  @@index([createdAt, runId])
   @@index([createdAt])
   @@index([workflowId, temporalRunId])
   @@index([teamId, createdAt])
@@ -2696,6 +2749,7 @@ model WorkflowStep {
   @@unique([runId, nodeId, attempt])
   @@index([runId])
   @@index([runId, nodeId])
+  @@index([endedAt, runId])
   @@map("workflow_steps")
 }
 

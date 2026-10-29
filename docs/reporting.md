@@ -133,17 +133,25 @@ transport.
   average use an exact attempt-count histogram for 0–19; its 20+ overflow bucket is represented as
   20.
 - Rollups are rebuilt daily and recomputed over the shared
-  `WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS` horizon to include recent outcomes. Older days are rebuilt
-  when a run ends, a linked pull request merges or closes, or a human step resolves after the
-  previous successful sweep. At most 60 dirty days are rebuilt per sweep, oldest first; remaining
-  days wait for a later successful sweep. `rollupDays` and `liveDays` show which dates came from each
-  source; rows with an obsolete duration-bucket version count as uncovered, and truncation flags
-  apply only to live reads. Global analytics daily series and duration percentiles, template
-  per-version duration/PR statistics, and delivery metrics use this hybrid reader. Set
-  `WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` to populate older history; the default of zero leaves older
-  history on the live path.
+  `WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS` horizon to include recent outcomes. Older run days are
+  dirtied by `WorkflowRun.updatedAt`, `PullRequest.updatedAt`, completion of a gate/review/CI fix
+  `WorkflowStep`, or creation of a reviewer `AgentTrace`; human-step requested days are dirtied
+  separately by `resolvedAt` for the approval rollup. Run deletions are not detected. Detection
+  uses a fixed one-hour overlap and stores the current sweep time only after a successful sweep.
+  At most 60 dirty days are rebuilt per sweep, oldest first; the durable backlog carries remaining
+  days to later sweeps. `rollupDays` and `liveDays` show which dates came from each source; rows
+  with an obsolete duration-bucket version count as uncovered, and truncation flags apply only to
+  live reads. Global analytics daily series and duration percentiles, template per-version
+  duration/PR statistics, delivery metrics, and the HITL and reviewer report slices use these
+  hybrid readers. Set `WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` to populate older history; the default
+  of zero leaves older history on the live path.
 - Approval source counts use `resolvedVia`; historical rows with no source are reported as
   `unknown`.
+- HITL approval rollups use the UTC day of `requestedAt` and retain kind, status, resolution source,
+  approver, timeout, and resolved-wait histogram measures. Reviewer rollups use the UTC day of
+  `WorkflowRun.startedAt` and retain reviewer, severity, approval, findings, category, and
+  malformed-verdict measures. Both carry a bucket version and persisted organization/team
+  attribution. Pending approvals remain an uncapped live count plus the oldest `findFirst` row.
 - User records do not expose a service-principal or API-token approver flag, so approval counts
   cannot separate people from machine identities. The human-step HTTP route requires a user
   principal and does not admit service-principal tokens.

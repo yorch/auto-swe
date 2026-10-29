@@ -1,16 +1,172 @@
 import { WORKFLOW_RUN_FAILURE_STATUSES, type WorkflowRunStatus } from '../types/api.js';
 import { wilsonInterval } from './analytics.js';
-import type { DeliveryMetrics, DeliveryReport } from './reports.js';
+import {
+  type DeliveryMetrics,
+  type DeliveryReport,
+  type HitlReport,
+  type QualityReport,
+  REVIEW_SEVERITIES,
+  REVIEWER_TYPES,
+} from './reports.js';
 import {
   CI_FIX_ROUND_BUCKETS,
   ciFixRoundsFromBuckets,
   combineWorkflowRunRollupRows,
   durationBucketForMs,
   durationPercentileFromBuckets,
+  type HumanStepDailyRollupRow,
+  type ReviewVerdictDailyRollupRow,
   type WorkflowRunRollupRow,
 } from './workflowRunRollup.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function humanStepMetricsFromRollups(
+  rows: readonly HumanStepDailyRollupRow[],
+  names: ReadonlyMap<string, string | null> = new Map()
+): Pick<HitlReport, 'byApprover' | 'byKind' | 'byVia' | 'medianWaitMs' | 'p95WaitMs' | 'timedOut'> {
+  const byKind: Record<string, Record<string, number>> = {};
+  const byVia: Record<string, number> = {};
+  const waitBuckets = Array.from({ length: rows[0]?.waitBuckets.length ?? 1 }, () => 0);
+  const approvers = new Map<
+    string,
+    { automated: number; interactive: number; waitBuckets: number[] }
+  >();
+  let timedOut = 0;
+  for (const row of rows) {
+    byKind[row.kind] ??= {};
+    byKind[row.kind][row.status] = (byKind[row.kind][row.status] ?? 0) + row.steps;
+    timedOut += row.timedOut;
+    let waits = 0;
+    for (let index = 0; index < row.waitBuckets.length; index++) {
+      const count = row.waitBuckets[index] ?? 0;
+      waitBuckets[index] = (waitBuckets[index] ?? 0) + count;
+      waits += count;
+    }
+    if (row.status !== 'RESOLVED' || waits === 0) {
+      continue;
+    }
+    byVia[row.resolvedVia] = (byVia[row.resolvedVia] ?? 0) + waits;
+    if (!row.resolvedBy) {
+      continue;
+    }
+    const group = approvers.get(row.resolvedBy) ?? {
+      automated: 0,
+      interactive: 0,
+      waitBuckets: Array.from({ length: waitBuckets.length }, () => 0),
+    };
+    for (let index = 0; index < row.waitBuckets.length; index++) {
+      const count = row.waitBuckets[index] ?? 0;
+      group.waitBuckets[index] = (group.waitBuckets[index] ?? 0) + count;
+    }
+    if (row.resolvedVia === 'web' || row.resolvedVia === 'slack') {
+      group.interactive += waits;
+    } else if (
+      row.resolvedVia === 'api_token' ||
+      row.resolvedVia === 'mcp' ||
+      row.resolvedVia === 'assistant'
+    ) {
+      group.automated += waits;
+    }
+    approvers.set(row.resolvedBy, group);
+  }
+  const byApprover = [...approvers.entries()]
+    .map(([resolvedBy, group]) => {
+      const name = names.get(resolvedBy) ?? resolvedBy;
+      const resolved = group.waitBuckets.reduce((sum, count) => sum + count, 0);
+      return {
+        automated: group.automated,
+        interactive: group.interactive,
+        medianWaitMs: durationPercentileFromBuckets(group.waitBuckets, 0.5),
+        name,
+        resolved,
+      };
+    })
+    .sort((a, b) => b.resolved - a.resolved || a.name.localeCompare(b.name));
+  return {
+    byApprover,
+    byKind,
+    byVia,
+    medianWaitMs: durationPercentileFromBuckets(waitBuckets, 0.5),
+    p95WaitMs: durationPercentileFromBuckets(waitBuckets, 0.95),
+    timedOut,
+  };
+}
+
+export function qualityReviewFromRollups(
+  rows: readonly Pick<
+    ReviewVerdictDailyRollupRow,
+    | 'approved'
+    | 'categoryCounts'
+    | 'findings'
+    | 'nonVerdictRows'
+    | 'reviewer'
+    | 'severity'
+    | 'verdicts'
+  >[]
+): QualityReport['review'] {
+  const reviewers = new Map(
+    REVIEWER_TYPES.map((reviewer) => [
+      reviewer,
+      {
+        approved: 0,
+        categories: new Map<string, number>(),
+        findingsTotal: 0,
+        severityCounts: Object.fromEntries(
+          REVIEW_SEVERITIES.map((severity) => [severity, 0])
+        ) as QualityReport['review']['byReviewer'][number]['severityCounts'],
+        verdicts: 0,
+      },
+    ])
+  );
+  let nonVerdictRows = 0;
+  for (const row of rows) {
+    nonVerdictRows += row.nonVerdictRows;
+    if (
+      !row.reviewer ||
+      !row.severity ||
+      row.approved === null ||
+      !REVIEWER_TYPES.includes(row.reviewer as (typeof REVIEWER_TYPES)[number]) ||
+      !REVIEW_SEVERITIES.includes(row.severity as (typeof REVIEW_SEVERITIES)[number])
+    ) {
+      continue;
+    }
+    const group = reviewers.get(row.reviewer as (typeof REVIEWER_TYPES)[number]);
+    if (!group) {
+      continue;
+    }
+    group.verdicts += row.verdicts;
+    group.approved += row.approved ? row.verdicts : 0;
+    group.severityCounts[row.severity as (typeof REVIEW_SEVERITIES)[number]] += row.verdicts;
+    group.findingsTotal += row.findings;
+    for (const [category, count] of Object.entries(row.categoryCounts)) {
+      group.categories.set(category, (group.categories.get(category) ?? 0) + count);
+    }
+  }
+  return {
+    byReviewer: REVIEWER_TYPES.map((reviewer) => {
+      const group = reviewers.get(reviewer);
+      const verdicts = group?.verdicts ?? 0;
+      return {
+        approvalRate: verdicts > 0 ? (group?.approved ?? 0) / verdicts : null,
+        approved: group?.approved ?? 0,
+        findingsTotal: group?.findingsTotal ?? 0,
+        reviewer,
+        severityCounts:
+          group?.severityCounts ??
+          (Object.fromEntries(
+            REVIEW_SEVERITIES.map((severity) => [severity, 0])
+          ) as QualityReport['review']['byReviewer'][number]['severityCounts']),
+        topCategories: [...(group?.categories ?? new Map()).entries()]
+          .map(([category, count]) => ({ category, count }))
+          .sort((a, b) => b.count - a.count || a.category.localeCompare(b.category))
+          .slice(0, 5),
+        verdicts,
+      };
+    }),
+    nonVerdictRows,
+  };
+}
 
 export interface WorkflowRunDurationStats {
   averageDurationMs: number | null;

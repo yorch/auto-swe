@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { computeDailyRunSeries } from './analytics.js';
-import { computeDeliveryReport } from './reports.js';
+import { computeDeliveryReport, computeHitlReport, computeQualityReport } from './reports.js';
 import {
+  buildHumanStepDailyRollups,
+  buildReviewVerdictDailyRollups,
   buildWorkflowRunDailyRollups,
   ciFixRoundsFromBuckets,
   combineWorkflowRunRollupRows,
@@ -14,6 +16,8 @@ import {
 import {
   dailyRunSeriesFromRollups,
   deliveryReportFromRollups,
+  humanStepMetricsFromRollups,
+  qualityReviewFromRollups,
   workflowRunDurationStatsFromRollups,
   workflowTemplatePerVersionFromRollups,
 } from './workflowRunRollupReports.js';
@@ -401,5 +405,79 @@ describe('WorkflowRun daily rollups', () => {
       new Date(windowEnd.getTime() - 1)
     );
     expect(rollupDaily).toEqual(liveDaily);
+  });
+
+  it('matches live HITL and reviewer metrics from daily rollups', () => {
+    const requestedAt = new Date('2026-10-01T10:00:00.000Z');
+    const steps = [
+      {
+        kind: 'APPROVAL',
+        requestedAt,
+        resolvedAt: new Date(requestedAt.getTime() + 5),
+        resolvedBy: 'user-1',
+        resolvedByName: 'Ada',
+        resolvedVia: 'web',
+        status: 'RESOLVED',
+      },
+      {
+        kind: 'REVIEW',
+        requestedAt,
+        resolvedAt: null,
+        resolvedBy: null,
+        resolvedByName: null,
+        resolvedVia: null,
+        status: 'TIMED_OUT',
+      },
+    ];
+    const liveHitl = computeHitlReport({
+      autonomyDecisions: [],
+      now: requestedAt,
+      pendingSteps: [],
+      windowSteps: steps,
+    });
+    const rollupHitl = humanStepMetricsFromRollups(
+      buildHumanStepDailyRollups(
+        steps.map((step) => ({ ...step, orgId: 'org-1', teamId: 'team-1' }))
+      ),
+      new Map([['user-1', 'Ada']])
+    );
+    expect(rollupHitl).toEqual({
+      byApprover: liveHitl.byApprover,
+      byKind: liveHitl.byKind,
+      byVia: liveHitl.byVia,
+      medianWaitMs: liveHitl.medianWaitMs,
+      p95WaitMs: liveHitl.p95WaitMs,
+      timedOut: liveHitl.timedOut,
+    });
+
+    const runs = [
+      {
+        attributedOrgId: 'org-1',
+        attributedTeamId: 'team-1',
+        id: 'run-1',
+        startedAt: requestedAt,
+      },
+    ];
+    const traces = [
+      {
+        error: null,
+        outputJson: {
+          approved: false,
+          findings: [{ category: 'correctness' }, { category: 'correctness' }],
+          reviewer: 'SECURITY',
+          severity: 'CRITICAL',
+        },
+        runId: 'run-1',
+      },
+      { error: null, outputJson: { approved: true }, runId: 'run-1' },
+    ];
+    const liveReview = computeQualityReport({
+      pullRequests: [],
+      reviewTraces: traces,
+      runs: [{ id: 'run-1' }],
+      steps: [],
+    }).review;
+    const rollupReview = qualityReviewFromRollups(buildReviewVerdictDailyRollups({ runs, traces }));
+    expect(rollupReview).toEqual(liveReview);
   });
 });

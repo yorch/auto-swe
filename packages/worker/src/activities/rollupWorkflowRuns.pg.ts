@@ -12,6 +12,8 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
   let rollupWorkflowRuns: typeof import('./rollupWorkflowRuns.js').rollupWorkflowRuns;
   let templateId = '';
   let runId = '';
+  let humanStepId = '';
+  let traceId = '';
   let dayStart: Date;
   let previousState: { lastSuccessfulStartAt: Date | null } | null = null;
   let now: Date;
@@ -53,6 +55,41 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
         },
       })
     ).id;
+    humanStepId = (
+      await prisma.workflowHumanStep.create({
+        data: {
+          description: null,
+          kind: 'APPROVAL',
+          nodeId: 'approval',
+          requestedAt: new Date(dayStart.getTime() + 7_200_000),
+          resolvedAt: new Date(now.getTime() - 900_000),
+          resolvedVia: 'web',
+          runId,
+          signalName: 'approval',
+          status: 'RESOLVED',
+          title: 'Approve',
+        },
+      })
+    ).id;
+    traceId = (
+      await prisma.agentTrace.create({
+        data: {
+          agentKey: 'reviewer',
+          createdAt: new Date(now.getTime() - 600_000),
+          nodeId: 'runReviewNetwork',
+          outputJson: {
+            approved: false,
+            findings: [{ category: 'correctness', message: 'Fix this', severity: 'CRITICAL' }],
+            reviewer: 'SECURITY',
+            severity: 'CRITICAL',
+            summary: 'Needs changes',
+          },
+          runId,
+          seq: 1,
+          type: 'llm_response',
+        },
+      })
+    ).id;
   });
 
   afterAll(async () => {
@@ -62,6 +99,22 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
         ['WorkflowRunDailyRollup'],
         () => prisma.workflowRunDailyRollup.deleteMany({ where: { day: dayStart } })
       );
+      await runUnscoped('remove the human-step rollup test fixture', ['HumanStepDailyRollup'], () =>
+        prisma.humanStepDailyRollup.deleteMany({ where: { day: dayStart } })
+      );
+      await runUnscoped(
+        'remove the review-verdict rollup test fixture',
+        ['ReviewVerdictDailyRollup'],
+        () => prisma.reviewVerdictDailyRollup.deleteMany({ where: { day: dayStart } })
+      );
+      if (traceId) {
+        await runUnscoped('remove the review trace test fixture', ['AgentTrace'], () =>
+          prisma.agentTrace.deleteMany({ where: { id: traceId } })
+        );
+      }
+      if (humanStepId) {
+        await prisma.workflowHumanStep.deleteMany({ where: { id: humanStepId } });
+      }
       await prisma.workflowRun.deleteMany({ where: { id: runId } });
     }
     if (templateId) {
@@ -95,14 +148,21 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
     );
     expect(dirtyCandidates.map((run) => run.id)).toContain(runId);
     const result = await rollupWorkflowRuns(now);
-    const rows = await runUnscoped(
-      'read the workflow-run rollup test fixture',
-      ['WorkflowRunDailyRollup'],
-      () =>
+    const [rows, humanRows, reviewRows] = await Promise.all([
+      runUnscoped('read the workflow-run rollup test fixture', ['WorkflowRunDailyRollup'], () =>
         prisma.workflowRunDailyRollup.findMany({
           where: { bucketVersion: 2, day: dayStart },
         })
-    );
+      ),
+      runUnscoped('read the human-step rollup test fixture', ['HumanStepDailyRollup'], () =>
+        prisma.humanStepDailyRollup.findMany({ where: { bucketVersion: 2, day: dayStart } })
+      ),
+      runUnscoped('read the review-verdict rollup test fixture', ['ReviewVerdictDailyRollup'], () =>
+        prisma.reviewVerdictDailyRollup.findMany({
+          where: { bucketVersion: 2, day: dayStart },
+        })
+      ),
+    ]);
     const state = await prisma.rollupSweepState.findUniqueOrThrow({
       select: { lastSuccessfulStartAt: true },
       where: { name: SWEEP_NAME },
@@ -111,6 +171,8 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
     expect(result).toEqual({ days: 2, rows: 1 });
     expect(rows).toHaveLength(1);
     expect(rows[0]?.runs).toBe(1);
+    expect(humanRows).toMatchObject([{ resolvedVia: 'web', steps: 1 }]);
+    expect(reviewRows).toMatchObject([{ findings: 1, reviewer: 'SECURITY', verdicts: 1 }]);
     expect(state.lastSuccessfulStartAt).toEqual(now);
   });
 });
