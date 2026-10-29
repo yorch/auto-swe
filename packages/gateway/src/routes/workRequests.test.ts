@@ -42,6 +42,28 @@ vi.mock('@auto-swe/shared/lib/sameRepositoryIds', () => ({ sameRepositoryIds }))
 vi.mock('../lib/issueTrackerClient.js', () => ({
   fetchTicket: vi.fn(async () => null),
 }));
+// Only the tracker allowlist is controllable; every other setting resolves as before.
+const trackerIssueRepositories = vi.hoisted(() => ({
+  ctx: [] as unknown[],
+  fail: false,
+  value: [] as string[],
+}));
+vi.mock('@auto-swe/shared/config', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@auto-swe/shared/config')>();
+  return {
+    ...original,
+    resolveSetting: async (...args: Parameters<typeof original.resolveSetting>) => {
+      if (args[0] !== 'github.trackerIssueRepositories') {
+        return original.resolveSetting(...args);
+      }
+      trackerIssueRepositories.ctx.push(args[1]);
+      if (trackerIssueRepositories.fail) {
+        throw new Error('settings unavailable');
+      }
+      return trackerIssueRepositories.value;
+    },
+  };
+});
 
 import { resolveIssueTrackerConfig } from '@auto-swe/shared/lib/systemConfig';
 import { TRACKER_READ_OUT_OF_SCOPE } from '@auto-swe/shared/lib/trackerSync';
@@ -671,6 +693,9 @@ describe('POST /api/v1/work-requests', () => {
     afterEach(() => {
       resolveIssueTrackerConfigMock.mockReset();
       fetchTicketMock.mockReset();
+      trackerIssueRepositories.ctx = [];
+      trackerIssueRepositories.fail = false;
+      trackerIssueRepositories.value = [];
     });
 
     // Enrichment runs after the response; the fixed warn line proves it ran and refused.
@@ -721,6 +746,39 @@ describe('POST /api/v1/work-requests', () => {
       expect((await submit('6')).statusCode).toBe(201);
       await vi.waitFor(() => expect(snapshotUpserts).toHaveLength(2));
       expect(fetchTicketMock).toHaveBeenCalledTimes(2);
+    });
+
+    it('fetches a ticket from a repository the operator listed, resolved at the repo team', async () => {
+      existingWorkflows = [];
+      snapshotUpserts.length = 0;
+      fetchTicketMock.mockClear();
+      trackerIssueRepositories.value = ['Org/Issues'];
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(githubTracker());
+      fetchTicketMock.mockResolvedValueOnce(ticket);
+      expect((await submit('org/issues#5')).statusCode).toBe(201);
+      await vi.waitFor(() => expect(snapshotUpserts).toHaveLength(1));
+      expect(fetchTicketMock).toHaveBeenCalledTimes(1);
+      expect(trackerIssueRepositories.ctx).toContainEqual({ orgId: 'org-1', teamId: 'team-1' });
+    });
+
+    it('refuses an unlisted repository whatever the list holds', async () => {
+      existingWorkflows = [];
+      snapshotUpserts.length = 0;
+      fetchTicketMock.mockClear();
+      trackerIssueRepositories.value = ['org/issues'];
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(githubTracker());
+
+      await expectRefused('attacker/private#1');
+    });
+
+    it('refuses a listed repository when the setting cannot be read', async () => {
+      existingWorkflows = [];
+      snapshotUpserts.length = 0;
+      fetchTicketMock.mockClear();
+      trackerIssueRepositories.fail = true;
+      resolveIssueTrackerConfigMock.mockResolvedValueOnce(githubTracker());
+
+      await expectRefused('org/issues#5');
     });
   });
 

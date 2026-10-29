@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   findRunInput: vi.fn(),
   logWarn: vi.fn(),
   resolveConfig: vi.fn(),
+  resolveSetting: vi.fn(),
 }));
 
 vi.mock('@auto-swe/shared/db', () => ({
@@ -14,6 +15,10 @@ vi.mock('@auto-swe/shared/db', () => ({
     connection: { findMany: (...args: unknown[]) => mocks.findConnections(...args) },
     runInput: { findUnique: (...args: unknown[]) => mocks.findRunInput(...args) },
   },
+}));
+vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@auto-swe/shared/config')>()),
+  resolveSetting: (...args: unknown[]) => mocks.resolveSetting(...args),
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveGitHubBaseUrl: async () => 'https://github.com',
@@ -56,6 +61,7 @@ function githubRun(overrides: Record<string, unknown> = {}, baseUrl: string | nu
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.resolveSetting.mockResolvedValue([]);
   mocks.findRunInput.mockResolvedValue({ externalTicketId: 'DEMO-4', ticketIsSynthetic: false });
   mocks.resolveConfig.mockResolvedValue(JIRA);
   mocks.createProvider.mockReturnValue({ addComment: mocks.addComment });
@@ -244,7 +250,7 @@ describe('postTicketComment', () => {
 describe('postTicketComment on the GitHub tracker', () => {
   const REFUSED = {
     posted: false,
-    reason: "the ticket's repository is not one this run targets",
+    reason: "the ticket's repository is not one this run targets or the operator allows",
   };
 
   it('refuses a ticket in a repository the run does not target', async () => {
@@ -284,6 +290,32 @@ describe('postTicketComment on the GitHub tracker', () => {
     );
   });
 
+  it('allows a ticket in a repository the operator listed, resolved at the run team', async () => {
+    mocks.resolveSetting.mockResolvedValue(['Acme/Issues']);
+    githubRun({
+      connection: { ...OWN_REPO, team: { orgId: 'org-1' }, teamId: 'team-1' },
+      externalTicketId: 'acme/issues#5',
+    });
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual({
+      posted: true,
+    });
+    expect(mocks.resolveSetting).toHaveBeenCalledWith('github.trackerIssueRepositories', {
+      orgId: 'org-1',
+      teamId: 'team-1',
+    });
+    expect(mocks.addComment).toHaveBeenCalledWith('acme/issues#5', 'X');
+  });
+
+  it('refuses an unlisted repository, and a listed one when the list cannot be read', async () => {
+    mocks.resolveSetting.mockResolvedValue(['acme/issues']);
+    githubRun({ externalTicketId: 'acme/elsewhere#5' });
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
+    mocks.resolveSetting.mockRejectedValue(new Error('settings unavailable'));
+    githubRun({ externalTicketId: 'acme/issues#5' });
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
+    expect(mocks.addComment).not.toHaveBeenCalled();
+  });
+
   it('refuses a bare issue number, which names no repository', async () => {
     githubRun({ externalTicketId: '#7' });
     await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
@@ -307,7 +339,7 @@ describe('postTicketComment on the GitHub tracker', () => {
     githubRun({ externalTicketId: 'attacker/public#1' });
     await postTicketComment({ body: 'X', workRequestId: 'wr-1' });
     expect(mocks.logWarn).toHaveBeenCalledWith(
-      "postTicketComment: the ticket's repository is not one this run targets",
+      "postTicketComment: the ticket's repository is not one this run targets or the operator allows",
       { workRequestId: 'wr-1' }
     );
   });
