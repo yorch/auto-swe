@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { buildDocSearchIndexFromDir } from './docFiles.js';
 import {
   buildSearchIndex,
@@ -9,7 +9,6 @@ import {
   MAX_QUERY_CHARS,
   MAX_QUERY_TERMS,
   MAX_RESULTS,
-  type SearchIndex,
   sameStem,
   searchDocs,
   stemForms,
@@ -573,15 +572,28 @@ describe('countMatchingTerms', () => {
 type Stemmer = (word: string) => string[];
 
 /**
- * The class this test reviews: two distinct words that one stem covers, where the longer is the
- * shorter with `s` or `es` added, and the shorter is a short or vowelless word (`http`/`https`,
- * `ghe`/`ghes`, `jwt`/`jwts`). Plurals of longer words are not reviewed: a plural of a word of
- * five or more letters with a vowel is an ordinary inflection. Keys are `short/long`.
+ * Function words and protocol names that a plural `s` strip must never merge with a base. A
+ * plural of one of these is a different word (`theirs`, `yours`, `https`), not an inflection.
+ */
+const WATCH_BASES: ReadonlySet<string> = new Set([
+  'our',
+  'your',
+  'their',
+  'her',
+  'his',
+  'len',
+  'rest',
+  'http',
+]);
+
+/**
+ * The merges this test reviews. Two distinct words that one stem covers, where the longer is the
+ * shorter with `s` or `es` added, and the shorter is either vowelless (`http`, `jwt`, `sync`) or
+ * in `WATCH_BASES`. Keys are `short/long`. Deterministic over the given vocabulary.
  *
- * Limits, stated so nothing reads as more than it is: only the short or vowelless plural class is
- * flagged. A false merge with a longer base (`their`/`theirs` before it was listed) is not flagged;
- * it has to be found by reading the docs or the stemmer lists. Missed inflections (`gas`/`gases`,
- * which the stemmer does not join) are not covered by this test at all.
+ * Limits, stated so nothing reads as more than it is: a false merge whose base is neither
+ * vowelless nor in `WATCH_BASES` is not flagged; missed inflections (`api`/`apis`, `gpu`/`gpus`,
+ * `id`/`ids`, `pr`/`prs`: the stemmer does not join them) are not covered by this test at all.
  */
 function flaggedMerges(vocabulary: string[], stem: Stemmer): Set<string> {
   const groups = new Map<string, string[]>();
@@ -595,7 +607,7 @@ function flaggedMerges(vocabulary: string[], stem: Stemmer): Set<string> {
     for (const short of group) {
       for (const long of group) {
         const plural = long === `${short}s` || long === `${short}es`;
-        if (plural && (short.length <= 4 || !/[aeiou]/.test(short))) {
+        if (plural && (!/[aeiou]/.test(short) || WATCH_BASES.has(short))) {
           flagged.add(`${short}/${long}`);
         }
       }
@@ -606,293 +618,47 @@ function flaggedMerges(vocabulary: string[], stem: Stemmer): Set<string> {
 
 /**
  * Compares the flagged merges with the reviewed list. `unreviewed` must be empty: a flagged merge
- * nobody has reviewed. `stale` lists reviewed entries that are no longer flagged (their words no
- * longer merge, or no longer occur), so the list cannot rot.
+ * nobody has reviewed. `stale` lists reviewed pairs the stemmer no longer merges. Staleness is
+ * judged by the stemmer alone, so rewording a sentence in the docs does not fail the test.
  */
 function mergeReport(
   flagged: Set<string>,
-  reviewed: Readonly<Record<string, string>>
+  reviewed: Readonly<Record<string, string>>,
+  stem: Stemmer
 ): { unreviewed: string[]; stale: string[] } {
+  const merges = (key: string) => {
+    const [short = '', long = ''] = key.split('/');
+    const forms = new Set(stem(short));
+    return stem(long).some((form) => forms.has(form));
+  };
   return {
     stale: Object.keys(reviewed)
-      .filter((key) => !flagged.has(key))
+      .filter((key) => !merges(key))
       .sort(),
     unreviewed: [...flagged].filter((key) => !(key in reviewed)).sort(),
   };
 }
 
 /**
- * Plural merges a reviewer has checked. Each is a genuine plural of a short word or an acronym
- * plural, which is what the stemmer is meant to join. `ghe`/`ghes` is joined on purpose: the docs
- * use GHE and GHES for the same product, so a search for either finds both. A pair that is not a
- * plural (a protocol name such as `https`) must not be listed; fix the stemmer list instead.
- * An entry is stale, and fails the test, once its words no longer merge in the docs.
+ * Flagged merges a reviewer has checked and accepted as benign, each with its own reason. An
+ * entry is stale, and fails the test, once the stemmer no longer merges its two words.
  */
-const PLURAL = 'plural, or third-person -s, of the same word';
-const ACRONYM = 'plural of an acronym or abbreviation';
 const REVIEWED_COLLISIONS: Readonly<Record<string, string>> = {
-  'ack/acks': PLURAL,
-  'act/acts': PLURAL,
-  'add/adds': PLURAL,
-  'age/ages': PLURAL,
-  'app/apps': PLURAL,
-  'arg/args': ACRONYM,
-  'arm/arms': PLURAL,
-  'ask/asks': PLURAL,
-  'back/backs': PLURAL,
-  'bar/bars': PLURAL,
-  'base/bases': PLURAL,
-  'beat/beats': PLURAL,
-  'bill/bills': PLURAL,
-  'bind/binds': PLURAL,
-  'bit/bits': PLURAL,
-  'blob/blobs': PLURAL,
-  'boot/boots': PLURAL,
-  'bot/bots': PLURAL,
-  'box/boxes': PLURAL,
-  'bug/bugs': PLURAL,
-  'buy/buys': PLURAL,
-  'byte/bytes': PLURAL,
-  'call/calls': PLURAL,
-  'cap/caps': PLURAL,
-  'card/cards': PLURAL,
-  'case/cases': PLURAL,
-  'cell/cells': PLURAL,
-  'char/chars': ACRONYM,
-  'cite/cites': PLURAL,
-  'code/codes': PLURAL,
-  'come/comes': PLURAL,
-  'cost/costs': PLURAL,
-  'cut/cuts': PLURAL,
-  'dag/dags': ACRONYM,
-  'date/dates': PLURAL,
-  'day/days': PLURAL,
-  'die/dies': PLURAL,
-  'diff/diffs': ACRONYM,
-  'doc/docs': ACRONYM,
-  'door/doors': PLURAL,
-  'dot/dots': PLURAL,
-  'drop/drops': PLURAL,
-  'edge/edges': PLURAL,
-  'edit/edits': PLURAL,
-  'emit/emits': PLURAL,
-  'end/ends': PLURAL,
-  'enum/enums': ACRONYM,
-  'epic/epics': PLURAL,
-  'era/eras': PLURAL,
-  'err/errs': ACRONYM,
-  'eval/evals': ACRONYM,
-  'exit/exits': PLURAL,
-  'expr/exprs': ACRONYM,
-  'fact/facts': PLURAL,
-  'fail/fails': PLURAL,
-  'fall/falls': PLURAL,
-  'fan/fans': PLURAL,
-  'feed/feeds': PLURAL,
-  'file/files': PLURAL,
-  'fill/fills': PLURAL,
-  'find/finds': PLURAL,
-  'fire/fires': PLURAL,
-  'fit/fits': PLURAL,
-  'fix/fixes': PLURAL,
-  'flag/flags': PLURAL,
-  'flip/flips': PLURAL,
-  'flow/flows': PLURAL,
-  'fold/folds': PLURAL,
-  'fork/forks': PLURAL,
-  'form/forms': PLURAL,
-  'four/fours': PLURAL,
-  'free/frees': PLURAL,
-  'gap/gaps': PLURAL,
-  'gate/gates': PLURAL,
-  'get/gets': PLURAL,
-  'ghe/ghes': 'GHE and GHES name one product in the docs; joined on purpose, so either finds both',
-  'give/gives': PLURAL,
-  'glob/globs': PLURAL,
-  'grow/grows': PLURAL,
-  'hand/hands': PLURAL,
-  'hang/hangs': PLURAL,
-  'hash/hashes': PLURAL,
-  'head/heads': PLURAL,
-  'help/helps': PLURAL,
-  'hide/hides': PLURAL,
-  'hint/hints': PLURAL,
-  'hit/hits': PLURAL,
-  'hold/holds': PLURAL,
-  'hook/hooks': PLURAL,
-  'hop/hops': PLURAL,
-  'host/hosts': PLURAL,
-  'hour/hours': PLURAL,
-  'idle/idles': PLURAL,
-  'item/items': PLURAL,
-  'job/jobs': PLURAL,
-  'join/joins': PLURAL,
-  'jwt/jwts': ACRONYM,
-  'keep/keeps': PLURAL,
-  'key/keys': PLURAL,
-  'kill/kills': PLURAL,
-  'kind/kinds': PLURAL,
-  'knob/knobs': PLURAL,
-  'know/knows': PLURAL,
-  'lack/lacks': PLURAL,
-  'lag/lags': PLURAL,
-  'land/lands': PLURAL,
-  'last/lasts': PLURAL,
-  'lead/leads': PLURAL,
-  'let/lets': PLURAL,
-  'lib/libs': ACRONYM,
-  'lift/lifts': PLURAL,
-  'like/likes': PLURAL,
-  'line/lines': PLURAL,
-  'link/links': PLURAL,
-  'lint/lints': PLURAL,
-  'list/lists': PLURAL,
-  'live/lives': PLURAL,
-  'load/loads': PLURAL,
-  'lock/locks': PLURAL,
-  'log/logs': PLURAL,
-  'look/looks': PLURAL,
-  'loop/loops': PLURAL,
-  'lose/loses': PLURAL,
-  'make/makes': PLURAL,
-  'map/maps': PLURAL,
-  'mark/marks': PLURAL,
-  'mask/masks': PLURAL,
-  'mean/means': PLURAL,
-  'meet/meets': PLURAL,
-  'miss/misses': PLURAL,
-  'mix/mixes': PLURAL,
-  'mock/mocks': PLURAL,
-  'mode/modes': PLURAL,
-  'move/moves': PLURAL,
-  'name/names': PLURAL,
-  'need/needs': PLURAL,
-  'node/nodes': PLURAL,
-  'note/notes': PLURAL,
-  'obey/obeys': PLURAL,
-  'omit/omits': PLURAL,
-  'one/ones': PLURAL,
-  'open/opens': PLURAL,
-  'opt/opts': ACRONYM,
-  'org/orgs': ACRONYM,
-  'own/owns': PLURAL,
-  'pack/packs': PLURAL,
-  'page/pages': PLURAL,
-  'pair/pairs': PLURAL,
-  'park/parks': PLURAL,
-  'part/parts': PLURAL,
-  'pass/passes': PLURAL,
-  'pat/pats': PLURAL,
-  'path/paths': PLURAL,
-  'pay/pays': PLURAL,
-  'pick/picks': PLURAL,
-  'pid/pids': ACRONYM,
-  'pin/pins': PLURAL,
-  'plan/plans': PLURAL,
-  'play/plays': PLURAL,
-  'pod/pods': PLURAL,
-  'poll/polls': PLURAL,
-  'port/ports': PLURAL,
-  'post/posts': PLURAL,
-  'prd/prds': ACRONYM,
-  'pull/pulls': PLURAL,
-  'push/pushes': PLURAL,
-  'put/puts': PLURAL,
-  'rank/ranks': PLURAL,
-  'rate/rates': PLURAL,
-  'read/reads': PLURAL,
-  'ref/refs': ACRONYM,
-  'repo/repos': ACRONYM,
-  'rest/rests': PLURAL,
-  'ride/rides': PLURAL,
-  'rise/rises': PLURAL,
-  'role/roles': PLURAL,
-  'root/roots': PLURAL,
-  'row/rows': PLURAL,
-  'rule/rules': PLURAL,
-  'run/runs': PLURAL,
-  'save/saves': PLURAL,
-  'say/says': PLURAL,
-  'scan/scans': PLURAL,
-  'see/sees': PLURAL,
-  'seed/seeds': PLURAL,
-  'send/sends': PLURAL,
-  'set/sets': PLURAL,
-  'shim/shims': PLURAL,
-  'ship/ships': PLURAL,
-  'show/shows': PLURAL,
-  'side/sides': PLURAL,
-  'sign/signs': PLURAL,
-  'sink/sinks': PLURAL,
-  'sit/sits': PLURAL,
-  'site/sites': PLURAL,
-  'size/sizes': PLURAL,
-  'skip/skips': PLURAL,
-  'slot/slots': PLURAL,
-  'sort/sorts': PLURAL,
-  'span/spans': PLURAL,
-  'spec/specs': ACRONYM,
-  'stat/stats': ACRONYM,
-  'stay/stays': PLURAL,
-  'step/steps': PLURAL,
-  'stop/stops': PLURAL,
-  'stub/stubs': PLURAL,
-  'sum/sums': PLURAL,
-  'swap/swaps': PLURAL,
-  'sync/syncs': PLURAL,
-  'tab/tabs': PLURAL,
-  'tag/tags': PLURAL,
-  'tail/tails': PLURAL,
-  'take/takes': PLURAL,
-  'talk/talks': PLURAL,
-  'task/tasks': PLURAL,
-  'team/teams': PLURAL,
-  'tell/tells': PLURAL,
-  'term/terms': PLURAL,
-  'test/tests': PLURAL,
-  'text/texts': PLURAL,
-  'tick/ticks': PLURAL,
-  'tier/tiers': PLURAL,
-  'time/times': PLURAL,
-  'tool/tools': PLURAL,
-  'tree/trees': PLURAL,
-  'trim/trims': PLURAL,
-  'trip/trips': PLURAL,
-  'tune/tunes': PLURAL,
-  'turn/turns': PLURAL,
-  'type/types': PLURAL,
-  'uid/uids': ACRONYM,
-  'url/urls': ACRONYM,
-  'use/uses': PLURAL,
-  'user/users': PLURAL,
-  'var/vars': ACRONYM,
-  'view/views': PLURAL,
-  'wait/waits': PLURAL,
-  'walk/walks': PLURAL,
-  'want/wants': PLURAL,
-  'warn/warns': PLURAL,
-  'way/ways': PLURAL,
-  'week/weeks': PLURAL,
-  'win/wins': PLURAL,
-  'wire/wires': PLURAL,
-  'word/words': PLURAL,
-  'work/works': PLURAL,
-  'wrap/wraps': PLURAL,
-  'zero/zeros': PLURAL,
+  'ghe/ghes':
+    'GHES and GHE both name GitHub Enterprise Server in the docs (GHE 14 times, GHES once, in pr-feedback.md); the rule does not flag it, and the stemmer merges it',
+  'jwt/jwts':
+    'JWTs: the plural of the acronym JWT (JSON Web Token), as in "sends session-bridge JWTs"',
+  'prd/prds':
+    'PRDs: the plural of the abbreviation PRD (product requirements document), as in "PRD runs"',
+  'sync/syncs':
+    'syncs: the third-person verb form of sync ("syncs the tracker"), not a noun plural',
 };
-
-let indexCache: Promise<SearchIndex> | undefined;
-/** The index of the served docs, built once: every test reads it, and the build parses each doc. */
-function docsIndex(): Promise<SearchIndex> {
-  indexCache ??= buildDocSearchIndexFromDir(
-    fileURLToPath(new URL('../../../../docs', import.meta.url))
-  );
-  return indexCache;
-}
 
 /** The distinct words of the served docs' titles and sections, split as the index splits them. */
 async function docsVocabulary(): Promise<string[]> {
-  const index = await docsIndex();
+  const index = await buildDocSearchIndexFromDir(
+    fileURLToPath(new URL('../../../../docs', import.meta.url))
+  );
   const vocabulary = new Set<string>();
   const add = (text: string) => {
     for (const { word } of words(text)) {
@@ -910,51 +676,65 @@ async function docsVocabulary(): Promise<string[]> {
 }
 
 describe('docs vocabulary plural merges', () => {
-  it('reads the served docs and their words', async () => {
-    const vocabulary = await docsVocabulary();
+  let vocabulary: string[] = [];
+  // Building the index parses every served doc. Under parallel load that outruns the 5 s default.
+  beforeAll(async () => {
+    vocabulary = await docsVocabulary();
+  }, 120_000);
+
+  it('reads the served docs and their words', () => {
     expect(vocabulary.length).toBeGreaterThan(1000);
     expect(vocabulary).toContain('approval');
   });
 
-  it('flags no short or vowelless plural merge the reviewed list does not cover', async () => {
-    const flagged = flaggedMerges(await docsVocabulary(), stemForms);
-    const { unreviewed, stale } = mergeReport(flagged, REVIEWED_COLLISIONS);
+  it('flags no vowelless or watch-set plural merge the reviewed list does not cover', () => {
+    const flagged = flaggedMerges(vocabulary, stemForms);
+    const { unreviewed, stale } = mergeReport(flagged, REVIEWED_COLLISIONS, stemForms);
     expect(
       unreviewed,
-      'docs words merge a short or vowelless word with its plural, not in REVIEWED_COLLISIONS: ' +
-        `${unreviewed.join(', ')}. Either add a reviewed entry with a reason (a genuine plural or ` +
-        'acronym plural), or fix the stemmer lists in docSearch.ts if the pair is not a plural.'
+      'docs words merge a vowelless or watch-set word with its plural, not in REVIEWED_COLLISIONS: ' +
+        `${unreviewed.join(', ')}. Either add a reviewed entry with a specific reason, or fix the ` +
+        'stemmer lists in docSearch.ts if the pair is not a plural.'
     ).toEqual([]);
     expect(
       stale,
-      `REVIEWED_COLLISIONS entries that no longer merge in the docs: ${stale.join(', ')}. Remove them.`
+      `REVIEWED_COLLISIONS entries the stemmer no longer merges: ${stale.join(', ')}. Remove them.`
     ).toEqual([]);
-  }, 15_000);
+  });
 
   it('reports a merge the pre-fix stemmer made, and suppresses it only when reviewed', () => {
     // Before `https` was listed as unstemmed, the plural rule gave it the stem of `http`.
     const preFix: Stemmer = (word) => (word === 'https' ? ['http'] : stemForms(word));
     const flagged = flaggedMerges(['http', 'https'], preFix);
     expect(flagged).toEqual(new Set(['http/https']));
-    expect(mergeReport(flagged, {})).toEqual({ stale: [], unreviewed: ['http/https'] });
-    expect(mergeReport(flagged, { 'http/https': 'reviewed' })).toEqual({
+    expect(mergeReport(flagged, {}, preFix)).toEqual({
+      stale: [],
+      unreviewed: ['http/https'],
+    });
+    expect(mergeReport(flagged, { 'http/https': 'reviewed' }, preFix)).toEqual({
       stale: [],
       unreviewed: [],
     });
   });
 
-  it('reports a reviewed entry as stale once its words no longer merge', () => {
+  it('flags a watch-set word and a vowelless word, but not an ordinary plural', () => {
+    expect(flaggedMerges(['our', 'ours'], stemForms)).toEqual(new Set(['our/ours']));
+    expect(flaggedMerges(['sync', 'syncs'], stemForms)).toEqual(new Set(['sync/syncs']));
+    expect(flaggedMerges(['agent', 'agents', 'engine', 'engines'], stemForms).size).toBe(0);
+  });
+
+  it('reports a reviewed pair as stale once the stemmer no longer merges it', () => {
     // A stemmer that merges nothing: the reviewed pair no longer merges, so its entry is stale.
     const noMerges: Stemmer = (word) => [word];
-    const flagged = flaggedMerges(['http', 'https'], noMerges);
-    expect(flagged.size).toBe(0);
-    expect(mergeReport(flagged, { 'http/https': 'reviewed' })).toEqual({
+    const flagged = flaggedMerges(['http', 'https'], stemForms);
+    expect(mergeReport(flagged, { 'http/https': 'reviewed' }, noMerges)).toEqual({
       stale: ['http/https'],
       unreviewed: [],
     });
-  });
-
-  it('does not flag an ordinary plural of a longer word', () => {
-    expect(flaggedMerges(['agent', 'agents', 'engine', 'engines'], stemForms).size).toBe(0);
+    // The same entry is not stale while the stemmer merges the pair, even if the docs lack it.
+    expect(mergeReport(new Set(), { 'our/ours': 'reviewed' }, stemForms)).toEqual({
+      stale: [],
+      unreviewed: [],
+    });
   });
 });
