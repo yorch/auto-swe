@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import rateLimit from '@fastify/rate-limit';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { describe, expect, it, vi } from 'vitest';
 import { reportDigestRoutes } from './reportDigests.js';
@@ -36,6 +37,7 @@ async function buildApp(role: string, membership: { orgIds?: string[]; teamIds?:
       update: vi.fn().mockResolvedValue({}),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
+    configAuditLog: { create: vi.fn().mockResolvedValue(undefined) },
     slackChannel: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue({ orgId: ORG_B }),
@@ -57,21 +59,25 @@ async function buildApp(role: string, membership: { orgIds?: string[]; teamIds?:
       ),
     },
   };
+  const database = Object.assign(prisma, {
+    $transaction: (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+  });
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
-  app.decorate('prisma', prisma as unknown as never);
+  app.decorate('prisma', database as unknown as never);
   app.decorate('temporal', temporal as unknown as never);
   app.decorate('auth', {
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role, sub: 'user-1' }),
   } as unknown as never);
+  await app.register(rateLimit, { global: false, max: 1000, timeWindow: '1 minute' });
   await app.register(reportDigestRoutes, { prefix: '/api/v1/report-digests' });
   await app.ready();
   return { app, prisma, temporal };
 }
 
 describe('report digest routes', () => {
-  it('publicly unsubscribes only the recipient authenticated by the HMAC token', async () => {
+  it('renders a non-mutating confirmation on GET and opts out through the RFC 8058 POST', async () => {
     const { app, prisma } = await buildApp('VIEWER');
     prisma.reportDigestSubscription.findUnique.mockResolvedValue({
       emailRecipients: ['digest@example.test'],
@@ -85,7 +91,22 @@ describe('report digest routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.body).toContain('You have been unsubscribed');
+    expect(response.body).toContain('method="post"');
+    expect(response.body).toContain('List-Unsubscribe');
+    expect(response.body).toContain(
+      'action="/api/v1/report-digests/unsubscribe?token=valid-token"'
+    );
+    expect(prisma.reportDigestSubscription.updateMany).not.toHaveBeenCalled();
+
+    const post = await app.inject({
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      method: 'POST',
+      payload: 'List-Unsubscribe=One-Click',
+      url: '/api/v1/report-digests/unsubscribe?token=valid-token',
+    });
+
+    expect(post.statusCode).toBe(200);
+    expect(post.body).toContain('You have been unsubscribed');
     expect(prisma.reportDigestSubscription.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: { optedOutEmails: { push: 'digest@example.test' } },
@@ -95,7 +116,37 @@ describe('report digest routes', () => {
     await app.close();
   });
 
-  it('allows a manager to re-add an opted-out recipient', async () => {
+  it('rate limits the public unsubscribe confirmation route', async () => {
+    const { app } = await buildApp('VIEWER');
+    const responses = await Promise.all(
+      Array.from({ length: 31 }, () =>
+        app.inject({
+          method: 'GET',
+          url: '/api/v1/report-digests/unsubscribe?token=invalid-token',
+        })
+      )
+    );
+
+    expect(responses.at(-1)?.statusCode).toBe(429);
+    await app.close();
+
+    const postApp = await buildApp('VIEWER');
+    const postResponses = await Promise.all(
+      Array.from({ length: 31 }, () =>
+        postApp.app.inject({
+          headers: { 'content-type': 'application/x-www-form-urlencoded' },
+          method: 'POST',
+          payload: 'List-Unsubscribe=One-Click',
+          url: '/api/v1/report-digests/unsubscribe?token=invalid-token',
+        })
+      )
+    );
+
+    expect(postResponses.at(-1)?.statusCode).toBe(429);
+    await postApp.app.close();
+  });
+
+  it('requires confirmation and audits a manager re-adding an opted-out recipient', async () => {
     const { app, prisma } = await buildApp('ADMIN');
     prisma.reportDigestSubscription.findUnique.mockResolvedValue({
       emailRecipients: [],
@@ -107,10 +158,43 @@ describe('report digest routes', () => {
       teamId: null,
     });
 
-    const response = await app.inject({
+    const unconfirmed = await app.inject({
       headers: AUTH,
       method: 'PATCH',
       payload: { emailRecipients: ['digest@example.test'] },
+      url: `/api/v1/report-digests/${SUBSCRIPTION}`,
+    });
+    expect(unconfirmed.statusCode).toBe(400);
+    expect(prisma.reportDigestSubscription.update).not.toHaveBeenCalled();
+
+    const confirmationWithoutRecipient = await app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: {
+        confirmOptedOutReadd: ['digest@example.test'],
+        emailRecipients: [],
+      },
+      url: `/api/v1/report-digests/${SUBSCRIPTION}`,
+    });
+    expect(confirmationWithoutRecipient.statusCode).toBe(200);
+    expect(prisma.reportDigestSubscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          emailRecipients: [],
+          optedOutEmails: { set: ['digest@example.test'] },
+        }),
+      })
+    );
+    expect(prisma.configAuditLog.create).not.toHaveBeenCalled();
+    prisma.reportDigestSubscription.update.mockClear();
+
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: {
+        confirmOptedOutReadd: ['digest@example.test'],
+        emailRecipients: ['digest@example.test'],
+      },
       url: `/api/v1/report-digests/${SUBSCRIPTION}`,
     });
 
@@ -120,6 +204,16 @@ describe('report digest routes', () => {
         data: expect.objectContaining({
           emailRecipients: ['digest@example.test'],
           optedOutEmails: { set: [] },
+        }),
+      })
+    );
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'UPDATE',
+          actorId: 'user-1',
+          entityId: SUBSCRIPTION,
+          entityType: 'ReportDigestSubscription',
         }),
       })
     );

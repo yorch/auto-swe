@@ -186,4 +186,25 @@ describe('buildReportDigest', () => {
     });
     expect(digest.text).toContain('Worst gate: not computed');
   });
+
+  it('keeps plain-text Slack headers at 150 characters and omits relative action URLs', () => {
+    const digest = buildReportDigest({
+      currentPeriod,
+      currentRows: [],
+      now,
+      oldestPendingApprovalRequestedAt: null,
+      pendingApprovalCount: 0,
+      previousPeriod,
+      previousRows: [],
+      reportsUrl: '/admin/reports',
+      scope: { name: '*'.repeat(200), type: 'ORGANIZATION' },
+    });
+    const header = digest.slackBlocks[0] as { text: { text: string; type: string } };
+
+    expect(header.text.type).toBe('plain_text');
+    expect(header.text.text).toBe('*'.repeat(150));
+    expect(header.text.text.length).toBeLessThanOrEqual(150);
+    expect(digest.slackBlocks).not.toContainEqual(expect.objectContaining({ type: 'actions' }));
+    expect(digest.slackMrkdwn).not.toContain('Open reports: /admin/reports');
+  });
 });

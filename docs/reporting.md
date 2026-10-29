@@ -100,20 +100,37 @@ data; team subscriptions do not. Send-test delivers immediately without changing
 last-sent timestamp.
 
 The weekly sweep runs Mondays at 13:00 UTC when `REPORT_DIGEST_ENABLED` is true. Configure
-`REPORT_DIGEST_CRON` to change the schedule. Digests require workflow-run rollups to be enabled;
-`REPORT_DIGEST_CRON` must run after `WORKFLOW_RUN_ROLLUP_CRON`. The sweep skips delivery when any
-of the 14 required completed UTC days has no rollup rows. Each email address and Slack channel has
-its own durable delivery row for a reporting period. Failed targets are retried after 15 minutes,
-for at most three attempts; targets already sent are not sent again. Email targets opted out on the
-subscription are excluded. The email includes a table-based HTML report, a plain-text alternative,
-and a `List-Unsubscribe` link. The link is signed with a purpose-specific HMAC key derived from the
-existing `CONFIG_ENCRYPTION_KEY`; no separate unsubscribe secret is configured. Managers can see
-opted-out addresses in the Digests tab and re-add an address by restoring it to the recipient list.
-`lastPeriodStart` remains as display metadata for the last fully delivered period and is not used to
-claim or suppress delivery. The migration clears legacy claim values so the displayed date has
-consistent meaning; only a period whose active targets all succeed is recorded. Send-test bypasses delivery-row persistence and does not change the
-scheduled last-sent timestamp; its one-minute limit is stored in Postgres. Email uses the platform
-SMTP configuration when available, otherwise the configured Resend transport.
+`REPORT_DIGEST_CRON` to change the schedule. Each workflow anchors one reporting period to its
+start time: the previous ISO week, Monday 00:00 through Sunday 23:59:59 UTC. Retries and schedule
+catch-up reuse that period. Digests require workflow-run rollups to be enabled;
+`REPORT_DIGEST_CRON` must run after `WORKFLOW_RUN_ROLLUP_CRON`. If any of the 14 required completed
+UTC days has no rollup rows, the workflow retries the coverage check up to six times, sleeping 15
+minutes between passes, and records `rollup_incomplete` if coverage remains unavailable. Each
+email address and Slack channel has its own durable delivery row for a reporting period. Failed
+targets are retried after 15 minutes, for at most three attempts; targets already sent are not sent
+again. Activity-level retries are disabled so the workflow owns the retry policy. The activity
+refuses to create rows for a period less than six days after the last fully delivered period, or
+earlier than any existing delivery period.
+
+Email targets opted out on the subscription are excluded. The email includes a table-based HTML
+report, a plain-text alternative, and `List-Unsubscribe` plus RFC 8058
+`List-Unsubscribe-Post: List-Unsubscribe=One-Click` headers. Opening the public unsubscribe URL
+only renders a confirmation form; the form and one-click mail-client POST both opt out through
+POST to that URL. Both methods are rate limited. The recipient-bound link uses a purpose-specific
+HMAC key derived from the existing `CONFIG_ENCRYPTION_KEY`; no separate unsubscribe secret is
+configured. Keep the previous encryption key in `CONFIG_ENCRYPTION_KEY_PREVIOUS` while links
+signed by it need to remain valid. Removing that old key invalidates its outstanding unsubscribe
+links. Plus-address variants (for example, `reports+weekly@example.test`) are separate recipient
+targets and must be managed as distinct addresses.
+
+Managers can see opted-out addresses in the Digests tab. Re-adding one requires confirmation and
+records the manager in the audit log. `lastPeriodStart` is retained as the last fully delivered
+period for display and as a guard against near-duplicate periods; the migration clears legacy
+claim-era values so the displayed date has consistent meaning. Only a period whose active targets
+all succeed is recorded. Send-test bypasses delivery-row persistence, records failures separately
+from scheduled delivery status, and does not change the scheduled last-sent timestamp; its
+one-minute limit is stored in Postgres. Email uses the platform SMTP configuration when available,
+otherwise the configured Resend transport.
 
 ## Limitations
 

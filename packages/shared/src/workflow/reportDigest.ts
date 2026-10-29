@@ -90,6 +90,18 @@ function periodLabel(period: { end: Date; start: Date }): string {
   return `${period.start.toISOString().slice(0, 10)} – ${period.end.toISOString().slice(0, 10)}`;
 }
 
+function absoluteHttpUrl(value: string | undefined): value is string {
+  if (!value) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export function buildReportDigest(input: ReportDigestInput): ReportDigest {
   const current = summarize(input.currentRows);
   const previous = summarize(input.previousRows);
@@ -123,6 +135,7 @@ export function buildReportDigest(input: ReportDigestInput): ReportDigest {
       ? null
       : Math.max(0, (now.getTime() - oldestApproval.getTime()) / (60 * 60 * 1000));
   const scopeName = input.scope.name.replace(/[\r\n]+/g, ' ').trim();
+  const slackReportsUrl = absoluteHttpUrl(input.reportsUrl) ? input.reportsUrl : undefined;
   const subject = `${scopeName} weekly report — ${periodLabel(input.currentPeriod)}`;
   const metrics = [
     {
@@ -206,7 +219,7 @@ export function buildReportDigest(input: ReportDigestInput): ReportDigest {
           `Projected monthly spend: $${input.budget.projectedUsd.toFixed(2)}`,
         ]
       : []),
-    `Open reports: ${input.reportsUrl ?? '/admin/reports'}`,
+    ...(slackReportsUrl ? [`Open reports: ${slackReportsUrl}`] : []),
   ];
   const text = lines.join('\n');
   const slackMrkdwn = lines.map((line) => escapeSlack(line)).join('\n');
@@ -288,7 +301,7 @@ export function buildReportDigest(input: ReportDigestInput): ReportDigest {
   });
   const slackBlocks = [
     {
-      text: { text: `${escapeSlack(scopeName)} weekly report`, type: 'plain_text' },
+      text: { text: Array.from(`${scopeName} weekly report`).slice(0, 150).join(''), type: 'plain_text' },
       type: 'header',
     },
     { fields: slackFields, type: 'section' },
@@ -302,17 +315,21 @@ export function buildReportDigest(input: ReportDigestInput): ReportDigest {
       ],
       type: 'context',
     },
-    {
+    ...(slackReportsUrl
+      ? [
+          {
       elements: [
         {
           action_id: 'open_report_digest',
           text: { text: 'Open reports', type: 'plain_text' },
           type: 'button',
-          url: input.reportsUrl ?? '/admin/reports',
+          url: slackReportsUrl,
         },
       ],
       type: 'actions',
-    },
+          },
+        ]
+      : []),
   ];
   return { html, slackBlocks, slackMrkdwn, subject, text };
 }

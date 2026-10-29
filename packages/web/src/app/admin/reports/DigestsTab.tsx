@@ -10,6 +10,7 @@ type Digest = {
   enabled: boolean;
   id: string;
   lastPeriodStart: string | null;
+  lastTestError: string | null;
   organization: Scope | null;
   orgId: string | null;
   optedOutEmails: string[];
@@ -60,6 +61,7 @@ export function DigestsTab() {
   });
   const update = useMutation({
     mutationFn: (input: {
+      confirmOptedOutReadd?: string[];
       emailRecipients?: string[];
       id: string;
       enabled?: boolean;
@@ -69,6 +71,9 @@ export function DigestsTab() {
         ...(input.enabled !== undefined
           ? { enabled: input.enabled }
           : {
+              ...(input.confirmOptedOutReadd
+                ? { confirmOptedOutReadd: input.confirmOptedOutReadd }
+                : {}),
               emailRecipients: input.emailRecipients ?? recipients(editEmail),
               ...(input.slackChannelId !== undefined
                 ? { slackChannelId: input.slackChannelId }
@@ -213,6 +218,11 @@ export function DigestsTab() {
                     ? new Date(digest.lastPeriodStart).toLocaleDateString()
                     : 'None'}
                 </p>
+                {digest.lastTestError && (
+                  <p className="mt-1 text-xs text-danger-400" role="status">
+                    Last test delivery failed: {digest.lastTestError}
+                  </p>
+                )}
                 {digest.optedOutEmails.length > 0 && (
                   <div className="mt-3 rounded border border-ink-700 p-3">
                     <h3 className="text-sm font-medium">Opted-out email addresses</h3>
@@ -222,8 +232,12 @@ export function DigestsTab() {
                           <span className="text-sm text-paper-300">{email}</span>
                           <button
                             className="rounded border border-ink-600 px-3 py-1 text-sm"
-                            onClick={() =>
+                            onClick={() => {
+                              if (!window.confirm(`Re-add ${email} to this digest?`)) {
+                                return;
+                              }
                               update.mutate({
+                                confirmOptedOutReadd: [email],
                                 emailRecipients: [
                                   ...digest.emailRecipients,
                                   ...(!digest.emailRecipients.some(
@@ -233,8 +247,8 @@ export function DigestsTab() {
                                     : []),
                                 ],
                                 id: digest.id,
-                              })
-                            }
+                              });
+                            }}
                             type="button"
                           >
                             Re-add

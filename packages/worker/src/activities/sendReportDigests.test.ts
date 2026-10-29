@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   coverageIncomplete: false,
+  deliveryPersistenceFails: false,
   deliveries: new Map<
     string,
     {
@@ -20,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   gatesAtLimit: false,
   heartbeats: [] as string[],
   nextDeliveryId: 0,
+  latestDeliveryPeriod: null as Date | null,
   slackPosts: [] as Array<{ blocks: unknown[]; channelId: string; text: string }>,
   subscriptions: [] as Array<Record<string, unknown>>,
   updates: [] as Array<{ id: string; data: Record<string, unknown> }>,
@@ -37,6 +39,9 @@ vi.mock('@auto-swe/shared/db', () => ({
       }: {
         data: Array<{ periodStart: Date; subscriptionId: string; target: string }>;
       }) => {
+        if (mocks.deliveryPersistenceFails) {
+          throw new Error('database write failed');
+        }
         for (const row of data) {
           const key = deliveryKey(row.subscriptionId, row.periodStart, row.target);
           if (!mocks.deliveries.has(key)) {
@@ -67,7 +72,15 @@ vi.mock('@auto-swe/shared/db', () => ({
               row.periodStart.getTime() === where.periodStart.getTime() &&
               where.target.in.includes(row.target)
           )
-          .map(({ attempts, id, status, target }) => ({ attempts, id, status, target })),
+          .map(({ attempts, id, sentAt, status, target }) => ({
+            attempts,
+            id,
+            sentAt,
+            status,
+            target,
+          })),
+      findFirst: async () =>
+        mocks.latestDeliveryPeriod ? { periodStart: mocks.latestDeliveryPeriod } : null,
       update: async ({ data, where }: { data: Record<string, unknown>; where: { id: string } }) => {
         const delivery = [...mocks.deliveries.values()].find((row) => row.id === where.id);
         if (!delivery) {
@@ -195,7 +208,9 @@ beforeEach(() => {
   mocks.updates = [];
   mocks.deliveries.clear();
   mocks.nextDeliveryId = 0;
+  mocks.latestDeliveryPeriod = null;
   mocks.coverageIncomplete = false;
+  mocks.deliveryPersistenceFails = false;
   mocks.gatesAtLimit = false;
   mocks.heartbeats = [];
   mocks.slackPosts = [];
@@ -208,8 +223,19 @@ describe('sendReportDigests', () => {
     mocks.subscriptions = [
       subscription('idempotent', { emailRecipients: ['digest@example.test'] }),
     ];
-    await expect(sendReportDigests({ now })).resolves.toEqual({ failed: 0, sent: 1, skipped: 0 });
-    await expect(sendReportDigests({ now })).resolves.toEqual({ failed: 0, sent: 1, skipped: 0 });
+    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+      failed: 0,
+      rollupIncomplete: 0,
+      sent: 1,
+      skipped: 0,
+    });
+    const retryNow = new Date(now.getTime() + 15 * 60 * 1000);
+    await expect(sendReportDigests({ now: retryNow, periodStart })).resolves.toEqual({
+      failed: 0,
+      rollupIncomplete: 0,
+      sent: 1,
+      skipped: 0,
+    });
     expect(mocks.emails.map(({ to }) => to)).toEqual(['digest@example.test']);
     expect(
       mocks.deliveries.get(deliveryKey('idempotent', periodStart, 'email:digest@example.test'))
@@ -227,9 +253,19 @@ describe('sendReportDigests', () => {
       }),
     ];
     mocks.failedEmailRecipients = ['second@example.test'];
-    await expect(sendReportDigests({ now })).resolves.toEqual({ failed: 1, sent: 0, skipped: 0 });
+    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+      failed: 1,
+      rollupIncomplete: 0,
+      sent: 0,
+      skipped: 0,
+    });
     mocks.failedEmailRecipients = [];
-    await expect(sendReportDigests({ now })).resolves.toEqual({ failed: 0, sent: 1, skipped: 0 });
+    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+      failed: 0,
+      rollupIncomplete: 0,
+      sent: 1,
+      skipped: 0,
+    });
     expect(mocks.emails.map(({ to }) => to)).toEqual([
       'first@example.test',
       'second@example.test',
@@ -243,7 +279,7 @@ describe('sendReportDigests', () => {
     mocks.subscriptions = [subscription('bounded', { emailRecipients: ['fail@example.test'] })];
     mocks.failedEmailRecipients = ['fail@example.test'];
     for (let attempt = 0; attempt < 4; attempt++) {
-      await sendReportDigests({ now });
+      await sendReportDigests({ now, periodStart });
     }
     expect(mocks.emails.filter(({ to }) => to === 'fail@example.test')).toHaveLength(3);
     expect(
@@ -258,7 +294,7 @@ describe('sendReportDigests', () => {
         optedOutEmails: ['stop@example.test'],
       }),
     ];
-    await expect(sendReportDigests({ now })).resolves.toMatchObject({ sent: 1 });
+    await expect(sendReportDigests({ now, periodStart })).resolves.toMatchObject({ sent: 1 });
     expect(mocks.emails.map(({ to }) => to)).toEqual(['keep@example.test', 'other@example.test']);
     expect(mocks.emails[0]?.listUnsubscribeUrl).toContain(
       '/api/v1/report-digests/unsubscribe?token='
@@ -279,14 +315,41 @@ describe('sendReportDigests', () => {
       }),
     ];
     await expect(
-      sendReportDigests({ now, sendTest: true, subscriptionId: 'test-send' })
-    ).resolves.toEqual({ failed: 0, sent: 1, skipped: 0 });
+      sendReportDigests({ now, periodStart, sendTest: true, subscriptionId: 'test-send' })
+    ).resolves.toEqual({ failed: 0, rollupIncomplete: 0, sent: 1, skipped: 0 });
     expect(mocks.slackPosts).toHaveLength(1);
     expect(mocks.slackPosts[0]?.blocks).toEqual(
       expect.arrayContaining([expect.objectContaining({ type: 'header' })])
     );
     expect(mocks.deliveries.size).toBe(0);
-    expect(mocks.updates).toEqual([{ data: { lastError: null }, id: 'test-send' }]);
+    expect(mocks.updates).toEqual([{ data: { lastTestError: null }, id: 'test-send' }]);
+  });
+
+  it('records send-test failures without changing scheduled delivery status', async () => {
+    mocks.subscriptions = [
+      subscription('test-failure', {
+        emailRecipients: ['fail@example.test'],
+        lastError: 'email_failed',
+      }),
+    ];
+    mocks.failedEmailRecipients = ['fail@example.test'];
+
+    await expect(
+      sendReportDigests({
+        now,
+        periodStart,
+        sendTest: true,
+        subscriptionId: 'test-failure',
+      })
+    ).resolves.toMatchObject({ failed: 1 });
+
+    expect(mocks.updates).toContainEqual({
+      data: { lastTestError: 'email_failed' },
+      id: 'test-failure',
+    });
+    expect(mocks.updates).not.toContainEqual(
+      expect.objectContaining({ data: expect.objectContaining({ lastError: expect.anything() }) })
+    );
   });
 
   it('records failures and continues to later subscriptions', async () => {
@@ -295,7 +358,12 @@ describe('sendReportDigests', () => {
       subscription('healthy', { slackChannel: { slackChannelId: 'C123' } }),
     ];
     mocks.failedEmailRecipients = ['broken@example.test'];
-    await expect(sendReportDigests({ now })).resolves.toEqual({ failed: 1, sent: 1, skipped: 0 });
+    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+      failed: 1,
+      rollupIncomplete: 0,
+      sent: 1,
+      skipped: 0,
+    });
     expect(mocks.updates).toContainEqual({
       data: { lastError: 'email_failed' },
       id: 'broken',
@@ -311,8 +379,9 @@ describe('sendReportDigests', () => {
   it('skips an uncovered day without creating delivery rows', async () => {
     mocks.subscriptions = [subscription('uncovered', { slackChannel: { slackChannelId: 'C123' } })];
     mocks.coverageIncomplete = true;
-    await expect(sendReportDigests({ now })).resolves.toEqual({
-      failed: 0,
+    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+      failed: 1,
+      rollupIncomplete: 1,
       sent: 0,
       skipped: 1,
     });
@@ -328,7 +397,7 @@ describe('sendReportDigests', () => {
       subscription('gate-limit', { slackChannel: { slackChannelId: 'C123' } }),
     ];
     mocks.gatesAtLimit = true;
-    await sendReportDigests({ now });
+    await sendReportDigests({ now, periodStart });
     expect(mocks.slackPosts[0]?.text).toContain('Worst gate: not computed');
     expect(mocks.slackPosts[0]?.blocks).toEqual(
       expect.arrayContaining([
@@ -338,5 +407,58 @@ describe('sendReportDigests', () => {
         expect.objectContaining({ type: 'actions' }),
       ])
     );
+  });
+
+  it('does not deliver within six days of the last completed period', async () => {
+    mocks.subscriptions = [
+      subscription('recent', {
+        emailRecipients: ['digest@example.test'],
+        lastPeriodStart: new Date('2026-10-12T00:00:00Z'),
+      }),
+    ];
+
+    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+      failed: 0,
+      rollupIncomplete: 0,
+      sent: 0,
+      skipped: 1,
+    });
+
+    expect(mocks.deliveries.size).toBe(0);
+    expect(mocks.emails).toHaveLength(0);
+  });
+
+  it('does not create a delivery for a period older than existing delivery history', async () => {
+    mocks.subscriptions = [subscription('stale', { emailRecipients: ['digest@example.test'] })];
+    mocks.latestDeliveryPeriod = new Date('2026-10-20T00:00:00Z');
+
+    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+      failed: 0,
+      rollupIncomplete: 0,
+      sent: 0,
+      skipped: 1,
+    });
+
+    expect(mocks.deliveries.size).toBe(0);
+    expect(mocks.emails).toHaveLength(0);
+  });
+
+  it('classifies delivery persistence exceptions separately from digest build failures', async () => {
+    mocks.subscriptions = [
+      subscription('delivery-write-failure', { emailRecipients: ['digest@example.test'] }),
+    ];
+    mocks.deliveryPersistenceFails = true;
+
+    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+      failed: 1,
+      rollupIncomplete: 0,
+      sent: 0,
+      skipped: 0,
+    });
+
+    expect(mocks.updates).toContainEqual({
+      data: { lastError: 'delivery_failed' },
+      id: 'delivery-write-failure',
+    });
   });
 });

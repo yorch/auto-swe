@@ -138,6 +138,11 @@ describe('assistant route policy', () => {
 });
 
 describe('assistantAccess', () => {
+  it('never exposes digest unsubscribe tokens to the assistant on either method', () => {
+    expect(assistantAccess('GET', '/api/v1/report-digests/unsubscribe')).toBe('never');
+    expect(assistantAccess('POST', '/api/v1/report-digests/unsubscribe')).toBe('never');
+  });
+
   it('refuses DELETE, an unknown route and a missing pattern', () => {
     expect(assistantAccess('DELETE', '/api/v1/workflow-runs/:id')).toBe('never');
     expect(assistantAccess('GET', '/api/v1/nope')).toBe('never');

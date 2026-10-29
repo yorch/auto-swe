@@ -49,19 +49,22 @@ afterEach(() => {
 });
 
 describe('sendReportDigestEmail', () => {
-  it('adds List-Unsubscribe to SMTP headers', async () => {
+  it('adds RFC 8058 unsubscribe headers to SMTP messages', async () => {
     await sendReportDigestEmail(email);
 
     expect(mocks.sendMail).toHaveBeenCalledWith(
       expect.objectContaining({
-        headers: { 'List-Unsubscribe': `<${email.listUnsubscribeUrl}>` },
+        headers: {
+          'List-Unsubscribe': `<${email.listUnsubscribeUrl}>`,
+          'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
+        },
         html: email.html,
         text: email.text,
       })
     );
   });
 
-  it('adds List-Unsubscribe to Resend headers', async () => {
+  it('adds RFC 8058 unsubscribe headers to Resend messages', async () => {
     mocks.config.smtpHost = null;
     mocks.config.smtpPort = null;
     mocks.config.resendApiKey = 'resend-key';
@@ -74,6 +77,12 @@ describe('sendReportDigestEmail', () => {
       'https://api.resend.com/emails',
       expect.objectContaining({
         body: expect.stringContaining(`"List-Unsubscribe":"<${email.listUnsubscribeUrl}>"`),
+      })
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://api.resend.com/emails',
+      expect.objectContaining({
+        body: expect.stringContaining('"List-Unsubscribe-Post":"List-Unsubscribe=One-Click"'),
       })
     );
   });

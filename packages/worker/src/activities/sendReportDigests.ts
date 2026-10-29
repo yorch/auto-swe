@@ -17,7 +17,14 @@ import { postSlackChannelMessage } from '../lib/slackNotify.js';
 const DAY_MS = 24 * 60 * 60 * 1000;
 export const MAX_REPORT_DIGEST_GATE_ROWS = 50_000;
 
-type DigestErrorCode = 'build_failed' | 'email_failed' | 'rollup_incomplete' | 'slack_failed';
+type DigestErrorCode =
+  | 'build_failed'
+  | 'delivery_failed'
+  | 'email_failed'
+  | 'period_out_of_order'
+  | 'period_too_soon'
+  | 'rollup_incomplete'
+  | 'slack_failed';
 
 interface DigestTarget {
   email?: string;
@@ -82,13 +89,18 @@ async function deliverTarget(
 }
 
 export async function sendReportDigests(
-  input: { now?: Date; subscriptionId?: string; sendTest?: boolean } = {}
-): Promise<{ failed: number; sent: number; skipped: number }> {
+  input: { now?: Date; periodStart: Date; subscriptionId?: string; sendTest?: boolean }
+): Promise<{ failed: number; rollupIncomplete: number; sent: number; skipped: number }> {
   const now = input.now ?? new Date();
-  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const currentStart = new Date(today - 7 * DAY_MS);
-  const currentEnd = new Date(today);
-  const previousStart = new Date(today - 14 * DAY_MS);
+  const currentStart = new Date(
+    Date.UTC(
+      input.periodStart.getUTCFullYear(),
+      input.periodStart.getUTCMonth(),
+      input.periodStart.getUTCDate()
+    )
+  );
+  const currentEnd = new Date(currentStart.getTime() + 7 * DAY_MS);
+  const previousStart = new Date(currentStart.getTime() - 7 * DAY_MS);
   const subscriptions = await runUnscoped(
     'the report digest sweep lists enabled digest subscriptions',
     ['ReportDigestSubscription'],
@@ -129,10 +141,37 @@ export async function sendReportDigests(
   );
   let sent = 0;
   let failed = 0;
+  let rollupIncomplete = 0;
   let skipped = 0;
   for (const subscription of subscriptions) {
     heartbeat(`processing report digest subscription ${subscription.id}`);
+    let stage: 'build' | 'delivery' = 'build';
     try {
+      if (!input.sendTest) {
+        const lastAllowedStart = subscription.lastPeriodStart
+          ? new Date(subscription.lastPeriodStart.getTime() + 6 * DAY_MS)
+          : null;
+        if (lastAllowedStart && currentStart < lastAllowedStart) {
+          await recordDigestError(subscription.id, 'period_too_soon');
+          skipped++;
+          continue;
+        }
+        const latestDelivery = await runUnscoped(
+          'the report digest prevents delivery periods from moving backwards',
+          ['ReportDigestDelivery'],
+          () =>
+            prisma.reportDigestDelivery.findFirst({
+              orderBy: { periodStart: 'desc' },
+              select: { periodStart: true },
+              where: { subscriptionId: subscription.id },
+            })
+        );
+        if (latestDelivery && currentStart < latestDelivery.periodStart) {
+          await recordDigestError(subscription.id, 'period_out_of_order');
+          skipped++;
+          continue;
+        }
+      }
       const coveredDays = await runUnscoped(
         'the report digest checks coverage for its 14 completed rollup days',
         ['WorkflowRunDailyRollup'],
@@ -151,7 +190,13 @@ export async function sendReportDigests(
         (_, index) => previousStart.getTime() + index * DAY_MS
       ).every((day) => covered.has(day));
       if (!hasCompleteCoverage) {
-        await recordDigestError(subscription.id, 'rollup_incomplete');
+        if (input.sendTest) {
+          await recordTestDigestError(subscription.id, 'rollup_incomplete');
+        } else {
+          await recordDigestError(subscription.id, 'rollup_incomplete');
+        }
+        rollupIncomplete++;
+        failed++;
         skipped++;
         continue;
       }
@@ -328,11 +373,16 @@ export async function sendReportDigests(
           error: error instanceof Error ? error.message : String(error),
           subscriptionId: subscription.id,
         });
-        await recordDigestError(subscription.id, 'build_failed');
+        if (input.sendTest) {
+          await recordTestDigestError(subscription.id, 'build_failed');
+        } else {
+          await recordDigestError(subscription.id, 'build_failed');
+        }
         failed++;
         continue;
       }
 
+      stage = 'delivery';
       const optedOut = new Set(subscription.optedOutEmails.map((email) => email.toLowerCase()));
       const targets: DigestTarget[] = subscription.emailRecipients
         .filter((email) => !optedOut.has(email.trim().toLowerCase()))
@@ -368,11 +418,11 @@ export async function sendReportDigests(
           }
         }
         if (deliveryError) {
-          await recordDigestError(subscription.id, deliveryError);
+          await recordTestDigestError(subscription.id, deliveryError);
           failed++;
           continue;
         }
-        await clearDigestError(subscription.id);
+        await clearTestDigestError(subscription.id);
         sent++;
         continue;
       }
@@ -497,13 +547,20 @@ export async function sendReportDigests(
         error: error instanceof Error ? error.message : String(error),
         subscriptionId: subscription.id,
       });
-      await recordDigestError(subscription.id, 'build_failed');
+      if (!input.sendTest) {
+        await recordDigestError(subscription.id, stage === 'build' ? 'build_failed' : 'delivery_failed');
+      } else {
+        await recordTestDigestError(
+          subscription.id,
+          stage === 'build' ? 'build_failed' : 'delivery_failed'
+        );
+      }
       failed++;
     } finally {
       heartbeat(`finished report digest subscription ${subscription.id}`);
     }
   }
-  return { failed, sent, skipped };
+  return { failed, rollupIncomplete, sent, skipped };
 }
 
 async function recordDigestError(subscriptionId: string, code: DigestErrorCode): Promise<void> {
@@ -525,13 +582,35 @@ async function recordDigestError(subscriptionId: string, code: DigestErrorCode):
   }
 }
 
-async function clearDigestError(subscriptionId: string): Promise<void> {
+async function recordTestDigestError(
+  subscriptionId: string,
+  code: DigestErrorCode
+): Promise<void> {
+  try {
+    await runUnscoped(
+      'the report digest records send-test failures separately from delivery status',
+      ['ReportDigestSubscription'],
+      () =>
+        prisma.reportDigestSubscription.update({
+          data: { lastTestError: code },
+          where: { id: subscriptionId },
+        })
+    );
+  } catch (error) {
+    logWarn('report digest test status could not be recorded', {
+      error: error instanceof Error ? error.message : String(error),
+      subscriptionId,
+    });
+  }
+}
+
+async function clearTestDigestError(subscriptionId: string): Promise<void> {
   await runUnscoped(
-    'the report digest clears the previous delivery error',
+    'the report digest clears the previous send-test error',
     ['ReportDigestSubscription'],
     () =>
       prisma.reportDigestSubscription.update({
-        data: { lastError: null },
+        data: { lastTestError: null },
         where: { id: subscriptionId },
       })
   );

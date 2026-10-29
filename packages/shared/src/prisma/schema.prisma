@@ -2228,6 +2228,7 @@ model ReportDigestSubscription {
   createdById      String            @map("created_by_id") @db.Uuid
   lastSentAt       DateTime?         @map("last_sent_at") @db.Timestamptz
   lastTestSentAt   DateTime?         @map("last_test_sent_at") @db.Timestamptz
+  lastTestError    String?           @map("last_test_error")
   lastPeriodStart  DateTime?         @map("last_period_start") @db.Date
   lastError        String?           @map("last_error")
   createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
