@@ -242,13 +242,29 @@ export async function detectRepoDependencies(
     const packageJson =
       manifestContents.get('package.json') ??
       (await safeFetchFile(provider, repoRef, 'package.json'));
+    const detectOpts = {
+      // Its scripts feed the suggestions and its `packageManager` pin names the manager.
+      packageJson: packageJson ?? undefined,
+      treeTruncated,
+    };
+    let detected = detectStack(rootEntries, detectOpts);
+    // An unpinned yarn root with no `.yarnrc.yml` has no flavour yet: the lockfile header names it.
+    if (
+      detected.packageManager === 'yarn' &&
+      !detected.yarnFlavor &&
+      rootEntries.includes('yarn.lock')
+    ) {
+      const yarnLock = await safeFetchFile(provider, repoRef, 'yarn.lock');
+      if (yarnLock !== null) {
+        detected = detectStack(rootEntries, {
+          ...detectOpts,
+          yarnLockHead: yarnLock.slice(0, 2048),
+        });
+      }
+    }
     await prisma.connection.update({
       data: {
-        detectedStack: detectStack(rootEntries, {
-          // Its scripts feed the suggestions and its `packageManager` pin names the manager.
-          packageJson: packageJson ?? undefined,
-          treeTruncated,
-        }) as unknown as Prisma.InputJsonValue,
+        detectedStack: detected as unknown as Prisma.InputJsonValue,
         detectedStackAt: new Date(),
       },
       where: { id: connection.id },

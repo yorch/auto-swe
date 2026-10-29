@@ -1,5 +1,10 @@
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  compositeCommand,
   detectedGateDefaults,
   detectedTarget,
   detectedTargetDir,
@@ -144,10 +149,10 @@ describe('detectedGateDefaults', () => {
     expect(
       detectedGateDefaults({ components: [{ path: '', stacks: ['node'] }], packageManager: 'bun' })
     ).toBeNull();
-    // Several components and no root signal is a layout with no single right place, which is
-    // not the same as "nothing detected": it resolves to no commands, not to the built-ins.
+    // More components than a composite covers, and no root signal, is a layout with no single
+    // right place, which is not the same as "nothing detected": no commands, not the built-ins.
     expect(
-      detectedGateDefaults(detect(['services/api/pom.xml', 'services/web/package.json']))
+      detectedGateDefaults(detect(Array.from({ length: 9 }, (_, i) => `s${i}/go.mod`)))
     ).toEqual({});
   });
 
@@ -372,11 +377,12 @@ describe('components as the target', () => {
     );
   });
 
-  it('resolves to no commands, not the built-ins, when several components compete', () => {
+  it('stays ambiguous, with no single directory, when several components compete', () => {
     const d = D(['api/pom.xml', 'web/package.json']);
     expect(detectedTarget(d)).toBe('ambiguous');
-    expect(detectedGateDefaults(d)).toEqual({});
     expect(detectedTargetDir(d)).toBe('');
+    // A composite has no image either: it is not one place.
+    expect(detectedTarget(D(['a/go.mod', 'b/go.mod']))).toBe('ambiguous');
   });
 
   it('counts only directories with a stack signal toward the cap, so a big tree still resolves', () => {
@@ -491,6 +497,297 @@ describe('components as the target', () => {
     expect(detectedTarget({ evidence: ['go.mod'], primary: 'go' })).toMatchObject({
       dir: '',
       stack: 'go',
+    });
+  });
+});
+
+describe('composite gates for several components', () => {
+  const D = (files: string[], opts?: Parameters<typeof detectStack>[1]) => detectStack(files, opts);
+  const goDirs = (n: number) => Array.from({ length: n }, (_, i) => `s${i}/go.mod`);
+
+  it('builds one command per gate, running each component in a subshell cd under a marker', () => {
+    const d = D(['a/go.mod', 'b/go.mod']);
+    expect(detectedTarget(d)).toBe('ambiguous');
+    expect(detectedGateDefaults(d)).toEqual({
+      runBuild:
+        "rc=0; echo '== a =='; (cd 'a' && go build ./...) || rc=$?; " +
+        "echo '== b =='; (cd 'b' && go build ./...) || rc=$?; exit $rc",
+      runLint:
+        "rc=0; echo '== a =='; (cd 'a' && go vet ./...) || rc=$?; " +
+        "echo '== b =='; (cd 'b' && go vet ./...) || rc=$?; exit $rc",
+      runTests:
+        "rc=0; echo '== a =='; (cd 'a' && go test ./...) || rc=$?; " +
+        "echo '== b =='; (cd 'b' && go test ./...) || rc=$?; exit $rc",
+    });
+  });
+
+  it('leaves a gate absent when any component has no command for it', () => {
+    // Python has only runTests, so the build and lint gates are not run in just the Go half.
+    expect(detectedGateDefaults(D(['api/go.mod', 'ml/pyproject.toml']))).toEqual({
+      runTests:
+        "rc=0; echo '== api =='; (cd 'api' && go test ./...) || rc=$?; " +
+        "echo '== ml =='; (cd 'ml' && python -m pytest) || rc=$?; exit $rc",
+    });
+    expect(detectedGateDefaults(D(['api/go.mod', 'web/package.json']))).not.toHaveProperty(
+      'runVulnScan'
+    );
+  });
+
+  it('orders components by path whatever order they are stored in', () => {
+    const stored = {
+      components: [
+        { path: 'b', stacks: ['go'] },
+        { path: 'a', stacks: ['go'] },
+      ],
+      evidence: [],
+    };
+    expect(detectedGateDefaults(stored)?.runTests).toMatch(/== a ==.*== b ==/);
+  });
+
+  it('gives each Node component its own lockfile’s manager', () => {
+    const d = D([
+      'admin/package.json',
+      'admin/package-lock.json',
+      'web/package.json',
+      'web/pnpm-lock.yaml',
+    ]);
+    expect(detectedGateDefaults(d)?.runTests).toBe(
+      "rc=0; echo '== admin =='; (cd 'admin' && npm test) || rc=$?; " +
+        "echo '== web =='; (cd 'web' && pnpm test) || rc=$?; exit $rc"
+    );
+    expect(detectedGateDefaults(d)?.runVulnScan).toBe(
+      "rc=0; echo '== admin =='; (cd 'admin' && npm audit --audit-level=high) || rc=$?; " +
+        "echo '== web =='; (cd 'web' && pnpm audit --audit-level high) || rc=$?; exit $rc"
+    );
+  });
+
+  it('picks the JVM build tool per component', () => {
+    expect(detectedGateDefaults(D(['a/pom.xml', 'b/build.gradle']))?.runTests).toBe(
+      "rc=0; echo '== a =='; (cd 'a' && mvn -B -q test) || rc=$?; " +
+        "echo '== b =='; (cd 'b' && ./gradlew test --no-daemon) || rc=$?; exit $rc"
+    );
+  });
+
+  it('covers up to 8 components and none beyond', () => {
+    expect(detectedGateDefaults(D(goDirs(8)))?.runTests?.match(/== s\d ==/g)).toHaveLength(8);
+    expect(detectedGateDefaults(D(goDirs(9)))).toEqual({});
+    expect(detectedTarget(D(goDirs(9)))).toBe('ambiguous');
+  });
+
+  it('returns nothing for a stored component path that does not validate', () => {
+    const stored = (bad: string) => ({
+      components: [
+        { path: 'a', stacks: ['go'] },
+        { path: bad, stacks: ['go'] },
+      ],
+      evidence: [],
+    });
+    for (const bad of ['../x', '/abs', "b';id;'", 'a b', 'x$(id)']) {
+      expect(detectedTarget(stored(bad)), bad).toBe('ambiguous');
+      expect(detectedGateDefaults(stored(bad)), bad).toEqual({});
+    }
+    // A component with no known stack cannot run anything either.
+    expect(
+      detectedGateDefaults({
+        components: [
+          { path: 'a', stacks: ['go'] },
+          { path: 'b', stacks: ['ruby'] },
+        ],
+        evidence: [],
+      })
+    ).toEqual({});
+  });
+
+  it('does not guess from an incomplete listing', () => {
+    expect(detectedGateDefaults(D(['a/go.mod', 'b/go.mod'], { treeTruncated: true }))).toBeNull();
+    expect(detectedGateDefaults(D(goDirs(60)))).toBeNull();
+  });
+
+  it('is not used when the root has a signal', () => {
+    expect(detectedGateDefaults(D(['go.mod', 'a/go.mod', 'b/go.mod']))?.runTests).toBe(
+      'go test ./...'
+    );
+  });
+});
+
+describe('compositeCommand run in a real sh', () => {
+  const run = (parts: Array<{ dir: string; command: string }>, wrap = false) => {
+    const root = mkdtempSync(join(tmpdir(), 'composite-'));
+    for (const dir of ['a', 'a/sub', 'b', 'c']) {
+      mkdirSync(join(root, dir), { recursive: true });
+    }
+    const command = compositeCommand(parts);
+    const result = spawnSync('sh', ['-c', wrap ? `{ ${command}\n} 2>&1` : command], {
+      cwd: root,
+      encoding: 'utf8',
+    });
+    return { root, status: result.status, stdout: result.stdout };
+  };
+  const ran = (root: string, dir: string) => existsSync(join(root, dir, 'ran'));
+  const touch = (dir: string) => ({ command: 'touch ran', dir });
+
+  it('exits 0 when every component passes, and prints a marker before each', () => {
+    const r = run([touch('a'), touch('b')]);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toBe('== a ==\n== b ==\n');
+    expect(ran(r.root, 'a') && ran(r.root, 'b')).toBe(true);
+  });
+
+  it('fails when the first fails, and still runs the second', () => {
+    const r = run([{ command: 'touch ran && exit 3', dir: 'a' }, touch('b')]);
+    expect(r.status).toBe(3);
+    expect(ran(r.root, 'a')).toBe(true);
+    expect(ran(r.root, 'b')).toBe(true);
+    expect(r.stdout).toBe('== a ==\n== b ==\n');
+  });
+
+  it('fails when only the last or a middle component fails', () => {
+    expect(run([touch('a'), touch('b'), { command: 'false', dir: 'c' }]).status).toBe(1);
+    const middle = run([touch('a'), { command: 'false', dir: 'b' }, touch('c')]);
+    expect(middle.status).toBe(1);
+    expect(ran(middle.root, 'c')).toBe(true);
+  });
+
+  it('fails a component whose directory is missing, and carries on', () => {
+    const r = run([{ command: 'true', dir: 'missing' }, touch('b')]);
+    // The shell's own status for a failed `cd` (1 or 2, by shell) — what matters is that it fails.
+    expect(r.status).not.toBe(0);
+    expect(ran(r.root, 'b')).toBe(true);
+  });
+
+  it('does not let one component’s cd move the next one’s starting point', () => {
+    const r = run([
+      { command: 'cd sub && touch ran', dir: 'a' },
+      { command: 'pwd > where && touch ran', dir: 'b' },
+    ]);
+    expect(r.status).toBe(0);
+    expect(existsSync(join(r.root, 'a', 'sub', 'ran'))).toBe(true);
+    expect(readFileSync(join(r.root, 'b', 'where'), 'utf8').trim()).toMatch(/\/b$/);
+    expect(ran(r.root, 'b')).toBe(true);
+  });
+
+  it('works inside a braced group with stderr merged, as the gate runner wraps it', () => {
+    expect(run([touch('a')], true).status).toBe(0);
+    // The failing part's own status survives, so an unrunnable tool (127) still reads as one.
+    expect(run([{ command: 'exit 127', dir: 'a' }, touch('b')]).status).toBe(127);
+    expect(
+      run([
+        { command: 'exit 3', dir: 'a' },
+        { command: 'exit 5', dir: 'b' },
+      ]).status
+    ).toBe(5);
+    const bad = run([{ command: 'echo oops >&2; exit 2', dir: 'a' }], true);
+    expect(bad.status).toBe(2);
+    expect(bad.stdout).toBe('== a ==\noops\n');
+  });
+});
+
+describe('suggestions follow the run-time defaults', () => {
+  const D = (files: string[], opts?: Parameters<typeof detectStack>[1]) => detectStack(files, opts);
+
+  it('suggests a single component’s gates, in its directory', () => {
+    const d = D(['backend/pom.xml']);
+    expect(d.suggestedGateCommands).toEqual({
+      runBuild: "cd 'backend' && mvn -B -q -DskipTests package",
+      runTests: "cd 'backend' && mvn -B -q test",
+    });
+    expect(d.suggestedGateCommands).toEqual(detectedGateDefaults(d));
+    expect(D(['svc/go.mod']).suggestedGateCommands.runLint).toBe("cd 'svc' && go vet ./...");
+  });
+
+  it('suggests the composites for 2..8 components', () => {
+    const d = D(['a/go.mod', 'b/pyproject.toml']);
+    expect(d.suggestedGateCommands).toEqual({
+      runTests:
+        "rc=0; echo '== a =='; (cd 'a' && go test ./...) || rc=$?; " +
+        "echo '== b =='; (cd 'b' && python -m pytest) || rc=$?; exit $rc",
+    });
+    expect(d.suggestedGateCommands).toEqual(detectedGateDefaults(d));
+  });
+
+  it('suggests nothing where the defaults resolve to nothing', () => {
+    const nine = Array.from({ length: 9 }, (_, i) => `s${i}/go.mod`);
+    expect(D(nine).suggestedGateCommands).toEqual({});
+    expect(D(['a/go.mod', 'b/go.mod'], { treeTruncated: true }).suggestedGateCommands).toEqual({});
+    expect(D(['README.md']).suggestedGateCommands).toEqual({});
+  });
+
+  it('keeps the root’s suggestions exactly, whatever components sit below it', () => {
+    expect(
+      D(['package.json', 'a/go.mod'], { packageJsonScripts: ['lint', 'test'] })
+        .suggestedGateCommands
+    ).toEqual({ runLint: 'npm run lint', runTests: 'npm test' });
+    expect(D(['pyproject.toml', 'a/go.mod']).suggestedGateCommands).toEqual({
+      runLint: 'ruff check',
+      runTests: 'python -m pytest',
+    });
+    expect(D(['requirements.txt']).suggestedGateCommands).toEqual({ runTests: 'python -m pytest' });
+    expect(D(['go.mod']).suggestedGateCommands).toEqual({
+      runBuild: 'go build ./...',
+      runLint: 'go vet ./...',
+      runTests: 'go test ./...',
+    });
+    expect(D(['package.json', 'yarn.lock']).suggestedGateCommands).toEqual({});
+  });
+});
+
+describe('Yarn flavour from the yarn.lock header', () => {
+  const CLASSIC = '# THIS IS AN AUTOGENERATED FILE.\n# yarn lockfile v1\n';
+  const BERRY =
+    '# This file is generated by running "yarn install".\n\n__metadata:\n  version: 8\n';
+  const files = ['package.json', 'yarn.lock'];
+
+  it('reads Classic from `# yarn lockfile v1` and Berry from `__metadata:`', () => {
+    const classic = detectStack(files, { yarnLockHead: CLASSIC });
+    expect(classic).toMatchObject({ packageManager: 'yarn', yarnFlavor: 'classic' });
+    expect(classic.components).toEqual([
+      { packageManager: 'yarn', path: '', stacks: ['node'], yarnFlavor: 'classic' },
+    ]);
+    expect(detectStack(files, { yarnLockHead: BERRY })).toMatchObject({
+      packageManager: 'yarn',
+      yarnFlavor: 'berry',
+    });
+  });
+
+  it('leaves the flavour unknown for a header that says neither, or none at all', () => {
+    expect(detectStack(files, { yarnLockHead: '# something else\n' }).yarnFlavor).toBeUndefined();
+    expect(detectStack(files).yarnFlavor).toBeUndefined();
+    expect(detectStack(files, { yarnLockHead: '' }).yarnFlavor).toBeUndefined();
+  });
+
+  it('is outranked by a packageManager pin and by .yarnrc.yml', () => {
+    expect(
+      detectStack(files, {
+        packageJson: JSON.stringify({ packageManager: 'yarn@4.1.0' }),
+        yarnLockHead: CLASSIC,
+      }).yarnFlavor
+    ).toBe('berry');
+    expect(
+      detectStack(files, {
+        packageJson: JSON.stringify({ packageManager: 'yarn@1.22.19' }),
+        yarnLockHead: BERRY,
+      }).yarnFlavor
+    ).toBe('classic');
+    expect(detectStack([...files, '.yarnrc.yml'], { yarnLockHead: CLASSIC }).yarnFlavor).toBe(
+      'berry'
+    );
+  });
+
+  it('does not apply to a root that is not on yarn', () => {
+    expect(
+      detectStack(['package.json', 'package-lock.json'], { yarnLockHead: CLASSIC })
+    ).not.toHaveProperty('yarnFlavor');
+    expect(
+      detectStack(['package.json', 'pnpm-lock.yaml'], { yarnLockHead: CLASSIC })
+    ).not.toHaveProperty('yarnFlavor');
+  });
+
+  it('a Classic root resolves to the Classic gates, without a vulnerability scan', () => {
+    expect(detectedGateDefaults(detectStack(files, { yarnLockHead: CLASSIC }))).toEqual({
+      runBuild: 'yarn build',
+      runLint: 'yarn lint',
+      runTests: 'yarn test',
+      runTypecheck: 'yarn typecheck',
     });
   });
 });

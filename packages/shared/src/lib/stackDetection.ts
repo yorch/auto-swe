@@ -171,7 +171,7 @@ const isFlavor = (v: unknown): v is YarnFlavor => v === 'berry' || v === 'classi
  *   complete — never when `treeTruncated` or `componentsTruncated` is set, because "only one
  *   seen" is not "only one";
  * - `'ambiguous'` when several directories have signals and the root has none: no single
- *   place is right, so the caller reports the gates as unconfigured;
+ *   place is right ({@link detectedGateDefaults} says which gates a composite still covers);
  * - `null` when there is nothing to go on (no detection, an unusable shape, an unlisted
  *   tree), which keeps the built-in behaviour.
  *
@@ -180,8 +180,22 @@ const isFlavor = (v: unknown): v is YarnFlavor => v === 'berry' || v === 'classi
  * read by its root-only `primary`.
  */
 export function detectedTarget(detected: unknown): DetectedTarget | 'ambiguous' | null {
+  return resolveTarget(detected).target;
+}
+
+/** The most components a composite gate covers; more is left unconfigured. */
+const MAX_COMPOSITE_COMPONENTS = 8;
+
+/**
+ * {@link detectedTarget}'s answer, plus — for an `'ambiguous'` layout of 2..8 components that
+ * all validate — the components themselves, which the composite gates run in.
+ */
+function resolveTarget(detected: unknown): {
+  target: DetectedTarget | 'ambiguous' | null;
+  components?: DetectedTarget[];
+} {
   if (!detected || typeof detected !== 'object') {
-    return null;
+    return { target: null };
   }
   const d = detected as Partial<DetectedStack>;
   const evidence = Array.isArray(d.evidence)
@@ -198,15 +212,17 @@ export function detectedTarget(detected: unknown): DetectedTarget | 'ambiguous' 
         .map((f) => f.slice(dir === '' ? 0 : dir.length + 1))
     );
   if (!Array.isArray(d.components)) {
-    return isStack(d.primary)
-      ? {
-          dir: '',
-          packageManager: isPm(d.packageManager) ? d.packageManager : undefined,
-          rootFiles: filesIn(''),
-          stack: d.primary,
-          yarnFlavor: isFlavor(d.yarnFlavor) ? d.yarnFlavor : undefined,
-        }
-      : null;
+    return {
+      target: isStack(d.primary)
+        ? {
+            dir: '',
+            packageManager: isPm(d.packageManager) ? d.packageManager : undefined,
+            rootFiles: filesIn(''),
+            stack: d.primary,
+            yarnFlavor: isFlavor(d.yarnFlavor) ? d.yarnFlavor : undefined,
+          }
+        : null,
+    };
   }
   const comps = d.components.filter(
     (c): c is NonNullable<DetectedStack['components']>[number] =>
@@ -228,12 +244,22 @@ export function detectedTarget(detected: unknown): DetectedTarget | 'ambiguous' 
     };
   };
   if (root) {
-    return pick(root);
+    return { target: pick(root) };
   }
   if (d.treeTruncated || d.componentsTruncated || comps.length === 0) {
-    return null;
+    return { target: null };
   }
-  return comps.length === 1 ? pick(comps[0] as (typeof comps)[number]) : 'ambiguous';
+  if (comps.length === 1) {
+    return { target: pick(comps[0] as (typeof comps)[number]) };
+  }
+  const valid = comps.map(pick).filter((t): t is DetectedTarget => t !== null);
+  return {
+    components:
+      comps.length <= MAX_COMPOSITE_COMPONENTS && valid.length === comps.length
+        ? valid.sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0))
+        : undefined,
+    target: 'ambiguous',
+  };
 }
 
 /** The directory the test loop and gates run in: a validated component, else `''` (the root). */
@@ -249,6 +275,39 @@ export function detectedTargetDir(detected: unknown): string {
  */
 export function inDir(dir: string, command: string): string {
   return dir === '' ? command : `cd '${dir}' && ${command}`;
+}
+
+/**
+ * One `sh` command that runs each part in its own directory and fails if any part fails, with the
+ * status of the last one that did (so a part that is not runnable, 126 or 127, still reads as
+ * such to the test loop). Every part runs, in the order given, under an `== dir ==` marker so the output says which directory a
+ * failure belongs to. Each `cd` is in a subshell: a bare one would carry into the next part. The
+ * directories are pre-validated ({@link COMPONENT_PATH_RE}) and quoted.
+ */
+export function compositeCommand(parts: ReadonlyArray<{ dir: string; command: string }>): string {
+  return [
+    'rc=0',
+    ...parts.map(({ dir, command }) => `echo '== ${dir} =='; (cd '${dir}' && ${command}) || rc=$?`),
+    'exit $rc',
+  ].join('; ');
+}
+
+/**
+ * The composite gates for several components: a gate every component has a command for, run in
+ * all of them. A gate any component lacks is left out — running it in only some would verify part
+ * of the repository and read as a pass.
+ */
+function compositeGateDefaults(components: DetectedTarget[]): RepoGateCommands {
+  const perComponent = components.map((t) => ({ commands: targetCommands(t) ?? {}, dir: t.dir }));
+  const gates = Object.keys(perComponent[0]?.commands ?? {}) as Array<keyof RepoGateCommands>;
+  const result: RepoGateCommands = {};
+  for (const gate of gates) {
+    const parts = perComponent.map(({ commands, dir }) => ({ command: commands[gate], dir }));
+    if (parts.every((p): p is { command: string; dir: string } => typeof p.command === 'string')) {
+      result[gate] = compositeCommand(parts);
+    }
+  }
+  return result;
 }
 
 /** The default commands for a target, before any `cd`, or null where the built-in gates are exactly them. */
@@ -283,16 +342,18 @@ function targetCommands(t: DetectedTarget): RepoGateCommands | null {
  * {@link detectedTarget}), or null when the built-in gates apply: nothing detected, or a Node
  * root on Yarn Berry or with no recorded manager. A non-null result may be sparse — a gate it
  * lacks has no unambiguous command for the stack, and the caller must not substitute another
- * ecosystem's — and is empty for an ambiguous layout. A component's commands carry their
- * `cd`; the stack defaults are the only commands that get one, never an admin's.
+ * ecosystem's. An ambiguous layout of 2..8 components gets one composite command per gate that
+ * every component has a command for ({@link compositeCommand}); a larger one, or one with an
+ * invalid path, gets an empty result. A component's commands carry their `cd`; the stack
+ * defaults are the only commands that get one, never an admin's.
  */
 export function detectedGateDefaults(detected: unknown): RepoGateCommands | null {
-  const t = detectedTarget(detected);
+  const { target: t, components } = resolveTarget(detected);
   if (t === null) {
     return null;
   }
   if (t === 'ambiguous') {
-    return {};
+    return components ? compositeGateDefaults(components) : {};
   }
   const commands = targetCommands(t);
   if (commands === null || t.dir === '') {
@@ -331,6 +392,8 @@ export function detectStack(
     /** The root `package.json` text: its scripts feed the suggestions and its `packageManager` pin names the manager. */
     packageJson?: string;
     packageJsonScripts?: string[];
+    /** The first ~2 KB of the root `yarn.lock`: its header tells Yarn Classic from Berry. */
+    yarnLockHead?: string;
     treeTruncated?: boolean;
   }
 ): DetectedStack {
@@ -416,7 +479,8 @@ export function detectStack(
     }
   }
 
-  // Suggestions stay root-only: a repo with no root stack gets none.
+  // A root stack's suggestions come from the root. A repo with no root stack gets what the
+  // run-time defaults resolve to for its components, computed below from the detection itself.
   const rootStack = rootStacks[0] ?? null;
   const suggestedGateCommands: RepoGateCommands =
     rootStack === 'node'
@@ -448,6 +512,14 @@ export function detectStack(
       yarnFlavor = own.yarnFlavor;
     }
   }
+  // The lockfile header is the last resort: a pin or a `.yarnrc.yml` already decided the flavour.
+  if (packageManager === 'yarn' && !yarnFlavor && opts?.yarnLockHead) {
+    if (opts.yarnLockHead.includes('# yarn lockfile v1')) {
+      yarnFlavor = 'classic';
+    } else if (opts.yarnLockHead.includes('__metadata:')) {
+      yarnFlavor = 'berry';
+    }
+  }
   // The root component carries the same answer, so a reader that looks only at components agrees.
   const rootComponent = components.find((c) => c.path === '') as
     | (DetectedStack['components'] & object)[number]
@@ -459,7 +531,7 @@ export function detectStack(
     }
   }
 
-  return {
+  const detection: DetectedStack = {
     ...(components.length > 0 ? { components } : {}),
     ...(componentsTruncated ? { componentsTruncated } : {}),
     evidence,
@@ -471,4 +543,8 @@ export function detectStack(
     suggestedGateCommands,
     ...(opts?.treeTruncated ? { treeTruncated: true } : {}),
   };
+  if (rootStack === null) {
+    detection.suggestedGateCommands = detectedGateDefaults(detection) ?? {};
+  }
+  return detection;
 }

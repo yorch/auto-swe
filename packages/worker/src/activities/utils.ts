@@ -18,11 +18,13 @@ export const TEST_RUN_TIMEOUT_MS = 600_000;
  * The test command the TDD loop and the fix sessions run.
  *
  * The same chain as the `runTests` quality gate, so the loop and the gate run the same
- * command wherever both have one (an ambiguous layout leaves the gate unconfigured and the
- * loop on its root guess, which then ends the loop as unrunnable): the repository's configured
+ * command wherever both have one (a layout the composite cannot cover — over 8 components, or
+ * components that do not all have a test command — leaves the gate unconfigured and the loop on
+ * its root guess, which then ends the loop as unrunnable): the repository's configured
  * `Connection.gateCommands.runTests` wins; then the default for the stack the
  * repository's root was detected as (a Python, JVM or Go root, not Node), or its only component
- * when the root has no stack (run in that directory); then a guess from package.json's scripts
+ * when the root has no stack (run in that directory), or the composite that runs the tests in
+ * each of 2..8 components; then a guess from package.json's scripts
  * and devDependencies, falling back to `npm test`. `packageJsonStr` is the text of the target's
  * `package.json` — {@link packageJsonReadCommand} reads the right one — and a guess for a
  * component runs in its directory too.
@@ -43,10 +45,11 @@ export function detectTestCommand(
   // guess below is better informed (a missing test script, a vitest dependency).
   const target = detectedTarget(detectedStack);
   const concrete = target !== null && target !== 'ambiguous' ? target : null;
+  // An ambiguous layout of 2..8 components resolves to the composite `runTests`.
   const stackTests =
-    concrete === null || concrete.stack === 'node'
-      ? undefined
-      : detectedGateDefaults(detectedStack)?.runTests;
+    target === 'ambiguous' || (concrete !== null && concrete.stack !== 'node')
+      ? detectedGateDefaults(detectedStack)?.runTests
+      : undefined;
   if (stackTests) {
     return stackTests;
   }

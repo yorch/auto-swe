@@ -33,15 +33,37 @@ describe('detectTestCommand with a component target', () => {
     ).toBe('make -C web test');
   });
 
-  it('leaves an ambiguous layout on the root guess, in the root', () => {
+  it('runs the composite tests across an ambiguous layout of 2..8 components', () => {
     const both = {
       components: [
         { path: 'a', stacks: ['go'] },
         { path: 'b', stacks: ['jvm'] },
       ],
+      evidence: ['b/pom.xml'],
+    };
+    expect(detectTestCommand('{}', null, both)).toBe(
+      "rc=0; echo '== a =='; (cd 'a' && go test ./...) || rc=$?; " +
+        "echo '== b =='; (cd 'b' && mvn -B -q test) || rc=$?; exit $rc"
+    );
+    // A configured command still wins.
+    expect(detectTestCommand('{}', { runTests: 'make test' }, both)).toBe('make test');
+  });
+
+  it('leaves a layout the composite cannot cover on the root guess, in the root', () => {
+    const many = {
+      components: Array.from({ length: 9 }, (_, i) => ({ path: `s${i}`, stacks: ['go'] })),
       evidence: [],
     };
-    expect(detectTestCommand('{}', null, both)).toBe('npm test');
+    expect(detectTestCommand('{}', null, many)).toBe('npm test');
+    // A component with no test command (a stack outside the table) uncovers the gate too.
+    const unknown = {
+      components: [
+        { path: 'a', stacks: ['go'] },
+        { path: 'b', stacks: ['ruby'] },
+      ],
+      evidence: [],
+    };
+    expect(detectTestCommand('{}', null, unknown)).toBe('npm test');
   });
 
   it('reads the component’s package.json, quoting the directory', () => {

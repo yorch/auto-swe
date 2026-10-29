@@ -164,7 +164,7 @@ describe('resolveCommand precedence', () => {
       expect(await resolveCommand('runTests', baseRequest, 'step')).toBe('step');
     });
 
-    it('fails every gate as unconfigured when several components compete and none is the root', async () => {
+    it('runs a gate in every component when each has one, and leaves it unconfigured when one lacks it', async () => {
       mockedFindUnique.mockResolvedValue({
         detectedStack: {
           components: [
@@ -175,7 +175,28 @@ describe('resolveCommand precedence', () => {
         },
         gateCommands: null,
       } as never);
-      for (const gate of ['runTests', 'runBuild', 'runLint', 'runVulnScan'] as const) {
+      // Both a JVM and a Node component have tests and a build: one command runs each in its dir.
+      for (const gate of ['runTests', 'runBuild'] as const) {
+        const cmd = await resolveCommand(gate, baseRequest, undefined);
+        expect(cmd, gate).toContain("(cd 'api' &&");
+        expect(cmd, gate).toContain("(cd 'web' &&");
+        expect(cmd, gate).toMatch(/exit \$rc$/);
+      }
+      // The JVM component has no lint and no audit default, so those would verify only `web`.
+      for (const gate of ['runLint', 'runVulnScan'] as const) {
+        expect(await resolveCommand(gate, baseRequest, undefined), gate).toBeNull();
+      }
+    });
+
+    it('leaves every gate unconfigured past eight components', async () => {
+      mockedFindUnique.mockResolvedValue({
+        detectedStack: {
+          components: Array.from({ length: 9 }, (_, i) => ({ path: `svc${i}`, stacks: ['go'] })),
+          evidence: [],
+        },
+        gateCommands: null,
+      } as never);
+      for (const gate of ['runTests', 'runBuild', 'runLint'] as const) {
         expect(await resolveCommand(gate, baseRequest, undefined), gate).toBeNull();
       }
     });
