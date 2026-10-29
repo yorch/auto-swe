@@ -151,6 +151,7 @@ export const SIDEBAR = [
       'docs/model-configuration',
       'docs/oauth-setup',
       'docs/mcp-server',
+      'docs/local-agents',
       'docs/github-app-setup',
       'docs/slack-app-setup',
       'reference/cli',

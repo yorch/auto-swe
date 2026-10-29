@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "auto-swe": {
+      "oauth": {
+        "scopes": "mcp:read mcp:write offline_access"
+      },
+      "type": "http",
+      "url": "${AUTO_SWE_MCP_URL}"
+    }
+  }
+}

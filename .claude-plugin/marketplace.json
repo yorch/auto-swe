@@ -1,0 +1,13 @@
+{
+  "name": "auto-swe-marketplace",
+  "owner": {
+    "name": "auto-swe maintainers"
+  },
+  "plugins": [
+    {
+      "description": "Delegate repository tasks to your auto-swe deployment through MCP.",
+      "name": "auto-swe",
+      "source": "./integrations/claude-code"
+    }
+  ]
+}

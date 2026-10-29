@@ -79,6 +79,21 @@ describe('rewriteLink', () => {
     );
   });
 
+  it('sends local-agent integration files to GitHub from the published guide', () => {
+    for (const path of [
+      'integrations/claude-code/.mcp.json',
+      'integrations/claude-code/.claude-plugin/plugin.json',
+      'integrations/claude-code/skills/delegate/SKILL.md',
+      'integrations/codex/config.toml',
+      'integrations/codex/AGENTS.md',
+      '.claude-plugin/marketplace.json',
+    ]) {
+      expect(rewriteLink(`../${path}`, from('docs/local-agents.md'))).toBe(
+        `${REPO}/blob/main/${path}`
+      );
+    }
+  });
+
   it('keeps the fragment on a GitHub fallback', () => {
     expect(rewriteLink('../AGENTS.md#runtime-security-scanners', from('docs/agents.md'))).toBe(
       `${REPO}/blob/main/AGENTS.md#runtime-security-scanners`
