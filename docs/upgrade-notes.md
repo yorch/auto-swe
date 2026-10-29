@@ -474,8 +474,7 @@ This entry is not a credential defect. It lists what an operator must do, on a d
 earlier code, for pull-request evaluation ([`pr-evaluation.md`](./pr-evaluation.md)) to take effect.
 
 **Affected.** Every deployment whose gateway and worker images are built from a commit that contains
-`PR_EVALUATION_COMMIT` (the SHA of the change that adds the feature; fill it in when the change
-lands on `main`). A build before it has none of this.
+`7ddfd551`. A build before it has none of this.
 
 **What changes.** A migration adds the table `pr_evaluations` and the column
 `connections.pr_evaluation_mode`. The normal migrate step applies it (`prisma migrate deploy`, which the
