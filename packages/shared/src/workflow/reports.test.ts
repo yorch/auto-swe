@@ -21,7 +21,6 @@ describe('computeDeliveryReport', () => {
           { ciStatus: 'FAILED', mergedAt: null },
         ],
         repoId: 'repo-1',
-        repoSpendUsd: 5,
         repositoryName: 'acme/api',
         startedAt: at,
         status: 'SUCCESS',
@@ -35,7 +34,6 @@ describe('computeDeliveryReport', () => {
         id: 'r2',
         pullRequests: [],
         repoId: 'repo-1',
-        repoSpendUsd: 2,
         repositoryName: 'acme/api',
         startedAt: at,
         status: 'FAILED',
@@ -49,7 +47,6 @@ describe('computeDeliveryReport', () => {
         id: 'r3',
         pullRequests: [{ ciStatus: 'PENDING', mergedAt: new Date(at.getTime() + 3_000) }],
         repoId: 'repo-2',
-        repoSpendUsd: 7,
         repositoryName: 'acme/web',
         startedAt: at,
         status: 'SUCCESS',
@@ -91,6 +88,7 @@ describe('computeQualityReport', () => {
       reviewTraces: [
         {
           outputJson: {
+            activityId: 'review-trace-1',
             approved: true,
             findings: [],
             reviewer: 'PERFORMANCE',
@@ -107,12 +105,19 @@ describe('computeQualityReport', () => {
           },
           runId: 'r2',
         },
+        { outputJson: { activityId: 'failed-call' }, runId: 'r3' },
         { outputJson: { approved: true }, runId: 'r3' },
+        {
+          error: 'provider failed',
+          outputJson: { approved: true, findings: [], reviewer: 'SECURITY', severity: 'PASS' },
+          runId: 'r3',
+        },
       ],
       runs: [{ id: 'r1' }, { id: 'r2' }, { id: 'r3' }],
       steps: [
         { runId: 'r1', status: 'PASSED', stepName: 'runLint' },
         { runId: 'r2', status: 'FAILED', stepName: 'runLint' },
+        { runId: 'r2', status: 'PASSED', stepName: 'runLint' },
         { runId: 'r3', status: 'SKIPPED', stepName: 'runLint' },
         { runId: 'r2', status: 'PASSED', stepName: 'runTests' },
         { runId: 'r1', status: 'PASSED', stepName: 'executeCIFixImplementation' },
@@ -122,20 +127,21 @@ describe('computeQualityReport', () => {
     });
 
     expect(report.gates.find((gate) => gate.stepName === 'runLint')).toEqual({
+      attempts: 3,
       failed: 1,
-      passed: 1,
-      passRate: 0.5,
+      finalPassRate: 2 / 3,
+      firstAttemptPassRate: 1 / 3,
+      passed: 2,
       stepName: 'runLint',
-      total: 2,
     });
     expect(report.fixLoops.find((loop) => loop.stepName === 'executeCIFixImplementation')).toEqual({
-      avgRoundsPerRun: 2,
+      avgAttemptsPerRun: 2,
       runsWithFix: 1,
       stepName: 'executeCIFixImplementation',
-      totalRounds: 2,
+      totalAttempts: 2,
     });
     expect(report.ciSelfHealRate).toBe(1);
-    expect(report.review.unparseableRows).toBe(1);
+    expect(report.review.nonVerdictRows).toBe(1);
     expect(report.review.byReviewer.find((row) => row.reviewer === 'SECURITY')).toMatchObject({
       approvalRate: 0,
       findingsTotal: 2,
@@ -158,6 +164,38 @@ describe('computeQualityReport', () => {
         severity: 'PASS',
       })
     ).toBeNull();
+    expect(parseReviewVerdict({ activityId: 'failed-call' })).toBeNull();
+    expect(
+      parseReviewVerdict({
+        activityId: 'real-worker-trace',
+        approved: true,
+        findings: [{ category: 'maintainability' }],
+        reviewer: 'DOMAIN_LOGIC',
+        severity: 'INFO',
+      })
+    ).toMatchObject({ approved: true, reviewer: 'DOMAIN_LOGIC', severity: 'INFO' });
+  });
+
+  it('uses grouped step counts while keeping gate rates per run-gate pair', () => {
+    const report = computeQualityReport({
+      pullRequests: [],
+      reviewTraces: [],
+      runs: [{ id: 'r1' }, { id: 'r2' }],
+      steps: [
+        { count: 2, runId: 'r1', status: 'PASSED', stepName: 'runLint' },
+        { count: 1, runId: 'r1', status: 'FAILED', stepName: 'runLint' },
+        { count: 4, runId: 'r2', status: 'SKIPPED', stepName: 'runLint' },
+      ],
+    });
+
+    expect(report.gates.find((gate) => gate.stepName === 'runLint')).toEqual({
+      attempts: 3,
+      failed: 1,
+      finalPassRate: 0.5,
+      firstAttemptPassRate: 0,
+      passed: 2,
+      stepName: 'runLint',
+    });
   });
 });
 

@@ -124,7 +124,7 @@ describe('GET /api/v1/pull-requests/outcomes/export', () => {
       OR: [
         {
           repoId: TEAM,
-          workflow: { temporalWorkflowId: 'workflow-1' },
+          workflow: { temporalWorkflowId: { in: ['workflow-1'] } },
         },
       ],
     });
@@ -145,12 +145,20 @@ describe('GET /api/v1/pull-requests/outcomes/export', () => {
       }),
     ]);
     b.prisma.workflowRun.findMany
-      .mockResolvedValueOnce([{ workflowId: 'workflow-1' }])
+      .mockResolvedValueOnce([
+        { workflowId: 'workflow-1' },
+        { workflowId: 'workflow-2' },
+        { workflowId: 'workflow-3' },
+      ])
       .mockResolvedValueOnce([
         { template: { name: 'Build' }, templateId: TEAM, workflowId: 'workflow-1' },
+        { template: { name: 'Build' }, templateId: TEAM, workflowId: 'workflow-2' },
+        { template: { name: 'Build' }, templateId: TEAM, workflowId: 'workflow-3' },
       ]);
     b.prisma.activeWorkflow.findMany.mockResolvedValue([
       { repoId: TEAM, temporalWorkflowId: 'workflow-1' },
+      { repoId: TEAM, temporalWorkflowId: 'workflow-2' },
+      { repoId: otherRepo, temporalWorkflowId: 'workflow-3' },
     ]);
 
     const response = await get(b, `?templateId=${TEAM}`);
@@ -163,7 +171,11 @@ describe('GET /api/v1/pull-requests/outcomes/export', () => {
       OR: [
         {
           repoId: TEAM,
-          workflow: { temporalWorkflowId: 'workflow-1' },
+          workflow: { temporalWorkflowId: { in: ['workflow-1', 'workflow-2'] } },
+        },
+        {
+          repoId: otherRepo,
+          workflow: { temporalWorkflowId: { in: ['workflow-3'] } },
         },
       ],
     });

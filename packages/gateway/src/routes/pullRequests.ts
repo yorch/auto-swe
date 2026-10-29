@@ -82,6 +82,28 @@ const OUTCOMES_EXPORT_COLUMNS = [
   'template_name',
 ] as const;
 
+function templateAttributionFilter(
+  links: Array<{ repoId: string | null; temporalWorkflowId: string }>
+): Prisma.PullRequestWhereInput {
+  const workflowsByRepo = new Map<string, string[]>();
+  for (const link of links) {
+    if (!link.repoId) {
+      continue;
+    }
+    const workflowIds = workflowsByRepo.get(link.repoId) ?? [];
+    workflowIds.push(link.temporalWorkflowId);
+    workflowsByRepo.set(link.repoId, workflowIds);
+  }
+  return workflowsByRepo.size > 0
+    ? {
+        OR: [...workflowsByRepo.entries()].map(([repoId, workflowIds]) => ({
+          repoId,
+          workflow: { temporalWorkflowId: { in: workflowIds } },
+        })),
+      }
+    : { id: { in: [] } };
+}
+
 /**
  * The pull requests an outcomes read or export covers: the ones the caller may reach, opened in
  * `[openedFrom, end)`, narrowed by the query. One definition, so the export can never reach a row
@@ -277,11 +299,16 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         const workflowIds = templateRuns
           .slice(0, OUTCOMES_EXPORT_MAX_ROWS)
           .map((run) => run.workflowId);
-        filters.push(
-          workflowIds.length > 0
-            ? { workflow: { temporalWorkflowId: { in: workflowIds } } }
-            : { id: { in: [] } }
-        );
+        const activeWorkflows = workflowIds.length
+          ? await fastify.prisma.activeWorkflow.findMany({
+              orderBy: { temporalWorkflowId: 'asc' },
+              select: { repoId: true, temporalWorkflowId: true },
+              take: OUTCOMES_EXPORT_MAX_ROWS + 1,
+              where: { temporalWorkflowId: { in: workflowIds } },
+            })
+          : [];
+        templateRunsTruncated ||= activeWorkflows.length > OUTCOMES_EXPORT_MAX_ROWS;
+        filters.push(templateAttributionFilter(activeWorkflows.slice(0, OUTCOMES_EXPORT_MAX_ROWS)));
       }
       const rows = await fastify.prisma.pullRequest.findMany({
         orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
@@ -446,19 +473,8 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
             })
           : [];
         sourceTruncated ||= workflows.length > OUTCOMES_EXPORT_MAX_ROWS;
-        const consistentLinks = workflows.slice(0, OUTCOMES_EXPORT_MAX_ROWS).map((workflow) => ({
-          repoId: workflow.repoId,
-          workflow: { temporalWorkflowId: workflow.temporalWorkflowId },
-        }));
         (where.AND as Prisma.PullRequestWhereInput[]).push(
-          consistentLinks.length > 0
-            ? {
-                OR: consistentLinks.map((link) => ({
-                  repoId: link.repoId,
-                  workflow: { temporalWorkflowId: link.workflow.temporalWorkflowId },
-                })),
-              }
-            : { id: { in: [] } }
+          templateAttributionFilter(workflows.slice(0, OUTCOMES_EXPORT_MAX_ROWS))
         );
       }
       const { format } = request.query;

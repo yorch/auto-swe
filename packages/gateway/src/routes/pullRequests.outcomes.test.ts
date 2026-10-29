@@ -53,6 +53,7 @@ async function buildApp(role: Role = 'ADMIN') {
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   const prisma = {
+    activeWorkflow: { findMany: vi.fn().mockResolvedValue([]) },
     pullRequest: { findMany: vi.fn().mockResolvedValue([]) },
     teamMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
@@ -128,6 +129,9 @@ describe('GET /api/v1/pull-requests/outcomes', () => {
     b.prisma.workflowRun.findMany.mockResolvedValue([
       { template: { name: 'Build' }, templateId: UUID_B, workflowId: 'temporal-1' },
     ]);
+    b.prisma.activeWorkflow.findMany.mockResolvedValue([
+      { repoId: UUID_A, temporalWorkflowId: 'temporal-1' },
+    ]);
     const { data } = (await get(b, `?templateId=${UUID_B}`)).json();
     expect(data.current.opened).toBe(1);
     expect(data.byTemplate).toEqual([
@@ -143,9 +147,52 @@ describe('GET /api/v1/pull-requests/outcomes', () => {
     ]);
     expect(b.prisma.workflowRun.findMany).toHaveBeenCalled();
     expect(whereOf(b)).toContainEqual({
-      workflow: { temporalWorkflowId: { in: ['temporal-1'] } },
+      OR: [
+        {
+          repoId: UUID_A,
+          workflow: { temporalWorkflowId: { in: ['temporal-1'] } },
+        },
+      ],
     });
     expect(b.prisma.pullRequest.findMany.mock.calls[0]?.[0].take).toBe(10_001);
+  });
+
+  it('groups repository-consistent attribution links before the capped PR read', async () => {
+    const b = await buildApp();
+    b.prisma.workflowRun.findMany.mockResolvedValue([
+      { template: { name: 'Build' }, templateId: UUID_B, workflowId: 'temporal-1' },
+      { template: { name: 'Build' }, templateId: UUID_B, workflowId: 'temporal-2' },
+      { template: { name: 'Build' }, templateId: UUID_B, workflowId: 'temporal-3' },
+    ]);
+    b.prisma.activeWorkflow.findMany.mockResolvedValue([
+      { repoId: UUID_A, temporalWorkflowId: 'temporal-1' },
+      { repoId: UUID_A, temporalWorkflowId: 'temporal-2' },
+      { repoId: UUID_B, temporalWorkflowId: 'temporal-3' },
+    ]);
+
+    await get(b, `?templateId=${UUID_B}`);
+
+    expect(b.prisma.pullRequest.findMany.mock.calls[0]?.[0]).toMatchObject({
+      take: 10_001,
+      where: {
+        AND: expect.arrayContaining([
+          {
+            OR: [
+              {
+                repoId: UUID_A,
+                workflow: {
+                  temporalWorkflowId: { in: ['temporal-1', 'temporal-2'] },
+                },
+              },
+              {
+                repoId: UUID_B,
+                workflow: { temporalWorkflowId: { in: ['temporal-3'] } },
+              },
+            ],
+          },
+        ]),
+      },
+    });
   });
 
   it('places PRs without a visible workflow run in the unattributed template bucket', async () => {

@@ -84,7 +84,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             },
           })
       );
-      const truncated = runsResult.length > REPORT_ROW_CAP;
+      const runsTruncated = runsResult.length > REPORT_ROW_CAP;
       const runs = runsResult.slice(0, REPORT_ROW_CAP);
       const runIds = runs.map((run) => run.id);
       const workflowIds = runs.map((run) => run.workflowId);
@@ -95,6 +95,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
               ['ActiveWorkflow'],
               () =>
                 fastify.prisma.activeWorkflow.findMany({
+                  orderBy: { temporalWorkflowId: 'asc' },
                   select: {
                     costUsdAccrued: true,
                     repoId: true,
@@ -112,6 +113,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
               ['PullRequest'],
               () =>
                 fastify.prisma.pullRequest.findMany({
+                  orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
                   select: {
                     ciStatus: true,
                     mergedAt: true,
@@ -129,6 +131,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
               ['WorkflowStep'],
               () =>
                 fastify.prisma.workflowStep.findMany({
+                  orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
                   select: { runId: true },
                   take: REPORT_ROW_CAP + 1,
                   where: {
@@ -139,10 +142,9 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             )
           : [],
       ]);
-      let wasTruncated = truncated;
-      wasTruncated ||= activeWorkflows.length > REPORT_ROW_CAP;
-      wasTruncated ||= pullRequests.length > REPORT_ROW_CAP;
-      wasTruncated ||= fixSteps.length > REPORT_ROW_CAP;
+      const activeWorkflowsTruncated = activeWorkflows.length > REPORT_ROW_CAP;
+      const prsTruncated = pullRequests.length > REPORT_ROW_CAP;
+      const ciFixStepsTruncated = fixSteps.length > REPORT_ROW_CAP;
       const runsByWorkflowId = new Map(
         runs.map((run) => [run.workflowId, { template: run.template, templateId: run.templateId }])
       );
@@ -176,11 +178,13 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             : (active?.repository?.repoName ?? active?.repository?.organizationName ?? null);
         return {
           ciFixRounds: ciRoundsByRun.get(run.id) ?? 0,
-          costUsdAccrued: Number(run.costUsdAccrued),
+          costUsdAccrued:
+            Number(run.costUsdAccrued) === 0
+              ? Number(active?.costUsdAccrued ?? 0)
+              : Number(run.costUsdAccrued),
           id: run.id,
           pullRequests: prsByRun.get(run.id) ?? [],
           repoId: active?.repoId ?? null,
-          repoSpendUsd: active ? Number(active.costUsdAccrued) : null,
           repositoryName: repoName,
           startedAt: run.startedAt,
           status: run.status,
@@ -193,7 +197,12 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       return {
         data: {
           ...report,
-          truncated: wasTruncated,
+          activeWorkflowsTruncated,
+          ciFixStepsTruncated,
+          prsTruncated,
+          runsTruncated,
+          truncated:
+            runsTruncated || activeWorkflowsTruncated || prsTruncated || ciFixStepsTruncated,
           windowEnd: range.windowEnd,
           windowStart: range.windowStart,
         },
@@ -230,19 +239,20 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             },
           })
       );
-      const truncated = runRows.length > REPORT_ROW_CAP;
+      const runsTruncated = runRows.length > REPORT_ROW_CAP;
       const runs = runRows.slice(0, REPORT_ROW_CAP);
       const runIds = runs.map((run) => run.id);
       const workflowIds = runs.map((run) => run.workflowId);
       const [steps, pullRequests, traces] = await Promise.all([
         runIds.length
           ? runUnscoped(
-              'quality report reads steps only for visible cohort runs',
+              'quality report groups steps only for visible cohort runs',
               ['WorkflowStep'],
               () =>
-                fastify.prisma.workflowStep.findMany({
-                  select: { runId: true, status: true, stepName: true },
-                  take: REPORT_ROW_CAP + 1,
+                fastify.prisma.workflowStep.groupBy({
+                  _count: { _all: true },
+                  by: ['runId', 'stepName', 'status'],
+                  orderBy: [{ runId: 'asc' }, { stepName: 'asc' }, { status: 'asc' }],
                   where: {
                     runId: { in: runIds },
                     stepName: {
@@ -268,6 +278,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
               ['PullRequest'],
               () =>
                 fastify.prisma.pullRequest.findMany({
+                  orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
                   select: {
                     ciStatus: true,
                     mergedAt: true,
@@ -286,11 +297,11 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
               () =>
                 fastify.prisma.agentTrace.findMany({
                   orderBy: { createdAt: 'desc' },
-                  select: { outputJson: true, runId: true },
+                  select: { error: true, outputJson: true, runId: true },
                   take: REPORT_ROW_CAP + 1,
                   where: {
                     agentKey: 'reviewer',
-                    createdAt: { gte: range.start, lt: range.end },
+                    error: null,
                     runId: { in: runIds },
                     type: 'llm_response',
                   },
@@ -299,7 +310,6 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
           : [],
       ]);
       const prsTruncated = pullRequests.length > REPORT_ROW_CAP;
-      const stepsTruncated = steps.length > REPORT_ROW_CAP;
       const tracesTruncated = traces.length > REPORT_ROW_CAP;
       const runsByWorkflowId = new Map(
         runs.map((run) => [run.workflowId, { template: run.template, templateId: run.templateId }])
@@ -316,16 +326,25 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       const report = computeQualityReport({
         pullRequests: reportPrs,
         reviewTraces: traces.slice(0, REPORT_ROW_CAP).map((trace) => ({
+          error: trace.error,
           outputJson: trace.outputJson,
           runId: trace.runId,
         })),
         runs: runs.map((run) => ({ id: run.id })),
-        steps: steps.slice(0, REPORT_ROW_CAP),
+        steps: steps.map((step) => ({
+          count: step._count._all,
+          runId: step.runId,
+          status: step.status,
+          stepName: step.stepName,
+        })),
       });
       return {
         data: {
           ...report,
-          truncated: truncated || prsTruncated || stepsTruncated || tracesTruncated,
+          prsTruncated,
+          runsTruncated,
+          tracesTruncated,
+          truncated: runsTruncated || prsTruncated || tracesTruncated,
           windowEnd: range.windowEnd,
           windowStart: range.windowStart,
         },
@@ -398,14 +417,26 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                     { startedAt: { gte: monthStart, lt: monthEnd } },
                     {
                       OR: [
-                        { connection: { team: { orgId: org.id } } },
                         { workRequest: { connection: { team: { orgId: org.id } } } },
-                        { workRequest: { billingOrgId: org.id } },
                         {
+                          connection: { team: { orgId: org.id } },
+                          OR: [{ workRequestId: null }, { workRequest: { connectionId: null } }],
+                        },
+                        {
+                          connectionId: null,
                           workRequest: {
                             activeWorkflows: {
                               some: { repository: { team: { orgId: org.id } } },
                             },
+                            connectionId: null,
+                          },
+                        },
+                        {
+                          connectionId: null,
+                          workRequest: {
+                            activeWorkflows: { none: { repoId: { not: null } } },
+                            billingOrgId: org.id,
+                            connectionId: null,
                           },
                         },
                       ],
@@ -477,6 +508,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                   },
           })
       );
+      const automationsTruncated = accessibleAutomations.length > REPORT_ROW_CAP;
       const visibleAutomationIds = accessibleAutomations
         .slice(0, REPORT_ROW_CAP)
         .map((automation) => automation.id);
@@ -501,6 +533,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             },
           })
       );
+      const firesTruncated = fireRows.length > REPORT_ROW_CAP;
       const fires = fireRows.slice(0, REPORT_ROW_CAP);
       const startedWorkflowIds = unique(
         fires.flatMap((fire) =>
@@ -508,23 +541,19 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
         )
       );
       const runRows = startedWorkflowIds.length
-        ? await asPlatformAdmin(
-            user,
-            'automation report joins produced visible runs',
+        ? await runUnscoped(
+            'automation fire ids were authorized before produced-run lookup',
             ['WorkflowRun'],
             () =>
               fastify.prisma.workflowRun.findMany({
+                orderBy: { workflowId: 'asc' },
                 select: { status: true, workflowId: true },
                 take: REPORT_ROW_CAP + 1,
-                where: {
-                  AND: [
-                    { workflowId: { in: startedWorkflowIds } },
-                    visibility(user, request.repoAccessGate),
-                  ],
-                },
+                where: { workflowId: { in: startedWorkflowIds } },
               })
           )
         : [];
+      const producedRunsTruncated = runRows.length > REPORT_ROW_CAP;
       const runStatuses = new Map(runRows.map((run) => [run.workflowId, run.status]));
       const report = computeAutomationReport(
         fires.map((fire) => ({
@@ -541,10 +570,10 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       return {
         data: {
           automations: report,
-          truncated:
-            accessibleAutomations.length > REPORT_ROW_CAP ||
-            fireRows.length > REPORT_ROW_CAP ||
-            runRows.length > REPORT_ROW_CAP,
+          automationsTruncated,
+          firesTruncated,
+          producedRunsTruncated,
+          truncated: automationsTruncated || firesTruncated || producedRunsTruncated,
           windowEnd: range.windowEnd,
           windowStart: range.windowStart,
         },
@@ -635,15 +664,18 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
           status: step.status,
         })),
       });
+      const windowStepsTruncated = windowSteps.length > REPORT_ROW_CAP;
+      const pendingStepsTruncated = pendingSteps.length > REPORT_ROW_CAP;
+      const decisionsTruncated = decisions.length > REPORT_ROW_CAP;
       return {
         data: {
           ...report,
-          truncated:
-            windowSteps.length > REPORT_ROW_CAP ||
-            pendingSteps.length > REPORT_ROW_CAP ||
-            decisions.length > REPORT_ROW_CAP,
+          decisionsTruncated,
+          pendingStepsTruncated,
+          truncated: windowStepsTruncated || pendingStepsTruncated || decisionsTruncated,
           windowEnd: range.windowEnd,
           windowStart: range.windowStart,
+          windowStepsTruncated,
         },
       };
     }

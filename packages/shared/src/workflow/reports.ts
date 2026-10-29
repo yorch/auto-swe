@@ -35,7 +35,6 @@ export interface DeliveryRun {
   templateId: string;
   templateName: string;
   workflowId: string;
-  repoSpendUsd: number | null;
 }
 
 export interface DeliveryMetrics {
@@ -67,7 +66,7 @@ function median(values: number[]): number | null {
     : (sorted[middle] ?? null);
 }
 
-function deliveryMetrics(runs: DeliveryRun[], repoSlice = false): DeliveryMetrics {
+function deliveryMetrics(runs: DeliveryRun[]): DeliveryMetrics {
   const mergedTimes: number[] = [];
   let runsSucceeded = 0;
   let runsWithPr = 0;
@@ -82,7 +81,7 @@ function deliveryMetrics(runs: DeliveryRun[], repoSlice = false): DeliveryMetric
       runsSucceeded++;
     }
     runCostUsd += run.costUsdAccrued;
-    spendUsd += repoSlice ? (run.repoSpendUsd ?? 0) : run.costUsdAccrued;
+    spendUsd += run.costUsdAccrued;
     if (run.pullRequests.length > 0) {
       runsWithPr++;
       ciFixRounds.push(run.ciFixRounds);
@@ -136,7 +135,7 @@ export function computeDeliveryReport(runs: DeliveryRun[]): DeliveryReport {
     ...deliveryMetrics(runs),
     byRepo: [...repositories.entries()]
       .map(([repoId, rows]) => ({
-        ...deliveryMetrics(rows, true),
+        ...deliveryMetrics(rows),
         repoId,
         repositoryName: rows[0]?.repositoryName ?? repoId,
       }))
@@ -160,6 +159,7 @@ export interface QualityRun {
 }
 
 export interface QualityStep {
+  count?: number;
   runId: string;
   status: string;
   stepName: string | null;
@@ -172,6 +172,7 @@ export interface QualityPullRequest {
 }
 
 export interface ReviewTrace {
+  error?: string | null;
   outputJson: unknown;
   runId: string | null;
 }
@@ -226,17 +227,18 @@ function countBy<T extends string>(values: T[]): Record<T, number> {
 export interface QualityReport {
   ciSelfHealRate: number | null;
   fixLoops: Array<{
-    avgRoundsPerRun: number | null;
+    avgAttemptsPerRun: number | null;
     runsWithFix: number;
     stepName: (typeof QUALITY_FIX_STEPS)[number];
-    totalRounds: number;
+    totalAttempts: number;
   }>;
   gates: Array<{
+    attempts: number;
     failed: number;
-    passRate: number | null;
+    finalPassRate: number | null;
+    firstAttemptPassRate: number | null;
     passed: number;
     stepName: (typeof QUALITY_GATE_STEPS)[number];
-    total: number;
   }>;
   mergeRateByReviewOutcome: {
     withRejectingVerdict: { mergeRate: number | null; mergedRuns: number; runsWithPr: number };
@@ -252,7 +254,7 @@ export interface QualityReport {
       topCategories: Array<{ category: string; count: number }>;
       verdicts: number;
     }>;
-    unparseableRows: number;
+    nonVerdictRows: number;
   };
 }
 
@@ -266,53 +268,69 @@ export function computeQualityReport(input: {
   steps: QualityStep[];
   reviewTraces: ReviewTrace[];
 }): QualityReport {
-  const gateStats = new Map<
+  const gatePairs = new Map<
     (typeof QUALITY_GATE_STEPS)[number],
-    { failed: number; passed: number }
-  >(QUALITY_GATE_STEPS.map((stepName) => [stepName, { failed: 0, passed: 0 }]));
+    Map<string, { failed: number; passed: number }>
+  >(QUALITY_GATE_STEPS.map((stepName) => [stepName, new Map()]));
   for (const step of input.steps) {
-    if (step.status !== 'PASSED' && step.status !== 'FAILED') {
-      continue;
-    }
-    const stats = gateStats.get(step.stepName as (typeof QUALITY_GATE_STEPS)[number]);
-    if (stats) {
-      stats[step.status === 'PASSED' ? 'passed' : 'failed']++;
+    const pairs = gatePairs.get(step.stepName as (typeof QUALITY_GATE_STEPS)[number]);
+    if (pairs) {
+      const stats = pairs.get(step.runId) ?? { failed: 0, passed: 0 };
+      if (step.status === 'PASSED') {
+        stats.passed += step.count ?? 1;
+      } else if (step.status === 'FAILED') {
+        stats.failed += step.count ?? 1;
+      }
+      pairs.set(step.runId, stats);
     }
   }
   const gates = QUALITY_GATE_STEPS.map((stepName) => {
-    const stats = gateStats.get(stepName) ?? { failed: 0, passed: 0 };
-    const total = stats.failed + stats.passed;
+    const pairs = [...(gatePairs.get(stepName)?.values() ?? [])];
+    const failed = pairs.reduce((sum, pair) => sum + pair.failed, 0);
+    const passed = pairs.reduce((sum, pair) => sum + pair.passed, 0);
+    const attempts = failed + passed;
+    const finalPassPairs = pairs.filter((pair) => pair.passed > 0).length;
+    const firstAttemptPassPairs = pairs.filter(
+      (pair) => pair.passed > 0 && pair.failed === 0
+    ).length;
     return {
-      failed: stats.failed,
-      passed: stats.passed,
-      passRate: total > 0 ? stats.passed / total : null,
+      attempts,
+      failed,
+      finalPassRate: pairs.length > 0 ? finalPassPairs / pairs.length : null,
+      firstAttemptPassRate: pairs.length > 0 ? firstAttemptPassPairs / pairs.length : null,
+      passed,
       stepName,
-      total,
     };
   });
 
   const fixesByStep = new Map<(typeof QUALITY_FIX_STEPS)[number], Map<string, number>>(
     QUALITY_FIX_STEPS.map((stepName) => [stepName, new Map()])
   );
+  const ciFixRunIds = new Set<string>();
   for (const step of input.steps) {
+    if (step.stepName === 'executeCIFixImplementation') {
+      ciFixRunIds.add(step.runId);
+    }
+    if (step.status !== 'PASSED' && step.status !== 'FAILED') {
+      continue;
+    }
     const byRun = fixesByStep.get(step.stepName as (typeof QUALITY_FIX_STEPS)[number]);
     if (byRun) {
-      byRun.set(step.runId, (byRun.get(step.runId) ?? 0) + 1);
+      byRun.set(step.runId, (byRun.get(step.runId) ?? 0) + (step.count ?? 1));
     }
   }
   const fixLoops = QUALITY_FIX_STEPS.map((stepName) => {
     const byRun = fixesByStep.get(stepName) ?? new Map();
-    const totalRounds = [...byRun.values()].reduce((sum, rounds) => sum + rounds, 0);
+    const totalAttempts = [...byRun.values()].reduce((sum, attempts) => sum + attempts, 0);
     const runsWithFix = byRun.size;
     return {
-      avgRoundsPerRun: runsWithFix > 0 ? totalRounds / runsWithFix : null,
+      avgAttemptsPerRun: runsWithFix > 0 ? totalAttempts / runsWithFix : null,
       runsWithFix,
       stepName,
-      totalRounds,
+      totalAttempts,
     };
   });
 
-  const ciFixRuns = fixesByStep.get('executeCIFixImplementation') ?? new Map();
   const healedRuns = new Set(
     input.pullRequests
       .filter((pr) => pr.ciStatus === 'PASSED' || pr.mergedAt !== null)
@@ -333,17 +351,23 @@ export function computeQualityReport(input: {
       },
     ])
   );
-  let unparseableRows = 0;
+  let nonVerdictRows = 0;
   const rejectingRuns = new Set<string>();
   for (const trace of input.reviewTraces) {
+    if (trace.error) {
+      continue;
+    }
+    if (!isRecord(trace.outputJson) || !Object.hasOwn(trace.outputJson, 'approved')) {
+      continue;
+    }
     const verdict = parseReviewVerdict(trace.outputJson);
     if (!verdict) {
-      unparseableRows++;
+      nonVerdictRows++;
       continue;
     }
     const group = reviewers.get(verdict.reviewer);
     if (!group) {
-      unparseableRows++;
+      nonVerdictRows++;
       continue;
     }
     group.verdicts++;
@@ -401,11 +425,11 @@ export function computeQualityReport(input: {
     }
   }
 
-  const ciRunCount = ciFixRuns.size;
+  const ciRunCount = ciFixRunIds.size;
   return {
     ciSelfHealRate:
       ciRunCount > 0
-        ? [...ciFixRuns.keys()].filter((runId) => healedRuns.has(runId)).length / ciRunCount
+        ? [...ciFixRunIds].filter((runId) => healedRuns.has(runId)).length / ciRunCount
         : null,
     fixLoops,
     gates,
@@ -419,7 +443,7 @@ export function computeQualityReport(input: {
         mergeGroups.rejecting.mergedRuns
       ),
     },
-    review: { byReviewer, unparseableRows },
+    review: { byReviewer, nonVerdictRows },
   };
 }
 
