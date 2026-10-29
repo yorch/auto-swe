@@ -1,8 +1,11 @@
 import {
+  COMPONENT_MARKER_RE,
+  compositeComponentCount,
   detectedGateDefaults,
   detectedTarget,
   detectedTargetDir,
   inDir,
+  PYTEST_NO_TESTS_STATUS,
 } from '@auto-swe/shared/lib/stackDetection';
 import type { FileChange, TestRunResult } from '@auto-swe/shared/types/workflow';
 
@@ -18,11 +21,13 @@ export const TEST_RUN_TIMEOUT_MS = 600_000;
  * The test command the TDD loop and the fix sessions run.
  *
  * The same chain as the `runTests` quality gate, so the loop and the gate run the same
- * command wherever both have one (an ambiguous layout leaves the gate unconfigured and the
- * loop on its root guess, which then ends the loop as unrunnable): the repository's configured
+ * command wherever both have one (a layout the composite cannot cover — over 8 components, or
+ * components that do not all have a test command — leaves the gate unconfigured and the loop on
+ * its root guess, which then ends the loop as unrunnable): the repository's configured
  * `Connection.gateCommands.runTests` wins; then the default for the stack the
  * repository's root was detected as (a Python, JVM or Go root, not Node), or its only component
- * when the root has no stack (run in that directory); then a guess from package.json's scripts
+ * when the root has no stack (run in that directory), or the composite that runs the tests in
+ * each of 2..8 components; then a guess from package.json's scripts
  * and devDependencies, falling back to `npm test`. `packageJsonStr` is the text of the target's
  * `package.json` — {@link packageJsonReadCommand} reads the right one — and a guess for a
  * component runs in its directory too.
@@ -58,10 +63,11 @@ function resolveTestCommand(
   // guess below is better informed (a missing test script, a vitest dependency).
   const target = detectedTarget(detectedStack);
   const concrete = target !== null && target !== 'ambiguous' ? target : null;
+  // An ambiguous layout of 2..8 components resolves to the composite `runTests`.
   const stackTests =
-    concrete === null || concrete.stack === 'node'
-      ? undefined
-      : detectedGateDefaults(detectedStack)?.runTests;
+    target === 'ambiguous' || (concrete !== null && concrete.stack !== 'node')
+      ? detectedGateDefaults(detectedStack)?.runTests
+      : undefined;
   if (stackTests) {
     return { command: stackTests, source: 'stack' };
   }
@@ -181,14 +187,11 @@ export function unrunnableTestCause(err: unknown): string | undefined {
     : undefined;
 }
 
-/** pytest's exit status when it collected no tests. */
-const PYTEST_NO_TESTS_STATUS = 5;
-
 /**
  * `none-collected`: the runner looked for tests and found none (pytest's exit 5).
  * `unreadable`: the run exited 0 but its output carries nothing `parseTestOutput` can read, so
- * whether tests ran is unknown (`go test`'s `[no test files]`, and also a green quiet
- * `mvn -B -q test`, a Gradle `BUILD SUCCESSFUL` or a verbose surefire summary).
+ * whether tests ran is unknown (`go test`'s `[no test files]`, a Gradle build whose `test` task
+ * was up to date, or one component of a composite whose output showed none).
  */
 export type NoTestsKind = 'none-collected' | 'unreadable';
 
@@ -215,7 +218,11 @@ export function noTestsFoundCause(
   }
   if ('result' in outcome) {
     const r = outcome.result;
-    return !r.passed && r.total === 0 && r.failing === 0
+    // The run resolved, so it exited 0; not passed with nothing failing means some run showed no
+    // tests. For a single run that is `total === 0` too (passed would be true with any count and
+    // no failure); for a composite it can be one component whose output showed none beside
+    // another's `12 passed`, which is just as little a failure the agent can fix.
+    return !r.passed && r.failing === 0
       ? { kind: 'unreadable', reason: 'the run exited 0 but printed no test counts' }
       : undefined;
   }
@@ -263,7 +270,9 @@ export function testStatusWord(result: TestRunResult): 'passing' | 'failing' | '
   if (result.passed) {
     return 'passing';
   }
-  return result.total === 0 && result.failing === 0 ? 'not run' : 'failing';
+  // Not passed with nothing failing is "not run": for a single run `total` is 0 as well, and a
+  // composite where one component showed no tests beside another's green run is the same state.
+  return result.failing === 0 ? 'not run' : 'failing';
 }
 
 /**
@@ -292,6 +301,9 @@ const RAN_TESTS_RES: readonly RegExp[] = [
   /^--- PASS: \S/m,
   /^\s*PASS[ \t]+\S/m,
   /^Ran [1-9]\d* tests?\b/m,
+  // Gradle names a task it executed; `UP-TO-DATE` and `NO-SOURCE` follow the name on their line,
+  // so a test task that did nothing does not match.
+  /^> Task :(?:[\w.-]+:)*test$/m,
 ];
 
 /**
@@ -358,32 +370,117 @@ export function parseTestOutput(
   durationMs: number,
   exitCode?: number
 ): TestRunResult {
-  const passCount = largestCount(output, PASS_COUNT_RES);
-  const failCount = largestCount(output, FAIL_COUNT_RES);
-  const passing = passCount ?? 0;
-  const failing = failCount ?? 0;
-  const countsParsed = passCount !== null || failCount !== null;
-  const ranTests = RAN_TESTS_RES.some((re) => re.test(output));
-
-  let passed: boolean;
-  if (exitCode !== undefined && exitCode !== 0) {
-    passed = false;
-  } else if (countsParsed) {
-    passed = failing === 0 && passing > 0;
-  } else if (exitCode === 0) {
-    passed = ranTests;
-  } else {
-    passed = false;
+  const sections = splitComponentSections(output);
+  if (sections) {
+    // A composite run: every component must show its own evidence, and the counts add up.
+    const scans = sections.map((s) => scanSection(s.body, exitCode));
+    const passing = scans.reduce((n, s) => n + s.passing, 0);
+    const failing = scans.reduce((n, s) => n + s.failing, 0);
+    return {
+      duration_ms: durationMs,
+      failing,
+      passed: (exitCode === undefined || exitCode === 0) && scans.every((s) => s.ok),
+      passing,
+      stdout: boundTestOutput(output),
+      total: passing + failing,
+    };
   }
-
+  const { failing, ok, passing } = scanSection(output, exitCode);
   return {
     duration_ms: durationMs,
     failing,
-    passed,
+    passed: exitCode !== undefined && exitCode !== 0 ? false : ok,
     passing,
-    stdout: output.slice(-10_000),
+    stdout: boundTestOutput(output),
     total: passing + failing,
   };
+}
+
+/**
+ * Maven Surefire's `Tests run: N, Failures: F, Errors: E, Skipped: S` lines, as counts. It prints
+ * one per test class and a total, so the line with the most tests is the total. `mvn -q` prints
+ * none, which is why the default test command is not quiet. Passing is N minus F, E and S.
+ */
+function surefireCounts(output: string): { passing: number; failing: number } | null {
+  let best: { run: number; failing: number; passing: number } | null = null;
+  for (const m of output.matchAll(
+    /Tests run: (\d+), Failures: (\d+), Errors: (\d+)(?:, Skipped: (\d+))?/g
+  )) {
+    const run = Number(m[1]);
+    const failing = Number(m[2]) + Number(m[3]);
+    if (best === null || run > best.run) {
+      best = { failing, passing: Math.max(run - failing - Number(m[4] ?? 0), 0), run };
+    }
+  }
+  return best;
+}
+
+/** One run's (or one component's) counts, and whether they show that tests ran and none failed. */
+function scanSection(
+  output: string,
+  exitCode?: number
+): { passing: number; failing: number; ok: boolean } {
+  const surefire = surefireCounts(output);
+  const passCount = largestCount(output, PASS_COUNT_RES);
+  const failCount = largestCount(output, FAIL_COUNT_RES);
+  const passing = Math.max(passCount ?? 0, surefire?.passing ?? 0);
+  const failing = Math.max(failCount ?? 0, surefire?.failing ?? 0);
+  const countsParsed = passCount !== null || failCount !== null || surefire !== null;
+  const ranTests = RAN_TESTS_RES.some((re) => re.test(output));
+  const ok = countsParsed ? failing === 0 && passing > 0 : exitCode === 0 && ranTests;
+  return { failing, ok, passing };
+}
+
+/**
+ * A composite command's output split at its marker lines, or null when it has fewer than two (a
+ * single run, which parses and truncates exactly as it always has). `marker` is the line itself.
+ */
+function splitComponentSections(output: string): Array<{ marker: string; body: string }> | null {
+  const markers = [...output.matchAll(COMPONENT_MARKER_RE)];
+  if (markers.length < 2) {
+    return null;
+  }
+  return markers.map((m, i) => {
+    const start = (m.index ?? 0) + m[0].length + 1;
+    const end = markers[i + 1]?.index ?? output.length;
+    return { body: output.slice(start, end), marker: m[0] };
+  });
+}
+
+const TEST_OUTPUT_BUDGET = 10_000;
+
+/**
+ * Test output bounded for what the agent is shown: the last `budget` characters of a single run;
+ * for a composite run an even share (`floor(budget / sections)`) per component, each keeping its
+ * marker line and its last characters, in order, so every component's failure is represented.
+ */
+export function boundTestOutput(output: string, budget = TEST_OUTPUT_BUDGET): string {
+  const sections = splitComponentSections(output);
+  // More sections than a composite has (the command itself covers at most 8), or markers too long
+  // to leave each a share, is not a composite's output but something printing marker lines: bound
+  // it like a single run, so the result never exceeds the budget.
+  if (!sections || sections.length > 8) {
+    return output.slice(-budget);
+  }
+  const share = Math.floor(budget / sections.length);
+  if (sections.some(({ marker }) => marker.length + 2 > share)) {
+    return output.slice(-budget);
+  }
+  return sections
+    .map(({ body, marker }) => {
+      const room = share - marker.length - 1;
+      const tail = room > 0 ? body.slice(-room) : '';
+      return `${marker}\n${tail}${tail === '' || tail.endsWith('\n') ? '' : '\n'}`;
+    })
+    .join('');
+}
+
+/**
+ * The wall-clock cap for a test command: {@link TEST_RUN_TIMEOUT_MS}, times the number of
+ * components a composite command runs, at most 4x — the components share one run's budget.
+ */
+export function testRunTimeoutMs(command: string): number {
+  return TEST_RUN_TIMEOUT_MS * Math.min(Math.max(compositeComponentCount(command), 1), 4);
 }
 
 /**

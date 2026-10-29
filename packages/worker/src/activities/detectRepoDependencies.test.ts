@@ -380,6 +380,90 @@ describe('detectRepoDependencies', () => {
     );
   });
 
+  describe('Yarn flavour from the root yarn.lock', () => {
+    const yarnFetches = () => fetchFileContent.mock.calls.filter((c) => c[1] === 'yarn.lock');
+    const recorded = (): Record<string, unknown> => {
+      const call = connectionUpdate.mock.calls[0]?.[0] as
+        | { data: { detectedStack: Record<string, unknown> } }
+        | undefined;
+      if (!call) {
+        throw new Error('connection.update was not called');
+      }
+      return call.data.detectedStack;
+    };
+
+    it('reads the lockfile header once for an unpinned yarn root, and records the flavour', async () => {
+      connectionFindUnique.mockResolvedValue(BASE_CONNECTION);
+      stubFiles({ 'package.json': '{}', 'yarn.lock': `# yarn lockfile v1\n${'x'.repeat(5000)}` });
+      listDirectory.mockResolvedValue(['package.json', 'yarn.lock']);
+
+      await detectRepoDependencies({ repoId: 'repo-self' });
+
+      expect(yarnFetches()).toHaveLength(1);
+      expect(recorded()).toMatchObject({ packageManager: 'yarn', yarnFlavor: 'classic' });
+    });
+
+    it('records Berry from a Berry header', async () => {
+      connectionFindUnique.mockResolvedValue(BASE_CONNECTION);
+      stubFiles({ 'package.json': '{}', 'yarn.lock': '__metadata:\n  version: 8\n' });
+      listDirectory.mockResolvedValue(['package.json', 'yarn.lock']);
+      await detectRepoDependencies({ repoId: 'repo-self' });
+      expect(recorded()).toMatchObject({ yarnFlavor: 'berry' });
+    });
+
+    it('only looks at the first 2 KB of the lockfile', async () => {
+      connectionFindUnique.mockResolvedValue(BASE_CONNECTION);
+      stubFiles({
+        'package.json': '{}',
+        'yarn.lock': `${'#'.repeat(2048)}\n# yarn lockfile v1\n`,
+      });
+      listDirectory.mockResolvedValue(['package.json', 'yarn.lock']);
+      await detectRepoDependencies({ repoId: 'repo-self' });
+      expect(recorded().yarnFlavor).toBeUndefined();
+    });
+
+    it('does not fetch it when a pin, a .yarnrc.yml, another manager or no yarn.lock decides', async () => {
+      connectionFindUnique.mockResolvedValue(BASE_CONNECTION);
+      const cases: Array<[Record<string, string>, string[]]> = [
+        [{ 'package.json': '{"packageManager":"yarn@4.1.0"}' }, ['package.json', 'yarn.lock']],
+        [{ 'package.json': '{}' }, ['package.json', 'yarn.lock', '.yarnrc.yml']],
+        [{ 'package.json': '{}' }, ['package.json', 'package-lock.json']],
+        [{ 'package.json': '{}' }, ['package.json']],
+        [{ 'pyproject.toml': 'x' }, ['pyproject.toml', 'yarn.lock']],
+        // A component's yarn.lock is not the root's.
+        [{}, ['web/package.json', 'web/yarn.lock']],
+      ];
+      for (const [files, listing] of cases) {
+        fetchFileContent.mockClear();
+        listDirectory.mockResolvedValue(listing);
+        stubFiles({ ...files, 'yarn.lock': '# yarn lockfile v1' });
+        await detectRepoDependencies({ repoId: 'repo-self' });
+        expect(yarnFetches(), listing.join()).toHaveLength(0);
+      }
+    });
+
+    it('survives a failed or missing lockfile fetch and still records the detection', async () => {
+      connectionFindUnique.mockResolvedValue(BASE_CONNECTION);
+      listDirectory.mockResolvedValue(['package.json', 'yarn.lock']);
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      fetchFileContent.mockImplementation(async (_repo: unknown, path: string) => {
+        if (path === 'yarn.lock') {
+          throw new Error('boom');
+        }
+        return path === 'package.json' ? '{}' : null;
+      });
+      await detectRepoDependencies({ repoId: 'repo-self' });
+      expect(yarnFetches()).toHaveLength(1);
+      expect(recorded()).toMatchObject({ packageManager: 'yarn' });
+      expect(recorded().yarnFlavor).toBeUndefined();
+
+      connectionUpdate.mockClear();
+      stubFiles({ 'package.json': '{}', 'yarn.lock': null });
+      await detectRepoDependencies({ repoId: 'repo-self' });
+      expect(recorded().yarnFlavor).toBeUndefined();
+    });
+  });
+
   it('records an empty detection for a repo with no manifests', async () => {
     connectionFindUnique.mockResolvedValue(BASE_CONNECTION);
     await detectRepoDependencies({ repoId: 'repo-self' });

@@ -1,16 +1,89 @@
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { componentMarker, compositeCommand } from '@auto-swe/shared/lib/stackDetection';
 import { describe, expect, it } from 'vitest';
 import {
+  boundTestOutput,
   detectTestCommand,
   noTestsFoundCause,
   noTestsFoundNotes,
   noTestsRunResult,
   packageJsonReadCommand,
   parseTestOutput,
+  TEST_RUN_TIMEOUT_MS,
   testCommandSource,
   testRunCommand,
+  testRunTimeoutMs,
   testStatusWord,
   unrunnableTestCause,
 } from './utils.js';
+
+describe('composite test output', () => {
+  const section = (dir: string, body: string) => `${componentMarker(dir)}\n${body}\n`;
+
+  it('requires every component to show that tests ran, even with exit 0', () => {
+    const out = section('a', '12 passed in 0.3s') + section('b', 'ok  \tpkg\t0.1s');
+    expect(parseTestOutput(out, 5, 0).passed).toBe(true);
+    const noTests = section('a', '12 passed in 0.3s') + section('b', '?   \tpkg\t[no test files]');
+    expect(parseTestOutput(noTests, 5, 0).passed).toBe(false);
+  });
+
+  it('sums the counts across components instead of taking the largest', () => {
+    const out = section('a', '12 passed in 0.3s') + section('b', 'Tests: 3 passed, 3 total');
+    expect(parseTestOutput(out, 5, 0)).toMatchObject({
+      failing: 0,
+      passed: true,
+      passing: 15,
+      total: 15,
+    });
+  });
+
+  it('fails when any component shows a failure, or the exit is non-zero', () => {
+    const out = section('a', '12 passed') + section('b', '2 failed, 1 passed');
+    expect(parseTestOutput(out, 5, 0)).toMatchObject({ failing: 2, passed: false, passing: 13 });
+    const clean = section('a', '12 passed') + section('b', '1 passed');
+    expect(parseTestOutput(clean, 5, 1).passed).toBe(false);
+  });
+
+  it('parses output with fewer than two markers exactly as a single run', () => {
+    const one = `${componentMarker('a')}\n12 passed\n`;
+    expect(parseTestOutput(one, 5, 0)).toMatchObject({ passed: true, passing: 12 });
+    const mentioned = `see ${componentMarker('a')} in the docs\nran 3 passed\n2 passed`;
+    expect(parseTestOutput(mentioned, 5, 0)).toMatchObject({ passed: true, passing: 3 });
+    // Two bare `== a ==` lines are not markers.
+    expect(parseTestOutput('== a ==\n12 passed\n== b ==\n', 5, 0).passing).toBe(12);
+  });
+
+  it('keeps a per-component tail so every component’s failure survives', () => {
+    const a = section('a', `${'x'.repeat(30_000)}\nFAIL in a`);
+    const b = section('b', `${'y'.repeat(30_000)}\nFAIL in b`);
+    const bounded = boundTestOutput(a + b);
+    expect(bounded.length).toBeLessThanOrEqual(10_000);
+    expect(bounded).toContain(componentMarker('a'));
+    expect(bounded).toContain(componentMarker('b'));
+    expect(bounded).toContain('FAIL in a');
+    expect(bounded).toContain('FAIL in b');
+    expect(bounded.indexOf(componentMarker('a'))).toBeLessThan(bounded.indexOf('FAIL in a'));
+    expect(bounded.indexOf('FAIL in a')).toBeLessThan(bounded.indexOf(componentMarker('b')));
+  });
+
+  it('truncates a single run to its last 10,000 characters, as before', () => {
+    const big = `${'x'.repeat(20_000)}END`;
+    expect(boundTestOutput(big)).toBe(big.slice(-10_000));
+    expect(parseTestOutput(big, 5, 0).stdout).toBe(big.slice(-10_000));
+  });
+
+  it('scales the timeout by the number of components, capped at 4x', () => {
+    const parts = (n: number) =>
+      compositeCommand(Array.from({ length: n }, (_, i) => ({ command: 'true', dir: `s${i}` })));
+    expect(testRunTimeoutMs('npm test')).toBe(TEST_RUN_TIMEOUT_MS);
+    expect(testRunTimeoutMs(parts(2))).toBe(2 * TEST_RUN_TIMEOUT_MS);
+    expect(testRunTimeoutMs(parts(4))).toBe(4 * TEST_RUN_TIMEOUT_MS);
+    expect(testRunTimeoutMs(parts(8))).toBe(4 * TEST_RUN_TIMEOUT_MS);
+  });
+});
 
 describe('detectTestCommand with a component target', () => {
   const component = (path: string, stack: string, extra: object = {}) => ({
@@ -38,15 +111,39 @@ describe('detectTestCommand with a component target', () => {
     ).toBe('make -C web test');
   });
 
-  it('leaves an ambiguous layout on the root guess, in the root', () => {
+  it('runs the composite tests across an ambiguous layout of 2..8 components', () => {
     const both = {
       components: [
         { path: 'a', stacks: ['go'] },
         { path: 'b', stacks: ['jvm'] },
       ],
+      evidence: ['b/pom.xml'],
+    };
+    expect(detectTestCommand('{}', null, both)).toBe(
+      compositeCommand([
+        { command: 'go test ./...', dir: 'a' },
+        { command: 'mvn -B -ntp test', dir: 'b' },
+      ])
+    );
+    // A configured command still wins.
+    expect(detectTestCommand('{}', { runTests: 'make test' }, both)).toBe('make test');
+  });
+
+  it('leaves a layout the composite cannot cover on the root guess, in the root', () => {
+    const many = {
+      components: Array.from({ length: 9 }, (_, i) => ({ path: `s${i}`, stacks: ['go'] })),
       evidence: [],
     };
-    expect(detectTestCommand('{}', null, both)).toBe('npm test');
+    expect(detectTestCommand('{}', null, many)).toBe('npm test');
+    // A component with no test command (a stack outside the table) uncovers the gate too.
+    const unknown = {
+      components: [
+        { path: 'a', stacks: ['go'] },
+        { path: 'b', stacks: ['ruby'] },
+      ],
+      evidence: [],
+    };
+    expect(detectTestCommand('{}', null, unknown)).toBe('npm test');
   });
 
   it('reads the component’s package.json, quoting the directory', () => {
@@ -365,6 +462,128 @@ describe('unrunnableTestCause', () => {
   });
 });
 
+describe('a real composite run, read by parseTestOutput', () => {
+  /** Run each part's command in its own temp directory under the real composite, as the loop does. */
+  const runComposite = (parts: Array<{ dir: string; command: string }>) => {
+    const root = mkdtempSync(join(tmpdir(), 'composite-parse-'));
+    for (const { dir } of parts) {
+      mkdirSync(join(root, dir), { recursive: true });
+    }
+    const r = spawnSync('sh', ['-c', testRunCommand(compositeCommand(parts))], {
+      cwd: root,
+      encoding: 'utf8',
+    });
+    return { output: r.stdout, status: r.status ?? -1 };
+  };
+
+  it('passes when every component printed evidence, even one whose output has no final newline', () => {
+    const r = runComposite([
+      { command: "printf '12 passed'", dir: 'a' },
+      { command: "printf 'ok  example.test/b  0.01s\\n'", dir: 'b' },
+    ]);
+    expect(r.status).toBe(0);
+    const parsed = parseTestOutput(r.output, 10, r.status);
+    expect(parsed.passed).toBe(true);
+    expect(parsed.passing).toBeGreaterThanOrEqual(12);
+  });
+
+  it('does not pass when one component ran no tests, however many another ran', () => {
+    const r = runComposite([
+      { command: "printf '12 passed'", dir: 'a' },
+      { command: "printf 'ok  example.test/b [no test files]\\n' | sed 's/ok  //'", dir: 'b' },
+    ]);
+    expect(r.status).toBe(0);
+    expect(parseTestOutput(r.output, 10, r.status).passed).toBe(false);
+  });
+
+  it('ends the loop as "tests unreadable", not as a failure to iterate on, when one component shows none', () => {
+    const r = runComposite([
+      { command: "printf '12 passed\\n'", dir: 'a' },
+      { command: 'true', dir: 'b' },
+    ]);
+    expect(r.status).toBe(0);
+    const parsed = parseTestOutput(r.output, 10, r.status);
+    expect(parsed.passed).toBe(false);
+    expect(noTestsFoundCause('stack', { result: parsed })?.kind).toBe('unreadable');
+    expect(testStatusWord(parsed)).toBe('not run');
+  });
+
+  it('keeps iterating on a real failure even when another component collected no tests', () => {
+    // pytest's exit 5 first, a failing Go suite second: the status is the real failure's, so
+    // the loop's no-tests rule (which stops on exit 5) does not apply.
+    const r = runComposite([
+      { command: 'exit 5', dir: 'a' },
+      { command: "printf '1 failed\\n'; exit 1", dir: 'b' },
+    ]);
+    expect(r.status).toBe(1);
+    expect(noTestsFoundCause('stack', { error: { code: r.status } })).toBeUndefined();
+  });
+
+  it('does not pass when one component fails, whatever the others printed', () => {
+    const r = runComposite([
+      { command: "printf '12 passed\\n'", dir: 'a' },
+      { command: "printf '1 failed\\n'; exit 1", dir: 'b' },
+    ]);
+    expect(r.status).toBe(1);
+    const parsed = parseTestOutput(r.output, 10, r.status);
+    expect(parsed.passed).toBe(false);
+    expect(parsed.failing).toBeGreaterThan(0);
+  });
+});
+
+describe('test evidence for JVM runners', () => {
+  it('counts Maven Surefire’s summary as tests having run, and a zero-test run as not', () => {
+    const ran = '[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 1\n[INFO] BUILD SUCCESS\n';
+    expect(parseTestOutput(ran, 10, 0).passed).toBe(true);
+    const none = '[INFO] Tests run: 0, Failures: 0, Errors: 0, Skipped: 0\n[INFO] BUILD SUCCESS\n';
+    expect(parseTestOutput(none, 10, 0).passed).toBe(false);
+    // `mvn -q` prints nothing on success: no evidence, so the default command is not quiet.
+    expect(parseTestOutput('', 10, 0).passed).toBe(false);
+  });
+
+  it('counts a Gradle test task that executed, not one that was skipped or up to date', () => {
+    expect(
+      parseTestOutput('> Task :compileJava\n> Task :test\n\nBUILD SUCCESSFUL\n', 10, 0).passed
+    ).toBe(true);
+    expect(parseTestOutput('> Task :app:test\nBUILD SUCCESSFUL\n', 10, 0).passed).toBe(true);
+    expect(parseTestOutput('> Task :test UP-TO-DATE\nBUILD SUCCESSFUL\n', 10, 0).passed).toBe(
+      false
+    );
+    expect(parseTestOutput('> Task :test NO-SOURCE\nBUILD SUCCESSFUL\n', 10, 0).passed).toBe(false);
+  });
+
+  it('still fails a Maven run with failures, whatever else it printed', () => {
+    const failed = '[ERROR] Tests run: 12, Failures: 2, Errors: 0, Skipped: 0\n';
+    expect(parseTestOutput(failed, 10, 1).passed).toBe(false);
+    expect(parseTestOutput(failed, 10, 0).passed).toBe(false);
+  });
+});
+
+describe('boundTestOutput is never larger than its budget', () => {
+  it('bounds output made of far more markers than a composite has', () => {
+    const flood = Array.from({ length: 5000 }, (_, i) => componentMarker(`d${i}`)).join('\n');
+    expect(boundTestOutput(flood, 10_000).length).toBeLessThanOrEqual(10_000);
+  });
+
+  it('bounds a marker too long to leave its section a share', () => {
+    const long = componentMarker('x'.repeat(6000));
+    const out = `${long}\nbody\n${componentMarker('b')}\nmore\n`;
+    expect(boundTestOutput(out, 10_000).length).toBeLessThanOrEqual(10_000);
+  });
+
+  it('still keeps a real composite’s every section', () => {
+    const out = ['a', 'b', 'c']
+      .map((d) => `${componentMarker(d)}\n${'x'.repeat(8000)}\nFAILED in ${d}\n`)
+      .join('');
+    const bounded = boundTestOutput(out, 10_000);
+    expect(bounded.length).toBeLessThanOrEqual(10_000);
+    for (const d of ['a', 'b', 'c']) {
+      expect(bounded).toContain(componentMarker(d));
+      expect(bounded).toContain(`FAILED in ${d}`);
+    }
+  });
+});
+
 describe('testCommandSource', () => {
   const stackOf = (stack: string, dir = '') => ({
     components: [{ path: dir, stacks: [stack] }],
@@ -392,15 +611,22 @@ describe('testCommandSource', () => {
     expect(testCommandSource(packageJson, gate, detected)).toBe(expected);
   });
 
-  it('is an ambiguous layout falling back to the guess', () => {
-    const both = {
+  it('is a composite for an ambiguous layout of 2..8 components, and the guess past that', () => {
+    const two = {
       components: [
         { path: 'a', stacks: ['go'] },
         { path: 'b', stacks: ['jvm'] },
       ],
       evidence: [],
     };
-    expect(testCommandSource('{}', null, both)).toBe('node-guess');
+    // The composite is stack-derived, so a run of it that shows no tests ends the loop like any
+    // other stack command does.
+    expect(testCommandSource('{}', null, two)).toBe('stack');
+    const nine = {
+      components: Array.from({ length: 9 }, (_, i) => ({ path: `s${i}`, stacks: ['go'] })),
+      evidence: [],
+    };
+    expect(testCommandSource('{}', null, nine)).toBe('node-guess');
   });
 
   it('agrees with detectTestCommand on which link supplied the command', () => {
@@ -441,10 +667,19 @@ describe('noTestsFoundCause', () => {
 
   it('does not fire for a result that passed, ran tests or failed', () => {
     expect(noTestsFoundCause('stack', { result: result({ passed: true }) })).toBeUndefined();
-    expect(
-      noTestsFoundCause('stack', { result: result({ passing: 3, total: 3 }) })
-    ).toBeUndefined();
     expect(noTestsFoundCause('stack', { result: result({ failing: 1 }) })).toBeUndefined();
+    expect(
+      noTestsFoundCause('stack', { result: result({ failing: 2, passing: 3, total: 5 }) })
+    ).toBeUndefined();
+  });
+
+  it("names a composite run where one component showed no tests beside another's green run", () => {
+    // Not passed, nothing failed, yet `passing > 0`: only a composite can be here (a single run
+    // with any passing count and no failure passes). Whether the silent component's tests ran is
+    // unknown, and no later agent pass changes that, so the loop stops instead of iterating.
+    expect(
+      noTestsFoundCause('stack', { result: result({ passing: 12, total: 12 }) })
+    ).toMatchObject({ kind: 'unreadable' });
   });
 
   it('never fires for a configured or package.json command', () => {
@@ -486,11 +721,29 @@ describe('noTestsFoundNotes', () => {
 describe('green quiet suites read as unreadable, not as missing tests', () => {
   it.each([
     ['mvn -B -q test (no output)', ''],
-    ['surefire verbose summary', '[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0'],
-    ['gradle', 'BUILD SUCCESSFUL in 4s\n3 actionable tasks: 3 executed'],
+    // No `> Task :test` line: the build succeeded, but nothing says its tests ran.
+    ['gradle without a test task line', 'BUILD SUCCESSFUL in 4s\n3 actionable tasks: 3 executed'],
+    ['gradle with the test task up to date', '> Task :test UP-TO-DATE\nBUILD SUCCESSFUL in 1s'],
   ])('%s', (_name, stdout) => {
     const parsed = parseTestOutput(stdout, 1, 0);
     expect(noTestsFoundCause('stack', { result: parsed })?.kind).toBe('unreadable');
+  });
+});
+
+describe('the default JVM commands print what the parser reads', () => {
+  // `mvn -B -ntp test` (not `-q`) prints Surefire's totals, and Gradle names an executed `test`
+  // task, so a green run of either is read as tests having run instead of ending the loop as
+  // unreadable.
+  it.each([
+    [
+      'mvn -B -ntp test',
+      '[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0\n[INFO] BUILD SUCCESS',
+    ],
+    ['gradle test', '> Task :compileJava\n> Task :test\nBUILD SUCCESSFUL in 4s'],
+  ])('%s', (_name, stdout) => {
+    const parsed = parseTestOutput(stdout, 1, 0);
+    expect(parsed.passed).toBe(true);
+    expect(noTestsFoundCause('stack', { result: parsed })).toBeUndefined();
   });
 });
 
@@ -501,6 +754,10 @@ describe('testStatusWord', () => {
     expect(testStatusWord({ ...base, passed: true, passing: 2, total: 2 })).toBe('passing');
     expect(testStatusWord({ ...base, failing: 2, passing: 1, total: 3 })).toBe('failing');
     expect(testStatusWord(base)).toBe('not run');
+  });
+
+  it("says not run for a composite whose one component showed no tests beside another's green run", () => {
+    expect(testStatusWord({ ...base, passing: 12, total: 12 })).toBe('not run');
   });
 
   it('keeps the unrunnable shape (failing 1, total 0) as failing', () => {

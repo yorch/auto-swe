@@ -447,6 +447,11 @@ declare module 'fastify' {
       syncSlackChannelSyncSchedule: (config: SlackChannelSyncScheduleConfig) => Promise<void>;
       getRepoDependencyScanScheduleStatus: () => Promise<RepoDependencyScanScheduleStatus>;
       triggerRepoDependencyScanNow: () => Promise<void>;
+      /**
+       * Scan ONE repository's dependencies and stack now (a just-onboarded repository), instead of
+       * waiting for the weekly sweep. A scan of that repository already running is joined.
+       */
+      startRepoDependencyScan: (repoId: string) => Promise<void>;
       syncWorkRequestSchedule: (input: WorkRequestScheduleInput) => Promise<void>;
       deleteWorkRequestSchedule: (scheduleRowId: string) => Promise<void>;
       triggerWorkRequestSchedule: (scheduleRowId: string) => Promise<void>;
@@ -1230,6 +1235,24 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
         taskQueue: 'engineering-workflow',
         workflowId,
       });
+    },
+
+    async startRepoDependencyScan(repoId: string): Promise<void> {
+      // One scan per repository: a start while one runs joins it, and a closed one is started
+      // afresh. The caller wraps this best-effort — a Temporal hiccup must not fail onboarding,
+      // and the weekly sweep scans the repository anyway.
+      try {
+        await client.workflow.start('RepoDependencyScanOneWorkflow', {
+          args: [{ repoId }],
+          taskQueue: 'engineering-workflow',
+          workflowId: `repo-dependency-scan-${repoId}`,
+          workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        });
+      } catch (err) {
+        if (getErrorName(err) !== 'WorkflowExecutionAlreadyStartedError') {
+          throw err;
+        }
+      }
     },
 
     async startRunnableWorkflow(

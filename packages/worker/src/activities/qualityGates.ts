@@ -42,7 +42,7 @@ import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { DEFAULT_COMMANDS, gateCommandFor } from './gateCommand.js';
 import { runImplementerFixSession } from './implementerSession.js';
-import { testStatusWord } from './utils.js';
+import { testRunTimeoutMs, testStatusWord } from './utils.js';
 import {
   createWorkspace,
   fetchBranchesSubcommand,
@@ -297,7 +297,11 @@ async function runGateCommand({
   workspace: Workspace;
 }): Promise<GateResult> {
   heartbeat(`gate ${gate}: running command`);
-  const result = await workspace.execCapture(command, { timeoutMs });
+  // A test gate's budget scales with the components its composite command runs, as the TDD loop's
+  // does; a step's own `timeoutMs` still wins.
+  const result = await workspace.execCapture(command, {
+    timeoutMs: timeoutMs ?? (gate === 'runTests' ? testRunTimeoutMs(command) : undefined),
+  });
 
   const fullLog = `$ ${command}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`;
   const runId = await currentWorkflowRunId();
