@@ -13,7 +13,10 @@ type ValidateOutcome =
  * a marker there, so a run that reaches it fails with that marker and a run that stops earlier
  * ends at a terminate node.
  */
-async function run(validate: ValidateOutcome, ticket: { available: boolean; text: string }) {
+async function run(
+  validate: ValidateOutcome,
+  ticket: { available: boolean; text: string; unavailableReason?: string }
+) {
   const steps: string[] = [];
   const dispatcher: Dispatcher = {
     async dispatchStep({ step }) {
@@ -22,7 +25,12 @@ async function run(validate: ValidateOutcome, ticket: { available: boolean; text
         case 'updateDomainState':
           return {};
         case 'gatherTicketContext':
-          return { available: ticket.available, digested: ticket.available, text: ticket.text };
+          return {
+            available: ticket.available,
+            digested: ticket.available,
+            text: ticket.text,
+            unavailableReason: ticket.unavailableReason ?? '',
+          };
         case 'validateContext':
           if (validate === 'throws') {
             throw new Error('provider down');
@@ -82,6 +90,30 @@ describe('ticket-to-merge stops before implement when the request is not actiona
       message: expect.stringContaining('not actionable'),
     });
     expect(String(result?.result.message)).toContain('re-run');
+  });
+
+  it('says why the ticket could not be read when the stop follows a refused fetch', async () => {
+    const { result } = await run(
+      {
+        actionable: false,
+        ambiguities: ['only a URL'],
+        successCriteria: ['AMBIGUOUS: only a URL'],
+      },
+      { available: false, text: '', unavailableReason: 'forbidden' }
+    );
+    expect(result?.result).toMatchObject({ ticketUnavailableReason: 'forbidden' });
+  });
+
+  it('leaves that reason empty when no ticket fetch failed', async () => {
+    const { result } = await run(
+      {
+        actionable: false,
+        ambiguities: ['only a URL'],
+        successCriteria: ['AMBIGUOUS: only a URL'],
+      },
+      NO_TICKET
+    );
+    expect(result?.result).toMatchObject({ ticketUnavailableReason: '' });
   });
 
   it('implements when validate found a real criterion', async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { type AtlassianClient, AtlassianError } from '../atlassianClient.js';
-import { JiraProvider } from './jira.js';
+import { TICKET_FAILURE_CLASSES } from '../ticketFailure.js';
+import { JiraProvider, jiraOutcomeKind } from './jira.js';
 
 const adf = (text: string) => ({
   content: [{ content: [{ text, type: 'text' }], type: 'paragraph' }],
@@ -152,6 +153,12 @@ describe('JiraProvider.fetchIssue extras', () => {
       expect(issue?.parent).toBeUndefined();
       expect(paths).toHaveLength(1);
     });
+  });
+});
+
+describe('jiraOutcomeKind', () => {
+  it.each(TICKET_FAILURE_CLASSES)('maps %s', (failure) => {
+    expect(jiraOutcomeKind(failure)).toBe(failure === 'not_found' ? 'refused' : 'unavailable');
   });
 });
 
@@ -352,5 +359,48 @@ describe('JiraProvider.searchIssues', () => {
     await expect(provider(client).searchIssues('not jql', { maxResults: 50 })).rejects.toBe(
       rejection
     );
+  });
+});
+
+describe('JiraProvider.readIssue failure classes', () => {
+  const failing = (err: Error) => stubClient({ '/issue/': err }).client;
+
+  it.each([
+    [new AtlassianError(401, 'auth', 'Atlassian auth failed: 401'), 'unauthorized'],
+    [new AtlassianError(403, 'auth', 'Atlassian auth failed: 403'), 'forbidden'],
+    [new AtlassianError(404, 'not_found', 'nope'), 'not_found'],
+    [new AtlassianError(429, 'rate_limited', 'slow down'), 'rate_limited'],
+    [new AtlassianError(500, 'server', 'boom'), 'server_error'],
+    [new AtlassianError(400, 'server', 'bad'), 'rejected'],
+    [new AtlassianError(422, 'server', 'bad'), 'rejected'],
+    [new AtlassianError(0, 'timeout', 'timed out'), 'timeout'],
+    [new AtlassianError(0, 'network', 'ECONNREFUSED'), 'network'],
+    [new AtlassianError(302, 'redirect', 'moved'), 'redirect'],
+    [new TypeError('unexpected shape'), 'unknown'],
+  ] as const)('answers %# with the class %s', async (err, failure) => {
+    const result = await provider(failing(err)).readIssue('SHMC-798');
+    expect(result).toEqual({ failure, issue: null });
+  });
+
+  it('keeps fetchIssue returning null for the same failure', async () => {
+    const client = failing(new AtlassianError(403, 'auth', 'no'));
+    expect(await provider(client).fetchIssue('SHMC-798')).toBeNull();
+  });
+
+  it('reports no failure when the issue was read', async () => {
+    const { client } = stubClient({ '/issue/AIDEVEX-8?': ISSUE });
+    const result = await provider(client).readIssue('AIDEVEX-8');
+    expect(result.failure).toBeUndefined();
+    expect(result.issue?.id).toBe('AIDEVEX-8');
+  });
+
+  it('puts no provider text, URL or token in the answer', async () => {
+    const secret = 'https://acme.atlassian.net/rest?token=SECRET Bearer abc';
+    const result = await provider(failing(new AtlassianError(0, 'network', secret))).readIssue(
+      'X-1'
+    );
+    // The answer is the class and nothing else: no field can carry the error text.
+    expect(result).toEqual({ failure: 'network', issue: null });
+    expect(JSON.stringify(result)).not.toMatch(/SECRET|acme|Bearer/);
   });
 });

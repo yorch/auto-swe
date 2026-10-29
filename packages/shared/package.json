@@ -93,6 +93,7 @@
     "./lib/integrations/jiraSyncStatuses": "./dist/lib/integrations/jiraSyncStatuses.js",
     "./lib/integrations/registry": "./dist/lib/integrations/registry.js",
     "./lib/integrations/issueTracker": "./dist/lib/integrations/issueTracker.js",
+    "./lib/integrations/ticketFailure": "./dist/lib/integrations/ticketFailure.js",
     "./lib/scannerCache": "./dist/lib/scannerCache.js",
     "./lib/integrations/knowledgeBase": "./dist/lib/integrations/knowledgeBase.js",
     "./lib/integrations/figmaDesign": "./dist/lib/integrations/figmaDesign.js",

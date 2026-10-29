@@ -143,3 +143,84 @@ describe('LinearProvider.searchIssues', () => {
     );
   });
 });
+
+describe('LinearProvider.readIssue failure classes', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const stub = (impl: () => Promise<unknown>) => vi.stubGlobal('fetch', vi.fn(impl));
+
+  it.each([
+    [401, 'unauthorized'],
+    [403, 'forbidden'],
+    [429, 'rate_limited'],
+    [500, 'server_error'],
+    [400, 'rejected'],
+  ] as const)('maps HTTP %i to %s', async (status, failure) => {
+    stub(async () => ({ json: async () => ({}), ok: false, status }));
+    expect(await provider().readIssue('ENG-1')).toEqual({ failure, issue: null });
+  });
+
+  it.each([
+    ['AUTHENTICATION_ERROR', 'unauthorized'],
+    ['FORBIDDEN', 'forbidden'],
+    ['RATELIMITED', 'rate_limited'],
+    ['SOMETHING_NEW', 'rejected'],
+  ] as const)(
+    'reads the GraphQL error code %s of a 400 as %s, never its message',
+    async (code, failure) => {
+      stub(async () => ({
+        json: async () => ({
+          errors: [{ extensions: { code }, message: 'Bearer lin_api_SECRET is invalid' }],
+        }),
+        ok: false,
+        status: 400,
+      }));
+      const result = await provider().readIssue('ENG-1');
+      expect(result).toEqual({ failure, issue: null });
+      expect(JSON.stringify(result)).not.toContain('SECRET');
+    }
+  );
+
+  it('keeps the HTTP status class when the error body is unreadable', async () => {
+    stub(async () => ({
+      json: async () => {
+        throw new SyntaxError('Unexpected token');
+      },
+      ok: false,
+      status: 400,
+    }));
+    expect((await provider().readIssue('ENG-1')).failure).toBe('rejected');
+  });
+
+  it('calls a 200 with an unparseable body unknown, not a network failure', async () => {
+    stub(async () => ({
+      json: async () => {
+        throw new SyntaxError('Unexpected token <');
+      },
+      ok: true,
+      status: 200,
+    }));
+    expect((await provider().readIssue('ENG-1')).failure).toBe('unknown');
+  });
+
+  it('maps a missing issue to not_found', async () => {
+    stub(async () => ({ json: async () => ({ data: { issue: null } }), ok: true, status: 200 }));
+    expect((await provider().readIssue('ENG-1')).failure).toBe('not_found');
+  });
+
+  it('maps a timeout and any other throw', async () => {
+    stub(async () => {
+      throw new DOMException('timed out', 'TimeoutError');
+    });
+    expect((await provider().readIssue('ENG-1')).failure).toBe('timeout');
+    stub(async () => {
+      throw new TypeError('fetch failed');
+    });
+    expect((await provider().readIssue('ENG-1')).failure).toBe('network');
+  });
+
+  it('keeps fetchIssue returning null on a failure', async () => {
+    stub(async () => ({ json: async () => ({}), ok: false, status: 403 }));
+    expect(await provider().fetchIssue('ENG-1')).toBeNull();
+  });
+});

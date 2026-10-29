@@ -1064,7 +1064,7 @@ The submitter's description is often a line or two; the ticket holds the require
 3. It hands the bounded ticket to the `ticketContextGatherer` agent, a persona on the `planner`
    model with no tools, which returns one typed digest: summary, requirements, acceptance criteria,
    constraints, open questions and references.
-4. It returns `{ available, digested, text }`. `text` is the ticket as a prompt block: the digest
+4. It returns `{ available, digested, text, unavailableReason }`. `text` is the ticket as a prompt block: the digest
    first, then the original description. The parent and the comments reach the prompt through the
    digest, not verbatim. A `set` node keeps it in `context.ticket`; `validate` (for the success
    criteria) and `implement` (for its system prompt, after the design context and before the
@@ -1073,6 +1073,37 @@ The submitter's description is often a line or two; the ticket holds the require
 The step is non-blocking. If the agent fails or answers outside its schema, `text` is the plain
 ticket and the trace records `ticket.digest_degraded`. If the run has no ticket, `available` is false
 and no model call is made. Only a cancellation stops the step.
+
+**Why a ticket could not be read.** Every tracker provider answers `readIssue`, which is
+`fetchIssue` plus a `failure` class when the ticket is null (`fetchIssue` still returns the issue or
+null). The class is one of a closed set (`TicketFailureClass`,
+`packages/shared/src/lib/integrations/ticketFailure.ts`): `unauthorized` (401), `forbidden` (403),
+`not_found` (404), `rate_limited` (429, or a GitHub 403 that reports an exhausted limit),
+`server_error` (5xx), `rejected` (any other 4xx: the tracker refused the request itself, for
+example a Linear API key it answers with 400), `timeout`, `network`, `redirect` (a redirect the
+connector does not follow), `refused` (the platform's network policy blocked the address; GitHub
+Issues and Linear report it, Jira reports a blocked address as `network`),
+`unconfigured` (no tracker, or none that can be built), `empty` (read, but with nothing to render)
+and `unknown` (an answer that could not be parsed, or a failure inside the platform; GitHub Issues
+and Linear report it, Jira reports an invalid response body as `network`). A class carries no provider text, response body, URL, token
+or header. `not_found` is ambiguous on purpose: Jira and GitHub answer 404 both for a ticket that
+does not exist and for one the token cannot see. `unavailableReason` in the step output is that
+class, or `''` when the ticket was read or the run names none, and the same class is the `reason` of
+the `ticket.context_unavailable` trace event, so the cause outlives the pod logs. That event's
+`error` is the fixed string `ticket could not be read` for every class; `unconfigured` is recorded
+without an `error`, since a deployment with no tracker is a setting and not a failure. With
+`workflow.ticketContextFallback` on, `validate` and `implement` read through the same code and
+trace the same event. A GitHub ticket outside the run's repositories is refused before any request
+and reads as `not_found`: the tracker is not asked, and nothing it would return is recorded or shown.
+The id the requester submitted stays in the event, as for any other miss.
+
+The Jira poller of an automation reads through `fetchIssueOutcome`, which classifies nothing itself:
+it maps the same class to what a poll decides. `not_found` is `refused`, the tracker's final word
+about that issue (no access to it, or gone), so the poll marks it seen. Every other class is
+`unavailable`, which a later poll may change: `unauthorized` and `forbidden` (a credential or a
+network rule an operator fixes, not a verdict on the issue), `rejected`, `rate_limited`,
+`server_error`, `timeout`, `network`, `redirect`, `refused`, `unconfigured`, `empty` and `unknown`.
+The poll leaves such an issue unseen.
 
 Another template opts in by adding the same pieces: the `gatherTicketContext` step, a `set` node
 that keeps `nodes.<id>.output.text` in `context.ticket`, and `ticket: context.ticket` as an input on
@@ -1094,7 +1125,11 @@ bare marker becomes `no reason given`. A `cond` after `validate` then ends the r
 `terminate` node whose result carries `message` and `ambiguities`, which the run page shows, instead
 of letting `implement` spend its budget guessing. An unreachable ticket alone never stops a run: a
 request with a real description yields real criteria and goes on, and so does a `validate` step that
-threw. A template opts in with `validatePhase({ stopIfNotActionable: true })`.
+threw. A template opts in with `validatePhase({ stopIfNotActionable: true })`. When the template also
+gathers the ticket, the result carries `ticketUnavailableReason` (the gather step's
+`unavailableReason`, `''` by default), and the run page's Stopped card adds one neutral line from a
+fixed table, for example "The ticket could not be read from the tracker (access was refused, or it
+does not exist)", so a stop caused by an unreadable ticket does not read as the requester's fault.
 
 Ticket text is written by people other than the operator, so everything that reaches a prompt is
 bounded (title 300 characters, description 6,000, comments 1,500 each within a 12,000-character
@@ -1103,8 +1138,8 @@ each digest list), carries no raw provider payload, sits inside a `<ticket>` del
 ticket's own text cannot close, and is introduced as requirements to satisfy, not instructions. The
 gatherer has no tools, so it reads only the text it is given and cannot be steered into acting on
 the tracker. The trace records `ticket.context_loaded` (the source, `stored` or `tracker`, with the
-ticket id and the provider) or `ticket.context_unavailable`, and its `error` is a fixed string,
-never a provider message, which can quote a request header.
+ticket id and the provider) or `ticket.context_unavailable` (with the failure `reason`), and its
+`error` is a fixed string, never a provider message, which can quote a request header.
 
 ## 4. The Review Network
 
@@ -1712,6 +1747,14 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   nothing. Comments and the parent are read for Jira only. A ticket is stored on first use, so an
   edit made after that is not picked up by the run. The fix loops (`ciFixer`, `reviewFixer`,
   `gateFixer`) do not take the ticket.
+- **A failure class says what the tracker answered, not why.** A 404 from Jira or GitHub is
+  `not_found` whether the ticket is missing or the token has no access to its project, and a
+  401 or 403 can mean a wrong token or a missing permission. The class narrows the cause; it does
+  not name it. Linear reports a bad key as HTTP 400 with a GraphQL error code: the code is read
+  against a fixed list (`AUTHENTICATION_ERROR`, `FORBIDDEN`, `RATELIMITED`), never its message, and
+  any other 4xx is `rejected`. A ticket id GitHub Issues cannot parse is `rejected` without a
+  request. The submit-time seeding in the gateway does not record a class, and a Jira response
+  whose body is not JSON is `network`, not `unknown`.
 - **The ticket block and the digest are framed and bounded, not scanned.** The delimiter and the
   "requirements, not instructions" framing lower the risk of text in a ticket steering an agent;
   they do not remove it, and the digest is model output derived from that text. The injection

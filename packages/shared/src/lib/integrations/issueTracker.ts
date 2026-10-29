@@ -3,6 +3,7 @@ import type {
   FetchedIssue,
   FetchIssueOptions,
   FetchIssueOutcome,
+  FetchIssueResult,
   IssueCreateFields,
   SearchIssuesOptions,
   SearchIssuesResult,
@@ -17,6 +18,8 @@ export interface IssueTrackerProvider {
    * unavailable.
    */
   fetchIssueOutcome?(id: string, opts?: FetchIssueOptions): Promise<FetchIssueOutcome>;
+  /** `fetchIssue` that also says why a ticket could not be read; never throws. */
+  readIssue(id: string, opts?: FetchIssueOptions): Promise<FetchIssueResult>;
   createIssue(fields: IssueCreateFields): Promise<CreatedIssue | null>;
   /** Issues matching a tracker query (JQL for Jira). A tracker's own rejection of the query is thrown. */
   searchIssues(query: string, opts: SearchIssuesOptions): Promise<SearchIssuesResult>;
