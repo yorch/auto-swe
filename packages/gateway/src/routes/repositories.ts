@@ -855,6 +855,21 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
         });
       }
 
+      // Scan it now rather than at the next weekly sweep: the detected stack picks the gate
+      // commands, the test command and the executor image, so until a scan has run the repository
+      // gets the Node defaults whatever it is. Best-effort — the sweep scans it regardless, and a
+      // Temporal hiccup must not fail an onboarding that has already happened.
+      if ((type ?? 'git_repo') === 'git_repo') {
+        try {
+          await fastify.temporal.startRepoDependencyScan(repo.id);
+        } catch (err) {
+          request.log.warn(
+            { err, repoId: repo.id },
+            'onboarding scan not started; the weekly sweep will scan this repository'
+          );
+        }
+      }
+
       return reply.status(201).send({ data: redactConnection(repo) });
     }
   );

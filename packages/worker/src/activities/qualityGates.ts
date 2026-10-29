@@ -39,9 +39,11 @@ import { recordGateEval } from '../lib/evalCapture.js';
 import { throwIfActivityCancelled } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
+import { withRunDetection } from '../lib/runDetection.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { DEFAULT_COMMANDS, gateCommandFor } from './gateCommand.js';
 import { runImplementerFixSession } from './implementerSession.js';
+import { testRunTimeoutMs, testStatusWord } from './utils.js';
 import {
   createWorkspace,
   fetchBranchesSubcommand,
@@ -185,10 +187,10 @@ export async function resolveCommand(
   }
 
   const repo = await prisma.connection.findUniqueOrThrow({
-    select: { detectedStack: true, gateCommands: true },
+    select: { detectedStack: true, gateCommands: true, id: true },
     where: { id: requireRepoId(request, 'qualityGate') },
   });
-  return gateCommandFor(gate, override, repo);
+  return gateCommandFor(gate, override, await withRunDetection(repo));
 }
 
 /**
@@ -227,10 +229,12 @@ async function provisionGateWorkspace(
   branch: string;
 }> {
   const [repo, workflowDefaults] = await Promise.all([
-    prisma.connection.findUniqueOrThrow({
-      include: { installation: { select: { host: true, installationId: true } } },
-      where: { id: requireRepoId(request, 'qualityGate') },
-    }),
+    prisma.connection
+      .findUniqueOrThrow({
+        include: { installation: { select: { host: true, installationId: true } } },
+        where: { id: requireRepoId(request, 'qualityGate') },
+      })
+      .then(withRunDetection),
     resolveWorkflowDefaults(),
   ]);
   const branch = branchOverride ?? workBranchOf(request, workflowDefaults.branchPrefix);
@@ -296,7 +300,11 @@ async function runGateCommand({
   workspace: Workspace;
 }): Promise<GateResult> {
   heartbeat(`gate ${gate}: running command`);
-  const result = await workspace.execCapture(command, { timeoutMs });
+  // A test gate's budget scales with the components its composite command runs, as the TDD loop's
+  // does; a step's own `timeoutMs` still wins.
+  const result = await workspace.execCapture(command, {
+    timeoutMs: timeoutMs ?? (gate === 'runTests' ? testRunTimeoutMs(command) : undefined),
+  });
 
   const fullLog = `$ ${command}\n--- stdout ---\n${result.stdout}\n--- stderr ---\n${result.stderr}`;
   const runId = await currentWorkflowRunId();
@@ -687,7 +695,7 @@ export async function executeGateFixImplementation(input: GateFixInput): Promise
     lessonQuery: `${gateName}: ${gateLogs.slice(-2_000)}`,
     mode: 'GATE_FIX',
     notes: (testResult, extraNote) =>
-      `Gate fix iteration for ${gateName}. ${extraNote ?? `${gateName} re-run skipped`}. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      `Gate fix iteration for ${gateName}. ${extraNote ?? `${gateName} re-run skipped`}. Tests ${testStatusWord(testResult)}.`,
     previousCodeResult,
     systemPromptOverride,
     usageEventName: 'llm.gate_fix',

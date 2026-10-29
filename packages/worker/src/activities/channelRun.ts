@@ -5,6 +5,10 @@ import {
   CHANNEL_ASSISTANT_SPEC,
   CHANNEL_ASSISTANT_TEMPLATE_NAME,
 } from '@auto-swe/shared/lib/channelTask';
+import {
+  attributionTeamSelect,
+  resolveWorkflowRunAttribution,
+} from '@auto-swe/shared/workflow/runAttribution';
 import { logError } from '../lib/activityLog.js';
 import { endWorkflowRun } from '../lib/endRun.js';
 import { recordRunFinalized } from '../lib/metrics.js';
@@ -147,11 +151,12 @@ export async function touchChannelThreadSession(
  * caller should surface, not silently swallow.
  */
 async function resolveChannelAssistantTemplate(): Promise<{
+  team: { id: string; orgId: string } | null;
   templateId: string;
   templateVersion: number;
 }> {
   const template = await prisma.workflowTemplate.findFirst({
-    select: { activeVersion: true, id: true },
+    select: { activeVersion: true, id: true, team: { select: attributionTeamSelect } },
     where: { name: CHANNEL_ASSISTANT_TEMPLATE_NAME, teamId: null },
   });
   if (!template?.activeVersion) {
@@ -159,7 +164,7 @@ async function resolveChannelAssistantTemplate(): Promise<{
       `no active "${CHANNEL_ASSISTANT_TEMPLATE_NAME}" workflow template — run \`yarn db:seed\``
     );
   }
-  return { templateId: template.id, templateVersion: template.activeVersion };
+  return { team: template.team, templateId: template.id, templateVersion: template.activeVersion };
 }
 
 /**
@@ -176,7 +181,11 @@ async function resolveChannelAssistantTemplate(): Promise<{
  * run visibility can reach the channel's owning team.
  */
 export async function startChannelRun(input: StartChannelRunInput): Promise<void> {
-  const { templateId, templateVersion } = await resolveChannelAssistantTemplate();
+  const {
+    team: templateTeam,
+    templateId,
+    templateVersion,
+  } = await resolveChannelAssistantTemplate();
 
   // The channel row is read on every path: its existence decides whether the
   // run links to it (`channelId`, which run visibility joins through to the
@@ -185,8 +194,17 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
   // the ambient path only knows the channelId, so team/org are backfilled from
   // it when not supplied.
   const channel = await prisma.slackChannel.findUnique({
-    select: { id: true, orgId: true, teamId: true },
+    select: {
+      id: true,
+      orgId: true,
+      team: { select: attributionTeamSelect },
+      teamId: true,
+    },
     where: { id: input.channelId },
+  });
+  const attribution = resolveWorkflowRunAttribution({
+    channel: channel?.team ? { team: channel.team } : null,
+    template: { team: templateTeam },
   });
   const teamId = input.teamId ?? channel?.teamId ?? undefined;
   const orgId = input.orgId ?? channel?.orgId ?? undefined;
@@ -241,6 +259,8 @@ export async function startChannelRun(input: StartChannelRunInput): Promise<void
       data: {
         agentRuntimes: agentRuntimes as Prisma.InputJsonObject,
         agentVersions,
+        attributedOrgId: attribution.attributedOrgId,
+        attributedTeamId: attribution.attributedTeamId,
         channelId: channel?.id ?? null,
         // Channel launches have no durable actor-bound source snapshot; fail closed.
         knowledgeSourceKind: 'UNKNOWN',

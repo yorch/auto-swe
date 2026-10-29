@@ -1,4 +1,4 @@
-import { detectedTarget } from './stackDetection.js';
+import { compositeSharedStack, detectedTarget } from './stackDetection.js';
 import { resolveWorkspaceInfra } from './systemConfig.js';
 
 /**
@@ -16,8 +16,9 @@ import { resolveWorkspaceInfra } from './systemConfig.js';
  * wins the `??` inside `createWorkspace` and the deployment's setting is never read).
  *
  * The stored detection only *selects* among images the deployer configured; it never names one.
- * Node has no entry because the default image is the Node image, and an ambiguous layout, an
- * unlisted tree or an unconfigured stack all fall through to the default — exactly what a
+ * Node has no entry because the default image is the Node image. An ambiguous layout of 2..8
+ * components that all share one non-Node stack takes that stack's image; a mixed one, an unlisted
+ * tree or an unconfigured stack fall through to the default — exactly what a
  * repository with no detection gets. The detection is the weekly scan's, so a repository moves
  * to its stack's image when the scan next runs, not when a deployer sets the variable.
  */
@@ -29,8 +30,9 @@ export function executorImageFor(repo: {
     return repo.executorImage;
   }
   const target = detectedTarget(repo.detectedStack);
-  if (target === null || target === 'ambiguous' || target.stack === 'node') {
+  const stack = target === 'ambiguous' ? compositeSharedStack(repo.detectedStack) : target?.stack;
+  if (!stack || stack === 'node') {
     return undefined;
   }
-  return resolveWorkspaceInfra().stackImages[target.stack];
+  return resolveWorkspaceInfra().stackImages[stack];
 }

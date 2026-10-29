@@ -79,7 +79,7 @@ export function stackGateDefaults(
       return { runTests: 'python -m pytest' };
     case 'jvm':
       return rootFiles.has('pom.xml')
-        ? { runBuild: 'mvn -B -q -DskipTests package', runTests: 'mvn -B -q test' }
+        ? { runBuild: 'mvn -B -q -DskipTests package', runTests: 'mvn -B -ntp test' }
         : {
             runBuild: './gradlew build -x test --no-daemon',
             runTests: './gradlew test --no-daemon',
@@ -171,7 +171,7 @@ const isFlavor = (v: unknown): v is YarnFlavor => v === 'berry' || v === 'classi
  *   complete — never when `treeTruncated` or `componentsTruncated` is set, because "only one
  *   seen" is not "only one";
  * - `'ambiguous'` when several directories have signals and the root has none: no single
- *   place is right, so the caller reports the gates as unconfigured;
+ *   place is right ({@link detectedGateDefaults} says which gates a composite still covers);
  * - `null` when there is nothing to go on (no detection, an unusable shape, an unlisted
  *   tree), which keeps the built-in behaviour.
  *
@@ -180,8 +180,22 @@ const isFlavor = (v: unknown): v is YarnFlavor => v === 'berry' || v === 'classi
  * read by its root-only `primary`.
  */
 export function detectedTarget(detected: unknown): DetectedTarget | 'ambiguous' | null {
+  return resolveTarget(detected).target;
+}
+
+/** The most components a composite gate covers; more is left unconfigured. */
+const MAX_COMPOSITE_COMPONENTS = 8;
+
+/**
+ * {@link detectedTarget}'s answer, plus — for an `'ambiguous'` layout of 2..8 components that
+ * all validate — the components themselves, which the composite gates run in.
+ */
+function resolveTarget(detected: unknown): {
+  target: DetectedTarget | 'ambiguous' | null;
+  components?: DetectedTarget[];
+} {
   if (!detected || typeof detected !== 'object') {
-    return null;
+    return { target: null };
   }
   const d = detected as Partial<DetectedStack>;
   const evidence = Array.isArray(d.evidence)
@@ -198,15 +212,17 @@ export function detectedTarget(detected: unknown): DetectedTarget | 'ambiguous' 
         .map((f) => f.slice(dir === '' ? 0 : dir.length + 1))
     );
   if (!Array.isArray(d.components)) {
-    return isStack(d.primary)
-      ? {
-          dir: '',
-          packageManager: isPm(d.packageManager) ? d.packageManager : undefined,
-          rootFiles: filesIn(''),
-          stack: d.primary,
-          yarnFlavor: isFlavor(d.yarnFlavor) ? d.yarnFlavor : undefined,
-        }
-      : null;
+    return {
+      target: isStack(d.primary)
+        ? {
+            dir: '',
+            packageManager: isPm(d.packageManager) ? d.packageManager : undefined,
+            rootFiles: filesIn(''),
+            stack: d.primary,
+            yarnFlavor: isFlavor(d.yarnFlavor) ? d.yarnFlavor : undefined,
+          }
+        : null,
+    };
   }
   const comps = d.components.filter(
     (c): c is NonNullable<DetectedStack['components']>[number] =>
@@ -228,12 +244,22 @@ export function detectedTarget(detected: unknown): DetectedTarget | 'ambiguous' 
     };
   };
   if (root) {
-    return pick(root);
+    return { target: pick(root) };
   }
   if (d.treeTruncated || d.componentsTruncated || comps.length === 0) {
-    return null;
+    return { target: null };
   }
-  return comps.length === 1 ? pick(comps[0] as (typeof comps)[number]) : 'ambiguous';
+  if (comps.length === 1) {
+    return { target: pick(comps[0] as (typeof comps)[number]) };
+  }
+  const valid = comps.map(pick).filter((t): t is DetectedTarget => t !== null);
+  return {
+    components:
+      comps.length <= MAX_COMPOSITE_COMPONENTS && valid.length === comps.length
+        ? valid.sort((a, b) => (a.dir < b.dir ? -1 : a.dir > b.dir ? 1 : 0))
+        : undefined,
+    target: 'ambiguous',
+  };
 }
 
 /** The directory the test loop and gates run in: a validated component, else `''` (the root). */
@@ -249,6 +275,89 @@ export function detectedTargetDir(detected: unknown): string {
  */
 export function inDir(dir: string, command: string): string {
   return dir === '' ? command : `cd '${dir}' && ${command}`;
+}
+
+/** The text before the directory in a composite command's per-component marker line. */
+const COMPONENT_MARKER_PREFIX = '== auto-swe component: ';
+
+/**
+ * A composite command's marker line for `dir`, as it appears in the output: a runner can print
+ * `== a ==`; it will not print this.
+ */
+export const componentMarker = (dir: string): string => `${COMPONENT_MARKER_PREFIX}${dir} ==`;
+
+/** Matches one marker line in a composite command's output; capture 1 is the directory. Global: use `matchAll`. */
+export const COMPONENT_MARKER_RE = /^== auto-swe component: (.+) ==$/gm;
+
+/** How many components a command runs, by its `echo` of the marker: 0 for anything but a composite. */
+export function compositeComponentCount(command: string): number {
+  return command.split(`echo '${COMPONENT_MARKER_PREFIX}`).length - 1;
+}
+
+/** pytest's exit status when it collected no tests: the runner ran, and there was nothing to run. */
+export const PYTEST_NO_TESTS_STATUS = 5;
+
+/**
+ * One `sh` command (dash, busybox ash and bash alike) that runs each part in its own directory
+ * and fails if any part fails. A part that fails with a status other than 126, 127 or 5 is a real
+ * failure and the first one's status is the command's; 126 and 127 (not runnable) and 5 (pytest
+ * collected nothing: {@link PYTEST_NO_TESTS_STATUS}) count only when no part really failed, and
+ * then the last of them is. These are the statuses the TDD loop stops on rather than iterates
+ * on, so a missing tool or an untested Python component cannot hide another component's failing
+ * test from the loop. Every part runs, in the order given, under
+ * a {@link componentMarker} line so the output says which directory a failure belongs to. Each
+ * `cd` is in a subshell: a bare one would carry into the next part, and a missing directory is a
+ * real failure. Each part's stderr is merged into its stdout, so a gate summary that shows only
+ * one stream still carries the markers. The directories are pre-validated ({@link COMPONENT_PATH_RE}) and quoted.
+ */
+export function compositeCommand(parts: ReadonlyArray<{ dir: string; command: string }>): string {
+  return [
+    'rc=0',
+    'ur=0',
+    'ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ] || [ "$1" -eq 5 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }',
+    ...parts.map(
+      // The bare `echo` ends a previous part's output that lacks a trailing newline, so the
+      // marker is always a line of its own (the parser reads it line-anchored).
+      ({ dir, command }) =>
+        `echo; echo '${componentMarker(dir)}'; (cd '${dir}' && ${command}) 2>&1; ck $?`
+    ),
+    'if [ "$rc" -ne 0 ]; then exit $rc; fi',
+    'exit $ur',
+  ].join('; ');
+}
+
+/**
+ * The one stack every component of a composite layout (an ambiguous one of 2..8 valid
+ * components) has as its first, when that stack is not Node — Node has no image of its own — or
+ * null for anything else.
+ */
+export function compositeSharedStack(detected: unknown): Stack | null {
+  const { target, components } = resolveTarget(detected);
+  const first = components?.[0]?.stack;
+  return target === 'ambiguous' &&
+    first !== undefined &&
+    first !== 'node' &&
+    components?.every((c) => c.stack === first)
+    ? first
+    : null;
+}
+
+/**
+ * The composite gates for several components: a gate every component has a command for, run in
+ * all of them. A gate any component lacks is left out — running it in only some would verify part
+ * of the repository and read as a pass.
+ */
+function compositeGateDefaults(components: DetectedTarget[]): RepoGateCommands {
+  const perComponent = components.map((t) => ({ commands: targetCommands(t) ?? {}, dir: t.dir }));
+  const gates = Object.keys(perComponent[0]?.commands ?? {}) as Array<keyof RepoGateCommands>;
+  const result: RepoGateCommands = {};
+  for (const gate of gates) {
+    const parts = perComponent.map(({ commands, dir }) => ({ command: commands[gate], dir }));
+    if (parts.every((p): p is { command: string; dir: string } => typeof p.command === 'string')) {
+      result[gate] = compositeCommand(parts);
+    }
+  }
+  return result;
 }
 
 /** The default commands for a target, before any `cd`, or null where the built-in gates are exactly them. */
@@ -283,16 +392,18 @@ function targetCommands(t: DetectedTarget): RepoGateCommands | null {
  * {@link detectedTarget}), or null when the built-in gates apply: nothing detected, or a Node
  * root on Yarn Berry or with no recorded manager. A non-null result may be sparse — a gate it
  * lacks has no unambiguous command for the stack, and the caller must not substitute another
- * ecosystem's — and is empty for an ambiguous layout. A component's commands carry their
- * `cd`; the stack defaults are the only commands that get one, never an admin's.
+ * ecosystem's. An ambiguous layout of 2..8 components gets one composite command per gate that
+ * every component has a command for ({@link compositeCommand}); a larger one, or one with an
+ * invalid path, gets an empty result. A component's commands carry their `cd`; the stack
+ * defaults are the only commands that get one, never an admin's.
  */
 export function detectedGateDefaults(detected: unknown): RepoGateCommands | null {
-  const t = detectedTarget(detected);
+  const { target: t, components } = resolveTarget(detected);
   if (t === null) {
     return null;
   }
   if (t === 'ambiguous') {
-    return {};
+    return components ? compositeGateDefaults(components) : {};
   }
   const commands = targetCommands(t);
   if (commands === null || t.dir === '') {
@@ -331,6 +442,8 @@ export function detectStack(
     /** The root `package.json` text: its scripts feed the suggestions and its `packageManager` pin names the manager. */
     packageJson?: string;
     packageJsonScripts?: string[];
+    /** The first ~2 KB of the root `yarn.lock`: its header tells Yarn Classic from Berry. */
+    yarnLockHead?: string;
     treeTruncated?: boolean;
   }
 ): DetectedStack {
@@ -416,7 +529,8 @@ export function detectStack(
     }
   }
 
-  // Suggestions stay root-only: a repo with no root stack gets none.
+  // Suggestions are root-only: a repo with no root stack gets none, because its run-time defaults
+  // already apply and a suggestion applied through the form would freeze into `gateCommands`.
   const rootStack = rootStacks[0] ?? null;
   const suggestedGateCommands: RepoGateCommands =
     rootStack === 'node'
@@ -446,6 +560,14 @@ export function detectStack(
       const own = pmOf('');
       packageManager = own.packageManager;
       yarnFlavor = own.yarnFlavor;
+    }
+  }
+  // The lockfile header is the last resort: a pin or a `.yarnrc.yml` already decided the flavour.
+  if (packageManager === 'yarn' && !yarnFlavor && opts?.yarnLockHead) {
+    if (opts.yarnLockHead.includes('# yarn lockfile v1')) {
+      yarnFlavor = 'classic';
+    } else if (opts.yarnLockHead.includes('__metadata:')) {
+      yarnFlavor = 'berry';
     }
   }
   // The root component carries the same answer, so a reader that looks only at components agrees.

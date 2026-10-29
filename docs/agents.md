@@ -1064,7 +1064,7 @@ The submitter's description is often a line or two; the ticket holds the require
 3. It hands the bounded ticket to the `ticketContextGatherer` agent, a persona on the `planner`
    model with no tools, which returns one typed digest: summary, requirements, acceptance criteria,
    constraints, open questions and references.
-4. It returns `{ available, digested, text }`. `text` is the ticket as a prompt block: the digest
+4. It returns `{ available, digested, text, unavailableReason }`. `text` is the ticket as a prompt block: the digest
    first, then the original description. The parent and the comments reach the prompt through the
    digest, not verbatim. A `set` node keeps it in `context.ticket`; `validate` (for the success
    criteria) and `implement` (for its system prompt, after the design context and before the
@@ -1073,6 +1073,37 @@ The submitter's description is often a line or two; the ticket holds the require
 The step is non-blocking. If the agent fails or answers outside its schema, `text` is the plain
 ticket and the trace records `ticket.digest_degraded`. If the run has no ticket, `available` is false
 and no model call is made. Only a cancellation stops the step.
+
+**Why a ticket could not be read.** Every tracker provider answers `readIssue`, which is
+`fetchIssue` plus a `failure` class when the ticket is null (`fetchIssue` still returns the issue or
+null). The class is one of a closed set (`TicketFailureClass`,
+`packages/shared/src/lib/integrations/ticketFailure.ts`): `unauthorized` (401), `forbidden` (403),
+`not_found` (404), `rate_limited` (429, or a GitHub 403 that reports an exhausted limit),
+`server_error` (5xx), `rejected` (any other 4xx: the tracker refused the request itself, for
+example a Linear API key it answers with 400), `timeout`, `network`, `redirect` (a redirect the
+connector does not follow), `refused` (the platform's network policy blocked the address; GitHub
+Issues and Linear report it, Jira reports a blocked address as `network`),
+`unconfigured` (no tracker, or none that can be built), `empty` (read, but with nothing to render)
+and `unknown` (an answer that could not be parsed, or a failure inside the platform; GitHub Issues
+and Linear report it, Jira reports an invalid response body as `network`). A class carries no provider text, response body, URL, token
+or header. `not_found` is ambiguous on purpose: Jira and GitHub answer 404 both for a ticket that
+does not exist and for one the token cannot see. `unavailableReason` in the step output is that
+class, or `''` when the ticket was read or the run names none, and the same class is the `reason` of
+the `ticket.context_unavailable` trace event, so the cause outlives the pod logs. That event's
+`error` is the fixed string `ticket could not be read` for every class; `unconfigured` is recorded
+without an `error`, since a deployment with no tracker is a setting and not a failure. With
+`workflow.ticketContextFallback` on, `validate` and `implement` read through the same code and
+trace the same event. A GitHub ticket outside the run's repositories is refused before any request
+and reads as `not_found`: the tracker is not asked, and nothing it would return is recorded or shown.
+The id the requester submitted stays in the event, as for any other miss.
+
+The Jira poller of an automation reads through `fetchIssueOutcome`, which classifies nothing itself:
+it maps the same class to what a poll decides. `not_found` is `refused`, the tracker's final word
+about that issue (no access to it, or gone), so the poll marks it seen. Every other class is
+`unavailable`, which a later poll may change: `unauthorized` and `forbidden` (a credential or a
+network rule an operator fixes, not a verdict on the issue), `rejected`, `rate_limited`,
+`server_error`, `timeout`, `network`, `redirect`, `refused`, `unconfigured`, `empty` and `unknown`.
+The poll leaves such an issue unseen.
 
 Another template opts in by adding the same pieces: the `gatherTicketContext` step, a `set` node
 that keeps `nodes.<id>.output.text` in `context.ticket`, and `ticket: context.ticket` as an input on
@@ -1084,27 +1115,93 @@ handed in as the empty string means the run has none, and neither path fetches a
 **Stopping on an unactionable request.** `ticket-to-merge` does not implement a request that
 validation cannot act on. The `validateContext` activity returns `actionable` and `ambiguities`
 beside `successCriteria`. A request is not actionable when the extraction succeeded and either every
-criterion is an `AMBIGUOUS: <what is unclear>` entry (the format the `context-ambiguity-resolution`
-skill asks for) or it returned no criteria at all. A degraded extraction (the model call failed,
+criterion is an `AMBIGUOUS: <what is unclear>` entry (the one format both validator skills,
+`success-criteria-extraction` and `context-ambiguity-resolution`, ask for) or it returned no criteria at all. A degraded extraction (the model call failed,
 traced `context_validation.degraded`) is not a verdict: its empty list stays actionable. The marker
 is read in one place, `packages/worker/src/lib/contextAmbiguity.ts`, at the start of an entry and
 after the decoration a model adds (backticks, emphasis, a bullet or list number, a colon or dash).
+`Clarify:` is read as an alias of the marker only when what follows it is a question (it ends in a
+question mark, whatever quote or emphasis closes it), so a model that words an open question that
+way does not slip it past the stop. `Clarify: the error message when X is empty` is a criterion,
+and `AMBIGUOUS:` needs no question mark. Neither word counts away from the start of an entry, and
+an entry that is blank is not a criterion: an extraction of only blanks is the same as none.
 The `ambiguities` copied into the result are bounded: at most 10, each cut to 500 characters, and a
 bare marker becomes `no reason given`. A `cond` after `validate` then ends the run `FAILED` at a
 `terminate` node whose result carries `message` and `ambiguities`, which the run page shows, instead
 of letting `implement` spend its budget guessing. An unreachable ticket alone never stops a run: a
 request with a real description yields real criteria and goes on, and so does a `validate` step that
-threw. A template opts in with `validatePhase({ stopIfNotActionable: true })`.
+threw. A template opts in with `validatePhase({ stopIfNotActionable: true })`. When the template also
+gathers the ticket, the result carries `ticketUnavailableReason` (the gather step's
+`unavailableReason`, `''` by default), and the run page's Stopped card adds one neutral line from a
+fixed table, for example "The ticket could not be read from the tracker (access was refused, or it
+does not exist)", so a stop caused by an unreadable ticket does not read as the requester's fault.
+
+**Re-launching an unchanged request.** A request that stopped as not actionable and is launched
+again unchanged usually stops the same way, so a launch is refused with
+`409 UNCHANGED_AFTER_NOT_ACTIONABLE` (`error.details` carries `previousRunId` and `stoppedAt`) when a
+run of the same template version, that the caller may see, ended in that stop within the last 24
+hours, its request is the same, and nothing has run it since. The stop is read from what the run
+recorded, never from its text: the run is `FAILED`, its spec snapshot holds the
+`terminateNotActionable` terminate node, and its context holds `validate`'s `actionable == false`
+verdict. The request is the same when the description and every input match exactly (the repository,
+budget tier and every other payload field), except that whitespace in the description and the case
+of the ticket id are ignored. A template run takes its description from `payload.description`, else
+from its label, so for a template with no `payload.description` the label is part of the request.
+Only the newest run of a request counts: a later run of the same request or of the same work
+request, whatever its outcome (even one cancelled at its first step), means the stop was overridden
+or fixed, and the guard steps aside. A
+request that differs in any way, an earlier stop older than the window, and an earlier run that
+failed for any other reason all launch as before.
+
+The refusal does not know why validation found nothing. A request can stop because of something
+outside it, such as a broken tracker token or an outage, and that clears once fixed. So the message
+says when it stopped and offers both ways on: add the ticket text or acceptance criteria and submit
+again, or have a person launch it as it is with `acknowledgeUnchanged: true` (the CLI's
+`--acknowledge-unchanged`, the web's "Run anyway"). The gateway's message does not name the field:
+the in-app assistant is shown that neutral text, and the override is documented only for the
+dashboard and the CLI. The flag is not stored with the request. The check covers
+`POST /work-requests`, `POST /workflow-templates/:id/runs` and `POST /work-requests/:id/retry`; a
+retry that adds instructions is a changed request. It runs after the checks that name a request
+already running or an idempotency-key replay, so those answers come first. The MCP
+`submit_work_request` tool gets a fixed message and has no override input: a person launches it as
+it is from the dashboard or the CLI.
+
+The lookup costs nothing for a template that cannot stop this way: it is skipped unless the template
+version's spec holds the `terminateNotActionable` terminate node (remembered per version in a small
+bounded in-process map, since a version's spec never changes). Otherwise the database narrows by
+relational columns first (template, version, status, window, repository, ticket id) before the
+JSON-path filters on the run's snapshots, and at most 25 stops and 25 later runs are read. Only runs
+the caller may see are compared (the run visibility filter, which includes shared-repository and
+template-team terms, so it is not limited to the caller's own team).
+
+**What the implementer is told when the run goes on.** A run that continues past the stop has
+concrete criteria, usually beside some ambiguities, and `implement` takes the whole extracted list
+as its `successCriteria` input (`ticket-to-merge` and the Qodo template built on its graph wire it
+from `context.successCriteria`). `executeImplementation` appends an
+`## Acceptance criteria and open questions` section to the implementer's system prompt, after the
+ticket digest and before the cross-repo block. It lists the concrete criteria as what done means
+and the ambiguity entries as open questions. For the open questions it asks the implementer not to
+guess how one is resolved: to implement only what the criteria and the description explicitly
+require, and to leave unchanged anything an open question blocks. When no concrete criterion exists
+it asks for the minimum the description plainly asks. The list is model output derived from ticket
+text, so it is bounded (20 criteria and 10 open questions, each cut to 500 characters and one line,
+within 6,000 characters in all, of which the open questions may always use 2,000; entries past the
+budget are replaced by an `(N more omitted)` line), and it sits inside a `<criteria>` delimiter.
+Every angle bracket in an entry, in any spelling (ASCII, fullwidth, CJK or math), is shown as `‹` or
+`›`, so no entry can contain a tag, however its pieces are nested or spaced. The ticket digest's
+`<ticket>` fence is neutralised the same way (`neutraliseFenceText`), so a legitimate `<` in ticket
+text reads as `‹`. The section is introduced as a description of the task, never as instructions. The step reads only an explicit `successCriteria` input, not
+`context.successCriteria`, so a template that does not bind it prompts exactly as before.
 
 Ticket text is written by people other than the operator, so everything that reaches a prompt is
 bounded (title 300 characters, description 6,000, comments 1,500 each within a 12,000-character
 budget that keeps the newest, parent description 2,000, and at most 12 items of 400 characters in
 each digest list), carries no raw provider payload, sits inside a `<ticket>` delimiter that the
-ticket's own text cannot close, and is introduced as requirements to satisfy, not instructions. The
+ticket's own text cannot contain (its angle brackets are replaced), and is introduced as requirements to satisfy, not instructions. The
 gatherer has no tools, so it reads only the text it is given and cannot be steered into acting on
 the tracker. The trace records `ticket.context_loaded` (the source, `stored` or `tracker`, with the
-ticket id and the provider) or `ticket.context_unavailable`, and its `error` is a fixed string,
-never a provider message, which can quote a request header.
+ticket id and the provider) or `ticket.context_unavailable` (with the failure `reason`), and its
+`error` is a fixed string, never a provider message, which can quote a request header.
 
 ## 4. The Review Network
 
@@ -1712,6 +1809,14 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   nothing. Comments and the parent are read for Jira only. A ticket is stored on first use, so an
   edit made after that is not picked up by the run. The fix loops (`ciFixer`, `reviewFixer`,
   `gateFixer`) do not take the ticket.
+- **A failure class says what the tracker answered, not why.** A 404 from Jira or GitHub is
+  `not_found` whether the ticket is missing or the token has no access to its project, and a
+  401 or 403 can mean a wrong token or a missing permission. The class narrows the cause; it does
+  not name it. Linear reports a bad key as HTTP 400 with a GraphQL error code: the code is read
+  against a fixed list (`AUTHENTICATION_ERROR`, `FORBIDDEN`, `RATELIMITED`), never its message, and
+  any other 4xx is `rejected`. A ticket id GitHub Issues cannot parse is `rejected` without a
+  request. The submit-time seeding in the gateway does not record a class, and a Jira response
+  whose body is not JSON is `network`, not `unknown`.
 - **The ticket block and the digest are framed and bounded, not scanned.** The delimiter and the
   "requirements, not instructions" framing lower the risk of text in a ticket steering an agent;
   they do not remove it, and the digest is model output derived from that text. The injection
@@ -1727,13 +1832,32 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   the overshoot is spend on the ledger, not spend missed; the budget just was not enforced earlier.
   A turn whose steps report no usage is debited only when `generate` returns. Per-step debits are
   priced at the turn's bound model, so a loop that switches models mid-turn is not split by model.
+- **The unchanged-request refusal covers three launch paths, for people.** Slack's run modal,
+  automations, webhooks, schedules, agent and PRD runs, and service-principal launches (which have no
+  user to scope the lookup to) are not checked, and MCP clients cannot override it. It reads the
+  `validate` node and `terminateNotActionable` by id, so a template that stops through other node ids
+  is not covered. A request that changes only in a way the payload does not carry (the ticket's own
+  text, edited in the tracker) is treated as unchanged, and so is one whose earlier stop came from a
+  transient ticket-fetch failure: the guard does not look at why the earlier stop happened, so "Run
+  anyway" is the way past it. With `experimentSplit` above zero and no `payload.ticketId`, the version
+  is bucketed on a fresh work-request id, so an identical re-launch can land on the other version and
+  skip the guard.
 - **The gatherer is one `planner`-model call per run**, with no cache across runs.
 - **The unactionable-request stop reads a prompt convention, not a schema field.** It rests on the
-  `validateContext` agent writing `AMBIGUOUS:` entries (or none, for input it cannot read). A model
-  that words an ambiguity differently defeats the marker, and the run implements as before. A model
+  `validateContext` agent writing `AMBIGUOUS:` entries (or `Clarify:`, the accepted alias, or none,
+  for input it cannot read). A model that words an ambiguity any other way defeats the marker, and
+  the run implements as before. A model
   that writes every gap as an `AMBIGUOUS` entry, even one it could assume a default for, stops a
   request the implementer could have handled; the remedy is to add acceptance criteria and re-run.
-  One concrete criterion beside the ambiguities lets a run go on. An admin-edited `validateContext`
+  One concrete criterion beside the ambiguities lets a run go on, and the implementer then sees the
+  ambiguities as open questions, which is an instruction to a model rather than a guarantee: it can
+  still resolve one by assumption. No channel carries the model's assumptions to a reviewer
+  (`implementationNotes` is built from fixed text, not written by the model), and the open questions
+  themselves are not shown to the reviewer, the pull request or the stored lesson either. Built-in
+  skill text reaches a deployment at gateway start (§6.5): the sync cuts a new revision of the skill
+  and replaces its text, so a deployment that never restarted the gateway keeps the previous example.
+  The criteria are handed to the first implementation only; the review-fix and CI-fix steps do not
+  receive them. An admin-edited `validateContext`
   prompt keeps its own text: only an untouched seeded prompt moves to the current one, as a new
   agent version. Only `ticket-to-merge` stops; the other built-in templates still continue past an
   ambiguity verdict, and a custom copy of `ticket-to-merge` keeps its old graph.

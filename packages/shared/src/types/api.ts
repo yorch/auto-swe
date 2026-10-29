@@ -504,6 +504,8 @@ export interface UpdateWorkflowTemplateBody {
 
 export interface WorkflowTemplateAnalytics {
   isTruncated: boolean;
+  rollupDays: number;
+  liveDays: number;
   windowDays: number;
   totalRuns: number;
   succeeded: number;
@@ -561,6 +563,8 @@ export interface GlobalAnalyticsResponse {
   succeeded: number;
   failed: number;
   successRate: number | null;
+  p50DurationMs: number | null;
+  p95DurationMs: number | null;
   totalCost: number;
   estimatedHumanTimeSavedTotal: number | null;
   autonomyRate: number | null;
@@ -591,6 +595,8 @@ export interface GlobalAnalyticsResponse {
   isTruncated: boolean;
   seriesTruncated: boolean;
   legacyCostTruncated: boolean;
+  rollupDays: number;
+  liveDays: number;
   /** Headline figures for the window of equal length just before this one; null when unavailable. */
   previous?: {
     totalRuns: number;
@@ -599,6 +605,10 @@ export interface GlobalAnalyticsResponse {
     estimatedHumanTimeSavedTotal: number | null;
     autonomyRate: number | null;
     humanReviewRate: number | null;
+    p50DurationMs: number | null;
+    p95DurationMs: number | null;
+    rollupDays: number;
+    liveDays: number;
   } | null;
   /** Runs started per UTC day in the window, oldest first. */
   daily?: Array<{ date: string; completed: number; failed: number; active: number }>;

@@ -11,9 +11,11 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
     modelDiscovery: cfg,
     repoAccess: cfg,
     repoDependency: cfg,
+    reportDigest: cfg,
     runReaper: cfg,
     skillSourceSync: cfg,
     slackChannelSync: cfg,
+    workflowRunRollup: { ...cfg, backfillDays: 0, recomputeDays: 30 },
   }),
 }));
 
@@ -30,6 +32,8 @@ const SYNCS = [
   'syncCallbackDeliveryPruneSchedule',
   'syncAgentTranscriptPruneSchedule',
   'syncAgentTraceRollupSchedule',
+  'syncWorkflowRunRollupSchedule',
+  'syncReportDigestSchedule',
   'syncAuditActivityPruneSchedule',
   'syncSkillSourceSyncSchedule',
   'syncSlackChannelSyncSchedule',

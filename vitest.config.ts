@@ -475,6 +475,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/inventory.ts'),
       },
       {
+        find: '@auto-swe/shared/workflow/runAttribution',
+        replacement: path.resolve(__dirname, 'packages/shared/src/workflow/runAttribution.ts'),
+      },
+      {
         find: '@auto-swe/shared/workflow',
         replacement: path.resolve(__dirname, 'packages/shared/src/workflow/index.ts'),
       },

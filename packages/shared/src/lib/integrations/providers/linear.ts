@@ -1,8 +1,14 @@
 import type { IssueTrackerProvider } from '../issueTracker.js';
+import {
+  isTimeoutError,
+  type TicketFailureClass,
+  ticketFailureFromStatus,
+} from '../ticketFailure.js';
 import type {
   CreatedIssue,
   FetchedIssue,
   FetchIssueOptions,
+  FetchIssueResult,
   IssueCreateFields,
   SearchIssuesOptions,
   SearchIssuesResult,
@@ -13,6 +19,43 @@ const LINEAR_GRAPHQL_URL = 'https://api.linear.app/graphql';
 
 interface LinearProviderConfig {
   log?: { warn: (obj: unknown, msg?: string) => void };
+}
+
+/** The GraphQL error codes Linear's own errors carry that name a class; any other code is ignored. */
+const LINEAR_ERROR_CLASSES = new Map<string, TicketFailureClass>([
+  ['AUTHENTICATION_ERROR', 'unauthorized'],
+  ['FORBIDDEN', 'forbidden'],
+  ['RATELIMITED', 'rate_limited'],
+]);
+
+/**
+ * The class a GraphQL body names, from the first `errors[].extensions.code` on the fixed list. The
+ * message is never read: it can quote the request, and the code is all a class needs.
+ */
+function linearErrorClass(body: unknown): TicketFailureClass | null {
+  const errors = (body as { errors?: unknown } | null)?.errors;
+  if (!Array.isArray(errors)) {
+    return null;
+  }
+  for (const error of errors) {
+    const code = (error as { extensions?: { code?: unknown } } | null)?.extensions?.code;
+    const failure = typeof code === 'string' ? LINEAR_ERROR_CLASSES.get(code) : undefined;
+    if (failure) {
+      return failure;
+    }
+  }
+  return null;
+}
+
+/** A non-2xx answer from Linear; the class is kept so a read can report it, never the body. */
+class LinearHttpError extends Error {
+  constructor(
+    readonly status: number,
+    readonly failure: TicketFailureClass
+  ) {
+    super(`Linear GraphQL HTTP ${status}`);
+    this.name = 'LinearHttpError';
+  }
 }
 
 async function linearGraphql<T>(
@@ -31,9 +74,26 @@ async function linearGraphql<T>(
     signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) {
-    throw new Error(`Linear GraphQL HTTP ${res.status}`);
+    // Linear answers a bad key with 400 and the reason in the body: read the code, not the text.
+    const body: unknown = await res.json().catch(() => null);
+    throw new LinearHttpError(
+      res.status,
+      linearErrorClass(body) ?? ticketFailureFromStatus(res.status)
+    );
   }
   return res.json() as Promise<T>;
+}
+
+/** The failure class of an error thrown while reading an issue; never its text. */
+function linearFailure(err: unknown): TicketFailureClass {
+  if (err instanceof LinearHttpError) {
+    return err.failure;
+  }
+  if (isTimeoutError(err)) {
+    return 'timeout';
+  }
+  // A 200 whose body is not JSON: Linear answered, so this is not the network.
+  return err instanceof SyntaxError ? 'unknown' : 'network';
 }
 
 const LINEAR_ISSUE_QUERY = `query Issue($id: String!) {
@@ -113,7 +173,11 @@ export class LinearProvider implements IssueTrackerProvider {
     this.log = config.log;
   }
 
-  async fetchIssue(id: string, _opts?: FetchIssueOptions): Promise<FetchedIssue | null> {
+  async fetchIssue(id: string, opts?: FetchIssueOptions): Promise<FetchedIssue | null> {
+    return (await this.readIssue(id, opts)).issue;
+  }
+
+  async readIssue(id: string, _opts?: FetchIssueOptions): Promise<FetchIssueResult> {
     try {
       type LinearResponse = {
         data?: {
@@ -134,22 +198,24 @@ export class LinearProvider implements IssueTrackerProvider {
       });
       const issue = result.data?.issue;
       if (!issue) {
-        return null;
+        return { failure: linearErrorClass(result) ?? 'not_found', issue: null };
       }
       return {
-        assignee: issue.assignee?.displayName ?? undefined,
-        description: issue.description ?? '',
-        id: issue.identifier ?? id,
-        labels: (issue.labels?.nodes ?? []).map((l) => l.name),
-        priority: issue.priority !== undefined ? String(issue.priority) : undefined,
-        raw: issue,
-        status: issue.state?.name ?? 'unknown',
-        title: issue.title ?? id,
-        url: issue.url ?? '',
+        issue: {
+          assignee: issue.assignee?.displayName ?? undefined,
+          description: issue.description ?? '',
+          id: issue.identifier ?? id,
+          labels: (issue.labels?.nodes ?? []).map((l) => l.name),
+          priority: issue.priority !== undefined ? String(issue.priority) : undefined,
+          raw: issue,
+          status: issue.state?.name ?? 'unknown',
+          title: issue.title ?? id,
+          url: issue.url ?? '',
+        },
       };
     } catch (err) {
       this.log?.warn({ err, issueId: id }, 'Linear fetchIssue failed');
-      return null;
+      return { failure: linearFailure(err), issue: null };
     }
   }
 

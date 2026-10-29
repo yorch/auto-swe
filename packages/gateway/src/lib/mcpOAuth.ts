@@ -44,6 +44,7 @@ export const MCP_CONSENT_SKEW_SECONDS = 5;
 
 /** Where the authorization server's endpoints live (better-auth's default base path). */
 export const AUTH_BASE_PATH = '/api/auth';
+export const MCP_DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 
 function trimTrailingSlashes(url: string): string {
   return url.replace(/\/+$/, '');

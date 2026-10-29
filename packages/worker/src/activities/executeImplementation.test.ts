@@ -385,6 +385,48 @@ describe('executeImplementation tracker ticket context', () => {
   });
 });
 
+describe('executeImplementation success criteria', () => {
+  const run = (criteria?: string[], ticket?: string) =>
+    executeImplementation(
+      { ...REQUEST, workRequestId: 'wr-1' } as RepoWorkRequest,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      ticket,
+      criteria
+    );
+
+  it('fences the criteria and the open questions into the implementer system prompt', async () => {
+    await run(['GET /health returns 200', 'AMBIGUOUS: does it need auth?']);
+    const prompt = systemPrompt();
+    expect(prompt.startsWith('BASE_PROMPT')).toBe(true);
+    expect(prompt).toContain('<criteria>');
+    expect(prompt).toContain('- GET /health returns 200');
+    expect(prompt).toContain('- does it need auth?');
+    expect(prompt).toMatch(/do not guess/i);
+  });
+
+  it('places them after the ticket and before the cross-repo block', async () => {
+    loadMock.mockResolvedValue('[CROSS]');
+    await run(['GET /health returns 200'], '[TICKET]');
+    const prompt = systemPrompt();
+    expect(prompt.indexOf('[TICKET]')).toBeLessThan(prompt.indexOf('<criteria>'));
+    expect(prompt.indexOf('<criteria>')).toBeLessThan(prompt.indexOf('[CROSS]'));
+  });
+
+  it('leaves the prompt byte-identical when no criteria were handed over', async () => {
+    await run();
+    expect(systemPrompt()).toBe('BASE_PROMPT');
+  });
+
+  it('leaves the prompt byte-identical for an empty list', async () => {
+    await run([]);
+    expect(systemPrompt()).toBe('BASE_PROMPT');
+  });
+});
+
 describe('executeImplementation cross-repo context', () => {
   it('appends the dependency block to the implementer system prompt', async () => {
     loadMock.mockResolvedValue('\n\n## Cross-Repo Dependency Context\n- acme/web — kinds: code');
@@ -759,6 +801,149 @@ describe('executeImplementation unrunnable test command', () => {
     const result = await executeImplementation(REQUEST);
     expect(generateMock).toHaveBeenCalledTimes(1);
     expect(result.implementationNotes).toContain('Tests passing');
+  });
+});
+
+describe('executeImplementation test command that finds no tests', () => {
+  const isTestRun = (c: unknown[]) =>
+    (c[1] as { timeoutMs?: number } | undefined)?.timeoutMs === TEST_RUN_TIMEOUT_MS;
+  const pythonStack = { components: [{ path: '', stacks: ['python'] }], evidence: [] };
+
+  function repoWith(fields: Record<string, unknown>) {
+    prismaMock.connection.findUniqueOrThrow.mockResolvedValue({
+      defaultBranch: 'main',
+      // Named, so the stack's image is not looked up (that needs the infra settings).
+      executorImage: 'ghcr.io/acme/executor:1',
+      id: 'repo-1',
+      organizationName: 'acme',
+      repoName: 'api',
+      ...fields,
+    });
+  }
+
+  /** Make the test run answer: reject with `fields`, or resolve with `stdout`. */
+  function testRun(outcome: { reject: Record<string, unknown> } | { stdout: string }) {
+    workspaceMock.exec.mockImplementation(
+      async (_command: string, options?: { timeoutMs?: number }) => {
+        if (options?.timeoutMs !== TEST_RUN_TIMEOUT_MS) {
+          return '';
+        }
+        if ('reject' in outcome) {
+          throw Object.assign(new Error('Command failed'), outcome.reject);
+        }
+        return outcome.stdout;
+      }
+    );
+  }
+
+  const notesFor = (command: string, run = 1) =>
+    `The test command \`${command}\` found no tests to run, so the TDD loop stopped after test run ${run}; set \`runTests\` for this repository.`;
+  const unreadableNotes = (command: string, run: number) =>
+    `The test command \`${command}\` exited 0 but printed no test counts, so whether tests ran could not be determined; the TDD loop stopped after test run ${run}. Set \`runTests\` for this repository for a command whose output can be read.`;
+
+  beforeEach(() => {
+    tddSetting.maxIterations = 3;
+    repoWith({ detectedStack: pythonStack });
+  });
+
+  it('stops after one run when a stack command exits 5, with the event and notes', async () => {
+    const eventSpy = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+    testRun({ reject: { code: 5, stdout: `HEAD${'x'.repeat(2000)}no tests ran` } });
+    const result = await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect(workspaceMock.exec.mock.calls.filter(isTestRun)).toHaveLength(1);
+    const events = eventSpy.mock.calls
+      .map(([e]) => e)
+      .filter((e) => e.name === 'tdd.no_tests_found');
+    expect(events).toHaveLength(1);
+    expect(events[0].inputJson).toEqual({ iteration: 0 });
+    const out = events[0].outputJson as { command: string; output: string; reason: string };
+    expect(out.command).toBe('python -m pytest');
+    expect(out.reason).toBe('exit status 5: no tests ran');
+    expect(out.output).toHaveLength(1000);
+    expect(out.output.endsWith('no tests ran')).toBe(true);
+    expect(result.implementationNotes).toBe(notesFor('python -m pytest'));
+    expect(result.testResults).toMatchObject({ failing: 0, passed: false, total: 0 });
+  });
+
+  it('still commits and pushes the work', async () => {
+    testRun({ reject: { code: 5, stdout: 'no tests ran' } });
+    await executeImplementation(REQUEST);
+    expect(workspaceMock.exec.mock.calls.map((c) => c[0])).toContain('git add -A');
+    expect(workspaceMock.gitAuthed).toHaveBeenCalledWith(expect.stringContaining('push origin'));
+  });
+
+  it('stops after one run when a stack command exits 0 with `[no test files]`', async () => {
+    const eventSpy = vi.spyOn(AgentTracer.prototype, 'addActivityEvent');
+    repoWith({ detectedStack: { components: [{ path: '', stacks: ['go'] }], evidence: [] } });
+    testRun({ stdout: '?   \texample.com/x\t[no test files]' });
+    const result = await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect(workspaceMock.exec.mock.calls.filter(isTestRun)).toHaveLength(1);
+    expect(result.implementationNotes).toBe(unreadableNotes('go test ./...', 1));
+    expect(
+      eventSpy.mock.calls.map(([e]) => e).filter((e) => e.name === 'tdd.tests_unreadable')
+    ).toHaveLength(1);
+  });
+
+  it('says a green quiet Maven run printed no counts, rather than that no tests exist', async () => {
+    repoWith({ detectedStack: { components: [{ path: '', stacks: ['jvm'] }], evidence: [] } });
+    testRun({ stdout: '' });
+    const result = await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalledTimes(1);
+    expect(result.implementationNotes).toContain('exited 0 but printed no test counts');
+    expect(result.implementationNotes).not.toContain('found no tests');
+  });
+
+  it('names the run that stopped the loop when it is not the first', async () => {
+    let runs = 0;
+    workspaceMock.exec.mockImplementation(
+      async (_command: string, options?: { timeoutMs?: number }) => {
+        if (options?.timeoutMs !== TEST_RUN_TIMEOUT_MS) {
+          return '';
+        }
+        runs += 1;
+        if (runs === 1) {
+          throw Object.assign(new Error('Command failed'), { code: 1, stdout: '1 failed' });
+        }
+        throw Object.assign(new Error('Command failed'), { code: 5, stdout: 'no tests ran' });
+      }
+    );
+    const result = await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalledTimes(2);
+    expect(result.implementationNotes).toBe(notesFor('python -m pytest', 2));
+  });
+
+  it('keeps iterating when a stack command fails with real failures (exit 1)', async () => {
+    testRun({ reject: { code: 1, stdout: '2 failed, 5 passed' } });
+    const result = await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalledTimes(3);
+    expect(result.implementationNotes).toContain('3 (max) TDD iterations. Tests failing.');
+  });
+
+  it('keeps iterating when a configured runTests finds no tests', async () => {
+    repoWith({ detectedStack: pythonStack, gateCommands: { runTests: 'pytest -q' } });
+    testRun({ reject: { code: 5, stdout: 'no tests ran' } });
+    await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalledTimes(3);
+    testRun({ stdout: '' });
+    generateMock.mockClear();
+    await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps iterating for a Node command, whatever its exit', async () => {
+    repoWith({});
+    testRun({ reject: { code: 5, stdout: 'no tests ran' } });
+    await executeImplementation(REQUEST);
+    expect(generateMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('words a final not-run result as not run in the notes', async () => {
+    repoWith({});
+    testRun({ stdout: '' });
+    const result = await executeImplementation(REQUEST);
+    expect(result.implementationNotes).toContain('Tests not run.');
   });
 });
 

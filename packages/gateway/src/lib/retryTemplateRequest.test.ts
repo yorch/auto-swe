@@ -5,6 +5,7 @@ import { requireAuth } from '../plugins/auth.js';
 import { authorizeLaunch } from './launchAuthorization.js';
 import { retryTemplateRequest } from './retryTemplateRequest.js';
 import { validateRunConnection } from './runConnection.js';
+import { clearStopNodeCache } from './unchangedRerun.js';
 
 vi.mock('./runConnection.js', () => ({ validateRunConnection: vi.fn() }));
 vi.mock('./launchAuthorization.js', () => ({
@@ -31,8 +32,17 @@ const input = {
 async function harness(
   visible = true,
   request: Record<string, unknown> = input,
-  templateRow: Record<string, unknown> = { id: 'template-1', teamId: null, workspaceProvider: null }
+  templateRow: Record<string, unknown> = {
+    id: 'template-1',
+    teamId: null,
+    workspaceProvider: null,
+  },
+  attempt: { instructions?: string; stops?: unknown[] } = {
+    instructions: 'Include migration notes',
+  }
 ) {
+  clearStopNodeCache();
+  let lookups = 0;
   const app = Fastify();
   const prisma = {
     // The launch records an authorized source snapshot: row locks, then the membership reads. All
@@ -54,6 +64,10 @@ async function harness(
     user: { findUnique: vi.fn(async () => null) },
     workflowRun: {
       findFirst: vi.fn(async (_query: unknown) => (visible ? { id: 'old-run' } : null)),
+      findMany: vi.fn(async (_query: unknown) => {
+        lookups += 1;
+        return lookups % 2 === 1 ? (attempt.stops ?? []) : [];
+      }),
     },
     workflowTemplate: {
       findFirst: vi.fn(async () => templateRow),
@@ -62,7 +76,10 @@ async function harness(
     // the recorded payload was written against — so the fixture carries that schema on the same
     // row: a version snapshots its template's, so one schema per case serves both lookups.
     workflowTemplateVersion: {
-      findFirst: vi.fn(async () => ({ inputSchema: templateRow.inputSchema ?? null })),
+      findFirst: vi.fn(async () => ({
+        inputSchema: templateRow.inputSchema ?? null,
+        spec: { nodes: { terminateNotActionable: { status: 'FAILED', type: 'terminate' } } },
+      })),
     },
   };
   const start = vi.fn(async () => {});
@@ -72,7 +89,14 @@ async function harness(
     verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: 'ENGINEER', sub: 'retry-caller' }),
   } as never);
   app.post('/retry', { onRequest: requireAuth({ requiredRole: 'ENGINEER' }) }, (req, reply) =>
-    retryTemplateRequest(app, req, reply, request as never, 'Include migration notes')
+    retryTemplateRequest(
+      app,
+      req,
+      reply,
+      request as never,
+      attempt.instructions,
+      (req.query as { acknowledge?: string }).acknowledge === 'true'
+    )
   );
   return { app, prisma, start };
 }
@@ -84,6 +108,46 @@ beforeEach(() => {
   vi.mocked(authorizeLaunch)
     .mockReset()
     .mockResolvedValue({ ok: true } as never);
+});
+
+describe('generic workflow retry of a request that stopped as not actionable', () => {
+  const stop = {
+    id: 'run-stopped',
+    startedAt: new Date(),
+    workRequest: { description: input.description, payload: input.payload },
+    workRequestId: input.id,
+  };
+
+  it('refuses the unchanged retry with 409 naming the earlier run, and starts nothing', async () => {
+    const { app, start } = await harness(true, input, undefined, { stops: [stop] });
+    const response = await app.inject({ headers: auth, method: 'POST', url: '/retry' });
+    expect(response.statusCode).toBe(409);
+    expect(response.json().error).toMatchObject({
+      code: 'UNCHANGED_AFTER_NOT_ACTIONABLE',
+      details: { previousRunId: 'run-stopped' },
+    });
+    expect(start).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('launches when the caller acknowledges', async () => {
+    const { app, start } = await harness(true, input, undefined, { stops: [stop] });
+    const url = '/retry?acknowledge=true';
+    expect((await app.inject({ headers: auth, method: 'POST', url })).statusCode).toBe(201);
+    expect(start).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('launches a retry that adds instructions, which change the request', async () => {
+    const { app } = await harness(true, input, undefined, {
+      instructions: 'Here is the ticket text',
+      stops: [stop],
+    });
+    expect((await app.inject({ headers: auth, method: 'POST', url: '/retry' })).statusCode).toBe(
+      201
+    );
+    await app.close();
+  });
 });
 
 describe('generic workflow retry', () => {

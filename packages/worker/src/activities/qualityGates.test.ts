@@ -7,6 +7,7 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
     trustedKnowledgeEvidence: { createMany: vi.fn(), findUnique: vi.fn() },
     workflowArtifact: { findFirst: vi.fn() },
+    workflowRun: { findUnique: vi.fn() },
   },
 }));
 
@@ -33,10 +34,12 @@ vi.mock('./workspace.js', async (importOriginal) => ({
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(async () => ({ branchPrefix: 'auto' })),
+  resolveWorkspaceInfra: vi.fn(() => ({ stackImages: {} })),
 }));
 vi.mock('../lib/activityContext.js', () => ({
   currentRunningWorkflowRunId: vi.fn(async () => 'db-run'),
   currentTemporalRunId: vi.fn(() => 'temporal-run'),
+  currentWorkflowId: vi.fn(() => 'wf-1'),
   currentWorkflowRunId: vi.fn(async () => 'db-run'),
 }));
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
@@ -61,6 +64,7 @@ import {
   runLint,
   runPerfBench,
   runQualityGates,
+  runTests,
   truncate,
 } from './qualityGates.js';
 import { createWorkspace } from './workspace.js';
@@ -116,7 +120,24 @@ describe('resolveCommand precedence', () => {
 
     it("uses the stack's command instead of a yarn one", async () => {
       mockedFindUnique.mockResolvedValue({ detectedStack, gateCommands: null } as never);
-      expect(await resolveCommand('runTests', baseRequest, undefined)).toBe('mvn -B -q test');
+      expect(await resolveCommand('runTests', baseRequest, undefined)).toBe('mvn -B -ntp test');
+    });
+
+    it('uses the stack the run pinned, not the one a later scan stored', async () => {
+      // The live row now says jvm (a scan landed mid-run); the run began on node.
+      mockedFindUnique.mockResolvedValue({
+        detectedStack,
+        gateCommands: null,
+        id: 'repo-1',
+      } as never);
+      vi.mocked(prisma.workflowRun.findUnique).mockResolvedValueOnce({
+        pinnedDetections: {
+          'repo-1': { components: [{ path: '', stacks: ['node'] }], evidence: ['package.json'] },
+        },
+      } as never);
+      expect(await resolveCommand('runTests', baseRequest, undefined)).toBe(
+        DEFAULT_COMMANDS.runTests
+      );
     });
 
     it('resolves a gate the stack has no command for to null, never to yarn', async () => {
@@ -158,13 +179,13 @@ describe('resolveCommand precedence', () => {
         gateCommands: { runLint: 'make lint' },
       } as never);
       expect(await resolveCommand('runTests', baseRequest, undefined)).toBe(
-        "cd 'backend' && mvn -B -q test"
+        "cd 'backend' && mvn -B -ntp test"
       );
       expect(await resolveCommand('runLint', baseRequest, undefined)).toBe('make lint');
       expect(await resolveCommand('runTests', baseRequest, 'step')).toBe('step');
     });
 
-    it('fails every gate as unconfigured when several components compete and none is the root', async () => {
+    it('runs a gate in every component when each has one, and leaves it unconfigured when one lacks it', async () => {
       mockedFindUnique.mockResolvedValue({
         detectedStack: {
           components: [
@@ -175,7 +196,28 @@ describe('resolveCommand precedence', () => {
         },
         gateCommands: null,
       } as never);
-      for (const gate of ['runTests', 'runBuild', 'runLint', 'runVulnScan'] as const) {
+      // Both a JVM and a Node component have tests and a build: one command runs each in its dir.
+      for (const gate of ['runTests', 'runBuild'] as const) {
+        const cmd = await resolveCommand(gate, baseRequest, undefined);
+        expect(cmd, gate).toContain("(cd 'api' &&");
+        expect(cmd, gate).toContain("(cd 'web' &&");
+        expect(cmd, gate).toMatch(/exit \$ur$/);
+      }
+      // The JVM component has no lint and no audit default, so those would verify only `web`.
+      for (const gate of ['runLint', 'runVulnScan'] as const) {
+        expect(await resolveCommand(gate, baseRequest, undefined), gate).toBeNull();
+      }
+    });
+
+    it('leaves every gate unconfigured past eight components', async () => {
+      mockedFindUnique.mockResolvedValue({
+        detectedStack: {
+          components: Array.from({ length: 9 }, (_, i) => ({ path: `svc${i}`, stacks: ['go'] })),
+          evidence: [],
+        },
+        gateCommands: null,
+      } as never);
+      for (const gate of ['runTests', 'runBuild', 'runLint'] as const) {
         expect(await resolveCommand(gate, baseRequest, undefined), gate).toBeNull();
       }
     });
@@ -248,6 +290,44 @@ describe('resolveCommand precedence', () => {
   });
 });
 
+describe('the test gate’s timeout', () => {
+  const twoGo = {
+    components: [
+      { path: 'a', stacks: ['go'] },
+      { path: 'b', stacks: ['go'] },
+    ],
+    evidence: [],
+  };
+
+  it('scales with the components a composite runs, as the TDD loop’s does', async () => {
+    mockedFindUnique.mockResolvedValue({ detectedStack: twoGo, gateCommands: null } as never);
+    await runTests({ request: baseRequest });
+    expect(fakeWorkspace.execCapture).toHaveBeenLastCalledWith(
+      expect.stringContaining("(cd 'a' &&"),
+      { timeoutMs: 1_200_000 }
+    );
+  });
+
+  it('is the usual ten minutes for a single command, and never changes another gate', async () => {
+    mockedFindUnique.mockResolvedValue({ detectedStack: null, gateCommands: null } as never);
+    await runTests({ request: baseRequest });
+    expect(fakeWorkspace.execCapture).toHaveBeenLastCalledWith('yarn test', { timeoutMs: 600_000 });
+    mockedFindUnique.mockResolvedValue({ detectedStack: twoGo, gateCommands: null } as never);
+    await runLint({ command: 'yarn lint', request: baseRequest });
+    expect(fakeWorkspace.execCapture).toHaveBeenLastCalledWith('yarn lint', {
+      timeoutMs: undefined,
+    });
+  });
+
+  it('lets a step’s own timeout win', async () => {
+    mockedFindUnique.mockResolvedValue({ detectedStack: twoGo, gateCommands: null } as never);
+    await runTests({ request: baseRequest, timeoutMs: 5_000 });
+    expect(fakeWorkspace.execCapture).toHaveBeenLastCalledWith(expect.any(String), {
+      timeoutMs: 5_000,
+    });
+  });
+});
+
 describe('truncate', () => {
   it('returns the input untouched when below the limit', () => {
     expect(truncate('hi', 10)).toBe('hi');
@@ -286,6 +366,22 @@ describe('executeGateFixImplementation re-run', () => {
     await afterGenerate({ execCapture }, { id: 'repo-1' });
     return (execCapture.mock.calls[0] as unknown as [string])[0];
   }
+
+  it('words the test outcome in the gate fix notes as passing, failing or not run', async () => {
+    fixSessionMock.mockResolvedValue({});
+    await executeGateFixImplementation({
+      gateName: 'runTests',
+      gateOutput: { exitCode: 1, passed: false, summary: 'boom' },
+      previousCodeResult,
+    });
+    const session = fixSessionMock.mock.calls.at(-1)?.[0] as {
+      notes: (t: Record<string, unknown>, extra: string | null) => string;
+    };
+    const notes = session.notes;
+    expect(notes({ failing: 0, passed: true, total: 1 }, 'x')).toContain('Tests passing.');
+    expect(notes({ failing: 1, passed: false, total: 1 }, 'x')).toContain('Tests failing.');
+    expect(notes({ failing: 0, passed: false, total: 0 }, 'x')).toContain('Tests not run.');
+  });
 
   it('re-runs the command the failed gate ran, including a step-level override', async () => {
     mockedFindUnique.mockResolvedValue({ gateCommands: { runTests: 'repo-tests' } } as never);

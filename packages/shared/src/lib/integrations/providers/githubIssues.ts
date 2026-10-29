@@ -1,11 +1,17 @@
-import { createGuardedFetch } from '../../guardedDispatcher.js';
-import { fetchGuarded } from '../../guardedFetch.js';
+import { createGuardedFetch, SsrfBlockedError } from '../../guardedDispatcher.js';
+import { fetchGuarded, RedirectRefusedError } from '../../guardedFetch.js';
 import { isSafeProbeUrl } from '../../ssrfGuard.js';
 import type { IssueTrackerProvider } from '../issueTracker.js';
+import {
+  isTimeoutError,
+  type TicketFailureClass,
+  ticketFailureFromStatus,
+} from '../ticketFailure.js';
 import type {
   CreatedIssue,
   FetchedIssue,
   FetchIssueOptions,
+  FetchIssueResult,
   IssueCreateFields,
   SearchIssuesOptions,
   SearchIssuesResult,
@@ -66,6 +72,26 @@ function repositoryUrlMatches(value: string, want: { owner: string; repo: string
 
 /** Where the GitHub tracker sends requests when its config names no base URL. */
 export const GITHUB_ISSUES_DEFAULT_BASE_URL = 'https://api.github.com';
+
+/** True for the guard's refusal, thrown by `fetch` or carried as the cause of its TypeError. */
+function isGuardRefusal(err: unknown): boolean {
+  return err instanceof SsrfBlockedError || (err instanceof Error && isGuardRefusal(err.cause));
+}
+
+/** The failure class of an error thrown while reading an issue; never its text, URL or host. */
+function githubFailure(err: unknown): TicketFailureClass {
+  if (err instanceof RedirectRefusedError) {
+    return 'redirect';
+  }
+  if (isGuardRefusal(err)) {
+    return 'refused';
+  }
+  if (isTimeoutError(err)) {
+    return 'timeout';
+  }
+  // A 200 whose body is not JSON: the tracker answered, so this is not the network.
+  return err instanceof SyntaxError ? 'unknown' : 'network';
+}
 
 export class GitHubIssuesProvider implements IssueTrackerProvider {
   private readonly apiToken: string | null;
@@ -139,6 +165,10 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
   }
 
   async fetchIssue(id: string, opts?: FetchIssueOptions): Promise<FetchedIssue | null> {
+    return (await this.readIssue(id, opts)).issue;
+  }
+
+  async readIssue(id: string, opts?: FetchIssueOptions): Promise<FetchIssueResult> {
     try {
       const parsed = parseGitHubTicketId(id, opts?.defaultRepo ?? this.defaultRepo);
       if (!parsed) {
@@ -146,7 +176,7 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
           { issueId: id },
           'GitHub fetchIssue: ticket ID must be owner/repo#123 or a bare issue number'
         );
-        return null;
+        return { failure: 'rejected', issue: null };
       }
       const url = `${this.baseUrl}/repos/${parsed.owner}/${parsed.repo}/issues/${parsed.number}`;
       const res = await this.request(
@@ -156,7 +186,14 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
       );
       if (!res.ok) {
         this.log?.warn({ issueId: id, status: res.status }, 'GitHub fetchIssue failed');
-        return null;
+        // An exhausted primary rate limit is a 403 that says so in a header.
+        const limited =
+          res.status === 403 &&
+          (res.headers.get('x-ratelimit-remaining') === '0' || res.headers.has('retry-after'));
+        return {
+          failure: limited ? 'rate_limited' : ticketFailureFromStatus(res.status),
+          issue: null,
+        };
       }
       const issue = (await res.json()) as {
         number: number;
@@ -170,22 +207,26 @@ export class GitHubIssuesProvider implements IssueTrackerProvider {
       const reported = issue.repository_url;
       if (reported !== undefined && !repositoryUrlMatches(reported, parsed)) {
         this.log?.warn({ issueId: id }, 'GitHub fetchIssue: issue belongs to another repository');
-        return null;
+        // Not in the repository the ticket names, so as good as absent there; the other
+        // repository is never named.
+        return { failure: 'not_found', issue: null };
       }
       return {
-        description: issue.body ?? '',
-        id: `${parsed.owner}/${parsed.repo}#${issue.number}`,
-        labels: (issue.labels ?? [])
-          .map((l) => (typeof l === 'string' ? l : (l.name ?? '')))
-          .filter(Boolean),
-        raw: issue,
-        status: issue.state ?? 'unknown',
-        title: issue.title ?? id,
-        url: issue.html_url ?? url,
+        issue: {
+          description: issue.body ?? '',
+          id: `${parsed.owner}/${parsed.repo}#${issue.number}`,
+          labels: (issue.labels ?? [])
+            .map((l) => (typeof l === 'string' ? l : (l.name ?? '')))
+            .filter(Boolean),
+          raw: issue,
+          status: issue.state ?? 'unknown',
+          title: issue.title ?? id,
+          url: issue.html_url ?? url,
+        },
       };
     } catch (err) {
       this.log?.warn({ err, issueId: id }, 'GitHub fetchIssue failed');
-      return null;
+      return { failure: githubFailure(err), issue: null };
     }
   }
 

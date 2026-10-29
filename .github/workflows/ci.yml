@@ -454,6 +454,13 @@ jobs:
           SKILL_SOURCE_PG_TEST: '1'
         run: yarn test packages/gateway/src/lib/skillSource.pg.test.ts packages/gateway/src/lib/skillSourceBudget.pg.test.ts
 
+      # The unchanged-request guard: its JSON-path filters on a run's snapshots
+      # must be accepted by Prisma and match what a finished run stores.
+      - name: Unchanged-request guard (database-backed tests)
+        env:
+          UNCHANGED_RERUN_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/unchangedRerun.pg.test.ts
+
       # Scoped memory search: a plan that reads the HNSW index applies the
       # repository filter after the index's first candidates, so a small
       # repository beside a crowded one gets nothing back without pgvector's
@@ -487,6 +494,15 @@ jobs:
         env:
           PINNED_SETTINGS_PG_TEST: '1'
         run: yarn test packages/worker/src/lib/config/pinnedSettings.pg.test.ts
+
+      # The run's stack-detection pin: which rows pinDetectionsOnRun writes is a
+      # predicate over a nullable JSON column and a nullable text column (a later
+      # execution of a reused workflow id re-pins, a retry and a NULL temporal
+      # run id do not), which a mocked Prisma does not evaluate.
+      - name: Run stack-detection pin (database-backed tests)
+        env:
+          RUN_DETECTION_PG_TEST: '1'
+        run: yarn test packages/worker/src/lib/runDetection.pg.test.ts
 
       # The usage report read from the daily rollup must equal the report read from
       # the traces: the rollup sums a Float column into a Decimal one and BigInt

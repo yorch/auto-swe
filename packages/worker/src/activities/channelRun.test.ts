@@ -54,7 +54,12 @@ const TEMPLATE = { activeVersion: 1, id: 'tmpl-channel' };
 beforeEach(() => {
   vi.clearAllMocks();
   p.workflowTemplate.findFirst.mockResolvedValue(TEMPLATE);
-  p.slackChannel.findUnique.mockResolvedValue({ id: 'chan-1', orgId: 'org-1', teamId: 'team-1' });
+  p.slackChannel.findUnique.mockResolvedValue({
+    id: 'chan-1',
+    orgId: 'org-1',
+    team: { id: 'team-1', orgId: 'org-1' },
+    teamId: 'team-1',
+  });
   p.agent.findMany.mockResolvedValue([]);
   p.agent.findFirst.mockResolvedValue(null);
   p.skill.findMany.mockResolvedValue([]);
@@ -77,6 +82,8 @@ describe('startChannelRun', () => {
     expect(data.status).toBe('RUNNING');
     expect(data.templateId).toBe('tmpl-channel');
     expect(data.templateVersion).toBe(1);
+    expect(data.attributedTeamId).toBe('team-1');
+    expect(data.attributedOrgId).toBe('org-1');
     expect(data.workRequestId).toBeNull();
     // Linked relationally so run visibility can reach the channel's team.
     expect(data.channelId).toBe('chan-1');

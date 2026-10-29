@@ -11,7 +11,7 @@ import { usePageViewEvents } from '@/hooks/usePageViewEvents';
 
 // Public routes (mirrors the page entries in proxy.ts PUBLIC_PATHS). They render
 // without the app chrome, whose queries would 401 for a signed-out visitor.
-const CHROMELESS_ROUTES = ['/login', '/reset-password'];
+const CHROMELESS_ROUTES = ['/login', '/reset-password', '/device'];
 
 // Routes that manage their own full-height layout: the shell gives them the whole main area (no
 // padding, no page scroll) and the page decides what scrolls. Each pattern is one named entry, so

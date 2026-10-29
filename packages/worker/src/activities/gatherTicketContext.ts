@@ -11,7 +11,7 @@ import { withHeartbeat } from '../lib/execUtils.js';
 import {
   formatTicketContext,
   formatTicketDigest,
-  loadTicket,
+  readTicket,
   type TicketDigest,
   TicketDigestSchema,
 } from '../lib/ticketContext.js';
@@ -24,9 +24,13 @@ export interface TicketContextResult {
   digested: boolean;
   /** The ticket as a prompt block, for the steps that take it as an input; '' when unavailable. */
   text: string;
+  /**
+   * Why the ticket could not be read: a `TicketFailureClass` (never provider text), or '' when it
+   * was read or the run names no ticket. `not_found` covers both a missing ticket and one the
+   * tracker's token cannot see.
+   */
+  unavailableReason: string;
 }
-
-const NO_TICKET: TicketContextResult = { available: false, digested: false, text: '' };
 
 /**
  * The context-gatherer step: the tracker ticket behind a run (with its newest comments and its
@@ -53,13 +57,13 @@ async function gatherImpl(
   heartbeat('reading the tracker ticket');
   const tracer = new AgentTracer();
   try {
-    const loaded = await loadTicket({
+    const { reason, ticket: loaded } = await readTicket({
       rich: true,
       tracer,
       workRequestId: workRequest.workRequestId,
     });
     if (!loaded) {
-      return NO_TICKET;
+      return { available: false, digested: false, text: '', unavailableReason: reason ?? '' };
     }
 
     heartbeat('digesting the ticket');
@@ -92,7 +96,12 @@ async function gatherImpl(
     }
 
     const text = formatTicketDigest(loaded.issue, digest);
-    return { available: text !== '', digested: digest !== null, text };
+    return {
+      available: text !== '',
+      digested: digest !== null,
+      text,
+      unavailableReason: text !== '' ? '' : 'empty',
+    };
   } finally {
     // Best-effort: a trace write must not fail a run.
     if (tracer.size > 0) {

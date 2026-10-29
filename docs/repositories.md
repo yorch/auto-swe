@@ -231,6 +231,25 @@ notes. The missing-`package.json` case counts only as npm's own
 configured `runTests` too. Set `runTests` to a command the workspace can run, or pin an
 `executorImage` that carries the repository's toolchain.
 
+A command derived from the [detected stack](#detected-stack) (pytest, `go test ./...`, `cargo test`,
+`mvn`, `gradle`) can run in an image that has the toolchain and still show no tests. Two outcomes
+end the loop after that test run, which is not always the first. The run is recorded as not run and
+the work is still committed and pushed:
+
+- **Exit status 5** (pytest's no-tests status; among the stack defaults only pytest exits 5): the
+  runner looked for tests and found none. A `tdd.no_tests_found` event is recorded and the
+  implementation notes say the command found no tests and that `runTests` should be set.
+- **Exit 0 with no readable test counts** (`go test` printing `[no test files]`, a Gradle build
+  whose `test` task was up to date, one component of a composite whose output showed no tests):
+  whether tests ran is unknown, and a green suite looks the same. A `tdd.tests_unreadable` event is recorded and the notes say the command exited 0
+  but printed no test counts, so a reviewer is not told tests are missing.
+
+A fix session (CI, review, gate or pull-request feedback) has one test run and no loop; it records
+the same events and appends the same sentences without loop wording. A configured `runTests` and the
+`package.json` guess never take this path. `runTests` is still how a repository gets a real command.
+The pull request body says "No test results could be read" for any not-run result, which also covers
+a `maxTddIterations` of 0 and a configured or Node command whose zero-exit output carries no counts.
+
 A gate command runs in the agent workspace of every run on the repository, so changing the set takes
 the same role as writing a command into a template: a platform admin, or an admin of the team that
 will own the repository (`403 GATE_COMMANDS_FORBIDDEN` otherwise; see
@@ -298,8 +317,14 @@ and one repository's failure doesn't stop the others.
 
 ### Detected stack
 
-The scheduled dependency scan also records the repository's stacks on the connection
-(`detectedStack`, with `detectedStackAt`). It reads the repository tree recursively.
+The dependency scan also records the repository's stacks on the connection
+(`detectedStack`, with `detectedStackAt`). It reads the repository tree recursively. It runs on the
+weekly schedule and once more when a repository is onboarded, so a new repository has its stack
+before its first run. The onboarding scan is started after the repository is saved and is
+best-effort: if it cannot be started, or runs before the repository's credentials work (it then
+records nothing and is not retried), the weekly sweep records the detection. A scan changes what
+later runs read: a run is pinned to the detection of each connection it may use as it was when the
+run began (`WorkflowRun.pinnedDetections`).
 
 - **What it scans.** Stack signals (`package.json`, `pyproject.toml`, `requirements.txt`,
   `setup.py`, `pom.xml`, `build.gradle[.kts]`, `settings.gradle[.kts]`, `go.mod`) up to four directories deep. Paths under
@@ -311,7 +336,10 @@ The scheduled dependency scan also records the repository's stacks on the connec
     components. Ties are broken by the fixed precedence node, then python, then jvm, then go.
   - a suggested curated Dockerfile
   - conservative suggested gate commands: for a Node root, the scripts the root `package.json`
-    declares; for a Python, JVM or Go root, the stack's fixed commands (see below)
+    declares; for a Python, JVM or Go root, the stack's fixed commands (see below). A repository
+    whose root has no stack signal gets no suggestions: its run-time defaults already apply, and a
+    suggestion applied through the form is copied into `gateCommands` and would freeze there, going
+    stale when a component is added
 - **Fallback.** When the tree cannot be listed, the scan falls back to the root directory. When
   neither listing works, the previous detection is kept.
 
@@ -323,9 +351,15 @@ stack's test command when `runTests` is unset (the same chain, so loop and gate 
 | Root | `runTests` | `runBuild` | `runLint` |
 |---|---|---|---|
 | Python | `python -m pytest` | — | — |
-| JVM, Maven (`pom.xml`) | `mvn -B -q test` | `mvn -B -q -DskipTests package` | — |
+| JVM, Maven (`pom.xml`) | `mvn -B -ntp test` | `mvn -B -q -DskipTests package` | — |
 | JVM, Gradle | `./gradlew test --no-daemon` | `./gradlew build -x test --no-daemon` | — |
 | Go | `go test ./...` | `go build ./...` | `go vet ./...` |
+
+The Maven test command is not quiet (`-q` prints nothing on success): the test loop needs Surefire's
+`Tests run: N, Failures: 0, Errors: 0` summary as evidence that tests ran, and a run with no tests
+does not pass. For Gradle, an executed `test` task (a `> Task :test` line, not one marked
+`UP-TO-DATE` or `NO-SOURCE`) is the evidence. A custom `runTests` for a JVM repository must print one
+of those for the loop to see it pass.
 
 A gate the table leaves blank resolves to no command and fails as unconfigured (`onFail: 'warn'`
 on its node makes it optional); it is never filled with a command from another ecosystem. The
@@ -337,7 +371,9 @@ when it has one — Corepack enforces the pin, so it outranks the lockfile — e
 when exactly one exists. A root on npm or pnpm runs that manager's commands (`npm run build`,
 `npm run lint`, `npm test`, `npm run typecheck`, `npm audit --audit-level=high`; `pnpm …` likewise),
 so its vulnerability scan is not Yarn 4's `yarn npm audit`. Yarn's flavour comes from the pin's major
-version, else from a root `.yarnrc.yml` (Berry's config file):
+version, else from a root `.yarnrc.yml` (Berry's config file), else from the first 2 KB of the root
+`yarn.lock`: `# yarn lockfile v1` means Classic and `__metadata:` means Berry. The scan fetches that
+file only for an unpinned yarn root with neither of the others:
 
 | Root | Gates |
 |---|---|
@@ -354,14 +390,51 @@ target — it keeps its `package.json` guess.
 
 - exactly **one** component, with a complete listing (`treeTruncated` and `componentsTruncated` both
   unset), is the target. The stack's default gates and test command run in that directory, so the
-  recorded command reads `cd 'backend' && mvn -B -q test` — the directory is visible in the run's gate
+  recorded command reads `cd 'backend' && mvn -B -ntp test` — the directory is visible in the run's gate
   result. A Node component's manager comes from its own lockfile (and `.yarnrc.yml`) alone; one with no
   lockfile gets npm's commands, because Yarn 4 refuses a directory that is not part of a project (its
   audit then fails, as `npm audit` needs a lockfile). Its test command is guessed from the component's
   own `package.json`. A Gradle `settings.gradle[.kts]` makes the root a JVM target, so a subproject is
   never picked in place of the root's `./gradlew`.
-- **several** components and no root signal is a layout with no single right place: every gate
-  resolves as unconfigured instead of running a root command that cannot work there.
+- **two to eight** components and no root signal, with a complete listing, resolve to **composite**
+  gates: one command per gate that runs the gate in every component, in path order, and fails if
+  any component fails. Every component runs even after an earlier one fails, and its output follows
+  an `== auto-swe component: <dir> ==` marker line, so a failure names its directory (a runner can
+  print `== a ==`; it will not print this). Each component's command is the one a single component
+  would get (its own Node manager, its own JVM build tool), run in a subshell `cd` so one
+  directory never moves the next one's starting point. The script is plain `sh` (dash, busybox ash
+  and bash alike):
+
+  ```sh
+  rc=0; ur=0; ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ] || [ "$1" -eq 5 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }; echo; echo '== auto-swe component: api =='; (cd 'api' && mvn -B -ntp test) 2>&1; ck $?; echo; echo '== auto-swe component: web =='; (cd 'web' && npm test) 2>&1; ck $?; if [ "$rc" -ne 0 ]; then exit $rc; fi; exit $ur
+  ```
+
+  The exit status is the first **real** failure's — any status other than 126, 127 or 5, a missing
+  directory included. A part that is not runnable (126, 127) or that collected no tests (pytest's
+  5) decides the status only when no part really failed, and then the last of them does. Those are
+  the statuses the test loop stops on instead of iterating, so a missing tool or an untested Python
+  component cannot hide another component's failing tests from the loop. All parts passing is 0.
+
+  The test loop reads the output per section: every component must show that its tests ran (a
+  parsed passing count of at least one, or a runner's own `ok`/`PASS` lines) and none may show a
+  failure, so a component that tested nothing is not covered by another's green run. The reported
+  passing and failing counts are the sums across components. The output fed back to the agent is
+  bounded per component — each section keeps its marker line and its last characters, an even share
+  of the 10,000-character budget — so every component's failure is represented. The test run's
+  timeout is the usual ten minutes times the number of components, at most four times, for the test
+  loop and for the `runTests` quality gate alike (a step's own `timeoutMs` still wins). Each
+  component's stderr is merged into its stdout inside the composite, so a gate summary that shows
+  one stream still carries the markers.
+
+  The rule is all-or-nothing per gate: a gate is composite only when **every** component has a
+  command for it. A gate any component lacks stays unconfigured, because running it in only some
+  components would verify part of the repository and read as a pass. The TDD and fix-session test
+  loop uses the composite `runTests` by the same chain. When every component's first stack is the
+  same non-Node stack, `executorImageFor` gives the layout that stack's configured image; a mixed
+  layout, or one with a Node component, gets none.
+- **more than eight** components, a stored path that does not validate, or a component with no
+  known stack leave every gate unconfigured instead of running a root command that cannot work
+  there.
 - anything else keeps the built-in behaviour.
 
 Only the stack defaults get the `cd`: a step's `command` and the repository's `gateCommands` are
@@ -482,6 +555,16 @@ longer fit.
   `runTests` falls back to `npm test`, which cannot run there, so the loop stops after one pass until
   `runTests` is set. Only npm 11's output with exit 254 is recognised: yarn, pnpm, bun and older npm
   with no `package.json` still iterate.
+- **A stack-derived test command that shows no tests ends the loop on two signals, as a cost
+  trade-off.** Exit status 5 and a zero exit with no readable counts stop it. After exit 5 the agent
+  could still add a test file, but the implementer already runs the tests itself in its first pass,
+  so a further pass costs a whole budget for a rarely different outcome; the diff is still committed
+  and reviewed. A collection error, a compile error or real failures (any other status) keep
+  iterating, because the agent can fix them, and `go test ./...` in a tree with no Go packages exits
+  1 and iterates. A zero exit counts as unreadable unless the output carries a count, an
+  `ok  <pkg>` / `Ran N tests` line, Surefire's `Tests run:` totals or an executed Gradle `test`
+  task. The default Maven and Gradle commands print those, so a green run of them does not stop the
+  loop; a composite counts as unreadable when any one component shows none.
 - **Gate commands are checked when they are saved or moved, not when a run starts.** The worker runs
   whatever set the row holds, so a command stays in use after the admin who set it loses the role,
   and a value written to the column outside the API has no audit entry.
@@ -509,13 +592,28 @@ longer fit.
   is refused, and an upstream that does not serve the endpoint a client uses fails the gate — pnpm
   uses the older `audits` endpoints, which a registry may no longer implement.
 - **An unknown Yarn is treated as Berry.** A root with `yarn.lock` but neither a `packageManager` pin nor a
-  `.yarnrc.yml` keeps the built-in gates, whose audit is Berry's `yarn npm audit`; on a Classic repository
-  that gate fails until a pin or `runVulnScan` says otherwise.
-- **The stack fallback follows the stored detection, which is weekly.** A repository onboarded
-  since the last scan has none and keeps the built-in `yarn` gates until the next scan; a root that
-  changed stack is followed only after a rescan. Each activity reads the detection itself, so a scan that
-  lands mid-run can move the run's later steps to another image or directory than its earlier ones; a run
-  is not pinned to the detection it started with. A polyglot root (root `package.json` plus a Python
+  `.yarnrc.yml` is read from the lockfile's header; a header that names neither flavour, or a lockfile
+  that could not be fetched, keeps the built-in gates, whose audit is Berry's `yarn npm audit`. On a
+  Classic repository that gate fails until a pin or `runVulnScan` says otherwise. A root `yarn.lock`
+  over 1 MB cannot be read by the scan, so the flavour stays unknown and is treated as Berry: pin
+  `packageManager` to fix it.
+- **Composite gates cover a bounded layout.** More than eight components, or a gate that some
+  component has no command for (a Python component has no build or lint default, for example), is
+  still unconfigured: set the repository's `gateCommands` for it.
+- **A mixed-stack layout has no single image.** Set the repository's `executorImage` to one that
+  carries every toolchain, or the components whose tools the default image lacks exit 127.
+- **The composite shares one run's test budget.** The timeout scales with the number of components
+  but is capped at four times the single-run limit, and the output the agent sees is split evenly
+  across components.
+- **The stack fallback follows the stored detection.** A repository is scanned when it is onboarded
+  and then weekly; one whose onboarding scan did not record anything keeps the built-in `yarn` gates
+  until the next weekly scan, and a root that changed stack is followed only after a rescan. A run
+  reads the detection its connections had when it began (for the connections it may use), found
+  through the run's workflow id, so a scan landing mid-run does not move its later steps to another
+  image or directory. A later execution that reuses the workflow id takes a fresh snapshot; every attempt and
+  retry of one execution keeps that execution's first. A repository first scanned after the run began has no
+  recorded detection for that run. Runs that began before the pin existed, and a connection
+  outside the run's authorized set, read the live value. A polyglot root (root `package.json` plus a Python
   service) is a Node target, and the service gets nothing. A single component is chosen only when it is
   the only one seen, which a repository whose real build is a `Makefile` beside one lone nested `package.json`
   would satisfy wrongly; the `cd` in the recorded command is how that shows, and `gateCommands` is the
@@ -523,8 +621,8 @@ longer fit.
 - **Stack detection is bounded.** It ignores signals deeper than four directories, and anything
   under the ignored build/vendor directories. It records at most 50 components
   (`componentsTruncated`). When the provider truncates a very large tree (`treeTruncated`), it
-  only sees part of the repository. Node gate-command suggestions come from the root `package.json`
-  only, so a repository with no root stack gets none.
+  only sees part of the repository. Node gate-command suggestions come from the root
+  `package.json` only, so a repository with no root stack gets none.
 - **Overrides must be base URLs on one host each.** A GitHub Enterprise server served under a path
   prefix rather than at the root of its host cannot be expressed: the web base is stored as an
   origin.

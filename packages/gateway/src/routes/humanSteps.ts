@@ -3,7 +3,11 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
-import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
+import {
+  type HitlResolveErrorCode,
+  resolvedViaForAuthMethod,
+  resolveHitlStep,
+} from '../lib/hitlResolve.js';
 import { syncSlackHumanStepOutcome } from '../lib/hitlSlackSync.js';
 import { sendError } from '../lib/httpErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
@@ -581,6 +585,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         response: {
           200: RespondResponseSchema,
           400: ErrorResponseSchema,
+          403: ErrorResponseSchema,
           404: ErrorResponseSchema,
           409: ErrorResponseSchema,
           502: ErrorResponseSchema,
@@ -589,6 +594,9 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
       },
     },
     async (request, reply) => {
+      if (request.authMethod === 'service') {
+        return sendError(reply, 403, 'FORBIDDEN', 'Service principals cannot resolve human steps');
+      }
       const user = requireUser(request);
       const { action, comment, value } = request.body;
 
@@ -602,7 +610,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         request.params.id,
         action,
         value,
-        user,
+        { ...user, via: resolvedViaForAuthMethod(request.authMethod) },
         comment
       );
 

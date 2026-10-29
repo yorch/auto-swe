@@ -12,11 +12,25 @@ import { gatewayUnreachableMessage } from '@/lib/networkErrors';
  * with the session cookie, so these use `fetch` directly instead of the bearer-token client.
  */
 const ProviderErrorSchema = z.object({
+  error: z.string().optional(),
   error_description: z.string().optional(),
   message: z.string().optional(),
 });
 
-async function providerFetch(path: string, init: RequestInit, fallback: string): Promise<unknown> {
+export class OAuthProviderError extends Error {
+  constructor(
+    message: string,
+    readonly code?: string
+  ) {
+    super(message);
+  }
+}
+
+export async function providerFetch(
+  path: string,
+  init: RequestInit,
+  fallback: string
+): Promise<unknown> {
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, { ...init, credentials: 'include' });
@@ -26,8 +40,9 @@ async function providerFetch(path: string, init: RequestInit, fallback: string):
   const body: unknown = await res.json().catch(() => null);
   if (!res.ok) {
     const parsed = ProviderErrorSchema.safeParse(body);
-    throw new Error(
-      (parsed.success && (parsed.data.error_description ?? parsed.data.message)) || fallback
+    throw new OAuthProviderError(
+      (parsed.success && (parsed.data.error_description ?? parsed.data.message)) || fallback,
+      parsed.success ? parsed.data.error : undefined
     );
   }
   return body;

@@ -122,6 +122,12 @@ describe('human step routes', () => {
       },
     } as unknown as never);
 
+    app.addHook('preHandler', async (request) => {
+      if (request.headers['x-test-auth'] === 'service') {
+        request.authMethod = 'service';
+      }
+    });
+
     await app.register(humanStepRoutes, { prefix: '/api/v1/human-steps' });
     await app.ready();
   });
@@ -497,6 +503,17 @@ describe('human step routes', () => {
       });
     }
 
+    it('returns 403 for service principals before resolving a step', async () => {
+      const res = await app.inject({
+        headers: { ...AUTH, 'x-test-auth': 'service' },
+        method: 'POST',
+        payload: { action: 'approve' },
+        url: `/api/v1/human-steps/${STEP_ID}/respond`,
+      });
+      expect(res.statusCode).toBe(403);
+      expect(updateManyCalls).toHaveLength(0);
+    });
+
     it('stores an approver comment with the step but keeps it out of the signal', async () => {
       stepRow = pendingStep();
       const res = await respond({ action: 'reject', comment: '  Needs a test  ' });
@@ -603,7 +620,11 @@ describe('human step routes', () => {
       expect(updateManyCalls).toHaveLength(1);
       const resolveCall = updateManyCalls[0] as UpdateManyCall;
       expect(resolveCall.where).toEqual({ id: STEP_ID, status: 'PENDING' });
-      expect(resolveCall.data).toMatchObject({ resolvedBy: USER_ID, status: 'RESOLVED' });
+      expect(resolveCall.data).toMatchObject({
+        resolvedBy: USER_ID,
+        resolvedVia: 'web',
+        status: 'RESOLVED',
+      });
 
       expect(signalCalls).toEqual([
         {
@@ -709,6 +730,7 @@ describe('human step routes', () => {
         payload: DB_NULL,
         resolvedAt: null,
         resolvedBy: null,
+        resolvedVia: null,
         status: 'PENDING',
       });
       expect(signalCalls).toHaveLength(0);

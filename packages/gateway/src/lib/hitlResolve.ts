@@ -35,6 +35,30 @@ export interface HitlActor {
   /** Platform user id (JWT `sub` / `User.id`). */
   sub: string;
   role: string;
+  via: HitlResolvedVia | null;
+}
+
+export type HitlResolvedVia = 'web' | 'api_token' | 'mcp' | 'assistant' | 'slack';
+export type HitlAuthMethod = 'session' | 'jwt' | 'pat' | 'mcp' | 'assistant' | 'service';
+
+export function resolvedViaForAuthMethod(
+  method: HitlAuthMethod | undefined
+): HitlResolvedVia | null {
+  switch (method) {
+    case 'session':
+    case 'jwt':
+      return 'web';
+    case 'pat':
+      return 'api_token';
+    case 'mcp':
+      return 'mcp';
+    case 'assistant':
+      return 'assistant';
+    case 'service':
+      return null;
+    default:
+      return null;
+  }
 }
 
 export interface HitlResolveDeps {
@@ -384,6 +408,7 @@ export async function resolveHitlStep(
         payload: Prisma.DbNull,
         resolvedAt: null,
         resolvedBy: null,
+        resolvedVia: null,
         status: 'PENDING',
       },
       where: { id: resolvedStep.id, resolvedBy: user.sub, status: 'RESOLVED' },
@@ -423,6 +448,7 @@ export async function resolveHitlStep(
           data: {
             action,
             resolvedBy: user.sub,
+            resolvedVia: user.via,
             stepId,
             value:
               comment !== undefined
@@ -469,6 +495,7 @@ export async function resolveHitlStep(
           payload: storedPayload as Prisma.InputJsonValue,
           resolvedAt: new Date(),
           resolvedBy: user.sub,
+          resolvedVia: user.via,
           status: 'RESOLVED',
         },
         where: { id: stepId, status: 'PENDING' },
@@ -500,6 +527,7 @@ export async function resolveHitlStep(
           payload: storedPayload as Prisma.InputJsonValue,
           resolvedAt: new Date(),
           resolvedBy: user.sub,
+          resolvedVia: user.via,
           status: 'RESOLVED',
         },
         where: { id: resolvedStep.id, status: 'PENDING' },

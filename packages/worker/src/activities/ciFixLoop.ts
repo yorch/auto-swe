@@ -11,6 +11,7 @@ import { ciLogIsUsable, fenceCiLogs, redactCiLog } from '../lib/ciLogGuard.js';
 import { rejectionText } from '../lib/rejectionText.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runImplementerFixSession } from './implementerSession.js';
+import { testStatusWord } from './utils.js';
 
 /**
  * Fetches CI logs from the provided URL. Provider-specific URL/auth handling
@@ -79,7 +80,7 @@ export async function executeCIFixImplementation(
     lessonQuery: failureContext.slice(-2_000),
     mode: 'CI_FIX',
     notes: (testResult) =>
-      `CI fix iteration. Failure context analyzed: ${failureContext.length} chars. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      `CI fix iteration. Failure context analyzed: ${failureContext.length} chars. Tests ${testStatusWord(testResult)}.`,
     previousCodeResult,
     // Each failure the loop fixes, kept for a lesson about the run (`lib/attemptTrace.ts`).
     startEvent: {
@@ -126,7 +127,7 @@ export async function executeReviewFixImplementation(
     lessonQuery: rejectionSummary,
     mode: 'REVIEW_FIX',
     notes: (testResult) =>
-      `Review fix iteration. ${rejectionSummary.split('\n').length} findings addressed. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+      `Review fix iteration. ${rejectionSummary.split('\n').length} findings addressed. Tests ${testStatusWord(testResult)}.`,
     previousCodeResult,
     systemPromptOverride,
     usageEventName: 'llm.review_fix',

@@ -102,7 +102,10 @@ async function buildApp() {
     }),
   };
 
-  const mockTemporal = { probeExecutorImage: vi.fn() };
+  const mockTemporal = {
+    probeExecutorImage: vi.fn(),
+    startRepoDependencyScan: vi.fn().mockResolvedValue(undefined),
+  };
 
   app.decorate('prisma', mockPrisma as unknown as never);
   app.decorate('auth', mockAuth as unknown as never);
@@ -136,6 +139,7 @@ describe('repositoryRoutes', () => {
     ctx.authState.role = 'ADMIN';
     ctx.authState.sub = 'admin-1';
     ctx.mockPrisma.$transaction.mockClear();
+    ctx.mockTemporal.startRepoDependencyScan.mockReset().mockResolvedValue(undefined);
     ctx.mockPrisma.knowledgeItem.count.mockReset().mockResolvedValue(0);
     ctx.mockPrisma.connectionTeamShare.deleteMany.mockReset();
     ctx.mockPrisma.connection.count.mockReset();
@@ -437,6 +441,49 @@ describe('repositoryRoutes', () => {
           baseUrl: 'https://github.com',
         });
       }
+    });
+
+    it('starts a scan of the new repository, so its stack is detected before its first run', async () => {
+      ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({ id: TEAM_ID, isActive: true });
+      ctx.mockPrisma.connection.findFirst.mockResolvedValueOnce(null);
+      ctx.mockPrisma.connection.create.mockResolvedValueOnce({ id: REPO_ID, teamId: TEAM_ID });
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: validBody,
+        url: '/api/v1/repositories',
+      });
+      expect(res.statusCode).toBe(201);
+      expect(ctx.mockTemporal.startRepoDependencyScan).toHaveBeenCalledTimes(1);
+      expect(ctx.mockTemporal.startRepoDependencyScan).toHaveBeenCalledWith(REPO_ID);
+    });
+
+    it('still onboards when the scan cannot be started (the weekly sweep covers it)', async () => {
+      ctx.mockTemporal.startRepoDependencyScan.mockRejectedValueOnce(new Error('temporal down'));
+      ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({ id: TEAM_ID, isActive: true });
+      ctx.mockPrisma.connection.findFirst.mockResolvedValueOnce(null);
+      ctx.mockPrisma.connection.create.mockResolvedValueOnce({ id: REPO_ID, teamId: TEAM_ID });
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: validBody,
+        url: '/api/v1/repositories',
+      });
+      expect(res.statusCode).toBe(201);
+      expect(JSON.parse(res.payload).data.id).toBe(REPO_ID);
+    });
+
+    it('starts no scan for a repository that was refused', async () => {
+      ctx.mockPrisma.team.findUnique.mockResolvedValueOnce({ id: TEAM_ID, isActive: true });
+      ctx.mockPrisma.connection.findFirst.mockResolvedValueOnce({ id: 'existing' });
+      const res = await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: validBody,
+        url: '/api/v1/repositories',
+      });
+      expect(res.statusCode).toBe(409);
+      expect(ctx.mockTemporal.startRepoDependencyScan).not.toHaveBeenCalled();
     });
 
     it('onboards a repository and returns 201', async () => {

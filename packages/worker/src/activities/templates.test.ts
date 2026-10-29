@@ -45,6 +45,12 @@ vi.mock('../lib/activityLog.js', async (importOriginal) => ({
   logWarn: vi.fn(),
 }));
 
+// Covered by its own suite; here only that createWorkflowRun pins, and survives a failed pin.
+const { pinDetectionsOnRun } = vi.hoisted(() => ({
+  pinDetectionsOnRun: vi.fn(async (): Promise<void> => undefined),
+}));
+vi.mock('../lib/runDetection.js', () => ({ pinDetectionsOnRun }));
+
 vi.mock('../lib/slackNotify.js', () => ({
   notifySlackRunComplete: vi.fn(),
   notifySlackStepFailure: vi.fn(),
@@ -299,6 +305,28 @@ describe('createWorkflowRun', () => {
       workRequestId: 'wr-1',
     });
     expect(upsertRun.mock.calls.at(-1)?.[0].create).not.toHaveProperty('connectionId');
+  });
+
+  it('persists team attribution from the run connection on create', async () => {
+    findVersion.mockResolvedValue({
+      spec: validSpec,
+      template: { team: { id: 'template-team', orgId: 'template-org' } },
+    } as never);
+    vi.mocked(prisma.connection.findUnique).mockResolvedValue({
+      team: { id: 'run-team', orgId: 'run-org' },
+    } as never);
+
+    await createWorkflowRun({
+      runConnectionId: 'run-connection',
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'wf-attributed',
+    });
+
+    expect(upsertRun.mock.calls.at(-1)?.[0].create).toMatchObject({
+      attributedOrgId: 'run-org',
+      attributedTeamId: 'run-team',
+    });
   });
 
   describe('launch audit of a run started from workflow code', () => {
@@ -924,6 +952,94 @@ describe('createWorkflowRun', () => {
     const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
     expect(args.create.authorizedConnectionIds).toEqual(['conn-the-run']);
     expect(args.update).toEqual({ authorizedConnectionIds: ['conn-the-run'] });
+  });
+
+  describe('stack detection pin', () => {
+    const create = () =>
+      createWorkflowRun({
+        runConnectionId: 'conn-the-run',
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-1',
+      });
+
+    beforeEach(() => {
+      pinDetectionsOnRun.mockReset().mockResolvedValue(undefined);
+      findVersion.mockResolvedValue({ spec: validSpec } as never);
+    });
+
+    it('pins the detections of the connections the run may use, once', async () => {
+      await create();
+      expect(pinDetectionsOnRun).toHaveBeenCalledTimes(1);
+      expect(pinDetectionsOnRun).toHaveBeenCalledWith('run-1', ['conn-the-run']);
+    });
+
+    it('pins exactly the set the run was upserted with, not only the run’s own connection', async () => {
+      // A version that declares a `connection` input widens the set beyond `runConnectionId`; a
+      // pin built from `[input.runConnectionId]` alone would leave those connections reading live.
+      findVersion.mockResolvedValue({
+        inputSchema: {
+          properties: { docConnectionId: { type: 'connection' } },
+          type: 'object',
+        },
+        spec: validSpec,
+      } as never);
+      await createWorkflowRun({
+        payload: { docConnectionId: 'dddddddd-0000-4000-8000-000000000009' },
+        runConnectionId: 'conn-the-run',
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-1',
+      });
+      const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
+      const authorized = args.create.authorizedConnectionIds;
+      expect(authorized).toEqual(['dddddddd-0000-4000-8000-000000000009', 'conn-the-run']);
+      expect(pinDetectionsOnRun).toHaveBeenCalledTimes(1);
+      expect(pinDetectionsOnRun).toHaveBeenCalledWith('run-1', authorized);
+    });
+
+    it('pins after the run is upserted, and the activity does not return until the pin is written', async () => {
+      // The pin blocks on a promise the test controls, so an activity that stopped awaiting it
+      // (a fire-and-forget `void pinDetectionsOnRun(...)`) would still return while it is held.
+      let release: () => void = () => {};
+      pinDetectionsOnRun.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          })
+      );
+      let settled = false;
+      const result = create().then((r) => {
+        settled = true;
+        return r;
+      });
+      for (let i = 0; i < 200 && pinDetectionsOnRun.mock.calls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(pinDetectionsOnRun).toHaveBeenCalledTimes(1);
+      // Give every other await in the activity time to finish: it still must not have returned.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(settled).toBe(false);
+      release();
+      await expect(result).resolves.toMatchObject({ runId: 'run-1' });
+      const upsertOrder = upsertRun.mock.invocationCallOrder[0] as number;
+      const pinOrder = pinDetectionsOnRun.mock.invocationCallOrder[0] as number;
+      expect(upsertOrder).toBeLessThan(pinOrder);
+    });
+
+    it('does not fail run creation when the pin cannot be written', async () => {
+      pinDetectionsOnRun.mockRejectedValue(new Error('db down'));
+      await expect(create()).resolves.toMatchObject({ runId: 'run-1' });
+    });
+
+    it('asks again on a retry, leaving the first writer’s pin to the helper’s null-only write', async () => {
+      // The no-overwrite guarantee is `updateMany … WHERE pinned_detections IS NULL`, tested in
+      // runDetection.test.ts; here, that a retry simply asks again.
+      await create();
+      await create();
+      expect(pinDetectionsOnRun).toHaveBeenCalledTimes(2);
+      expect(pinDetectionsOnRun).toHaveBeenNthCalledWith(2, 'run-1', ['conn-the-run']);
+    });
   });
 
   it('pins the connections the version declares, not the template’s current schema', async () => {
