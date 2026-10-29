@@ -37,6 +37,12 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { sendError } from '../lib/httpErrors.js';
 import { IdempotencyHeaderSchema, workflowIdFromIdempotencyKey } from '../lib/idempotency.js';
+import {
+  assertMcpWriteAllowed,
+  mcpWriteAuditHook,
+  mcpWriteBegin,
+  sendRunCapRefusal,
+} from '../lib/mcpWriteGuard.js';
 import { isOrgMember } from '../lib/orgAccess.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import {
@@ -139,6 +145,24 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     reply: FastifyReply,
     input: LaunchInput
   ) {
+    const mcpWrite = await assertMcpWriteAllowed(request, reply, {
+      submit: { budgetTier: input.budgetTier, idempotencyKey: input.idempotencyKey },
+      tool: 'start_agent_run',
+    });
+    if (mcpWrite.refused) {
+      return mcpWrite.refused;
+    }
+    if (request.mcpBridge) {
+      const settings = await resolveSettings(['mcp.agentRunAllowedDeliverModes']);
+      if (!settings['mcp.agentRunAllowedDeliverModes'].includes(input.deliver)) {
+        return error(
+          reply,
+          403,
+          'MCP_DELIVER_MODE_NOT_ALLOWED',
+          'This delivery mode is not allowed through MCP'
+        );
+      }
+    }
     const { caller } = input;
     const user = caller.kind === 'user' ? caller.user : null;
     const service = caller.kind === 'service' ? caller.principal : undefined;
@@ -303,6 +327,29 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       );
     }
 
+    const repo8 = repo.id.replace(/-/g, '').slice(0, 8);
+    const caller8 = idempotencyCallerScope(caller);
+    const temporalWorkflowId = input.idempotencyKey
+      ? workflowIdFromIdempotencyKey('agent', `${repo8}-${caller8}`, input.idempotencyKey)
+      : `agent-${repo8}-${crypto.randomUUID().replace(/-/g, '')}`;
+    const replay = async () => {
+      if (!request.mcpBridge) {
+        return null;
+      }
+      const previous = await fastify.prisma.activeWorkflow.findUnique({
+        select: { workRequest: { select: { requestedById: true } }, workRequestId: true },
+        where: { temporalWorkflowId },
+      });
+      if (!previous || previous.workRequest?.requestedById !== user?.sub) {
+        return null;
+      }
+      return reply.send({ data: { deduplicated: true, workRequestId: previous.workRequestId } });
+    };
+    const previous = await replay();
+    if (previous) {
+      return previous;
+    }
+
     // Concurrency. Friendly early refusal; the worker admits by rank and is the authority.
     // A ledger row only holds a slot while its workflow is still running in
     // Temporal; one whose workflow is gone is closed here (bounded, and kept
@@ -352,13 +399,8 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     const attemptId = crypto.randomUUID();
     const workRequestId = input.workRequestId ?? attemptId;
     const externalTicketId = agentRunTicketId(attemptId);
-    const repo8 = repo.id.replace(/-/g, '').slice(0, 8);
     // The key is scoped to the caller as well as the repo: two callers who pick the
     // same key on one repo must not collide, and a 409 must not reveal the other's run.
-    const caller8 = idempotencyCallerScope(caller);
-    const temporalWorkflowId = input.idempotencyKey
-      ? workflowIdFromIdempotencyKey('agent', `${repo8}-${caller8}`, input.idempotencyKey)
-      : `agent-${repo8}-${crypto.randomUUID().replace(/-/g, '')}`;
     const { branchPrefix } = await resolveWorkflowDefaults();
     if (input.baseBranch && isPlatformWorkBranch(input.baseBranch, branchPrefix)) {
       return error(
@@ -456,14 +498,21 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
                 connectionId: repo.id,
               }),
             }
-          : {}),
+          : { guard: mcpWrite.launchGuard }),
         audit: { actor: user ?? null, source: service ? 'service-token' : 'agent-run' },
         log: fastify.log,
         sourceAuthorization: user ? { actor: user } : {},
       }
     );
     if (!result.ok) {
+      const raced = await replay();
+      if (raced) {
+        return raced;
+      }
       if (result.reason === 'GUARD_REFUSED') {
+        if (request.mcpBridge) {
+          return sendRunCapRefusal(reply);
+        }
         return sendServiceLaunchRefusal(reply, result.refusal);
       }
       return error(reply, 409, 'RUN_CONFLICT', 'A run with this idempotency key already exists');
@@ -529,6 +578,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/agents',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { querystring: RepoContextQuery },
     },
@@ -637,8 +687,10 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     {
       // Open to service principals: docs/service-principals.md.
       // `runs:agent`, not `runs:launch`: a free-form prompt to an agent of the caller's choosing.
-      config: { serviceScopes: ['runs:agent'] },
+      config: { mcpScope: 'write', serviceScopes: ['runs:agent'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onSend: mcpWriteAuditHook,
+      preValidation: mcpWriteBegin('start_agent_run'),
       schema: { body: CreateAgentRunBody, headers: IdempotencyHeaderSchema },
     },
     async (request, reply) => {

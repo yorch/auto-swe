@@ -37,10 +37,12 @@ const initializeLegacy = {
 };
 const READ_TOOLS = [
   'get_run',
+  'list_agents',
   'list_pending_human_steps',
   'list_repositories',
   'list_runs',
   'list_work_requests',
+  'wait_for_run',
 ];
 const toolNames = (result: { tools: Array<{ name: string }> }) =>
   result.tools.map((t) => t.name).sort();

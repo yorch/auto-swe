@@ -11,6 +11,10 @@ vi.mock('@auto-swe/shared/lib/billing', async (importOriginal) => ({
 const cfg = vi.hoisted(() => ({
   hostsOk: true,
   settings: {
+    'mcp.agentRunAllowedDeliverModes': ['none', 'draft_pr'],
+    'mcp.maxConcurrentRuns': 2,
+    'mcp.writeCallsPerMinute': 100,
+    'mcp.writeToolsEnabled': true,
     // The request's repo-access gate is resolved from the same registry.
     'repoAccess.mode': 'off',
     'repoAccess.staleAfterHours': 24,
@@ -18,7 +22,7 @@ const cfg = vi.hoisted(() => ({
     'workspace.agentRunMaxConcurrentPerTeam': 2,
     'workspace.agentRunMaxSteps': 50,
     'workspace.agentRunMaxWallClockSeconds': 1800,
-  } as Record<string, number | string>,
+  } as Record<string, number | string | boolean | string[]>,
 }));
 vi.mock('@auto-swe/shared/config', () => ({ resolveSettings: vi.fn(async () => cfg.settings) }));
 vi.mock('@auto-swe/shared/lib/connectionCredential', async (orig) => ({
@@ -33,6 +37,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 }));
 
 import { __resetReconcileCacheForTests } from '@auto-swe/shared/lib/agentRunAdmission';
+import { resetMcpWriteRateLimit } from '../lib/mcpWriteGuard.js';
 import { agentRunRoutes } from './agentRuns.js';
 
 const USER = 'user-1';
@@ -57,6 +62,8 @@ interface State {
   prevRun: unknown;
   prevTemplateOk: boolean;
   orgOverBudget: boolean;
+  mcpInFlight: number;
+  replayWorkRequestId: string | null;
 }
 
 describe('POST /api/v1/agent-runs', () => {
@@ -71,6 +78,7 @@ describe('POST /api/v1/agent-runs', () => {
   beforeEach(async () => {
     __resetReconcileCacheForTests();
     cfg.hostsOk = true;
+    resetMcpWriteRateLimit();
     cfg.settings['workspace.agentRunMaxConcurrentGlobal'] = 4;
     cfg.settings['workspace.agentRunMaxConcurrentPerTeam'] = 2;
     cfg.settings['workspace.agentRunMaxSteps'] = 50;
@@ -80,10 +88,12 @@ describe('POST /api/v1/agent-runs', () => {
       closed: [],
       inFlight: [],
       installationActive: true,
+      mcpInFlight: 0,
       orgOverBudget: false,
       ownerMembers: [USER],
       prevRun: null,
       prevTemplateOk: true,
+      replayWorkRequestId: null,
       role: 'ENGINEER',
       sharedMembers: [],
       startFails: false,
@@ -100,6 +110,11 @@ describe('POST /api/v1/agent-runs', () => {
     app = Fastify();
     app.setValidatorCompiler(validatorCompiler);
     app.setSerializerCompiler(serializerCompiler);
+    app.addHook('onRequest', async (request) => {
+      if (request.headers['x-test-mcp']) {
+        request.mcpBridge = { clientId: 'test', consentId: 'test', scopes: ['mcp:write'] };
+      }
+    });
     app.decorate('auth', {
       verifyAccessToken: () => ({ exp: 9999999999, iat: 0, role: s.role, sub: USER }),
     } as unknown as never);
@@ -110,6 +125,10 @@ describe('POST /api/v1/agent-runs', () => {
       $transaction: async (arg: unknown) =>
         typeof arg === 'function' ? arg(prisma) : Promise.all(arg as Promise<unknown>[]),
       activeWorkflow: {
+        count: async () => {
+          events.push('mcp-cap');
+          return s.mcpInFlight;
+        },
         create: async ({ data }: { data: Record<string, unknown> }) => {
           events.push('ledger');
           ledgers.push(data);
@@ -126,6 +145,10 @@ describe('POST /api/v1/agent-runs', () => {
             temporalWorkflowId: r.workflowId,
             workRequest: { createdAt: new Date(1) },
           })),
+        findUnique: async () =>
+          s.replayWorkRequestId
+            ? { workRequest: { requestedById: USER }, workRequestId: s.replayWorkRequestId }
+            : null,
         updateMany: async (args: { where: { temporalWorkflowId: { in: string[] } } }) => {
           s.closed.push(args.where.temporalWorkflowId.in);
           return { count: args.where.temporalWorkflowId.in.length };
@@ -137,6 +160,7 @@ describe('POST /api/v1/agent-runs', () => {
           return s.agents;
         },
       },
+      auditLog: { create: async () => ({}) },
       connection: {
         findUnique: async () => ({
           githubApiUrl: null,
@@ -160,6 +184,7 @@ describe('POST /api/v1/agent-runs', () => {
           type: s.type,
         }),
       },
+      oauthClient: { findUnique: async () => null },
       organizationMembership: { findUnique: async () => ({ role: 'ORG_MEMBER' }) },
       orgMonthlyUsage: {
         findUnique: async () => (s.orgOverBudget ? { costUsdAccrued: 100 } : null),
@@ -248,6 +273,35 @@ describe('POST /api/v1/agent-runs', () => {
       templateId: TEMPLATE,
       ticketIsSynthetic: true,
     });
+  });
+
+  it('applies the MCP cap inside the launch transaction before ledger writes', async () => {
+    s.mcpInFlight = 2;
+    const res = await post({}, { 'idempotency-key': 'agent-key-0001', 'x-test-mcp': '1' });
+    expect(res.statusCode).toBe(429);
+    expect(res.json().error.code).toBe('MCP_RUN_CAP_REACHED');
+    expect(events).toEqual(['mcp-cap']);
+    expect(started).toEqual([]);
+    expect(runInputs).toEqual([]);
+    expect(ledgers).toEqual([]);
+  });
+
+  it('launches bridged calls under the cap and replays before testing the cap', async () => {
+    const headers = { 'idempotency-key': 'agent-key-0001', 'x-test-mcp': '1' };
+    const first = await post({}, headers);
+    expect(first.statusCode).toBe(201);
+    expect(events).toEqual(['mcp-cap', 'runInput', 'ledger', 'start']);
+    s.mcpInFlight = 2;
+    s.replayWorkRequestId = first.json().data.workRequestId;
+    events.length = 0;
+    const replay = await post({}, headers);
+    expect(replay.statusCode).toBe(200);
+    expect(replay.json().data).toEqual({
+      deduplicated: true,
+      workRequestId: s.replayWorkRequestId,
+    });
+    expect(events).toEqual([]);
+    expect(started).toHaveLength(1);
   });
 
   it('assigns a branch only when the run delivers', async () => {

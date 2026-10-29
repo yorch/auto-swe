@@ -463,6 +463,18 @@ export const SETTING_DEFINITIONS = {
   }),
 
   // ── MCP server ─────────────────────────────────────────────────────────────
+  'mcp.agentRunAllowedDeliverModes': defineSetting({
+    defaultValue: ['none', 'draft_pr'],
+    description:
+      'Delivery modes allowed for agent runs launched through MCP. Other launch paths are unchanged.',
+    group: 'mcp',
+    label: 'MCP agent run delivery modes',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.array(z.enum(['none', 'draft_pr', 'branch'])),
+  }),
   'mcp.enabled': defineSetting({
     defaultValue: false,
     description:
