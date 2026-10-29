@@ -473,6 +473,21 @@ export default function RunDetailPage({ params }: PageProps) {
               <Alert title={`Re-run failed: ${retryRun.errorView.title}`}>
                 {retryRun.errorView.message}
                 {retryRun.errorView.hint ? ` ${retryRun.errorView.hint}` : ''}
+                {retryRun.errorView.runAnyway && !isAgentRun && (
+                  <div className="mt-3 flex flex-wrap items-center gap-4">
+                    <Button onClick={retryRun.runAnyway} variant="secondary">
+                      Run anyway
+                    </Button>
+                    {retryRun.errorView.previousRunId && (
+                      <Link
+                        className="underline"
+                        href={`/runs/${retryRun.errorView.previousRunId}`}
+                      >
+                        View the earlier run
+                      </Link>
+                    )}
+                  </div>
+                )}
               </Alert>
             )}
           </div>

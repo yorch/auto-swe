@@ -107,6 +107,7 @@ import {
 } from '../lib/templateWebhookSigning.js';
 import { memberOrgs } from '../lib/tenantScope.js';
 import { isValidTicketId } from '../lib/ticketId.js';
+import { refuseUnchangedRerun } from '../lib/unchangedRerun.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
 import { type JwtPayload, requireAuth, requireCaller, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
@@ -2033,6 +2034,8 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   // the template's declared inputSchema (if any). Non-SWE templates that don't
   // need a connectionId may omit it; externalTicketId is auto-generated.
   const RunTemplateBody = z.object({
+    /** Launch a request that is unchanged since a not-actionable stop (docs/agents.md §3.8). */
+    acknowledgeUnchanged: z.boolean().optional(),
     /** Where to report the run's outcome (docs/run-callbacks.md). */
     callback: CallbackRequestSchema.optional(),
     label: z.string().max(200).optional(),
@@ -2147,7 +2150,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             idempotencyKey
           )
         : `wf-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
-      const requestPayload = JSON.stringify(withoutCallback(request.body));
+      // The override is a launch-time choice, not part of the request: it is neither stored nor
+      // compared with a replayed request.
+      const { acknowledgeUnchanged, ...storable } = request.body;
+      const requestPayload = JSON.stringify(withoutCallback(storable));
       const replay = async () => {
         if (!request.mcpBridge) {
           return null;
@@ -2175,7 +2181,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           storedInput = null;
         }
         const prior = RunTemplateBody.omit({ callback: true }).safeParse(storedInput);
-        if (!prior.success || !isDeepStrictEqual(prior.data, withoutCallback(request.body))) {
+        if (!prior.success || !isDeepStrictEqual(prior.data, withoutCallback(storable))) {
           return {
             reply: sendError(
               reply,
@@ -2334,6 +2340,31 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       });
       if (!callback.ok) {
         return sendCallbackRefusal(reply, callback);
+      }
+      // An identical request that stopped as not actionable would stop again. After the
+      // key-derived id exists: a replayed key of such a run is the ordinary RUN_CONFLICT, not this.
+      const replayedKey =
+        user && idempotencyKey
+          ? await fastify.prisma.activeWorkflow.findUnique({
+              select: { id: true },
+              where: { temporalWorkflowId },
+            })
+          : null;
+      if (
+        !replayedKey &&
+        (await refuseUnchangedRerun(
+          { gate: request.repoAccessGate, log: request.log, prisma: fastify.prisma, user },
+          {
+            description,
+            payload,
+            templateId: tpl.id,
+            templateVersion: resolvedVersion,
+          },
+          reply,
+          acknowledgeUnchanged
+        ))
+      ) {
+        return;
       }
 
       const repoWorkRequest: RepoWorkRequest = {
