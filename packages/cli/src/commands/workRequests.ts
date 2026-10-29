@@ -1,13 +1,13 @@
 import type { RepositorySummary } from '@auto-swe/shared/types/api';
 import { BUDGET_TIERS } from '@auto-swe/shared/types/workflow';
-import { apiRequest, apiRequestFull, runWithExitCodes } from '../lib/api.js';
+import { apiRequest, apiRequestFull, runWithExitCodes, withAcknowledgeHint } from '../lib/api.js';
 import type { CliEnv } from '../lib/env.js';
 import { missingValue, parseFlags } from '../lib/flags.js';
 
 const SUB_HELP = `auto-swe run — submit a work request
 
   run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
-      [--idempotency-key=<key>]
+      [--idempotency-key=<key>] [--acknowledge-unchanged]
 
   FLAGS
     --ticket=<id>           External ticket ID (e.g. JIRA-123, GH-42)
@@ -20,6 +20,9 @@ const SUB_HELP = `auto-swe run — submit a work request
                             instead of a second one (same key, ticket, repo,
                             description and budget tier, else it is refused; a key
                             is scoped to you and never expires)
+    --acknowledge-unchanged Launch a request that is identical to one that stopped within
+                            the last 24 hours because it was not actionable. Without it
+                            that launch is refused (UNCHANGED_AFTER_NOT_ACTIONABLE)
 
   The run uses the repository's team default template (or the global default).
   To start a specific template with an arbitrary payload, use \`workflows run\`.
@@ -169,6 +172,7 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
   }
 
   const body: Record<string, unknown> = {
+    ...(flags['acknowledge-unchanged'] ? { acknowledgeUnchanged: true } : {}),
     budgetTier: budget,
     description: flags.description,
     externalTicketId: flags.ticket,
@@ -180,7 +184,9 @@ async function cmdRun(args: string[], env: CliEnv): Promise<number> {
     '/api/v1/work-requests',
     body,
     flags['idempotency-key'] ? { 'Idempotency-Key': flags['idempotency-key'] } : undefined
-  );
+  ).catch((err: unknown) => {
+    throw withAcknowledgeHint(err);
+  });
 
   process.stdout.write(
     result.deduplicated

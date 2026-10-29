@@ -1,18 +1,43 @@
 import type { CliEnv } from './env.js';
 
 interface GatewayErrorBody {
-  error?: { code?: string; message?: string };
+  error?: { code?: string; details?: unknown; message?: string };
 }
 
 export class GatewayError extends Error {
   readonly statusCode: number;
   readonly code: string;
+  /** The gateway's `error.details`, when it sends some. Untrusted. */
+  readonly details: unknown;
 
-  constructor(statusCode: number, code: string, message: string) {
+  constructor(statusCode: number, code: string, message: string, details?: unknown) {
     super(message);
     this.code = code;
+    this.details = details;
     this.statusCode = statusCode;
   }
+}
+
+/**
+ * Rewords the gateway's refusal of an unchanged request after a not-actionable stop for a
+ * terminal: it names the CLI's flag, not the API's field. Any other error passes through.
+ */
+export function withAcknowledgeHint(err: unknown): unknown {
+  if (!(err instanceof GatewayError) || err.code !== 'UNCHANGED_AFTER_NOT_ACTIONABLE') {
+    return err;
+  }
+  const previous =
+    typeof err.details === 'object' && err.details !== null && 'previousRunId' in err.details
+      ? ` ${String(err.details.previousRunId)}`
+      : '';
+  return new GatewayError(
+    err.statusCode,
+    err.code,
+    `This request stopped as not actionable (run${previous}) and has not changed. ` +
+      'If you have fixed what stopped it (for example tracker access), pass --acknowledge-unchanged to launch it again; ' +
+      'otherwise add the ticket text or acceptance criteria and run it again.',
+    err.details
+  );
 }
 
 type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -73,7 +98,8 @@ async function requestEnvelope(
     throw new GatewayError(
       res.status,
       json.error?.code ?? 'HTTP_ERROR',
-      json.error?.message ?? `HTTP ${res.status}`
+      json.error?.message ?? `HTTP ${res.status}`,
+      json.error?.details
     );
   }
   return json;

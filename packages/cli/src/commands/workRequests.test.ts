@@ -159,6 +159,66 @@ describe('runWorkRequestsCommand', () => {
     expect(stdoutWrites.join('')).toContain('wr-1');
   });
 
+  describe('after a not-actionable stop', () => {
+    const posts: Array<Record<string, unknown>> = [];
+    const stubGateway = (refuse: boolean) => {
+      posts.length = 0;
+      globalThis.fetch = vi.fn().mockImplementation((url: string, init?: { body?: string }) => {
+        if (!url.includes('/work-requests')) {
+          return Promise.resolve({
+            ok: true,
+            status: 200,
+            text: async () =>
+              JSON.stringify({
+                data: [{ id: 'repo-1', organizationName: 'org', repoName: 'repo' }],
+              }),
+          });
+        }
+        const body = JSON.parse(init?.body ?? '{}') as Record<string, unknown>;
+        posts.push(body);
+        return Promise.resolve(
+          refuse && !body.acknowledgeUnchanged
+            ? {
+                ok: false,
+                status: 409,
+                text: async () =>
+                  JSON.stringify({
+                    error: {
+                      code: 'UNCHANGED_AFTER_NOT_ACTIONABLE',
+                      details: { previousRunId: 'run-9' },
+                      message: 'unchanged',
+                    },
+                  }),
+              }
+            : {
+                ok: true,
+                status: 201,
+                text: async () =>
+                  JSON.stringify({ data: { workflowIds: ['wf-1'], workRequestId: 'wr-1' } }),
+              }
+        );
+      }) as unknown as typeof fetch;
+    };
+    const args = ['--ticket=T-1', '--description=foo', '--repo=org/repo'];
+
+    it('names the earlier run and the flag that overrides the refusal', async () => {
+      stubGateway(true);
+      const code = await runWorkRequestsCommand(args, ENV);
+      expect(code).toBe(2);
+      const err = stderrWrites.join('');
+      expect(err).toContain('UNCHANGED_AFTER_NOT_ACTIONABLE');
+      expect(err).toContain('run-9');
+      expect(err).toContain('has not changed');
+      expect(err).toContain('--acknowledge-unchanged');
+    });
+
+    it('sends acknowledgeUnchanged with --acknowledge-unchanged', async () => {
+      stubGateway(true);
+      expect(await runWorkRequestsCommand([...args, '--acknowledge-unchanged'], ENV)).toBe(0);
+      expect(posts[0]).toMatchObject({ acknowledgeUnchanged: true });
+    });
+  });
+
   it('pages through /repositories until it finds the repo', async () => {
     const filler = Array.from({ length: REPO_PAGE_SIZE }, (_, i) => ({
       id: `r-${i}`,

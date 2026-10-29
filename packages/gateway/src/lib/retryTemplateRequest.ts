@@ -19,6 +19,7 @@ import {
   launchableTemplateWhere,
   sendTemplateNotLaunchable,
 } from './templateLaunch.js';
+import { refuseUnchangedRerun } from './unchangedRerun.js';
 import { launchTrackedWorkflow } from './workflowLaunch.js';
 
 /** Re-run a connection-free or non-git workflow with its recorded input/version. */
@@ -27,7 +28,8 @@ export async function retryTemplateRequest(
   request: FastifyRequest,
   reply: FastifyReply,
   input: Prisma.RunInputGetPayload<object>,
-  instructions?: string
+  instructions?: string,
+  acknowledgeUnchanged?: boolean
 ) {
   const user = requireUser(request);
   const previous = await app.prisma.workflowRun.findFirst({
@@ -144,6 +146,22 @@ export async function retryTemplateRequest(
     ...(instructions && typeof stored.description === 'string' ? { description } : {}),
   };
   if (!inputsSatisfySchema(reply, versionSchema, payload)) {
+    return;
+  }
+  // Instructions change the request, so only a retry without them can be unchanged.
+  if (
+    await refuseUnchangedRerun(
+      { gate: request.repoAccessGate, log: request.log, prisma: app.prisma, user },
+      {
+        description: input.description,
+        payload: stored,
+        templateId: input.templateId,
+        templateVersion: input.templateVersion,
+      },
+      reply,
+      acknowledgeUnchanged || !!instructions
+    )
+  ) {
     return;
   }
   // The original's base, re-checked: the branch prefix may have changed since.

@@ -55,6 +55,48 @@ function agentRun(deliver: string | null, via: 'payload' | 'result' = 'payload')
   };
 }
 
+describe('useRunReRun after a not-actionable stop', () => {
+  it('offers Run anyway, which re-runs with acknowledgeUnchanged', async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        bodies.push(body);
+        return body.acknowledgeUnchanged
+          ? ok({ data: { temporalWorkflowId: 'w2', workRequestId: 'wr-2' } })
+          : new Response(
+              JSON.stringify({
+                error: {
+                  code: 'UNCHANGED_AFTER_NOT_ACTIONABLE',
+                  details: { previousRunId: 'run-1' },
+                  message: 'm',
+                },
+              }),
+              { headers: { 'content-type': 'application/json' }, status: 409 }
+            );
+      })
+    );
+    const { result } = renderHook(
+      () =>
+        useRunReRun({
+          contextSnapshot: null,
+          isAgentRun: false,
+          result: null,
+          workRequest: WORK_REQUEST,
+        }),
+      { wrapper: wrapper() }
+    );
+    act(() => result.current.request());
+    await waitFor(() => expect(result.current.errorView?.runAnyway).toBe(true));
+    expect(result.current.errorView?.previousRunId).toBe('run-1');
+    expect(result.current.locked).toBe(false);
+    act(() => result.current.runAnyway());
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(bodies).toEqual([{}, { acknowledgeUnchanged: true }]);
+  });
+});
+
 describe('useRunReRun', () => {
   it('re-runs an ordinary run through the generic retry, one click', async () => {
     const calls = stubFetch(() => ok({ temporalWorkflowId: 'w2', workRequestId: 'wr-2' }));

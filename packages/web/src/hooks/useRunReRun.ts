@@ -48,6 +48,14 @@ export function useRunReRun(
     }
   }, [workRequestId, locked, agent]);
 
+  // The gateway refused an unchanged request after a not-actionable stop: the person may
+  // launch it as it is.
+  const runAnyway = useCallback(() => {
+    if (workRequestId && !locked) {
+      generic.mutate({ acknowledgeUnchanged: true, workRequestId });
+    }
+  }, [workRequestId, locked, generic]);
+
   return {
     cancel: () => setConfirming(false),
     confirm,
@@ -62,5 +70,6 @@ export function useRunReRun(
     isSuccess: mutation.isSuccess,
     locked,
     request,
+    runAnyway,
   };
 }

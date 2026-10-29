@@ -97,6 +97,67 @@ describe('workflow launch', () => {
   });
 });
 
+describe('workflow launch after a not-actionable stop', () => {
+  it('explains the refusal and launches only after Run anyway, with the flag', async () => {
+    const bodies: unknown[] = [];
+    setupFetchMock({
+      'GET /api/v1/repositories': () => ({ data: [], meta: { total: 0 } }),
+      'GET /api/v1/workflow-templates/template-1': () => ({
+        data: { ...template, activeVersionSpec: { spec: null } },
+      }),
+    });
+    const inner = vi.mocked(globalThis.fetch);
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (
+        init?.method === 'POST' &&
+        String(input).endsWith('/workflow-templates/template-1/runs')
+      ) {
+        const body = JSON.parse(init.body as string);
+        bodies.push(body);
+        return body.acknowledgeUnchanged
+          ? new Response(
+              JSON.stringify({ data: { temporalWorkflowId: 'wf-1', workRequestId: 'request-2' } }),
+              { headers: { 'content-type': 'application/json' }, status: 201 }
+            )
+          : new Response(
+              JSON.stringify({
+                error: {
+                  code: 'UNCHANGED_AFTER_NOT_ACTIONABLE',
+                  details: { previousRunId: 'run-1', stoppedAt: '2026-10-27T10:00:00.000Z' },
+                  message: 'unchanged',
+                },
+              }),
+              { headers: { 'content-type': 'application/json' }, status: 409 }
+            );
+      }
+      return inner(input, init);
+    });
+    const launched = vi.fn();
+    render(withQuery(<WorkflowLaunchForm onLaunched={launched} template={template} />));
+    fireEvent.change(screen.getByLabelText(/Task name/), { target: { value: 'Ticket' } });
+    fireEvent.change(screen.getByLabelText(/Description/), {
+      target: { value: 'https://jira.example.com/browse/X-1' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Review workflow' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Launch workflow' }));
+    expect(await screen.findByText(/This request stopped before and has not changed/)).toBeTruthy();
+    expect(screen.getByText(/If you have fixed what stopped it/)).toBeTruthy();
+    expect(screen.getByText(/add the ticket text or acceptance criteria/)).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'View the earlier run' }).getAttribute('href')).toBe(
+      '/runs/run-1'
+    );
+    expect(launched).not.toHaveBeenCalled();
+    const runAnyway = screen.getByRole('button', { name: 'Run anyway' }) as HTMLButtonElement;
+    fireEvent.click(runAnyway);
+    fireEvent.click(runAnyway);
+    await waitFor(() => expect(launched).toHaveBeenCalledWith('request-2'));
+    expect(launched).toHaveBeenCalledTimes(1);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[0]).not.toHaveProperty('acknowledgeUnchanged');
+    expect(bodies[1]).toMatchObject({ acknowledgeUnchanged: true });
+  });
+});
+
 describe('workflow launch sample', () => {
   it('fills the task name and the free-text field without launching', async () => {
     const bodies = gateway();

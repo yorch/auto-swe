@@ -558,9 +558,15 @@ function writeFailure(response: BridgeResponse, notFound: string): ToolResult {
         ? failure('Write access is turned off on this platform.')
         : failureFor(403);
     case 409:
-      return code === 'IDEMPOTENCY_KEY_IN_PROGRESS' || code === 'IDEMPOTENCY_KEY_RETRY'
+      if (code === 'IDEMPOTENCY_KEY_IN_PROGRESS' || code === 'IDEMPOTENCY_KEY_RETRY') {
+        return failure(
+          'A request with this idempotency key is still starting. Retry shortly with the same key.'
+        );
+      }
+      // The override is deliberately not a tool input: a person decides to launch it as it is.
+      return code === 'UNCHANGED_AFTER_NOT_ACTIONABLE'
         ? failure(
-            'A request with this idempotency key is still starting. Retry shortly with the same key.'
+            'This same request stopped as not actionable before and nothing has changed. Change it (add the ticket text or acceptance criteria) and submit again, or have a person launch it as it is from the dashboard or the CLI. Nothing was launched.'
           )
         : failure('The run is not in a state where this can be done.');
     case 422:

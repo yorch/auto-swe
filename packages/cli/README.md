@@ -32,10 +32,12 @@ the dashboard at **Settings → API tokens**, or with
 
 ```
 run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
-    [--idempotency-key=<key>]
+    [--idempotency-key=<key>] [--acknowledge-unchanged]
                                      Submit a work request and start a run on the default template;
                                      with --idempotency-key a retried submission returns the run it
-                                     already started instead of a second one
+                                     already started instead of a second one; a request identical to
+                                     one that stopped as not actionable in the last 24 hours is
+                                     refused unless --acknowledge-unchanged is passed
 
 agent run <key[@version]> "<prompt>" --repo=<org/name> [--deliver=none|branch|draft_pr]
           [--base=<branch>] [--max-steps=N] [--timeout=SECONDS] [--wait]
@@ -49,7 +51,7 @@ workflows show <name> [--version=N]  Print one template's active (or given) spec
 workflows export <name> [-o <path>]  Write the active spec to a file (or stdout)
 workflows import <path> [--name=N] [--team=<slug>]
                                      Create a template (or a new version if --name matches)
-workflows run <name> --payload=<json> [--label=<text>]
+workflows run <name> --payload=<json> [--label=<text>] [--acknowledge-unchanged]
                                      Start a run with a generic JSON payload
 workflows generate "<description>" [--name=N] [--team=<slug>]
                                      Generate a DRAFT template from plain language (AI)

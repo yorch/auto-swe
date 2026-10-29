@@ -1096,6 +1096,44 @@ of letting `implement` spend its budget guessing. An unreachable ticket alone ne
 request with a real description yields real criteria and goes on, and so does a `validate` step that
 threw. A template opts in with `validatePhase({ stopIfNotActionable: true })`.
 
+**Re-launching an unchanged request.** A request that stopped as not actionable and is launched
+again unchanged usually stops the same way, so a launch is refused with
+`409 UNCHANGED_AFTER_NOT_ACTIONABLE` (`error.details` carries `previousRunId` and `stoppedAt`) when a
+run of the same template version, that the caller may see, ended in that stop within the last 24
+hours, its request is the same, and nothing has run it since. The stop is read from what the run
+recorded, never from its text: the run is `FAILED`, its spec snapshot holds the
+`terminateNotActionable` terminate node, and its context holds `validate`'s `actionable == false`
+verdict. The request is the same when the description and every input match exactly (the repository,
+budget tier and every other payload field), except that whitespace in the description and the case
+of the ticket id are ignored. A template run takes its description from `payload.description`, else
+from its label, so for a template with no `payload.description` the label is part of the request.
+Only the newest run of a request counts: a later run of the same request or of the same work
+request, whatever its outcome (even one cancelled at its first step), means the stop was overridden
+or fixed, and the guard steps aside. A
+request that differs in any way, an earlier stop older than the window, and an earlier run that
+failed for any other reason all launch as before.
+
+The refusal does not know why validation found nothing. A request can stop because of something
+outside it, such as a broken tracker token or an outage, and that clears once fixed. So the message
+says when it stopped and offers both ways on: add the ticket text or acceptance criteria and submit
+again, or have a person launch it as it is with `acknowledgeUnchanged: true` (the CLI's
+`--acknowledge-unchanged`, the web's "Run anyway"). The gateway's message does not name the field:
+the in-app assistant is shown that neutral text, and the override is documented only for the
+dashboard and the CLI. The flag is not stored with the request. The check covers
+`POST /work-requests`, `POST /workflow-templates/:id/runs` and `POST /work-requests/:id/retry`; a
+retry that adds instructions is a changed request. It runs after the checks that name a request
+already running or an idempotency-key replay, so those answers come first. The MCP
+`submit_work_request` tool gets a fixed message and has no override input: a person launches it as
+it is from the dashboard or the CLI.
+
+The lookup costs nothing for a template that cannot stop this way: it is skipped unless the template
+version's spec holds the `terminateNotActionable` terminate node (remembered per version in a small
+bounded in-process map, since a version's spec never changes). Otherwise the database narrows by
+relational columns first (template, version, status, window, repository, ticket id) before the
+JSON-path filters on the run's snapshots, and at most 25 stops and 25 later runs are read. Only runs
+the caller may see are compared (the run visibility filter, which includes shared-repository and
+template-team terms, so it is not limited to the caller's own team).
+
 Ticket text is written by people other than the operator, so everything that reaches a prompt is
 bounded (title 300 characters, description 6,000, comments 1,500 each within a 12,000-character
 budget that keeps the newest, parent description 2,000, and at most 12 items of 400 characters in
@@ -1727,6 +1765,16 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   the overshoot is spend on the ledger, not spend missed; the budget just was not enforced earlier.
   A turn whose steps report no usage is debited only when `generate` returns. Per-step debits are
   priced at the turn's bound model, so a loop that switches models mid-turn is not split by model.
+- **The unchanged-request refusal covers three launch paths, for people.** Slack's run modal,
+  automations, webhooks, schedules, agent and PRD runs, and service-principal launches (which have no
+  user to scope the lookup to) are not checked, and MCP clients cannot override it. It reads the
+  `validate` node and `terminateNotActionable` by id, so a template that stops through other node ids
+  is not covered. A request that changes only in a way the payload does not carry (the ticket's own
+  text, edited in the tracker) is treated as unchanged, and so is one whose earlier stop came from a
+  transient ticket-fetch failure: the guard does not look at why the earlier stop happened, so "Run
+  anyway" is the way past it. With `experimentSplit` above zero and no `payload.ticketId`, the version
+  is bucketed on a fresh work-request id, so an identical re-launch can land on the other version and
+  skip the guard.
 - **The gatherer is one `planner`-model call per run**, with no cache across runs.
 - **The unactionable-request stop reads a prompt convention, not a schema field.** It rests on the
   `validateContext` agent writing `AMBIGUOUS:` entries (or none, for input it cannot read). A model

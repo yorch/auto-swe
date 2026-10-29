@@ -492,6 +492,7 @@ describe('the write tools', () => {
       [404, 'REPO_NOT_FOUND', 'Repository not found'],
       [409, 'IDEMPOTENCY_KEY_IN_PROGRESS', 'still starting'],
       [409, 'IDEMPOTENCY_KEY_RETRY', 'still starting'],
+      [409, 'UNCHANGED_AFTER_NOT_ACTIONABLE', 'stopped as not actionable'],
       [422, 'IDEMPOTENCY_KEY_MISMATCH', 'different request'],
       [422, 'MCP_BUDGET_TIER_NOT_ALLOWED', 'refused the request'],
       [429, 'MCP_RUN_CAP_REACHED', 'maximum number of runs'],

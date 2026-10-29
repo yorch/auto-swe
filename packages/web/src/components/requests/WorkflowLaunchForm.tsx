@@ -6,6 +6,7 @@ import {
   isWorkspaceProviderType,
 } from '@auto-swe/shared/lib/workspaceProviders';
 import type { WorkflowTemplateSummary } from '@auto-swe/shared/types/api';
+import Link from 'next/link';
 import { useId, useRef, useState } from 'react';
 import { LaunchCardHeader, ReviewList } from '@/components/requests/LaunchSteps';
 import { SampleTaskButton } from '@/components/requests/SampleTaskButton';
@@ -23,6 +24,7 @@ import {
 } from '@/components/workflow/schemaForm';
 import { useRepositories } from '@/hooks/useRepositories';
 import { useRunTemplate } from '@/hooks/useTemplates';
+import { describeLaunchError } from '@/lib/agentRun';
 import { connectionLabel } from '@/lib/connectionDisplay';
 import { errMsg } from '@/lib/errors';
 import { pickSampleField, WORKFLOW_SAMPLE } from '@/lib/sampleTasks';
@@ -58,6 +60,8 @@ export function WorkflowLaunchForm({
   const lock = useRef(false);
   const launch = useRunTemplate(template.id);
   const { data: connections = [] } = useRepositories();
+  const failure = launch.isError ? describeLaunchError(launch.error) : null;
+  const unchanged = failure?.runAnyway ? failure : null;
   const sampleField = pickSampleField(schema);
   const errors = schema ? validatePayload(schema, payload) : {};
   const required = new Set(schema?.required ?? []);
@@ -86,13 +90,17 @@ export function WorkflowLaunchForm({
       setReview(true);
     }
   }
-  async function submit() {
+  async function submit(acknowledgeUnchanged?: true) {
     if (lock.current || launch.isSuccess) {
       return;
     }
     lock.current = true;
     try {
-      const result = await launch.mutateAsync({ label: label.trim(), payload });
+      const result = await launch.mutateAsync({
+        label: label.trim(),
+        payload,
+        ...(acknowledgeUnchanged ? { acknowledgeUnchanged } : {}),
+      });
       onLaunched(result.workRequestId);
     } catch {
       lock.current = false;
@@ -109,7 +117,24 @@ export function WorkflowLaunchForm({
         stage={review ? 'review' : 'details'}
         title={review ? 'Review and launch' : 'Task details'}
       />
-      {launch.isError && <Alert>{errMsg(launch.error, 'Could not start the workflow')}</Alert>}
+      {launch.isError &&
+        (unchanged ? (
+          <Alert title={unchanged.title}>
+            {unchanged.message} {unchanged.hint}
+            <div className="mt-3 flex flex-wrap items-center gap-4">
+              <Button disabled={launch.isPending} onClick={() => submit(true)} variant="secondary">
+                Run anyway
+              </Button>
+              {unchanged.previousRunId && (
+                <Link className="underline" href={`/runs/${unchanged.previousRunId}`}>
+                  View the earlier run
+                </Link>
+              )}
+            </div>
+          </Alert>
+        ) : (
+          <Alert>{errMsg(launch.error, 'Could not start the workflow')}</Alert>
+        ))}
       {review ? (
         <>
           <ReviewList
@@ -150,7 +175,7 @@ export function WorkflowLaunchForm({
             </Button>
             <Button
               disabled={launch.isPending || launch.isSuccess}
-              onClick={submit}
+              onClick={() => submit()}
               variant="primary"
             >
               {launch.isPending ? 'Starting…' : 'Launch workflow'}
