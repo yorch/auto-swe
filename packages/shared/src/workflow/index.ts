@@ -225,6 +225,7 @@ export {
   durationBucketForMs,
   durationPercentileFromBuckets,
   WORKFLOW_RUN_DAY_MS,
+  WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
   WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS,
   workflowRunRollupInputFromRun,
 } from './workflowRunRollup.js';

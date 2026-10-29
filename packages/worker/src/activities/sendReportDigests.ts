@@ -3,7 +3,11 @@ import { orgMonthSpend } from '@auto-swe/shared/lib/billing';
 import { forecastMonthlyBudget } from '@auto-swe/shared/lib/budgetForecast';
 import { resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import { buildReportDigest, QUALITY_GATE_STEPS } from '@auto-swe/shared/workflow';
+import {
+  buildReportDigest,
+  QUALITY_GATE_STEPS,
+  WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
+} from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { logWarn } from '../lib/activityLog.js';
 import { sendReportDigestEmail } from '../lib/reportDigestEmail.js';
@@ -76,7 +80,10 @@ export async function sendReportDigests(
         () =>
           prisma.workflowRunDailyRollup.groupBy({
             by: ['day'],
-            where: { day: { gte: previousStart, lt: currentEnd } },
+            where: {
+              bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
+              day: { gte: previousStart, lt: currentEnd },
+            },
           })
       );
       const covered = new Set(coveredDays.map(({ day }) => day.getTime()));
@@ -120,7 +127,11 @@ export async function sendReportDigests(
           () =>
             prisma.workflowRunDailyRollup.findMany({
               orderBy: [{ day: 'asc' }, { id: 'asc' }],
-              where: { ...scopeFilter, day: { gte: previousStart, lt: currentEnd } },
+              where: {
+                ...scopeFilter,
+                bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
+                day: { gte: previousStart, lt: currentEnd },
+              },
             })
         );
         const currentRows = rows.filter((row) => row.day >= currentStart);

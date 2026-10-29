@@ -126,19 +126,22 @@ transport.
 - Template names hidden by the workflow-template visibility rule, channel names hidden by channel
   access, and repository names blocked by the repository-access gate are masked as `Private
   template`, `Private channel`, and `Inaccessible repository`; the corresponding counts remain.
-- Run and merge duration percentiles are approximate: values fall into logarithmically spaced
-  buckets and the reader returns the bucket's geometric midpoint. CI-fix p95 and average use an
-  exact attempt-count histogram for 0–19; its 20+ overflow bucket is represented as 20.
-- Rollups are rebuilt daily and recomputed over the configured
-  `WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS` horizon to include late outcomes. Once a day is older than
-  that horizon it is frozen; later merges and run finalizations are not reflected in that day.
-  `rollupDays` and `liveDays` show which dates came from each source; truncation flags apply only
-  to live reads. Global analytics daily series and duration percentiles, template per-version
-  duration/PR statistics, and delivery metrics use this hybrid reader. Duration and merge
-  percentiles use logarithmically spaced buckets and return a bucket midpoint; the CI-fix histogram
-  is exact for 0–19 attempts and represents 20 or more as 20. Freshness is bounded by the daily
-  schedule and the recompute window. Set `WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` to populate older
-  history; the default of zero leaves history outside the recompute horizon on the live path.
+- Run and merge duration percentiles are approximate. Duration buckets use sub-second bounds,
+  then grow logarithmically; percentile ranks are interpolated inside each bucket (linearly from
+  zero in the first bucket, logarithmically thereafter). When the entire requested window is live,
+  duration percentiles use the exact run durations already read for the response. CI-fix p95 and
+  average use an exact attempt-count histogram for 0–19; its 20+ overflow bucket is represented as
+  20.
+- Rollups are rebuilt daily and recomputed over the shared
+  `WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS` horizon to include recent outcomes. Older days are rebuilt
+  when a run ends, a linked pull request merges or closes, or a human step resolves after the
+  previous successful sweep. At most 60 dirty days are rebuilt per sweep, oldest first; remaining
+  days wait for a later successful sweep. `rollupDays` and `liveDays` show which dates came from each
+  source; rows with an obsolete duration-bucket version count as uncovered, and truncation flags
+  apply only to live reads. Global analytics daily series and duration percentiles, template
+  per-version duration/PR statistics, and delivery metrics use this hybrid reader. Set
+  `WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` to populate older history; the default of zero leaves older
+  history on the live path.
 - Approval source counts use `resolvedVia`; historical rows with no source are reported as
   `unknown`.
 - User records do not expose a service-principal or API-token approver flag, so approval counts

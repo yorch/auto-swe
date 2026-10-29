@@ -321,6 +321,8 @@ model PullRequest {
   // The pull-request list filters by state and pages newest-first.
   @@index([status, openedAt])
   @@index([openedAt])
+  @@index([mergedAt, runId])
+  @@index([closedAt, runId])
   @@map("pull_requests")
 }
 
@@ -2099,6 +2101,7 @@ model WorkflowRun {
   // The run list (`GET /workflow-runs`) pages newest first, optionally by status.
   @@index([startedAt])
   @@index([status, startedAt])
+  @@index([endedAt, startedAt])
   @@map("workflow_runs")
 }
 
@@ -2107,6 +2110,7 @@ model WorkflowRun {
 model WorkflowRunDailyRollup {
   id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   day                      DateTime @db.Date
+  bucketVersion            Int      @default(1) @map("bucket_version")
   dimensionKey             String   @map("dimension_key")
   orgId                    String?  @map("org_id") @db.Uuid
   teamId                   String?  @map("team_id") @db.Uuid
@@ -2146,6 +2150,15 @@ model WorkflowRunDailyRollup {
   @@index([teamId, day])
   @@index([templateId, day])
   @@map("workflow_run_daily_rollups")
+}
+
+/// Watermark for a scheduled derived-data sweep. A capped rollup sweep keeps the
+/// previous start time until every dirty day from that interval has been rebuilt.
+model RollupSweepState {
+  name                  String    @id
+  lastSuccessfulStartAt DateTime? @map("last_successful_start_at") @db.Timestamptz
+
+  @@map("rollup_sweep_states")
 }
 
 model ReportDigestSubscription {
@@ -2732,6 +2745,7 @@ model WorkflowHumanStep {
   @@index([status])
   @@index([resolvedBy])
   @@index([requestedAt])
+  @@index([resolvedAt, runId])
   @@map("workflow_human_steps")
 }
 

@@ -5,14 +5,17 @@ import {
   buildWorkflowRunDailyRollups,
   ciFixRoundsFromBuckets,
   combineWorkflowRunRollupRows,
+  DURATION_BUCKET_BOUNDS_MS,
   durationBucketForMs,
   durationPercentileFromBuckets,
+  WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
   workflowRunRollupInputFromRun,
 } from './workflowRunRollup.js';
 import {
   dailyRunSeriesFromRollups,
   deliveryReportFromRollups,
   workflowRunDurationStatsFromRollups,
+  workflowTemplatePerVersionFromRollups,
 } from './workflowRunRollupReports.js';
 
 describe('WorkflowRun daily rollups', () => {
@@ -119,14 +122,137 @@ describe('WorkflowRun daily rollups', () => {
     expect(summary.p95FixRounds).toBe(2);
   });
 
-  it('buckets durations geometrically and caps CI rounds at the overflow bucket', () => {
-    const durations = Array.from({ length: 31 }, () => 0);
-    durations[durationBucketForMs(1000)] = 2;
-    expect(durationPercentileFromBuckets(durations, 0.5)).toBe(500);
+  it('uses versioned sub-second and logarithmic duration buckets', () => {
+    expect(WORKFLOW_RUN_ROLLUP_BUCKET_VERSION).toBe(2);
+    expect(DURATION_BUCKET_BOUNDS_MS.slice(0, 7)).toEqual([10, 25, 50, 100, 250, 500, 1000]);
+    expect(durationBucketForMs(10)).toBe(0);
+    expect(durationBucketForMs(11)).toBe(1);
+    expect(durationBucketForMs(250)).toBe(4);
+
+    const firstBucket = Array.from({ length: DURATION_BUCKET_BOUNDS_MS.length + 1 }, () => 0);
+    firstBucket[0] = 3;
+    expect(durationPercentileFromBuckets(firstBucket, 0.5)).toBe(5);
+
+    const logBucket = Array.from({ length: DURATION_BUCKET_BOUNDS_MS.length + 1 }, () => 0);
+    logBucket[7] = 3;
+    expect(durationPercentileFromBuckets(logBucket, 0.5)).toBeCloseTo(
+      Math.sqrt((DURATION_BUCKET_BOUNDS_MS[6] ?? 1000) * (DURATION_BUCKET_BOUNDS_MS[7] ?? 1100))
+    );
+
+    const cap = 30 * 24 * 60 * 60 * 1000;
+    const overflow = Array.from({ length: DURATION_BUCKET_BOUNDS_MS.length + 1 }, () => 0);
+    overflow[overflow.length - 1] = 1;
+    expect(durationBucketForMs(cap + 1)).toBe(DURATION_BUCKET_BOUNDS_MS.length);
+    expect(durationPercentileFromBuckets(overflow, 0.95)).toBe(cap);
+
+    const start = new Date('2026-10-01T10:00:00Z');
+    const row = buildWorkflowRunDailyRollups({
+      now: start,
+      pullRequests: [],
+      runs: [
+        {
+          attributedOrgId: null,
+          attributedTeamId: null,
+          costUsdAccrued: 0,
+          endedAt: new Date(start.getTime() + 250),
+          estimatedHumanTimeSaved: null,
+          hadHumanStep: null,
+          id: 'sub-second-run',
+          outcomeDomain: null,
+          outcomeType: null,
+          repoId: null,
+          startedAt: start,
+          status: 'SUCCESS',
+          templateId: 'template',
+          templateVersion: 1,
+          wasAutonomous: null,
+        },
+      ],
+      steps: [],
+      traces: [],
+    })[0];
+    expect(row?.bucketVersion).toBe(2);
+    expect(row?.durationBuckets[durationBucketForMs(250)]).toBe(1);
 
     const rounds = Array.from({ length: 21 }, () => 0);
     rounds[20] = 2;
     expect(ciFixRoundsFromBuckets(rounds)).toEqual({ avgPerRun: 20, p95PerRun: 20 });
+  });
+
+  it('estimates lognormal p50 and p95 from buckets within five percent of exact ranks', () => {
+    let state = 17;
+    const random = () => {
+      state = (state * 16807) % 2_147_483_647;
+      return state / 2_147_483_647;
+    };
+    const durations: number[] = [];
+    for (let index = 0; index < 20_000; index++) {
+      const u1 = Math.max(Number.MIN_VALUE, random());
+      const u2 = random();
+      const normal = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+      durations.push(Math.exp(8 + 0.8 * normal));
+    }
+    const buckets = Array.from({ length: DURATION_BUCKET_BOUNDS_MS.length + 1 }, () => 0);
+    for (const duration of durations) {
+      buckets[durationBucketForMs(duration)] = (buckets[durationBucketForMs(duration)] ?? 0) + 1;
+    }
+    const sorted = [...durations].sort((a, b) => a - b);
+    for (const q of [0.5, 0.95]) {
+      const exact = sorted[Math.ceil(sorted.length * q) - 1] ?? 0;
+      const estimate = durationPercentileFromBuckets(buckets, q) ?? 0;
+      expect(Math.abs(estimate - exact) / exact).toBeLessThan(0.05);
+    }
+  });
+
+  it('uses exact ranks for live-only duration windows and template versions', () => {
+    const start = new Date('2026-10-01T10:00:00Z');
+    const liveRows = [100, 200, 300, 400, 500].map((duration, index) => ({
+      endedAt: new Date(start.getTime() + duration),
+      startedAt: start,
+      templateVersion: 1,
+      ...{
+        attributedOrgId: null,
+        attributedTeamId: null,
+        costUsdAccrued: 0,
+        estimatedHumanTimeSaved: null,
+        hadHumanStep: null,
+        id: `live-${index}`,
+        outcomeDomain: null,
+        outcomeType: null,
+        repoId: null,
+        status: 'SUCCESS',
+        templateId: 'template',
+        wasAutonomous: null,
+        workflowId: `workflow-${index}`,
+      },
+    }));
+    expect(workflowRunDurationStatsFromRollups([], liveRows)).toMatchObject({
+      p50DurationMs: 300,
+      p95DurationMs: 500,
+    });
+    const liveRollups = buildWorkflowRunDailyRollups({
+      now: start,
+      pullRequests: [],
+      runs: liveRows.map(workflowRunRollupInputFromRun),
+      steps: [],
+      traces: [],
+    });
+    const exactMerges = [100, 200, 300].map((durationMs) => ({
+      durationMs,
+      repoId: null,
+      teamId: null,
+      templateId: 'template',
+    }));
+    expect(deliveryReportFromRollups(liveRollups, {}, exactMerges)).toMatchObject({
+      byTeam: [{ medianTimeToMergeMs: 200 }],
+      medianTimeToMergeMs: 200,
+    });
+    expect(
+      workflowTemplatePerVersionFromRollups(
+        liveRollups,
+        new Map([[1, [100, 200, 300, 400, 500]]])
+      )[0]?.p50DurationMs
+    ).toBe(300);
   });
 
   it('ignores PR attribution outside the run cohort', () => {
@@ -164,7 +290,7 @@ describe('WorkflowRun daily rollups', () => {
     });
   });
 
-  it('matches live delivery metrics and daily series, with merge percentiles in the same bucket', () => {
+  it('matches live delivery metrics and daily series, with duration percentiles', () => {
     const start = new Date('2026-10-01T10:00:00Z');
     const liveRuns = [
       {
@@ -264,12 +390,8 @@ describe('WorkflowRun daily rollups', () => {
       durationBucketForMs(liveDelivery.medianTimeToMergeMs ?? 0)
     );
     const rollupDuration = workflowRunDurationStatsFromRollups(rollups);
-    expect(durationBucketForMs(rollupDuration.p50DurationMs ?? 0)).toBe(
-      durationBucketForMs(60_000)
-    );
-    expect(durationBucketForMs(rollupDuration.p95DurationMs ?? 0)).toBe(
-      durationBucketForMs(60_000)
-    );
+    expect(rollupDuration.p50DurationMs).not.toBeNull();
+    expect(rollupDuration.p95DurationMs).not.toBeNull();
 
     const windowEnd = new Date('2026-10-02T00:00:00Z');
     const liveDaily = computeDailyRunSeries(liveRuns, start, new Date(windowEnd.getTime() - 1));

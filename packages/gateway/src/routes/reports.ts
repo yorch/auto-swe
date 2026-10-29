@@ -8,6 +8,7 @@ import {
   computeQualityReport,
   deliveryReportFromRollups,
   qualityMetricsFromRollups,
+  WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
   workflowRunRollupInputFromRun,
 } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
@@ -103,7 +104,13 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             () =>
               fastify.prisma.workflowRunDailyRollup.findMany({
                 where: {
-                  AND: [{ day: { in: plan.rollupDays } }, workflowRunRollupAttributionWhere(scope)],
+                  AND: [
+                    {
+                      bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
+                      day: { in: plan.rollupDays },
+                    },
+                    workflowRunRollupAttributionWhere(scope),
+                  ],
                 },
               })
           )
@@ -204,6 +211,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       for (const step of fixSteps.slice(0, REPORT_ROW_CAP)) {
         ciRoundsByRun.set(step.runId, (ciRoundsByRun.get(step.runId) ?? 0) + 1);
       }
+      const liveRunInputs = liveRuns.map(workflowRunRollupInputFromRun);
       const liveRollups = buildWorkflowRunDailyRollups({
         now: new Date(),
         pullRequests: liveRuns.flatMap((run) =>
@@ -214,7 +222,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             status: pr.status,
           }))
         ),
-        runs: liveRuns.map(workflowRunRollupInputFromRun),
+        runs: liveRunInputs,
         steps: fixSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
           runId: step.runId,
           status: step.status,
@@ -223,6 +231,23 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
         traces: [],
       });
       const allRows = [...rollupRows, ...liveRollups];
+      const exactLiveMergeDurations =
+        rollupRows.length === 0
+          ? liveRunInputs.flatMap((run) =>
+              (prsByRun.get(run.id) ?? []).flatMap((pr) =>
+                pr.status === 'MERGED' && pr.mergedAt
+                  ? [
+                      {
+                        durationMs: Math.max(0, pr.mergedAt.getTime() - run.startedAt.getTime()),
+                        repoId: run.repoId,
+                        teamId: run.attributedTeamId,
+                        templateId: run.templateId,
+                      },
+                    ]
+                  : []
+              )
+            )
+          : undefined;
       const [repos, teams, templates] = await Promise.all([
         runUnscoped(
           'delivery labels are resolved only for IDs present in caller-scoped rollups',
@@ -292,11 +317,15 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       for (const template of templates) {
         templateNames.set(template.id, template.name);
       }
-      const report = deliveryReportFromRollups(allRows, {
-        repos: repoNames,
-        teams: new Map(teams.map((team) => [team.id, team.name])),
-        templates: templateNames,
-      });
+      const report = deliveryReportFromRollups(
+        allRows,
+        {
+          repos: repoNames,
+          teams: new Map(teams.map((team) => [team.id, team.name])),
+          templates: templateNames,
+        },
+        exactLiveMergeDurations
+      );
       return {
         data: {
           ...report,
@@ -443,7 +472,10 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                 fastify.prisma.workflowRunDailyRollup.findMany({
                   where: {
                     AND: [
-                      { day: { in: plan.rollupDays } },
+                      {
+                        bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
+                        day: { in: plan.rollupDays },
+                      },
                       workflowRunRollupAttributionWhere(scope),
                     ],
                   },

@@ -2,13 +2,14 @@ import { parseReviewVerdict } from './reports.js';
 
 export const WORKFLOW_RUN_DAY_MS = 24 * 60 * 60 * 1000;
 export const WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS = 30;
+export const WORKFLOW_RUN_ROLLUP_BUCKET_VERSION = 2;
 export const CI_FIX_ROUND_BUCKETS = 21;
 export const CI_FIX_ROUND_OVERFLOW = 20;
 
 export const DURATION_BUCKET_BOUNDS_MS: readonly number[] = (() => {
-  const bounds = [1000];
+  const bounds = [10, 25, 50, 100, 250, 500, 1000];
   while ((bounds.at(-1) ?? 1000) < 30 * WORKFLOW_RUN_DAY_MS) {
-    bounds.push(Math.min(30 * WORKFLOW_RUN_DAY_MS, Math.round((bounds.at(-1) ?? 1000) * 1.25)));
+    bounds.push(Math.min(30 * WORKFLOW_RUN_DAY_MS, Math.round((bounds.at(-1) ?? 1000) * 1.1)));
   }
   return bounds;
 })();
@@ -103,6 +104,7 @@ export interface WorkflowRunRollupTraceInput {
 
 export interface WorkflowRunRollupRow {
   builtAt: Date;
+  bucketVersion: number;
   ciFixAttempts: number;
   ciFixRoundsBuckets: number[];
   costUsd: number;
@@ -169,17 +171,20 @@ export function durationPercentileFromBuckets(
   const rank = Math.max(0, Math.min(total - 1, Math.ceil(total * q) - 1));
   let cumulative = 0;
   for (let i = 0; i < buckets.length; i++) {
-    cumulative += buckets[i] ?? 0;
-    if (cumulative > rank) {
-      if (i === 0) {
-        return (DURATION_BUCKET_BOUNDS_MS[0] ?? 1000) / 2;
+    const count = buckets[i] ?? 0;
+    if (rank < cumulative + count) {
+      if (i >= DURATION_BUCKET_BOUNDS_MS.length) {
+        return DURATION_BUCKET_BOUNDS_MS.at(-1) ?? 30 * WORKFLOW_RUN_DAY_MS;
       }
-      const lower = DURATION_BUCKET_BOUNDS_MS[i - 1] ?? 0;
-      const upper =
-        DURATION_BUCKET_BOUNDS_MS[i] ??
-        (DURATION_BUCKET_BOUNDS_MS.at(-1) ?? 30 * WORKFLOW_RUN_DAY_MS) * 1.25;
-      return Math.sqrt(lower * upper);
+      const lower = i === 0 ? 0 : (DURATION_BUCKET_BOUNDS_MS[i - 1] ?? 0);
+      const upper = DURATION_BUCKET_BOUNDS_MS[i] ?? 0;
+      const position = count === 1 ? 0.5 : (rank - cumulative) / (count - 1);
+      if (lower === 0) {
+        return upper * position;
+      }
+      return Math.exp(Math.log(lower) + (Math.log(upper) - Math.log(lower)) * position);
     }
+    cumulative += count;
   }
   return null;
 }
@@ -268,6 +273,7 @@ export function buildWorkflowRunDailyRollups(
     ]);
     const key = `${dayMs}:${dimensionKey}`;
     const row = rows.get(key) ?? {
+      bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
       builtAt: now,
       ciFixAttempts: 0,
       ciFixRoundsBuckets: Array.from({ length: CI_FIX_ROUND_BUCKETS }, () => 0),

@@ -18,6 +18,15 @@ export interface WorkflowRunDurationStats {
   p95DurationMs: number | null;
 }
 
+function exactDurationPercentile(values: readonly number[], q: number): number | null {
+  if (values.length === 0) {
+    return null;
+  }
+  const sorted = [...values].sort((a, b) => a - b);
+  const rank = Math.max(0, Math.min(sorted.length - 1, Math.ceil(sorted.length * q) - 1));
+  return sorted[rank] ?? null;
+}
+
 export interface WorkflowRunTemplateVersionMetrics {
   avgCostPerRun: number | null;
   mergeRate: number | null;
@@ -31,6 +40,13 @@ export interface WorkflowRunTemplateVersionMetrics {
   successRate: number | null;
   successRateCi95: [number, number] | null;
   version: number;
+}
+
+export interface ExactLiveMergeDuration {
+  durationMs: number;
+  repoId: string | null;
+  teamId: string | null;
+  templateId: string | null;
 }
 
 export function qualityMetricsFromRollups(rows: readonly WorkflowRunRollupRow[]) {
@@ -100,6 +116,19 @@ export function workflowRunDurationStatsFromRollups(
   >[],
   liveRows: readonly { endedAt: Date | null; startedAt: Date }[] = []
 ): WorkflowRunDurationStats {
+  if (rows.length === 0) {
+    const durations = liveRows.flatMap((row) =>
+      row.endedAt ? [Math.max(0, row.endedAt.getTime() - row.startedAt.getTime())] : []
+    );
+    if (durations.length === 0) {
+      return { averageDurationMs: null, p50DurationMs: null, p95DurationMs: null };
+    }
+    return {
+      averageDurationMs: durations.reduce((sum, duration) => sum + duration, 0) / durations.length,
+      p50DurationMs: exactDurationPercentile(durations, 0.5),
+      p95DurationMs: exactDurationPercentile(durations, 0.95),
+    };
+  }
   const buckets = Array.from({ length: rows[0]?.durationBuckets.length ?? 1 }, () => 0);
   let count = 0;
   let sum = 0;
@@ -131,7 +160,8 @@ export function workflowRunDurationStatsFromRollups(
 }
 
 export function workflowTemplatePerVersionFromRollups(
-  rows: readonly WorkflowRunRollupRow[]
+  rows: readonly WorkflowRunRollupRow[],
+  exactLiveDurationsByVersion: ReadonlyMap<number, readonly number[]> = new Map()
 ): WorkflowRunTemplateVersionMetrics[] {
   const byVersion = new Map<number, WorkflowRunRollupRow[]>();
   for (const row of rows) {
@@ -161,7 +191,9 @@ export function workflowTemplatePerVersionFromRollups(
         avgCostPerRun: totals.runs > 0 ? totals.costUsd / totals.runs : null,
         mergeRate: mergeDecided > 0 ? totals.prsMerged / mergeDecided : null,
         mergeRateCi95: wilsonInterval(totals.prsMerged, mergeDecided),
-        p50DurationMs: totals.p50DurationMs,
+        p50DurationMs: exactLiveDurationsByVersion.has(version)
+          ? exactDurationPercentile(exactLiveDurationsByVersion.get(version) ?? [], 0.5)
+          : totals.p50DurationMs,
         prMerged: totals.prsMerged,
         prOpen,
         prOpened: totals.prsOpened,
@@ -181,9 +213,13 @@ export function deliveryReportFromRollups(
     repos?: ReadonlyMap<string, string>;
     teams?: ReadonlyMap<string, string>;
     templates?: ReadonlyMap<string, string>;
-  } = {}
+  } = {},
+  exactLiveMergeDurations?: readonly ExactLiveMergeDuration[]
 ): DeliveryReport {
-  const metrics = (slice: readonly WorkflowRunRollupRow[]): DeliveryMetrics => {
+  const metrics = (
+    slice: readonly WorkflowRunRollupRow[],
+    exactMerges?: readonly ExactLiveMergeDuration[]
+  ): DeliveryMetrics => {
     const totals = combineWorkflowRunRollupRows(slice);
     const runsSucceeded = slice
       .filter((row) => row.status === 'SUCCESS')
@@ -192,7 +228,12 @@ export function deliveryReportFromRollups(
     return {
       ciFixRounds: fixRounds,
       costPerMergedPr: totals.prsMerged > 0 ? totals.costUsd / totals.prsMerged : null,
-      medianTimeToMergeMs: durationPercentileFromBuckets(totals.mergeMsBuckets, 0.5),
+      medianTimeToMergeMs: exactMerges
+        ? exactDurationPercentile(
+            exactMerges.map((merge) => merge.durationMs),
+            0.5
+          )
+        : durationPercentileFromBuckets(totals.mergeMsBuckets, 0.5),
       prsCiPassed: totals.prsCiPassed,
       prsMerged: totals.prsMerged,
       runsStarted: totals.runs,
@@ -220,7 +261,10 @@ export function deliveryReportFromRollups(
   };
   const byRepo = [...group((row) => row.repoId, false).entries()]
     .map(([repoId, grouped]) => ({
-      ...metrics(grouped),
+      ...metrics(
+        grouped,
+        exactLiveMergeDurations?.filter((merge) => merge.repoId === repoId)
+      ),
       repoId: repoId as string,
       repositoryName: labels.repos?.get(repoId as string) ?? (repoId as string),
     }))
@@ -229,19 +273,25 @@ export function deliveryReportFromRollups(
     );
   const byTemplate = [...group((row) => row.templateId, true).entries()]
     .map(([templateId, grouped]) => ({
-      ...metrics(grouped),
+      ...metrics(
+        grouped,
+        exactLiveMergeDurations?.filter((merge) => merge.templateId === templateId)
+      ),
       templateId: templateId ?? 'unattributed',
       templateName: templateId ? (labels.templates?.get(templateId) ?? templateId) : 'Unattributed',
     }))
     .sort((a, b) => b.runsStarted - a.runsStarted || a.templateName.localeCompare(b.templateName));
   const byTeam = [...group((row) => row.teamId, true).entries()]
     .map(([teamId, grouped]) => ({
-      ...metrics(grouped),
+      ...metrics(
+        grouped,
+        exactLiveMergeDurations?.filter((merge) => merge.teamId === teamId)
+      ),
       teamId,
       teamName: teamId ? (labels.teams?.get(teamId) ?? teamId) : 'Unattributed',
     }))
     .sort((a, b) => b.runsStarted - a.runsStarted || a.teamName.localeCompare(b.teamName));
-  return { ...metrics(rows), byRepo, byTeam, byTemplate };
+  return { ...metrics(rows, exactLiveMergeDurations), byRepo, byTeam, byTemplate };
 }
 
 export function emptyCiFixRoundsBuckets(): number[] {

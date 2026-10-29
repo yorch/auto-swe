@@ -2,6 +2,7 @@ import type { PrismaClient } from '@auto-swe/shared';
 import { DAY_MS } from '@auto-swe/shared/lib/agentTraceRollup';
 import { resolveScheduledSweeps } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { WORKFLOW_RUN_ROLLUP_BUCKET_VERSION } from '@auto-swe/shared/workflow';
 import type { Range } from './usageWindows.js';
 
 export function workflowRunRollupHorizonMs(nowMs: number): number {
@@ -26,6 +27,7 @@ export async function coveredWorkflowRunRollupDays(
       prisma.workflowRunDailyRollup.groupBy({
         by: ['day'],
         where: {
+          bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
           day: { gte: new Date(startMs), lt: new Date(Math.min(endMs, horizon)) },
         },
       })

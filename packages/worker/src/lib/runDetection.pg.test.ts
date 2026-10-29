@@ -3,6 +3,7 @@ import type { prisma as PrismaClient } from '@auto-swe/shared/db';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RunDetection from './runDetection.js';
+import '../activities/rollupWorkflowRuns.pg.js';
 
 /**
  * The run's stack-detection pin against real Postgres: which rows `pinDetectionsOnRun` writes is a

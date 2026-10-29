@@ -532,6 +532,17 @@ null.
 
 ---
 
+### Workflow-run rollup history
+
+**Affected.** Deployments applying the workflow-run rollup bucket-version migration.
+
+The migration removes existing rollup rows because their duration buckets use the previous
+format. The recompute horizon is rebuilt automatically. To rebuild older history, set
+`WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` to the desired number of days; until those days are rebuilt,
+older report windows use live reads and remain subject to the live-row cap.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,
