@@ -484,6 +484,23 @@ against an older schema. The normal deployment migration step applies this migra
 
 ---
 
+### Reporting attribution backfill (`20261029130735_reporting_attribution`)
+
+**Affected.** Deployments that apply the reporting-attribution migration. It adds nullable
+WorkflowRun team/organization attribution, PullRequest template/run attribution, and the HITL
+resolution-source columns, then backfills existing workflow runs and repository-matched pull
+requests.
+
+**Expected cost.** The backfill scans existing workflow runs and pull requests and looks up the
+latest run for each repository-matched active workflow. On large tables, expect a migration whose
+runtime grows with the number of stored runs and pull requests.
+
+**Actions.** Nothing manual is required beyond the normal `migrate deploy`; the migration performs
+both backfills. No historical HITL source is inferred, so existing resolution-source values remain
+null.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

@@ -657,6 +657,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         estimatedHumanTimeSaved: true,
         hadHumanStep: true,
         hasError: true,
+        id: true,
         outcomeDomain: true,
         outcomeType: true,
         startedAt: true,
@@ -2876,6 +2877,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             estimatedHumanTimeSaved: true,
             hadHumanStep: true,
             hasError: true,
+            id: true,
             outcomeType: true,
             startedAt: true,
             status: true,
@@ -2939,20 +2941,23 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         }
       }
       const selectedRuns = runs.slice(0, ANALYTICS_ROW_CAP);
-      const workflowIds = selectedRuns.flatMap((run) => (run.workflowId ? [run.workflowId] : []));
-      const pullRequests = workflowIds.length
+      const runIds = selectedRuns.map((run) => run.id);
+      const pullRequests = runIds.length
         ? await fastify.prisma.pullRequest.findMany({
             select: {
-              repoId: true,
+              runId: true,
               status: true,
-              workflow: { select: { repoId: true, temporalWorkflowId: true } },
+              templateVersion: true,
             },
-            where: { workflow: { temporalWorkflowId: { in: workflowIds } } },
+            where: {
+              runId: { in: runIds },
+              templateVersion: { not: null },
+            },
           })
         : [];
       const runPullRequests = pullRequests.flatMap((pr) =>
-        pr.workflow && pr.workflow.repoId === pr.repoId
-          ? [{ status: pr.status, workflowId: pr.workflow.temporalWorkflowId }]
+        pr.runId && pr.templateVersion !== null
+          ? [{ runId: pr.runId, status: pr.status, templateVersion: pr.templateVersion }]
           : []
       );
       return {

@@ -124,9 +124,8 @@ The response `data` holds `window` (`start`, `end`, `days`), `current` for the w
 `previous` for the same number of days directly before it (null when `previousComplete` is false),
 `previousComplete`, `isTruncated`, and
 `byRepository`: the ten repositories with the most PRs opened, each with its own summary, plus
-`byTemplate`: PR outcomes attributed through `PullRequest.workflow` → `ActiveWorkflow.temporalWorkflowId`
-→ `WorkflowRun.workflowId`. PRs without a matching visible run appear in the null-id
-“Unattributed” bucket. A summary
+`byTemplate`: PR outcomes grouped by the persisted `PullRequest.templateId` and template name.
+Rows without a template id appear in the null-id “Unattributed” bucket. A summary
 carries `opened`, `merged`, `closedUnmerged`, `open`, `mergeRate` (merged over merged plus closed
 unmerged; null while none has resolved), `timeToMergeMs` (`p50`, `p95` and `count` of merged PRs
 with a valid open-to-merge time), `ciStatusCounts` and `draftCount`. The summaries are computed by
@@ -297,8 +296,10 @@ http(s) address.
 
 ## Limitations
 
-- Template attribution for outcomes is limited to visible workflow runs started within 30 days
-  before the selected outcomes window.
+- Pull-request attribution is stored when a worker creates or updates a PR and is backfilled from
+  repository-matched active workflows and their latest run. Rows with no matching run keep null
+  attribution and appear as “Unattributed”; reporting reads the stored attribution rather than
+  searching recent runs.
 
 - With the GitHub tracker, comments, pull-request links, issue closes and PRD issue creation go
   only to a repository the run targets, on the tracker's host, or one listed in

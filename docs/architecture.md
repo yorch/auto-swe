@@ -1145,6 +1145,18 @@ NDJSON from `/api/v1/workflow-templates/analytics/export`; platform usage export
 and node breakdowns from `/api/v1/platform/usage/export` with the same scope and role checks as
 the usage report.
 
+Workflow runs store nullable reporting-only team and organization attribution. The selected team is
+the run connection's team, then the work-request connection's team, channel team, requesting
+service's team, or template team, in that order. The selected team's organization is used; when no
+team is available, the work request's billing organization is used. These fields do not affect run
+visibility.
+
+Pull requests store their template id, template version, and associated run id. A worker links a PR
+only through an active workflow in the same repository and selects that workflow's latest run;
+historical rows use the same repository guard and selection. Outcomes and template analytics read
+these persisted fields. Human-step resolutions store `resolvedVia` as `web`, `slack`, `api_token`,
+`mcp`, or `assistant`; older rows remain null.
+
 The global analytics response also carries `approvalLatency`: how long people took to answer the
 human steps (`WorkflowHumanStep`) requested in the window, for the runs the caller may see, overall
 and per template (`computeApprovalLatency()` in `shared/src/workflow/analytics.ts`). The wait is
@@ -1284,6 +1296,8 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
+- **Historical PRs without a repository-matched active workflow and run remain unattributed.**
+  Historical human-step and approval rows do not have a resolution source and remain null.
 - **The input cap bounds dollar-equivalent input tokens, not dollars.** Output tokens have their own
   cap, and a run's cost is the sum of both. A cache-heavy run counts well under its raw total, so
   the effective headroom of such a run is larger than a raw count gave it. Cache writes count above

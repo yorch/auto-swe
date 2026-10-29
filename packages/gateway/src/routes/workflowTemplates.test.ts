@@ -63,10 +63,18 @@ function buildApp(state: {
     status: string;
     startedAt: Date;
     endedAt: Date | null;
+    workflowId?: string;
+    templateVersion?: number;
     workRequestId?: string | null;
     /** Non-admin viewers who pass run visibility; unset = everyone. */
     visibleTo?: string[];
   }>;
+  pullRequests?: Array<{
+    runId: string | null;
+    status: string;
+    templateVersion: number | null;
+  }>;
+  pullRequestArgs?: Mutable[];
   userRole?: string;
   /** Every run-visibility predicate the last-run lookup passed, for assertions. */
   runVisibilityTerms?: Mutable[];
@@ -157,6 +165,15 @@ function buildApp(state: {
               }>;
             }
           ).humanErrorBaselines ?? [],
+      },
+      pullRequest: {
+        findMany: async (args: Mutable) => {
+          state.pullRequestArgs?.push(args);
+          const runIds = (args.where as { runId?: { in?: string[] } }).runId?.in;
+          return (state.pullRequests ?? []).filter(
+            (row) => !runIds || (row.runId !== null && runIds.includes(row.runId))
+          );
+        },
       },
       team: {
         findUnique: async ({ where }: { where: Mutable }) => {
@@ -3155,14 +3172,20 @@ describe('GET /workflow-templates/:id/analytics', () => {
     // rate once per branch. The route supplies the ids the version declares so
     // the text cannot be misread.
     const state = {
+      pullRequestArgs: [],
+      pullRequests: [
+        { runId: 'run-1', status: 'MERGED', templateVersion: 1 },
+        { runId: 'other-run', status: 'MERGED', templateVersion: 1 },
+      ],
       runs: [
         {
-          endedAt: new Date('2026-01-01T00:10:00Z'),
+          endedAt: new Date(),
           id: 'run-1',
-          startedAt: new Date('2026-01-01T00:00:00Z'),
+          startedAt: new Date(Date.now() - 60 * 60 * 1000),
           status: 'SUCCESS',
           templateId: TPL_ID,
           templateVersion: 1,
+          workflowId: 'wf-1',
         },
       ],
       steps: [
@@ -3227,6 +3250,18 @@ describe('GET /workflow-templates/:id/analytics', () => {
         { failed: 1, failureRate: 0.5, nodeId: 'impl', total: 2 },
         { failed: 0, failureRate: 0, nodeId: 'openPR', total: 1 },
       ]);
+      expect(res.json().data.perVersion[0]).toMatchObject({
+        mergeRate: 1,
+        prMerged: 1,
+        prOpened: 1,
+      });
+      expect(state.pullRequestArgs).toContainEqual({
+        select: { runId: true, status: true, templateVersion: true },
+        where: {
+          runId: { in: ['run-1'] },
+          templateVersion: { not: null },
+        },
+      });
     } finally {
       await app.close();
     }

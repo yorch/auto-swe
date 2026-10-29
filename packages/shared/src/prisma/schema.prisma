@@ -290,6 +290,11 @@ model PullRequest {
   id         String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   workflowId String?         @map("workflow_id") @db.Uuid
   workflow   ActiveWorkflow? @relation(fields: [workflowId], references: [id])
+  templateId String?         @map("template_id") @db.Uuid
+  template   WorkflowTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  templateVersion Int?       @map("template_version")
+  runId      String?         @map("run_id") @db.Uuid
+  run        WorkflowRun?    @relation("PullRequestAttributionRun", fields: [runId], references: [id], onDelete: SetNull)
   repoId     String?         @map("repo_id") @db.Uuid
   repository Connection?     @relation(fields: [repoId], references: [id])
   prNumber   Int?            @map("pr_number")
@@ -307,6 +312,7 @@ model PullRequest {
 
   @@index([workflowId])
   @@index([repoId])
+  @@index([templateId, openedAt])
   // The pull-request list filters by state and pages newest-first.
   @@index([status, openedAt])
   @@index([openedAt])
@@ -884,6 +890,7 @@ model Organization {
   agentTranscripts    AgentTranscript[]        @relation("OrgAgentTranscripts")
   knowledgeItems      KnowledgeItem[]
   humanErrorBaselines HumanErrorBaseline[]
+  attributedWorkflowRuns WorkflowRun[] @relation("WorkflowRunAttributedOrganization")
 
   configSettings    ConfigSetting[]
   configPermissions ConfigPermission[]
@@ -936,6 +943,7 @@ model Team {
   /// URLs other services post signed events to (`EventEndpoint`).
   eventEndpoints        EventEndpoint[]
   workflowTemplates     WorkflowTemplate[]
+  attributedWorkflowRuns WorkflowRun[]          @relation("WorkflowRunAttributedTeam")
   shellAudits           WorkflowShellAudit[]
   providerCredentials   ProviderCredential[]
   agents                Agent[]
@@ -1945,6 +1953,11 @@ model WorkflowRun {
   /// entry (added to an agent after the run began) resolves its current
   /// revision. Null for runs created before this column existed.
   skillRevisions    Json?             @map("skill_revisions")
+  /// Reporting-only attribution; these fields do not affect run visibility.
+  attributedTeamId  String?           @map("attributed_team_id") @db.Uuid
+  attributedTeam    Team?             @relation("WorkflowRunAttributedTeam", fields: [attributedTeamId], references: [id], onDelete: SetNull)
+  attributedOrgId   String?           @map("attributed_org_id") @db.Uuid
+  attributedOrganization Organization? @relation("WorkflowRunAttributedOrganization", fields: [attributedOrgId], references: [id], onDelete: SetNull)
   /// True when this run was routed to the canary arm (evals P2 canary).
   /// Used to split EvalResult rows for canary vs control comparison.
   isCanary          Boolean           @default(false) @map("is_canary")
@@ -2014,9 +2027,12 @@ model WorkflowRun {
   autonomyDecisions AutonomyDecision[]
   outboundDeliveries OutboundDelivery[]
   transcripts       AgentTranscript[]
+  attributedPullRequests PullRequest[] @relation("PullRequestAttributionRun")
 
   @@index([templateId])
   @@index([workRequestId])
+  @@index([attributedTeamId, startedAt])
+  @@index([attributedOrgId, startedAt])
   @@index([launchedById])
   @@index([channelId])
   @@index([connectionId])
@@ -2564,6 +2580,8 @@ model WorkflowHumanStep {
   resolvedAt        DateTime?       @map("resolved_at") @db.Timestamptz
   resolvedBy        String?         @map("resolved_by") @db.Uuid
   resolvedByUser    User?           @relation(fields: [resolvedBy], references: [id], onDelete: SetNull)
+  /// web, slack, api_token, mcp, or assistant; null for historical resolutions.
+  resolvedVia       String?         @map("resolved_via")
   /// The signal payload submitted by the human (action + optional value).
   payload           Json?
   requestedAt       DateTime        @default(now()) @map("requested_at") @db.Timestamptz
@@ -2596,6 +2614,8 @@ model HumanApproval {
   step           WorkflowHumanStep @relation(fields: [stepId], references: [id], onDelete: Cascade)
   resolvedBy     String?           @map("resolved_by") @db.Uuid
   resolvedByUser User?             @relation(fields: [resolvedBy], references: [id], onDelete: SetNull)
+  /// web, slack, api_token, mcp, or assistant; null for historical resolutions.
+  resolvedVia    String?           @map("resolved_via")
   action         String
   value          Json?
   resolvedAt     DateTime          @default(now()) @map("resolved_at") @db.Timestamptz
@@ -2664,6 +2684,7 @@ model WorkflowTemplate {
 
   versions              WorkflowTemplateVersion[]
   workflowRuns          WorkflowRun[]
+  attributedPullRequests PullRequest[]
   agents                Agent[]
   scheduledWorkRequests ScheduledWorkRequest[]
   configSettings        ConfigSetting[]

@@ -301,6 +301,28 @@ describe('createWorkflowRun', () => {
     expect(upsertRun.mock.calls.at(-1)?.[0].create).not.toHaveProperty('connectionId');
   });
 
+  it('persists team attribution from the run connection on create', async () => {
+    findVersion.mockResolvedValue({
+      spec: validSpec,
+      template: { team: { id: 'template-team', orgId: 'template-org' } },
+    } as never);
+    vi.mocked(prisma.connection.findUnique).mockResolvedValue({
+      team: { id: 'run-team', orgId: 'run-org' },
+    } as never);
+
+    await createWorkflowRun({
+      runConnectionId: 'run-connection',
+      templateId: 'tpl-1',
+      templateVersion: 1,
+      workflowId: 'wf-attributed',
+    });
+
+    expect(upsertRun.mock.calls.at(-1)?.[0].create).toMatchObject({
+      attributedOrgId: 'run-org',
+      attributedTeamId: 'run-team',
+    });
+  });
+
   describe('launch audit of a run started from workflow code', () => {
     const auditCreate = vi.mocked(prisma.configAuditLog.create);
     const auditFind = vi.mocked(prisma.configAuditLog.findFirst);

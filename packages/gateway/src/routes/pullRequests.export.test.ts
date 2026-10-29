@@ -32,6 +32,8 @@ function row(n: number, over: Record<string, unknown> = {}) {
     prNumber: n,
     repository: { organizationName: 'acme', repoName: 'api' },
     status: 'OPEN',
+    template: null,
+    templateId: null,
     ...over,
   };
 }
@@ -99,21 +101,14 @@ describe('GET /api/v1/pull-requests/outcomes/export', () => {
     expect(lines).toHaveLength(3);
   });
 
-  it('filters by repository and template and exports attribution', async () => {
+  it('filters by repository and persisted template attribution', async () => {
     const b = await buildApp();
     b.prisma.pullRequest.findMany.mockResolvedValue([
       row(1, {
         repoId: TEAM,
-        workflow: { repoId: TEAM, temporalWorkflowId: 'workflow-1' },
+        template: { name: 'Build' },
+        templateId: TEAM,
       }),
-    ]);
-    b.prisma.workflowRun.findMany
-      .mockResolvedValueOnce([{ workflowId: 'workflow-1' }])
-      .mockResolvedValueOnce([
-        { template: { name: 'Build' }, templateId: TEAM, workflowId: 'workflow-1' },
-      ]);
-    b.prisma.activeWorkflow.findMany.mockResolvedValue([
-      { repoId: TEAM, temporalWorkflowId: 'workflow-1' },
     ]);
     const response = await get(b, `?templateId=${TEAM}&repoId=${TEAM}`);
     expect(response.statusCode).toBe(200);
@@ -121,44 +116,15 @@ describe('GET /api/v1/pull-requests/outcomes/export', () => {
       repoId: TEAM,
     });
     expect(b.prisma.pullRequest.findMany.mock.calls[0]?.[0].where.AND).toContainEqual({
-      OR: [
-        {
-          repoId: TEAM,
-          workflow: { temporalWorkflowId: { in: ['workflow-1'] } },
-        },
-      ],
+      templateId: TEAM,
     });
     expect(response.body.trimEnd().split('\n')[1]).toMatch(new RegExp(`,${TEAM},Build$`));
   });
 
-  it('excludes repository-mismatched links from a template-filtered export', async () => {
-    const otherRepo = '00000000-0000-4000-8000-00000000000c';
+  it('uses persisted template attribution in a template-filtered export', async () => {
     const b = await buildApp();
     b.prisma.pullRequest.findMany.mockResolvedValue([
-      row(1, {
-        repoId: otherRepo,
-        workflow: { repoId: TEAM, temporalWorkflowId: 'workflow-1' },
-      }),
-      row(2, {
-        repoId: TEAM,
-        workflow: { repoId: TEAM, temporalWorkflowId: 'workflow-1' },
-      }),
-    ]);
-    b.prisma.workflowRun.findMany
-      .mockResolvedValueOnce([
-        { workflowId: 'workflow-1' },
-        { workflowId: 'workflow-2' },
-        { workflowId: 'workflow-3' },
-      ])
-      .mockResolvedValueOnce([
-        { template: { name: 'Build' }, templateId: TEAM, workflowId: 'workflow-1' },
-        { template: { name: 'Build' }, templateId: TEAM, workflowId: 'workflow-2' },
-        { template: { name: 'Build' }, templateId: TEAM, workflowId: 'workflow-3' },
-      ]);
-    b.prisma.activeWorkflow.findMany.mockResolvedValue([
-      { repoId: TEAM, temporalWorkflowId: 'workflow-1' },
-      { repoId: TEAM, temporalWorkflowId: 'workflow-2' },
-      { repoId: otherRepo, temporalWorkflowId: 'workflow-3' },
+      row(2, { repoId: TEAM, template: { name: 'Build' }, templateId: TEAM }),
     ]);
 
     const response = await get(b, `?templateId=${TEAM}`);
@@ -166,25 +132,8 @@ describe('GET /api/v1/pull-requests/outcomes/export', () => {
     const lines = response.body.trimEnd().split('\n');
     expect(lines).toHaveLength(2);
     expect(lines[1]).toContain(`,${TEAM},Build`);
-    expect(lines[1]).not.toContain('pr-000001');
     expect(b.prisma.pullRequest.findMany.mock.calls[0]?.[0].where.AND).toContainEqual({
-      OR: [
-        {
-          repoId: TEAM,
-          workflow: { temporalWorkflowId: { in: ['workflow-1', 'workflow-2'] } },
-        },
-        {
-          repoId: otherRepo,
-          workflow: { temporalWorkflowId: { in: ['workflow-3'] } },
-        },
-      ],
-    });
-    expect(b.prisma.workflowRun.findMany.mock.calls[0]?.[0].take).toBe(50_001);
-    expect(b.prisma.workflowRun.findMany.mock.calls[0]?.[0].where.AND).toContainEqual({
-      startedAt: {
-        gte: new Date(WINDOW_START.getTime() - 30 * 24 * 60 * 60 * 1000),
-        lt: WINDOW_END,
-      },
+      templateId: TEAM,
     });
   });
 

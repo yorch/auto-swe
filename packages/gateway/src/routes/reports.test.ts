@@ -179,13 +179,13 @@ describe('report routes', () => {
         ciStatus: 'PASSED',
         mergedAt: new Date('2026-01-02T00:00:00.000Z'),
         repoId: otherRepoId,
-        workflow: { repoId, temporalWorkflowId: 'workflow-1' },
+        runId: null,
       },
       {
         ciStatus: 'PASSED',
         mergedAt: new Date('2026-01-03T00:00:00.000Z'),
         repoId,
-        workflow: { repoId, temporalWorkflowId: 'workflow-1' },
+        runId: 'run-1',
       },
     ]);
     const response = await app.inject({
@@ -204,7 +204,7 @@ describe('report routes', () => {
       spendUsd: 5,
     });
     expect(prisma.pullRequest.findMany.mock.calls[0]?.[0].where).toEqual({
-      workflow: { temporalWorkflowId: { in: ['workflow-1'] } },
+      runId: { in: ['run-1'] },
     });
   });
 

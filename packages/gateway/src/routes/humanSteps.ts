@@ -3,7 +3,11 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
-import { type HitlResolveErrorCode, resolveHitlStep } from '../lib/hitlResolve.js';
+import {
+  type HitlResolveErrorCode,
+  resolvedViaForAuthMethod,
+  resolveHitlStep,
+} from '../lib/hitlResolve.js';
 import { syncSlackHumanStepOutcome } from '../lib/hitlSlackSync.js';
 import { sendError } from '../lib/httpErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
@@ -602,7 +606,7 @@ export const humanStepRoutes: FastifyPluginAsync = async (fastify) => {
         request.params.id,
         action,
         value,
-        user,
+        { ...user, via: resolvedViaForAuthMethod(request.authMethod) },
         comment
       );
 

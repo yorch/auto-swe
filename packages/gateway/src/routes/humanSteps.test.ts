@@ -603,7 +603,11 @@ describe('human step routes', () => {
       expect(updateManyCalls).toHaveLength(1);
       const resolveCall = updateManyCalls[0] as UpdateManyCall;
       expect(resolveCall.where).toEqual({ id: STEP_ID, status: 'PENDING' });
-      expect(resolveCall.data).toMatchObject({ resolvedBy: USER_ID, status: 'RESOLVED' });
+      expect(resolveCall.data).toMatchObject({
+        resolvedBy: USER_ID,
+        resolvedVia: 'web',
+        status: 'RESOLVED',
+      });
 
       expect(signalCalls).toEqual([
         {
@@ -709,6 +713,7 @@ describe('human step routes', () => {
         payload: DB_NULL,
         resolvedAt: null,
         resolvedBy: null,
+        resolvedVia: null,
         status: 'PENDING',
       });
       expect(signalCalls).toHaveLength(0);

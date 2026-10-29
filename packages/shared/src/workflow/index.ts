@@ -116,6 +116,17 @@ export {
   REVIEW_SEVERITIES,
   REVIEWER_TYPES,
 } from './reports.js';
+export type {
+  RunAttributionTeam,
+  WorkflowRunAttribution,
+  WorkflowRunAttributionSources,
+} from './runAttribution.js';
+export {
+  attributionTeamRelationSelect,
+  attributionTeamSelect,
+  resolveWorkflowRunAttribution,
+  runInputAttributionSelect,
+} from './runAttribution.js';
 export {
   assertShellImageAllowed,
   BUILTIN_SHELL_IMAGES,

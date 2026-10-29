@@ -8,6 +8,16 @@ report as a client-generated CSV.
 Platform analytics time saved is the sum of each successful run's estimate, snapshotted from the
 template when the run started.
 
+Workflow runs store nullable reporting-only team and organization attribution. The team resolver
+uses the run connection, work-request connection, channel, requesting service, then template, in
+that order; the selected team's organization wins, with the work request's billing organization as
+the fallback when no team is available. This attribution does not change run visibility.
+
+Pull requests store their template id, template version and associated run id. Writers and the
+historical backfill associate a PR only through an active workflow in the same repository and use
+the latest run for that workflow. Outcomes, per-version template analytics and report cohorts read
+these persisted fields instead of dynamically joining recent runs.
+
 ## Delivery
 
 Delivery cohorts are workflow runs whose `startedAt` falls inside the selected window. The funnel
@@ -62,7 +72,9 @@ successful produced workflow run.
 
 Approval reporting counts human steps by kind and status, resolution waits for resolved steps,
 timeouts, currently pending steps, and the oldest pending age. Approvers are grouped by the
-resolving user. Autonomy decisions are counted by event and risk class.
+resolving user. Autonomy decisions are counted by event and risk class. Resolved steps and approvals
+record `resolvedVia` as `web`, `slack`, `api_token`, `mcp` or `assistant`; historical rows remain
+null.
 
 ## Data bounds
 
@@ -79,4 +91,7 @@ most five runs per organization; each organization indicates when more ranked ru
   run-to-team relationship.
 - Reports use live bounded reads; a daily run-rollup table is not available.
 - User records do not expose a service-principal or API-token approver flag, so approval counts
-  cannot separate people from machine identities.
+  cannot separate people from machine identities. The human-step HTTP route requires a user
+  principal and does not admit service-principal tokens.
+- Historical pull requests without a repository-matched active workflow and run remain unattributed.
+- Historical human-step and approval records do not have a resolution source and remain null.

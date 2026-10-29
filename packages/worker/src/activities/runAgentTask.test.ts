@@ -21,7 +21,7 @@ const m = vi.hoisted(() => ({
   gate: vi.fn(),
   harnessTurn: vi.fn(),
   importTree: vi.fn(async () => 10),
-  ledger: { id: 'ledger-1', repoId: 'repo-1' } as unknown,
+  ledger: { id: 'ledger-1', repoId: 'repo-1', temporalWorkflowId: 'agent-wf' } as unknown,
   mcpConnectionId: null as string | null,
   modelSpec: 'anthropic/x',
   persist: vi.fn(async (_tracer: unknown, _key: string) => {}),
@@ -67,7 +67,14 @@ vi.mock('@auto-swe/shared/db', () => ({
       })),
     },
     pullRequest: { create: m.prCreate, update: m.prUpdate },
-    workflowRun: { findUnique: vi.fn(async () => m.run) },
+    workflowRun: {
+      findFirst: vi.fn(async () => ({
+        id: 'run-1',
+        templateId: 'template-1',
+        templateVersion: 2,
+      })),
+      findUnique: vi.fn(async () => m.run),
+    },
   },
 }));
 vi.mock('../lib/temporalClient.js', () => ({
@@ -616,7 +623,10 @@ describe('delivery: trust boundary and gate-before-push', () => {
         isDraft: true,
         prNumber: 7,
         repoId: 'repo-1',
+        runId: 'run-1',
         status: 'OPEN',
+        templateId: 'template-1',
+        templateVersion: 2,
         title: '[auto-swe] agent run: fix the typo',
         workflowId: 'ledger-1',
       },

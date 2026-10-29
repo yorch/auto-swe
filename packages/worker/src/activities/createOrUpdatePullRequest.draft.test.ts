@@ -10,6 +10,7 @@ const m = vi.hoisted(() => ({
     connection: { findUniqueOrThrow: vi.fn() },
     pullRequest: { create: vi.fn(), findFirst: vi.fn(), update: vi.fn() },
     runInput: { findUnique: vi.fn() },
+    workflowRun: { findFirst: vi.fn() },
   },
 }));
 
@@ -70,6 +71,7 @@ beforeEach(() => {
   m.prisma.connection.findUniqueOrThrow.mockResolvedValue({ defaultBranch: 'main', id: 'repo-1' });
   m.prisma.pullRequest.findFirst.mockResolvedValue(null);
   m.prisma.activeWorkflow.findFirst.mockResolvedValue({ id: 'w1' });
+  m.prisma.workflowRun.findFirst.mockResolvedValue(null);
   m.createPr.mockResolvedValue({ prNumber: 7, prUrl: 'https://example.test/pull/7' });
 });
 
@@ -173,6 +175,33 @@ describe('when the synthetic flag cannot be read', () => {
 });
 
 describe('which ledger row a new PR is linked to', () => {
+  it('persists the latest run attribution for a repo-matched workflow link', async () => {
+    m.prisma.activeWorkflow.findFirst.mockResolvedValue({
+      id: 'own-row',
+      repoId: 'repo-1',
+      temporalWorkflowId: 'wf-own',
+    });
+    m.prisma.workflowRun.findFirst.mockResolvedValue({
+      id: 'run-latest',
+      templateId: 'template-1',
+      templateVersion: 4,
+    });
+
+    await createOrUpdatePullRequest(request, codeResult);
+
+    expect(m.prisma.pullRequest.create.mock.calls[0]?.[0].data).toMatchObject({
+      runId: 'run-latest',
+      templateId: 'template-1',
+      templateVersion: 4,
+      workflowId: 'own-row',
+    });
+    expect(m.prisma.workflowRun.findFirst).toHaveBeenCalledWith({
+      orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+      select: { id: true, templateId: true, templateVersion: true },
+      where: { workflowId: 'wf-own' },
+    });
+  });
+
   it("links the row of the executing workflow, not another row of the same work request's", async () => {
     m.prisma.activeWorkflow.findFirst.mockImplementation(
       async (args: { where: { temporalWorkflowId?: string } }) =>

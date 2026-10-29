@@ -141,7 +141,7 @@ async function resolveHitlStepFromSlack(
     target.stepId,
     target.action,
     target.value,
-    { role: user.role, sub: user.id },
+    { role: user.role, sub: user.id, via: 'slack' },
     target.comment
   );
   if (!result.ok) {
