@@ -29,8 +29,10 @@ function newMockPrisma() {
     configAuditLog: { create: vi.fn().mockResolvedValue({}) },
     evalCase: {
       count: vi.fn().mockResolvedValue(0),
+      findFirst: vi.fn().mockResolvedValue(null),
       findMany: vi.fn().mockResolvedValue([]),
       groupBy: vi.fn().mockResolvedValue([]),
+      update: vi.fn(),
       updateMany: vi.fn().mockResolvedValue({ count: 0 }),
     },
     evalDataset: {
@@ -1129,6 +1131,160 @@ describe('evalRoutes', () => {
       });
       expect(res.statusCode).toBe(403);
       expect(prisma.evalCase.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('PATCH /evals/:id/cases/:caseId', () => {
+    const DS = '11111111-1111-4111-8111-111111111111';
+    const CASE = '22222222-2222-4222-8222-222222222222';
+    const url = `/api/v1/platform/evals/${DS}/cases/${CASE}`;
+    const row = (stack: string | null) => ({
+      baselineSha: 'abc',
+      createdAt: new Date('2026-06-24T00:00:00Z'),
+      datasetId: DS,
+      flakeRuns: 3,
+      flakeScreened: true,
+      flakeScreenInfraErrors: 0,
+      goldenTest: 'yarn test',
+      id: CASE,
+      input: {},
+      reference: null,
+      repoUrl: 'https://x/y',
+      stack,
+      tags: [],
+    });
+    const patch = (app: Awaited<ReturnType<typeof buildApp>>['app'], payload: unknown) =>
+      app.inject({ headers: AUTH, method: 'PATCH', payload: payload as object, url });
+
+    it('changes the stack, resets the screen, audits it and starts the screen', async () => {
+      const { app, prisma, startEvalScreenWorkflow } = await buildApp();
+      prisma.evalCase.findFirst.mockResolvedValue(row(null));
+      prisma.evalCase.update.mockResolvedValue({
+        ...row('jvm'),
+        flakeRuns: 0,
+        flakeScreened: false,
+      });
+      const res = await patch(app, { stack: 'jvm' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toMatchObject({ flakeScreened: false, id: CASE, stack: 'jvm' });
+      expect(prisma.evalCase.findFirst).toHaveBeenCalledWith({
+        where: { datasetId: DS, id: CASE },
+      });
+      expect(prisma.evalCase.update).toHaveBeenCalledWith({
+        data: {
+          flakeRuns: 0,
+          flakeScreened: false,
+          flakeScreenInfraErrors: 0,
+          quarantined: false,
+          stack: 'jvm',
+        },
+        where: { id: CASE },
+      });
+      expect(prisma.configAuditLog.create).toHaveBeenCalledTimes(1);
+      expect(prisma.configAuditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          action: 'UPDATE',
+          actorId: 'admin-1',
+          afterJson: { stack: 'jvm' },
+          beforeJson: { stack: null },
+          entityId: CASE,
+          entityType: 'EvalCase',
+        }),
+      });
+      expect(startEvalScreenWorkflow).toHaveBeenCalledWith(`eval-screen-${DS}`, {
+        datasetId: DS,
+      });
+      expect(res.json().screenStarted).toBe(true);
+    });
+
+    it('reports that the screen did not start, instead of claiming it did', async () => {
+      const { app, prisma, startEvalScreenWorkflow } = await buildApp();
+      prisma.evalCase.findFirst.mockResolvedValue(row(null));
+      prisma.evalCase.update.mockResolvedValue(row('go'));
+      startEvalScreenWorkflow.mockRejectedValueOnce(new Error('temporal down'));
+      const res = await patch(app, { stack: 'go' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().screenStarted).toBe(false);
+    });
+
+    it('takes a quarantined case out of quarantine along with the reset', async () => {
+      const { app, prisma } = await buildApp();
+      prisma.evalCase.findFirst.mockResolvedValue({ ...row('python'), quarantined: true });
+      prisma.evalCase.update.mockResolvedValue(row('jvm'));
+      await patch(app, { stack: 'jvm' });
+      expect(prisma.evalCase.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ quarantined: false }) })
+      );
+    });
+
+    it('clears the stack with null', async () => {
+      const { app, prisma } = await buildApp();
+      prisma.evalCase.findFirst.mockResolvedValue(row('python'));
+      prisma.evalCase.update.mockResolvedValue(row(null));
+      const res = await patch(app, { stack: null });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.stack).toBeNull();
+      expect(prisma.evalCase.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ stack: null }) })
+      );
+    });
+
+    it('writes nothing and starts no screen when the stack is unchanged', async () => {
+      const { app, prisma, startEvalScreenWorkflow } = await buildApp();
+      prisma.evalCase.findFirst.mockResolvedValue(row('go'));
+      const res = await patch(app, { stack: 'go' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data).toMatchObject({ flakeScreened: true, stack: 'go' });
+      expect(prisma.evalCase.update).not.toHaveBeenCalled();
+      expect(prisma.configAuditLog.create).not.toHaveBeenCalled();
+      expect(startEvalScreenWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('treats null and node as the same environment: no write, no re-screen', async () => {
+      const { app, prisma, startEvalScreenWorkflow } = await buildApp();
+      prisma.evalCase.findFirst.mockResolvedValue(row(null));
+      expect((await patch(app, { stack: 'node' })).statusCode).toBe(200);
+      prisma.evalCase.findFirst.mockResolvedValue(row('node'));
+      expect((await patch(app, { stack: null })).statusCode).toBe(200);
+      expect(prisma.evalCase.update).not.toHaveBeenCalled();
+      expect(startEvalScreenWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('refuses an unknown stack or an extra field without writing', async () => {
+      const { app, prisma } = await buildApp();
+      prisma.evalCase.findFirst.mockResolvedValue(row(null));
+      expect((await patch(app, { stack: 'ruby' })).statusCode).toBe(400);
+      expect((await patch(app, { stack: 'go', tags: [] })).statusCode).toBe(400);
+      expect((await patch(app, {})).statusCode).toBe(400);
+      expect(prisma.evalCase.update).not.toHaveBeenCalled();
+    });
+
+    it('404s a case that is not in the dataset', async () => {
+      const { app, prisma, startEvalScreenWorkflow } = await buildApp();
+      prisma.evalCase.findFirst.mockResolvedValue(null);
+      const res = await patch(app, { stack: 'go' });
+      expect(res.statusCode).toBe(404);
+      expect(res.json().error.code).toBe('CASE_NOT_FOUND');
+      expect(prisma.evalCase.update).not.toHaveBeenCalled();
+      expect(startEvalScreenWorkflow).not.toHaveBeenCalled();
+    });
+
+    it('is ADMIN-only', async () => {
+      const { app, prisma } = await buildApp('ENGINEER');
+      const res = await patch(app, { stack: 'go' });
+      expect(res.statusCode).toBe(403);
+      expect(prisma.evalCase.findFirst).not.toHaveBeenCalled();
+      expect(prisma.evalCase.update).not.toHaveBeenCalled();
+    });
+
+    it('still changes the stack when the screen cannot start', async () => {
+      const { app, prisma, startEvalScreenWorkflow } = await buildApp();
+      startEvalScreenWorkflow.mockRejectedValue(new Error('temporal unreachable'));
+      prisma.evalCase.findFirst.mockResolvedValue(row(null));
+      prisma.evalCase.update.mockResolvedValue(row('go'));
+      const res = await patch(app, { stack: 'go' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().data.stack).toBe('go');
     });
   });
 });

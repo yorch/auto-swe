@@ -104,6 +104,10 @@ const CaseInput = z.object({
   tags: z.array(z.string().max(100)).max(50).optional(),
 });
 
+const UpdateCaseBody = z
+  .object({ stack: z.enum(['node', 'python', 'jvm', 'go']).nullable() })
+  .strict();
+
 const CreateDatasetBody = z.object({
   cases: z.array(CaseInput).max(10_000).optional(),
   description: z.string().max(2000).nullable().optional(),
@@ -457,6 +461,69 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, out, RESCREEN_NOT_FOUND[out]);
       }
       return reply.status(202).send({ data: out });
+    }
+  );
+
+  // ── Change a case's stack ──
+  // A different stack is a different environment, so the screen the case passed
+  // (or failed) no longer says anything: the flake-screen state is reset exactly
+  // as a re-screen resets it, and the dataset's screen is started. An unchanged
+  // stack writes nothing.
+  app.patch(
+    '/evals/:id/cases/:caseId',
+    { onRequest: adminOnly, schema: { body: UpdateCaseBody, params: CaseParams } },
+    async (request, reply) => {
+      const { caseId, id } = request.params;
+      const { stack } = request.body;
+      const existing = await fastify.prisma.evalCase.findFirst({
+        where: { datasetId: id, id: caseId },
+      });
+      if (!existing) {
+        return sendError(reply, 404, 'CASE_NOT_FOUND', RESCREEN_NOT_FOUND.CASE_NOT_FOUND);
+      }
+      // `null` is node, so null → node (and node → null) is the same environment: no write, no
+      // re-screen, whichever way the caller spells it.
+      if ((existing.stack ?? 'node') === (stack ?? 'node')) {
+        return { data: toCaseDto(existing), screenStarted: false };
+      }
+      const actor = requireUser(request);
+      const updated = await fastify.prisma.$transaction(async (tx) => {
+        const row = await tx.evalCase.update({
+          // `quarantined` goes too: a case is quarantined when its reference stopped passing, and
+          // the wrong environment is a likely reason, so the new stack gets a fresh chance.
+          data: {
+            flakeRuns: 0,
+            flakeScreened: false,
+            flakeScreenInfraErrors: 0,
+            quarantined: false,
+            stack,
+          },
+          where: { id: existing.id },
+        });
+        await writeAuditLog(fastify, {
+          action: 'UPDATE',
+          actor,
+          after: { stack },
+          before: { stack: existing.stack },
+          client: tx,
+          entityId: existing.id,
+          entityType: 'EvalCase',
+        });
+        return row;
+      });
+      // Best-effort, like the start on create and on re-screen: the case is reset
+      // either way, and the next eval run of the dataset or the re-validation
+      // sweep screens it.
+      let screenStarted = false;
+      try {
+        await fastify.temporal.startEvalScreenWorkflow(evalScreenWorkflowId(id), {
+          datasetId: id,
+        });
+        screenStarted = true;
+      } catch (err) {
+        request.log.error({ datasetId: id, err }, 'failed to start EvalScreenWorkflow');
+      }
+      return { data: toCaseDto(updated), screenStarted };
     }
   );
 

@@ -231,6 +231,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PATCH /api/v1/automations/events/:id': 'confirm',
   'PATCH /api/v1/me/preferences': 'confirm',
   'PATCH /api/v1/platform/autonomy-policies/:id': 'confirm',
+  'PATCH /api/v1/platform/evals/:id/cases/:caseId': 'confirm',
   'PATCH /api/v1/platform/github-host-credentials/:id': { never: 'secret' },
   'PATCH /api/v1/platform/github-installations/:id': 'confirm',
   'PATCH /api/v1/platform/github-webhook-secrets/:id': { never: 'secret' },

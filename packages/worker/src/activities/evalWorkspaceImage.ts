@@ -32,13 +32,18 @@ export const EVAL_WORKSPACE_IMAGE = 'node:24-alpine';
  * runs exactly where it always did.
  *
  * These are upstream toolchain bases, not the curated executor images (which are built
- * per repository and have no shared tag). They carry the language toolchain but not a
- * build tool beyond it: a JVM case brings its Maven or Gradle wrapper, and an image
- * without `git` gets one installed when the workspace starts.
+ * per repository and have no shared tag). They carry the language toolchain and, for
+ * the JVM, Maven (the JDK major is 21 either way); no other build tool beyond it. A
+ * Gradle case brings its wrapper, and an image without `git` gets one installed when
+ * the workspace starts.
+ *
+ * Changing an entry is a benchmark epoch for the cases on that stack, as for
+ * `EVAL_WORKSPACE_IMAGE`: scores recorded before and after are not comparable, and the
+ * cases need re-screening.
  */
 const EVAL_STACK_IMAGES: Readonly<Record<string, string>> = Object.freeze({
   go: 'golang:1.26-bookworm@sha256:386f0cbb8fb3402ff5a15048c96731e6ff37142d31182f3b72306359a1f5e9b7',
-  jvm: 'eclipse-temurin:21-jdk@sha256:23cc5734ff46e776f51ce66eb9ee08444fd47caabec0a95b7eb6e94be2d3696d',
+  jvm: 'maven:3.9-eclipse-temurin-21@sha256:99e61abcff91a9b1333463bd8451fb18495d6eba9250ac66a338b518f8278320',
   node: EVAL_WORKSPACE_IMAGE,
   python:
     'python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f',

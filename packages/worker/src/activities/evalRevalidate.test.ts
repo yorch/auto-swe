@@ -8,9 +8,9 @@ const runGateStandalone = vi.fn(async (_input: unknown) => ({
 vi.mock('./standaloneGateRunner.js', () => ({
   runGateStandalone: (input: unknown) => runGateStandalone(input),
 }));
-const evalCaseUpdate = vi.fn(async (_args: unknown) => ({}));
+const evalCaseUpdate = vi.fn(async (_args: unknown) => ({ count: 1 }));
 vi.mock('@auto-swe/shared/db', () => ({
-  prisma: { evalCase: { update: (args: unknown) => evalCaseUpdate(args) } },
+  prisma: { evalCase: { updateMany: (args: unknown) => evalCaseUpdate(args) } },
 }));
 
 import {
@@ -56,14 +56,14 @@ describe('revalidateDataset', () => {
     const { deps: d, setQuarantined } = deps([c({ id: 'a' })], () => false);
     const r = await revalidateDataset('d1', d);
     expect(r).toEqual({ checked: 1, quarantined: 1, restored: 0 });
-    expect(setQuarantined).toHaveBeenCalledWith('a', true);
+    expect(setQuarantined).toHaveBeenCalledWith('a', true, null);
   });
 
   it('restores a previously-quarantined case that passes again', async () => {
     const { deps: d, setQuarantined } = deps([c({ id: 'a', quarantined: true })], () => true);
     const r = await revalidateDataset('d1', d);
     expect(r).toEqual({ checked: 1, quarantined: 0, restored: 1 });
-    expect(setQuarantined).toHaveBeenCalledWith('a', false);
+    expect(setQuarantined).toHaveBeenCalledWith('a', false, null);
   });
 
   it('leaves a healthy passing case untouched', async () => {
@@ -109,6 +109,31 @@ describe('defaultSetQuarantined', () => {
       data: { quarantined: true },
       where: { id: 'a' },
     });
+  });
+
+  it('is conditional on the stack the verdict was reached in, so a moved case is left alone', async () => {
+    evalCaseUpdate.mockClear();
+    await _defaults.defaultSetQuarantined('a', true, 'python');
+    expect(evalCaseUpdate).toHaveBeenCalledWith({
+      data: { quarantined: true },
+      where: { id: 'a', stack: 'python' },
+    });
+    evalCaseUpdate.mockClear();
+    // A case with no stack is node: the guard is `stack IS NULL`, not "no guard".
+    await _defaults.defaultSetQuarantined('a', false, null);
+    expect(evalCaseUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'a', stack: null } })
+    );
+  });
+
+  it('passes each case’s own stack when it is the one that is quarantined or restored', async () => {
+    const { deps: d, setQuarantined } = deps(
+      [c({ id: 'a', stack: 'jvm' }), c({ id: 'b', quarantined: true, stack: 'go' })],
+      (x) => x.id === 'b'
+    );
+    await revalidateDataset('ds', d);
+    expect(setQuarantined).toHaveBeenCalledWith('a', true, 'jvm');
+    expect(setQuarantined).toHaveBeenCalledWith('b', false, 'go');
   });
 
   it('sends a restored case back to unscreened, so a new screen must pass', async () => {

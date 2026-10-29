@@ -2,6 +2,7 @@
 
 import type {
   AdminTokenSummary,
+  EvalCaseDto,
   EvalDatasetDetail,
   EvalDatasetSummary,
   EvalRescreenResultDto,
@@ -746,6 +747,33 @@ export function useRescreenEvalCases(datasetId: string) {
           {}
         )
         .then((r) => r.data),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ['eval-dataset', datasetId] });
+      void qc.invalidateQueries({ queryKey: ['eval-suite-health'] });
+    },
+  });
+}
+
+/**
+ * Change one case's stack (`null` clears it). The gateway resets the case's flake-screen
+ * state and starts the dataset's screen, so the dataset is refetched (ADMIN).
+ */
+export function useUpdateEvalCaseStack(datasetId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      caseId,
+      stack,
+    }: {
+      caseId: string;
+      stack: 'node' | 'python' | 'jvm' | 'go' | null;
+    }) =>
+      api
+        .patch<{ data: EvalCaseDto; screenStarted: boolean }>(
+          `/api/v1/platform/evals/${datasetId}/cases/${caseId}`,
+          { stack }
+        )
+        .then((r) => ({ case: r.data, screenStarted: r.screenStarted })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['eval-dataset', datasetId] });
       void qc.invalidateQueries({ queryKey: ['eval-suite-health'] });

@@ -27,7 +27,8 @@ export interface RevalidateDeps {
   loadCases: (datasetId: string) => Promise<RevalCaseRow[]>;
   /** Does the case's reference still pass against current repo state? */
   runReference: (c: RevalCaseRow) => Promise<GateResult>;
-  setQuarantined: (caseId: string, quarantined: boolean) => Promise<void>;
+  /** `stack` is the environment the verdict was reached in: a case moved since is left alone. */
+  setQuarantined: (caseId: string, quarantined: boolean, stack?: string | null) => Promise<void>;
 }
 
 export interface RevalidateResult {
@@ -53,10 +54,10 @@ export async function revalidateDataset(
     }
     const passes = reference.passed;
     if (!passes && !c.quarantined) {
-      await deps.setQuarantined(c.id, true);
+      await deps.setQuarantined(c.id, true, c.stack ?? null);
       quarantined += 1;
     } else if (passes && c.quarantined) {
-      await deps.setQuarantined(c.id, false);
+      await deps.setQuarantined(c.id, false, c.stack ?? null);
       restored += 1;
     }
   }
@@ -123,7 +124,11 @@ function runReferenceDefault(c: RevalCaseRow): Promise<GateResult> {
   return runCaseReference(c);
 }
 
-async function defaultSetQuarantined(caseId: string, quarantined: boolean): Promise<void> {
+async function defaultSetQuarantined(
+  caseId: string,
+  quarantined: boolean,
+  stack?: string | null
+): Promise<void> {
   // A restored case passes again in a different repo state than its last flake
   // screen saw, so that screen says nothing now: it goes back to unscreened, and
   // the harness scores it only once a new screen (the sweep's, right after this)
@@ -131,7 +136,11 @@ async function defaultSetQuarantined(caseId: string, quarantined: boolean): Prom
   const data = quarantined
     ? { quarantined }
     : { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0, quarantined };
-  await prisma.evalCase.update({ data, where: { id: caseId } }).catch(() => undefined);
+  // Conditional on the stack the reference ran in, so a verdict from before a stack change never
+  // quarantines or restores the case in its new environment.
+  await prisma.evalCase
+    .updateMany({ data, where: stack === undefined ? { id: caseId } : { id: caseId, stack } })
+    .catch(() => undefined);
 }
 
 export const _defaults = { defaultSetQuarantined };
