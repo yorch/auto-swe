@@ -193,7 +193,7 @@ function ConsentDecision({ search }: { search: string }) {
                 <Icon className="mt-0.5 text-success-400" name="check" size={15} />
                 <span>
                   <span className="font-semibold text-paper-100">Read</span>: see repositories, work
-                  requests, runs and pending approvals.
+                  requests, agents, workflow templates, runs and pending approvals.
                 </span>
               </li>
             )}
@@ -201,11 +201,11 @@ function ConsentDecision({ search }: { search: string }) {
               <li>
                 <Checkbox
                   checked={allowWrite}
-                  hint="Runs started this way use your own GitHub identity and appear as you."
+                  hint="Runs started this way use your own GitHub identity and appear as you. Templates may push branches or open pull requests when enabled by an administrator."
                   label={
                     <>
                       <span className="font-semibold text-paper-100">Write</span>: start work
-                      requests and cancel runs for you.
+                      requests, agent or template runs, and cancel runs for you.
                     </>
                   }
                   onChange={(e) => setAllowWrite(e.target.checked)}

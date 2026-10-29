@@ -500,6 +500,19 @@ export const SETTING_DEFINITIONS = {
     schema: positiveInt.max(50),
     unit: 'runs',
   }),
+
+  'mcp.templateRunsEnabled': defineSetting({
+    defaultValue: false,
+    description:
+      'Allow MCP clients to launch workflow templates, which may execute authored code and push branches. Other launch paths are unchanged.',
+    group: 'mcp',
+    label: 'Enable MCP template launches',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
   'mcp.writeCallsPerMinute': defineSetting({
     defaultValue: 10,
     description:

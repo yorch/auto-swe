@@ -1,6 +1,8 @@
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
+import { isDeepStrictEqual } from 'node:util';
 import { Prisma } from '@auto-swe/shared';
+import { resolveSettings } from '@auto-swe/shared/config';
 import { isSystemManagedTemplate } from '@auto-swe/shared/lib/channelTask';
 import { inputSchemaProblems, isInputSchema } from '@auto-swe/shared/lib/inputSchema';
 import { CallbackRequestSchema } from '@auto-swe/shared/lib/runCallbacks';
@@ -46,6 +48,12 @@ import {
   sendLaunchRefusal,
 } from '../lib/launchAuthorization.js';
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
+import {
+  assertMcpWriteAllowed,
+  mcpWriteAuditHook,
+  mcpWriteBegin,
+  sendRunCapRefusal,
+} from '../lib/mcpWriteGuard.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import {
@@ -1073,6 +1081,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/',
     {
+      config: { mcpScope: 'read' },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { querystring: ListTemplatesQuery },
     },
@@ -1096,7 +1105,34 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
             : []),
         ],
         ...(request.query.teamId ? { teamId: request.query.teamId } : {}),
+        ...(request.mcpBridge ? { activeVersion: { not: null }, status: 'ACTIVE' } : {}),
       };
+      if (request.mcpBridge) {
+        const templates = await asPlatformAdmin(
+          user,
+          'admin discovers launchable templates through MCP',
+          ['WorkflowTemplate'],
+          () =>
+            fastify.prisma.workflowTemplate.findMany({
+              orderBy: [{ isDefault: 'desc' }, { updatedAt: 'desc' }],
+              select: {
+                activeVersion: true,
+                description: true,
+                id: true,
+                inputSchema: true,
+                name: true,
+                status: true,
+                teamId: true,
+              },
+              where,
+            })
+        );
+        return {
+          data: templates
+            .filter((t) => !isSystemManagedTemplate({ name: t.name, team: t.teamId ? {} : null }))
+            .map(({ teamId: _teamId, ...t }) => t),
+        };
+      }
       // `teamMembershipFilter` is `{}` for a platform admin.
       const templates = await asPlatformAdmin(
         user,
@@ -2008,8 +2044,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     {
       // Open to service principals: docs/service-principals.md. One handler for both kinds of
       // caller, so a principal goes through every check a person does, plus its own.
-      config: { serviceScopes: ['runs:launch'] },
+      config: { mcpScope: 'write', serviceScopes: ['runs:launch'] },
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
+      onSend: mcpWriteAuditHook,
+      preValidation: mcpWriteBegin('start_template_run'),
       schema: {
         body: RunTemplateBody,
         headers: IdempotencyHeaderSchema,
@@ -2020,6 +2058,39 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const caller = requireCaller(request);
       const user = caller.kind === 'user' ? caller.user : null;
       const service = caller.kind === 'service' ? caller.principal : undefined;
+      const idempotencyKey = request.headers['idempotency-key'];
+      const mcpWrite = await assertMcpWriteAllowed(request, reply, {
+        submit: {
+          budgetTier:
+            typeof request.body.payload.budget === 'string'
+              ? request.body.payload.budget
+              : 'STANDARD',
+          idempotencyKey,
+        },
+        tool: 'start_template_run',
+      });
+      if (mcpWrite.refused) {
+        return mcpWrite.refused;
+      }
+      if (request.mcpBridge) {
+        const settings = await resolveSettings(['mcp.templateRunsEnabled']);
+        if (!settings['mcp.templateRunsEnabled']) {
+          return sendError(
+            reply,
+            403,
+            'MCP_TEMPLATE_RUNS_DISABLED',
+            'MCP template launches are disabled'
+          );
+        }
+        if (request.body.callback !== undefined) {
+          return sendError(
+            reply,
+            400,
+            'MCP_CALLBACK_NOT_ALLOWED',
+            'Callbacks are not accepted through MCP'
+          );
+        }
+      }
       const tpl = await fastify.prisma.workflowTemplate.findFirst({
         select: {
           activeVersion: true,
@@ -2064,6 +2135,65 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           'NO_ACTIVE_VERSION',
           'Template has no active version — promote a version first'
         );
+      }
+
+      const shortTplId = tpl.id.replace(/-/g, '').slice(0, 8);
+      const temporalWorkflowId = idempotencyKey
+        ? workflowIdFromIdempotencyKey(
+            'wf',
+            request.mcpBridge || service
+              ? `${shortTplId}-${idempotencyCallerScope(caller)}`
+              : shortTplId,
+            idempotencyKey
+          )
+        : `wf-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+      const requestPayload = JSON.stringify(withoutCallback(request.body));
+      const replay = async () => {
+        if (!request.mcpBridge) {
+          return null;
+        }
+        const previous = await fastify.prisma.activeWorkflow.findUnique({
+          select: {
+            workRequest: {
+              select: { requestedById: true, requestPayload: true, templateId: true },
+            },
+            workRequestId: true,
+          },
+          where: { temporalWorkflowId },
+        });
+        if (
+          !previous?.workRequest ||
+          previous.workRequest.requestedById !== user?.sub ||
+          previous.workRequest.templateId !== tpl.id
+        ) {
+          return null;
+        }
+        let storedInput: unknown;
+        try {
+          storedInput = JSON.parse(previous.workRequest.requestPayload);
+        } catch {
+          storedInput = null;
+        }
+        const prior = RunTemplateBody.omit({ callback: true }).safeParse(storedInput);
+        if (!prior.success || !isDeepStrictEqual(prior.data, withoutCallback(request.body))) {
+          return {
+            reply: sendError(
+              reply,
+              422,
+              'IDEMPOTENCY_KEY_MISMATCH',
+              'This key was used for different template-run inputs'
+            ),
+          };
+        }
+        return {
+          reply: reply.send({
+            data: { deduplicated: true, workRequestId: previous.workRequestId },
+          }),
+        };
+      };
+      const previous = await replay();
+      if (previous) {
+        return previous.reply;
       }
 
       const payload = request.body.payload ?? {};
@@ -2195,21 +2325,6 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         return;
       }
 
-      const shortTplId = tpl.id.replace(/-/g, '').slice(0, 8);
-      // With an Idempotency-Key the ID is a pure function of the key, so the
-      // unique index on ActiveWorkflow.temporalWorkflowId becomes a real dedup
-      // gate. Without one, every request is a distinct run (previous behaviour).
-      // A person's key is scoped to the template, as it always was; a principal's also to the
-      // principal, so its keys are its own.
-      const idempotencyKey = request.headers['idempotency-key'];
-      const temporalWorkflowId = idempotencyKey
-        ? workflowIdFromIdempotencyKey(
-            'wf',
-            service ? `${shortTplId}-${idempotencyCallerScope(caller)}` : shortTplId,
-            idempotencyKey
-          )
-        : `wf-${shortTplId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
-
       // Checked before anything is written; stored sealed beside the request, never in
       // `requestPayload` (the URL's query may carry the receiver's token).
       const callback = await resolveLaunchCallback(fastify.prisma, {
@@ -2220,7 +2335,6 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       if (!callback.ok) {
         return sendCallbackRefusal(reply, callback);
       }
-      const requestPayload = JSON.stringify(withoutCallback(request.body));
 
       const repoWorkRequest: RepoWorkRequest = {
         budgetTier,
@@ -2283,14 +2397,21 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
                   templateId: tpl.id,
                 }),
               }
-            : {}),
+            : { guard: mcpWrite.launchGuard }),
           audit: { actor: user ?? null, source: service ? 'service-token' : 'template-run' },
           log: fastify.log,
           sourceAuthorization: user ? { actor: user } : {},
         }
       );
       if (!launch.ok) {
+        const raced = await replay();
+        if (raced) {
+          return raced.reply;
+        }
         if (launch.reason === 'GUARD_REFUSED') {
+          if (request.mcpBridge) {
+            return sendRunCapRefusal(reply);
+          }
           return sendServiceLaunchRefusal(reply, launch.refusal);
         }
         return sendError(reply, 409, 'RUN_CONFLICT', 'A run with this workflow ID already exists');
