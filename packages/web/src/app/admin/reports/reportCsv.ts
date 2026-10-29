@@ -1,7 +1,15 @@
 import type { ReportTab, ReportTabData } from './ReportTabPanel';
 
 function csvCell(value: unknown): string {
-  const rawText = value === null || value === undefined ? '' : String(value);
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return `"${String(value)}"`;
+  }
+  const rawText =
+    value === null || value === undefined
+      ? ''
+      : typeof value === 'object'
+        ? JSON.stringify(value)
+        : String(value);
   const text = /^[=+\-@\t\r]/.test(rawText) ? `'${rawText}` : rawText;
   return `"${text.replaceAll('"', '""')}"`;
 }

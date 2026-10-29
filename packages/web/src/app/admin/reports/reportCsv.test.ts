@@ -21,6 +21,25 @@ describe('reportCsv', () => {
     expect(csv).toContain(`"'=SUM(1,2)"`);
   });
 
+  it('writes nested values as JSON instead of [object Object]', () => {
+    const csv = reportCsv('automations', {
+      automations: [{ id: 'a-1', outcomes: { STARTED: 2 }, tags: ['x', 'y'] }],
+    } as unknown as ReportTabData);
+
+    expect(csv).not.toContain('[object Object]');
+    expect(csv).toContain('"{""STARTED"":2}"');
+    expect(csv).toContain('"[""x"",""y""]"');
+  });
+
+  it('leaves numbers, including negative ones, unprefixed', () => {
+    const csv = reportCsv('automations', {
+      automations: [{ delta: -1, id: 'a-1', note: '-1' }],
+    } as unknown as ReportTabData);
+
+    expect(csv).toContain('"-1","a-1"');
+    expect(csv).toContain(`"'-1"`);
+  });
+
   it('exports every quality and approval section with section labels', () => {
     const quality = reportCsv('quality', {
       ciSelfHealRate: null,
