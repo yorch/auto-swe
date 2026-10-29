@@ -137,5 +137,11 @@ export function registerBetterAuthRoutes(app: FastifyInstance, handler: RouteHan
     method: 'POST',
     url: OAUTH_REGISTER_PATH,
   });
+  app.route({
+    config: { rateLimit: { keyGenerator: ipRateLimitKey, max: 10, timeWindow: '1 minute' } },
+    handler,
+    method: 'POST',
+    url: '/api/auth/device/code',
+  });
   app.route({ handler, method: ['GET', 'POST'], url: '/api/auth/*' });
 }

@@ -11,10 +11,10 @@ import {
 // authorization server (after a social sign-in, say) before this app has set the session marker
 // below. The page establishes the session itself and every call it makes is authenticated by the
 // gateway, so nothing is exposed by letting the page load.
-const PUBLIC_PATHS = ['/login', '/api', '/reset-password', '/health', '/oauth/consent'];
+const PUBLIC_PATHS = ['/login', '/api', '/reset-password', '/health', '/oauth/consent', '/device'];
 
 /** Pages that take a credential or a security decision, and so must never be framed. */
-const FRAME_PROTECTED_PATHS = ['/login', '/oauth/consent'];
+const FRAME_PROTECTED_PATHS = ['/login', '/oauth/consent', '/device'];
 
 /**
  * Two cookies can signal an authenticated session to this proxy:

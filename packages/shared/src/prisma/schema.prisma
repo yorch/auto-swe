@@ -3795,6 +3795,25 @@ model OauthClientAssertion {
   @@map("oauth_client_assertions")
 }
 
+/// Device authorization codes owned by Better Auth's RFC 8628 plugin.
+model DeviceCode {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  deviceCode      String    @unique @map("device_code")
+  userCode        String    @unique @map("user_code")
+  userId          String?   @map("user_id") @db.Uuid
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz
+  status          String
+  lastPolledAt    DateTime? @map("last_polled_at") @db.Timestamptz
+  pollingInterval Int?      @map("polling_interval")
+  clientId        String?   @map("client_id")
+  scope           String?
+  resources       String[]
+  oauthClientId   String?   @map("oauth_client_id")
+
+  @@index([userId, oauthClientId])
+  @@map("device_codes")
+}
+
 /// Signing keys for the `jwt` plugin (EdDSA, rotated; see `betterAuth.ts`).
 model Jwks {
   id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid

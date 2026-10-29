@@ -52,6 +52,7 @@ The assistant's tools in the worker call the gateway at `API_INTERNAL_URL` (defa
 server reads for its own fetches.
 
 The `mcp` group holds the switches and bounds of the MCP server: `mcp.enabled`,
+`mcp.deviceFlowEnabled` (default false; enables browser-approved RFC 8628 sign-in for headless clients),
 `mcp.writeToolsEnabled`, `mcp.writeCallsPerMinute`, `mcp.maxConcurrentRuns`,
 `mcp.agentRunAllowedDeliverModes` (default `['none', 'draft_pr']`), and `mcp.templateRunsEnabled`
 (default false; authored workflows may push branches and trigger CI), all ADMIN-only, GLOBAL-only and read

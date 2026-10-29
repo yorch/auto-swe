@@ -250,6 +250,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PATCH /api/v1/teams/:teamId/service-principals/:id': { never: 'secret' },
   'PATCH /api/v1/users/:id': { never: 'identity' },
   'PATCH /api/v1/workflow-templates/:id': 'confirm',
+  'POST /api/auth/device/code': { never: 'oauthFlow' },
   'POST /api/v1/activity/ui': { never: 'userActivity' },
   'POST /api/v1/agent-runs': 'confirm',
   'POST /api/v1/agent-runs/:workRequestId/rerun': 'confirm',

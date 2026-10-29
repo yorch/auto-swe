@@ -34,6 +34,10 @@ the server accepts now: `mcp:read` always, `mcp:write` only while `mcp.writeTool
 For Claude Code CLI/Desktop and Codex installation, delegation skills and the follow/review loop,
 see [Local coding agents](./local-agents.md).
 
+Headless clients can use the optional RFC 8628 device authorization flow described in
+[OAuth setup](./oauth-setup.md#device-authorization). It still requires a user to sign in and
+approve the exact requested scopes in a browser; it is not a non-interactive credential bootstrap.
+
 A client needs only the endpoint URL. Without a token the endpoint answers 401 with a
 `WWW-Authenticate` challenge that names the protected resource metadata and the default scope:
 
@@ -277,7 +281,7 @@ response back.
 
 ## Settings
 
-All six are ADMIN-only, GLOBAL-only registry settings ([configuration.md](./configuration.md)) read per
+All seven are ADMIN-only, GLOBAL-only registry settings ([configuration.md](./configuration.md)) read per
 request through the ~30 s settings cache, so a change applies on every replica within about 30 seconds
 and needs no restart. None is read only at startup.
 
@@ -286,6 +290,7 @@ and needs no restart. None is read only at startup.
 | `mcp.templateRunsEnabled` | `false` | Allows bridged template launches, including authored code that may push branches or trigger CI. Enable only after reviewing installed templates. Does not affect discovery or other callers. |
 | `mcp.agentRunAllowedDeliverModes` | `['none', 'draft_pr']` | Delivery modes accepted by a bridged agent-run launch; an empty list refuses every delivery mode. Other callers are unchanged. |
 | `mcp.enabled` | `false` | Off, the endpoint and both protected resource metadata documents answer 404 (as the authorization server's endpoints do). If the setting cannot be read they answer 503: the server does not guess. |
+| `mcp.deviceFlowEnabled` | `false` | Allows the RFC 8628 device grant and its browser approval endpoints. Off, the device endpoints and grant answer 404 and discovery omits them. |
 | `mcp.writeToolsEnabled` | `false` | Off, `mcp:write` is dropped from every token's effective scopes, left out of the protected resource metadata and refused at consent, the write tools are not listed, and the write routes refuse a bridged call. |
 | `mcp.writeCallsPerMinute` | `10` | The most write calls one user may make in a minute, counting refused ones. Counted per gateway process. |
 | `mcp.maxConcurrentRuns` | `2` | The most runs one user may have in flight before an MCP launch is refused. Counts runs started from the dashboard and the CLI too. |
