@@ -49,6 +49,77 @@ const money = z
 
 const count = z.coerce.number().int().min(0);
 
+const inputType = z.enum(['string', 'number', 'boolean', 'array', 'connection']);
+const schemaIdentifier = z
+  .string()
+  .min(1)
+  .max(200)
+  .refine((s) => cleaned(s) === s);
+const schemaEnum = z.array(z.union([schemaIdentifier, z.number().finite()])).max(50);
+const inputField = z.object({
+  description: z.string().optional(),
+  enum: schemaEnum.optional(),
+  format: z.literal('uuid').optional(),
+  items: z
+    .object({
+      enum: schemaEnum.optional(),
+      format: z.literal('uuid').optional(),
+      type: z.enum(['string', 'number', 'boolean']),
+    })
+    .optional(),
+  type: inputType,
+});
+const reducedInputSchema = z.object({
+  properties: z.record(schemaIdentifier, inputField).refine((p) => Object.keys(p).length <= 100),
+  required: z.array(schemaIdentifier).max(100).optional(),
+  type: z.literal('object'),
+});
+export const templatesOutput = z.object({
+  templates: z.array(
+    z.object({
+      description: z.string(),
+      id: z.string().uuid(),
+      inputSchema: reducedInputSchema.nullable(),
+      name: z.string(),
+    })
+  ),
+});
+export const restTemplates = z.object({
+  data: z.array(
+    z.object({
+      activeVersion: z.number().int().positive().nullable(),
+      description: shortName(500),
+      id: z.string().uuid(),
+      inputSchema: z.unknown().transform((schema) => {
+        const parsed = reducedInputSchema.safeParse(schema);
+        if (!parsed.success) {
+          return null;
+        }
+        return {
+          ...parsed.data,
+          properties: Object.fromEntries(
+            Object.entries(parsed.data.properties).map(([key, field]) => [
+              key,
+              {
+                ...field,
+                ...(field.description !== undefined
+                  ? { description: shortName(280).parse(field.description) }
+                  : {}),
+              },
+            ])
+          ),
+        };
+      }),
+      name: shortName(200),
+      status: z.string(),
+    })
+  ),
+});
+export const startTemplateRunOutput = z.object({
+  status: z.enum(['started', 'already_submitted']),
+  workRequestId: z.string().uuid(),
+});
+
 // ── What the REST routes return, reduced to the fields a tool uses ──
 
 const meta = z.object({ limit: z.number(), offset: z.number(), total: z.number() });

@@ -245,6 +245,7 @@ async function build(options: {
       meta: { limit: 50, offset: 0, total: 1 },
     }),
     '/api/v1/workflow-runs/:id': () => runDetail(),
+    '/api/v1/workflow-templates': () => ({ data: [] }),
   };
 
   const app = Fastify();
@@ -351,6 +352,50 @@ describe('the read tools', () => {
   }
   afterEach(async () => {
     await Promise.all(apps.splice(0).map((a) => a.close()));
+  });
+
+  it('lists only active promoted template contracts through the REST bridge', async () => {
+    const s = await setup();
+    const entry = {
+      activeVersion: 1,
+      author: INJECTION,
+      description: 'Safe\n description',
+      id: REPO_ID,
+      inputSchema: {
+        properties: { topic: { default: INJECTION, description: 'Topic', type: 'string' } },
+        required: ['topic'],
+        spec: INJECTION,
+        type: 'object',
+      },
+      name: 'A\u200b template',
+      spec: INJECTION,
+      status: 'ACTIVE',
+    };
+    s.route.body = {
+      data: [entry, { ...entry, status: 'DRAFT' }, { ...entry, activeVersion: null }],
+    };
+    const { json } = await s.callTool('list_templates');
+    expect(json.result.structuredContent).toEqual({
+      templates: [
+        {
+          description: 'Safe  description',
+          id: REPO_ID,
+          inputSchema: {
+            properties: { topic: { description: 'Topic', type: 'string' } },
+            required: ['topic'],
+            type: 'object',
+          },
+          name: 'A template',
+        },
+      ],
+    });
+    expect(JSON.stringify(json.result)).not.toContain(INJECTION);
+    s.route.body = { data: [] };
+    expect((await s.callTool('list_templates')).json.result.structuredContent).toEqual({
+      templates: [],
+    });
+    s.route.body = { data: INJECTION };
+    expect((await s.callTool('list_templates')).json.result.isError).toBe(true);
   });
 
   it('lists only sanitised agent picker fields', async () => {
@@ -515,7 +560,7 @@ describe('the read tools', () => {
     expect(s.seen.urls).toEqual([]);
   });
 
-  it('lists exactly the seven read tools, each read-only with a strict input', async () => {
+  it('lists exactly the eight read tools, each read-only with a strict input', async () => {
     const { app, token } = await setup();
     const res = await app.inject({
       headers: {
@@ -609,6 +654,13 @@ describe('the read tools', () => {
         input: ['limit', 'offset', 'status', 'workRequestId'],
         name: 'list_runs',
         output: ['limit', 'offset', 'runs', 'total'],
+        strict: false,
+      },
+      {
+        annotations: { ...readOnly, title: 'List workflow templates' },
+        input: [],
+        name: 'list_templates',
+        output: ['templates'],
         strict: false,
       },
       {
@@ -1120,6 +1172,7 @@ describe('which routes an MCP token may reach', () => {
       'GET /api/v1/work-requests read',
       'GET /api/v1/workflow-runs read',
       'GET /api/v1/workflow-runs/:id read',
+      'GET /api/v1/workflow-templates read',
       'HEAD /api/v1/agent-runs/agents read',
       'HEAD /api/v1/human-steps read',
       'HEAD /api/v1/inbox read',
@@ -1127,10 +1180,12 @@ describe('which routes an MCP token may reach', () => {
       'HEAD /api/v1/work-requests read',
       'HEAD /api/v1/workflow-runs read',
       'HEAD /api/v1/workflow-runs/:id read',
+      'HEAD /api/v1/workflow-templates read',
       // The two write tools' routes, and only those.
       'POST /api/v1/agent-runs write',
       'POST /api/v1/work-requests write',
       'POST /api/v1/workflow-runs/:id/cancel write',
+      'POST /api/v1/workflow-templates/:id/runs write',
     ]);
     // Imports (and transforms) every route plugin: ~2 s alone, over the 5 s default under a loaded full-suite run.
   }, 30_000);

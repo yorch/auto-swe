@@ -21,7 +21,11 @@ import type { LaunchGuard } from './workflowLaunch.js';
  * writes the ledger rows.
  */
 
-export type McpWriteTool = 'submit_work_request' | 'start_agent_run' | 'cancel_run';
+export type McpWriteTool =
+  | 'submit_work_request'
+  | 'start_agent_run'
+  | 'start_template_run'
+  | 'cancel_run';
 
 /** Refusal codes the MCP tools translate to a fixed message. The codes are a closed vocabulary. */
 export const MCP_WRITE_CODES = {

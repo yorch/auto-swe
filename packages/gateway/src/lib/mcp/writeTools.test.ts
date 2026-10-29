@@ -129,6 +129,7 @@ async function build(
   );
   standIn('/api/v1/work-requests');
   standIn('/api/v1/agent-runs');
+  standIn('/api/v1/workflow-templates/:id/runs');
   standIn('/api/v1/workflow-runs/:id/cancel');
   await app.ready();
 
@@ -236,6 +237,91 @@ describe('the write tools', () => {
     expect(JSON.stringify(json.result)).not.toContain(INJECTION);
   });
 
+  it('starts and replays a template run using only allowlisted identifiers', async () => {
+    const s = await setup();
+    const args = {
+      idempotencyKey: KEY,
+      label: 'Work',
+      payload: { nested: { x: [1, true, null] }, topic: 'task' },
+      templateId: REPO_ID,
+    };
+    s.route.body = { data: { spec: INJECTION, workflowId: WF_ID, workRequestId: WR_ID } };
+    const started = await s.callTool(s.writeToken, 'start_template_run', args);
+    expect(started.json.result.structuredContent).toEqual({
+      status: 'started',
+      workRequestId: WR_ID,
+    });
+    expect(s.sent).toEqual([
+      {
+        body: { label: args.label, payload: args.payload },
+        idempotencyKey: KEY,
+        url: `/api/v1/workflow-templates/${REPO_ID}/runs`,
+      },
+    ]);
+    s.route.status = 200;
+    s.route.body = { data: { deduplicated: true, workRequestId: WR_ID } };
+    expect(
+      (await s.callTool(s.writeToken, 'start_template_run', args)).json.result.structuredContent
+    ).toEqual({ status: 'already_submitted', workRequestId: WR_ID });
+    expect(JSON.stringify(started.json.result)).not.toContain(INJECTION);
+  });
+
+  it.each([
+    [
+      403,
+      'MCP_TEMPLATE_RUNS_DISABLED',
+      'Template launches through MCP are turned off. Ask an administrator to enable them. Nothing was launched.',
+    ],
+    [
+      422,
+      'IDEMPOTENCY_KEY_MISMATCH',
+      'That idempotency key was already used for a different request. Use a new key for a different request.',
+    ],
+    [404, 'TEMPLATE_NOT_FOUND', 'Template not found or not launchable.'],
+    [400, 'INVALID_INPUT', 'The platform refused the request.'],
+  ])('maps template refusal %s/%s without route text', async (status, code, message) => {
+    const s = await setup();
+    s.route.status = Number(status);
+    s.route.body = { error: { code, details: [INJECTION], message: INJECTION } };
+    const { json } = await s.callTool(s.writeToken, 'start_template_run', {
+      idempotencyKey: KEY,
+      payload: {},
+      templateId: REPO_ID,
+    });
+    expect(json.result.isError).toBe(true);
+    expect(json.result.content[0].text).toBe(message);
+    expect(JSON.stringify(json.result)).not.toContain(INJECTION);
+  });
+
+  it.each([
+    { callback: { url: 'https://example.com' } },
+    { payload: [] },
+    { idempotencyKey: 'bad key' },
+    { templateId: 'bad' },
+  ])('rejects invalid template inputs %j before bridging', async (changed) => {
+    const s = await setup();
+    const { json } = await s.callTool(s.writeToken, 'start_template_run', {
+      idempotencyKey: KEY,
+      payload: {},
+      templateId: REPO_ID,
+      ...changed,
+    });
+    expect(json.result.isError).toBe(true);
+    expect(s.sent).toHaveLength(0);
+  });
+
+  it('rejects a malformed template launch response', async () => {
+    const s = await setup();
+    s.route.body = { data: { workRequestId: INJECTION } };
+    const { json } = await s.callTool(s.writeToken, 'start_template_run', {
+      idempotencyKey: KEY,
+      payload: {},
+      templateId: REPO_ID,
+    });
+    expect(json.result.isError).toBe(true);
+    expect(JSON.stringify(json.result)).not.toContain(INJECTION);
+  });
+
   const toolNames = async (s: Awaited<ReturnType<typeof setup>>, token: string) => {
     const res = await s.rpc(token, 'tools/list');
     return (JSON.parse(res.body).result.tools as Array<{ name: string }>).map((t) => t.name).sort();
@@ -251,8 +337,10 @@ describe('the write tools', () => {
         'list_pending_human_steps',
         'list_repositories',
         'list_runs',
+        'list_templates',
         'list_work_requests',
         'start_agent_run',
+        'start_template_run',
         'submit_work_request',
         'wait_for_run',
       ]);
@@ -266,12 +354,12 @@ describe('the write tools', () => {
 
     it('lists no write tool when the user consented to read only, whatever the token says', async () => {
       const s = await setup({ consentScopes: ['mcp:read', 'offline_access'] });
-      expect(await toolNames(s, s.writeToken)).toHaveLength(7);
+      expect(await toolNames(s, s.writeToken)).toHaveLength(8);
     });
 
     it('lists no write tool while writes are disabled, even for a token that carries mcp:write', async () => {
       const s = await setup({ writeToolsEnabled: false });
-      expect(await toolNames(s, s.writeToken)).toHaveLength(7);
+      expect(await toolNames(s, s.writeToken)).toHaveLength(8);
     });
 
     it('describes both tools with the right annotations and strict inputs', async () => {

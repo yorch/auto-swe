@@ -27,11 +27,14 @@ import {
   restRun,
   restRuns,
   restSubmitted,
+  restTemplates,
   restWorkRequests,
   runOutput,
   runsOutput,
   startAgentRunOutput,
+  startTemplateRunOutput,
   submitOutput,
+  templatesOutput,
   waitOutput,
   workRequestsOutput,
 } from './projections.js';
@@ -190,6 +193,33 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
     (body) => {
       const parsed = restAgents.safeParse(body);
       return parsed.success ? { agents: parsed.data.data } : null;
+    }
+  );
+
+  readTool(
+    'list_templates',
+    {
+      description:
+        'List active, visible, launchable workflow templates and their reduced input contracts. No workflow spec or prompts. Check repository access and policy when launching; template launches require an administrator opt-in.',
+      input: {},
+      output: templatesOutput,
+      title: 'List workflow templates',
+    },
+    () => get('/api/v1/workflow-templates'),
+    (body) => {
+      const parsed = restTemplates.safeParse(body);
+      return parsed.success
+        ? {
+            templates: parsed.data.data
+              .filter((t) => t.status === 'ACTIVE' && t.activeVersion !== null)
+              .map(({ id, name, description, inputSchema }) => ({
+                description,
+                id,
+                inputSchema,
+                name,
+              })),
+          }
+        : null;
     }
   );
 
@@ -462,6 +492,7 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
 
 /** The tools that need `mcp:write`. */
 export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'start_template_run',
   'submit_work_request',
   'start_agent_run',
   'cancel_run',
@@ -492,6 +523,11 @@ function writeFailure(response: BridgeResponse, notFound: string): ToolResult {
         "Your organization's monthly budget is used up, so no new run can start. Nothing was launched."
       );
     case 403:
+      if (code === 'MCP_TEMPLATE_RUNS_DISABLED') {
+        return failure(
+          'Template launches through MCP are turned off. Ask an administrator to enable them. Nothing was launched.'
+        );
+      }
       if (code === 'MCP_DELIVER_MODE_NOT_ALLOWED') {
         return failure('This delivery mode is not allowed through MCP. Nothing was launched.');
       }
@@ -528,6 +564,58 @@ function writeFailure(response: BridgeResponse, notFound: string): ToolResult {
  */
 export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller: McpCaller) {
   const { app, bridge } = deps;
+
+  server.registerTool(
+    'start_template_run',
+    {
+      annotations: { ...WRITE, title: 'Start a template run' },
+      description:
+        'Launch an active workflow template as YOU, under your identity and using your saved credentials where applicable. Templates may push branches or open pull requests; administrator opt-in is required. No callback, approval or merge tool is provided. Build payload from list_templates; launches use STANDARD budget only. Use a fresh idempotencyKey for each distinct task and reuse it only for an identical retry. Follow workRequestId with wait_for_run and get_run.',
+      inputSchema: z
+        .object({
+          idempotencyKey: z.string().regex(/^[A-Za-z0-9._:~-]{8,128}$/),
+          label: z.string().max(200).optional(),
+          payload: z.record(z.string(), z.json()),
+          templateId: z.string().uuid(),
+        })
+        .strict(),
+      outputSchema: startTemplateRunOutput,
+      title: 'Start a template run',
+    },
+    async ({ templateId, idempotencyKey, ...body }): Promise<ToolResult> => {
+      try {
+        const response = await bridge.post(
+          app,
+          caller,
+          `/api/v1/workflow-templates/${templateId}/runs`,
+          { body, idempotencyKey }
+        );
+        if (response.status !== 200 && response.status !== 201) {
+          return writeFailure(response, 'Template not found or not launchable.');
+        }
+        const parsed = z
+          .object({
+            data: z.object({
+              deduplicated: z.boolean().optional(),
+              workRequestId: z.string().uuid(),
+            }),
+          })
+          .safeParse(response.body);
+        if (!parsed.success) {
+          return failure('The platform returned an unexpected response.');
+        }
+        return ok(
+          startTemplateRunOutput.parse({
+            status: parsed.data.data.deduplicated ? 'already_submitted' : 'started',
+            workRequestId: parsed.data.data.workRequestId,
+          })
+        );
+      } catch (err) {
+        app.log.error({ err, tool: 'start_template_run' }, 'mcp: a tool failed');
+        return failureFor(500);
+      }
+    }
+  );
 
   server.registerTool(
     'start_agent_run',

@@ -1,5 +1,73 @@
 import { describe, expect, it } from 'vitest';
-import { projectRunOutcome, restRun, runOutput } from './projections.js';
+import {
+  projectRunOutcome,
+  restRun,
+  restTemplates,
+  runOutput,
+  templatesOutput,
+} from './projections.js';
+
+describe('reduced template contracts', () => {
+  const template = (inputSchema: unknown) => ({
+    activeVersion: 1,
+    author: 'SECRET',
+    description: `A\u200b description\n${'x'.repeat(600)}`,
+    id: '33333333-3333-4333-8333-333333333333',
+    inputSchema,
+    name: 'A\u202e template',
+    spec: { prompt: 'SECRET' },
+    status: 'ACTIVE',
+  });
+  it('retains only the input contract, sanitizes text and drops defaults and extensions', () => {
+    const { data } = restTemplates.parse({
+      data: [
+        template({
+          nodes: 'SECRET',
+          properties: {
+            repos: { items: { format: 'uuid', secret: 'SECRET', type: 'string' }, type: 'array' },
+            topic: {
+              default: 'SECRET',
+              description: `Topic\n${'y'.repeat(400)}`,
+              enum: ['a', 'b'],
+              prompt: 'SECRET',
+              type: 'string',
+            },
+          },
+          required: ['topic'],
+          type: 'object',
+        }),
+      ],
+    });
+    const output = templatesOutput.parse({ templates: data });
+    expect(output.templates[0]?.inputSchema).toEqual({
+      properties: {
+        repos: { items: { format: 'uuid', type: 'string' }, type: 'array' },
+        topic: { description: `Topic ${'y'.repeat(274)}`, enum: ['a', 'b'], type: 'string' },
+      },
+      required: ['topic'],
+      type: 'object',
+    });
+    expect(output.templates[0]?.name).toBe('A template');
+    expect(output.templates[0]?.description).toHaveLength(500);
+    expect(JSON.stringify(output)).not.toContain('SECRET');
+    expect(JSON.stringify(output)).not.toContain('activeVersion');
+  });
+  it.each([
+    null,
+    { properties: { bad: { type: 'secret' } }, type: 'object' },
+    { properties: { bad: { enum: ['a\u200bb'], type: 'string' } }, type: 'object' },
+  ])('fails closed on absent or unsupported contracts: %j', (schema) => {
+    expect(restTemplates.parse({ data: [template(schema)] }).data[0]?.inputSchema).toBeNull();
+  });
+  it('retains an empty contract and an empty catalog', () => {
+    expect(
+      restTemplates.parse({ data: [template({ properties: {}, type: 'object' })] }).data[0]
+        ?.inputSchema
+    ).toEqual({ properties: {}, type: 'object' });
+    expect(restTemplates.parse({ data: [] })).toEqual({ data: [] });
+    expect(restTemplates.safeParse({ data: [{ id: 'bad' }] }).success).toBe(false);
+  });
+});
 
 const body = (result: unknown = null, error: string | null = null, status = 'SUCCESS') =>
   restRun.parse({

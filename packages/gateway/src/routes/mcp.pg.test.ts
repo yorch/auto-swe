@@ -289,6 +289,7 @@ describe.skipIf(!enabled)('MCP endpoint against Postgres', () => {
       'list_pending_human_steps',
       'list_repositories',
       'list_runs',
+      'list_templates',
       'list_work_requests',
       'wait_for_run',
     ]);
