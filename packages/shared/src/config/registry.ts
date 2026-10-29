@@ -472,6 +472,7 @@ export const SETTING_DEFINITIONS = {
     restartRequired: false,
     runPinned: false,
     schema: trackerIssueRepositoryList,
+    sensitive: true,
   }),
   'github.userCredentialHosts': defineSetting({
     defaultValue: ['github.com'],
