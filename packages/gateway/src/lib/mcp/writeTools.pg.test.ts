@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { invalidateSettingsCache } from '@auto-swe/shared/config';
 import { prisma } from '@auto-swe/shared/db';
+import { AGENT_RUN_TEMPLATE_NAME, AGENT_RUN_TEMPLATE_ORIGIN } from '@auto-swe/shared/lib/agentRun';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import rateLimit from '@fastify/rate-limit';
 import {
@@ -15,6 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { z } from 'zod';
 import authPlugin, { invalidateUserAuthCache, ipRateLimitKey } from '../../plugins/auth.js';
 import prismaPlugin from '../../plugins/prisma.js';
+import { agentRunRoutes } from '../../routes/agentRuns.js';
 import { mcpRoutes } from '../../routes/mcp.js';
 import { workflowRunRoutes } from '../../routes/workflowRuns.js';
 import { workRequestRoutes } from '../../routes/workRequests.js';
@@ -274,7 +276,6 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
   const clearRuns = async () => {
     const wfs = {
       repoId: { in: [ids.repo, ids.poorRepo] },
-      temporalWorkflowId: { startsWith: 'eng-' },
     };
     await prisma.workflowRun.deleteMany({
       where: { workflowId: { startsWith: `eng-acme${MARK}` } },
@@ -290,8 +291,23 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
   async function fixtures() {
     await runUnscoped(
       'test fixture: tenants',
-      ['Team', 'TeamMembership', 'Connection', 'WorkflowTemplate', 'ConnectionTeamShare'],
+      ['Team', 'TeamMembership', 'Connection', 'WorkflowTemplate', 'ConnectionTeamShare', 'Agent'],
       async () => {
+        await prisma.agent.create({ data: { key: MARK, name: MARK, scope: 'GLOBAL' } });
+        const existing = await prisma.workflowTemplate.findFirst({
+          where: { name: AGENT_RUN_TEMPLATE_NAME, origin: AGENT_RUN_TEMPLATE_ORIGIN, teamId: null },
+        });
+        if (!existing) {
+          const template = await prisma.workflowTemplate.create({
+            data: {
+              activeVersion: 1,
+              name: AGENT_RUN_TEMPLATE_NAME,
+              origin: AGENT_RUN_TEMPLATE_ORIGIN,
+              status: 'ACTIVE',
+            },
+          });
+          ids.agentTemplate = template.id;
+        }
         for (const [key, budget] of [
           ['', null],
           ['poor', 100],
@@ -387,6 +403,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
         'WorkflowTemplate',
         'ConfigSetting',
         'ConnectionTeamShare',
+        'Agent',
       ],
       async () => {
         const repos = {
@@ -405,6 +422,10 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
           where: { organization: { slug: { startsWith: MARK } } },
         });
         await prisma.workflowTemplate.deleteMany({ where: { name: { startsWith: MARK } } });
+        if (ids.agentTemplate) {
+          await prisma.workflowTemplate.delete({ where: { id: ids.agentTemplate } });
+        }
+        await prisma.agent.deleteMany({ where: { key: MARK } });
         await prisma.teamMembership.deleteMany({ where: { team: { slug: { startsWith: MARK } } } });
         await prisma.connectionTeamShare.deleteMany({
           where: { team: { slug: { startsWith: MARK } } },
@@ -462,6 +483,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
         }
         cancelled.push(id);
       },
+      isWorkflowGone: async () => false,
       startRunnableWorkflow: async (
         id: string,
         input: { request: { launchedById?: string; budgetTier?: string } }
@@ -489,6 +511,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
     });
     await app.register(mcpRoutes, options);
     await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
+    await app.register(agentRunRoutes, { prefix: '/api/v1/agent-runs' });
     await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
     await app.ready();
     await fixtures();
@@ -528,7 +551,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       expect(await toolNames(people.alice.token)).toEqual(
         expect.arrayContaining(['cancel_run', 'submit_work_request'])
       );
-      expect(await toolNames(people.alice.readToken as string)).toHaveLength(5);
+      expect(await toolNames(people.alice.readToken as string)).toHaveLength(7);
     });
 
     it('answers a read token that calls a write tool with 403 insufficient_scope for mcp:write', async () => {
@@ -553,7 +576,7 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
     it('a fresh deployment with no write setting exposes no write tool and refuses mcp:write consent', async () => {
       // Only `mcp.enabled`: every other mcp.* key is absent, so the registry defaults apply.
       await setSettings({ 'mcp.enabled': true });
-      expect(await toolNames(people.alice.token)).toHaveLength(5);
+      expect(await toolNames(people.alice.token)).toHaveLength(7);
       const clientId = await registerClient();
       const challenge = b64url(crypto.createHash('sha256').update('v'.repeat(43)).digest());
       const refused = await call(
@@ -711,6 +734,64 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       });
       expect((rows[0].afterJson as { inputDigest: string }).inputDigest).toMatch(/^[0-9a-f]{64}$/);
       expect(JSON.stringify(rows[0])).not.toContain(SECRET_TEXT);
+    });
+  });
+
+  describe('start_agent_run', () => {
+    const args = () => ({
+      agent: MARK,
+      deliver: 'none',
+      idempotencyKey: crypto.randomUUID(),
+      prompt: SECRET_TEXT,
+      repoId: ids.repo,
+    });
+
+    it('caps parallel bridged launches and replays the accepted key at the cap', async () => {
+      await settingsOn({ 'mcp.maxConcurrentRuns': 1 });
+      startDelayMs = 40;
+      const inputs = Array.from({ length: 6 }, args);
+      const results = await Promise.all(
+        inputs.map((input) => callTool(people.alice.token, 'start_agent_run', input))
+      );
+      const accepted = results.findIndex((r) => r.result.structuredContent?.status === 'started');
+      expect(accepted).toBeGreaterThanOrEqual(0);
+      expect(results.filter((r) => r.result.structuredContent?.status === 'started')).toHaveLength(
+        1
+      );
+      for (const refused of results.filter((r) => r.result.isError)) {
+        expect(refused.result.content[0].text).toContain('maximum number of runs');
+      }
+      expect(started).toHaveLength(1);
+      expect(await inFlight(people.alice.id)).toBe(1);
+      const replay = await callTool(
+        people.alice.token,
+        'start_agent_run',
+        inputs[accepted] as Record<string, unknown>
+      );
+      expect(replay.result.structuredContent).toMatchObject({
+        status: 'already_submitted',
+        workRequestId: results[accepted]?.result.structuredContent.workRequestId,
+      });
+      expect(started).toHaveLength(1);
+      expect(JSON.stringify(results.map((r) => r.result))).not.toContain(SECRET_TEXT);
+    });
+
+    it('deduplicates parallel same-key launches through the real bridge', async () => {
+      await settingsOn({ 'mcp.maxConcurrentRuns': 1 });
+      startDelayMs = 150;
+      const input = args();
+      const results = await Promise.all(
+        Array.from({ length: 4 }, () => callTool(people.alice.token, 'start_agent_run', input))
+      );
+      expect(results.filter((r) => r.result.structuredContent?.status === 'started')).toHaveLength(
+        1
+      );
+      expect(
+        results.filter((r) => r.result.structuredContent?.status === 'already_submitted')
+      ).toHaveLength(3);
+      expect(new Set(results.map((r) => r.result.structuredContent.workRequestId)).size).toBe(1);
+      expect(started).toHaveLength(1);
+      expect(await inFlight(people.alice.id)).toBe(1);
     });
   });
 

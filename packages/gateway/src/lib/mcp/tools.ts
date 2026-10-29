@@ -278,22 +278,24 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
             if (!summary) {
               return failure('The platform returned an unexpected response.');
             }
-            const human = await get('/api/v1/human-steps', query({ runId: id }));
-            signal.throwIfAborted();
-            if (human.status !== 200) {
-              return failureFor(human.status);
-            }
-            const parsed = restHumanSteps.safeParse(human.body);
-            if (!parsed.success) {
-              return failure('The platform returned an unexpected response.');
-            }
-            const step = parsed.data.data.find((s) => s.runId === id);
-            if (step) {
-              pendingHumanStep = {
-                id: step.id,
-                inboxUrl: `${origin}/approvals`,
-                title: step.title,
-              };
+            if (!['SUCCESS', 'FAILED', 'CANCELLED', 'TIMED_OUT'].includes(summary.status)) {
+              const human = await get('/api/v1/human-steps', query({ runId: id }));
+              signal.throwIfAborted();
+              if (human.status !== 200) {
+                return failureFor(human.status);
+              }
+              const parsed = restHumanSteps.safeParse(human.body);
+              if (!parsed.success) {
+                return failure('The platform returned an unexpected response.');
+              }
+              const step = parsed.data.data.find((s) => s.runId === id);
+              if (step) {
+                pendingHumanStep = {
+                  id: step.id,
+                  inboxUrl: `${origin}/approvals`,
+                  title: step.title,
+                };
+              }
             }
           }
           const status = summary?.status ?? null;

@@ -427,17 +427,23 @@ describe('the read tools', () => {
     expect(json.result.structuredContent).toMatchObject({ changed: true, status: 'SUCCESS' });
   });
 
-  it('returns immediately for a terminal run', async () => {
-    const s = await setup();
-    const detail = runDetail();
-    detail.data.status = 'SUCCESS';
-    const original = s.bridge.get.bind(s.bridge);
-    vi.spyOn(s.bridge, 'get').mockImplementation(async (...args) =>
-      args[2].endsWith(RUN_ID) ? { body: detail, status: 200 } : original(...args)
-    );
-    const { json } = await s.callTool('wait_for_run', { runId: RUN_ID });
-    expect(json.result.structuredContent).toMatchObject({ changed: false, status: 'SUCCESS' });
-  });
+  it.each(['SUCCESS', 'FAILED', 'CANCELLED', 'TIMED_OUT'])(
+    'returns immediately for a %s run without reading human steps',
+    async (status) => {
+      const s = await setup();
+      const detail = runDetail();
+      detail.data.status = status;
+      const get = vi.spyOn(s.bridge, 'get').mockResolvedValue({ body: detail, status: 200 });
+      const { json } = await s.callTool('wait_for_run', { runId: RUN_ID });
+      expect(json.result.structuredContent).toMatchObject({
+        changed: false,
+        pendingHumanStep: null,
+        status,
+      });
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(get.mock.calls[0]?.[2]).toBe(`/api/v1/workflow-runs/${RUN_ID}`);
+    }
+  );
 
   it('returns a pending human step without relaying its context', async () => {
     const s = await setup();
