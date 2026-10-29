@@ -35,7 +35,6 @@ import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
-import { runTrailer, syncToOwnPush } from '../lib/ownBranchSync.js';
 import {
   type CrossRepoStepOptions,
   checkoutUpstreamRepos,
@@ -65,7 +64,7 @@ import {
   testRunCommand,
   unrunnableTestCause,
 } from './utils.js';
-import { createWorkspace } from './workspace.js';
+import { createWorkspace, fetchBranchesSubcommand, shellQuote } from './workspace.js';
 
 /**
  * Render the stored Figma design summary (a `FigmaDesignSummary[]` written by
@@ -192,10 +191,11 @@ export async function executeImplementation(
     // `branch` from defaultBranch HEAD — so a retry would rebuild the change
     // from scratch and then have its push rejected as non-fast-forward. Sync to
     // whatever a previous attempt pushed, exactly as the fix sessions do.
-    // Only a branch this run pushed is adopted: a branch whose tip another run made (a ticket's
-    // earlier pull request) fails the run, non-retryably, and is left as it is.
     if (currentAttempt() > 1) {
-      if (!(await syncToOwnPush(workspace, branch, request.workRequestId))) {
+      try {
+        await workspace.gitAuthed(fetchBranchesSubcommand([branch]));
+        await workspace.exec(`git reset --hard origin/${shellQuote(branch)}`);
+      } catch {
         // Nothing pushed yet — the previous attempt failed before its push.
         heartbeat('retry: remote branch not found, starting from clone HEAD');
       }
@@ -429,12 +429,7 @@ export async function executeImplementation(
     // the pushed branch the agent may have had nothing left to change, and an
     // empty `git commit` exits non-zero. A guarded step also checks the committed
     // range here, before the push.
-    // The trailer names this run, so a retry can tell its own push from anyone else's.
-    const pushSha = await commitStaged(
-      workspace,
-      `${commitSummary}\n\n${runTrailer(request.workRequestId)}`,
-      pathGuard
-    );
+    const pushSha = await commitStaged(workspace, commitSummary, pathGuard);
     // Never push on behalf of a run that has already been cancelled.
     throwIfActivityCancelled();
     await workspace.gitAuthed(`push origin ${pushRefspec(branch, pushSha)}`);

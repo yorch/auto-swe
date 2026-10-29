@@ -419,8 +419,9 @@ expires. A round stops starting automations after ten minutes and resumes where 
   `<BRANCH_PREFIX>/<ticket>-<status digest>`, for example `auto/PAY-12-3fa2c1d9`, where the digest is
   eight hex digits of the lower-cased status name (the same digest ends the run's workflow id). It
   is decided once, when the run starts, and carried in the run (`branchName` on the request,
-  `workBranch` on the run input), so every step and a re-run use it. One ticket's runs therefore never share a
-  branch or a pull request. Every other run, including a new-issue run, works on
+  `workBranch` on the run input), so every step and a re-run use it. A run for one status therefore never shares a
+  branch or a pull request with a run for another; a re-run of the same pair, like any re-run,
+  continues on that pair's branch. Every other run, including a new-issue run, works on
   `<BRANCH_PREFIX>/<ticket>`.
 - **At most 50 issues a poll,** in key order (by project, then issue number). The rest wait for the
   next poll.
@@ -657,9 +658,7 @@ recorded as `FAILED_TO_START` with its code.
 - **Runs on one ticket do not share a branch,** so they cannot overwrite each other, but they can
   overlap in time. The in-flight check covers the runs in the last 14 days that the automation
   ledger holds; a manual launch, a transition-hook run, or a run older than that is not in it. A
-  retried implementation step builds only on a branch whose tip commit it made itself (the commit
-  carries the run's `Auto-SWE-Run` trailer); on a branch that exists with a tip from anywhere else it
-  stops, non-retryably, and pushes nothing.
+  re-run of the same (ticket, status) pair, like any re-run, continues on that pair's branch.
 - **A new-issue and a status-change automation on one ticket.** The in-flight check counts both, so
   they do not run on it at the same time. Each keeps its own subject, so a ticket the new-issue
   automation started can still be started by the status-change automation once that run has ended
