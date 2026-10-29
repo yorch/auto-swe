@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { Alert } from '@/components/ui/Alert';
 import { Card } from '@/components/ui/Card';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
@@ -23,7 +24,10 @@ export function PullRequestOutcomesCard({
   range: DateRange;
   windowDays: number;
 }) {
-  const { data, error, isError, isFetching, isLoading, refetch } = usePullRequestOutcomes(range);
+  const [repoId, setRepoId] = useState('');
+  const all = usePullRequestOutcomes(range);
+  const filtered = usePullRequestOutcomes(range, repoId || undefined);
+  const { data, error, isError, isFetching, isLoading, refetch } = repoId ? filtered : all;
   const noun = `vs previous ${windowDays} days`;
 
   return (
@@ -44,7 +48,15 @@ export function PullRequestOutcomesCard({
         rows={2}
         shape="cards"
       >
-        {data && <Outcomes data={data} noun={noun} />}
+        {data && (
+          <Outcomes
+            data={data}
+            noun={noun}
+            onRepositoryChange={setRepoId}
+            repositories={all.data?.byRepository ?? data.byRepository}
+            repositoryId={repoId}
+          />
+        )}
       </QueryBoundary>
     </Card>
   );
@@ -53,9 +65,15 @@ export function PullRequestOutcomesCard({
 function Outcomes({
   data,
   noun,
+  onRepositoryChange,
+  repositories,
+  repositoryId,
 }: {
   data: NonNullable<ReturnType<typeof usePullRequestOutcomes>['data']>;
   noun: string;
+  onRepositoryChange: (repositoryId: string) => void;
+  repositories: NonNullable<ReturnType<typeof usePullRequestOutcomes>['data']>['byRepository'];
+  repositoryId: string;
 }) {
   const { current, previous } = data;
   const resolved = current.merged + current.closedUnmerged;
@@ -132,6 +150,78 @@ function Outcomes({
           value={current.opened}
         />
       </div>
+
+      {repositories.length > 0 && (
+        <label className="flex items-center gap-2 text-sm text-paper-400">
+          Repository
+          <select
+            className="rounded border border-ink-600 bg-ink-800 px-2 py-1 text-paper-100"
+            onChange={(event) => onRepositoryChange(event.target.value)}
+            value={repositoryId}
+          >
+            <option value="">All repositories</option>
+            {repositories.map(({ repository }) => (
+              <option key={repository.id} value={repository.id}>
+                {repository.org}/{repository.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
+      {data.byTemplate.length > 0 && (
+        <div>
+          <h3 className="mb-2 text-sm font-medium text-paper-400">Top templates by PRs opened</h3>
+          <div className="-mx-4">
+            <Table className="max-sm:px-4" stacked>
+              <THead>
+                <Th className="px-4" variant="compact">
+                  Template
+                </Th>
+                <Th align="right" className="px-4" variant="compact">
+                  Opened
+                </Th>
+                <Th align="right" className="px-4" variant="compact">
+                  Merged
+                </Th>
+                <Th align="right" className="px-4" variant="compact">
+                  Closed unmerged
+                </Th>
+                <Th align="right" className="px-4" variant="compact">
+                  Merge rate
+                </Th>
+                <Th align="right" className="px-4" variant="compact">
+                  Median time to merge
+                </Th>
+              </THead>
+              <tbody>
+                {data.byTemplate.slice(0, 5).map((template) => (
+                  <TRow key={template.templateId ?? 'unattributed'}>
+                    <Td className="px-4 py-2.5 font-medium text-paper-100" primary>
+                      {template.templateName}
+                    </Td>
+                    <Td className="px-4 py-2 text-right tabular-nums" label="Opened">
+                      {template.opened}
+                    </Td>
+                    <Td className="px-4 py-2 text-right tabular-nums" label="Merged">
+                      {template.merged}
+                    </Td>
+                    <Td className="px-4 py-2 text-right tabular-nums" label="Closed unmerged">
+                      {template.closedUnmerged}
+                    </Td>
+                    <Td className="px-4 py-2 text-right tabular-nums" label="Merge rate">
+                      {formatPercent(template.mergeRate)}
+                    </Td>
+                    <Td className="px-4 py-2 text-right tabular-nums" label="Median time to merge">
+                      {formatDuration(template.medianTimeToMergeMs)}
+                    </Td>
+                  </TRow>
+                ))}
+              </tbody>
+            </Table>
+          </div>
+        </div>
+      )}
 
       {data.byRepository.length > 0 && (
         <div>

@@ -38,6 +38,7 @@ const OutcomesQuery = refineCustomRange(
     repoId: z.string().uuid().optional(),
     scope: z.enum(['MINE', 'TEAM']).default('TEAM'),
     teamId: z.string().uuid().optional(),
+    templateId: z.string().uuid().optional(),
     window: z.coerce.number().int().min(1).max(365).default(30),
   })
 );
@@ -53,6 +54,7 @@ const OutcomesExportQuery = refineCustomRange(
     repoId: z.string().uuid().optional(),
     scope: z.enum(['MINE', 'TEAM']).default('TEAM'),
     teamId: z.string().uuid().optional(),
+    templateId: z.string().uuid().optional(),
     window: z.coerce.number().int().min(1).max(365).default(30),
   })
 );
@@ -71,6 +73,8 @@ const OUTCOMES_EXPORT_COLUMNS = [
   'merged_at',
   'closed_at',
   'time_to_merge_ms',
+  'template_id',
+  'template_name',
 ] as const;
 
 /**
@@ -252,21 +256,49 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           isDraft: true,
           mergedAt: true,
           openedAt: true,
+          repoId: true,
           repository: { select: { id: true, organizationName: true, repoName: true } },
           status: true,
+          workflow: { select: { repoId: true, temporalWorkflowId: true } },
         },
         take: OUTCOMES_ROW_CAP + 1,
         where: { AND: filters },
       });
       const capped = rows.length > OUTCOMES_ROW_CAP;
       const kept = rows.slice(0, OUTCOMES_ROW_CAP);
+      const workflowIds = kept.flatMap((r) =>
+        r.workflow?.temporalWorkflowId ? [r.workflow.temporalWorkflowId] : []
+      );
+      const runs = workflowIds.length
+        ? await fastify.prisma.workflowRun.findMany({
+            select: { template: { select: { name: true } }, templateId: true, workflowId: true },
+            where: {
+              AND: [
+                buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+                { workflowId: { in: workflowIds } },
+              ],
+            },
+          })
+        : [];
+      const runByWorkflowId = new Map(runs.map((r) => [r.workflowId, r]));
+      const templateOf = (r: (typeof kept)[number]) => {
+        if (!r.workflow || r.workflow.repoId !== r.repoId) {
+          return null;
+        }
+        const run = runByWorkflowId.get(r.workflow.temporalWorkflowId);
+        return run ? { templateId: run.templateId, templateName: run.template.name } : null;
+      };
       // Newest first, so a capped read loses the previous window before this one. The extra row
       // fetched past the cap is the first one lost: this window is cut only if it is in this window.
       const firstLost = rows[OUTCOMES_ROW_CAP]?.openedAt;
       const isTruncated = capped && firstLost !== undefined && firstLost >= start;
 
-      const current = kept.filter((r) => r.openedAt >= start);
-      const previous = kept.filter((r) => r.openedAt < start);
+      const currentAll = kept.filter((r) => r.openedAt >= start);
+      const previousAll = kept.filter((r) => r.openedAt < start);
+      const matchesTemplate = (r: (typeof kept)[number]) =>
+        !request.query.templateId || templateOf(r)?.templateId === request.query.templateId;
+      const current = currentAll.filter(matchesTemplate);
+      const previous = previousAll.filter(matchesTemplate);
 
       const byRepo = new Map<
         string,
@@ -295,9 +327,39 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           },
           summary: summarizePullRequestOutcomes(repoRows),
         }));
+      const byTemplateGroups = new Map<
+        string,
+        { templateId: string | null; templateName: string; rows: typeof current }
+      >();
+      for (const row of current) {
+        const template = templateOf(row);
+        const templateId = template?.templateId ?? null;
+        const key = templateId ?? '';
+        const group = byTemplateGroups.get(key) ?? {
+          rows: [],
+          templateId,
+          templateName: template?.templateName ?? 'Unattributed',
+        };
+        group.rows.push(row);
+        byTemplateGroups.set(key, group);
+      }
+      const byTemplate = [...byTemplateGroups.values()]
+        .map(({ rows: templateRows, ...template }) => {
+          const summary = summarizePullRequestOutcomes(templateRows);
+          return {
+            ...template,
+            closedUnmerged: summary.closedUnmerged,
+            medianTimeToMergeMs: summary.timeToMergeMs.p50,
+            merged: summary.merged,
+            mergeRate: summary.mergeRate,
+            opened: summary.opened,
+          };
+        })
+        .sort((a, b) => b.opened - a.opened);
 
       const data: PullRequestOutcomesResponse = {
         byRepository,
+        byTemplate,
         current: summarizePullRequestOutcomes(current),
         isTruncated,
         previous: capped ? null : summarizePullRequestOutcomes(previous),
@@ -323,6 +385,20 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
       const where: Prisma.PullRequestWhereInput = {
         AND: outcomesFilters(user, request.repoAccessGate, request.query, start, end),
       };
+      if (request.query.templateId) {
+        const templateRuns = await fastify.prisma.workflowRun.findMany({
+          select: { workflowId: true },
+          where: {
+            AND: [
+              buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+              { templateId: request.query.templateId },
+            ],
+          },
+        });
+        (where.AND as Prisma.PullRequestWhereInput[]).push({
+          workflow: { temporalWorkflowId: { in: templateRuns.map((r) => r.workflowId) } },
+        });
+      }
       const { format } = request.query;
       const select = {
         ciStatus: true,
@@ -332,8 +408,10 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         mergedAt: true,
         openedAt: true,
         prNumber: true,
+        repoId: true,
         repository: { select: { organizationName: true, repoName: true } },
         status: true,
+        workflow: { select: { repoId: true, temporalWorkflowId: true } },
       } satisfies Prisma.PullRequestSelect;
       const readBatch = (cursor: string | undefined) =>
         fastify.prisma.pullRequest.findMany({
@@ -344,21 +422,48 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           where,
         });
       type Batch = Awaited<ReturnType<typeof readBatch>>;
-      const cells = (r: Batch[number]) => [
-        r.id,
-        r.repository?.organizationName ?? null,
-        r.repository?.repoName ?? null,
-        r.prNumber,
-        r.status,
-        r.isDraft,
-        r.ciStatus,
-        r.openedAt.toISOString(),
-        r.mergedAt?.toISOString() ?? null,
-        r.closedAt?.toISOString() ?? null,
-        r.mergedAt ? r.mergedAt.getTime() - r.openedAt.getTime() : null,
-      ];
-      const encode = (r: Batch[number]) => {
-        const values = cells(r);
+      const runsFor = (rows: Batch) => {
+        const ids = rows.flatMap((r) =>
+          r.workflow?.temporalWorkflowId ? [r.workflow.temporalWorkflowId] : []
+        );
+        return ids.length
+          ? fastify.prisma.workflowRun.findMany({
+              select: { template: { select: { name: true } }, templateId: true, workflowId: true },
+              where: {
+                AND: [
+                  buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+                  { workflowId: { in: ids } },
+                ],
+              },
+            })
+          : Promise.resolve([]);
+      };
+      const cells = (
+        r: Batch[number],
+        runByWorkflow: Map<string, { templateId: string; template: { name: string } }>
+      ) => {
+        const run =
+          r.workflow && r.workflow.repoId === r.repoId
+            ? runByWorkflow.get(r.workflow.temporalWorkflowId)
+            : undefined;
+        return [
+          r.id,
+          r.repository?.organizationName ?? null,
+          r.repository?.repoName ?? null,
+          r.prNumber,
+          r.status,
+          r.isDraft,
+          r.ciStatus,
+          r.openedAt.toISOString(),
+          r.mergedAt?.toISOString() ?? null,
+          r.closedAt?.toISOString() ?? null,
+          r.mergedAt ? r.mergedAt.getTime() - r.openedAt.getTime() : null,
+          run?.templateId ?? null,
+          run?.template.name ?? null,
+        ];
+      };
+      const encode = (r: Batch[number], runs: Awaited<ReturnType<typeof runsFor>>) => {
+        const values = cells(r, new Map(runs.map((run) => [run.workflowId, run])));
         return format === 'csv'
           ? csvRow(values)
           : `${JSON.stringify(Object.fromEntries(OUTCOMES_EXPORT_COLUMNS.map((c, i) => [c, values[i]])))}\n`;
@@ -370,21 +475,24 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
         fastify.prisma.pullRequest.count({ where }),
         readBatch(undefined),
       ]);
+      const firstRuns = await runsFor(firstBatch);
       async function* lines() {
         if (format === 'csv') {
           yield csvRow(OUTCOMES_EXPORT_COLUMNS);
         }
         let rows = firstBatch;
+        let runRows = firstRuns;
         let written = 0;
         while (rows.length > 0) {
           // Never write past the cap, even when it does not fall on a batch boundary.
           const batch = rows.slice(0, OUTCOMES_EXPORT_MAX_ROWS - written);
-          yield batch.map(encode).join('');
+          yield batch.map((row) => encode(row, runRows)).join('');
           written += batch.length;
           if (rows.length < OUTCOMES_EXPORT_BATCH || written >= OUTCOMES_EXPORT_MAX_ROWS) {
             return;
           }
           rows = await readBatch(rows[rows.length - 1]?.id);
+          runRows = await runsFor(rows);
         }
       }
       return reply

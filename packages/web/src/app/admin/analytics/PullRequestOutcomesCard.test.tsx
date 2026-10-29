@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import type { PullRequestOutcomesResponse } from '@auto-swe/shared/types/api';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupFetchMock, withQuery } from '@/test/rtl-helpers';
 import { PullRequestOutcomesCard } from './PullRequestOutcomesCard';
@@ -24,6 +24,17 @@ const response = (
   over: Partial<PullRequestOutcomesResponse> = {}
 ): PullRequestOutcomesResponse => ({
   byRepository: [{ repository: { id: 'r1', name: 'api', org: 'acme' }, summary: summary() }],
+  byTemplate: [
+    {
+      closedUnmerged: 1,
+      medianTimeToMergeMs: 3_600_000,
+      merged: 3,
+      mergeRate: 0.75,
+      opened: 6,
+      templateId: 'template-1',
+      templateName: 'Build',
+    },
+  ],
   current: summary(),
   isTruncated: false,
   previous: summary({ merged: 2, mergeRate: 0.5, opened: 4 }),
@@ -48,11 +59,25 @@ describe('PullRequestOutcomesCard', () => {
     // 0.5 -> 0.75 is +25 percentage points.
     expect(screen.getByText(/\+25\.0 pts vs previous 30 days/)).toBeTruthy();
     expect(screen.getByText('Time to merge, median')).toBeTruthy();
-    expect(screen.getByText('1h')).toBeTruthy();
-    expect(screen.getByText('2h')).toBeTruthy();
+    expect(screen.getAllByText('1h').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('2h').length).toBeGreaterThan(0);
     expect(screen.getByText('2 still open')).toBeTruthy();
-    expect(screen.getByText('acme/api')).toBeTruthy();
+    expect(screen.getAllByText('acme/api').length).toBeGreaterThan(0);
+    expect(screen.getByText('Top templates by PRs opened')).toBeTruthy();
+    expect(screen.getByText('Build')).toBeTruthy();
+    expect(screen.getByRole('combobox', { name: 'Repository' })).toBeTruthy();
     expect(String(spy.mock.calls[0]?.[0])).toContain('/api/v1/pull-requests/outcomes?window=30');
+  });
+
+  it('filters outcomes by repository', async () => {
+    const spy = renderCard(response());
+    await screen.findByText('Build');
+    fireEvent.change(screen.getByRole('combobox', { name: 'Repository' }), {
+      target: { value: 'r1' },
+    });
+    await waitFor(() => {
+      expect(spy.mock.calls.some(([input]) => String(input).includes('repoId=r1'))).toBe(true);
+    });
   });
 
   it('sends a custom range as since and until', async () => {

@@ -258,15 +258,19 @@ export function useGlobalAnalytics(range: DateRange = { days: 30, kind: 'preset'
 }
 
 /** Delivery outcomes of the pull requests opened in the window (`/admin/analytics`). */
-export function usePullRequestOutcomes(range: DateRange = { days: 30, kind: 'preset' }) {
+export function usePullRequestOutcomes(
+  range: DateRange = { days: 30, kind: 'preset' },
+  repoId?: string
+) {
+  const query = { ...rangeQuery(range), ...(repoId ? { repoId } : {}) };
   return useQuery({
     queryFn: () =>
       api
         .get<{ data: PullRequestOutcomesResponse }>(
-          `/api/v1/pull-requests/outcomes?${new URLSearchParams(rangeQuery(range))}`
+          `/api/v1/pull-requests/outcomes?${new URLSearchParams(query)}`
         )
         .then((r) => r.data),
-    queryKey: ['pull-request-outcomes', rangeKey(range)],
+    queryKey: ['pull-request-outcomes', rangeKey(range), repoId ?? null],
     refetchInterval: 30_000,
   });
 }

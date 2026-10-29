@@ -34,8 +34,10 @@ function pr(openedAt: Date, over: Record<string, unknown> = {}) {
     isDraft: false,
     mergedAt: null,
     openedAt,
+    repoId: UUID_A,
     repository: repo(1),
     status: 'OPEN',
+    workflow: null,
     ...over,
   };
 }
@@ -53,6 +55,7 @@ async function buildApp(role: Role = 'ADMIN') {
   const prisma = {
     pullRequest: { findMany: vi.fn().mockResolvedValue([]) },
     teamMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
+    workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
   };
   app.decorate('prisma', prisma as unknown as never);
   app.decorate('auth', {
@@ -109,6 +112,36 @@ describe('GET /api/v1/pull-requests/outcomes', () => {
     const { data } = (await get(b)).json();
     expect(data.current.opened).toBe(1);
     expect(data.previous.opened).toBe(1);
+  });
+
+  it('attributes PRs by workflow run and filters the cohort by template', async () => {
+    const b = await buildApp();
+    b.prisma.pullRequest.findMany.mockResolvedValue([
+      inCurrent(0, {
+        mergedAt: new Date(WINDOW_START.getTime() + DAY_MS + 3_600_000),
+        repoId: UUID_A,
+        status: 'MERGED',
+        workflow: { repoId: UUID_A, temporalWorkflowId: 'temporal-1' },
+      }),
+      inCurrent(1000, { status: 'OPEN', workflow: null }),
+    ]);
+    b.prisma.workflowRun.findMany.mockResolvedValue([
+      { template: { name: 'Build' }, templateId: UUID_B, workflowId: 'temporal-1' },
+    ]);
+    const { data } = (await get(b, `?templateId=${UUID_B}`)).json();
+    expect(data.current.opened).toBe(1);
+    expect(data.byTemplate).toEqual([
+      {
+        closedUnmerged: 0,
+        medianTimeToMergeMs: 3_600_000,
+        merged: 1,
+        mergeRate: 1,
+        opened: 1,
+        templateId: UUID_B,
+        templateName: 'Build',
+      },
+    ]);
+    expect(b.prisma.workflowRun.findMany).toHaveBeenCalled();
   });
 
   it('bounds openedAt to [previousStart, end) and adds no repository filter for an admin', async () => {
