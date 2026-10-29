@@ -244,7 +244,19 @@ export function tokenize(query: string): string[] {
 const VOWELS = /[aeiou]/;
 
 /** Words the suffix rules would damage: they are their own singular, or end like a plural. */
-const UNSTEMMED = new Set(['series', 'species', 'news', 'does', 'goes']);
+const UNSTEMMED = new Set([
+  'series',
+  'species',
+  'news',
+  'does',
+  'goes',
+  'https',
+  // Possessive pronouns that end like a plural but are not the plural of `your` or `their`.
+  'yours',
+  'theirs',
+  // A verb form (`this rests on`), not a plural of the API term `REST`.
+  'rests',
+]);
 
 /** Words ending -ed that are not a past tense (`embed`, not `emb` + `ed`). */
 const NOT_PAST_TENSE = new Set(['embed', 'hundred', 'indeed', 'naked', 'sacred', 'shred']);
@@ -370,8 +382,8 @@ function undouble(s: string): string {
   return doubled && !'lsz'.includes(last) ? s.slice(0, -1) : s;
 }
 
-/** Every run of letters in `text`, with its position. */
-function words(text: string): { start: number; end: number; word: string }[] {
+/** Every run of letters in `text`, with its position. Exported for the docs vocabulary test. */
+export function words(text: string): { start: number; end: number; word: string }[] {
   return [...text.matchAll(/[A-Za-z]+/g)].map((m) => ({
     end: m.index + m[0].length,
     start: m.index,

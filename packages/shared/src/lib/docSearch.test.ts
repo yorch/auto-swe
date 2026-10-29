@@ -1,4 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { fileURLToPath } from 'node:url';
+import { beforeAll, describe, expect, it } from 'vitest';
+import { buildDocSearchIndexFromDir } from './docFiles.js';
 import {
   buildSearchIndex,
   countMatchingTerms,
@@ -11,6 +13,7 @@ import {
   searchDocs,
   stemForms,
   tokenize,
+  words,
 } from './docSearch.js';
 import { extractToc } from './docToc.js';
 
@@ -518,6 +521,11 @@ describe('stem equality, not stem prefix', () => {
     expect(sameStem('based', 'bash')).toBe(false);
     expect(sameStem('cases', 'cascade')).toBe(false);
     expect(sameStem('uses', 'user')).toBe(false);
+    // `https` is a protocol name, not the plural of `http`.
+    expect(sameStem('https', 'http')).toBe(false);
+    // Possessive pronouns are not the plurals of `your` and `their`.
+    expect(sameStem('yours', 'your')).toBe(false);
+    expect(sameStem('theirs', 'their')).toBe(false);
   });
 
   it('finds nothing for speed, although spend and specific start the same way', () => {
@@ -557,5 +565,176 @@ describe('countMatchingTerms', () => {
   it('counts the query terms a text holds, by substring or stem', () => {
     expect(countMatchingTerms('Opens the pull request', 'pull requests zebra')).toBe(2);
     expect(countMatchingTerms('nothing here', 'pull')).toBe(0);
+  });
+});
+
+/** A stemmer with docSearch's `stemForms` signature, so the check can be run on other rules. */
+type Stemmer = (word: string) => string[];
+
+/**
+ * Function words and protocol names that a plural `s` strip must never merge with a base. A
+ * plural of one of these is a different word (`theirs`, `yours`, `https`), not an inflection.
+ */
+const WATCH_BASES: ReadonlySet<string> = new Set([
+  'our',
+  'your',
+  'their',
+  'her',
+  'his',
+  'len',
+  'rest',
+  'http',
+]);
+
+/**
+ * The merges this test reviews. Two distinct words that one stem covers, where the longer is the
+ * shorter with `s` or `es` added, and the shorter is either vowelless (`http`, `jwt`, `sync`) or
+ * in `WATCH_BASES`. Keys are `short/long`. Deterministic over the given vocabulary.
+ *
+ * Limits, stated so nothing reads as more than it is: a false merge whose base is neither
+ * vowelless nor in `WATCH_BASES` is not flagged; missed inflections (`api`/`apis`, `gpu`/`gpus`,
+ * `id`/`ids`, `pr`/`prs`: the stemmer does not join them) are not covered by this test at all.
+ */
+function flaggedMerges(vocabulary: string[], stem: Stemmer): Set<string> {
+  const groups = new Map<string, string[]>();
+  for (const word of new Set(vocabulary)) {
+    for (const form of new Set(stem(word))) {
+      groups.set(form, [...(groups.get(form) ?? []), word]);
+    }
+  }
+  const flagged = new Set<string>();
+  for (const group of groups.values()) {
+    for (const short of group) {
+      for (const long of group) {
+        const plural = long === `${short}s` || long === `${short}es`;
+        if (plural && (!/[aeiou]/.test(short) || WATCH_BASES.has(short))) {
+          flagged.add(`${short}/${long}`);
+        }
+      }
+    }
+  }
+  return flagged;
+}
+
+/**
+ * Compares the flagged merges with the reviewed list. `unreviewed` must be empty: a flagged merge
+ * nobody has reviewed. `stale` lists reviewed pairs the stemmer no longer merges. Staleness is
+ * judged by the stemmer alone, so rewording a sentence in the docs does not fail the test.
+ */
+function mergeReport(
+  flagged: Set<string>,
+  reviewed: Readonly<Record<string, string>>,
+  stem: Stemmer
+): { unreviewed: string[]; stale: string[] } {
+  const merges = (key: string) => {
+    const [short = '', long = ''] = key.split('/');
+    const forms = new Set(stem(short));
+    return stem(long).some((form) => forms.has(form));
+  };
+  return {
+    stale: Object.keys(reviewed)
+      .filter((key) => !merges(key))
+      .sort(),
+    unreviewed: [...flagged].filter((key) => !(key in reviewed)).sort(),
+  };
+}
+
+/**
+ * Flagged merges a reviewer has checked and accepted as benign, each with its own reason. An
+ * entry is stale, and fails the test, once the stemmer no longer merges its two words.
+ */
+const REVIEWED_COLLISIONS: Readonly<Record<string, string>> = {
+  'ghe/ghes':
+    'GHES and GHE both name GitHub Enterprise Server in the docs (GHE 14 times, GHES once, in pr-feedback.md); the rule does not flag it, and the stemmer merges it',
+  'jwt/jwts':
+    'JWTs: the plural of the acronym JWT (JSON Web Token), as in "sends session-bridge JWTs"',
+  'prd/prds':
+    'PRDs: the plural of the abbreviation PRD (product requirements document), as in "PRD runs"',
+  'sync/syncs':
+    'syncs: the third-person verb form of sync ("syncs the tracker"), not a noun plural',
+};
+
+/** The distinct words of the served docs' titles and sections, split as the index splits them. */
+async function docsVocabulary(): Promise<string[]> {
+  const index = await buildDocSearchIndexFromDir(
+    fileURLToPath(new URL('../../../../docs', import.meta.url))
+  );
+  const vocabulary = new Set<string>();
+  const add = (text: string) => {
+    for (const { word } of words(text)) {
+      vocabulary.add(word.toLowerCase());
+    }
+  };
+  for (const doc of index.docs) {
+    add(doc.title);
+  }
+  for (const section of index.sections) {
+    add(section.text);
+    add(section.heading ?? '');
+  }
+  return [...vocabulary].sort();
+}
+
+describe('docs vocabulary plural merges', () => {
+  let vocabulary: string[] = [];
+  // Building the index parses every served doc. Under parallel load that outruns the 5 s default.
+  beforeAll(async () => {
+    vocabulary = await docsVocabulary();
+  }, 120_000);
+
+  it('reads the served docs and their words', () => {
+    expect(vocabulary.length).toBeGreaterThan(1000);
+    expect(vocabulary).toContain('approval');
+  });
+
+  it('flags no vowelless or watch-set plural merge the reviewed list does not cover', () => {
+    const flagged = flaggedMerges(vocabulary, stemForms);
+    const { unreviewed, stale } = mergeReport(flagged, REVIEWED_COLLISIONS, stemForms);
+    expect(
+      unreviewed,
+      'docs words merge a vowelless or watch-set word with its plural, not in REVIEWED_COLLISIONS: ' +
+        `${unreviewed.join(', ')}. Either add a reviewed entry with a specific reason, or fix the ` +
+        'stemmer lists in docSearch.ts if the pair is not a plural.'
+    ).toEqual([]);
+    expect(
+      stale,
+      `REVIEWED_COLLISIONS entries the stemmer no longer merges: ${stale.join(', ')}. Remove them.`
+    ).toEqual([]);
+  });
+
+  it('reports a merge the pre-fix stemmer made, and suppresses it only when reviewed', () => {
+    // Before `https` was listed as unstemmed, the plural rule gave it the stem of `http`.
+    const preFix: Stemmer = (word) => (word === 'https' ? ['http'] : stemForms(word));
+    const flagged = flaggedMerges(['http', 'https'], preFix);
+    expect(flagged).toEqual(new Set(['http/https']));
+    expect(mergeReport(flagged, {}, preFix)).toEqual({
+      stale: [],
+      unreviewed: ['http/https'],
+    });
+    expect(mergeReport(flagged, { 'http/https': 'reviewed' }, preFix)).toEqual({
+      stale: [],
+      unreviewed: [],
+    });
+  });
+
+  it('flags a watch-set word and a vowelless word, but not an ordinary plural', () => {
+    expect(flaggedMerges(['our', 'ours'], stemForms)).toEqual(new Set(['our/ours']));
+    expect(flaggedMerges(['sync', 'syncs'], stemForms)).toEqual(new Set(['sync/syncs']));
+    expect(flaggedMerges(['agent', 'agents', 'engine', 'engines'], stemForms).size).toBe(0);
+  });
+
+  it('reports a reviewed pair as stale once the stemmer no longer merges it', () => {
+    // A stemmer that merges nothing: the reviewed pair no longer merges, so its entry is stale.
+    const noMerges: Stemmer = (word) => [word];
+    const flagged = flaggedMerges(['http', 'https'], stemForms);
+    expect(mergeReport(flagged, { 'http/https': 'reviewed' }, noMerges)).toEqual({
+      stale: ['http/https'],
+      unreviewed: [],
+    });
+    // The same entry is not stale while the stemmer merges the pair, even if the docs lack it.
+    expect(mergeReport(new Set(), { 'our/ours': 'reviewed' }, stemForms)).toEqual({
+      stale: [],
+      unreviewed: [],
+    });
   });
 });
