@@ -43,10 +43,10 @@
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@types/nodemailer": "8.0.2",
     "@opentelemetry/sdk-trace-node": "2.11.0",
     "@temporalio/proto": "1.24.0",
     "@temporalio/testing": "1.24.0",
+    "@types/nodemailer": "8.0.2",
     "tsx": "4.23.15",
     "typescript": "7.0.2"
   }
