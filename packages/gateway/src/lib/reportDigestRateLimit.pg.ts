@@ -37,8 +37,10 @@ describe.skipIf(!enabled)('report digest send-test rate limit against Postgres',
 
   afterAll(async () => {
     if (subscriptionId) {
-      await unscoped(() =>
-        prisma.reportDigestSubscription.deleteMany({ where: { id: subscriptionId } })
+      await runUnscoped(
+        'the report digest rate-limit test removes only its unique subscription fixture',
+        ['ReportDigestSubscription'],
+        () => prisma.reportDigestSubscription.deleteMany({ where: { id: subscriptionId } })
       );
     }
     if (orgId) {
