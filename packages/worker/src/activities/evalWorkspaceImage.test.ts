@@ -14,6 +14,10 @@ describe('evalWorkspaceImageFor', () => {
     }
   });
 
+  it('runs a JVM case on an image that carries Maven and the JDK 21 major', () => {
+    expect(evalWorkspaceImageFor('jvm')).toMatch(/^maven:3\.9-eclipse-temurin-21@sha256:/);
+  });
+
   it('refuses a stack outside the set rather than scoring it on the node image', () => {
     for (const bad of ['ruby', '', 'toString', '__proto__', 'constructor']) {
       expect(() => evalWorkspaceImageFor(bad), bad).toThrow(/Unknown eval case stack/);

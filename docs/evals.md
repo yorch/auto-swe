@@ -214,12 +214,15 @@ verdict's `summary.runtimes` lists the runtimes each side ran on across the comp
 **Cases run in a pinned image.** A case is scored, and its reference screened and re-validated,
 in a pinned image, not the operator's configured workspace image, so a score stays comparable with
 its history; moving an image re-baselines every score on it and calls for a re-screen. The image
-follows the case's `stack` (`node`, `python`, `jvm` or `go`; set when the dataset is created): `node`,
-and a case with no stack, run in `EVAL_WORKSPACE_IMAGE`; the others run in a digest-pinned upstream
-toolchain base chosen in `evalWorkspaceImageFor`. A case names a stack, never an image, and a stack
-outside that set fails the case instead of falling back to node. Those bases carry the language
-toolchain only: a JVM case brings its own Maven or Gradle wrapper, a Python case installs what its
-golden test needs, and an image without `git` gets one installed when the workspace starts.
+follows the case's `stack` (`node`, `python`, `jvm` or `go`; set when the dataset is created and
+changed afterwards on the dataset page or with `PATCH /evals/:id/cases/:caseId`): `node`, and a case
+with no stack, run in `EVAL_WORKSPACE_IMAGE`; the others run in a digest-pinned upstream toolchain
+base chosen in `evalWorkspaceImageFor`. A case names a stack, never an image, and a stack outside
+that set fails the case instead of falling back to node. Those bases carry the language toolchain
+only: the JVM base also carries Maven (on the JDK 21 major), a Gradle case brings its own wrapper, a
+Python case installs what its golden test needs, and an image without `git` gets one installed when
+the workspace starts. Changing a case's stack resets its stability check, since the case now runs in
+a different environment, and starts the dataset's screen.
 
 **Infrastructure errors throw rather than scoring zero.** A Docker, model, agent, or MCP failure
 marks the `EvalRun` `FAILED`; it never records a false `0` that would poison the regression verdict
@@ -373,10 +376,10 @@ verdicts into trends per template, model, and prompt version.
 
 ## 8. Limitations
 
-- **A case's stack is set through the API only.** `stack` is accepted on a case when a dataset is
-  created; the dashboard has no field for it and a stored case's stack cannot be edited, so changing
-  one means recreating the case. The `gate` scorer is unaffected: it runs on the repository's own
-  executor image.
+- **A case's stack is set at creation through the API only.** `stack` is accepted on a case when a
+  dataset is created, through the dataset create API; the dashboard cannot add a case. A stored
+  case's stack can be changed from the dataset page and by the case route, which resets that case's
+  stability check. The `gate` scorer is unaffected: it runs on the repository's own executor image.
 - **Historical replay is not built.** Replaying real production tickets against their original
   repository states would need snapshot infrastructure the platform does not have. The regression
   gate rests on the frozen benchmark plus online scoring and canary instead.

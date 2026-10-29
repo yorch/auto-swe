@@ -13,13 +13,22 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination } from '@/components/ui/Pagination';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
-import { useEvalDataset, useEvalRuns, useRescreenEvalCases } from '@/hooks/useAdmin';
+import { Select } from '@/components/ui/Select';
+import {
+  useEvalDataset,
+  useEvalRuns,
+  useRescreenEvalCases,
+  useUpdateEvalCaseStack,
+} from '@/hooks/useAdmin';
 import { formatArm } from '@/lib/evalRuntime';
 import { validateRouteParam } from '@/lib/routeParams';
 import { formatDate, formatRelativeTime } from '@/lib/utils';
 
 const RUNS_LIMIT = 20;
 const CASES_PAGE_SIZE = 25;
+const STACKS = ['node', 'python', 'jvm', 'go'] as const;
+type Stack = (typeof STACKS)[number];
+const STACK_OPTIONS = STACKS.map((s) => ({ label: s, value: s }));
 
 export default function EvalDatasetPage({ params }: { params: Promise<{ id: string }> }) {
   const id = validateRouteParam(use(params).id);
@@ -31,6 +40,9 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
   // The re-check awaiting confirmation: one case, or (no caseId) the whole dataset.
   const [confirmRescreen, setConfirmRescreen] = useState<{ caseId?: string } | null>(null);
   const [rescreenNote, setRescreenNote] = useState<string | null>(null);
+  const updateStack = useUpdateEvalCaseStack(id ?? '');
+  // The stack change awaiting confirmation; it re-screens the case.
+  const [confirmStack, setConfirmStack] = useState<{ caseId: string; stack: Stack } | null>(null);
   const ds = dataset.data;
   const runRows = runs.data?.data ?? [];
   const runsTotal = runs.data?.meta.total ?? 0;
@@ -229,6 +241,29 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
                       id: 'goldenTest',
                     },
                     {
+                      cell: (c) => (
+                        <Select
+                          aria-label={`Stack of case ${c.id}`}
+                          compact
+                          onChange={(value) => {
+                            const stack = STACKS.find((s) => s === value);
+                            if (stack && stack !== (c.stack ?? 'node')) {
+                              setConfirmStack({ caseId: c.id, stack });
+                            }
+                          }}
+                          options={STACK_OPTIONS}
+                          value={c.stack ?? 'node'}
+                        />
+                      ),
+                      header: (
+                        <span title="The toolchain image the case's golden test runs in. A case with no stack runs on Node.">
+                          Stack
+                        </span>
+                      ),
+                      id: 'stack',
+                      label: 'Stack',
+                    },
+                    {
                       cell: (c) =>
                         c.tags.length ? (
                           <span className="flex flex-wrap gap-1">
@@ -318,6 +353,20 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
               }}
               open={confirmRescreen !== null}
               title={confirmRescreen?.caseId ? 'Re-check this case?' : 'Re-check every case?'}
+            />
+            <ConfirmModal
+              confirmLabel="Change stack"
+              message={`This case moves to the ${confirmStack?.stack} environment and goes back to "Not checked yet", so it is checked again there. Until that check passes, benchmark runs do not score it, and scores recorded on its previous stack are not comparable with later ones.`}
+              onClose={() => setConfirmStack(null)}
+              onConfirm={async () => {
+                if (!confirmStack) {
+                  return;
+                }
+                await updateStack.mutateAsync(confirmStack);
+                setRescreenNote('Stack changed; the case is checked again on the new stack.');
+              }}
+              open={confirmStack !== null}
+              title="Change this case's stack?"
             />
           </>
         )}

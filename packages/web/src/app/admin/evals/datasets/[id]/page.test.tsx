@@ -150,6 +150,71 @@ describe('EvalDatasetPage', () => {
     ).toBe(true);
   });
 
+  it('shows each case stack (node when unset) and changes one after confirmation', async () => {
+    const base = {
+      baselineSha: 'abcdef1234567890',
+      createdAt: '2026-09-01T00:00:00.000Z',
+      datasetId: DS_ID,
+      flakeRuns: 5,
+      flakeScreened: true,
+      goldenTest: 'yarn test',
+      input: {},
+      reference: null,
+      tags: [],
+    };
+    const spy = setupFetchMock({
+      [`GET /api/v1/platform/evals/${DS_ID}`]: () => ({
+        data: {
+          caseCount: 2,
+          cases: [
+            { ...base, id: 'case-1', repoUrl: 'https://github.com/acme/api', stack: null },
+            { ...base, id: 'case-2', repoUrl: 'https://github.com/acme/svc', stack: 'python' },
+          ],
+          createdAt: '2026-09-01T00:00:00.000Z',
+          description: null,
+          id: DS_ID,
+          name: 'Stack bench',
+          scope: 'GLOBAL',
+          slug: 'stack-bench',
+        },
+      }),
+      [`PATCH /api/v1/platform/evals/${DS_ID}/cases/case-1`]: () => ({
+        data: { ...base, id: 'case-1', stack: 'jvm' },
+      }),
+      'GET /api/v1/platform/evals/runs': () => ({
+        data: [],
+        meta: { limit: 20, offset: 0, total: 0 },
+      }),
+    });
+    render(withQuery(<EvalDatasetPage params={resolvedParams({ id: DS_ID })} />));
+
+    const unset = await screen.findByRole('button', { name: /Stack of case case-1/ });
+    expect(unset.textContent).toContain('node');
+    expect(screen.getByRole('button', { name: /Stack of case case-2/ }).textContent).toContain(
+      'python'
+    );
+
+    fireEvent.click(unset);
+    fireEvent.click(screen.getByRole('option', { name: 'jvm' }));
+    expect(await screen.findByText("Change this case's stack?")).toBeTruthy();
+    expect(
+      screen.getByText(/moves to the jvm environment and goes back to "Not checked yet"/)
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Change stack' }));
+
+    expect(
+      await screen.findByText('Stack changed; the case is checked again on the new stack.')
+    ).toBeTruthy();
+    const bodies = spy.mock.calls
+      .filter(
+        ([u, init]) =>
+          String(u).endsWith(`/evals/${DS_ID}/cases/case-1`) &&
+          (init as RequestInit | undefined)?.method === 'PATCH'
+      )
+      .map(([, init]) => JSON.parse(String((init as RequestInit).body)));
+    expect(bodies).toEqual([{ stack: 'jvm' }]);
+  });
+
   it('pages through a long case list and names the CLI command when there are no runs', async () => {
     const cases = Array.from({ length: 30 }, (_, i) => ({
       baselineSha: 'abcdef1234567890',
