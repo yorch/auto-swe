@@ -199,6 +199,48 @@ describe('report digest routes', () => {
     await app.close();
   });
 
+  it('re-adds one recipient while preserving other opted-out recipients', async () => {
+    const { app, prisma } = await buildApp('ADMIN');
+    prisma.reportDigestSubscription.findUnique.mockResolvedValue({
+      emailRecipients: ['digest@example.test', 'other@example.test'],
+      id: SUBSCRIPTION,
+      optedOutEmails: ['digest@example.test', 'other@example.test'],
+      orgId: ORG_A,
+      scope: 'ORGANIZATION',
+      slackChannelId: null,
+      teamId: null,
+    });
+
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'PATCH',
+      payload: {
+        confirmOptedOutReadd: ['digest@example.test'],
+        emailRecipients: ['digest@example.test', 'other@example.test'],
+      },
+      url: `/api/v1/report-digests/${SUBSCRIPTION}`,
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(prisma.reportDigestSubscription.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          emailRecipients: ['digest@example.test', 'other@example.test'],
+          optedOutEmails: { set: ['other@example.test'] },
+        }),
+      })
+    );
+    expect(prisma.configAuditLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          afterJson: { readdedRecipients: ['digest@example.test'] },
+          beforeJson: { optedOutRecipients: ['digest@example.test'] },
+        }),
+      })
+    );
+    await app.close();
+  });
+
   it('allows an org admin to create an org digest only for their own organization', async () => {
     const { app, prisma } = await buildApp('ENGINEER', { orgIds: [ORG_A] });
     const own = await app.inject({

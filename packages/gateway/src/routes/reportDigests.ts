@@ -414,25 +414,40 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
         return reply.status(409).send({ error: 'A scope can have at most 5 digest subscriptions' });
       }
       const optedOut = new Set(existing.optedOutEmails.map((email) => email.trim().toLowerCase()));
-      const readdedRecipients = (request.body.emailRecipients ?? [])
-        .map((email) => email.trim().toLowerCase())
-        .filter((email) => optedOut.has(email));
-      const readded = new Set(readdedRecipients);
+      const existingRecipients = new Set(
+        existing.emailRecipients.map((email) => email.trim().toLowerCase())
+      );
+      const requestedRecipients = new Set(
+        checked.emailRecipients.map((email) => email.trim().toLowerCase())
+      );
       const { confirmOptedOutReadd, ...patchBody } = request.body;
       const confirmations = new Set(
         (confirmOptedOutReadd ?? []).map((email) => email.trim().toLowerCase())
       );
-      if (readdedRecipients.some((email) => !confirmations.has(email))) {
+      const readdedRecipients = [...confirmations].filter(
+        (email) => optedOut.has(email) && requestedRecipients.has(email)
+      );
+      const readded = new Set(readdedRecipients);
+      const newlyAddedOptedOutRecipients = checked.emailRecipients
+        .map((email) => email.trim().toLowerCase())
+        .filter((email) => optedOut.has(email) && !existingRecipients.has(email));
+      const invalidConfirmations = [...confirmations].filter(
+        (email) => !optedOut.has(email) || !requestedRecipients.has(email)
+      );
+      const unconfirmedRecipients = newlyAddedOptedOutRecipients.filter(
+        (email) => !confirmations.has(email)
+      );
+      if (unconfirmedRecipients.length > 0 || invalidConfirmations.length > 0) {
         return reply.status(400).send({
           error: 'Confirm each opted-out address before re-adding it',
-          optedOutAddresses: readdedRecipients,
+          optedOutAddresses: [...unconfirmedRecipients, ...invalidConfirmations],
         });
       }
       const updated = await fastify.prisma.$transaction(async (tx) => {
         const result = await tx.reportDigestSubscription.update({
           data: {
             ...patchBody,
-            ...(request.body.emailRecipients !== undefined
+            ...(request.body.emailRecipients !== undefined || readdedRecipients.length > 0
               ? {
                   optedOutEmails: {
                     set: existing.optedOutEmails.filter(
