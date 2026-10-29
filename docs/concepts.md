@@ -200,7 +200,8 @@ Guided paths build on those pieces:
 - **The workflow editor** explains each node type in the inspector and the palette, and its
   **Check workflow** button reports the structural and expression-syntax check that runs as you
   edit and also asks the server for the checks a save would run, including whether the agents and
-  MCP connections it names exist. It never runs the workflow, and when the server check cannot run
+  MCP connections it names exist and, for a saved template, whether the version being edited is
+  still the newest. It never runs the workflow, and when the server check cannot run
   it says so and shows the editor result only. The palette shows a node's help in one shared panel
   instead of a tab stop per node.
 - **A run's page** opens with a plain-language verdict derived from the run's recorded status,
