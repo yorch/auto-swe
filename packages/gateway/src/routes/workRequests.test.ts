@@ -223,6 +223,7 @@ describe('POST /api/v1/work-requests', () => {
       startReembedMemory: async () => {},
       startReembedStaleMemory: async () => true,
       startRepoDependencyInference: async () => {},
+      startRepoDependencyScan: async () => {},
       startRunnableWorkflow: async (id: string) => {
         startedWorkflowIds.push(id);
       },
