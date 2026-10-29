@@ -30,13 +30,30 @@ describe('isCredentialEnvName', () => {
       'DB_PASS',
       'DB_PWD',
       'PAT',
+      'PASS',
+      'PWD',
+      'GPG_PASSPHRASE',
+      'DEPLOY_KEY',
+      'DEPLOYKEY',
+      'SIGNING_KEY',
+      'SIGNINGKEY',
     ]) {
       expect(isCredentialEnvName(name), name).toBe(true);
     }
   });
 
   it('matches PAT, PASS and PWD only as whole words', () => {
-    for (const name of ['PASSIVE_MODE', 'PATH', 'COMPASS_DIR', 'SPATH', 'PATHS', 'KEYBOARD']) {
+    for (const name of [
+      'PASSIVE_MODE',
+      'PATH',
+      'COMPASS_DIR',
+      'SPATH',
+      'PATHS',
+      'KEYBOARD',
+      'OLDPWD',
+      'BYPASS',
+      'PATCH',
+    ]) {
       expect(isCredentialEnvName(name), name).toBe(false);
     }
   });
@@ -194,6 +211,55 @@ describe('assertNoCredentialEnvPairs', () => {
       'CMD=curl https://host/x?a=b',
     ]) {
       expect(() => assertNoCredentialEnvPairs([pair], 'test'), pair).not.toThrow();
+    }
+  });
+
+  it('accepts the JSON a container step carries as its input', () => {
+    for (const value of [
+      '{"url":"http://host:8080","email":"a@b.com"}',
+      '{"api":"http://svc:9000","tags":["@a"]}',
+      '{"s":"http://localhost:3000?x=1@2"}',
+    ]) {
+      const pair = `CONTAINER_STEP_INPUT=${value}`;
+      expect(() => assertNoCredentialEnvPairs([pair], 'test'), value).not.toThrow();
+    }
+  });
+
+  it('accepts a URL whose query or fragment carries an at sign', () => {
+    for (const pair of [
+      'X=http://host:8080?a@b',
+      'X=http://host:8080#a@b',
+      'X=http://[::1]:8080/',
+    ]) {
+      expect(() => assertNoCredentialEnvPairs([pair], 'test'), pair).not.toThrow();
+    }
+  });
+
+  it('refuses userinfo with an empty user or password, or a percent-encoded one', () => {
+    for (const pair of [
+      'X=postgres://u:p@h/db',
+      'X=http://u:@h',
+      'X=http://:p@h',
+      'X=https://u:p%40q@h',
+    ]) {
+      expect(() => assertNoCredentialEnvPairs([pair], 'test'), pair).toThrow(
+        'value carries URL credentials'
+      );
+    }
+  });
+
+  it('judges adversarial values in linear time', () => {
+    const size = 200_000;
+    for (const body of [
+      'a://'.repeat(size / 4),
+      'a:'.repeat(size / 2),
+      '@'.repeat(size),
+      '"a://b:c'.repeat(size / 8),
+      'a'.repeat(size),
+    ]) {
+      const started = Date.now();
+      expect(() => assertNoCredentialEnvPairs([`X=${body}`], 'test')).not.toThrow();
+      expect(Date.now() - started).toBeLessThan(500);
     }
   });
 

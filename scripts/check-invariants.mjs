@@ -662,8 +662,8 @@ function checkComposeProfilesAreAdded() {
 const CREDENTIAL_NAME = new RegExp(
   [
     /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|AUTH|CREDENTIAL|NPMRC|YARNRC/,
-    /(?:PRIVATE|ACCESS|SSH)_?KEY|BEARER|COOKIE/,
-    /(?:^|_)(?:PAT|PASS|PWD)(?![A-Za-z])/,
+    /(?:PRIVATE|ACCESS|SSH|DEPLOY|SIGNING)_?KEY|BEARER|COOKIE|PASSPHRASE/,
+    /(?<![A-Za-z0-9])(?:PAT|PASS|PWD)(?![A-Za-z])/,
   ]
     .map((re) => re.source)
     .join('|'),

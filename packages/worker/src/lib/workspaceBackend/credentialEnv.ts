@@ -14,8 +14,8 @@
 const CREDENTIAL_NAME = new RegExp(
   [
     /TOKEN|SECRET|PASSWORD|PASSWD|API_?KEY|AUTH|CREDENTIAL|NPMRC|YARNRC/,
-    /(?:PRIVATE|ACCESS|SSH)_?KEY|BEARER|COOKIE/,
-    /(?:^|_)(?:PAT|PASS|PWD)(?![A-Za-z])/,
+    /(?:PRIVATE|ACCESS|SSH|DEPLOY|SIGNING)_?KEY|BEARER|COOKIE|PASSPHRASE/,
+    /(?<![A-Za-z0-9])(?:PAT|PASS|PWD)(?![A-Za-z])/,
   ]
     .map((re) => re.source)
     .join('|'),
@@ -42,10 +42,15 @@ export function isCredentialEnvName(name: string): boolean {
 
 /**
  * URL userinfo in a value (`scheme://user:pass@host`), e.g. `HTTPS_PROXY=http://u:p@host`.
- * The lookbehind keeps the scan linear: without it, a long value without `://` is rescanned
- * from every letter.
+ * The user and password are limited to RFC 3986 userinfo characters, so JSON, query strings and
+ * paths (`"`, `/`, `?`, `#`, `[`, whitespace) end the match. The lookbehind keeps the scan
+ * linear: without it, a long value without `://` is rescanned from every letter.
  */
-const URL_USERINFO = /(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\/\/[^/\s:@]+:[^/\s@]+@/i;
+const USERINFO_CHARS = "[A-Za-z0-9\\-._~%!$&'()*+,;=]";
+const URL_USERINFO = new RegExp(
+  `(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*:\\/\\/${USERINFO_CHARS}*:${USERINFO_CHARS}*@`,
+  'i'
+);
 
 /**
  * Throws when any `NAME=value` pair names a credential, or its value carries URL userinfo.

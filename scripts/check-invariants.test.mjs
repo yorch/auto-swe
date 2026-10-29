@@ -134,8 +134,58 @@ describe('envCredentialViolations', () => {
     ]) {
       expect(envCredentialViolations(wrap(env)), env).toHaveLength(1);
     }
-    const plain = wrap("env: ['PASSIVE_MODE=1', 'PATH=/x', 'COMPASS_DIR=/y']");
+    const plain = wrap(
+      "env: ['PASSIVE_MODE=1', 'PATH=/x', 'COMPASS_DIR=/y', 'OLDPWD=/z', 'BYPASS=1', 'PATCH=2']"
+    );
     expect(envCredentialViolations(plain)).toEqual([]);
+  });
+
+  it('reports a bare PAT, PASS or PWD at the start of a string literal', () => {
+    for (const env of [
+      "env: ['PAT=x']",
+      S('env: [`PWD=@{p}`]'),
+      "env: ['PASS=x']",
+      "env: ['GPG_PASSPHRASE=x']",
+      "env: ['DEPLOY_KEY=x']",
+      "env: ['SIGNING_KEY=x']",
+    ]) {
+      expect(envCredentialViolations(wrap(env)), env).toHaveLength(1);
+    }
+  });
+
+  it('does not report platform env names', () => {
+    const names = [
+      'NPM_CONFIG_USERCONFIG',
+      'NPM_CONFIG_REPLACE_REGISTRY_HOST',
+      'NPM_CONFIG_AUDIT',
+      'NPM_CONFIG_FUND',
+      'NPM_CONFIG_UPDATE_NOTIFIER',
+      'NPM_CONFIG_REGISTRY',
+      'YARN_NPM_REGISTRY_SERVER',
+      'COREPACK_NPM_REGISTRY',
+      'COREPACK_ENABLE_DOWNLOAD_PROMPT',
+      'YARN_NPM_ALWAYS_AUTH',
+      'AUTO_SWE_EXEC_ID',
+      'ANTHROPIC_BASE_URL',
+      'CLAUDE_CODE_MAX_RETRIES',
+      'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC',
+      'CLAUDE_CODE_ENTRYPOINT',
+      'CLAUDE_CODE_MAX_OUTPUT_TOKENS',
+      'HOME',
+      'SHELL',
+      'DISABLE_AUTOUPDATER',
+      'DISABLE_TELEMETRY',
+      'GIT_AUTHOR_NAME',
+      'GIT_AUTHOR_EMAIL',
+      'CONTAINER_STEP_INPUT',
+      'PATH',
+      'LANG',
+      'TERM',
+    ];
+    // YARN_NPM_ALWAYS_AUTH is an exact-name exception at run time only; the source rule has none.
+    for (const name of names.filter((n) => n !== 'YARN_NPM_ALWAYS_AUTH')) {
+      expect(envCredentialViolations(wrap(`env: ['${name}=x']`)), name).toEqual([]);
+    }
   });
 
   it('does not treat a comparison or another property as an env assignment', () => {
