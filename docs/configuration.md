@@ -52,7 +52,8 @@ The assistant's tools in the worker call the gateway at `API_INTERNAL_URL` (defa
 server reads for its own fetches.
 
 The `mcp` group holds the switches and bounds of the MCP server: `mcp.enabled`,
-`mcp.writeToolsEnabled`, `mcp.writeCallsPerMinute` and `mcp.maxConcurrentRuns`, all ADMIN-only and read
+`mcp.writeToolsEnabled`, `mcp.writeCallsPerMinute`, `mcp.maxConcurrentRuns`, and
+`mcp.agentRunAllowedDeliverModes` (default `['none', 'draft_pr']`), all ADMIN-only, GLOBAL-only and read
 per request, so they take effect within the settings cache's ~30 s with no restart; see
 [mcp-server.md](./mcp-server.md#settings).
 

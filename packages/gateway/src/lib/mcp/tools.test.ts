@@ -4,6 +4,7 @@ import rateLimit from '@fastify/rate-limit';
 import {
   CLIENT_CAPABILITIES_META_KEY,
   CLIENT_INFO_META_KEY,
+  type McpServer,
   PROTOCOL_VERSION_META_KEY,
 } from '@modelcontextprotocol/server';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -23,6 +24,7 @@ import {
 } from '../../test/mcpTokens.js';
 import { createMcpTokenVerifier } from '../mcpTokenVerifier.js';
 import { MCP_BRIDGE_HEADER, mcpBridgePlugin } from './bridge.js';
+import { registerReadTools } from './tools.js';
 
 vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -31,7 +33,7 @@ vi.mock('@auto-swe/shared/lib/repoAccessGate', async (importOriginal) => ({
 
 /**
  * The read tools through the real MCP route, the real bridge and the real `requireAuth`, with
- * stand-ins for the five REST routes that return what the real ones return: every field the real
+ * stand-ins for the REST routes that return what the real ones return: every field the real
  * route sends, including the ones a tool must never pass on.
  */
 
@@ -224,6 +226,17 @@ async function build(options: {
   const seen: Seen = { headers: [], ips: [], queries: [], urls: [] };
   const route = { body: undefined as unknown, status: 200 };
   const bodies: Record<string, () => unknown> = {
+    '/api/v1/agent-runs/agents': () => ({
+      data: [
+        {
+          description: 'A\u200b short\n description',
+          key: 'implementer',
+          name: 'Implementer',
+          systemPrompt: INJECTION,
+          version: 1,
+        },
+      ],
+    }),
     '/api/v1/human-steps': () => humanStepsBody,
     '/api/v1/repositories': () => repositoriesBody,
     '/api/v1/work-requests': () => workRequestsBody,
@@ -290,6 +303,10 @@ async function build(options: {
     );
   }
   await app.ready();
+  const bridge = app.mcpBridge;
+  if (!bridge) {
+    throw new Error('Bridge not registered');
+  }
 
   const token = await mintToken({ key: options.key });
   let seq = 0;
@@ -320,7 +337,7 @@ async function build(options: {
     });
     return { json: JSON.parse(res.body), res };
   }
-  return { app, callTool, deps, route, seen, token };
+  return { app, bridge, callTool, deps, route, seen, token };
 }
 
 describe('the read tools', () => {
@@ -336,7 +353,169 @@ describe('the read tools', () => {
     await Promise.all(apps.splice(0).map((a) => a.close()));
   });
 
-  it('lists exactly the five read tools, each read-only with a strict input', async () => {
+  it('lists only sanitised agent picker fields', async () => {
+    const { callTool } = await setup();
+    const { json } = await callTool('list_agents', { repoId: REPO_ID });
+    expect(json.result.structuredContent).toEqual({
+      agents: [
+        {
+          description: 'A short  description',
+          key: 'implementer',
+          name: 'Implementer',
+          version: 1,
+        },
+      ],
+    });
+    expect(JSON.stringify(json.result)).not.toContain(INJECTION);
+  });
+
+  it('reports an empty agent picker and refuses malformed picker data', async () => {
+    const s = await setup();
+    const get = vi.spyOn(s.bridge, 'get');
+    get.mockResolvedValue({ body: { data: [] }, status: 200 });
+    expect((await s.callTool('list_agents')).json.result.structuredContent).toEqual({ agents: [] });
+    get.mockResolvedValue({ body: { data: [{ key: INJECTION }] }, status: 200 });
+    const { json } = await s.callTool('list_agents');
+    expect(json.result.isError).toBe(true);
+    expect(JSON.stringify(json.result)).not.toContain(INJECTION);
+  });
+
+  it('stops waiting when its HTTP request aborts, without another bridged read', async () => {
+    const s = await setup();
+    const abort = new AbortController();
+    const get = vi.spyOn(s.bridge, 'get').mockImplementation(async () => {
+      abort.abort();
+      return { body: runDetail(), status: 200 };
+    });
+    const registerTool = vi.fn();
+    registerReadTools(
+      { registerTool } as unknown as McpServer,
+      {
+        app: s.app,
+        bridge: s.bridge,
+        dashboardOrigin: 'https://app.example.com',
+        getGitHubHosts: async () => ['github.com'],
+        serverVersion: '1.0.0',
+      },
+      { clientIp: '198.51.100.7', scopes: ['mcp:read'], token: s.token, userId: TEST_USER }
+    );
+    const wait = registerTool.mock.calls.find(([name]) => name === 'wait_for_run')?.[2];
+    const result = await wait(
+      { runId: RUN_ID, timeoutSeconds: 25 },
+      {
+        http: {
+          req: new Request('https://gateway.example.com/api/v1/mcp', { signal: abort.signal }),
+        },
+        mcpReq: { signal: new AbortController().signal },
+      }
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe('The request was cancelled.');
+    expect(get).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits until a run changes status', async () => {
+    const s = await setup();
+    let reads = 0;
+    vi.spyOn(s.bridge, 'get').mockImplementation(async (_app, _caller, path) => ({
+      body: path.endsWith(RUN_ID)
+        ? { data: { ...runDetail().data, status: reads++ ? 'SUCCESS' : 'RUNNING' } }
+        : { data: [] },
+      status: 200,
+    }));
+    const { json } = await s.callTool('wait_for_run', { runId: RUN_ID, timeoutSeconds: 4 });
+    expect(json.result.structuredContent).toMatchObject({ changed: true, status: 'SUCCESS' });
+  });
+
+  it.each(['SUCCESS', 'FAILED', 'CANCELLED', 'TIMED_OUT'])(
+    'returns immediately for a %s run without reading human steps',
+    async (status) => {
+      const s = await setup();
+      const detail = runDetail();
+      detail.data.status = status;
+      const get = vi.spyOn(s.bridge, 'get').mockResolvedValue({ body: detail, status: 200 });
+      const { json } = await s.callTool('wait_for_run', { runId: RUN_ID });
+      expect(json.result.structuredContent).toMatchObject({
+        changed: false,
+        pendingHumanStep: null,
+        status,
+      });
+      expect(get).toHaveBeenCalledTimes(1);
+      expect(get.mock.calls[0]?.[2]).toBe(`/api/v1/workflow-runs/${RUN_ID}`);
+    }
+  );
+
+  it('returns a pending human step without relaying its context', async () => {
+    const s = await setup();
+    const { json } = await s.callTool('wait_for_run', { runId: RUN_ID });
+    expect(json.result.structuredContent.pendingHumanStep).toMatchObject({
+      inboxUrl: 'https://app.example.com/approvals',
+      title: 'Approve the plan',
+    });
+    expectNoLeak(json.result);
+  });
+
+  it('times out while a submitted work request has no run row', async () => {
+    const s = await setup();
+    s.route.body = { data: [], meta: { limit: 1, offset: 0, total: 0 } };
+    const { json } = await s.callTool('wait_for_run', { timeoutSeconds: 0, workRequestId: WR_ID });
+    expect(json.result.structuredContent).toEqual({ changed: false, pendingHumanStep: null });
+  });
+
+  it('times out unchanged on a running run without a human step', async () => {
+    const s = await setup();
+    vi.spyOn(s.bridge, 'get').mockImplementation(async (_app, _caller, path) => ({
+      body: path.endsWith(RUN_ID) ? runDetail() : { data: [] },
+      status: 200,
+    }));
+    const { json } = await s.callTool('wait_for_run', { runId: RUN_ID, timeoutSeconds: 0 });
+    expect(json.result.structuredContent).toMatchObject({
+      changed: false,
+      pendingHumanStep: null,
+      status: 'RUNNING',
+    });
+  });
+
+  it('waits for a submitted work request to acquire its run', async () => {
+    const s = await setup();
+    let lists = 0;
+    vi.spyOn(s.bridge, 'get').mockImplementation(async (_app, _caller, path) => ({
+      body: path.endsWith(RUN_ID)
+        ? runDetail()
+        : path.endsWith('workflow-runs')
+          ? { data: lists++ ? [runSummary] : [], meta: { limit: 1, offset: 0, total: 1 } }
+          : { data: [] },
+      status: 200,
+    }));
+    const { json } = await s.callTool('wait_for_run', { timeoutSeconds: 4, workRequestId: WR_ID });
+    expect(json.result.structuredContent).toMatchObject({
+      changed: true,
+      id: RUN_ID,
+      status: 'RUNNING',
+    });
+  });
+
+  it('never relays a poll refusal or malformed response', async () => {
+    const s = await setup();
+    const get = vi.spyOn(s.bridge, 'get');
+    for (const status of [404, 429, 500, 200]) {
+      get.mockResolvedValue({ body: { error: { message: INJECTION } }, status });
+      const { json } = await s.callTool('wait_for_run', { runId: RUN_ID, timeoutSeconds: 0 });
+      expect(json.result.isError).toBe(true);
+      expect(JSON.stringify(json.result)).not.toContain(INJECTION);
+    }
+  });
+
+  it('requires exactly one run identity for a wait', async () => {
+    const s = await setup();
+    for (const args of [{}, { runId: RUN_ID, workRequestId: WR_ID }]) {
+      const { json } = await s.callTool('wait_for_run', args);
+      expect(json.result?.isError || json.error).toBeTruthy();
+    }
+    expect(s.seen.urls).toEqual([]);
+  });
+
+  it('lists exactly the seven read tools, each read-only with a strict input', async () => {
     const { app, token } = await setup();
     const res = await app.inject({
       headers: {
@@ -386,9 +565,12 @@ describe('the read tools', () => {
         input: ['runId'],
         name: 'get_run',
         output: [
+          'branch',
           'costUsdAccrued',
           'dashboardUrl',
+          'diffStat',
           'endedAt',
+          'failure',
           'id',
           'result',
           'startedAt',
@@ -399,6 +581,13 @@ describe('the read tools', () => {
           'tokensOutputTotal',
           'workRequest',
         ],
+        strict: false,
+      },
+      {
+        annotations: { ...readOnly, title: 'List launchable agents' },
+        input: ['repoId'],
+        name: 'list_agents',
+        output: ['agents'],
         strict: false,
       },
       {
@@ -427,6 +616,31 @@ describe('the read tools', () => {
         input: ['limit', 'offset', 'ticket'],
         name: 'list_work_requests',
         output: ['limit', 'offset', 'total', 'workRequests'],
+        strict: false,
+      },
+      {
+        annotations: { ...readOnly, title: 'Wait for a run' },
+        input: ['runId', 'timeoutSeconds', 'workRequestId'],
+        name: 'wait_for_run',
+        output: [
+          'branch',
+          'changed',
+          'costUsdAccrued',
+          'dashboardUrl',
+          'diffStat',
+          'endedAt',
+          'failure',
+          'id',
+          'pendingHumanStep',
+          'result',
+          'startedAt',
+          'status',
+          'steps',
+          'templateName',
+          'tokensInputTotal',
+          'tokensOutputTotal',
+          'workRequest',
+        ],
         strict: false,
       },
     ]);
@@ -507,9 +721,12 @@ describe('the read tools', () => {
       const { callTool } = await setup();
       const { json } = await callTool('get_run', { runId: RUN_ID });
       expect(json.result.structuredContent).toEqual({
+        branch: null,
         costUsdAccrued: 1.25,
         dashboardUrl: `https://app.example.com/runs/${RUN_ID}`,
+        diffStat: null,
         endedAt: null,
+        failure: null,
         id: RUN_ID,
         result: { prNumber: 7, prUrl: 'https://github.com/acme/api/pull/7' },
         startedAt: '2026-10-01T10:00:00.000Z',
@@ -895,6 +1112,7 @@ describe('which routes an MCP token may reach', () => {
     await app.close();
     expect(routes).toBeGreaterThan(250);
     expect([...new Set(seen)].sort()).toEqual([
+      'GET /api/v1/agent-runs/agents read',
       'GET /api/v1/human-steps read',
       // The same human-steps plugin is also mounted as the inbox alias.
       'GET /api/v1/inbox read',
@@ -902,6 +1120,7 @@ describe('which routes an MCP token may reach', () => {
       'GET /api/v1/work-requests read',
       'GET /api/v1/workflow-runs read',
       'GET /api/v1/workflow-runs/:id read',
+      'HEAD /api/v1/agent-runs/agents read',
       'HEAD /api/v1/human-steps read',
       'HEAD /api/v1/inbox read',
       'HEAD /api/v1/repositories read',
@@ -909,6 +1128,7 @@ describe('which routes an MCP token may reach', () => {
       'HEAD /api/v1/workflow-runs read',
       'HEAD /api/v1/workflow-runs/:id read',
       // The two write tools' routes, and only those.
+      'POST /api/v1/agent-runs write',
       'POST /api/v1/work-requests write',
       'POST /api/v1/workflow-runs/:id/cancel write',
     ]);

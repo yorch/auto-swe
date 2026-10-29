@@ -128,6 +128,7 @@ async function build(
     }
   );
   standIn('/api/v1/work-requests');
+  standIn('/api/v1/agent-runs');
   standIn('/api/v1/workflow-runs/:id/cancel');
   await app.ready();
 
@@ -181,6 +182,60 @@ describe('the write tools', () => {
     await Promise.all(apps.splice(0).map((a) => a.close()));
   });
 
+  it('starts an agent run as the caller, with a header key and allowlisted result', async () => {
+    const s = await setup();
+    s.route.body = {
+      data: {
+        effective: { deliver: 'none', maxSteps: 50, maxWallClockSeconds: 1800 },
+        prompt: INJECTION,
+        workRequestId: WR_ID,
+      },
+    };
+    const args = {
+      agent: 'implementer',
+      deliver: 'none',
+      idempotencyKey: KEY,
+      prompt: INJECTION,
+      repoId: REPO_ID,
+    };
+    const { json } = await s.callTool(s.writeToken, 'start_agent_run', args);
+    expect(s.sent).toEqual([
+      {
+        body: { agent: 'implementer', deliver: 'none', prompt: INJECTION, repoId: REPO_ID },
+        idempotencyKey: KEY,
+        url: '/api/v1/agent-runs',
+      },
+    ]);
+    expect(json.result.structuredContent).toEqual({
+      effective: { deliver: 'none', maxSteps: 50, maxWallClockSeconds: 1800 },
+      status: 'started',
+      workRequestId: WR_ID,
+    });
+    s.route.status = 200;
+    s.route.body = { data: { deduplicated: true, workRequestId: WR_ID } };
+    const replay = await s.callTool(s.writeToken, 'start_agent_run', args);
+    expect(replay.json.result.structuredContent).toEqual({
+      effective: null,
+      status: 'already_submitted',
+      workRequestId: WR_ID,
+    });
+  });
+
+  it('never relays an agent-run delivery refusal message', async () => {
+    const s = await setup();
+    s.route.status = 403;
+    s.route.body = { error: { code: 'MCP_DELIVER_MODE_NOT_ALLOWED', message: INJECTION } };
+    const { json } = await s.callTool(s.writeToken, 'start_agent_run', {
+      agent: 'implementer',
+      deliver: 'branch',
+      idempotencyKey: KEY,
+      prompt: 'Task',
+      repoId: REPO_ID,
+    });
+    expect(json.result.isError).toBe(true);
+    expect(JSON.stringify(json.result)).not.toContain(INJECTION);
+  });
+
   const toolNames = async (s: Awaited<ReturnType<typeof setup>>, token: string) => {
     const res = await s.rpc(token, 'tools/list');
     return (JSON.parse(res.body).result.tools as Array<{ name: string }>).map((t) => t.name).sort();
@@ -192,11 +247,14 @@ describe('the write tools', () => {
       expect(await toolNames(s, s.writeToken)).toEqual([
         'cancel_run',
         'get_run',
+        'list_agents',
         'list_pending_human_steps',
         'list_repositories',
         'list_runs',
         'list_work_requests',
+        'start_agent_run',
         'submit_work_request',
+        'wait_for_run',
       ]);
     });
 
@@ -208,12 +266,12 @@ describe('the write tools', () => {
 
     it('lists no write tool when the user consented to read only, whatever the token says', async () => {
       const s = await setup({ consentScopes: ['mcp:read', 'offline_access'] });
-      expect(await toolNames(s, s.writeToken)).toHaveLength(5);
+      expect(await toolNames(s, s.writeToken)).toHaveLength(7);
     });
 
     it('lists no write tool while writes are disabled, even for a token that carries mcp:write', async () => {
       const s = await setup({ writeToolsEnabled: false });
-      expect(await toolNames(s, s.writeToken)).toHaveLength(5);
+      expect(await toolNames(s, s.writeToken)).toHaveLength(7);
     });
 
     it('describes both tools with the right annotations and strict inputs', async () => {

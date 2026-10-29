@@ -3,6 +3,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import authPlugin, { requireAuth } from '../plugins/auth.js';
+import { agentRunRoutes } from '../routes/agentRuns.js';
 import { workflowRunRoutes } from '../routes/workflowRuns.js';
 import { workRequestRoutes } from '../routes/workRequests.js';
 import {
@@ -17,6 +18,7 @@ import { createMcpTokenVerifier } from './mcpTokenVerifier.js';
 import { mcpWriteAuditHook, resetMcpWriteRateLimit } from './mcpWriteGuard.js';
 
 const settings = vi.hoisted(() => ({
+  'mcp.agentRunAllowedDeliverModes': ['none', 'draft_pr'],
   'mcp.maxConcurrentRuns': 2,
   'mcp.writeCallsPerMinute': 10,
   'mcp.writeToolsEnabled': true,
@@ -113,6 +115,7 @@ describe('the write guards, enforced in the bridged route', () => {
       async () => ({})
     );
     await app.register(workRequestRoutes, { prefix: '/api/v1/work-requests' });
+    await app.register(agentRunRoutes, { prefix: '/api/v1/agent-runs' });
     await app.register(workflowRunRoutes, { prefix: '/api/v1/workflow-runs' });
     await app.ready();
 
@@ -170,6 +173,44 @@ describe('the write guards, enforced in the bridged route', () => {
       url: `/api/v1/workflow-runs/${RUN}/cancel`,
     });
   const code = (res: { json: () => { error?: { code?: string } } }) => res.json().error?.code;
+
+  const agentRun = (body: Record<string, unknown> = {}, bridged = true, key = 'agent-key-0001') =>
+    app.inject({
+      headers: {
+        authorization: `Bearer ${bridged ? writeToken : app.auth.signAccessToken({ role: 'ENGINEER', sub: TEST_USER })}`,
+        ...(bridged ? { [MCP_BRIDGE_HEADER]: leaked } : {}),
+        ...(key ? { 'idempotency-key': key } : {}),
+      },
+      method: 'POST',
+      payload: { agent: 'implementer', prompt: 'Do not record this prompt', repoId: REPO, ...body },
+      url: '/api/v1/agent-runs',
+    });
+
+  it('applies the full guard chain to bridged agent launches before any lookup', async () => {
+    settings['mcp.writeToolsEnabled'] = false;
+    expect(code(await agentRun())).toBe('MCP_WRITE_DISABLED');
+    settings['mcp.writeToolsEnabled'] = true;
+    expect(code(await agentRun({ budgetTier: 'LARGE' }))).toBe('MCP_BUDGET_TIER_NOT_ALLOWED');
+    expect(code(await agentRun({}, true, ''))).toBe('MCP_IDEMPOTENCY_KEY_REQUIRED');
+    expect(code(await agentRun({ deliver: 'branch' }))).toBe('MCP_DELIVER_MODE_NOT_ALLOWED');
+    settings['mcp.writeCallsPerMinute'] = 3;
+    expect(code(await agentRun())).toBe('MCP_WRITE_RATE_LIMITED');
+    expect(calls.connection).toBe(0);
+    expect(
+      audit.every(
+        (row) => (row.data.afterJson as Record<string, unknown>).tool === 'start_agent_run'
+      )
+    ).toBe(true);
+    expect(JSON.stringify(audit)).not.toContain('Do not record this prompt');
+  });
+
+  it('leaves non-bridged agent launches unchanged, including deliver mode and budget tier', async () => {
+    settings['mcp.writeToolsEnabled'] = false;
+    const res = await agentRun({ budgetTier: 'LARGE', deliver: 'branch' }, false, '');
+    expect(res.statusCode, res.body).toBe(404);
+    expect(calls.connection).toBe(1);
+    expect(audit).toEqual([]);
+  });
 
   it('a leaked secret plus a write token passes the guards and reaches the route, as the tool would', async () => {
     const res = await forged();

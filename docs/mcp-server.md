@@ -7,8 +7,8 @@ and talks to the endpoint over Streamable HTTP. The server is a resource server 
 accepts only access tokens that the authorization server issued for it, and it re-checks on every
 request that the grant behind the token still stands.
 
-The server exposes five read-only tools and, only when an admin has turned writes on and the user has
-consented to them, two write tools (below), and no resources or prompts. A tool is a call to the same REST
+The server exposes seven read-only tools and, only when an admin has turned writes on and the user has
+consented to them, three write tools (below), and no resources or prompts. A tool calls the same REST
 route a dashboard or CLI user would call, made in-process as the signed-in user, so what a tool returns is
 what that user is allowed to see, reduced to a short allowlist of fields. The write tools can start a run
 and cancel one; nothing here can approve, merge or answer a human step.
@@ -90,19 +90,21 @@ a user stops that token on its next request instead of when it expires. The user
 
 ## Tools
 
-Five read tools, all read-only (`readOnlyHint`), needing the `mcp:read` scope, and two write tools needing
+Seven read tools, all read-only (`readOnlyHint`), needing the `mcp:read` scope, and three write tools needing
 `mcp:write` ([below](#write-tools)). Every input is a strict object: an argument the tool does not declare
 is refused, not ignored.
 
 | Tool | Calls | Returns |
 |---|---|---|
+| `list_agents` | `GET /api/v1/agent-runs/agents` | Launchable agents: `key`, `version`, `name`, and a sanitised description clipped to 300 code points. Optional `repoId` resolves organization overrides as the launch does. No prompts, models, skills or tools. |
+| `wait_for_run` | Polls `GET /api/v1/workflow-runs`, `GET /api/v1/workflow-runs/:id`, and `GET /api/v1/human-steps?runId=…` | Exactly one of `runId` or `workRequestId`, and `timeoutSeconds` (default 25, maximum 50). Returns the `get_run` fields plus `changed` and `pendingHumanStep` (`id`, sanitised `title`, `inboxUrl`, or null). Returns on a status change, terminal status, pending human step, or timeout. When no run row exists yet, waits for one; a timeout without a row returns only `changed: false` and `pendingHumanStep: null`. Honors request cancellation. |
 | `list_repositories` | `GET /api/v1/repositories` | `id`, `organizationName`, `repoName`, `defaultBranch`, `isActive`, `team` (`id`, `name`, `slug`). Git repositories only. Inputs: `limit` (default 50, max 100), `offset`. |
 | `list_work_requests` | `GET /api/v1/work-requests` | `id`, `externalTicketId`, `createdAt`, `isMine`, and the work request's workflows as `id` and `status`. No description and no requester's name. Inputs: `limit`, `offset`, `ticket` (substring of the ticket id). |
 | `list_runs` | `GET /api/v1/workflow-runs` | `id`, `status`, `templateName`, `startedAt`, `endedAt`, `costUsdAccrued`, `workRequest` (`id`, `externalTicketId`). Inputs: `limit`, `offset`, `status`, `workRequestId`. |
-| `get_run` | `GET /api/v1/workflow-runs/:id` | `id`, `status`, `templateName`, timestamps, `costUsdAccrued`, token totals, `steps` as `nodeId`, `status`, `attempt`, `failed`, `result`, `workRequest` and `dashboardUrl`. Input: `runId` (a UUID). |
+| `get_run` | `GET /api/v1/workflow-runs/:id` | `id`, `status`, `templateName`, timestamps, `costUsdAccrued`, token totals, `steps` as `nodeId`, `status`, `attempt`, `failed`, `result`, `workRequest`, `dashboardUrl`, `branch`, `failure`, and `diffStat`. Input: `runId` (a UUID). |
 | `list_pending_human_steps` | `GET /api/v1/human-steps` | `id`, `runId`, `kind`, `nodeId`, `title`, `requestedAt`, `timeoutAt`, `requiredApprovers`, `currentApprovers`, `inboxUrl`, and `truncated`. Pending steps on runs the caller can see (every team's for an administrator), at most 100, newest first; `truncated` is true when the cap was reached. No inputs. |
 
-A list tool returns `total`, `limit` and `offset` beside its rows. `get_run.result` is exactly
+Paged list tools return `total`, `limit` and `offset` beside their rows. `get_run.branch` is a validated work branch from the stored result, or null when unknown. `failure` is null unless the run failed or timed out; then it is `{ type }`, a fixed enum of the agent-run viewer's known refusal types, `TIMED_OUT`, or `UNKNOWN`, never an error message. `diffStat` sums the already stored result's file line counts as `filesChanged`, `insertions`, and `deletions`, or is null when absent. No diff or file paths are returned. `get_run.result` is exactly
 `{ prUrl, prNumber }` or `null`. `prUrl` is rebuilt as `https://<host>/<owner>/<repo>/pull/<prNumber>` and only on a GitHub host the platform is configured for (the instance's own and each connection's GitHub Enterprise override); a link with another host, a query, a fragment, credentials or a different pull request number is dropped, because the result is whatever a workflow's terminate node mapped. A tool
 returns `structuredContent` that matches its `outputSchema`, and the same JSON as text.
 
@@ -115,7 +117,7 @@ A ticket id that is outside the characters the submit route accepts is returned 
 a team member authors (a template, a workflow node, a human step's title) are clipped and stripped of
 control characters, and are still text a person wrote. Characters a person cannot see but a model reads (zero-width and bidirectional-override characters, the Unicode tag block, private-use characters, unpaired surrogates) are removed, and names are clipped by code point.
 
-Not exposed: answering or approving a human step, merging, retrying, any write other than the two below,
+Not exposed: answering or approving a human step, merging, retrying, any write other than the three below,
 templates, traces, and every administrative surface. `list_pending_human_steps` shows that a person is needed and where to go;
 the answer is given in the dashboard.
 
@@ -125,7 +127,7 @@ that does not exist.
 
 ### Write tools
 
-Two tools, each needing the `mcp:write` scope. They exist only for a token that holds it, and a token
+Three tools, each needing the `mcp:write` scope. They exist only for a token that holds it, and a token
 holds it only while `mcp.writeToolsEnabled` is on and the user consented to write: with writes off, or
 for a read-only grant, `tools/list` does not show them. A read-only token that calls one anyway, while
 writes are on, is answered 403 `insufficient_scope` with `scope="mcp:write"` in the challenge, so a client
@@ -134,6 +136,7 @@ scope cannot be granted.
 
 | Tool | Calls | Does |
 |---|---|---|
+| `start_agent_run` | `POST /api/v1/agent-runs` | Delegates `prompt` to `agent` (`key` or `key@version`) on `repoId`, with `deliver` (`none`, `draft_pr`, `branch`), optional `baseBranch`, and required `idempotencyKey` (same format as `submit_work_request`). The run acts as the user, using their GitHub credentials. Returns `status` (`started` or `already_submitted`), `workRequestId`, and `effective` limits (`deliver`, `maxSteps`, `maxWallClockSeconds`, or null on replay); follow it with `wait_for_run`. The budget tier is always `STANDARD`. `mcp.agentRunAllowedDeliverModes` defaults to allowing `none` and `draft_pr`; other modes are refused as `MCP_DELIVER_MODE_NOT_ALLOWED`. Dashboard, CLI and service-principal launches are unaffected. |
 | `submit_work_request` | `POST /api/v1/work-requests` | Starts a run for a ticket in a repository. Inputs: `externalTicketId`, `description`, `repoId`, and `idempotencyKey` (required, 8 to 128 characters of `A-Z a-z 0-9 . _ : ~ -`, sent as the `Idempotency-Key` header). There is no budget tier input: a run is always `STANDARD`. Returns `status` (`started`, `already_submitted` for a retry of a key that already launched a run, or `already_running` when the ticket already has a run in flight and nothing was launched), and `workRequestId`, which identifies the submission: pass it to `cancel_run`, or to `list_runs` and `get_run` (via `list_runs`) to follow it. The run itself is created by the worker a moment after the submit, so a `list_runs` for the work request can be empty at first. |
 | `cancel_run` | `POST /api/v1/workflow-runs/:id/cancel` | Cancels a run that is still running, if the caller may control it: the same rule as the dashboard, so a member of a team the repository is only shared with can see a run but not cancel it. Input: `runId`, or the `workRequestId` that `submit_work_request` returned (exactly one). A `workRequestId` cancels every running run of that work request that the caller launched, and only those, listing again until a pass finds none left to try (a run that finishes mid-way cannot make one be skipped): a run someone else launched, or that no user launched (a schedule or webhook), is left running and listed in `notCancelled`, and is cancelled only with its own `runId` (which the route's control filter still has to allow). If the worker has not created the run yet, the tool says so and nothing is cancelled. Returns `runIds` (cancelled), `notCancelled` (each with a fixed reason) and `status`: `CANCELLED`, or `PARTIAL` when some run was not cancelled. The result is an error only when nothing was cancelled. A refusal for one run (not found, not running, the platform could not cancel) does not stop the rest; a refusal that applies to every call (writes switched off, the burst limit, a revoked token, a lost scope) does, and the runs not reached are reported as not cancelled. |
 
@@ -150,8 +153,8 @@ write access off, no permission, repository or run not found, the organization's
 concurrency cap, and the burst limit. A ticket that already has a run in flight is a result
 (`already_running`), not an error.
 
-**The guards are in the route, not in the tool.** The tool is not the control: both routes declare
-`config: { mcpScope: 'write' }` (exactly these two), and when a
+**The guards are in the route, not in the tool.** The tool is not the control: all three write routes declare
+`config: { mcpScope: 'write' }`, and when a
 request is bridged they call `assertMcpWriteAllowed` before anything else, so a leaked bridge secret plus
 a valid write token gets exactly what the tool gets. In order, on `POST /work-requests`:
 
@@ -168,6 +171,12 @@ a valid write token gets exactly what the tool gets. In order, on `POST /work-re
 `cancel_run` takes steps 1 and 2 only, and then the route's own control filter. A request that is not
 bridged (the dashboard, the CLI) skips all of it.
 
+`start_agent_run` uses the same guard chain, including the transactional concurrency cap. It also
+checks `mcp.agentRunAllowedDeliverModes` before lookup or replay, then follows the agent-run route's
+repository authorization, agent resolution, ceilings and platform/team admission. A replay returns
+the original work request, including when a same-key launch wins a concurrent insert. Replays do not
+launch another run; reuse a key only for the same task.
+
 **The concurrency cap** `mcp.maxConcurrentRuns` counts the user's in-flight runs of every origin, the
 dashboard's included: the user's `ActiveWorkflow` rows with a non-terminal status, which are written
 synchronously when a run is submitted (a `WorkflowRun`, which the worker creates a moment later, would
@@ -178,7 +187,7 @@ several. `launchTrackedWorkflow` takes the check as an optional `guard`; without
 and CLI launch, its behaviour is unchanged.
 
 **Audit.** Every bridged write that reaches the route writes a `McpToolCall` row to the config audit log,
-from a hook on the two routes: the actor, the consent id (`entityId`), the OAuth client id and its name, the
+from a hook on the write routes: the actor, the consent id (`entityId`), the OAuth client id and its name, the
 tool, a SHA-256 digest of the raw input (never the description or any other input text), the HTTP status,
 the refusal code if any, the work request id, and for `cancel_run` the run id it targeted (also on a
 refusal). Refusals after authentication are audited too, including a body that fails validation. Not
@@ -190,7 +199,7 @@ is not reported to the agent as an error it would retry.
 
 ### How a tool is authorized
 
-A tool never reads the database. It makes one in-process `GET` (or, for a write tool, `POST`) to the REST
+A tool never reads the database. It makes in-process `GET` calls (or, for a write tool, a `POST`) to the REST
 route above, so that route's
 role check, visibility filter, tenant guard, rate limit and audit apply to it unchanged, for a team
 member, an outsider and an ADMIN alike. Two properties keep that from becoming a way around REST's own
@@ -205,9 +214,8 @@ rules:
    it in `X-Auto-Swe-Mcp-Bridge` on its inner calls. The inner request's headers are built from nothing:
    no header the client sent is forwarded, and the only thing taken from the outer request is the
    client's address, so the call is rate limited as the client is. A route accepts a bridged MCP token
-   only if it declares `config: { mcpScope: 'read' | 'write' }`, and exactly the five read routes in the
-   table above do (six paths, counting the `/api/v1/inbox` alias of the human-steps route), all `read`,
-   plus the two `write` routes of the write tools.
+   only if it declares `config: { mcpScope: 'read' | 'write' }`: the read routes in the table above
+   (including the `/api/v1/inbox` alias of the human-steps route), plus the three `write` routes.
 
 `requireAuth` applies these rules, in this order, to any request that carries the bridge header (its
 presence, in whatever form, is enough to take this path, so no other credential is tried after it):
@@ -251,16 +259,17 @@ response back.
 
 ## Settings
 
-All four are ADMIN-only, GLOBAL-only registry settings ([configuration.md](./configuration.md)) read per
+All five are ADMIN-only, GLOBAL-only registry settings ([configuration.md](./configuration.md)) read per
 request through the ~30 s settings cache, so a change applies on every replica within about 30 seconds
 and needs no restart. None is read only at startup.
 
 | Setting | Default | Effect here |
 |---|---|---|
+| `mcp.agentRunAllowedDeliverModes` | `['none', 'draft_pr']` | Delivery modes accepted by a bridged agent-run launch; an empty list refuses every delivery mode. Other callers are unchanged. |
 | `mcp.enabled` | `false` | Off, the endpoint and both protected resource metadata documents answer 404 (as the authorization server's endpoints do). If the setting cannot be read they answer 503: the server does not guess. |
 | `mcp.writeToolsEnabled` | `false` | Off, `mcp:write` is dropped from every token's effective scopes, left out of the protected resource metadata and refused at consent, the write tools are not listed, and the write routes refuse a bridged call. |
 | `mcp.writeCallsPerMinute` | `10` | The most write calls one user may make in a minute, counting refused ones. Counted per gateway process. |
-| `mcp.maxConcurrentRuns` | `2` | The most runs one user may have in flight before `submit_work_request` is refused. Counts runs started from the dashboard and the CLI too. |
+| `mcp.maxConcurrentRuns` | `2` | The most runs one user may have in flight before an MCP launch is refused. Counts runs started from the dashboard and the CLI too. |
 
 ## Operations
 
@@ -302,8 +311,14 @@ and needs no restart. None is read only at startup.
 - Consent is read or write, not per repository or per tool: a token reads everything its user can read.
 - `list_repositories` filters out the connections that are not git repositories after the route has
   counted them, so its `total` can exceed the rows a client can ever page through.
-- A tool call costs two requests against the gateway's per-IP rate limit: the endpoint's and the inner
-  call's. The limit is per gateway process.
+- A single-read tool call costs two requests against the gateway's per-IP rate limit: the endpoint's
+  and the inner call's. `wait_for_run` polls at three-second intervals, with up to three reads per
+  iteration (listing runs for a work request, reading its run, reading pending human steps), all
+  counting against that limit. Stop and retry later on a rate-limit refusal. The limit is per process.
+- `wait_for_run` samples status, not events: intermediate transitions between polls can be missed.
+  It follows the newest run for a work request; use a run id to follow one particular execution.
+- Branch and diff totals are available only when recorded in the result. A failed run can have pushed
+  a branch without recording it there, and spilled result fields cannot be recovered through MCP.
 - The names a team member authors (template, node, human step title) can still carry text that tries to
   steer a model. They are length-limited and stripped of control characters, not made safe.
 - On a configured GitHub host, the owner and repository segments of `get_run`'s `prUrl` can still carry

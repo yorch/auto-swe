@@ -285,10 +285,12 @@ describe.skipIf(!enabled)('MCP endpoint against Postgres', () => {
         .sort()
     ).toEqual([
       'get_run',
+      'list_agents',
       'list_pending_human_steps',
       'list_repositories',
       'list_runs',
       'list_work_requests',
+      'wait_for_run',
     ]);
   });
 

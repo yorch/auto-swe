@@ -1,3 +1,4 @@
+import { isSafeGitBranchName } from '@auto-swe/shared/lib/gitRef';
 import { z } from 'zod';
 import { isValidTicketId } from '../ticketId.js';
 
@@ -117,7 +118,14 @@ export const restRun = z.object({
     result: z.unknown().optional(),
     startedAt: timestamp,
     status,
-    steps: z.array(z.object({ attempt: count, nodeId: shortName(100), status })),
+    steps: z.array(
+      z.object({
+        attempt: count,
+        error: z.string().nullable().optional(),
+        nodeId: shortName(100),
+        status,
+      })
+    ),
     templateName: shortName(200),
     tokensInputTotal: count,
     tokensOutputTotal: count,
@@ -189,9 +197,38 @@ export const runsOutput = z.object({
 });
 
 export const runOutput = z.object({
+  branch: z.string().nullable(),
   costUsdAccrued: z.number(),
   dashboardUrl: z.string(),
+  diffStat: z
+    .object({
+      deletions: z.number().int(),
+      filesChanged: z.number().int(),
+      insertions: z.number().int(),
+    })
+    .nullable(),
   endedAt: z.string().nullable(),
+  failure: z
+    .object({
+      type: z.enum([
+        'AGENT_NOT_LAUNCHABLE',
+        'AGENT_RUN_CONCURRENCY_EXCEEDED',
+        'AGENT_RUN_DIFF_TOO_LARGE',
+        'AGENT_RUN_EXPORT_TOO_LARGE',
+        'AGENT_RUN_PUSH_POLICY',
+        'AGENT_RUNS_DISABLED',
+        'BUDGET_EXCEEDED',
+        'DRAFT_PR_UNSUPPORTED',
+        'MODEL_PRICE_UNAVAILABLE',
+        'MODEL_UNPRICED',
+        'PR_CREATE_FAILED',
+        'SECURITY_GATE_FAILURE',
+        'SECURITY_GATE_UNAVAILABLE',
+        'TIMED_OUT',
+        'UNKNOWN',
+      ]),
+    })
+    .nullable(),
   id: z.string(),
   result: z.object({ prNumber: z.number().int(), prUrl: z.string() }).nullable(),
   startedAt: z.string(),
@@ -209,6 +246,85 @@ export const runOutput = z.object({
   tokensOutputTotal: z.number().int(),
   workRequest: ticketRef,
 });
+
+export const agentsOutput = z.object({
+  agents: z.array(
+    z.object({
+      description: z.string().nullable(),
+      key: z.string(),
+      name: z.string(),
+      version: z.number().int(),
+    })
+  ),
+});
+export const restAgents = z.object({
+  data: z.array(
+    z.object({
+      description: shortName(300).nullable(),
+      key: shortName(130),
+      name: shortName(200),
+      version: z.number().int().positive(),
+    })
+  ),
+});
+export const waitOutput = z
+  .object({
+    ...runOutput.shape,
+    changed: z.boolean(),
+    pendingHumanStep: z
+      .object({ id: z.string().uuid(), inboxUrl: z.string(), title: z.string() })
+      .nullable(),
+  })
+  .partial()
+  .required({ changed: true, pendingHumanStep: true });
+
+export function projectRunOutcome(data: z.infer<typeof restRun>['data']) {
+  const result = z
+    .object({
+      branch: z.string().optional(),
+      filesChanged: z.array(z.object({ linesAdded: count, linesRemoved: count })).optional(),
+    })
+    .safeParse(data.result);
+  const rawBranch = result.success ? result.data.branch : undefined;
+  const branch =
+    rawBranch && isSafeGitBranchName(rawBranch) && cleaned(rawBranch) === rawBranch
+      ? rawBranch
+      : null;
+  const latestAttempts = new Map<string, (typeof data.steps)[number]>();
+  for (const step of data.steps) {
+    if (step.attempt >= (latestAttempts.get(step.nodeId)?.attempt ?? -1)) {
+      latestAttempts.set(step.nodeId, step);
+    }
+  }
+  let failed: (typeof data.steps)[number] | undefined;
+  for (const step of data.steps) {
+    if (step.status === 'FAILED' && latestAttempts.get(step.nodeId) === step) {
+      failed = step;
+    }
+  }
+  const type = failed?.error?.match(/^([A-Z][A-Z0-9_]*): /)?.[1];
+  const failureSchema = runOutput.shape.failure.unwrap();
+  const failure =
+    data.status === 'FAILED' || data.status === 'TIMED_OUT'
+      ? {
+          type: failureSchema.shape.type.safeParse(type ?? data.status).success
+            ? (type ?? data.status)
+            : 'UNKNOWN',
+        }
+      : null;
+  const files = result.success ? result.data.filesChanged : undefined;
+  return {
+    branch,
+    diffStat: files
+      ? {
+          deletions: files.reduce((n, f) => n + f.linesRemoved, 0),
+          filesChanged: files.length,
+          insertions: files.reduce((n, f) => n + f.linesAdded, 0),
+        }
+      : null,
+    failure,
+  };
+}
 
 export const humanStepsOutput = z.object({
   humanSteps: z.array(
@@ -314,6 +430,18 @@ export const submitOutput = z.object({
     .describe(
       'Identifies the submission. Pass it to cancel_run to stop its run, or to list_runs (workRequestId) to find the run id, which appears a moment after the submit.'
     ),
+});
+
+export const agentRunLimits = z.object({
+  deliver: z.enum(['none', 'draft_pr', 'branch']),
+  maxSteps: z.number().int().positive(),
+  maxWallClockSeconds: z.number().int().positive(),
+});
+
+export const startAgentRunOutput = z.object({
+  effective: agentRunLimits.nullable(),
+  status: z.enum(['started', 'already_submitted']),
+  workRequestId: z.string().uuid(),
 });
 
 /** `POST /workflow-runs/:id/cancel`. */

@@ -1,3 +1,6 @@
+import { setTimeout as delay } from 'node:timers/promises';
+import { AGENT_REF_RE, AGENT_RUN_MAX_PROMPT_CHARS } from '@auto-swe/shared/lib/agentRun';
+import { BaseBranchSchema } from '@auto-swe/shared/lib/gitRef';
 import { type AuthInfo, McpServer } from '@modelcontextprotocol/server';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
@@ -10,10 +13,14 @@ import {
   type McpCaller,
 } from './bridge.js';
 import {
+  agentRunLimits,
+  agentsOutput,
   cancelOutput,
   humanStepsOutput,
+  projectRunOutcome,
   projectRunResult,
   repositoriesOutput,
+  restAgents,
   restCancelled,
   restHumanSteps,
   restRepositories,
@@ -23,15 +30,17 @@ import {
   restWorkRequests,
   runOutput,
   runsOutput,
+  startAgentRunOutput,
   submitOutput,
+  waitOutput,
   workRequestsOutput,
 } from './projections.js';
 
 /**
- * The tools. Each is one call to a REST route made through the bridge, so the route's own role
+ * The tools call REST routes through the bridge, so each route's own role
  * check and visibility filter decide what comes back; the tool only chooses the request and
  * reduces the response to an allowlisted shape. No tool reads the database. The read tools are
- * GETs; the two write tools are POSTs to routes that bound them themselves
+ * GETs; the write tools are POSTs to routes that bound them themselves
  * (`lib/mcpWriteGuard.ts`), so a tool is never the control.
  */
 
@@ -169,6 +178,153 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
   const get = (path: string, params?: URLSearchParams) => bridge.get(app, caller, path, params);
 
   readTool(
+    'list_agents',
+    {
+      description:
+        'List agents you can launch, optionally resolved for a repository. Returns only key, version, name and a short description.',
+      input: { repoId: z.string().uuid().optional() },
+      output: agentsOutput,
+      title: 'List launchable agents',
+    },
+    (args) => get('/api/v1/agent-runs/agents', query(args)),
+    (body) => {
+      const parsed = restAgents.safeParse(body);
+      return parsed.success ? { agents: parsed.data.data } : null;
+    }
+  );
+
+  const projectRun = async (body: unknown) => {
+    const parsed = restRun.safeParse(body);
+    if (!parsed.success) {
+      return null;
+    }
+    const { data } = parsed.data;
+    return {
+      ...projectRunOutcome(data),
+      costUsdAccrued: data.costUsdAccrued,
+      dashboardUrl: `${origin}/runs/${data.id}`,
+      endedAt: data.endedAt,
+      id: data.id,
+      result: projectRunResult(data.result, await githubHosts()),
+      startedAt: data.startedAt,
+      status: data.status,
+      steps: data.steps.map((s) => ({
+        attempt: s.attempt,
+        failed: s.status === 'FAILED',
+        nodeId: s.nodeId,
+        status: s.status,
+      })),
+      templateName: data.templateName,
+      tokensInputTotal: data.tokensInputTotal,
+      tokensOutputTotal: data.tokensOutputTotal,
+      workRequest: data.workRequest,
+    };
+  };
+
+  server.registerTool(
+    'wait_for_run',
+    {
+      annotations: { ...READ_ONLY, title: 'Wait for a run' },
+      description:
+        'Wait for a status change, a terminal run or a pending human step. Polls every three seconds, spending the per-IP rate limit on each read. A newly submitted work request may not have a run yet; keep waiting with its workRequestId.',
+      inputSchema: z
+        .object({
+          runId: z.string().uuid().optional(),
+          timeoutSeconds: z.number().int().min(0).max(50).default(25),
+          workRequestId: z.string().uuid().optional(),
+        })
+        .strict()
+        .refine(
+          (a) => Boolean(a.runId) !== Boolean(a.workRequestId),
+          'Give exactly one of runId or workRequestId'
+        ),
+      outputSchema: waitOutput,
+      title: 'Wait for a run',
+    },
+    async (args, extra): Promise<ToolResult> => {
+      const signal = extra.http?.req
+        ? AbortSignal.any([extra.mcpReq.signal, extra.http.req.signal])
+        : extra.mcpReq.signal;
+      try {
+        const deadline = Date.now() + args.timeoutSeconds * 1000;
+        let initial: string | null | undefined;
+        while (!signal.aborted) {
+          let id = args.runId;
+          if (!id) {
+            const response = await get(
+              '/api/v1/workflow-runs',
+              query({ limit: 1, workRequestId: args.workRequestId })
+            );
+            signal.throwIfAborted();
+            if (response.status !== 200) {
+              return failureFor(response.status);
+            }
+            const parsed = restRuns.safeParse(response.body);
+            if (!parsed.success) {
+              return failure('The platform returned an unexpected response.');
+            }
+            id = parsed.data.data[0]?.id;
+          }
+          let summary: Awaited<ReturnType<typeof projectRun>> = null;
+          let pendingHumanStep = null;
+          if (id) {
+            const response = await get(`/api/v1/workflow-runs/${id}`);
+            signal.throwIfAborted();
+            if (response.status !== 200) {
+              return failureFor(response.status);
+            }
+            summary = await projectRun(response.body);
+            signal.throwIfAborted();
+            if (!summary) {
+              return failure('The platform returned an unexpected response.');
+            }
+            if (!['SUCCESS', 'FAILED', 'CANCELLED', 'TIMED_OUT'].includes(summary.status)) {
+              const human = await get('/api/v1/human-steps', query({ runId: id }));
+              signal.throwIfAborted();
+              if (human.status !== 200) {
+                return failureFor(human.status);
+              }
+              const parsed = restHumanSteps.safeParse(human.body);
+              if (!parsed.success) {
+                return failure('The platform returned an unexpected response.');
+              }
+              const step = parsed.data.data.find((s) => s.runId === id);
+              if (step) {
+                pendingHumanStep = {
+                  id: step.id,
+                  inboxUrl: `${origin}/approvals`,
+                  title: step.title,
+                };
+              }
+            }
+          }
+          const status = summary?.status ?? null;
+          if (initial === undefined) {
+            initial = status;
+          }
+          const changed = initial !== status;
+          if (
+            changed ||
+            pendingHumanStep ||
+            (status && ['SUCCESS', 'FAILED', 'CANCELLED', 'TIMED_OUT'].includes(status)) ||
+            Date.now() >= deadline
+          ) {
+            return ok(waitOutput.parse({ ...summary, changed, pendingHumanStep }));
+          }
+          await delay(Math.max(0, Math.min(3000, deadline - Date.now())), undefined, { signal });
+        }
+        return failure('The request was cancelled.');
+      } catch (err) {
+        if (signal.aborted) {
+          return failure('The request was cancelled.');
+        }
+        app.log.error({ err, tool: 'wait_for_run' }, 'mcp: a tool failed');
+        return failureFor(500);
+      }
+    }
+  );
+
+  readTool(
     'list_repositories',
     {
       description:
@@ -276,32 +432,7 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
     },
     // A run the caller cannot see is a 404, exactly as in REST.
     (args) => get(`/api/v1/workflow-runs/${args.runId}`),
-    async (body) => {
-      const parsed = restRun.safeParse(body);
-      if (!parsed.success) {
-        return null;
-      }
-      const { data } = parsed.data;
-      return {
-        costUsdAccrued: data.costUsdAccrued,
-        dashboardUrl: `${origin}/runs/${data.id}`,
-        endedAt: data.endedAt,
-        id: data.id,
-        result: projectRunResult(data.result, await githubHosts()),
-        startedAt: data.startedAt,
-        status: data.status,
-        steps: data.steps.map((s) => ({
-          attempt: s.attempt,
-          failed: s.status === 'FAILED',
-          nodeId: s.nodeId,
-          status: s.status,
-        })),
-        templateName: data.templateName,
-        tokensInputTotal: data.tokensInputTotal,
-        tokensOutputTotal: data.tokensOutputTotal,
-        workRequest: data.workRequest,
-      };
-    }
+    projectRun
   );
 
   readTool(
@@ -330,7 +461,11 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
 }
 
 /** The tools that need `mcp:write`. */
-export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set(['submit_work_request', 'cancel_run']);
+export const WRITE_TOOL_NAMES: ReadonlySet<string> = new Set([
+  'submit_work_request',
+  'start_agent_run',
+  'cancel_run',
+]);
 
 const WRITE = {
   destructiveHint: false,
@@ -357,6 +492,9 @@ function writeFailure(response: BridgeResponse, notFound: string): ToolResult {
         "Your organization's monthly budget is used up, so no new run can start. Nothing was launched."
       );
     case 403:
+      if (code === 'MCP_DELIVER_MODE_NOT_ALLOWED') {
+        return failure('This delivery mode is not allowed through MCP. Nothing was launched.');
+      }
       return code === 'MCP_WRITE_DISABLED'
         ? failure('Write access is turned off on this platform.')
         : failureFor(403);
@@ -390,6 +528,60 @@ function writeFailure(response: BridgeResponse, notFound: string): ToolResult {
  */
 export function registerWriteTools(server: McpServer, deps: McpToolDeps, caller: McpCaller) {
   const { app, bridge } = deps;
+
+  server.registerTool(
+    'start_agent_run',
+    {
+      annotations: { ...WRITE, title: 'Start an agent run' },
+      description:
+        'Delegate a task to one platform agent on a repository. The run acts as YOU, under your identity and using your saved GitHub credentials; it may push and open a draft pull request with your token. Nothing is merged or approved. Use a new idempotency key per distinct request and reuse it only to retry that request. Follow with wait_for_run using the workRequestId.',
+      inputSchema: z
+        .object({
+          agent: z.string().min(1).max(130).regex(AGENT_REF_RE),
+          baseBranch: BaseBranchSchema.optional(),
+          deliver: z.enum(['none', 'draft_pr', 'branch']),
+          idempotencyKey: z.string().regex(/^[A-Za-z0-9._:~-]{8,128}$/),
+          prompt: z.string().min(1).max(AGENT_RUN_MAX_PROMPT_CHARS),
+          repoId: z.string().uuid(),
+        })
+        .strict(),
+      outputSchema: startAgentRunOutput,
+      title: 'Start an agent run',
+    },
+    async ({ idempotencyKey, ...body }): Promise<ToolResult> => {
+      try {
+        const response = await bridge.post(app, caller, '/api/v1/agent-runs', {
+          body,
+          idempotencyKey,
+        });
+        if (response.status !== 200 && response.status !== 201) {
+          return writeFailure(response, 'Repository or agent not found.');
+        }
+        const parsed = z
+          .object({
+            data: z.object({
+              deduplicated: z.boolean().optional(),
+              effective: agentRunLimits.optional(),
+              workRequestId: z.string().uuid(),
+            }),
+          })
+          .safeParse(response.body);
+        if (!parsed.success) {
+          return failure('The platform returned an unexpected response.');
+        }
+        return ok(
+          startAgentRunOutput.parse({
+            effective: parsed.data.data.effective ?? null,
+            status: parsed.data.data.deduplicated ? 'already_submitted' : 'started',
+            workRequestId: parsed.data.data.workRequestId,
+          })
+        );
+      } catch (err) {
+        app.log.error({ err, tool: 'start_agent_run' }, 'mcp: a tool failed');
+        return failureFor(500);
+      }
+    }
+  );
 
   server.registerTool(
     'submit_work_request',
