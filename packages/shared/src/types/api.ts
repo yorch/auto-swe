@@ -166,6 +166,8 @@ export interface DetectedStack {
    * project with one. Absent on a detection from before this was recorded.
    */
   packageManager?: 'npm' | 'yarn' | 'pnpm';
+  /** Yarn's flavour when `packageManager` is yarn and a pin or `.yarnrc.yml` named it; absent when unknown. */
+  yarnFlavor?: 'berry' | 'classic';
   /** The root filenames the detection read as signals. */
   evidence: string[];
   /**
@@ -173,7 +175,13 @@ export interface DetectedStack {
    * ('' = root), `stacks` what its marker files indicate. Sorted by path,
    * capped at 50.
    */
-  components?: Array<{ path: string; stacks: Array<'node' | 'python' | 'jvm' | 'go'> }>;
+  components?: Array<{
+    path: string;
+    stacks: Array<'node' | 'python' | 'jvm' | 'go'>;
+    /** For a Node component: the manager its own lockfile names, when exactly one does. */
+    packageManager?: 'npm' | 'yarn' | 'pnpm';
+    yarnFlavor?: 'berry' | 'classic';
+  }>;
   /** More than 50 directories had stack signals. */
   componentsTruncated?: boolean;
   /** The tree listing itself was truncated by the provider. */

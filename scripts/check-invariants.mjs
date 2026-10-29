@@ -105,6 +105,21 @@ function checkWorkspaceImageLiterals() {
       if (arg === undefined) {
         continue; // fewer args than the image position — inherits by omission
       }
+      // The connection's own `executorImage` is only part of the answer: the deployer's image for
+      // its detected stack sits between it and the default, and `executorImageFor` is what reads
+      // it. `repo.executorImage ?? undefined` type-checks, runs, and silently gives every Python,
+      // JVM and Go repository the Node image again.
+      if (/\bexecutorImage\b/.test(arg) && !/\bexecutorImageFor\s*\(/.test(arg)) {
+        fail(
+          file,
+          src.slice(0, open).split('\n').length,
+          'workspace-image-inherited',
+          `createWorkspace(…) image argument reads executorImage directly: ${arg.trim()}`,
+          'The image for a repository is `executorImageFor(repo)` (lib/executorImage.ts): the ' +
+            "connection's executorImage, else the deployer's image for its detected stack, else " +
+            'the default. Reading `executorImage` alone skips the stack image.'
+        );
+      }
       // A quoted string anywhere in the argument means a literal was written
       // inline, whether bare or as the right-hand side of `??`.
       const literal = arg.match(/'([^']*)'|"([^"]*)"/);
@@ -115,7 +130,7 @@ function checkWorkspaceImageLiterals() {
           'workspace-image-inherited',
           `createWorkspace(…) image argument is the literal ${literal[0].trim()}`,
           'A literal wins the `image ?? infra.image` inside createWorkspace, so the ' +
-            "operator's configured image is never read. Pass `repo.executorImage ?? undefined`, " +
+            "operator's configured image is never read. Pass `executorImageFor(repo)` (lib/executorImage.ts), " +
             'or a named constant if the pin is deliberate (see EVAL_WORKSPACE_IMAGE).'
         );
       }

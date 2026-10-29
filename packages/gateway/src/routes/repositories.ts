@@ -1363,8 +1363,9 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
   // workspace container and running the contract probe inside it. Platform
   // ADMIN only: the image is code that runs next to the platform's git
   // credential, the same authority `executorImageProblem` applies to setting
-  // one. The image defaults to the repository's override, else the worker's
-  // resolved workspace default (the activity resolves it when none is sent).
+  // one. The image defaults to the repository's override. With none, the worker
+  // resolves the one its runs would use — the deployer's image for the detected
+  // stack (sent along), else the workspace default.
   app.post(
     '/:id/executor-image/probe',
     {
@@ -1376,7 +1377,7 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const repo = await fastify.prisma.connection.findUnique({
-        select: { executorImage: true, type: true },
+        select: { detectedStack: true, executorImage: true, type: true },
         where: { id: request.params.id },
       });
       if (repo?.type !== 'git_repo') {
@@ -1388,7 +1389,13 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       }
       const result = await fastify.temporal.probeExecutorImage(
         `executor-image-probe-${request.params.id}-${crypto.randomBytes(8).toString('hex')}`,
-        { image }
+        // With no image named, the worker resolves the one this repository's runs would use: the
+        // deployer's image for its detected stack (an environment variable only the worker is
+        // sure to have), else the default. A named image is probed as given.
+        {
+          detectedStack: image === undefined ? (repo.detectedStack ?? undefined) : undefined,
+          image,
+        }
       );
       return { data: result };
     }

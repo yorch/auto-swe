@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import type { FigmaDesignSummary } from '@auto-swe/shared/lib/integrations/figmaDesign';
 import {
   resolveIssueTrackerConfig,
@@ -58,6 +59,7 @@ import {
 } from './allowedPaths.js';
 import {
   detectTestCommand,
+  packageJsonReadCommand,
   parseDiffToFileChanges,
   parseTestOutput,
   TEST_RUN_TIMEOUT_MS,
@@ -158,7 +160,7 @@ export async function executeImplementation(
     authedCloneUrl,
     branch,
     baseBranch,
-    repo.executorImage ?? undefined,
+    executorImageFor(repo),
     undefined,
     undefined,
     { teamId: repo.teamId }
@@ -207,7 +209,7 @@ export async function executeImplementation(
     pathGuard = await startPathGuard(workspace, baseBranch, allowedPaths, baseSha, guardOptions);
 
     // Detect test framework
-    const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
+    const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
     const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);
 
     // The runtime — the Mastra loop or the Claude Code harness — is chosen first,

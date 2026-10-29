@@ -19,6 +19,7 @@ import {
   failingStepRuns,
   normaliseRunCommand,
 } from '@auto-swe/shared/lib/ciWorkflowFile';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
@@ -163,7 +164,7 @@ async function verify(input: {
     authedCloneUrl,
     fixBranch,
     baseBranch,
-    repo.executorImage ?? undefined,
+    executorImageFor(repo),
     undefined,
     undefined,
     { teamId: repo.teamId }

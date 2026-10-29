@@ -803,6 +803,12 @@ export interface WorkspaceInfraConfig {
   pidsLimit: number;
   /// Default base image; an explicit `image` argument to `createWorkspace` wins.
   image: string;
+  /// The executor image for a repository whose detected stack is python, jvm or go
+  /// (`WORKSPACE_IMAGE_PYTHON|JVM|GO`); a stack with none set runs on `image`. Node has no
+  /// entry — `image` is the Node image — and an admin-set `Connection.executorImage`
+  /// outranks all of these. Environment-only: an executor image runs next to the clone
+  /// credential, so only the deployer may map a stack to one.
+  stackImages: Partial<Record<'python' | 'jvm' | 'go', string>>;
   /// Privileged sidecar that installs the cloud-metadata blackhole routes.
   metadataBlockImage: string;
   /// Blackhole cloud metadata IPs inside every workspace. Only the literal
@@ -1149,6 +1155,19 @@ export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
     pidsLimit: boundedEnvInt('WORKSPACE_PIDS_LIMIT', 512, 1, Number.MAX_SAFE_INTEGER),
     regexScanBudgetMs: boundedEnvInt('SCANNER_REGEX_BUDGET_MS', 250, 10, 60_000),
     registryProxy: resolveRegistryProxy(),
+    stackImages: Object.fromEntries(
+      (['python', 'jvm', 'go'] as const)
+        .map((stack) => [
+          stack,
+          validatedEnv(
+            `WORKSPACE_IMAGE_${stack.toUpperCase()}`,
+            '',
+            DOCKER_IMAGE_REF_RE,
+            IMAGE_HINT
+          ),
+        ])
+        .filter(([, image]) => image !== '')
+    ),
   };
 }
 
@@ -1181,6 +1200,9 @@ export function validateWorkspaceInfraEnv(): string[] {
   );
   check('WORKSPACE_PIDS_LIMIT', positiveInt, 'a positive integer');
   check('WORKSPACE_IMAGE', (raw) => DOCKER_IMAGE_REF_RE.test(raw), IMAGE_HINT);
+  for (const name of ['WORKSPACE_IMAGE_PYTHON', 'WORKSPACE_IMAGE_JVM', 'WORKSPACE_IMAGE_GO']) {
+    check(name, (raw) => DOCKER_IMAGE_REF_RE.test(raw), IMAGE_HINT);
+  }
   check('WORKSPACE_METADATA_BLOCK_IMAGE', (raw) => DOCKER_IMAGE_REF_RE.test(raw), IMAGE_HINT);
   // `0` or `no` would read as "off" to an operator but leave blocking on, so
   // only the two literal spellings are accepted for a security control.

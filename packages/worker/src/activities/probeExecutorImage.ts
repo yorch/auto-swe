@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import { workspaceBackend } from '../lib/workspaceBackend/index.js';
@@ -105,8 +106,13 @@ export function parseImageProbeOutput(stdout: string): { ok: boolean; checks: Im
 }
 
 export interface ProbeExecutorImageInput {
-  /** Image ref to probe; defaults to the resolved workspace image. */
+  /**
+   * Image ref to probe; defaults to the image a repository with `detectedStack` would run on
+   * (the deployer's image for its stack), else the resolved workspace image.
+   */
   image?: string;
+  /** The repository's stored detection, used only when no `image` is named. */
+  detectedStack?: unknown;
 }
 
 /**
@@ -121,7 +127,10 @@ export interface ProbeExecutorImageInput {
 export async function probeExecutorImage(
   input: ProbeExecutorImageInput
 ): Promise<ExecutorImageProbeResult> {
-  const image = input.image ?? resolveWorkspaceInfra().image;
+  const image =
+    input.image ??
+    executorImageFor({ detectedStack: input.detectedStack }) ??
+    resolveWorkspaceInfra().image;
   if (!DOCKER_IMAGE_REF_RE.test(image)) {
     throw new Error(`Invalid Docker image name: ${image}`);
   }

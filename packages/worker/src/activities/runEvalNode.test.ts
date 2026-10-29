@@ -46,7 +46,7 @@ vi.mock('@auto-swe/shared/lib/regexExec', async (importOriginal) => {
 });
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(),
-  resolveWorkspaceInfra: vi.fn(() => ({ regexScanBudgetMs: 250 })),
+  resolveWorkspaceInfra: vi.fn(() => ({ regexScanBudgetMs: 250, stackImages: {} })),
 }));
 vi.mock('../lib/activityContext.js', () => ({
   currentWorkflowRunId: vi.fn().mockResolvedValue(undefined),

@@ -253,6 +253,24 @@ tries to install it (`apk`, then `apt-get`) before giving up with an error
 naming this contract; `ripgrep` is optional but recommended — Pi's grep
 honours `.gitignore` only through it.
 
+**An image per stack.** A deployer may map a detected stack to an image with `WORKSPACE_IMAGE_PYTHON`,
+`WORKSPACE_IMAGE_JVM` and `WORKSPACE_IMAGE_GO` (environment-only, validated at worker boot like
+`WORKSPACE_IMAGE`). A repository's workspace then starts on, most specific first:
+
+1. its `executorImage`, when a platform admin set one;
+2. the image for its detected stack — the root's, or the only component's — when that variable is set;
+3. `WORKSPACE_IMAGE`.
+
+Node has no variable: `WORKSPACE_IMAGE` is the Node image, and a repository the scan found to be Node
+behaves exactly as before. Unset variables, an ambiguous layout and a repository the scan has not
+reached all fall through to `WORKSPACE_IMAGE`. The stored detection only *selects* among images the
+deployer configured and never names one, so a committed `go.mod` can move a repository onto the Go
+image but cannot choose which image that is. The images are not built into the platform: build
+`defaults/Dockerfile.<stack>` (see below) and publish it where the workers can pull it. On Kubernetes,
+`K8S_WORKSPACE_IMAGE_PULL_SECRETS` must cover those registries too. The probe below, run with no image named,
+tests the image the repository's runs would use: its override, else its stack's image, else the
+default.
+
 A platform admin can check a candidate image without waiting for a run: the
 **Check image** button in the repository's connection form, or
 `POST /api/v1/repositories/:id/executor-image/probe` (`{ image? }`, defaulting
@@ -284,7 +302,7 @@ The scheduled dependency scan also records the repository's stacks on the connec
 (`detectedStack`, with `detectedStackAt`). It reads the repository tree recursively.
 
 - **What it scans.** Stack signals (`package.json`, `pyproject.toml`, `requirements.txt`,
-  `setup.py`, `pom.xml`, `build.gradle[.kts]`, `go.mod`) up to four directories deep. Paths under
+  `setup.py`, `pom.xml`, `build.gradle[.kts]`, `settings.gradle[.kts]`, `go.mod`) up to four directories deep. Paths under
   `node_modules`, `vendor`, `.git`, `dist`, `build` and `target` are ignored.
 - **What it records:**
   - `components`: every directory with a signal and its stacks, capped at 50
@@ -314,11 +332,42 @@ on its node makes it optional); it is never filled with a command from another e
 commands come from this fixed table, not from the stored `suggestedGateCommands`. A Node root, a
 polyglot root (node outranks the rest) and a repository with no detection keep the built-in gates.
 
-A Node root whose lockfile names npm or pnpm runs that manager's commands instead (`npm run build`,
+**Node package manager.** A Node root's manager comes from its `package.json` `packageManager` pin
+when it has one — Corepack enforces the pin, so it outranks the lockfile — else from its lockfile
+when exactly one exists. A root on npm or pnpm runs that manager's commands (`npm run build`,
 `npm run lint`, `npm test`, `npm run typecheck`, `npm audit --audit-level=high`; `pnpm …` likewise),
-so its vulnerability scan is not Yarn 4's `yarn npm audit`. The test loop does not take the manager's
-`npm test` — it keeps its `package.json` guess. A Yarn root, or a detection from before the manager
-was recorded, keeps the built-in `yarn` gates.
+so its vulnerability scan is not Yarn 4's `yarn npm audit`. Yarn's flavour comes from the pin's major
+version, else from a root `.yarnrc.yml` (Berry's config file):
+
+| Root | Gates |
+|---|---|
+| Yarn Berry, Yarn of unknown flavour, no recorded manager | the built-in `yarn` gates, including `yarn npm audit --severity high` |
+| Yarn Classic (`yarn@1.x`) | the built-in `yarn` gates **without** `runVulnScan`, which resolves as unconfigured |
+
+Yarn Classic has no `yarn npm audit`, and its `yarn audit` posts to a hard-coded `registry.yarnpkg.com`
+whatever registry is configured, so it can never go through the registry proxy and would send every
+package name in the lockfile, private ones included, to a public host. Set `runVulnScan` on the
+repository if you want it anyway. The test loop does not take a manager's `npm test` for a Node
+target — it keeps its `package.json` guess.
+
+**Components.** A repository whose root has no stack signal resolves by its components:
+
+- exactly **one** component, with a complete listing (`treeTruncated` and `componentsTruncated` both
+  unset), is the target. The stack's default gates and test command run in that directory, so the
+  recorded command reads `cd 'backend' && mvn -B -q test` — the directory is visible in the run's gate
+  result. A Node component's manager comes from its own lockfile (and `.yarnrc.yml`) alone; one with no
+  lockfile gets npm's commands, because Yarn 4 refuses a directory that is not part of a project (its
+  audit then fails, as `npm audit` needs a lockfile). Its test command is guessed from the component's
+  own `package.json`. A Gradle `settings.gradle[.kts]` makes the root a JVM target, so a subproject is
+  never picked in place of the root's `./gradlew`.
+- **several** components and no root signal is a layout with no single right place: every gate
+  resolves as unconfigured instead of running a root command that cannot work there.
+- anything else keeps the built-in behaviour.
+
+Only the stack defaults get the `cd`: a step's `command` and the repository's `gateCommands` are
+written relative to the repository root and run exactly as written. A stored component path is
+re-validated where it is used (plain segments, at most four, never absolute, `..` or starting with
+`-`) and quoted, since the column is JSON the worker wrote, not trusted input.
 
 The repository edit form shows the detection as a suggestion: the detected stacks and components,
 the suggested `defaults/Dockerfile.<stack>` for `build-executor.yml`, and a **Use suggested gate
@@ -459,15 +508,18 @@ longer fit.
   [`package-registries.md`](./package-registries.md)). An audit that names a private-scope package
   is refused, and an upstream that does not serve the endpoint a client uses fails the gate — pnpm
   uses the older `audits` endpoints, which a registry may no longer implement.
-- **The Yarn built-ins assume Yarn 4.** `yarn npm audit` exists only in Yarn Berry; the detector sees
-  lockfile names, not the Yarn version.
+- **An unknown Yarn is treated as Berry.** A root with `yarn.lock` but neither a `packageManager` pin nor a
+  `.yarnrc.yml` keeps the built-in gates, whose audit is Berry's `yarn npm audit`; on a Classic repository
+  that gate fails until a pin or `runVulnScan` says otherwise.
 - **The stack fallback follows the stored detection, which is weekly.** A repository onboarded
   since the last scan has none and keeps the built-in `yarn` gates until the next scan; a root that
-  changed stack is followed only after a rescan. Only the root counts: a Python or JVM service in a
-  subdirectory of a repository whose root has no stack gets no fallback, and the test loop still
-  reads only the root `package.json`. The image is not chosen from the stack — the repository still
-  needs an `executorImage` (or the workspace default) that carries the toolchain, and a Python
-  `runTests` assumes `pytest` is installed by the repository's own setup.
+  changed stack is followed only after a rescan. Each activity reads the detection itself, so a scan that
+  lands mid-run can move the run's later steps to another image or directory than its earlier ones; a run
+  is not pinned to the detection it started with. A polyglot root (root `package.json` plus a Python
+  service) is a Node target, and the service gets nothing. A single component is chosen only when it is
+  the only one seen, which a repository whose real build is a `Makefile` beside one lone nested `package.json`
+  would satisfy wrongly; the `cd` in the recorded command is how that shows, and `gateCommands` is the
+  fix. A Python `runTests` assumes `pytest` is installed by the repository's own setup.
 - **Stack detection is bounded.** It ignores signals deeper than four directories, and anything
   under the ignored build/vendor directories. It records at most 50 components
   (`componentsTruncated`). When the provider truncates a very large tree (`treeTruncated`), it

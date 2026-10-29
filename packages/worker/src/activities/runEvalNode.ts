@@ -14,6 +14,7 @@
  */
 
 import { prisma } from '@auto-swe/shared/db';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import {
   type RegexTarget,
   resolveRegexBudgetMs,
@@ -238,7 +239,7 @@ async function evaluateScorer(
           // from defaultBranch), on the repo's configured toolchain image.
           existingBranch: true,
           gate: scorer.gate as GateName,
-          image: repo.executorImage ?? undefined,
+          image: executorImageFor(repo),
           teamId: repo.teamId,
         });
         return {

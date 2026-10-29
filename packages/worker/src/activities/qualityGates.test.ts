@@ -149,6 +149,51 @@ describe('resolveCommand precedence', () => {
       expect(await resolveCommand('runLint', baseRequest, undefined)).toBe('npm run lint');
     });
 
+    it('runs a lone component’s commands in its directory, but not an override', async () => {
+      mockedFindUnique.mockResolvedValue({
+        detectedStack: {
+          components: [{ path: 'backend', stacks: ['jvm'] }],
+          evidence: ['backend/pom.xml'],
+        },
+        gateCommands: { runLint: 'make lint' },
+      } as never);
+      expect(await resolveCommand('runTests', baseRequest, undefined)).toBe(
+        "cd 'backend' && mvn -B -q test"
+      );
+      expect(await resolveCommand('runLint', baseRequest, undefined)).toBe('make lint');
+      expect(await resolveCommand('runTests', baseRequest, 'step')).toBe('step');
+    });
+
+    it('fails every gate as unconfigured when several components compete and none is the root', async () => {
+      mockedFindUnique.mockResolvedValue({
+        detectedStack: {
+          components: [
+            { path: 'api', stacks: ['jvm'] },
+            { path: 'web', stacks: ['node'] },
+          ],
+          evidence: [],
+        },
+        gateCommands: null,
+      } as never);
+      for (const gate of ['runTests', 'runBuild', 'runLint', 'runVulnScan'] as const) {
+        expect(await resolveCommand(gate, baseRequest, undefined), gate).toBeNull();
+      }
+    });
+
+    it('has no audit for Yarn Classic, rather than Berry’s command, which Yarn 1 lacks', async () => {
+      mockedFindUnique.mockResolvedValue({
+        detectedStack: {
+          components: [{ path: '', stacks: ['node'] }],
+          evidence: ['package.json', 'yarn.lock'],
+          packageManager: 'yarn',
+          yarnFlavor: 'classic',
+        },
+        gateCommands: null,
+      } as never);
+      expect(await resolveCommand('runVulnScan', baseRequest, undefined)).toBeNull();
+      expect(await resolveCommand('runTests', baseRequest, undefined)).toBe('yarn test');
+    });
+
     it('keeps the yarn defaults for a Node root', async () => {
       mockedFindUnique.mockResolvedValue({
         detectedStack: { components: [{ path: '', stacks: ['node'] }], evidence: ['package.json'] },

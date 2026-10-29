@@ -1,4 +1,9 @@
-import { detectedGateDefaults, detectedRootStack } from '@auto-swe/shared/lib/stackDetection';
+import {
+  detectedGateDefaults,
+  detectedTarget,
+  detectedTargetDir,
+  inDir,
+} from '@auto-swe/shared/lib/stackDetection';
 import type { FileChange, TestRunResult } from '@auto-swe/shared/types/workflow';
 
 /**
@@ -12,11 +17,15 @@ export const TEST_RUN_TIMEOUT_MS = 600_000;
 /**
  * The test command the TDD loop and the fix sessions run.
  *
- * The same chain as the `runTests` quality gate, so the loop and the gate never
- * run different commands: the repository's configured
+ * The same chain as the `runTests` quality gate, so the loop and the gate run the same
+ * command wherever both have one (an ambiguous layout leaves the gate unconfigured and the
+ * loop on its root guess, which then ends the loop as unrunnable): the repository's configured
  * `Connection.gateCommands.runTests` wins; then the default for the stack the
- * repository's root was detected as (a Python, JVM or Go root, not Node); then a guess from
- * package.json's scripts and devDependencies, falling back to `npm test`.
+ * repository's root was detected as (a Python, JVM or Go root, not Node), or its only component
+ * when the root has no stack (run in that directory); then a guess from package.json's scripts
+ * and devDependencies, falling back to `npm test`. `packageJsonStr` is the text of the target's
+ * `package.json` — {@link packageJsonReadCommand} reads the right one — and a guess for a
+ * component runs in its directory too.
  */
 export function detectTestCommand(
   packageJsonStr: string,
@@ -30,16 +39,28 @@ export function detectTestCommand(
   if (typeof configured === 'string' && configured.trim().length > 0) {
     return configured;
   }
-  // A Node root is not given its package manager's `npm test`: the package.json
+  // A Node target is not given its package manager's `npm test`: the package.json
   // guess below is better informed (a missing test script, a vitest dependency).
+  const target = detectedTarget(detectedStack);
+  const concrete = target !== null && target !== 'ambiguous' ? target : null;
   const stackTests =
-    detectedRootStack(detectedStack) === 'node'
+    concrete === null || concrete.stack === 'node'
       ? undefined
       : detectedGateDefaults(detectedStack)?.runTests;
   if (stackTests) {
     return stackTests;
   }
-  return detectTestCommandFromPackageJson(packageJsonStr);
+  return inDir(concrete?.dir ?? '', detectTestCommandFromPackageJson(packageJsonStr));
+}
+
+/**
+ * The shell command that prints the `package.json` {@link detectTestCommand} should read: the
+ * root's, or the target component's when the root has no stack. The directory is a
+ * re-validated path from a stored detection, quoted.
+ */
+export function packageJsonReadCommand(detectedStack: unknown): string {
+  const dir = detectedTargetDir(detectedStack);
+  return `cat ${dir ? `'${dir}/package.json'` : 'package.json'} 2>/dev/null || echo "{}"`;
 }
 
 function detectTestCommandFromPackageJson(packageJsonStr: string): string {

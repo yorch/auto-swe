@@ -10,6 +10,7 @@ import {
   isLaunchableAgentKey,
 } from '@auto-swe/shared/lib/agentRun';
 import { decideAdmission } from '@auto-swe/shared/lib/agentRunAdmission';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import { clampPullRequestTitle } from '@auto-swe/shared/lib/pullRequest';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
@@ -109,6 +110,7 @@ export async function runAgentTask(input: RunAgentTaskInput): Promise<RunAgentTa
 export interface AgentTaskCoreInput {
   /** The `git_repo` connection row, with its installation. */
   repo: Parameters<typeof toRepoRef>[0] & {
+    detectedStack?: unknown;
     executorImage?: string | null;
     teamId: string | null;
   };
@@ -227,7 +229,7 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       authedCloneUrl,
       branch,
       baseBranch,
-      repo.executorImage ?? undefined,
+      executorImageFor(repo),
       undefined,
       undefined,
       { teamId: repo.teamId }
@@ -291,7 +293,7 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       authedCloneUrl,
       branch,
       baseBranch,
-      repo.executorImage ?? undefined,
+      executorImageFor(repo),
       baseSha,
       undefined,
       { teamId: repo.teamId }

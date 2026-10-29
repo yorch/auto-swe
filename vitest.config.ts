@@ -338,6 +338,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/repoDependency.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/executorImage',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/executorImage.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/stackDetection',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/stackDetection.ts'),
       },

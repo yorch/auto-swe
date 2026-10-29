@@ -1,4 +1,5 @@
 import { prisma } from '@auto-swe/shared/db';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import type { CodeResult, TestRunResult } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { runImplementerTurn } from '../agents/implementerRuntime.js';
@@ -24,6 +25,7 @@ import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { commitStaged, diffForResult, pushRefspec, startPathGuard } from './allowedPaths.js';
 import {
   detectTestCommand,
+  packageJsonReadCommand,
   parseDiffToFileChanges,
   parseTestOutput,
   TEST_RUN_TIMEOUT_MS,
@@ -148,7 +150,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     authedCloneUrl,
     previousCodeResult.branch,
     baseBranch,
-    repo.executorImage ?? undefined,
+    executorImageFor(repo),
     undefined,
     undefined,
     { teamId: repo.teamId }
@@ -189,7 +191,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       { refuseWorkflowChanges: input.refuseWorkflowChanges }
     );
 
-    const packageJson = await workspace.exec('cat package.json 2>/dev/null || echo "{}"');
+    const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
     const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);
 
     // The session runs as its own persona (ciFixer / reviewFixer / gateFixer):

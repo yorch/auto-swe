@@ -1,10 +1,59 @@
 import { describe, expect, it } from 'vitest';
 import {
   detectTestCommand,
+  packageJsonReadCommand,
   parseTestOutput,
   testRunCommand,
   unrunnableTestCause,
 } from './utils.js';
+
+describe('detectTestCommand with a component target', () => {
+  const component = (path: string, stack: string, extra: object = {}) => ({
+    components: [{ path, stacks: [stack], ...extra }],
+    evidence: [],
+  });
+
+  it('runs a non-Node component’s default in its directory', () => {
+    expect(detectTestCommand('{}', null, component('services/api', 'go'))).toBe(
+      "cd 'services/api' && go test ./..."
+    );
+  });
+
+  it('guesses a Node component’s command from ITS package.json and runs it there', () => {
+    const pkg = JSON.stringify({ devDependencies: { vitest: '1' } });
+    expect(detectTestCommand(pkg, null, component('web', 'node'))).toBe(
+      "cd 'web' && npx vitest run"
+    );
+    expect(detectTestCommand('{}', null, component('web', 'node'))).toBe("cd 'web' && npm test");
+  });
+
+  it('never wraps a command an admin configured', () => {
+    expect(
+      detectTestCommand('{}', { runTests: 'make -C web test' }, component('web', 'node'))
+    ).toBe('make -C web test');
+  });
+
+  it('leaves an ambiguous layout on the root guess, in the root', () => {
+    const both = {
+      components: [
+        { path: 'a', stacks: ['go'] },
+        { path: 'b', stacks: ['jvm'] },
+      ],
+      evidence: [],
+    };
+    expect(detectTestCommand('{}', null, both)).toBe('npm test');
+  });
+
+  it('reads the component’s package.json, quoting the directory', () => {
+    expect(packageJsonReadCommand(component('web', 'node'))).toBe(
+      `cat 'web/package.json' 2>/dev/null || echo "{}"`
+    );
+    expect(packageJsonReadCommand(undefined)).toBe('cat package.json 2>/dev/null || echo "{}"');
+    expect(packageJsonReadCommand(component('a b; id', 'node'))).toBe(
+      'cat package.json 2>/dev/null || echo "{}"'
+    );
+  });
+});
 
 describe('detectTestCommand with a detected stack', () => {
   const python = { components: [{ path: '', stacks: ['python'] }], evidence: ['pyproject.toml'] };

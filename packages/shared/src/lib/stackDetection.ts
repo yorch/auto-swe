@@ -1,6 +1,7 @@
 import type { DetectedStack, RepoGateCommands } from '../types/api.js';
+import { packageManagerPins } from './lockfileAllowlist.js';
 
-type Stack = 'node' | 'python' | 'jvm' | 'go';
+export type Stack = 'node' | 'python' | 'jvm' | 'go';
 
 /**
  * Fixed precedence for `primary` when a repository presents several stacks:
@@ -14,7 +15,9 @@ const PRECEDENCE: readonly Stack[] = ['node', 'python', 'jvm', 'go'];
 /** Root filenames that evidence each stack. */
 const SIGNALS: Record<Stack, string[]> = {
   go: ['go.mod'],
-  jvm: ['pom.xml', 'build.gradle', 'build.gradle.kts'],
+  // `settings.gradle*` marks a Gradle multi-project root: its subprojects' `build.gradle*` are not
+  // the place to run the root's `./gradlew`.
+  jvm: ['pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts'],
   node: ['package.json'],
   python: ['pyproject.toml', 'requirements.txt', 'setup.py'],
 };
@@ -24,6 +27,16 @@ const NODE_LOCKFILES: Array<{ file: string; pm: NodePackageManager }> = [
   { file: 'yarn.lock', pm: 'yarn' },
   { file: 'pnpm-lock.yaml', pm: 'pnpm' },
 ];
+
+/** The script names a `package.json` text declares; none for text that is not one. */
+function scriptsOf(packageJson: string | undefined): string[] {
+  try {
+    const parsed = JSON.parse(packageJson ?? '') as { scripts?: unknown };
+    return parsed.scripts && typeof parsed.scripts === 'object' ? Object.keys(parsed.scripts) : [];
+  } catch {
+    return [];
+  }
+}
 
 function nodeGateCommands(present: Set<string>, scripts: Set<string>): RepoGateCommands {
   const pm = NODE_LOCKFILES.find((l) => present.has(l.file))?.pm ?? 'npm';
@@ -79,14 +92,35 @@ export function stackGateDefaults(
 }
 
 type NodePackageManager = 'npm' | 'yarn' | 'pnpm';
+type YarnFlavor = 'berry' | 'classic';
 
 /**
- * Gate commands for a Node root whose lockfile names npm or pnpm. Yarn has no
- * entry: the built-in gates are `yarn` commands, so a Yarn root (or one whose
- * manager is unknown) keeps them. A script the repository does not declare fails
- * as `missing script`, exactly as the built-in `yarn lint` does.
+ * The built-in Node gate commands: Yarn 4 (Berry), what the platform has always assumed. The
+ * worker's `DEFAULT_COMMANDS` is this table plus `runPerfBench: null`, so there is one copy;
+ * a Node root on Yarn Berry, or on an unknown manager, resolves to these without a lookup.
  */
-const NODE_PM_GATE_DEFAULTS: Record<'npm' | 'pnpm', RepoGateCommands> = {
+export const YARN_GATE_DEFAULTS: Readonly<
+  Record<'runBuild' | 'runLint' | 'runTests' | 'runTypecheck' | 'runVulnScan', string>
+> = Object.freeze({
+  runBuild: 'yarn build',
+  runLint: 'yarn lint',
+  runTests: 'yarn test',
+  runTypecheck: 'yarn typecheck',
+  runVulnScan: 'yarn npm audit --severity high',
+});
+
+/**
+ * Gate commands by Node package manager. A script the repository does not declare fails as
+ * `missing script`, exactly as the built-in `yarn lint` does.
+ *
+ * Yarn Classic has no `runVulnScan`. `yarn npm audit` does not exist in Yarn 1, and `yarn audit`
+ * posts to a hard-coded `https://registry.yarnpkg.com` — Yarn 1 ignores the configured registry
+ * for it — so it can never go through the registry proxy, carries no registry credential, and
+ * sends every package name in the lockfile, private ones included, to a public host. The
+ * proxy refuses exactly that for the other managers, so no default is better than that one;
+ * the gate resolves as unconfigured and an admin may set `runVulnScan` deliberately.
+ */
+const NODE_PM_GATE_DEFAULTS: Record<'npm' | 'pnpm' | 'yarn-classic', RepoGateCommands> = {
   npm: {
     runBuild: 'npm run build',
     runLint: 'npm run lint',
@@ -101,45 +135,172 @@ const NODE_PM_GATE_DEFAULTS: Record<'npm' | 'pnpm', RepoGateCommands> = {
     runTypecheck: 'pnpm run typecheck',
     runVulnScan: 'pnpm audit --audit-level high',
   },
+  'yarn-classic': {
+    runBuild: YARN_GATE_DEFAULTS.runBuild,
+    runLint: YARN_GATE_DEFAULTS.runLint,
+    runTests: YARN_GATE_DEFAULTS.runTests,
+    runTypecheck: YARN_GATE_DEFAULTS.runTypecheck,
+  },
 };
 
-/** The stack a stored detection puts at the repository's root, or null. Assumes no shape. */
-export function detectedRootStack(detected: unknown): Stack | null {
+/** A directory in a stored detection: a few plain path segments, never absolute, `..` or an option. */
+const COMPONENT_PATH_RE = /^[A-Za-z0-9_@][A-Za-z0-9._@-]*(?:\/[A-Za-z0-9_@][A-Za-z0-9._@-]*){0,3}$/;
+
+/** Where a repository's gates and test loop run, and on which stack, per its stored detection. */
+export interface DetectedTarget {
+  /** `''` for the repository root, else a validated relative directory. */
+  dir: string;
+  stack: Stack;
+  packageManager?: NodePackageManager;
+  yarnFlavor?: YarnFlavor;
+  /** The names of the files directly in `dir` that evidenced a stack; picks the JVM build tool. */
+  rootFiles: ReadonlySet<string>;
+}
+
+const isStack = (v: unknown): v is Stack =>
+  v === 'node' || v === 'python' || v === 'jvm' || v === 'go';
+const isPm = (v: unknown): v is NodePackageManager => v === 'npm' || v === 'yarn' || v === 'pnpm';
+const isFlavor = (v: unknown): v is YarnFlavor => v === 'berry' || v === 'classic';
+
+/**
+ * Resolve a stored detection to the one place a repository's defaults apply, or say why not:
+ *
+ * - the **root**, when it has a stack signal (a polyglot root resolves by the fixed
+ *   precedence, so node wins);
+ * - else the **only component**, when exactly one directory has a signal and the listing was
+ *   complete — never when `treeTruncated` or `componentsTruncated` is set, because "only one
+ *   seen" is not "only one";
+ * - `'ambiguous'` when several directories have signals and the root has none: no single
+ *   place is right, so the caller reports the gates as unconfigured;
+ * - `null` when there is nothing to go on (no detection, an unusable shape, an unlisted
+ *   tree), which keeps the built-in behaviour.
+ *
+ * The input is a JSON column written by the worker, but nothing about its shape is assumed:
+ * a component path is re-validated here, and a record from before `components` existed is
+ * read by its root-only `primary`.
+ */
+export function detectedTarget(detected: unknown): DetectedTarget | 'ambiguous' | null {
   if (!detected || typeof detected !== 'object') {
     return null;
   }
   const d = detected as Partial<DetectedStack>;
-  const root = Array.isArray(d.components)
-    ? d.components.find((c) => c?.path === '')?.stacks?.[0]
-    : d.primary;
-  return root === 'node' || root === 'python' || root === 'jvm' || root === 'go' ? root : null;
+  const evidence = Array.isArray(d.evidence)
+    ? d.evidence.filter((f): f is string => typeof f === 'string')
+    : [];
+  const filesIn = (dir: string) =>
+    new Set(
+      evidence
+        .filter((f) =>
+          dir === ''
+            ? !f.includes('/')
+            : f.startsWith(`${dir}/`) && !f.slice(dir.length + 1).includes('/')
+        )
+        .map((f) => f.slice(dir === '' ? 0 : dir.length + 1))
+    );
+  if (!Array.isArray(d.components)) {
+    return isStack(d.primary)
+      ? {
+          dir: '',
+          packageManager: isPm(d.packageManager) ? d.packageManager : undefined,
+          rootFiles: filesIn(''),
+          stack: d.primary,
+          yarnFlavor: isFlavor(d.yarnFlavor) ? d.yarnFlavor : undefined,
+        }
+      : null;
+  }
+  const comps = d.components.filter(
+    (c): c is NonNullable<DetectedStack['components']>[number] =>
+      !!c && typeof c === 'object' && typeof c.path === 'string' && Array.isArray(c.stacks)
+  );
+  const root = comps.find((c) => c.path === '');
+  const pick = (c: (typeof comps)[number]): DetectedTarget | null => {
+    const stack = c.stacks.find(isStack);
+    if (!stack || (c.path !== '' && !COMPONENT_PATH_RE.test(c.path))) {
+      return null;
+    }
+    const own = c.path === '' ? d : c;
+    return {
+      dir: c.path,
+      packageManager: isPm(own.packageManager) ? own.packageManager : undefined,
+      rootFiles: filesIn(c.path),
+      stack,
+      yarnFlavor: isFlavor(own.yarnFlavor) ? own.yarnFlavor : undefined,
+    };
+  };
+  if (root) {
+    return pick(root);
+  }
+  if (d.treeTruncated || d.componentsTruncated || comps.length === 0) {
+    return null;
+  }
+  return comps.length === 1 ? pick(comps[0] as (typeof comps)[number]) : 'ambiguous';
+}
+
+/** The directory the test loop and gates run in: a validated component, else `''` (the root). */
+export function detectedTargetDir(detected: unknown): string {
+  const t = detectedTarget(detected);
+  return t !== null && t !== 'ambiguous' ? t.dir : '';
 }
 
 /**
- * Stack-derived fallback commands for a repository's stored detection, or null
- * when the built-in `yarn` gates apply: no detection, a root with no stack, or a
- * Node root on Yarn (or with no recorded manager). A non-null result may be sparse —
- * a gate it lacks has no unambiguous command for the stack, and the caller must
- * not substitute another ecosystem's.
- *
- * Only the root counts: a detection with `components` is read from the root
- * component (a polyglot root resolves by the fixed precedence, so node wins),
- * and one from before `components` existed carried a root-only `primary`.
- * The input is a JSON column, so nothing about its shape is assumed.
+ * `cd '<dir>' && <command>` for a component; the command unchanged at the root. The directory
+ * is pre-validated. The result is for a shell of its own, as every gate and the test loop get:
+ * chained in one shell, the first `cd` would move the second command's starting point.
  */
-export function detectedGateDefaults(detected: unknown): RepoGateCommands | null {
-  const root = detectedRootStack(detected);
-  if (root === null) {
+export function inDir(dir: string, command: string): string {
+  return dir === '' ? command : `cd '${dir}' && ${command}`;
+}
+
+/** The default commands for a target, before any `cd`, or null where the built-in gates are exactly them. */
+function targetCommands(t: DetectedTarget): RepoGateCommands | null {
+  if (t.stack !== 'node') {
+    return stackGateDefaults(t.stack, t.rootFiles);
+  }
+  if (t.packageManager === 'npm' || t.packageManager === 'pnpm') {
+    return { ...NODE_PM_GATE_DEFAULTS[t.packageManager] };
+  }
+  if (t.packageManager === 'yarn' && t.yarnFlavor === 'classic') {
+    return { ...NODE_PM_GATE_DEFAULTS['yarn-classic'] };
+  }
+  if (t.dir === '') {
+    // Yarn Berry, or a manager nobody recorded: the root keeps the built-ins, which are this table.
     return null;
   }
-  const d = detected as Partial<DetectedStack>;
-  if (root === 'node') {
-    const pm = d.packageManager;
-    return pm === 'npm' || pm === 'pnpm' ? { ...NODE_PM_GATE_DEFAULTS[pm] } : null;
+  // A component spells them out, because they must run in its directory. One whose directory
+  // has no lockfile at all gets npm's, not Yarn 4's: Yarn 4 refuses a directory that is not
+  // part of a project, and `npm run` works without a lockfile. (Its audit then fails honestly,
+  // as `npm audit` needs one.) One with a `yarn.lock` is Yarn, Berry unless it says Classic, and
+  // one with several lockfiles is unknown like an unknown root — the built-in Yarn commands —
+  // rather than a guess at which of them is live.
+  const hasLockfile = NODE_LOCKFILES.some((l) => t.rootFiles.has(l.file));
+  return t.packageManager === undefined && !hasLockfile
+    ? { ...NODE_PM_GATE_DEFAULTS.npm }
+    : { ...YARN_GATE_DEFAULTS };
+}
+
+/**
+ * Stack-derived fallback commands for a repository's stored detection (see
+ * {@link detectedTarget}), or null when the built-in gates apply: nothing detected, or a Node
+ * root on Yarn Berry or with no recorded manager. A non-null result may be sparse — a gate it
+ * lacks has no unambiguous command for the stack, and the caller must not substitute another
+ * ecosystem's — and is empty for an ambiguous layout. A component's commands carry their
+ * `cd`; the stack defaults are the only commands that get one, never an admin's.
+ */
+export function detectedGateDefaults(detected: unknown): RepoGateCommands | null {
+  const t = detectedTarget(detected);
+  if (t === null) {
+    return null;
   }
-  const evidence = Array.isArray(d.evidence) ? d.evidence : [];
-  const rootFiles = new Set(evidence.filter((f) => typeof f === 'string' && !f.includes('/')));
-  return stackGateDefaults(root, rootFiles);
+  if (t === 'ambiguous') {
+    return {};
+  }
+  const commands = targetCommands(t);
+  if (commands === null || t.dir === '') {
+    return commands;
+  }
+  return Object.fromEntries(
+    Object.entries(commands).map(([gate, cmd]) => [gate, inDir(t.dir, cmd as string)])
+  ) as RepoGateCommands;
 }
 
 /**
@@ -166,7 +327,12 @@ function usable(path: string): boolean {
 
 export function detectStack(
   presentFiles: string[],
-  opts?: { packageJsonScripts?: string[]; treeTruncated?: boolean }
+  opts?: {
+    /** The root `package.json` text: its scripts feed the suggestions and its `packageManager` pin names the manager. */
+    packageJson?: string;
+    packageJsonScripts?: string[];
+    treeTruncated?: boolean;
+  }
 ): DetectedStack {
   const filtered = presentFiles.filter(usable);
   // Group by containing directory: '' for root files, 'a/b' for nested.
@@ -178,15 +344,50 @@ export function detectStack(
     set.add(base);
     byDir.set(dir, set);
   }
-  const dirs = [...byDir.keys()].sort();
-  const componentsTruncated = dirs.length > MAX_COMPONENTS;
-  const components = dirs
-    .slice(0, MAX_COMPONENTS)
+  // Only directories that carry a stack signal are components, and the cap counts those: every
+  // directory of a large tree holds files, and capping before the filter drops real components
+  // behind a hundred directories of docs — and, since a truncated list is what stops the
+  // only-component rule from firing, would switch that rule off for most real repositories.
+  const withSignals = [...byDir.keys()]
+    .sort()
     .map((dir) => ({
-      path: dir,
+      dir,
       stacks: PRECEDENCE.filter((stack) => SIGNALS[stack].some((f) => byDir.get(dir)?.has(f))),
     }))
     .filter((c) => c.stacks.length > 0);
+  // A JVM project is a tree: Maven modules and Gradle subprojects sit under a parent that builds
+  // them, and the parent's wrapper or `mvn` is where the build runs. A JVM signal below another
+  // JVM signal is therefore that parent's, not a second component; counting it would make a plain
+  // `server/` (a `settings.gradle.kts` and an `app/build.gradle.kts`) look like two.
+  const jvmDirs = withSignals.filter((c) => c.stacks.includes('jvm')).map((c) => c.dir);
+  const underJvmParent = (dir: string) =>
+    jvmDirs.some((p) => p !== dir && (p === '' || dir.startsWith(`${p}/`)));
+  const signalDirs = withSignals
+    .map((c) =>
+      c.stacks.includes('jvm') && underJvmParent(c.dir)
+        ? { ...c, stacks: c.stacks.filter((s) => s !== 'jvm') }
+        : c
+    )
+    .filter((c) => c.stacks.length > 0);
+  const componentsTruncated = signalDirs.length > MAX_COMPONENTS;
+  // A directory's Node package manager comes from its own lockfile names alone (a component's
+  // package.json is not fetched): exactly one lockfile names it, none or several leave it unknown.
+  const pmOf = (dir: string): { packageManager?: NodePackageManager; yarnFlavor?: YarnFlavor } => {
+    const files = byDir.get(dir);
+    const locks = NODE_LOCKFILES.filter((l) => files?.has(l.file));
+    const packageManager = locks.length === 1 ? locks[0]?.pm : undefined;
+    return {
+      ...(packageManager ? { packageManager } : {}),
+      ...(packageManager === 'yarn' && files?.has('.yarnrc.yml')
+        ? { yarnFlavor: 'berry' as const }
+        : {}),
+    };
+  };
+  const components = signalDirs.slice(0, MAX_COMPONENTS).map(({ dir, stacks }) => ({
+    path: dir,
+    stacks,
+    ...(stacks[0] === 'node' ? pmOf(dir) : {}),
+  }));
 
   const present = new Set(byDir.get('') ?? []);
   const stacks = PRECEDENCE.filter((stack) => components.some((c) => c.stacks.includes(stack)));
@@ -219,7 +420,7 @@ export function detectStack(
   const rootStack = rootStacks[0] ?? null;
   const suggestedGateCommands: RepoGateCommands =
     rootStack === 'node'
-      ? nodeGateCommands(present, new Set(opts?.packageJsonScripts))
+      ? nodeGateCommands(present, new Set(opts?.packageJsonScripts ?? scriptsOf(opts?.packageJson)))
       : { ...stackGateDefaults(rootStack, present) };
   // Python's lint is a suggestion only: `ruff` is not in the curated image, so it
   // is not a run-time default (a missing binary would fail the gate with 127).
@@ -227,18 +428,43 @@ export function detectStack(
     suggestedGateCommands.runLint = 'ruff check';
   }
 
-  // Recorded only when exactly one root lockfile exists: two (a stale one beside the
-  // live one) leave the manager unknown, and an unknown manager keeps the built-in
-  // gates instead of guessing one that could differ from what the repo runs.
-  const rootLockfiles = NODE_LOCKFILES.filter((l) => present.has(l.file));
-  const packageManager =
-    rootStack === 'node' && rootLockfiles.length === 1 ? rootLockfiles[0]?.pm : undefined;
+  // The root's manager: the `packageManager` pin when there is one — Corepack enforces it, so
+  // it outranks a lockfile — else the lockfile when exactly one exists (two, a stale one beside
+  // the live one, leave it unknown). An unknown manager keeps the built-in gates instead of
+  // guessing one that could differ from what the repo runs. Yarn's flavour comes from the pin's
+  // major version, else from a `.yarnrc.yml` (Berry's config file).
+  let packageManager: NodePackageManager | undefined;
+  let yarnFlavor: YarnFlavor | undefined;
+  if (rootStack === 'node') {
+    const pin = opts?.packageJson ? packageManagerPins(opts.packageJson)[0] : undefined;
+    if (pin?.name === 'npm' || pin?.name === 'pnpm') {
+      packageManager = pin.name;
+    } else if (pin?.name === 'yarn' || pin?.name === '@yarnpkg/cli-dist') {
+      packageManager = 'yarn';
+      yarnFlavor = pin.name === 'yarn' ? 'classic' : 'berry';
+    } else {
+      const own = pmOf('');
+      packageManager = own.packageManager;
+      yarnFlavor = own.yarnFlavor;
+    }
+  }
+  // The root component carries the same answer, so a reader that looks only at components agrees.
+  const rootComponent = components.find((c) => c.path === '') as
+    | (DetectedStack['components'] & object)[number]
+    | undefined;
+  if (rootComponent && packageManager) {
+    rootComponent.packageManager = packageManager;
+    if (yarnFlavor) {
+      rootComponent.yarnFlavor = yarnFlavor;
+    }
+  }
 
   return {
     ...(components.length > 0 ? { components } : {}),
     ...(componentsTruncated ? { componentsTruncated } : {}),
     evidence,
     ...(packageManager ? { packageManager } : {}),
+    ...(yarnFlavor ? { yarnFlavor } : {}),
     primary,
     stacks,
     suggestedDockerfile: primary,

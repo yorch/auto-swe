@@ -351,7 +351,7 @@ declare module 'fastify' {
        */
       probeExecutorImage: (
         workflowId: string,
-        input: { image?: string }
+        input: { detectedStack?: unknown; image?: string }
       ) => Promise<ExecutorImageProbeResult>;
       /** Start an async NL-generation job (does NOT await the result). */
       startWorkflowAuthorJob: (workflowId: string, input: WorkflowAuthorJobInput) => Promise<void>;
@@ -1070,7 +1070,7 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
 
     async probeExecutorImage(
       workflowId: string,
-      input: { image?: string }
+      input: { detectedStack?: unknown; image?: string }
     ): Promise<ExecutorImageProbeResult> {
       // execute() = start + await result. The bound sits above the activity's
       // 10-minute start-to-close (image pulls are slow) so the workflow does

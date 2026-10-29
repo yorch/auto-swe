@@ -23,6 +23,7 @@ import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 import { randomUUID } from 'node:crypto';
 import { prisma } from '@auto-swe/shared/db';
 import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { activityInfo, heartbeat } from '@temporalio/activity';
@@ -244,7 +245,7 @@ async function provisionGateWorkspace(
     authedCloneUrl,
     branch,
     baseBranch,
-    repo.executorImage ?? undefined,
+    executorImageFor(repo),
     undefined,
     undefined,
     { teamId: repo.teamId }

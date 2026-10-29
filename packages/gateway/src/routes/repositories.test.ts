@@ -1298,6 +1298,51 @@ describe('repositoryRoutes', () => {
       });
     });
 
+    it('hands the worker the detection when no image is named, so it can pick the stack image', async () => {
+      const detectedStack = { components: [{ path: '', stacks: ['go'] }], evidence: ['go.mod'] };
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        detectedStack,
+        executorImage: null,
+        type: 'git_repo',
+      });
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: {},
+        url: `/api/v1/repositories/${REPO_ID}/executor-image/probe`,
+      });
+      expect(ctx.mockTemporal.probeExecutorImage.mock.calls[0]?.[1]).toEqual({ detectedStack });
+    });
+
+    it('does not send the detection when an image is named, by the body or the repository', async () => {
+      const detectedStack = { components: [{ path: '', stacks: ['go'] }], evidence: [] };
+      ctx.mockPrisma.connection.findUnique.mockResolvedValue({
+        detectedStack,
+        executorImage: 'ghcr.io/acme/exec:1',
+        type: 'git_repo',
+      });
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: {},
+        url: `/api/v1/repositories/${REPO_ID}/executor-image/probe`,
+      });
+      await ctx.app.inject({
+        headers: AUTH_HEADER,
+        method: 'POST',
+        payload: { image: 'debian:stable-slim' },
+        url: `/api/v1/repositories/${REPO_ID}/executor-image/probe`,
+      });
+      const calls = ctx.mockTemporal.probeExecutorImage.mock.calls as [
+        string,
+        { detectedStack?: unknown },
+      ][];
+      expect(calls).toHaveLength(2);
+      for (const [, input] of calls) {
+        expect(input.detectedStack).toBeUndefined();
+      }
+    });
+
     it('honours an explicit image in the body', async () => {
       await ctx.app.inject({
         headers: AUTH_HEADER,

@@ -11,6 +11,7 @@
 
 import { prisma } from '@auto-swe/shared/db';
 import { putArtifact } from '@auto-swe/shared/lib/artifactStore';
+import { executorImageFor } from '@auto-swe/shared/lib/executorImage';
 import type {
   DecompositionResult,
   RepoWorkRequest,
@@ -417,7 +418,7 @@ async function provisionMergeWorkspace(
     authedCloneUrl,
     targetBranch,
     baseBranch,
-    repo.executorImage ?? undefined,
+    executorImageFor(repo),
     undefined,
     undefined,
     { teamId: repo.teamId }
