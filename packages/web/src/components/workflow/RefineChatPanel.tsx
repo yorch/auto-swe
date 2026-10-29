@@ -34,10 +34,13 @@ type ChatMessage = {
 export function RefineChatPanel({
   open,
   onClose,
+  onSaved,
   templateId,
 }: {
   open: boolean;
   onClose: () => void;
+  /** Called with the version a refinement saved, so the page can tell its own versions apart. */
+  onSaved?: (version: number) => void;
   templateId: string;
 }) {
   const refine = useRefineWorkflowTemplate(templateId);
@@ -77,6 +80,7 @@ export function RefineChatPanel({
     try {
       const res = await refine.mutateAsync(prompt);
       const version = res.data.version;
+      onSaved?.(version);
       const summary = res.summary?.trim();
       append({
         role: 'assistant',
