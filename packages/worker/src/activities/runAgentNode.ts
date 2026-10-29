@@ -284,7 +284,7 @@ async function runInCheckout(args: {
     executorImageFor(repo),
     undefined,
     undefined,
-    { teamId: repo.teamId }
+    { detectedStack: repo.detectedStack, teamId: repo.teamId }
   );
   onOpen(workspace.destroy);
   let checkedOut = branch;

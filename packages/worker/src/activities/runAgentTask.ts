@@ -235,7 +235,7 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       executorImageFor(repo),
       undefined,
       undefined,
-      { teamId: repo.teamId }
+      { detectedStack: repo.detectedStack, teamId: repo.teamId }
     );
     const baseSha = (await agentWs.exec('git rev-parse HEAD')).trim();
 
@@ -299,7 +299,7 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
       executorImageFor(repo),
       baseSha,
       undefined,
-      { teamId: repo.teamId }
+      { detectedStack: repo.detectedStack, teamId: repo.teamId }
     );
     await importAgentTree(agentWs, trusted);
     const committed = await commitTrustedTree(trusted, baseSha, commitMessage);

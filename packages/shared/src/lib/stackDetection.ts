@@ -183,6 +183,47 @@ export function detectedTarget(detected: unknown): DetectedTarget | 'ambiguous' 
   return resolveTarget(detected).target;
 }
 
+/**
+ * Every stack a detection uses, or null when it is absent or unusable — "unknown", which a caller
+ * must not read as "uses none". A component whose stored path fails validation contributes
+ * nothing, as it does for {@link detectedTarget}; a record from before `components` existed is
+ * read by its root-only `primary`. Unlike the target, this is the union over all components, so
+ * a Go module beside a Node root is seen. A detection whose listing was truncated is unknown
+ * too: a stack past the truncation is not in it, and "uses none of these" would be a guess.
+ */
+export function detectedStacks(detected: unknown): Stack[] | null {
+  if (!detected || typeof detected !== 'object') {
+    return null;
+  }
+  const d = detected as Partial<DetectedStack>;
+  if (d.treeTruncated || d.componentsTruncated) {
+    return null;
+  }
+  const found = new Set<Stack>();
+  if (!Array.isArray(d.components)) {
+    if (isStack(d.primary)) {
+      found.add(d.primary);
+    }
+  } else {
+    for (const c of d.components) {
+      if (
+        c &&
+        typeof c === 'object' &&
+        typeof c.path === 'string' &&
+        Array.isArray(c.stacks) &&
+        (c.path === '' || COMPONENT_PATH_RE.test(c.path))
+      ) {
+        for (const s of c.stacks) {
+          if (isStack(s)) {
+            found.add(s);
+          }
+        }
+      }
+    }
+  }
+  return found.size > 0 ? [...found] : null;
+}
+
 /** The most components a composite gate covers; more is left unconfigured. */
 const MAX_COMPOSITE_COMPONENTS = 8;
 
