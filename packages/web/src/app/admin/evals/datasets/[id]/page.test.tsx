@@ -180,6 +180,7 @@ describe('EvalDatasetPage', () => {
       }),
       [`PATCH /api/v1/platform/evals/${DS_ID}/cases/case-1`]: () => ({
         data: { ...base, id: 'case-1', stack: 'jvm' },
+        screenStarted: true,
       }),
       'GET /api/v1/platform/evals/runs': () => ({
         data: [],

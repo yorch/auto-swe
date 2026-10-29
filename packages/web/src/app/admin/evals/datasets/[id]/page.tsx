@@ -356,14 +356,18 @@ export default function EvalDatasetPage({ params }: { params: Promise<{ id: stri
             />
             <ConfirmModal
               confirmLabel="Change stack"
-              message={`This case moves to the ${confirmStack?.stack} environment and goes back to "Not checked yet", so it is checked again there. Until that check passes, benchmark runs do not score it, and scores recorded on its previous stack are not comparable with later ones.`}
+              message={`This case moves to the ${confirmStack?.stack} environment and goes back to "Not checked yet" (and leaves quarantine, if it was quarantined), so it is checked again there. Until that check passes, benchmark runs do not score it, and scores recorded on its previous stack are not comparable with later ones.`}
               onClose={() => setConfirmStack(null)}
               onConfirm={async () => {
                 if (!confirmStack) {
                   return;
                 }
-                await updateStack.mutateAsync(confirmStack);
-                setRescreenNote('Stack changed; the case is checked again on the new stack.');
+                const r = await updateStack.mutateAsync(confirmStack);
+                setRescreenNote(
+                  r.screenStarted
+                    ? 'Stack changed; the case is checked again on the new stack.'
+                    : 'Stack changed. The check could not start now; the next benchmark run of this dataset starts it.'
+                );
               }}
               open={confirmStack !== null}
               title="Change this case's stack?"

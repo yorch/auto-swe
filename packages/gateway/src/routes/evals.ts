@@ -484,12 +484,20 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       // `null` is node, so null → node (and node → null) is the same environment: no write, no
       // re-screen, whichever way the caller spells it.
       if ((existing.stack ?? 'node') === (stack ?? 'node')) {
-        return { data: toCaseDto(existing) };
+        return { data: toCaseDto(existing), screenStarted: false };
       }
       const actor = requireUser(request);
       const updated = await fastify.prisma.$transaction(async (tx) => {
         const row = await tx.evalCase.update({
-          data: { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0, stack },
+          // `quarantined` goes too: a case is quarantined when its reference stopped passing, and
+          // the wrong environment is a likely reason, so the new stack gets a fresh chance.
+          data: {
+            flakeRuns: 0,
+            flakeScreened: false,
+            flakeScreenInfraErrors: 0,
+            quarantined: false,
+            stack,
+          },
           where: { id: existing.id },
         });
         await writeAuditLog(fastify, {
@@ -506,14 +514,16 @@ export const evalRoutes: FastifyPluginAsync = async (fastify) => {
       // Best-effort, like the start on create and on re-screen: the case is reset
       // either way, and the next eval run of the dataset or the re-validation
       // sweep screens it.
+      let screenStarted = false;
       try {
         await fastify.temporal.startEvalScreenWorkflow(evalScreenWorkflowId(id), {
           datasetId: id,
         });
+        screenStarted = true;
       } catch (err) {
         request.log.error({ datasetId: id, err }, 'failed to start EvalScreenWorkflow');
       }
-      return { data: toCaseDto(updated) };
+      return { data: toCaseDto(updated), screenStarted };
     }
   );
 

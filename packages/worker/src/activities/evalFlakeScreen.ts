@@ -212,6 +212,10 @@ async function defaultRecordInfraError(c: ScreenCaseRow, runs: number): Promise<
     goldenTest: c.goldenTest,
     id: c.id,
     repoUrl: c.repoUrl,
+    // The environment it ran in: a case moved to another stack while this screen was running
+    // must not take its result (the stack's change reset the case, and a result from the old
+    // environment would mark it screened).
+    stack: c.stack ?? null,
   };
   await prisma.evalCase.updateMany({
     data: { flakeScreenInfraErrors: { increment: 1 } },
@@ -232,8 +236,8 @@ async function defaultRecordScreen(
   flakeScreened: boolean,
   runs: number
 ): Promise<boolean> {
-  // Conditional on the reference this screen ran and on the case still being
-  // unscreened, so a result never lands on a reference it did not run.
+  // Conditional on the reference and the environment this screen ran, and on the case still
+  // being unscreened, so a result never lands on a reference or a stack it did not run.
   const { count } = await prisma.evalCase.updateMany({
     data: { flakeRuns: runs, flakeScreened },
     where: {
@@ -242,6 +246,7 @@ async function defaultRecordScreen(
       goldenTest: c.goldenTest,
       id: c.id,
       repoUrl: c.repoUrl,
+      stack: c.stack ?? null,
     },
   });
   return count > 0;
@@ -281,3 +286,6 @@ export async function countUnscreenedCasesActivity(
 ): Promise<number> {
   return defaultCountUnscreened(datasetId, skipCaseIds);
 }
+
+/** The default database writes, for the tests that check their guards. */
+export const _defaults = { defaultRecordInfraError, defaultRecordScreen };

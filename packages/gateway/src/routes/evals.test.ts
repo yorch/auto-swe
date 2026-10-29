@@ -1171,7 +1171,13 @@ describe('evalRoutes', () => {
         where: { datasetId: DS, id: CASE },
       });
       expect(prisma.evalCase.update).toHaveBeenCalledWith({
-        data: { flakeRuns: 0, flakeScreened: false, flakeScreenInfraErrors: 0, stack: 'jvm' },
+        data: {
+          flakeRuns: 0,
+          flakeScreened: false,
+          flakeScreenInfraErrors: 0,
+          quarantined: false,
+          stack: 'jvm',
+        },
         where: { id: CASE },
       });
       expect(prisma.configAuditLog.create).toHaveBeenCalledTimes(1);
@@ -1188,6 +1194,27 @@ describe('evalRoutes', () => {
       expect(startEvalScreenWorkflow).toHaveBeenCalledWith(`eval-screen-${DS}`, {
         datasetId: DS,
       });
+      expect(res.json().screenStarted).toBe(true);
+    });
+
+    it('reports that the screen did not start, instead of claiming it did', async () => {
+      const { app, prisma, startEvalScreenWorkflow } = await buildApp();
+      prisma.evalCase.findFirst.mockResolvedValue(row(null));
+      prisma.evalCase.update.mockResolvedValue(row('go'));
+      startEvalScreenWorkflow.mockRejectedValueOnce(new Error('temporal down'));
+      const res = await patch(app, { stack: 'go' });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().screenStarted).toBe(false);
+    });
+
+    it('takes a quarantined case out of quarantine along with the reset', async () => {
+      const { app, prisma } = await buildApp();
+      prisma.evalCase.findFirst.mockResolvedValue({ ...row('python'), quarantined: true });
+      prisma.evalCase.update.mockResolvedValue(row('jvm'));
+      await patch(app, { stack: 'jvm' });
+      expect(prisma.evalCase.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ quarantined: false }) })
+      );
     });
 
     it('clears the stack with null', async () => {

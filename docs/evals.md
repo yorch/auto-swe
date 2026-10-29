@@ -221,8 +221,13 @@ base chosen in `evalWorkspaceImageFor`. A case names a stack, never an image, an
 that set fails the case instead of falling back to node. Those bases carry the language toolchain
 only: the JVM base also carries Maven (on the JDK 21 major), a Gradle case brings its own wrapper, a
 Python case installs what its golden test needs, and an image without `git` gets one installed when
-the workspace starts. Changing a case's stack resets its stability check, since the case now runs in
-a different environment, and starts the dataset's screen.
+the workspace starts. Changing a case's stack resets its stability check and takes it out of quarantine (a case is
+quarantined when its reference stopped passing, and the wrong environment is a likely reason), since
+the case now runs in a different environment, and starts the dataset's screen; the response says
+whether that screen started. A screen already running on the old stack cannot record its result into
+the case: its writes are conditional on the stack it ran in, as the re-validation's quarantine writes
+are. Moving the JVM base onto Maven reset the stability check of every `jvm` case once, in a data
+migration, because a screen taken on the bare JDK says nothing about the new image.
 
 **Infrastructure errors throw rather than scoring zero.** A Docker, model, agent, or MCP failure
 marks the `EvalRun` `FAILED`; it never records a false `0` that would poison the regression verdict
@@ -379,7 +384,7 @@ verdicts into trends per template, model, and prompt version.
 - **A case's stack is set at creation through the API only.** `stack` is accepted on a case when a
   dataset is created, through the dataset create API; the dashboard cannot add a case. A stored
   case's stack can be changed from the dataset page and by the case route, which resets that case's
-  stability check. The `gate` scorer is unaffected: it runs on the repository's own executor image.
+  stability check and quarantine. The `gate` scorer is unaffected: it runs on the repository's own executor image.
 - **Historical replay is not built.** Replaying real production tickets against their original
   repository states would need snapshot infrastructure the platform does not have. The regression
   gate rests on the frozen benchmark plus online scoring and canary instead.

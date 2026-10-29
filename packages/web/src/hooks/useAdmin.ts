@@ -769,10 +769,11 @@ export function useUpdateEvalCaseStack(datasetId: string) {
       stack: 'node' | 'python' | 'jvm' | 'go' | null;
     }) =>
       api
-        .patch<{ data: EvalCaseDto }>(`/api/v1/platform/evals/${datasetId}/cases/${caseId}`, {
-          stack,
-        })
-        .then((r) => r.data),
+        .patch<{ data: EvalCaseDto; screenStarted: boolean }>(
+          `/api/v1/platform/evals/${datasetId}/cases/${caseId}`,
+          { stack }
+        )
+        .then((r) => ({ case: r.data, screenStarted: r.screenStarted })),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['eval-dataset', datasetId] });
       void qc.invalidateQueries({ queryKey: ['eval-suite-health'] });
