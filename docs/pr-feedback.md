@@ -243,9 +243,10 @@ and the run records no `requestedById`. The organization budget is still checked
 - The "feedback that arrived after this round started" line appears only when a second
   delivery on the same pull request was actually suppressed in-flight while the round ran.
 - A Qodo nudge that arrives while the run that opened the pull request is still working (for
-  example during `AWAITING_CI`) is skipped as busy, and it has already used the one decision a
-  head gets: later Qodo comments on that same head are suppressed as the same subject. Findings
-  on a head are acted on only if Qodo's review lands after the run has parked.
+  example during `AWAITING_CI`) is not skipped at once: the round waits for the run to park, up to
+  `qodo.prFeedbackRunWaitSeconds`. The nudge has already used the one decision a head gets, so a
+  round that gives up when the cap passes leaves that head without a fix; the cap bullet below says
+  when that happens.
 - **A Qodo round has no per-actor access check and no human-author trust gate.** Nobody is behind
   the trigger, so the checks the human path runs (the author is a linked, active repository member
   with write access) do not exist for it, and it is not equivalent to the human path. Its safety
