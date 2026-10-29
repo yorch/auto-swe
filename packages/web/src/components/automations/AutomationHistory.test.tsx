@@ -17,7 +17,7 @@ vi.mock('@/hooks/useAutomations', () => ({
   }),
 }));
 
-import { AutomationHistory } from './AutomationHistory';
+import { AutomationHistory, subjectLabel } from './AutomationHistory';
 
 const fire = (id: string, outcome: string, retriedAt: string | null = null) => ({
   createdAt: new Date().toISOString(),
@@ -54,5 +54,16 @@ describe('AutomationHistory', () => {
   it('offers nothing to someone who may only read', () => {
     render(<AutomationHistory automationId="a" source={WORKFLOW_RUN_FAILED} />);
     expect(screen.queryByRole('button', { name: /Decide again/ })).toBeNull();
+  });
+});
+
+describe('subjectLabel', () => {
+  it('cuts a hash to twelve characters', () => {
+    expect(subjectLabel('a'.repeat(40))).toBe('a'.repeat(12));
+  });
+
+  it('shows a Jira issue and its status whole', () => {
+    expect(subjectLabel('jira-pay-12#ready for review')).toBe('jira-pay-12#ready for review');
+    expect(subjectLabel('jira-pay-12')).toBe('jira-pay-12');
   });
 });

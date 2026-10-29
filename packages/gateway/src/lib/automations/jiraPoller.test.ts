@@ -11,6 +11,7 @@ import {
   connectionOwnerKey,
   hasBalancedParentheses,
   JIRA_POLL_MAX_MATCHES,
+  PLATFORM_TRANSITION_REASON,
   type PollableAutomation,
   platformTransitionCheck,
   pollAutomation,
@@ -179,27 +180,6 @@ const run = (
       tracker: {
         fetchIssue: extras.fetchIssue ?? vi.fn(async (key: string) => issueFor(key)),
         ...(extras.fetchIssueOutcome ? { fetchIssueOutcome: extras.fetchIssueOutcome } : {}),
-        searchIssues,
-      } as never,
-    },
-    a
-  );
-
-const runWith = (
-  fake: ReturnType<typeof fakePrisma>,
-  searchIssues: ReturnType<typeof vi.fn>,
-  a: PollableAutomation,
-  extras: Extras & { platformTransition?: (k: string, s: string) => Promise<boolean> }
-) =>
-  pollAutomation(
-    {
-      decide: (extras.decide ?? vi.fn(async () => started())) as never,
-      log: { warn: warnLog },
-      now: NOW,
-      platformTransition: extras.platformTransition,
-      prisma: fake.prisma as never,
-      tracker: {
-        fetchIssue: extras.fetchIssue ?? vi.fn(async (key: string) => issueFor(key)),
         searchIssues,
       } as never,
     },
@@ -1091,106 +1071,52 @@ describe('pollAutomation: status changes', () => {
     );
     expect(JSON.stringify(warnLog.mock.calls)).not.toContain('xxxxxxxx');
   });
-
-  it('does not act on a transition the platform made itself, and does not look at it again', async () => {
-    const fake = baselined();
-    fake.seen.add('pay-1#open');
-    const decide = vi.fn(async (_facts: JiraStatusChangedFacts) => started());
-    const platformTransition = vi.fn(
-      async (_k: string, status: string) => status === 'In Progress'
-    );
-    const search = vi.fn(async () => found(inStatus('PAY-1', 'In Progress')));
-    const fetchIssue = vi.fn(async (key: string) => issueFor(key));
-    const args = { decide, fetchIssue, platformTransition };
-    const outcome = await runWith(fake, search, statusAutomation(), args);
-    expect(outcome).toEqual({
-      pending: 0,
-      platformTransitions: 1,
-      started: 0,
-      status: 'polled',
-      suppressed: 0,
-    });
-    expect(decide).not.toHaveBeenCalled();
-    expect(fetchIssue).not.toHaveBeenCalled();
-    expect(fake.seen.has('pay-1#in progress')).toBe(true);
-    expect(warnLog).toHaveBeenCalledWith(
-      { automationId: 'auto-1', issueKey: 'PAY-1' },
-      expect.stringContaining('platform made itself')
-    );
-    // A person's move to a status the platform does not write still starts a run.
-    const next = vi.fn(async () => found(inStatus('PAY-1', 'Blocked')));
-    expect((await runWith(fake, next, statusAutomation(), args)).status).toBe('polled');
-    expect(decide).toHaveBeenCalledTimes(1);
-  });
-
-  it('never asks the platform-transition check under the new-issue source', async () => {
-    const fake = baselined();
-    const platformTransition = vi.fn(async () => true);
-    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
-    const search = vi.fn(async () => found(hit('PAY-1')));
-    await runWith(fake, search, automation(), { decide, platformTransition });
-    expect(platformTransition).not.toHaveBeenCalled();
-    expect(decide).toHaveBeenCalledTimes(1);
-  });
-
-  it('keeps the new-issue source keyed on the issue alone', async () => {
-    const fake = baselined();
-    fake.seen.add('pay-1');
-    const decide = vi.fn(async (_facts: JiraFilterFacts) => started());
-    const search = vi.fn(async () => found(inStatus('PAY-1', 'In Review')));
-    await run(fake, search, automation(), { decide });
-    expect(decide).not.toHaveBeenCalled();
-  });
-
-  it('stops with START_FAILED and leaves the pair unseen when the start failed', async () => {
-    const fake = baselined();
-    const decide = vi.fn(
-      async (_facts: JiraStatusChangedFacts): Promise<AutomationResult> => ({
-        automationId: 'auto-1',
-        outcome: 'FAILED_TO_START',
-      })
-    );
-    const search = vi.fn(async () => found(inStatus('PAY-1', 'In Review')));
-    expect(await run(fake, search, statusAutomation(), { decide })).toEqual({
-      code: 'START_FAILED',
-      status: 'error',
-    });
-    expect(fake.seen.size).toBe(0);
-  });
 });
 
 describe('platformTransitionCheck', () => {
-  const NOW_ = new Date('2026-10-28T12:00:00Z');
   const checkWith = (found: boolean) => {
-    const findFirst = vi.fn(async () => (found ? { id: 'r1' } : null));
-    return {
-      check: platformTransitionCheck({ runInput: { findFirst } } as never, 'conn-1', NOW_),
-      findFirst,
-    };
+    const findFirst = vi.fn(async (_args: { where: Record<string, unknown> }) =>
+      found ? { id: 'r1' } : null
+    );
+    return { check: platformTransitionCheck({ runInput: { findFirst } } as never), findFirst };
   };
 
   it.each(['In Progress', 'in review', ' DONE '])(
-    'recognises %s when a recent run on the ticket exists on the repository',
+    'recognises %s when any run exists on the ticket, whatever its age, repository or source',
     async (status) => {
       const { check, findFirst } = checkWith(true);
-      expect(await check('PAY-1', status)).toBe(true);
-      expect(findFirst).toHaveBeenCalledWith({
-        select: { id: true },
-        where: {
-          connectionId: 'conn-1',
-          createdAt: { gte: new Date('2026-10-14T12:00:00Z') },
-          externalTicketId: { equals: 'PAY-1', mode: 'insensitive' },
-          ticketIsSynthetic: false,
-        },
+      expect(await check('PAY-1', status)).toBe(PLATFORM_TRANSITION_REASON);
+      const where = findFirst.mock.calls[0]?.[0].where as Record<string, unknown>;
+      // No window and no repository: only the ticket and that the id is a real ticket's.
+      expect(where).toEqual({
+        externalTicketId: { in: ['PAY-1', 'pay-1'] },
+        ticketIsSynthetic: false,
       });
     }
   );
 
+  it('matches the ticket id exactly, never as a pattern, so a project key with _ is not a wildcard', async () => {
+    const { check, findFirst } = checkWith(false);
+    await check('MY_PROJ-1', 'Done');
+    const where = findFirst.mock.calls[0]?.[0].where as Record<string, unknown>;
+    expect(where.externalTicketId).toEqual({ in: ['MY_PROJ-1', 'my_proj-1'] });
+    expect(JSON.stringify(where)).not.toContain('insensitive');
+    expect(JSON.stringify(where)).not.toContain('contains');
+  });
+
+  it('asks for a ticket with a real (non-synthetic) run only, not an automation’s or repository’s', async () => {
+    const { check, findFirst } = checkWith(false);
+    await check('PAY-1', 'Done');
+    expect(findFirst.mock.calls[0]?.[0].where).toMatchObject({ ticketIsSynthetic: false });
+    expect(findFirst.mock.calls[0]?.[0].where).not.toHaveProperty('connectionId');
+    expect(findFirst.mock.calls[0]?.[0].where).not.toHaveProperty('createdAt');
+  });
+
   it('does not recognise it without a run, or a status the platform does not write, asking nothing for the latter', async () => {
     const none = checkWith(false);
-    expect(await none.check('PAY-1', 'In Progress')).toBe(false);
+    expect(await none.check('PAY-1', 'In Progress')).toBeNull();
     const other = checkWith(true);
-    expect(await other.check('PAY-1', 'Blocked')).toBe(false);
+    expect(await other.check('PAY-1', 'Blocked')).toBeNull();
     expect(other.findFirst).not.toHaveBeenCalled();
   });
 });

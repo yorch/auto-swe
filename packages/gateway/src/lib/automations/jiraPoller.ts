@@ -82,8 +82,6 @@ export type PollOutcome =
       pending: number;
       /** Issues the tracker refused to show (marked seen, no ledger row). Absent when none. */
       refused?: number;
-      /** Transitions the platform's own Jira sync made (marked seen, no ledger row). Absent when none. */
-      platformTransitions?: number;
     };
 
 /** An automation as the poller reads it: its filters, and the repository it acts on. */
@@ -106,11 +104,6 @@ export interface PollDeps {
   /** Decides one new issue: the engine, for the automation being polled. */
   decide: (facts: JiraFilterFacts | JiraStatusChangedFacts) => Promise<AutomationResult>;
   now: Date;
-  /**
-   * Whether `status` is one the platform itself moved the ticket to (`status_changed` only): see
-   * `platformTransitionCheck`. Absent, nothing is recognised as the platform's own.
-   */
-  platformTransition?: (issueKey: string, status: string) => Promise<boolean>;
   /** Where a refused issue is named (its key only). */
   log?: { warn: (obj: unknown, msg?: string) => void };
 }
@@ -391,22 +384,8 @@ async function startNewIssues(
   let started = 0;
   let suppressed = 0;
   let refused = 0;
-  let platformTransitions = 0;
   let decided = 0;
   for (const match of unseen.slice(0, MAX_ISSUES_PER_POLL)) {
-    if (statusMode && (await deps.platformTransition?.(match.key, match.status ?? ''))) {
-      // The platform's own sync moved this ticket (it has a run here, and the status is one the
-      // sync writes): answering that with another run would loop. Counted and logged, not
-      // recorded in the ledger, and the pair is not looked at again.
-      await markSeen(match);
-      decided++;
-      platformTransitions++;
-      deps.log?.warn(
-        { automationId, issueKey: match.key },
-        'a Jira transition the platform made itself was not acted on'
-      );
-      continue;
-    }
     let read: FetchIssueOutcome;
     try {
       read = deps.tracker.fetchIssueOutcome
@@ -487,7 +466,6 @@ async function startNewIssues(
     status: 'polled',
     suppressed,
     ...(refused > 0 ? { refused } : {}),
-    ...(platformTransitions > 0 ? { platformTransitions } : {}),
   };
 }
 
@@ -532,6 +510,7 @@ export function engineDecider(
     now: Date;
   }
 ): PollDeps['decide'] {
+  const isPlatformTransition = platformTransitionCheck(fastify.prisma);
   const common = {
     automation: args.automation,
     connection: args.connection,
@@ -544,44 +523,47 @@ export function engineDecider(
     team: args.connection.team,
   };
   return args.automation.source === JIRA_FILTER_STATUS_CHANGED
-    ? (facts) =>
-        decideAndStart(fastify, jiraFilterStatusChangedSource, {
+    ? (facts) => {
+        const status = facts as JiraStatusChangedFacts;
+        return decideAndStart(fastify, jiraFilterStatusChangedSource, {
           ...common,
-          facts: facts as JiraStatusChangedFacts,
-        })
+          facts: status,
+          ownOutput: () => isPlatformTransition(status.issueKey, status.status),
+        });
+      }
     : (facts) => decideAndStart(fastify, jiraFilterNewIssueSource, { ...common, facts });
 }
 
-/** How long after a run starts the platform may still be writing statuses to its ticket. */
-const PLATFORM_TRANSITION_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+/** The reason recorded for a transition the platform made itself. */
+export const PLATFORM_TRANSITION_REASON =
+  'the platform’s own Jira sync moved this ticket to this status for a run on it; it is not acted on again';
 
 /**
  * Recognises a transition the platform made itself. Its Jira sync moves a ticket to In Progress,
- * In Review and Done for a run on that ticket (`JIRA_SYNC_STATUSES`), so an issue in one of those
- * statuses while a run on it was started on the repository in the last 14 days (by any source, a
- * manual launch or the transition hook) is taken as the platform's own doing and is not acted on.
+ * In Review and Done for a run on that ticket (`JIRA_SYNC_STATUSES`), and writes Done when the
+ * pull request merges, which can be weeks after the run began. So an issue in one of those
+ * statuses is taken as the platform's own doing when ANY run on that ticket exists, whatever its
+ * age, repository or source (an automation, a manual launch, the transition hook).
+ *
  * It is a rule over what the platform writes, not a view of who made the transition: a person's
- * move to the same status in that window is skipped too, and a workflow whose transitions land
- * in other status names is not recognised.
+ * move to one of those statuses on such a ticket is recognised too, and a workflow whose
+ * transitions land in other status names is not. The ticket id is matched exactly in its usual
+ * spellings (as Jira issues it, upper-case, lower-case) and never as a pattern, because `_` in a
+ * project key is a wildcard to a case-insensitive match. The answer is a yes or no that is only
+ * used to suppress an occurrence; no run, repository or team is named in it.
  */
 export function platformTransitionCheck(
-  prisma: Pick<PrismaClient, 'runInput'>,
-  connectionId: string,
-  now: Date
-): NonNullable<PollDeps['platformTransition']> {
+  prisma: Pick<PrismaClient, 'runInput'>
+): (issueKey: string, status: string) => Promise<string | null> {
   return async (issueKey, status) => {
     if (!JIRA_SYNC_STATUS_KEYS.includes(status.trim().toLowerCase())) {
-      return false;
+      return null;
     }
+    const spellings = [...new Set([issueKey, issueKey.toUpperCase(), issueKey.toLowerCase()])];
     const run = await prisma.runInput.findFirst({
       select: { id: true },
-      where: {
-        connectionId,
-        createdAt: { gte: new Date(now.getTime() - PLATFORM_TRANSITION_WINDOW_MS) },
-        externalTicketId: { equals: issueKey, mode: 'insensitive' },
-        ticketIsSynthetic: false,
-      },
+      where: { externalTicketId: { in: spellings }, ticketIsSynthetic: false },
     });
-    return run !== null;
+    return run ? PLATFORM_TRANSITION_REASON : null;
   };
 }

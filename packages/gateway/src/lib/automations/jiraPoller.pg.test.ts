@@ -29,7 +29,6 @@ import {
   connectionOwnerKey,
   engineDecider,
   type PollableAutomation,
-  platformTransitionCheck,
   pollAutomation,
 } from './jiraPoller.js';
 
@@ -64,6 +63,8 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
   let fixtureTeam: { id: string; orgId: string };
   let ownerKey: string;
   const startedWorkflows: string[] = [];
+  /** The request each started run was handed, in order. */
+  const startedRequests: { branchName?: string }[] = [];
   /** Whether Temporal reports every execution as over; a test sets false to leave a run open. */
   const runsAreOver = { value: true };
 
@@ -73,8 +74,9 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
     prisma,
     temporal: {
       isWorkflowGone: async () => runsAreOver.value,
-      startRunnableWorkflow: async (id: string) => {
+      startRunnableWorkflow: async (id: string, input: { request: { branchName?: string } }) => {
         startedWorkflows.push(id);
+        startedRequests.push(input.request);
       },
     },
   };
@@ -184,6 +186,7 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
     settings.allowed = ['PAY'];
     settings.polling = true;
     startedWorkflows.length = 0;
+    startedRequests.length = 0;
     runsAreOver.value = true;
     await prisma.automationSeenIssue.deleteMany({ where: { automationId } });
     await prisma.automationPollState.deleteMany({ where: { automationId } });
@@ -531,10 +534,7 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
         ownerKey,
       });
       return pollAutomation(
-        {
-          ...deps(slowTracker(found as never), new Date(), decide as never),
-          platformTransition: platformTransitionCheck(prisma, repoId, new Date()),
-        },
+        deps(slowTracker(found as never), new Date(), decide as never),
         statusAutomation
       );
     };
@@ -626,29 +626,94 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
       expect(startedWorkflows).toHaveLength(1);
     });
 
-    it('reuses the ticket’s branch for a later run, the branch every source names for a ticket', async () => {
+    it('gives every run on a ticket a branch of its own, decided once and carried in the run', async () => {
       await poll([inStatus('PAY-1', 'Open')]);
       await poll([inStatus('PAY-1', 'Ready')]);
       await poll([inStatus('PAY-1', 'Blocked')]);
+      const branches = startedRequests.map((r) => r.branchName);
+      expect(branches).toHaveLength(2);
+      expect(new Set(branches).size).toBe(2);
+      for (const branch of branches) {
+        expect(branch).toMatch(/^auto\/PAY-1-[0-9a-f]{8}$/);
+      }
+      // The branch the request names is the one the active workflow and the run input keep.
       const rows = await prisma.activeWorkflow.findMany({ where: { repoId } });
-      expect(rows.map((r) => r.assignedBranch)).toEqual(['auto/PAY-1', 'auto/PAY-1']);
+      expect(rows.map((r) => r.assignedBranch).sort()).toEqual([...branches].sort());
+      const inputs = await prisma.runInput.findMany({
+        orderBy: { createdAt: 'asc' },
+        where: { connectionId: repoId },
+      });
+      expect(inputs.map((r) => r.workBranch)).toEqual(branches);
     });
 
-    it('does not act on the platform’s own move to In Progress for a ticket it has a run on', async () => {
+    it('leaves the branch of a new-issue run as it always was', async () => {
+      const newIssuePoll = async (found: ReturnType<typeof hit>[]) =>
+        pollAutomation(
+          deps(slowTracker(found), new Date(), (await realDecider()) as never),
+          automation
+        );
+      await newIssuePoll([]);
+      await newIssuePoll([hit('PAY-5')]);
+      expect(startedRequests).toHaveLength(1);
+      expect(startedRequests[0]).not.toHaveProperty('branchName');
+      const row = await prisma.activeWorkflow.findFirstOrThrow({ where: { repoId } });
+      expect(row.assignedBranch).toBe('auto/PAY-5');
+      const input = await prisma.runInput.findFirstOrThrow({ where: { connectionId: repoId } });
+      expect(input.workBranch).toBeNull();
+    });
+
+    it('records the platform’s own move to In Progress, In Review and Done as suppressed, starting nothing', async () => {
       await poll([inStatus('PAY-1', 'Open')]);
       await poll([inStatus('PAY-1', 'Ready')]);
       expect(startedWorkflows).toHaveLength(1);
       expect(await poll([inStatus('PAY-1', 'In Progress')])).toEqual({
         pending: 0,
-        platformTransitions: 1,
         started: 0,
         status: 'polled',
-        suppressed: 0,
+        suppressed: 1,
       });
       await poll([inStatus('PAY-1', 'In Review')]);
       await poll([inStatus('PAY-1', 'Done')]);
       expect(startedWorkflows).toHaveLength(1);
-      expect(await outcomes()).toEqual(['jira-pay-1#ready:STARTED']);
+      expect(await outcomes()).toEqual([
+        'jira-pay-1#ready:STARTED',
+        'jira-pay-1#in progress:SUPPRESSED_OWN_OUTPUT',
+        'jira-pay-1#in review:SUPPRESSED_OWN_OUTPUT',
+        'jira-pay-1#done:SUPPRESSED_OWN_OUTPUT',
+      ]);
+    });
+
+    it('still recognises it for a run of any age, in any repository, but not for a synthetic one', async () => {
+      const old = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+      const stray = ['PAY-70', 'PAY-71'];
+      try {
+        await prisma.runInput.createMany({
+          data: [
+            // Another repository's (here: none) run, long ago.
+            {
+              createdAt: old,
+              description: '',
+              externalTicketId: 'PAY-70',
+              requestPayload: '{}',
+              ticketIsSynthetic: false,
+            },
+            {
+              description: '',
+              externalTicketId: 'PAY-71',
+              requestPayload: '{}',
+              ticketIsSynthetic: true,
+            },
+          ],
+        });
+        await poll([inStatus('PAY-70', 'Open'), inStatus('PAY-71', 'Open')]);
+        await poll([inStatus('PAY-70', 'Done'), inStatus('PAY-71', 'Done')]);
+        expect(await outcomes()).toEqual([
+          'jira-pay-70#done:SUPPRESSED_OWN_OUTPUT',
+          'jira-pay-71#done:STARTED',
+        ]);
+      } finally {
+        await prisma.runInput.deleteMany({ where: { externalTicketId: { in: stray } } });
+      }
     });
 
     it('acts on In Progress for a ticket the platform has no run on', async () => {
@@ -675,6 +740,26 @@ describe.skipIf(!enabled)('Jira filter polling against Postgres', () => {
         where: { outcome: 'SUPPRESSED_IN_FLIGHT', ownerKey },
       });
       expect(fire?.subjectKey).toBe('jira-pay-3#ready');
+    });
+
+    it('does not start a new-issue run on a ticket a status-change run has open', async () => {
+      await poll([inStatus('PAY-4', 'Open')]);
+      await poll([inStatus('PAY-4', 'Ready')]);
+      expect(startedWorkflows).toHaveLength(1);
+      runsAreOver.value = false;
+      // The new-issue automation first sees PAY-4 now; its guard counts the other source's run.
+      const newIssuePoll = async (found: ReturnType<typeof hit>[]) =>
+        pollAutomation(
+          deps(slowTracker(found), new Date(), (await realDecider()) as never),
+          automation
+        );
+      await newIssuePoll([]);
+      expect(await newIssuePoll([hit('PAY-4')])).toMatchObject({ started: 0, suppressed: 1 });
+      expect(startedWorkflows).toHaveLength(1);
+      const fire = await prisma.automationFire.findFirst({
+        where: { outcome: 'SUPPRESSED_IN_FLIGHT', ownerKey, source: JIRA_FILTER_NEW_ISSUE },
+      });
+      expect(fire?.subjectKey).toBe('jira-pay-4');
     });
 
     it('rejects a Jira filter without a JQL, as for the sibling source', async () => {
