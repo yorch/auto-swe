@@ -5,13 +5,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resolveWorkflowRunAttribution } from './runAttribution.js';
 
 /**
- * Runs the attribution UPDATE against a migrated throwaway PostgreSQL database.
- * Opt in with RUN_ATTRIBUTION_PG_TEST=1 and DATABASE_URL:
- *
- *   RUN_ATTRIBUTION_PG_TEST=1 DATABASE_URL=... yarn vitest run \
- *     packages/shared/src/workflow/runAttribution.pg.test.ts
+ * Imported by modelSuggestions.pg.test.ts and enabled with
+ * MODEL_SUGGESTIONS_PG_TEST=1 against a migrated throwaway PostgreSQL database.
  */
-const enabled = process.env.RUN_ATTRIBUTION_PG_TEST === '1';
+const enabled = process.env.MODEL_SUGGESTIONS_PG_TEST === '1';
 
 function requiredAt<T>(values: readonly T[], index: number): T {
   const value = values[index];
@@ -238,7 +235,6 @@ describe.skipIf(!enabled)('workflow run attribution backfill against Postgres', 
 
   afterAll(async () => {
     await cleanup();
-    await prisma.$disconnect();
   });
 
   it('matches resolver precedence, billing-org fallback, and null attribution', async () => {

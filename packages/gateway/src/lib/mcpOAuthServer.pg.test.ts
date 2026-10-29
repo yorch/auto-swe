@@ -15,6 +15,7 @@ import { registerFormBodyParser } from './formBody.js';
 import { MCP_JWKS_GRACE_SECONDS, mcpIssuerFor } from './mcpOAuth.js';
 import { mcpOAuthGate } from './mcpOAuthGate.js';
 import { mcpOAuthGateOptions } from './mcpOAuthGateOptions.js';
+import './reportDigestRateLimit.pg.js';
 
 /**
  * The authorization server end to end: the real better-auth OAuth provider, through the

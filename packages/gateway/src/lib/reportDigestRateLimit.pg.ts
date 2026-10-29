@@ -3,7 +3,11 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { claimReportDigestTestSend } from './reportDigestRateLimit.js';
 
-const enabled = process.env.REPORT_DIGEST_PG_TEST === '1';
+/**
+ * Imported by mcpOAuthServer.pg.test.ts and enabled with MCP_OAUTH_PG_TEST=1
+ * against a migrated throwaway PostgreSQL database.
+ */
+const enabled = process.env.MCP_OAUTH_PG_TEST === '1';
 const suffix = Math.random().toString(36).slice(2);
 const orgName = `report-digest-pg-${suffix}`;
 const createdById = '00000000-0000-4000-8000-000000000001';
@@ -40,7 +44,6 @@ describe.skipIf(!enabled)('report digest send-test rate limit against Postgres',
     if (orgId) {
       await prisma.organization.deleteMany({ where: { id: orgId } });
     }
-    await prisma.$disconnect();
   });
 
   it('allows one atomic claim per minute and releases it after the window', async () => {
