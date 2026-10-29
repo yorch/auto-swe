@@ -290,7 +290,18 @@ export function projectRunOutcome(data: z.infer<typeof restRun>['data']) {
     rawBranch && isSafeGitBranchName(rawBranch) && cleaned(rawBranch) === rawBranch
       ? rawBranch
       : null;
-  const failed = data.steps.find((s) => s.status === 'FAILED');
+  const latestAttempts = new Map<string, (typeof data.steps)[number]>();
+  for (const step of data.steps) {
+    if (step.attempt >= (latestAttempts.get(step.nodeId)?.attempt ?? -1)) {
+      latestAttempts.set(step.nodeId, step);
+    }
+  }
+  let failed: (typeof data.steps)[number] | undefined;
+  for (const step of data.steps) {
+    if (step.status === 'FAILED' && latestAttempts.get(step.nodeId) === step) {
+      failed = step;
+    }
+  }
   const type = failed?.error?.match(/^([A-Z][A-Z0-9_]*): /)?.[1];
   const failureSchema = runOutput.shape.failure.unwrap();
   const failure =

@@ -275,6 +275,8 @@ const MCP_ROUTE_FILE = 'packages/gateway/src/routes/mcp.ts';
  * Everything not listed here is refused, so a new dependency is a deliberate edit to this list.
  */
 const ALLOWED_PACKAGES = new Set([
+  '@auto-swe/shared/lib/agentRun',
+  '@auto-swe/shared/lib/gitRef',
   '@modelcontextprotocol/server',
   'better-auth/node',
   'fastify',

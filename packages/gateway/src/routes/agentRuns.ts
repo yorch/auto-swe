@@ -87,6 +87,7 @@ const CreateAgentRunBody = z.object({
   repoId: z.string().uuid(),
 });
 type CreateAgentRunBody = z.infer<typeof CreateAgentRunBody>;
+const AgentRunReplayInput = CreateAgentRunBody.omit({ callback: true });
 
 const MIN_WALL_CLOCK_SECONDS = 60;
 const MAX_STEPS_HARD = 500;
@@ -327,6 +328,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
       );
     }
 
+    const requestPayload = JSON.stringify(AgentRunReplayInput.parse(input));
     const repo8 = repo.id.replace(/-/g, '').slice(0, 8);
     const caller8 = idempotencyCallerScope(caller);
     const temporalWorkflowId = input.idempotencyKey
@@ -337,17 +339,39 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
         return null;
       }
       const previous = await fastify.prisma.activeWorkflow.findUnique({
-        select: { workRequest: { select: { requestedById: true } }, workRequestId: true },
+        select: {
+          workRequest: { select: { requestedById: true, requestPayload: true } },
+          workRequestId: true,
+        },
         where: { temporalWorkflowId },
       });
-      if (!previous || previous.workRequest?.requestedById !== user?.sub) {
+      if (!previous?.workRequest || previous.workRequest.requestedById !== user?.sub) {
         return null;
       }
-      return reply.send({ data: { deduplicated: true, workRequestId: previous.workRequestId } });
+      let storedInput: unknown;
+      try {
+        storedInput = JSON.parse(previous.workRequest.requestPayload);
+      } catch {
+        storedInput = null;
+      }
+      const prior = AgentRunReplayInput.safeParse(storedInput);
+      if (!prior.success || JSON.stringify(prior.data) !== requestPayload) {
+        return {
+          reply: error(
+            reply,
+            422,
+            'IDEMPOTENCY_KEY_MISMATCH',
+            'This Idempotency-Key was already used for a different request. Use a new key for different agent-run inputs.'
+          ),
+        };
+      }
+      return {
+        reply: reply.send({ data: { deduplicated: true, workRequestId: previous.workRequestId } }),
+      };
     };
     const previous = await replay();
     if (previous) {
-      return previous;
+      return previous.reply;
     }
 
     // Concurrency. Friendly early refusal; the worker admits by rank and is the authority.
@@ -420,16 +444,6 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     if (!callback.ok) {
       return sendCallbackRefusal(reply, callback);
     }
-    const requestPayload = JSON.stringify({
-      agent: input.agent,
-      ...(input.baseBranch ? { baseBranch: input.baseBranch } : {}),
-      budgetTier: input.budgetTier,
-      deliver: input.deliver,
-      maxSteps: input.maxSteps,
-      maxWallClockSeconds: input.maxWallClockSeconds,
-      prompt: input.prompt,
-      repoId: input.repoId,
-    });
     const repoWorkRequest: RepoWorkRequest = {
       budgetTier: input.budgetTier,
       connectionId: repo.id,
@@ -507,7 +521,7 @@ export const agentRunRoutes: FastifyPluginAsync = async (fastify) => {
     if (!result.ok) {
       const raced = await replay();
       if (raced) {
-        return raced;
+        return raced.reply;
       }
       if (result.reason === 'GUARD_REFUSED') {
         if (request.mcpBridge) {

@@ -73,4 +73,38 @@ describe('allowlisted run outcomes', () => {
     ).toBeNull();
     expect(projectRunOutcome(body(null, null, 'TIMED_OUT')).failure).toEqual({ type: 'TIMED_OUT' });
   });
+
+  it('reports the last unrecovered failure, not a failed attempt that succeeded on retry', () => {
+    const data = body(null, null, 'FAILED');
+    data.steps = [
+      { attempt: 1, error: 'BUDGET_EXCEEDED: secret', nodeId: 'plan', status: 'FAILED' },
+      { attempt: 2, error: null, nodeId: 'plan', status: 'SUCCESS' },
+      { attempt: 1, error: 'SECURITY_GATE_FAILURE: secret', nodeId: 'gate', status: 'FAILED' },
+    ];
+    expect(projectRunOutcome(data).failure).toEqual({ type: 'SECURITY_GATE_FAILURE' });
+  });
+
+  it('does not attribute a run failure to a recovered node, even when it appears last', () => {
+    const data = body(null, null, 'FAILED');
+    data.steps = [
+      { attempt: 1, error: 'SECURITY_GATE_FAILURE: secret', nodeId: 'gate', status: 'FAILED' },
+      { attempt: 1, error: 'BUDGET_EXCEEDED: secret', nodeId: 'plan', status: 'FAILED' },
+      { attempt: 2, error: null, nodeId: 'plan', status: 'SUCCESS' },
+    ];
+    expect(projectRunOutcome(data).failure).toEqual({ type: 'SECURITY_GATE_FAILURE' });
+    data.steps.shift();
+    expect(projectRunOutcome(data).failure).toEqual({ type: 'UNKNOWN' });
+  });
+
+  it('uses the final failed attempt and never falls back from an unknown terminal type', () => {
+    const data = body(null, null, 'FAILED');
+    data.steps = [
+      { attempt: 1, error: 'BUDGET_EXCEEDED: secret', nodeId: 'run', status: 'FAILED' },
+      { attempt: 2, error: 'SECURITY_GATE_FAILURE: secret', nodeId: 'run', status: 'FAILED' },
+    ];
+    expect(projectRunOutcome(data).failure).toEqual({ type: 'SECURITY_GATE_FAILURE' });
+    data.steps.push({ attempt: 1, error: 'Novel: secret', nodeId: 'end', status: 'FAILED' });
+    expect(projectRunOutcome(data).failure).toEqual({ type: 'UNKNOWN' });
+    expect(JSON.stringify(projectRunOutcome(data))).not.toContain('secret');
+  });
 });

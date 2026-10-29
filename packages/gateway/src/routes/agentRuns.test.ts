@@ -147,7 +147,10 @@ describe('POST /api/v1/agent-runs', () => {
           })),
         findUnique: async () =>
           s.replayWorkRequestId
-            ? { workRequest: { requestedById: USER }, workRequestId: s.replayWorkRequestId }
+            ? {
+                workRequest: { requestedById: USER, requestPayload: runInputs[0]?.requestPayload },
+                workRequestId: s.replayWorkRequestId,
+              }
             : null,
         updateMany: async (args: { where: { temporalWorkflowId: { in: string[] } } }) => {
           s.closed.push(args.where.temporalWorkflowId.in);
@@ -301,6 +304,41 @@ describe('POST /api/v1/agent-runs', () => {
       workRequestId: s.replayWorkRequestId,
     });
     expect(events).toEqual([]);
+    expect(started).toHaveLength(1);
+  });
+
+  it.each([
+    { prompt: 'different task' },
+    { agent: 'contentWriter@3' },
+    { deliver: 'draft_pr' },
+    { baseBranch: 'release/1' },
+    { maxSteps: 20 },
+    { maxWallClockSeconds: 600 },
+    { repoId: 'cccccccc-1111-4111-8111-cccccccccccc' },
+  ])('refuses a bridged key reused with different inputs: %j', async (changed) => {
+    const headers = { 'idempotency-key': 'agent-key-0001', 'x-test-mcp': '1' };
+    const first = await post({}, headers);
+    s.replayWorkRequestId = first.json().data.workRequestId;
+    events.length = 0;
+    const mismatch = await post(changed, headers);
+    expect(mismatch.statusCode).toBe(422);
+    expect(mismatch.json().error.code).toBe('IDEMPOTENCY_KEY_MISMATCH');
+    expect(events).toEqual([]);
+    expect(started).toHaveLength(1);
+  });
+
+  it('refuses a replay with an unreadable stored request', async () => {
+    const headers = { 'idempotency-key': 'agent-key-0001', 'x-test-mcp': '1' };
+    const first = await post({}, headers);
+    s.replayWorkRequestId = first.json().data.workRequestId;
+    const stored = runInputs[0];
+    if (!stored) {
+      throw new Error('Missing stored request');
+    }
+    stored.requestPayload = 'not JSON';
+    const mismatch = await post({}, headers);
+    expect(mismatch.statusCode).toBe(422);
+    expect(mismatch.json().error.code).toBe('IDEMPOTENCY_KEY_MISMATCH');
     expect(started).toHaveLength(1);
   });
 

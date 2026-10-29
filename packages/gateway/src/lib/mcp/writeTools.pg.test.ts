@@ -793,6 +793,79 @@ describe.skipIf(!enabled)('MCP write tools against Postgres', () => {
       expect(started).toHaveLength(1);
       expect(await inFlight(people.alice.id)).toBe(1);
     });
+
+    it('returns a sequential same-key replay without entering another launch transaction', async () => {
+      const input = args();
+      const first = await callTool(people.alice.token, 'start_agent_run', input);
+      expect(first.result.structuredContent?.status).toBe('started');
+      const count = vi.spyOn(prisma.activeWorkflow, 'count');
+      try {
+        const replay = await callTool(people.alice.token, 'start_agent_run', input);
+        expect(replay.result.structuredContent).toMatchObject({
+          status: 'already_submitted',
+          workRequestId: first.result.structuredContent.workRequestId,
+        });
+        expect(count).not.toHaveBeenCalled();
+      } finally {
+        count.mockRestore();
+      }
+      expect(started).toHaveLength(1);
+      expect(await inFlight(people.alice.id)).toBe(1);
+    });
+
+    it.each([false, true])(
+      'refuses a different prompt with the same key (racing: %s)',
+      async (racing) => {
+        const bridge = app.mcpBridge;
+        if (!bridge) {
+          throw new Error('Bridge not registered');
+        }
+        const input = args();
+        const changed = { ...input, prompt: `${SECRET_TEXT} different task` };
+        const post = vi.spyOn(bridge, 'post');
+        try {
+          if (racing) {
+            await settingsOn({ 'mcp.maxConcurrentRuns': 1 });
+            startDelayMs = 150;
+            const results = await Promise.all(
+              [input, changed].map((value) =>
+                callTool(people.alice.token, 'start_agent_run', value)
+              )
+            );
+            expect(
+              results.filter((r) => r.result.structuredContent?.status === 'started')
+            ).toHaveLength(1);
+            expect(results.filter((r) => r.result.isError)).toHaveLength(1);
+          } else {
+            expect(
+              (await callTool(people.alice.token, 'start_agent_run', input)).result
+                .structuredContent?.status
+            ).toBe('started');
+            const mismatch = await callTool(people.alice.token, 'start_agent_run', changed);
+            expect(mismatch.result.isError).toBe(true);
+            expect(mismatch.result.content[0].text).toBe(
+              'That idempotency key was already used for a different request. Use a new key for a different request.'
+            );
+            expect(JSON.stringify(mismatch.result)).not.toContain(SECRET_TEXT);
+          }
+          const responses = await Promise.all(post.mock.results.map((result) => result.value));
+          expect(responses).toEqual(
+            expect.arrayContaining([
+              expect.objectContaining({
+                body: expect.objectContaining({
+                  error: expect.objectContaining({ code: 'IDEMPOTENCY_KEY_MISMATCH' }),
+                }),
+                status: 422,
+              }),
+            ])
+          );
+          expect(started).toHaveLength(1);
+          expect(await inFlight(people.alice.id)).toBe(1);
+        } finally {
+          post.mockRestore();
+        }
+      }
+    );
   });
 
   describe('the concurrency cap', () => {
