@@ -50,6 +50,7 @@ function buildApp(opts: Opts = {}) {
 
   const created: unknown[] = [];
   const nameLookups: unknown[] = [];
+  const versionLookups: unknown[] = [];
   const model = (name: string, impl: Record<string, (a: never) => unknown>) =>
     new Proxy(impl, {
       get(target, prop: string) {
@@ -106,13 +107,15 @@ function buildApp(opts: Opts = {}) {
       }) as never,
     }),
     workflowTemplateVersion: model('workflowTemplateVersion', {
-      findFirst: (() =>
-        opts.latestVersion === undefined ? null : { version: opts.latestVersion }) as never,
+      findFirst: ((a: unknown) => {
+        versionLookups.push(a);
+        return opts.latestVersion === undefined ? null : { version: opts.latestVersion };
+      }) as never,
     }),
   };
   app.decorate('prisma', prisma as unknown as never);
   app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
-  return { app, created, nameLookups, writes };
+  return { app, created, nameLookups, versionLookups, writes };
 }
 
 const spec = (nodes: Record<string, unknown>, entry = 'start') => ({
@@ -432,10 +435,17 @@ describe('POST /workflow-templates/validate', () => {
     const saveIssues = (issues: Issue[]) => issues.filter((i) => i.source === 'save');
 
     it('leaves a spec-only call exactly as before', async () => {
-      const { app, nameLookups } = buildApp({ latestVersion: 9, taken: [`${TEAM_ID}:x`] });
+      const { app, nameLookups, versionLookups } = buildApp({
+        latestVersion: 9,
+        taken: [`${TEAM_ID}:x`],
+        template: { teamId: TEAM_ID },
+      });
       const res = await validate(app, { spec: VALID, teamId: TEAM_ID });
       expect(res.json()).toEqual({ data: { issues: [], ok: true } });
+      const withTemplate = await validate(app, { spec: VALID, templateId: TEMPLATE_ID });
+      expect(withTemplate.json()).toEqual({ data: { issues: [], ok: true } });
       expect(nameLookups).toEqual([]);
+      expect(versionLookups).toEqual([]);
       await app.close();
     });
 
