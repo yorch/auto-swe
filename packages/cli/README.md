@@ -2,7 +2,7 @@
 
 `auto-swe` — a thin command-line client over the gateway REST API for submitting
 work requests and managing workflow templates, runs, personal access tokens,
-bundles, and eval datasets. ESM, Node 26+.
+bundles, and eval datasets, plus OAuth credential helpers for MCP clients. ESM, Node 26+.
 
 ## Install / build
 
@@ -16,7 +16,7 @@ built package so `auto-swe` is on your `PATH`.
 
 ## Authentication
 
-Resolved per process (never cached to disk), in order:
+REST command credentials are resolved per process (never cached to disk):
 
 `AUTO_SWE_TOKEN` — an `ats_*` personal access token (a short-lived JWT from
 the session-token bridge also works). PATs are the intended path: mint one in
@@ -28,9 +28,49 @@ the dashboard at **Settings → API tokens**, or with
 | `AUTO_SWE_API_URL`   | `http://localhost:8080` | Base URL of the gateway                  |
 | `AUTO_SWE_TOKEN`     | —                       | Bearer token (`ats_*` PAT or JWT)        |
 
+### MCP device authorization
+
+`mcp` commands use separate OAuth credentials, not `AUTO_SWE_TOKEN`, and do not require a PAT.
+The deployment administrator enables `mcp.enabled` and `mcp.deviceFlowEnabled`; write login also
+requires `mcp.writeToolsEnabled`.
+
+```sh
+auto-swe mcp login --url https://auto-swe.example.com          # read and offline access
+auto-swe mcp login --url https://auto-swe.example.com --write  # also request write access
+auto-swe mcp token --url https://auto-swe.example.com          # token only, stdout
+auto-swe mcp header --url https://auto-swe.example.com         # Authorization JSON, stdout
+auto-swe mcp logout --url https://auto-swe.example.com
+```
+
+The base defaults to `AUTO_SWE_API_URL`, then `http://localhost:8080`. It is the gateway origin,
+not the MCP endpoint; HTTPS is required except on loopback. The CLI discovers the OAuth endpoints,
+registers a public device/refresh client once per deployment, and reuses it on subsequent logins.
+The provider requires an unused loopback redirect URI even for device-only clients; the CLI supplies
+it without opening a callback listener. Login prints the complete verification URL and user code to
+stderr. Open it in a trusted browser and approve only a code you started. Device codes expire in ten
+minutes; polling respects the returned interval and `slow_down`. Approval grants all requested scopes:
+deny a write request and log in again without `--write` if you only want reads.
+
+Successful login stores issuer, client id, resource, scopes, access token, access expiry (epoch
+milliseconds), and refresh token in `$XDG_CONFIG_HOME/auto-swe/mcp-credentials.json` (fallback
+`~/.config/auto-swe/mcp-credentials.json`), keyed by gateway origin. The directory is mode `0700`,
+the file `0600`, and replacements are atomic. Local credential operations are serialized to protect
+rotating refresh tokens. Do not share the file, put it in a repository, or log its contents.
+`token` and `header` refresh when less than sixty seconds remain and save the rotated refresh token
+before printing. `invalid_grant` requires another login. Logout revokes the refresh token before
+deleting the local entry; a failed revocation preserves it so logout can be retried. Use dashboard
+Connected apps to disconnect the grant itself. Already-issued access tokens expire after ten minutes.
+
+See [headless client setup](../../docs/local-agents.md#headless-ssh-and-ci-clients) for Claude Code
+`headersHelper` and Codex `bearer_token_env_var` examples. Never send token/header output to logs.
+
 ## Commands
 
 ```
+mcp login [--url <base>] [--write]  Approve a device code in a browser; no REST token needed
+mcp token|header [--url <base>]     Print an MCP token or Authorization JSON, refreshing if needed
+mcp logout [--url <base>]          Revoke the refresh token and delete local MCP credentials
+
 run --ticket=<id> --description=<text> (--repo=<org/name>|--repo-id=<uuid>) [--budget=<tier>]
     [--idempotency-key=<key>]
                                      Submit a work request and start a run on the default template;
@@ -140,3 +180,14 @@ Inspect and export agent transcripts (the model calls each activity attempt made
 - `auto-swe transcripts list <runId>` — a run's transcripts with status, runtime, call count and size.
 - `auto-swe transcripts get <transcriptId> [--format=raw|normalized] [--scrub-pii] [-o file]` — metadata plus the NDJSON content stream.
 - `auto-swe transcripts export --from=ISO --to=ISO [--agent=KEY] [--activity-type=TYPE] [--format=raw|normalized] [--scrub-pii] [-o file]` — admin export of `{transcript, record}` lines over a ≤31-day range, across all tenants.
+
+## Limitations
+
+- MCP login still requires a signed-in active user to approve a code in a browser; it is not unattended
+  account sign-in. Device OAuth tokens work only at the MCP endpoint, not at the REST API.
+- File permission modes require a filesystem with POSIX permission support. A crash can leave
+  `.mcp-credentials.lock` in the private config directory: remove that empty lock directory only after
+  confirming no MCP credential command is running. Back up credentials privately, never in Git.
+- The CLI does not refresh another process's environment. A Codex bearer-token wrapper suits short
+  sessions only; restart it when the ten-minute token expires. Vendor interoperability is not tested
+  against a live deployment.
