@@ -44,6 +44,7 @@ import {
 } from '../lib/launchAuthorization.js';
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
+import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import {
   callbackScopeForCaller,
   resolveLaunchCallback,
@@ -1360,22 +1361,31 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // this update run in one transaction so a concurrent read can never
       // observe a moment with zero (or more than one) default template for
       // the team.
-      const updated: TemplateWithIncludes = await fastify.prisma.$transaction(async (tx) => {
-        for (const record of servingRecords.values()) {
-          await record(tx);
-        }
-        if (request.body.isDefault === true) {
-          await tx.workflowTemplate.updateMany({
-            data: { isDefault: false },
-            where: { id: { not: existing.id }, teamId: existing.teamId },
+      let updated: TemplateWithIncludes;
+      try {
+        updated = await fastify.prisma.$transaction(async (tx) => {
+          for (const record of servingRecords.values()) {
+            await record(tx);
+          }
+          if (request.body.isDefault === true) {
+            await tx.workflowTemplate.updateMany({
+              data: { isDefault: false },
+              where: { id: { not: existing.id }, teamId: existing.teamId },
+            });
+          }
+          return tx.workflowTemplate.update({
+            data: updateData,
+            include: TEMPLATE_INCLUDE,
+            where: { id: existing.id },
           });
-        }
-        return tx.workflowTemplate.update({
-          data: updateData,
-          include: TEMPLATE_INCLUDE,
-          where: { id: existing.id },
         });
-      });
+      } catch (err) {
+        // The (team_id, name) unique index: a rename onto a name the team already uses.
+        if (request.body.name !== undefined && isUniqueConstraintError(err)) {
+          return sendError(reply, 409, 'NAME_CONFLICT', TEMPLATE_NAME_CONFLICT_MESSAGE);
+        }
+        throw err;
+      }
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,
