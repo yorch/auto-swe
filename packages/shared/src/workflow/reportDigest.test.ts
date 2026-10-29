@@ -18,6 +18,7 @@ function rows(input: {
   merged: boolean;
   startedAt: Date;
   status: string;
+  templateId?: string;
 }) {
   return buildWorkflowRunDailyRollups({
     now,
@@ -45,7 +46,7 @@ function rows(input: {
         repoId: null,
         startedAt: input.startedAt,
         status: input.status,
-        templateId: 'hostile-template',
+        templateId: input.templateId ?? 'hostile-template',
         templateVersion: 1,
         wasAutonomous: true,
       },
@@ -107,7 +108,7 @@ describe('buildReportDigest', () => {
     expect(digest.html).toContain('color:#18794e');
     expect(digest.html).toContain('color:#b42318');
     const blockTypes = digest.slackBlocks.map((block) => (block as { type: string }).type);
-    expect(blockTypes).toEqual(['header', 'section', 'section', 'context', 'actions']);
+    expect(blockTypes).toEqual(['header', 'section', 'section', 'section', 'context', 'actions']);
     expect(digest.slackMrkdwn).toContain('Open reports: https://example.test/admin/reports');
   });
 
@@ -152,6 +153,57 @@ describe('buildReportDigest', () => {
     expect(digest.html).toContain('&lt;img');
     expect(digest.slackMrkdwn).toContain('&lt;img');
     expect(digest.slackMrkdwn).toContain('\\*alert\\*');
+    const templateBlock = digest.slackBlocks.find(
+      (block) =>
+        (block as { text?: { text?: string } }).text?.text?.startsWith('*Top templates*') ?? false
+    ) as { text: { text: string } };
+    expect(templateBlock.text.text).toContain('&lt;img');
+    expect(templateBlock.text.text).toContain('\\*alert\\*');
+  });
+
+  it('renders bounded top templates in Slack using masked names', () => {
+    const currentRows = [
+      ...rows({
+        cost: 1,
+        id: 'visible-template-run',
+        merged: false,
+        startedAt: new Date('2026-10-15T12:00:00Z'),
+        status: 'SUCCESS',
+        templateId: 'visible-template',
+      }),
+      ...rows({
+        cost: 1,
+        id: 'private-template-run',
+        merged: false,
+        startedAt: new Date('2026-10-16T12:00:00Z'),
+        status: 'SUCCESS',
+        templateId: 'private-template-id',
+      }),
+    ];
+    const digest = buildReportDigest({
+      currentPeriod,
+      currentRows,
+      now,
+      oldestPendingApprovalRequestedAt: null,
+      pendingApprovalCount: 0,
+      previousPeriod,
+      previousRows: [],
+      scope: { name: 'Team', type: 'TEAM' },
+      templateNames: new Map([
+        ['private-template-id', 'Private template'],
+        ['visible-template', `<Billing> *${'x'.repeat(5000)}*`],
+      ]),
+    });
+    const templateBlock = digest.slackBlocks.find(
+      (block) =>
+        (block as { text?: { text?: string } }).text?.text?.startsWith('*Top templates*') ?? false
+    ) as { text: { text: string } };
+
+    expect(templateBlock.text.text).toContain('*Private template*');
+    expect(templateBlock.text.text).toContain('&lt;Billing&gt;');
+    expect(templateBlock.text.text).toContain('\\*');
+    expect(templateBlock.text.text).not.toContain('private-template-id');
+    expect(templateBlock.text.text.length).toBeLessThanOrEqual(3000);
   });
 
   it('strips line breaks from scope headings and escapes them in every format', () => {

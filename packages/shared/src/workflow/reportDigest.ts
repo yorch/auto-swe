@@ -299,6 +299,14 @@ export function buildReportDigest(input: ReportDigestInput): ReportDigest {
       type: 'mrkdwn',
     };
   });
+  const slackTemplateLines = topTemplates.map((template) => {
+    const name = Array.from(template.name).slice(0, 100).join('');
+    const successRate =
+      template.successRate === null ? 'n/a' : `${(template.successRate * 100).toFixed(1)}%`;
+    const mergeRate =
+      template.mergeRate === null ? 'n/a' : `${(template.mergeRate * 100).toFixed(1)}%`;
+    return `• *${escapeSlack(name)}* — ${template.runs} runs; success ${successRate}; merge ${mergeRate}`;
+  });
   const slackBlocks = [
     {
       text: { text: Array.from(`${scopeName} weekly report`).slice(0, 150).join(''), type: 'plain_text' },
@@ -306,6 +314,13 @@ export function buildReportDigest(input: ReportDigestInput): ReportDigest {
     },
     { fields: slackFields, type: 'section' },
     { text: { text: escapeSlack(additionalLines.join(' · ')), type: 'mrkdwn' }, type: 'section' },
+    {
+      text: {
+        text: `*Top templates*\n${slackTemplateLines.length ? slackTemplateLines.join('\n') : 'No template runs'}`,
+        type: 'mrkdwn',
+      },
+      type: 'section',
+    },
     {
       elements: [
         {
