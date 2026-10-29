@@ -524,6 +524,9 @@ describe('stem equality, not stem prefix', () => {
     expect(sameStem('uses', 'user')).toBe(false);
     // `https` is a protocol name, not the plural of `http`.
     expect(sameStem('https', 'http')).toBe(false);
+    // Possessive pronouns are not the plurals of `your` and `their`.
+    expect(sameStem('yours', 'your')).toBe(false);
+    expect(sameStem('theirs', 'their')).toBe(false);
   });
 
   it('finds nothing for speed, although spend and specific start the same way', () => {
