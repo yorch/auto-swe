@@ -230,9 +230,8 @@ resolves at the team and organization of the run's own repository, never from an
 supplies. Listed entries are on the tracker's host by definition, so the host comparison applies
 only to a run's repositories; the provider still calls only the tracker's own base URL. A bare issue
 number never resolves against the list. A setting that cannot be read is an empty list, so the
-check fails closed. The PRD project key is held to the same rule: a run repository or a listed
-one.
- A PRD run's project key
+check fails closed. A run with no git repository connection has no team to resolve at and gets no
+list. A PRD run's project key
 (`owner/repo`) is checked the same way, as the issue `<key>#1`; without a project key the
 admin-configured default is used and is not checked. A write that fails the check is skipped and
 logged with a fixed line, and a PRD item that is refused counts as a failed tracker item. A read
@@ -311,8 +310,10 @@ http(s) address.
 - A ticket already on a `ContextSnapshot` is used as stored; the scope check applies only when the
   ticket is fetched.
 - A listed issues repository must be on the tracker's own host and is listed by an admin; there is
-  no per-request or per-launcher way to name one, and a repository listed for a team applies to every
-  run on that team's repositories.
+  no per-request or per-launcher way to name one. A `TEAM` or `ORGANIZATION` value applies to every
+  run on that team's repositories, including runs by other teams on a repository shared with it,
+  because the list resolves at the repository's owning team; shares and membership decide that
+  audience.
 - A renamed repository or a transferred issue is not followed, so its ticket is unavailable and its
   writes are skipped until the id names the current repository.
 - A GitHub ticket id on a run with no git repository (no connection, no authorized repository) is

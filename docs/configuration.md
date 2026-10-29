@@ -432,8 +432,11 @@ setting, in the `github` group:
 Only an ADMIN can change it, at `TEAM`, `ORGANIZATION` or globally: every entry widens what the
 platform's tracker token can read and write for the runs it covers, so a team lead cannot add one.
 A launcher cannot supply or override it. It resolves at the team and organization of the run's own
-repository (the repository the launcher selected, at submit time), so a value set for one team does
-not apply to another team's runs.
+repository (the repository the launcher selected, at submit time), so a `TEAM` or `ORGANIZATION`
+value applies to every run on that team's repositories, including runs by members of other teams on
+a repository shared with it (`ConnectionTeamShare`). The team's lead controls that audience through
+shares and membership. A run with no git repository connection resolves no list. The value names
+internal repositories, so it is sensitive: a reader below ADMIN sees the setting but not its value.
 
 An entry is trimmed and must be ASCII letters, digits, `_`, `.` and `-` on each side of one `/`,
 with no `.` or `..` segment. A repeat that differs only in case is dropped, and comparison with a
