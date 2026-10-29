@@ -5,6 +5,7 @@ import {
   MAX_AMBIGUITY_CHARS,
   NO_CRITERIA_REASON,
   NO_REASON_GIVEN,
+  splitSuccessCriteria,
 } from './contextAmbiguity.js';
 
 describe('assessSuccessCriteria', () => {
@@ -63,6 +64,47 @@ describe('assessSuccessCriteria', () => {
     });
   });
 
+  describe('the Clarify: alias', () => {
+    it.each([
+      ['plain', 'Clarify: does the endpoint require authentication?'],
+      ['lower case', 'clarify: does the endpoint require authentication?'],
+      ['backticks', '`Clarify: does the endpoint require authentication?`'],
+      ['bold', '**Clarify:** does the endpoint require authentication?'],
+      ['a bullet', '- Clarify: does the endpoint require authentication?'],
+      ['a numbered item', '1. Clarify: does the endpoint require authentication?'],
+      ['an em dash', 'Clarify — does the endpoint require authentication?'],
+      ['trailing whitespace', 'Clarify: does the endpoint require authentication?  '],
+      ['a closing quote', 'Clarify: "does the endpoint require authentication?"'],
+    ])('reads a question as an ambiguity, written with %s', (_name, entry) => {
+      const result = assessSuccessCriteria([entry]);
+      expect(result.actionable).toBe(false);
+      expect(result.ambiguities[0]).toMatch(/^"?does the endpoint require authentication\?"?$/);
+    });
+
+    it('stays actionable beside a concrete criterion, and keeps the reason without the alias', () => {
+      expect(assessSuccessCriteria(['GET /health returns 200', 'Clarify: which auth?'])).toEqual({
+        actionable: true,
+        ambiguities: ['which auth?'],
+      });
+    });
+
+    it.each([
+      'Clarify: the error message when X is empty',
+      'Clarify - the endpoint returns 404',
+      'Clarify : copy',
+      'Clarify the error message wording',
+      'Add a column. Clarify: which table?',
+      'Clarifying text is shown?',
+      'Clarify-looking input is rejected?',
+    ])('reads %j as a concrete criterion: the alias needs a question', (entry) => {
+      expect(assessSuccessCriteria([entry]).actionable).toBe(true);
+    });
+
+    it('keeps AMBIGUOUS unconditional: no question mark needed', () => {
+      expect(assessSuccessCriteria(['AMBIGUOUS: the table is not named']).actionable).toBe(false);
+    });
+  });
+
   it('does not read a word that merely starts like the marker', () => {
     expect(assessSuccessCriteria(['AMBIGUOUS-looking input is rejected']).actionable).toBe(true);
   });
@@ -93,6 +135,48 @@ describe('assessSuccessCriteria', () => {
       expect(out.ambiguities).toHaveLength(MAX_AMBIGUITIES);
       expect(out.ambiguities[0]).toBe('gap 0');
       expect(assessSuccessCriteria([...many, 'a real criterion']).actionable).toBe(true);
+    });
+  });
+});
+
+describe('splitSuccessCriteria', () => {
+  it('separates the concrete criteria from the ambiguities, marker removed, in order', () => {
+    expect(
+      splitSuccessCriteria([
+        'GET /health returns 200',
+        'AMBIGUOUS: no auth policy',
+        'Clarify: which table?',
+        'POST /x returns 201',
+      ])
+    ).toEqual({
+      ambiguities: ['no auth policy', 'which table?'],
+      concrete: ['GET /health returns 200', 'POST /x returns 201'],
+    });
+  });
+
+  it('returns nothing for an empty list', () => {
+    expect(splitSuccessCriteria([])).toEqual({ ambiguities: [], concrete: [] });
+  });
+
+  it('bounds the ambiguities like the assessment does', () => {
+    const many = Array.from({ length: MAX_AMBIGUITIES + 3 }, (_, i) => `AMBIGUOUS: q${i}`);
+    expect(splitSuccessCriteria(many).ambiguities).toHaveLength(MAX_AMBIGUITIES);
+  });
+});
+
+describe('blank entries', () => {
+  it('are not concrete criteria', () => {
+    expect(splitSuccessCriteria(['   ', '', 'AMBIGUOUS: what'])).toEqual({
+      ambiguities: ['what'],
+      concrete: [],
+    });
+    expect(assessSuccessCriteria(['   ', 'AMBIGUOUS: what']).actionable).toBe(false);
+  });
+
+  it('make an extraction of only blanks behave like no criteria', () => {
+    expect(assessSuccessCriteria(['', '  '])).toEqual({
+      actionable: false,
+      ambiguities: [NO_CRITERIA_REASON],
     });
   });
 });

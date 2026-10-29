@@ -195,6 +195,19 @@ function ticketFromStep(
   return typeof value === 'string' ? value : undefined;
 }
 
+/**
+ * The success criteria an earlier step extracted, from an explicit `successCriteria` input only. It
+ * is deliberately not read from `context.successCriteria` as the ticket is from `context.ticket`:
+ * most templates keep the criteria there for the reviewers, and the implementer's prompt must not
+ * change for a template that did not opt in.
+ */
+function criteriaFromStep(inputs: Record<string, unknown>): string[] | undefined {
+  const value = inputs.successCriteria;
+  return Array.isArray(value) && value.every((v) => typeof v === 'string')
+    ? (value as string[])
+    : undefined;
+}
+
 const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepExecutor>([
   [
     'retrieveKnowledge',
@@ -386,6 +399,20 @@ const STEP_EXECUTORS: ReadonlyMap<string, StepExecutor> = new Map<string, StepEx
       const allowedPaths = allowedPathsConfig(config);
       const guardOptions = guardOptionsConfig(config);
       const ticket = ticketFromStep(inputs, ctx);
+      const criteria = criteriaFromStep(inputs);
+      // The eighth argument is passed only when a step handed criteria over.
+      if (criteria !== undefined) {
+        return agentActivities.executeImplementation(
+          effectiveRequest,
+          subtask,
+          systemPromptOverride,
+          crossRepo,
+          allowedPaths,
+          guardOptions,
+          ticket,
+          criteria
+        );
+      }
       // The seventh argument is passed only when a step produced a ticket.
       if (ticket !== undefined) {
         return agentActivities.executeImplementation(

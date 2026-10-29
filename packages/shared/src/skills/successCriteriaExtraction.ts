@@ -16,5 +16,5 @@ When analysing a work request, extract success criteria that are:
 
 For each criterion, prefer the form: *[Actor/system] [verb] [object] [condition/constraint]*.
 
-If the work request is ambiguous about what "done" means, include a criterion that flags the ambiguity (e.g. "Clarify: does the endpoint require authentication?") rather than silently assuming.`,
+If the work request is ambiguous about what "done" means, include an entry that flags the ambiguity in the form \`AMBIGUOUS: <what is unclear and why it matters>\` (e.g. \`AMBIGUOUS: does the endpoint require authentication?\`) rather than silently assuming. Use that exact prefix: it is how the platform tells an open question from a criterion.`,
 };

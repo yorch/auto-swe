@@ -624,6 +624,23 @@ function withNotActionableStop(g: WorkflowSpec): WorkflowSpec {
   return { ...g, nodes } as WorkflowSpec;
 }
 
+/**
+ * `ticket-to-merge` hands what `validate` extracted to `implement` as its `successCriteria` input,
+ * so the implementer knows what done means and which parts were flagged ambiguous.
+ */
+function withCriteriaHandoff(g: WorkflowSpec): WorkflowSpec {
+  const nodes = { ...g.nodes } as Record<string, unknown>;
+  const implement = nodes.implement as { inputs?: Record<string, unknown> };
+  nodes.implement = {
+    ...implement,
+    inputs: {
+      ...implement.inputs,
+      successCriteria: { default: [], from: 'context.successCriteria' },
+    },
+  };
+  return { ...g, nodes } as WorkflowSpec;
+}
+
 function ticketToMergeFailureLessons(g: WorkflowSpec): WorkflowSpec {
   const nodes = structuredClone(g.nodes) as Record<string, Record<string, unknown>>;
   const lesson = (outcome: string, next: string) => ({
@@ -962,8 +979,10 @@ const INTENDED_CHANGES: Record<
   },
   'ticket-to-merge': {
     apply: (g: WorkflowSpec) =>
-      withNotActionableStop(
-        withTicketGatherer(ticketToMergeFailureLessons(removePassThrough(g, 'setCompleted')))
+      withCriteriaHandoff(
+        withNotActionableStop(
+          withTicketGatherer(ticketToMergeFailureLessons(removePassThrough(g, 'setCompleted')))
+        )
       ),
     reason:
       'the finalizer already writes COMPLETED on SUCCESS; a review or CI loop that runs out ' +
@@ -971,14 +990,15 @@ const INTENDED_CHANGES: Record<
       'before the run ends, and every commitToMemory step names the outcome it records; ' +
       "the run's tracker ticket is gathered before validation and handed to validate and implement; " +
       'a request validation finds not actionable ends the run FAILED before implement, saying why ' +
-      'the ticket could not be read when it could not',
+      'the ticket could not be read when it could not; ' +
+      "implement receives validate's success criteria, ambiguity entries included",
   },
   'ticket-to-merge-qodo': {
-    apply: (g: WorkflowSpec) => withNotActionableStop(g),
+    apply: (g: WorkflowSpec) => withCriteriaHandoff(withNotActionableStop(g)),
     reason:
       'it is built on the ticket-to-merge node graph, so a request validation finds not ' +
       'actionable ends the run FAILED before implement, saying why the ticket could not be read ' +
-      'when it could not',
+      "when it could not, and implement receives validate's success criteria, ambiguity entries included",
   },
   // The two templates that ended the run on the first CI failure now fix and retry like their
   // siblings, with CI ahead of the human / consensus gates (and the setCompleted removal above).
