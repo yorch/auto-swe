@@ -248,3 +248,47 @@ describe('Jira filter polling settings', () => {
     }
   });
 });
+
+describe('github.trackerIssueRepositories', () => {
+  const key = 'github.trackerIssueRepositories';
+  const def = SETTING_DEFINITIONS[key];
+
+  it('is empty by default, ADMIN-only, and overridable at team and organization', () => {
+    expect(def.defaultValue).toEqual([]);
+    expect(def.requiredRole).toBe('ADMIN');
+    expect(def.overridableAt).toEqual(['TEAM', 'ORGANIZATION']);
+    expect(def.group).toBe('github');
+    expect(def.runPinned).toBe(false);
+  });
+
+  it('takes owner/repo entries, trimmed, and drops case-insensitive repeats', () => {
+    expect(def.schema.parse([])).toEqual([]);
+    expect(def.schema.parse([' Acme/Issues ', 'acme/issues', 'acme/web.v2', 'a_b/c-d'])).toEqual([
+      'Acme/Issues',
+      'acme/web.v2',
+      'a_b/c-d',
+    ]);
+  });
+
+  it.each([
+    ['no slash', ['acme']],
+    ['three segments', ['acme/web/extra']],
+    ['an issue number', ['acme/web#1']],
+    ['a dot segment', ['acme/..']],
+    ['a leading dot segment', ['./web']],
+    ['whitespace inside', ['ac me/web']],
+    ['a URL', ['https://github.com/acme/web']],
+    ['non-ASCII', ['acmé/web']],
+    ['an empty entry', ['']],
+    ['not a list', 'acme/web'],
+    ['a non-string entry', [1]],
+  ])('rejects %s', (_label, value) => {
+    expect(def.schema.safeParse(value).success).toBe(false);
+  });
+
+  it('takes at most fifty repositories', () => {
+    const many = (n: number) => Array.from({ length: n }, (_, i) => `acme/repo${i}`);
+    expect(def.schema.safeParse(many(50)).success).toBe(true);
+    expect(def.schema.safeParse(many(51)).success).toBe(false);
+  });
+});

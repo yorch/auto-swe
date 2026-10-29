@@ -1,3 +1,4 @@
+import { resolveSetting, type SettingResolveCtx } from '../config/index.js';
 import { hostFamily } from './githubHostScope.js';
 import {
   GITHUB_ISSUES_DEFAULT_BASE_URL,
@@ -25,13 +26,52 @@ export interface TrackerScopeRepo {
   githubUrl?: string | null;
   /** The repository's API base override; null/empty → the instance's. */
   githubApiUrl?: string | null;
+  /** The owning team, so the operator's allowlist resolves at the run's own scope. */
+  teamId?: string | null;
+  /** The owning team's organization, for the same reason. */
+  team?: { orgId?: string | null } | null;
 }
 
-/** The repositories a run targets, and where a repository with no URL override lives. */
+/**
+ * The repositories a run targets, where a repository with no URL override lives, and the
+ * repositories an operator authorised beyond them.
+ */
 export interface TrackerRepoScope {
+  /**
+   * `owner/repo` entries of `github.trackerIssueRepositories`, which are on the tracker's host by
+   * definition. Absent or empty: only `repos` count. Only a ticket id that names its repository
+   * can match one; a bare number never does.
+   */
+  extraRepos?: ReadonlyArray<string>;
   /** The instance's GitHub web URL (`resolveGitHubBaseUrl`). */
   instanceBaseUrl: string;
   repos: ReadonlyArray<TrackerScopeRepo>;
+}
+
+/** The setting scope a repository's issue-repository allowlist resolves at. */
+function repoSettingCtx(repo: TrackerScopeRepo | undefined): SettingResolveCtx {
+  const ctx: SettingResolveCtx = {};
+  if (repo?.teamId) {
+    ctx.teamId = repo.teamId;
+  }
+  if (repo?.team?.orgId) {
+    ctx.orgId = repo.team.orgId;
+  }
+  return ctx;
+}
+
+/**
+ * The operator's extra tracker repositories (`github.trackerIssueRepositories`) at `ctx`. Fails
+ * closed: a read that throws, or a value that is not a list of strings, is an empty list, never a
+ * wider one.
+ */
+export async function resolveTrackerIssueRepos(ctx: SettingResolveCtx): Promise<string[]> {
+  try {
+    const value: unknown = await resolveSetting('github.trackerIssueRepositories', ctx);
+    return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : [];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -68,6 +108,11 @@ function repoOnHost(repo: TrackerScopeRepo, host: string, instanceBaseUrl: strin
  * is anything whose host does not parse — unless the caller passes the `defaultRepo` the provider
  * resolves a bare number against (a read does, a write does not), which is then checked like any
  * other repository.
+ *
+ * A ticket that names its own repository is also in scope when the operator listed that
+ * repository in `scope.extraRepos`. Those are on the tracker's host by definition (the provider
+ * only calls its own base URL), so the host comparison is not applied to them. A bare number
+ * never matches the list: it resolves only against `defaultRepo`.
  */
 export function isGitHubTicketInScope(
   ticketId: string,
@@ -82,6 +127,13 @@ export function isGitHubTicketInScope(
   }
   const owner = parsed.owner.toLowerCase();
   const repo = parsed.repo.toLowerCase();
+  if (
+    scope.extraRepos?.length &&
+    parseGitHubTicketId(ticketId) &&
+    scope.extraRepos.some((entry) => entry.toLowerCase() === `${owner}/${repo}`)
+  ) {
+    return true;
+  }
   return scope.repos.some(
     (r) =>
       r.organizationName?.toLowerCase() === owner &&
@@ -90,17 +142,25 @@ export function isGitHubTicketInScope(
   );
 }
 
-/** {@link TrackerRepoScope} for repositories already in hand (the one a request targets). */
+/**
+ * {@link TrackerRepoScope} for repositories already in hand (the one a request targets). The
+ * operator's extra repositories resolve at the first repository's team and organization.
+ */
 export async function repoTrackerScope(
   repos: ReadonlyArray<TrackerScopeRepo>
 ): Promise<TrackerRepoScope> {
-  return { instanceBaseUrl: await resolveGitHubBaseUrl(), repos };
+  return {
+    extraRepos: await resolveTrackerIssueRepos(repoSettingCtx(repos[0])),
+    instanceBaseUrl: await resolveGitHubBaseUrl(),
+    repos,
+  };
 }
 
 /**
  * May a tracker READ fetch this user-supplied ticket id? Only the GitHub tracker is gated: its id
  * names its own `owner/repo`, and the platform's token reads any repository it can see, so the id
- * must name a repository the request or run targets, on the tracker's host. Jira and Linear ids
+ * must name a repository the request or run targets, on the tracker's host, or one the operator
+ * listed in `github.trackerIssueRepositories`. Jira and Linear ids
  * name no repository. The scope loads only for GitHub and a failed load refuses, so this never
  * throws; the caller asks before any network call.
  */
@@ -122,7 +182,7 @@ export async function isTrackerReadInScope(
 
 /** The line a refused GitHub-tracker read logs. Fixed: it never carries ticket text. */
 export const TRACKER_READ_OUT_OF_SCOPE =
-  "Tracker read skipped: the ticket's repository is not one this request targets";
+  "Tracker read skipped: the ticket's repository is not one this request targets or the operator allows";
 
 const REPO_HOST_SELECT = {
   githubApiUrl: true,
@@ -133,7 +193,9 @@ const REPO_HOST_SELECT = {
 
 /** The run-input columns {@link runTrackerScope} reads; select them with this. */
 export const RUN_TRACKER_SCOPE_SELECT = {
-  connection: { select: { ...REPO_HOST_SELECT, type: true } },
+  connection: {
+    select: { ...REPO_HOST_SELECT, team: { select: { orgId: true } }, teamId: true, type: true },
+  },
   knowledgeRepoSources: true,
 } as const;
 
@@ -141,7 +203,8 @@ export const RUN_TRACKER_SCOPE_SELECT = {
  * The repositories a run targets: its own connection when that is a git repository (a
  * connection of another type names no repository, whatever its org/repo columns say), plus every
  * git repository the launch was authorized against (`knowledgeRepoSources`, which an epic fills
- * for each target).
+ * for each target). The operator's extra repositories resolve at the run's own connection's team
+ * and organization.
  */
 export async function runTrackerScope(run: {
   connection: (TrackerScopeRepo & { type: string }) | null;
@@ -170,7 +233,11 @@ export async function runTrackerScope(run: {
     );
     repos.push(...rows);
   }
-  return { instanceBaseUrl: await resolveGitHubBaseUrl(), repos };
+  return {
+    extraRepos: await resolveTrackerIssueRepos(repoSettingCtx(run.connection ?? undefined)),
+    instanceBaseUrl: await resolveGitHubBaseUrl(),
+    repos,
+  };
 }
 
 /** {@link runTrackerScope} for a run input by id; no repositories when there is no such row. */
@@ -188,7 +255,7 @@ export async function loadRunTrackerScope(runInputId: string): Promise<TrackerRe
 
 /** The line a refused GitHub-tracker sync logs. Fixed: it never carries ticket text. */
 export const TRACKER_SYNC_OUT_OF_SCOPE =
-  "Tracker sync skipped: the ticket's repository is not one this run targets";
+  "Tracker sync skipped: the ticket's repository is not one this run targets or the operator allows";
 
 /** The line a failed tracker sync logs. Fixed: it never carries an error or ticket text. */
 export const TRACKER_SYNC_FAILED = 'Tracker sync failed; continuing';

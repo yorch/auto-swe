@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   createProvider: vi.fn(),
   findConnections: vi.fn(async (..._args: unknown[]) => [] as unknown[]),
   findRunInput: vi.fn(),
+  resolveSetting: vi.fn(),
   syncOnEvent: vi.fn(async (..._args: unknown[]) => {}),
 }));
 
@@ -12,6 +13,9 @@ vi.mock('../db.js', () => ({
     connection: { findMany: (...args: unknown[]) => mocks.findConnections(...args) },
     runInput: { findUnique: (...args: unknown[]) => mocks.findRunInput(...args) },
   },
+}));
+vi.mock('../config/index.js', () => ({
+  resolveSetting: (...args: unknown[]) => mocks.resolveSetting(...args),
 }));
 vi.mock('./systemConfig.js', () => ({
   resolveGitHubBaseUrl: async () => 'https://github.com',
@@ -25,6 +29,7 @@ import {
   isGitHubTicketInScope,
   isTrackerReadInScope,
   repoTrackerScope,
+  resolveTrackerIssueRepos,
   syncTrackerOnEvent,
   TRACKER_SYNC_FAILED,
   TRACKER_SYNC_OUT_OF_SCOPE,
@@ -43,6 +48,11 @@ const repo = (overrides: Partial<TrackerScopeRepo> = {}): TrackerScopeRepo => ({
 const scope = (...repos: TrackerScopeRepo[]): TrackerRepoScope => ({
   instanceBaseUrl: DOTCOM,
   repos,
+});
+
+beforeEach(() => {
+  mocks.resolveSetting.mockReset();
+  mocks.resolveSetting.mockResolvedValue([]);
 });
 
 describe('isGitHubTicketInScope', () => {
@@ -124,10 +134,101 @@ describe('isGitHubTicketInScope with a default repository', () => {
   });
 });
 
+describe('isGitHubTicketInScope with operator-listed repositories', () => {
+  const withExtra = (extraRepos: string[], ...repos: TrackerScopeRepo[]): TrackerRepoScope => ({
+    extraRepos,
+    instanceBaseUrl: DOTCOM,
+    repos,
+  });
+
+  it('allows a named ticket in a listed repository, case-insensitively', () => {
+    const listed = withExtra(['Acme/Issues'], repo());
+    expect(isGitHubTicketInScope('acme/issues#5', null, listed)).toBe(true);
+    expect(isGitHubTicketInScope('ACME/ISSUES#5', null, listed)).toBe(true);
+  });
+
+  it('allows a listed repository when the run targets none', () => {
+    expect(isGitHubTicketInScope('acme/issues#5', null, withExtra(['acme/issues']))).toBe(true);
+  });
+
+  it('refuses a repository that is neither a run repository nor listed', () => {
+    const listed = withExtra(['acme/issues'], repo());
+    expect(isGitHubTicketInScope('acme/other#5', null, listed)).toBe(false);
+    expect(isGitHubTicketInScope('acme/issues-2#5', null, listed)).toBe(false);
+    expect(isGitHubTicketInScope('attacker/issues#5', null, listed)).toBe(false);
+  });
+
+  it('never resolves a bare number against the list', () => {
+    const listed = withExtra(['acme/issues']);
+    const issues = { owner: 'acme', repo: 'issues' };
+    expect(isGitHubTicketInScope('#5', null, listed, issues)).toBe(false);
+    expect(isGitHubTicketInScope('5', null, listed, issues)).toBe(false);
+    expect(isGitHubTicketInScope('5', null, withExtra(['acme/issues'], repo()), issues)).toBe(
+      false
+    );
+  });
+
+  it('applies no host comparison to a listed repository, but still needs a valid tracker URL', () => {
+    const listed = withExtra(['acme/issues'], repo({ githubUrl: 'https://other.example' }));
+    expect(isGitHubTicketInScope('acme/issues#5', null, listed)).toBe(true);
+    expect(isGitHubTicketInScope('acme/issues#5', 'https://ghe.corp/api/v3', listed)).toBe(true);
+    expect(isGitHubTicketInScope('acme/issues#5', 'not a url', listed)).toBe(false);
+  });
+
+  it('keeps the host rule for a run repository', () => {
+    const listed = withExtra(['acme/issues'], repo());
+    expect(isGitHubTicketInScope('acme/web#1', 'https://ghe.corp/api/v3', listed)).toBe(false);
+  });
+
+  it('treats a missing or empty list as no list', () => {
+    expect(isGitHubTicketInScope('acme/issues#5', null, scope(repo()))).toBe(false);
+    expect(isGitHubTicketInScope('acme/issues#5', null, withExtra([], repo()))).toBe(false);
+  });
+});
+
+describe('resolveTrackerIssueRepos', () => {
+  it('returns the setting resolved at the given scope', async () => {
+    mocks.resolveSetting.mockResolvedValue(['acme/issues']);
+    expect(await resolveTrackerIssueRepos({ orgId: 'o', teamId: 't' })).toEqual(['acme/issues']);
+    expect(mocks.resolveSetting).toHaveBeenCalledWith('github.trackerIssueRepositories', {
+      orgId: 'o',
+      teamId: 't',
+    });
+  });
+
+  it('fails closed: an error, or a value that is not a list, is an empty list', async () => {
+    mocks.resolveSetting.mockRejectedValue(new Error('db down'));
+    expect(await resolveTrackerIssueRepos({})).toEqual([]);
+    mocks.resolveSetting.mockResolvedValue('acme/issues');
+    expect(await resolveTrackerIssueRepos({})).toEqual([]);
+    mocks.resolveSetting.mockResolvedValue(['acme/issues', 7, null]);
+    expect(await resolveTrackerIssueRepos({})).toEqual(['acme/issues']);
+  });
+});
+
 describe('repoTrackerScope', () => {
-  it('pairs the repositories with the instance host', async () => {
+  it('pairs the repositories with the instance host and an empty list by default', async () => {
     const repos = [repo()];
-    expect(await repoTrackerScope(repos)).toEqual({ instanceBaseUrl: DOTCOM, repos });
+    expect(await repoTrackerScope(repos)).toEqual({
+      extraRepos: [],
+      instanceBaseUrl: DOTCOM,
+      repos,
+    });
+  });
+
+  it("resolves the list at the first repository's team and organization", async () => {
+    mocks.resolveSetting.mockResolvedValue(['acme/issues']);
+    const repos = [repo({ team: { orgId: 'org-1' }, teamId: 'team-1' })];
+    expect((await repoTrackerScope(repos)).extraRepos).toEqual(['acme/issues']);
+    expect(mocks.resolveSetting).toHaveBeenCalledWith('github.trackerIssueRepositories', {
+      orgId: 'org-1',
+      teamId: 'team-1',
+    });
+  });
+
+  it('does not throw, and lists nothing, when the setting cannot be read', async () => {
+    mocks.resolveSetting.mockRejectedValue(new Error('db down'));
+    expect((await repoTrackerScope([repo()])).extraRepos).toEqual([]);
   });
 });
 
@@ -208,6 +309,39 @@ describe('syncTrackerOnEvent', () => {
     const warn = vi.fn();
     await syncTrackerOnEvent({ ...EVENT, issueId }, GITHUB, { runInputId: 'wr-1', warn });
     expect(mocks.createProvider).not.toHaveBeenCalled();
+    expect(mocks.syncOnEvent).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(TRACKER_SYNC_OUT_OF_SCOPE, {
+      event: 'workflow_completed',
+      runInputId: 'wr-1',
+    });
+  });
+
+  it('syncs a ticket in a repository the operator listed, resolved at the run team', async () => {
+    mocks.resolveSetting.mockResolvedValue(['acme/issues']);
+    mocks.findRunInput.mockResolvedValue({
+      connection: { ...repo(), team: { orgId: 'org-1' }, teamId: 'team-1', type: 'git_repo' },
+      knowledgeRepoSources: null,
+    });
+    const warn = vi.fn();
+    await syncTrackerOnEvent({ ...EVENT, issueId: 'acme/issues#5' }, GITHUB, {
+      runInputId: 'wr-1',
+      warn,
+    });
+    expect(mocks.syncOnEvent).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+    expect(mocks.resolveSetting).toHaveBeenCalledWith('github.trackerIssueRepositories', {
+      orgId: 'org-1',
+      teamId: 'team-1',
+    });
+  });
+
+  it('refuses a listed repository when the setting cannot be read', async () => {
+    mocks.resolveSetting.mockRejectedValue(new Error('db down'));
+    const warn = vi.fn();
+    await syncTrackerOnEvent({ ...EVENT, issueId: 'acme/issues#5' }, GITHUB, {
+      runInputId: 'wr-1',
+      warn,
+    });
     expect(mocks.syncOnEvent).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledWith(TRACKER_SYNC_OUT_OF_SCOPE, {
       event: 'workflow_completed',

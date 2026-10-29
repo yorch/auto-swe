@@ -36,13 +36,14 @@ export interface CreatedTrackerItem {
 
 /** The line a refused GitHub project key logs. Fixed: it never carries the key. */
 export const TRACKER_PROJECT_OUT_OF_SCOPE =
-  'Tracker issue not created: the project is not a repository this run targets';
+  'Tracker issue not created: the project is not a repository this run targets or the operator allows';
 
 export interface TrackerWriteOptions {
   /**
    * The repositories the run targets. On the GitHub tracker a caller-supplied `projectKey` is an
    * `owner/repo` the platform token would create issues in, so it is written only when it names
-   * one of these; with no scope nothing is written. Unused for Jira and Linear.
+   * one of these or one the operator listed (`scope.extraRepos`); with no scope nothing is
+   * written. Unused for Jira and Linear.
    */
   scope?: TrackerRepoScope | null;
   /** Receives {@link TRACKER_PROJECT_OUT_OF_SCOPE}. Default: the console. */
