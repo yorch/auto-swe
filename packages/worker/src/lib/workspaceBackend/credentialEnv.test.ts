@@ -147,7 +147,7 @@ describe('assertNoCredentialEnvPairs', () => {
     ).not.toThrow();
   });
 
-  it('judges the name only, never the value', () => {
+  it('does not judge a value by its name', () => {
     expect(() => assertNoCredentialEnvPairs(['NOTE=the token is rotated'], 'test')).not.toThrow();
   });
 
@@ -361,6 +361,9 @@ describe('assertNoCredentialEnvPairs value shapes', () => {
       'Basic setup',
       'Bearer token auth',
       'sk-learn',
+      'sk-learn-contrib-imbalanced',
+      'Basic authentication-service',
+      'Bearer tokens-are-rotated-daily',
       'task-queue-name',
       'disk-usage-report-2026',
       'eyJ',
@@ -392,6 +395,8 @@ describe('assertNoCredentialEnvPairs value shapes', () => {
       rep('gh', size / 2),
       rep('sk-', size / 3),
       rep('eyJ.', size / 4),
+      rep('eyJ-', size / 4),
+      rep('sk-a', size / 4),
       rep('eyJaaaaaaaaaa.', size / 14),
       rep('Bearer ', size / 7),
       rep('Bearer', size / 6),

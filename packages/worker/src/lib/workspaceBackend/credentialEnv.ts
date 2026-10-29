@@ -75,22 +75,26 @@ const URL_USERNAME_ONLY = new RegExp(
 
 /**
  * Well-known credential shapes in a value. Each is anchored on a distinctive prefix and a
- * minimum length so ordinary data (hashes, UUIDs, prose, `sk-learn`) cannot match; each is a
- * literal prefix followed by one bounded class, so matching is linear. The `Bearer`/`Basic`
- * scheme word is case-sensitive on purpose: a case-insensitive `basic` would match prose
- * such as `basic authentication-service`. One line per shape; the label is the only text an
- * error carries.
+ * minimum length so ordinary data (hashes, UUIDs, kebab-case names) cannot match. The `sk-`,
+ * JWT and `Bearer`/`Basic` shapes start only at a token boundary and the `sk-` and
+ * `Bearer`/`Basic` bodies must contain a digit (or `+/=`), so prose such as
+ * `Basic authentication-service` and `sk-learn-contrib-imbalanced` pass; the scheme word is
+ * also case-sensitive. A start is never tried inside a run of its own body characters, which
+ * keeps matching linear. One line per shape; the label is the only text an error carries.
  */
 const CREDENTIAL_VALUE_SHAPES: readonly { kind: string; re: RegExp }[] = [
   { kind: 'GitHub token', re: /\bgh[pousr]_[A-Za-z0-9]{30,}/ },
   { kind: 'GitHub token', re: /\bgithub_pat_[A-Za-z0-9_]{20,}/ },
-  { kind: 'API key', re: /\bsk-[A-Za-z0-9_-]{20,}/ },
+  { kind: 'API key', re: /(?<![\w-])sk-(?=[A-Za-z0-9_-]*[0-9])[A-Za-z0-9_-]{20,}/ },
   { kind: 'Slack token', re: /\bxox[abprs]-[A-Za-z0-9-]{10,}/ },
   { kind: 'AWS access key', re: /\b(?:AKIA|ASIA)[0-9A-Z]{16}\b/ },
   { kind: 'Google API key', re: /\bAIza[0-9A-Za-z_-]{35}/ },
-  { kind: 'JWT', re: /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/ },
+  { kind: 'JWT', re: /(?<![\w-])eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/ },
   { kind: 'private key', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----/ },
-  { kind: 'HTTP authorization', re: /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{16,}/ },
+  {
+    kind: 'HTTP authorization',
+    re: /\b(?:Bearer|Basic)\s+(?=[A-Za-z0-9._~+/=-]*[0-9+/=])[A-Za-z0-9._~+/=-]{16,}/,
+  },
   // base64 of `x-access-token:`, the start of the git `http.extraheader` Basic value
   { kind: 'git auth header', re: /eC1hY2Nlc3MtdG9rZW46/ },
 ];
