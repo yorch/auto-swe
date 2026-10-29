@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  activityFailures: 0,
   calls: [] as Array<unknown[]>,
-  proxyOptions: null as unknown,
+  proxyOptions: [] as unknown[],
   results: [] as Array<{
     failed: number;
     rollupIncomplete?: number;
@@ -15,13 +16,22 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('@temporalio/workflow', () => ({
   proxyActivities: (options: unknown) => {
-    mocks.proxyOptions = options;
+    mocks.proxyOptions.push(options);
+    const maximumAttempts =
+      (options as { retry?: { maximumAttempts?: number } }).retry?.maximumAttempts ?? 1;
     return {
-      sendReportDigests: (...args: unknown[]) => {
-        mocks.calls.push(args);
-        return Promise.resolve(
-          mocks.results.shift() ?? { failed: 0, rollupIncomplete: 0, sent: 0, skipped: 0 }
-        );
+      sendReportDigests: async (...args: unknown[]) => {
+        for (let attempt = 1; ; attempt++) {
+          mocks.calls.push(args);
+          if (mocks.activityFailures > 0) {
+            mocks.activityFailures -= 1;
+            if (attempt === maximumAttempts) {
+              throw new Error('temporary database failure');
+            }
+            continue;
+          }
+          return mocks.results.shift() ?? { failed: 0, rollupIncomplete: 0, sent: 0, skipped: 0 };
+        }
       },
     };
   },
@@ -35,6 +45,7 @@ vi.mock('@temporalio/workflow', () => ({
 import { ScheduledReportDigestWorkflow } from './scheduledReportDigest.js';
 
 beforeEach(() => {
+  mocks.activityFailures = 0;
   mocks.results = [];
   mocks.sleeps = [];
   mocks.calls = [];
@@ -72,7 +83,32 @@ describe('ScheduledReportDigestWorkflow', () => {
     });
   });
 
-  it('retries incomplete rollup coverage for six passes and disables activity retries', async () => {
+  it('retries activity failures without changing the anchored ISO-week period', async () => {
+    mocks.activityFailures = 1;
+    mocks.results = [{ failed: 0, rollupIncomplete: 0, sent: 1, skipped: 0 }];
+
+    await expect(ScheduledReportDigestWorkflow()).resolves.toEqual({
+      failed: 0,
+      sent: 1,
+      skipped: 0,
+    });
+
+    expect(mocks.calls).toEqual([
+      [{ periodStart: new Date('2026-10-19T00:00:00.000Z') }],
+      [{ periodStart: new Date('2026-10-19T00:00:00.000Z') }],
+    ]);
+    expect(mocks.proxyOptions[0]).toEqual({
+      retry: {
+        backoffCoefficient: 2,
+        initialInterval: '5s',
+        maximumAttempts: 3,
+        maximumInterval: '30s',
+      },
+      startToCloseTimeout: '30 minutes',
+    });
+  });
+
+  it('retries incomplete rollup coverage for six workflow passes with a bounded activity policy', async () => {
     mocks.results = [
       ...Array.from({ length: 5 }, () => ({
         failed: 1,
@@ -91,7 +127,16 @@ describe('ScheduledReportDigestWorkflow', () => {
 
     expect(mocks.calls).toHaveLength(6);
     expect(mocks.sleeps).toEqual(Array.from({ length: 5 }, () => '15 minutes'));
-    expect(mocks.proxyOptions).toEqual({
+    expect(mocks.proxyOptions[0]).toEqual({
+      retry: {
+        backoffCoefficient: 2,
+        initialInterval: '5s',
+        maximumAttempts: 3,
+        maximumInterval: '30s',
+      },
+      startToCloseTimeout: '30 minutes',
+    });
+    expect(mocks.proxyOptions[1]).toEqual({
       retry: { maximumAttempts: 1 },
       startToCloseTimeout: '30 minutes',
     });
@@ -117,5 +162,12 @@ describe('ScheduledReportDigestWorkflow', () => {
     });
     expect(mocks.calls).toHaveLength(1);
     expect(mocks.sleeps).toEqual([]);
+
+    mocks.calls = [];
+    mocks.activityFailures = 1;
+    await expect(ScheduledReportDigestWorkflow({ sendTest: true })).rejects.toThrow(
+      'temporary database failure'
+    );
+    expect(mocks.calls).toHaveLength(1);
   });
 });
