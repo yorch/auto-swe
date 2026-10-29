@@ -1150,7 +1150,7 @@ describe('splitRegistryWorkspaceEnv', () => {
   });
 });
 
-// ---- Go module proxy (`/go/<registryId>/…`) ----
+// ---- Go module proxy (`/go/<token>/<registryId>/…`) ----
 
 const GO = {
   ...REG,
@@ -1234,7 +1234,7 @@ async function startGoProxy(
   const reg = await proxy.register({ onDenied: () => {}, registries: [opts.registry ?? GO] });
   reg.setAllowlist(new Map([[GO.id, null]]));
   const call = (path: string, method = 'GET') =>
-    rawGet(base, `/go/go-1${path}`, bearer(reg.token), method);
+    rawGet(base, `/go/${reg.token}/go-1${path}`, undefined, method);
   return { base, call, proxy, reg };
 }
 
@@ -1243,40 +1243,66 @@ describe('go module proxy: access', () => {
     const { base, proxy } = await startProxy(async () => new Response('x'));
     const reg = await proxy.register({ onDenied: () => {}, registries: [GO, REG] });
     const mod = '/golang.org/x/text/@v/v0.14.0.mod';
-    expect((await rawGet(base, `/go/go-1${mod}`)).status).toBe(401);
-    expect((await rawGet(base, `/go/go-1${mod}`, bearer('wrong'))).status).toBe(401);
-    expect((await rawGet(base, `/go/nope${mod}`, bearer(reg.token))).status).toBe(404);
+    const go = (id: string, method = 'GET') =>
+      rawGet(base, `/go/${reg.token}/${id}${mod}`, undefined, method);
+    expect((await rawGet(base, `/go/wrong/go-1${mod}`)).status).toBe(401);
+    expect((await go('nope')).status).toBe(404);
     // An npm registry id is not a Go registry.
-    expect((await rawGet(base, `/go/${REG.id}${mod}`, bearer(reg.token))).status).toBe(404);
-    expect((await rawGet(base, `/go/go-1${mod}`, bearer(reg.token), 'POST')).status).toBe(405);
-    expect((await rawGet(base, `/go/go-1${mod}`, bearer(reg.token), 'DELETE')).status).toBe(405);
-    expect((await rawGet(base, `/go/go-1${mod}`, bearer(reg.token))).status).toBe(503);
+    expect((await go(REG.id)).status).toBe(404);
+    expect((await go('go-1', 'POST')).status).toBe(405);
+    expect((await go('go-1', 'DELETE')).status).toBe(405);
+    expect((await go('go-1')).status).toBe(503);
     reg.setAllowlist(
       new Map([
         [GO.id, null],
         [REG.id, null],
       ])
     );
-    const bad = await rawGet(base, '/go/go-1/golang.org/x/text', bearer(reg.token));
+    const bad = await rawGet(base, `/go/${reg.token}/go-1/golang.org/x/text`);
     expect(bad.status).toBe(404);
     expect(bad.body).toContain('unrecognized Go module path');
-    expect((await rawGet(base, `/go/go-1${mod}`, bearer(reg.token))).status).toBe(200);
+    expect((await go('go-1')).status).toBe(200);
     await proxy.close();
   });
 
-  it('accepts the token as a Basic password, ignoring the user name', async () => {
+  it('authenticates the Go route by its path token alone, never by a header', async () => {
     const { base, proxy, reg } = await startGoProxy(async () => new Response('module x'));
-    const path = '/go/go-1/golang.org/x/text/@v/v0.14.0.mod';
-    expect((await rawGet(base, path, basic('anything', reg.token))).status).toBe(200);
-    expect((await rawGet(base, path, basic('', reg.token))).status).toBe(200);
-    expect((await rawGet(base, path, basic('anything', 'wrong'))).status).toBe(401);
-    expect((await rawGet(base, path, basic('anything', ''))).status).toBe(401);
-    // The token as the user name is not the password.
-    expect((await rawGet(base, path, basic(reg.token, 'x'))).status).toBe(401);
-    expect(
-      (await rawGet(base, path, `Basic ${Buffer.from(reg.token).toString('base64')}`)).status
-    ).toBe(401);
-    expect((await rawGet(base, path, 'Basic !!!')).status).toBe(401);
+    const mod = '/go-1/golang.org/x/text/@v/v0.14.0.mod';
+    // A valid Bearer header with a wrong path token is not enough…
+    expect((await rawGet(base, `/go/wrong${mod}`, bearer(reg.token))).status).toBe(401);
+    // …and so is its absence from the path: `go-1` then reads as the token.
+    expect((await rawGet(base, `/go${mod}`, bearer(reg.token))).status).toBe(401);
+    // A valid path token is accepted whatever the header says.
+    expect((await rawGet(base, `/go/${reg.token}${mod}`, bearer('bogus'))).status).toBe(200);
+    // Basic is not accepted anywhere: not as a password, not as a user name.
+    expect((await rawGet(base, `/go/wrong${mod}`, basic('anything', reg.token))).status).toBe(401);
+    expect((await rawGet(base, `/go/wrong${mod}`, basic(reg.token, 'x'))).status).toBe(401);
+    expect((await rawGet(base, `/go/${reg.token}${mod}`, 'Basic !!!')).status).toBe(200);
+    await proxy.close();
+  });
+
+  it('never puts the path token in a Go response or a denial report', async () => {
+    const denials: unknown[] = [];
+    const { base, proxy } = await startProxy(async () => new Response('ok'));
+    const reg = await proxy.register({ onDenied: (d) => denials.push(d), registries: [GO] });
+    reg.setAllowlist(new Map([[GO.id, goLockfile()]]));
+    const at = (id: string, rest: string, method = 'GET') =>
+      rawGet(base, `/go/${reg.token}/${id}${rest}`, undefined, method);
+    const responses = [
+      await at('go-1', '/golang.org/x/text/@v/v0.14.0.mod'),
+      await at('go-1', '/golang.org/x/text/@v/v9.9.9.zip'),
+      await at('go-1', '/example.com/other/@v/v1.0.0.mod'),
+      await at('go-1', '/golang.org/x/text'),
+      await at('nope', '/golang.org/x/text/@v/v0.14.0.mod'),
+      await at('go-1', '/golang.org/x/text/@v/v0.14.0.mod', 'POST'),
+    ];
+    expect(responses.map((r) => r.status)).toEqual([200, 403, 403, 404, 404, 405]);
+    expect(denials.length).toBeGreaterThan(0);
+    for (const r of responses) {
+      expect(r.body).not.toContain(reg.token);
+      expect(JSON.stringify(r.headers)).not.toContain(reg.token);
+    }
+    expect(JSON.stringify(denials)).not.toContain(reg.token);
     await proxy.close();
   });
 
@@ -1294,11 +1320,17 @@ describe('go module proxy: access', () => {
    * through WHATWG URL parsing, which resolves `..` on the client and so hides the very requests
    * this test is about; a `path` option is sent as given.
    */
-  const targetGet = (base: string, path: string, authorization: string) =>
+  const targetGet = (base: string, path: string, authorization?: string) =>
     new Promise<number>((resolve, reject) => {
       const u = new URL(base);
       const req = http.request(
-        { headers: { authorization }, host: u.hostname, method: 'GET', path, port: u.port },
+        {
+          headers: authorization ? { authorization } : {},
+          host: u.hostname,
+          method: 'GET',
+          path,
+          port: u.port,
+        },
         (res) => {
           res.resume();
           res.on('end', () => resolve(res.statusCode ?? 0));
@@ -1308,7 +1340,7 @@ describe('go module proxy: access', () => {
       req.end();
     });
 
-  it('judges Basic by the normalised path, so /go/.. cannot smuggle it onto an npm path', async () => {
+  it('judges the route by the normalised path, so /go/.. cannot reach npm with a path token or Basic', async () => {
     const { base, proxy } = await startProxy(async () => new Response('{}'));
     const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
     reg.setAllowlist(new Map([[REG.id, null]]));
@@ -1322,6 +1354,15 @@ describe('go module proxy: access', () => {
       // Bearer on the same path is an ordinary npm request.
       expect(await targetGet(base, path, bearer(reg.token)), path).toBe(200);
     }
+    // A path token reaches nothing on npm: with no Bearer header there is no token at all.
+    for (const path of [
+      `/go/${reg.token}/../npm/${REG.id}/pkg`,
+      `/go/${reg.token}/%2e%2e/npm/${REG.id}/pkg`,
+      `/npm/${REG.id}/pkg?token=${reg.token}`,
+      `/npm/${reg.token}/${REG.id}/pkg`,
+    ]) {
+      expect(await targetGet(base, path), path).toBe(401);
+    }
     await proxy.close();
   });
 });
@@ -1333,7 +1374,7 @@ describe('go module proxy: lockfile mode', () => {
     const reg = await proxy.register({ onDenied: (d) => denials.push(d), registries: [GO] });
     reg.setAllowlist(new Map([[GO.id, goLockfile()]]));
     const call = (path: string, method = 'GET') =>
-      rawGet(base, `/go/go-1${path}`, bearer(reg.token), method);
+      rawGet(base, `/go/${reg.token}/go-1${path}`, undefined, method);
     return { base, call, denials, proxy, reg };
   };
 
@@ -1406,7 +1447,7 @@ describe('go module proxy: lockfile mode', () => {
     const reg = await proxy.register({ onDenied: () => {}, registries: [GO] });
     reg.setAllowlist(new Map());
     expect(
-      (await rawGet(base, '/go/go-1/golang.org/x/text/@v/v0.14.0.mod', bearer(reg.token))).status
+      (await rawGet(base, `/go/${reg.token}/go-1/golang.org/x/text/@v/v0.14.0.mod`)).status
     ).toBe(403);
     expect(upstream).not.toHaveBeenCalled();
     await proxy.close();
@@ -1575,16 +1616,12 @@ describe('go module proxy: open mode and relay', () => {
         )
     );
     await new Promise<void>((resolve) => {
-      const req = http.request(
-        `${base}/go/go-1/a/b/@v/v1.0.0.zip`,
-        { headers: { authorization: bearer(reg.token) } },
-        (res) => {
-          res.once('data', () => {
-            req.destroy();
-            resolve();
-          });
-        }
-      );
+      const req = http.request(`${base}/go/${reg.token}/go-1/a/b/@v/v1.0.0.zip`, (res) => {
+        res.once('data', () => {
+          req.destroy();
+          resolve();
+        });
+      });
       req.on('error', () => {});
       req.end();
     });
@@ -1641,9 +1678,9 @@ describe('go and npm registries in one registration', () => {
     const reg = await proxy.register({ onDenied: () => {}, registries: [GO, REG] });
     reg.setAllowlist(both);
     expect((await rawGet(base, `/npm/${GO.id}/pkg`, bearer(reg.token))).status).toBe(404);
-    expect((await rawGet(base, `/go/${REG.id}/a/b/@latest`, bearer(reg.token))).status).toBe(404);
+    expect((await rawGet(base, `/go/${reg.token}/${REG.id}/a/b/@latest`)).status).toBe(404);
     expect((await rawGet(base, `/npm/${REG.id}/pkg`, bearer(reg.token))).status).toBe(200);
-    expect((await rawGet(base, `/go/${GO.id}/a/b/@latest`, bearer(reg.token))).status).toBe(200);
+    expect((await rawGet(base, `/go/${reg.token}/${GO.id}/a/b/@latest`)).status).toBe(200);
     expect(urls).toEqual(['http://upstream.test/pkg', 'http://goup.test/a/b/@latest']);
     await proxy.close();
   });
@@ -1690,9 +1727,9 @@ describe('go and npm registries in one registration', () => {
     expect(res.body).toContain('no default registry answers audits');
     expect(upstream).not.toHaveBeenCalled();
     // And a Go path rejects POST rather than treating it as an audit.
-    expect((await rawGet(base, `/go/${GO.id}${AUDIT}`, bearer(reg.token), 'POST')).status).toBe(
-      405
-    );
+    expect(
+      (await rawGet(base, `/go/${reg.token}/${GO.id}${AUDIT}`, undefined, 'POST')).status
+    ).toBe(405);
     await proxy.close();
   });
 });
@@ -1747,7 +1784,7 @@ describe('go module proxy: the real tarball cache', () => {
     const base = `http://127.0.0.1:${await proxy.listen()}`;
     const reg = await proxy.register({ onDenied: () => {}, registries: [GO] });
     reg.setAllowlist(new Map([[GO.id, new Map([['a/b', new Set(['v9.9.9'])]])]]));
-    expect((await rawGet(base, '/go/go-1/a/b/@v/v1.0.0.zip', bearer(reg.token))).status).toBe(403);
+    expect((await rawGet(base, `/go/${reg.token}/go-1/a/b/@v/v1.0.0.zip`)).status).toBe(403);
     await proxy.close();
   });
 });

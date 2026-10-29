@@ -18,11 +18,14 @@
  * it answers 503 ("not ready"), a state `createWorkspace` never lets the agent
  * reach because it returns only once the allowlist is in place.
  *
- * A second route, `<baseUrl>/go/<registryId>/<GOPROXY path>`, serves Go modules the same way
- * (`goProxy.ts` holds the protocol): GET and HEAD only, the registry credential added
+ * A second route, `<baseUrl>/go/<token>/<registryId>/<GOPROXY path>`, serves Go modules the same
+ * way (`goProxy.ts` holds the protocol): GET and HEAD only, the registry credential added
  * server-side, and in `lockfile` mode only the module versions the base ref's `go.sum` names.
- * The Go tool sends credentials from a `GOPROXY` URL as Basic auth, so that route accepts the
- * token as a Basic password as well as a Bearer token; the npm route takes Bearer only.
+ * The Go route authenticates by the token in its path and reads no `Authorization` header: the
+ * Go tool refuses to send credentials from a `GOPROXY` URL (userinfo) over plain http, and this
+ * proxy is plain http on the container network. The npm route takes a Bearer header only.
+ * The token segment is a secret: it is never part of what the allowlist, the cache key, a
+ * denial report or a response sees.
  *
  * Modelled on `agents/claudeCode/modelProxy.ts`.
  */
@@ -197,21 +200,9 @@ function routeRegistry(reg: Registration, name: string): ResolvedRegistry | unde
   return npmDefault(reg);
 }
 
-/** The token a request presents: `Bearer <token>`, or — Go route only — a Basic password. */
-function presentedToken(auth: string | undefined, allowBasic: boolean): string | undefined {
-  if (typeof auth !== 'string') {
-    return undefined;
-  }
-  if (auth.startsWith('Bearer ')) {
-    return auth.slice(7);
-  }
-  if (allowBasic && auth.startsWith('Basic ')) {
-    // `user:password`; the user name is ignored and the password is the token.
-    const decoded = Buffer.from(auth.slice(6).trim(), 'base64').toString('utf8');
-    const colon = decoded.indexOf(':');
-    return colon < 0 ? undefined : decoded.slice(colon + 1) || undefined;
-  }
-  return undefined;
+/** The token a request presents in its header: `Bearer <token>`. */
+function presentedToken(auth: string | undefined): string | undefined {
+  return typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
 }
 
 function sendJson(
@@ -1234,24 +1225,24 @@ export function createRegistryProxy(options: {
   });
 
   function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    // Only the Go route accepts Basic. That is decided from the SAME normalised path the router
-    // uses, never from the raw target: `/go/../npm/<id>/…` and `/go/%2e%2e/npm/<id>/…` both
-    // normalise to an npm path, and judging them by their raw prefix would let Basic reach it.
+    // The route is decided from the WHATWG-normalised path, never the raw target:
+    // `/go/../npm/<id>/…` and `/go/%2e%2e/npm/<id>/…` normalise to an npm path and are then judged
+    // as npm, so a path token cannot stand in for the Bearer header there.
     const url = new URL(req.url ?? '/', 'http://proxy');
-    const goMatch = /^\/go\/([^/]+)(\/.*)$/.exec(url.pathname);
-    const token = presentedToken(req.headers.authorization, goMatch !== null);
+    const goMatch = /^\/go\/([^/]+)\/([^/]+)(\/.*)$/.exec(url.pathname);
+    const token = goMatch ? goMatch[1] : presentedToken(req.headers.authorization);
     const reg = token ? registrations.get(digest(token)) : undefined;
     if (!reg) {
       sendJson(res, 401, 'unknown or expired token');
       return;
     }
     if (goMatch) {
-      handleGo(reg, req, res, goMatch[1] ?? '', goMatch[2] ?? '');
+      handleGo(reg, req, res, goMatch[2] ?? '', goMatch[3] ?? '');
       return;
     }
     const m = /^\/npm\/([^/]+)(\/.*)$/.exec(url.pathname);
     if (!m) {
-      sendJson(res, 404, 'only /npm/<registry>/… and /go/<registry>/… paths exist here');
+      sendJson(res, 404, 'only /npm/<registry>/… and /go/<token>/<registry>/… paths exist here');
       return;
     }
     // The URL's <id> only proves membership — the caller may legitimately
@@ -1298,7 +1289,7 @@ export function createRegistryProxy(options: {
     reg.inFlight.add(call);
     void call.finally(() => reg.inFlight.delete(call));
   }
-  /** `/go/<registryId><rest>`: the token is already verified. */
+  /** `/go/<token>/<registryId><rest>`: the token is already verified and is not passed on. */
   function handleGo(
     reg: Registration,
     req: http.IncomingMessage,

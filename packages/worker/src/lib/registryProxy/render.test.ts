@@ -13,11 +13,13 @@ const SCOPED = { ecosystem: 'npm' as const, id: 'npm-2', isDefault: false, scope
 const GO = { ecosystem: 'go' as const, id: 'go-1', isDefault: true, scopes: [] };
 
 describe('registryWorkspaceEnv with a go registry', () => {
-  it('points GOPROXY at the proxy alone, with the token as userinfo', () => {
+  it('points GOPROXY at the proxy alone, with the token as a path segment', () => {
     const env = registryWorkspaceEnv([GO], BASE, TOKEN);
-    expect(env).toContain(`GOPROXY=http://proxy:${TOKEN}@proxy.internal:9999/go/go-1`);
+    expect(env).toContain(`GOPROXY=http://proxy.internal:9999/go/${TOKEN}/go-1`);
     // No `,direct` and no second entry: a refused module is not fetched from its VCS.
     const goproxy = env.find((p) => p.startsWith('GOPROXY=')) ?? '';
+    // Go will not send userinfo credentials over http, so there is none.
+    expect(goproxy).not.toContain('@');
     expect(goproxy).not.toContain(',');
     expect(goproxy).not.toContain('direct');
     expect(env).toContain('GOTOOLCHAIN=local');
@@ -50,7 +52,7 @@ describe('registryWorkspaceEnv with a go registry', () => {
   it('emits both blocks when both ecosystems are present, npm default never the go one', () => {
     const env = registryWorkspaceEnv([GO, NPM], BASE, TOKEN);
     expect(env).toContain(`NPM_CONFIG_REGISTRY=${BASE}/npm/npm-1`);
-    expect(env).toContain(`GOPROXY=http://proxy:${TOKEN}@proxy.internal:9999/go/go-1`);
+    expect(env).toContain(`GOPROXY=http://proxy.internal:9999/go/${TOKEN}/go-1`);
     expect(env.join('\n')).not.toContain('/npm/go-1');
   });
 

@@ -441,7 +441,7 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
       const setAllowlist = vi.fn();
       vi.mocked(beginWorkspaceRegistries).mockResolvedValueOnce({
         baseUrl: 'http://proxy.internal:9999',
-        env: [`GOPROXY=http://proxy:${TOKEN}@proxy.internal:9999/go/go-1`, 'GOTOOLCHAIN=local'],
+        env: [`GOPROXY=http://proxy.internal:9999/go/${TOKEN}/go-1`, 'GOTOOLCHAIN=local'],
         registration: {
           baseUrl: 'http://proxy.internal:9999',
           release: async () => {},

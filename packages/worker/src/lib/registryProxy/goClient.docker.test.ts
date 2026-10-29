@@ -25,7 +25,6 @@ import { registryWorkspaceEnv, splitRegistryWorkspaceEnv } from './render.js';
 
 const enabled = process.env.GO_PROXY_DOCKER_TEST === '1';
 const IMAGE = process.env.GO_PROXY_TEST_IMAGE ?? 'asw-executor-go:ci';
-const DENIED = "is not in the repository's committed lockfiles";
 const VERSION = 'v1.0.0';
 const UPSTREAM_TOKEN = 'up-token';
 const REGISTRY_ID = 'rGo';
@@ -357,7 +356,9 @@ describe.skipIf(!enabled)('registry proxy against a real Go toolchain', () => {
   it('puts GOPROXY, which carries the token, in secretEnv and not in plain env', async () => {
     const a = await activate(null);
     expect(Object.keys(a.secretEnv)).toEqual(['GOPROXY']);
-    expect(a.secretEnv.GOPROXY).toContain(a.reg.token);
+    // Go refuses credentials from a GOPROXY URL over plain http, so the token is a path segment.
+    expect(a.secretEnv.GOPROXY).toContain(`/go/${a.reg.token}/`);
+    expect(a.secretEnv.GOPROXY).not.toContain('@');
     expect(a.env.some((e) => e.startsWith('GOPROXY='))).toBe(false);
     expect(a.env.some((e) => e.includes(a.reg.token))).toBe(false);
     expect(a.env).toContain('GOTOOLCHAIN=local');
@@ -390,7 +391,8 @@ describe.skipIf(!enabled)('registry proxy against a real Go toolchain', () => {
     const a = await activate(lib.goSum);
     const r = await client(dir, a, ['go', 'build', './...'], { ignore: true });
     expect(r.code).not.toBe(0);
-    expect(`${r.err}${r.out}`).toContain(DENIED);
+    // Go reports only the status line, not the proxy's body; the reason is in the denial report.
+    expect(`${r.err}${r.out}`).toContain('403 Forbidden');
     expect(upstream.requests.some((q) => q.path.includes('other'))).toBe(false);
     expect(a.denials).toContainEqual(expect.objectContaining({ name: other.path }));
     await a.reg.release();
@@ -405,13 +407,15 @@ describe.skipIf(!enabled)('registry proxy against a real Go toolchain', () => {
     await a.reg.release();
   }, 300_000);
 
-  it('refuses go get @latest in lockfile mode', async () => {
+  it('resolves @latest to the allowed version from the local list, never asking the upstream', async () => {
+    // `go get m@latest` asks the proxy for `@v/list`, which in lockfile mode names only the
+    // go.sum versions, so "latest" can only be one the repository already pins.
     const dir = writeProject(lib);
     const a = await activate(lib.goSum);
-    const r = await client(dir, a, ['go', 'get', `${lib.path}@latest`], { ignore: true });
-    expect(r.code).not.toBe(0);
-    expect(`${r.err}${r.out}`).toContain(DENIED);
+    const r = await client(dir, a, ['go', 'get', `${lib.path}@latest`]);
+    expect(r.code).toBe(0);
     expect(upstream.requests.some((q) => q.path.endsWith('/@latest'))).toBe(false);
+    expect(upstream.requests.some((q) => q.path.endsWith('/@v/list'))).toBe(false);
     await a.reg.release();
   }, 300_000);
 
