@@ -166,6 +166,11 @@ prose has no compiler and status prose rots silently.
 - **Known gaps live next to the feature**, in that doc's `## Limitations` section — never in a
   central list, which is what drifted before. Product-level boundaries and overall maturity are the
   exception and belong in `docs/product-overview.md` §7 and §8.
+- **A change that needs an operator to act on a deployment that ran earlier code adds an entry to
+  [`docs/upgrade-notes.md`](./docs/upgrade-notes.md) in the same change.** That covers rotating a
+  credential, purging logs, running a migration by hand and changing configuration. Entries are
+  keyed by the condition that makes a deployment affected and by the SHA of the fixing commit, and
+  are append-only.
 - **`yarn docs:check` is the compiler for the rules above.** Prose has no type system, so the
   checkable parts of these conventions are enforced in CI as their own job. It fails on:
 
