@@ -31,6 +31,9 @@ the server accepts now: `mcp:read` always, `mcp:write` only while `mcp.writeTool
 
 ## Connecting a client
 
+For Claude Code CLI/Desktop and Codex installation, delegation skills and the follow/review loop,
+see [Local coding agents](./local-agents.md).
+
 A client needs only the endpoint URL. Without a token the endpoint answers 401 with a
 `WWW-Authenticate` challenge that names the protected resource metadata and the default scope:
 

@@ -1,0 +1,10 @@
+{
+  "author": {
+    "name": "auto-swe maintainers"
+  },
+  "description": "Delegate isolated repository tasks to auto-swe and follow their governed runs.",
+  "homepage": "https://github.com/yorch/auto-swe",
+  "name": "auto-swe",
+  "repository": "https://github.com/yorch/auto-swe",
+  "version": "0.1.0"
+}
