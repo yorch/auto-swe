@@ -35,7 +35,7 @@ function newMockPrisma() {
   };
 }
 
-async function buildApp(role: 'ADMIN' | 'LEAD' | 'ENGINEER' = 'ADMIN') {
+async function buildApp(role: 'ADMIN' | 'LEAD' | 'ORG_ADMIN' | 'ENGINEER' = 'ADMIN') {
   const app = Fastify();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
@@ -53,6 +53,7 @@ const AUTH = { authorization: 'Bearer fake' };
 const TEAM_A = '00000000-0000-4000-8000-00000000000a';
 const TEAM_B = '00000000-0000-4000-8000-00000000000b';
 const ORG_A = '00000000-0000-4000-8000-0000000000a1';
+const ORG_B = '00000000-0000-4000-8000-0000000000a2';
 
 /** One (model, agent, activity) group as Prisma returns it. */
 function group(
@@ -441,14 +442,21 @@ describe('usageRoutes GET /usage/export', () => {
     expect(response.statusCode).toBe(403);
   });
 
-  it('denies an organization admin who cannot access the requested organization', async () => {
-    const { app } = await buildApp('ENGINEER');
+  it('denies an organization admin who requests another organization', async () => {
+    const { app, prisma } = await buildApp('ORG_ADMIN');
+    prisma.organizationMembership.findUnique.mockImplementation(
+      async (args: { where: { userId_orgId: { orgId: string } } }) =>
+        args.where.userId_orgId.orgId === ORG_B ? { role: 'ORG_ADMIN' } : null
+    );
     const response = await app.inject({
       headers: AUTH,
       method: 'GET',
       url: `/api/v1/platform/usage/export?orgId=${ORG_A}`,
     });
     expect(response.statusCode).toBe(403);
+    expect(prisma.organizationMembership.findUnique).toHaveBeenCalledWith({
+      where: { userId_orgId: { orgId: ORG_A, userId: 'admin-1' } },
+    });
   });
 
   it('exports model, agent and node breakdowns as CSV', async () => {
