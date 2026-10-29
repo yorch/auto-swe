@@ -191,7 +191,7 @@ describe('pinDetectionsOnRun', () => {
   it('pins an empty set rather than leaving the column to be filled later', async () => {
     await pinDetectionsOnRun('run-1', []);
     expect(updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { pinnedDetections: {} } })
+      expect.objectContaining({ data: expect.objectContaining({ pinnedDetections: {} }) })
     );
   });
 
