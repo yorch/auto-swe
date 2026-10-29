@@ -258,6 +258,18 @@ describe('pull request evaluation webhook handling', () => {
       expect(starts).toHaveLength(0);
     });
 
+    it('evaluates a repository in enforce mode, chosen or inherited, without needing an armed row', async () => {
+      connections = [{ ...CONN, prEvaluationMode: 'enforce' }];
+      await deliver('pull_request', { action: 'opened', pull_request: pr() });
+      expect(starts).toHaveLength(1);
+      starts.length = 0;
+      connections = [{ ...CONN, prEvaluationMode: null }];
+      settingsState.defaultMode = 'enforce';
+      await deliver('pull_request', { action: 'synchronize', pull_request: pr() });
+      expect(starts).toHaveLength(1);
+      expect(armedLookups).toEqual([]);
+    });
+
     it('starts nothing for a pull request the platform did not open', async () => {
       platformPr = null;
       const res = await deliver('pull_request', { action: 'opened', pull_request: pr() });

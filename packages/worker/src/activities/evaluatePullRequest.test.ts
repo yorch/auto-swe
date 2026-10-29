@@ -472,6 +472,81 @@ describe('evaluatePullRequest: approvals and status', () => {
     expect(ok.statusState).toBe('success');
   });
 
+  describe('enforce mode', () => {
+    const enforceRepo = async () => {
+      m.connection.mockResolvedValue({ ...(await m.connection()), prEvaluationMode: 'enforce' });
+    };
+
+    it('is pending with no approvals and success once enough approvals on this head exist', async () => {
+      await enforceRepo();
+      const pending = await evaluatePullRequestWith(
+        INPUT,
+        depsWith(fakeScm({ listPullRequestReviews: async () => [] }))
+      );
+      expect(pending.statusState).toBe('pending');
+      const stale = await evaluatePullRequestWith(
+        INPUT,
+        depsWith(fakeScm({ listPullRequestReviews: async () => approvals(1, OLD_HEAD) }))
+      );
+      expect(stale.statusState).toBe('pending');
+      const ok = await evaluatePullRequestWith(
+        INPUT,
+        depsWith(fakeScm({ listPullRequestReviews: async () => approvals(1) }))
+      );
+      expect(ok.statusState).toBe('success');
+      expect(m.created.at(-1)).toMatchObject({ mode: 'enforce', statusState: 'success' });
+    });
+
+    it('does not count an approver without write access', async () => {
+      await enforceRepo();
+      const scm = fakeScm({
+        listPullRequestReviews: async () => approvals(1),
+        repoPermission: async () => ({ ok: true, permission: 'read' }),
+      });
+      expect((await evaluatePullRequestWith(INPUT, depsWith(scm))).statusState).toBe('pending');
+    });
+
+    it('never arms auto-merge, even when every auto condition holds', async () => {
+      await enforceRepo();
+      const scm = fakeScm({ listPullRequestReviews: async () => approvals(1) });
+      const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+      expect(result.autoMerge).toBe('not-eligible');
+      expect(scm.calls).not.toContain('enableAutoMerge');
+    });
+
+    it('disarms an auto-merge GitHub shows enabled', async () => {
+      await enforceRepo();
+      const scm = fakeScm({
+        getPullRequest: async () => ARMED,
+        listPullRequestReviews: async () => approvals(1),
+      });
+      const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+      expect(result.autoMerge).toBe('disabled');
+      expect(scm.calls).toContain('disableAutoMerge');
+      expect(scm.calls).not.toContain('enableAutoMerge');
+    });
+
+    it('is the default mode of a repository that has not chosen one', async () => {
+      m.settings['prEvaluation.defaultMode'] = 'enforce';
+      const result = await evaluatePullRequestWith(
+        INPUT,
+        depsWith(fakeScm({ listPullRequestReviews: async () => [] }))
+      );
+      expect(result.statusState).toBe('pending');
+    });
+
+    // The real database rejects an unknown mode string (CHECK constraint), so in production this
+    // evaluation fails closed to a `failure` status with no stored row. The mock has no CHECK, so
+    // this asserts the strict status rules, not the production path.
+    it('applies the strict status rules to a mode it does not recognise, arming nothing', async () => {
+      m.connection.mockResolvedValue({ ...(await m.connection()), prEvaluationMode: 'mystery' });
+      const scm = fakeScm({ listPullRequestReviews: async () => [] });
+      const result = await evaluatePullRequestWith(INPUT, depsWith(scm));
+      expect(result.statusState).toBe('pending');
+      expect(scm.calls).not.toContain('enableAutoMerge');
+    });
+  });
+
   it('publishes the status under the configured context for the evaluated head', async () => {
     m.settings['prEvaluation.requiredStatusContext'] = 'ci/custom';
     await evaluatePullRequestWith(INPUT, depsWith(fakeScm()));

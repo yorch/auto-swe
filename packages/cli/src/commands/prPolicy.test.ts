@@ -256,6 +256,20 @@ describe('pr-policy', () => {
       expect(out.join('')).toMatch(/Mode for .*: advisory/);
     });
 
+    it('sends enforce, and prints the gateway warnings', async () => {
+      respond(200, {
+        data: {
+          mode: 'enforce',
+          modeSource: 'repository',
+          warnings: ['Nothing is enforced until the status is required.'],
+        },
+      });
+      expect(await runPrPolicyCommand(['mode', REPO_ID, 'enforce'], loadEnv)).toBe(0);
+      expect(calls[0]?.body).toEqual({ mode: 'enforce' });
+      expect(out.join('')).toMatch(/Mode for .*: enforce/);
+      expect(err.join('') + out.join('')).toContain('Nothing is enforced until the status');
+    });
+
     it('sends null for inherit', async () => {
       respond(200, { data: { mode: null, modeSource: 'default' } });
       expect(await runPrPolicyCommand(['mode', REPO_ID, 'inherit'], loadEnv)).toBe(0);
@@ -291,7 +305,7 @@ describe('pr-policy', () => {
     it('refuses an unknown mode without calling the gateway', async () => {
       respond(200, { data: {} });
       expect(await runPrPolicyCommand(['mode', REPO_ID, 'always'], loadEnv)).toBe(1);
-      expect(err.join('')).toMatch(/mode must be one of/);
+      expect(err.join('')).toMatch(/mode must be one of: off, advisory, enforce, auto, inherit/);
       expect(calls).toEqual([]);
     });
 

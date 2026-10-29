@@ -33,7 +33,7 @@ const DETECT_NAMES: readonly string[] = [
 const DETECT_SKIP = new Set(['node_modules', '.git', 'dist', 'build', 'vendor']);
 const DETECT_DEPTH = 3;
 
-const MODE_CHOICES = ['off', 'advisory', 'auto', 'inherit'] as const;
+const MODE_CHOICES = ['off', 'advisory', 'enforce', 'auto', 'inherit'] as const;
 
 const SUB_HELP = `auto-swe pr-policy — a repository's PR policy file and evaluation settings
 
@@ -46,10 +46,12 @@ const SUB_HELP = `auto-swe pr-policy — a repository's PR policy file and evalu
                                    Errors exit 1; warnings print and exit 0. Token-free.
   pr-policy status <repoId>        Show a repository's evaluation mode, enablement, last
                                    evaluation and auto-merge evidence (gateway, needs a token).
-  pr-policy mode <repoId> <off|advisory|auto|inherit>
+  pr-policy mode <repoId> <off|advisory|enforce|auto|inherit>
                                    Set a repository's evaluation mode; "inherit" restores the
-                                   deployment default. auto is refused with the reasons it is not
-                                   ready (exit 1). Needs a team lead or platform admin.
+                                   deployment default. enforce holds the status pending until
+                                   enough approvals exist and never arms auto-merge. auto is
+                                   refused with the reasons it is not ready (exit 1). Needs a
+                                   team lead or platform admin.
 `;
 
 const POLICY_TEMPLATE_HEADER = `# auto-swe pull request policy (.auto-swe/pr-policy.yml)
@@ -93,7 +95,7 @@ interface LastEvaluation {
 
 interface PrEvaluationStatus {
   enabled: boolean;
-  mode: 'off' | 'advisory' | 'auto';
+  mode: 'off' | 'advisory' | 'enforce' | 'auto';
   modeSource: 'repository' | 'default';
   autoMergeAllowed: boolean;
   lastEvaluation: LastEvaluation | null;
@@ -109,6 +111,7 @@ interface PrEvaluationStatus {
 interface ModeResult {
   mode: string | null;
   modeSource: 'repository' | 'default';
+  warnings?: string[];
 }
 
 export async function runPrPolicyCommand(
@@ -314,7 +317,9 @@ async function cmdMode(args: string[], env: CliEnv): Promise<number> {
   const { positional, flags } = parseFlags(args);
   const [repoId, choice, ...extra] = positional;
   if (!repoId || !choice || extra.length > 0) {
-    process.stderr.write(`Usage: pr-policy mode <repoId> <off|advisory|auto|inherit>\n${SUB_HELP}`);
+    process.stderr.write(
+      `Usage: pr-policy mode <repoId> <off|advisory|enforce|auto|inherit>\n${SUB_HELP}`
+    );
     return 1;
   }
   if (rejectUnknownFlags(flags, [])) {
@@ -336,6 +341,9 @@ async function cmdMode(args: string[], env: CliEnv): Promise<number> {
     const source =
       result.modeSource === 'repository' ? 'set on this repository' : 'deployment default';
     process.stdout.write(`Mode for ${repoId}: ${shown} (${source})\n`);
+    for (const warning of result.warnings ?? []) {
+      process.stderr.write(`Warning: ${warning}\n`);
+    }
     return 0;
   } catch (err) {
     if (err instanceof GatewayError && err.statusCode === 400 && err.code === 'AUTO_NOT_READY') {

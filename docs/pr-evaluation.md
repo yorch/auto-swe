@@ -105,11 +105,14 @@ A repository's mode is `connections.pr_evaluation_mode`; null inherits `prEvalua
 | Mode | Effect |
 |---|---|
 | `off` | No evaluation, no status, no brief. A pull request the platform armed earlier is disarmed. |
-| `advisory` | Classifies, posts the brief, publishes the status. The status is always `success` (§5), so it enforces nothing. Never arms auto-merge. |
-| `auto` | As `advisory`, but the status follows the approval count (§5) and a `LOW` change that meets every condition in §8 is armed. |
+| `advisory` | Classifies, posts the brief, publishes the status. The status is `success` whatever the class and the approval count (§5), except `failure` when the evaluation itself fails, so it enforces nothing about approvals. The exception is an error raised while evaluating, which posts `failure` in every mode, `advisory` included (§2, fail-closed behaviour). Never arms auto-merge. |
+| `enforce` | As `advisory`, but the status follows the approval count (§5), so marking the context required enforces the approver counts. Never arms auto-merge, and cancels any auto-merge GitHub shows enabled on the pull request, including one armed earlier in `auto`. |
+| `auto` | As `enforce`, and a `LOW` change that meets every condition in §8 is armed. |
 
-`prEvaluation.defaultMode` accepts only `off` or `advisory`; `auto` is never a default. `auto` is
-chosen per repository, by a platform admin only (§10).
+`prEvaluation.defaultMode` accepts `off`, `advisory` or `enforce`; `auto` is never a default. `auto`
+is chosen per repository, by a platform admin only (§10). An unrecognised mode value fails closed:
+the database rejects an unknown mode string, so the evaluation fails with status `failure` and no
+stored row, nothing is armed, and any auto-merge the platform armed is disarmed.
 
 Only the pull requests the platform opened are evaluated (§11). A repository that has the feature on
 sees no status on a person's pull request.
@@ -152,10 +155,13 @@ decides it:
 | Mode | State | When |
 |---|---|---|
 | `off` | none | Nothing is published. |
-| `advisory` | `success` | Always, whatever the class and the approval count. The description reads `advisory: <class> risk, <n>/<required> approvals`. |
-| `auto` | `failure` | The evaluation failed (a reason with code `evaluation-error`). |
-| `auto` | `pending` | The approval count the class requires is not yet met on this head. |
-| `auto` | `success` | The required number of approvals is met on this head. |
+| `advisory` | `success` | Whatever the class and the approval count. The description reads `advisory: <class> risk, <n>/<required> approvals`. |
+| `enforce`, `auto` | `failure` | The evaluation failed (a reason with code `evaluation-error`). |
+| `enforce`, `auto` | `pending` | The approval count the class requires is not yet met on this head. |
+| `enforce`, `auto` | `success` | The required number of approvals is met on this head. |
+
+For `enforce` the description reads `enforce: <class> risk: waiting for <n>/<required> approvals` (or
+`enforce: <class> risk: <n>/<required> approvals` once met); for `auto` it has no mode prefix.
 
 Approvals are counted by `approvalState`: distinct people whose **latest** review is an approval of
 the **exact head commit**. A later comment or change request withdraws an approval, an approval of
@@ -164,9 +170,10 @@ never count. One person with two logins cannot be detected.
 
 Two consequences an operator must know:
 
-- **`advisory` always reports `success`.** Marking the context required in branch protection for a
+- **`advisory` reports `success` whatever the class and the approval count** (an error raised while evaluating still posts `failure`, in every mode). Marking the context required in branch protection for a
   repository in `advisory` mode therefore enforces nothing. The approver counts reach GitHub's
-  merge button **only in `auto` mode**.
+  merge button **only in `enforce` and `auto` mode**; `enforce` does so without ever arming
+  auto-merge.
 - **An `auto` repository keeps auto's status rules while `prEvaluation.autoMergeAllowed` is off.**
   The repository's status stays `pending` until approved (so a required context still enforces the
   count), but nothing is armed. The row records the reason `auto-merge-globally-disabled`.
@@ -247,11 +254,14 @@ Warnings are also recorded as `policy-warning` reasons on the evaluation.
    ```
    Commit it to the base branch.
 4. **Choose a mode.** `advisory` is the default once enabled. Mode changes need an owning-team lead
-   or a platform admin: `auto-swe pr-policy mode <repoId> <off|advisory|auto|inherit>`. `auto-swe
+   or a platform admin: `auto-swe pr-policy mode <repoId> <off|advisory|enforce|auto|inherit>`. `auto-swe
    pr-policy status <repoId>` shows the mode, the last evaluation and the evidence (§9).
 5. **Make the status count (GitHub side, done by a repository admin).** In branch protection or a
    ruleset for the base branch, add `auto-swe/pr-evaluation` as a **required status check**. This
-   has an effect only for a repository in `auto` mode (§5).
+   has an effect only for a repository in `enforce` or `auto` mode (§5). `PUT` answers `enforce`
+   with a warning while the latest evaluation shows the context is not a required check (or could
+   not read it), since nothing is enforced until it is. Set `advisory` first and let one evaluation
+   run if the repository has none yet.
 6. **For `auto` mode, also:**
    - **Pin the required check to the GitHub App.** When adding it, choose the platform's GitHub App
      as the source of the check. An unpinned requirement can be satisfied by any token that can write
@@ -298,7 +308,7 @@ another.
 
 The platform cancels what it armed when:
 
-- the repository's mode is changed away from `auto` (`PUT` on the route in §13 starts a re-evaluation
+- the repository's mode is changed away from `auto`, `enforce` included (`PUT` on the route in §13 starts a re-evaluation
   of every armed open pull request of that repository);
 - `prEvaluation.autoMergeAllowed` or `prEvaluation.enabled` is set to false, or a stored GLOBAL
   override of either is cleared (the same, deployment-wide);
@@ -327,7 +337,7 @@ starting `Revert` that names `(#N)`.
 
 What it counts is evaluation rows merged under `LOW`. It does **not** check who approved, whether the
 merge was by a person or by auto-merge, which repository it was in, or whether the repository was
-in `advisory` or `auto` mode; the count is the whole deployment's. What it shows is that the
+in `advisory`, `enforce` or `auto` mode; the count is the whole deployment's. What it shows is that the
 classifier's `LOW` was not followed by a revert recognised by that text in the weeks after. It does
 not show that unattended merging is safe; see Limitations.
 
@@ -336,7 +346,7 @@ not show that unattended merging is safe; see Limitations.
 | Action | Role |
 |---|---|
 | Read a repository's evaluation state and the evaluations of repositories you can reach | ENGINEER and above, for a repository you can reach |
-| Set a repository to `off`, `advisory` or `inherit` | Lead of the owning team, or platform admin |
+| Set a repository to `off`, `advisory`, `enforce` or `inherit` | Lead of the owning team, or platform admin |
 | Set a repository to `auto` | Platform admin only, and only while the preconditions below hold |
 | Change any `prEvaluation.*` setting | Platform admin |
 
@@ -381,7 +391,7 @@ All are ADMIN-only registry settings in the `prEvaluation` group; see
 | Setting | Default | Overridable at | Effect |
 |---|---|---|---|
 | `prEvaluation.enabled` | off | GLOBAL only | The kill switch. Off, nothing is evaluated and nothing is posted. |
-| `prEvaluation.defaultMode` | `advisory` | team, organization | Mode of a repository that has not chosen one: `off` or `advisory`. |
+| `prEvaluation.defaultMode` | `advisory` | team, organization | Mode of a repository that has not chosen one: `off`, `advisory` or `enforce`. |
 | `prEvaluation.autoMergeAllowed` | off | GLOBAL only | Whether any repository may arm GitHub auto-merge. Off, `auto` keeps its status rules and arms nothing. |
 | `prEvaluation.autoMinEvidence` | 150 | GLOBAL only | Low-risk merges in 90 days, with no bad merge, that `auto` needs (§9). |
 | `prEvaluation.requiredStatusContext` | `auto-swe/pr-evaluation` | GLOBAL only | The status context name. |
@@ -399,7 +409,7 @@ All are ADMIN-only registry settings in the `prEvaluation` group; see
 | Route | Role | Purpose |
 |---|---|---|
 | `GET /api/v1/repositories/:id/pr-evaluation` | ENGINEER | Enabled flag, mode and where it came from, whether auto-merge is allowed, the status context, the thresholds in force, the evidence figures, and the repository's last evaluation |
-| `PUT /api/v1/repositories/:id/pr-evaluation` | LEAD of the owning team, or ADMIN | Body `{ "mode": "off" \| "advisory" \| "auto" \| null }`; `null` inherits. `auto` is ADMIN-only and may answer `400 AUTO_NOT_READY` |
+| `PUT /api/v1/repositories/:id/pr-evaluation` | LEAD of the owning team, or ADMIN | Body `{ "mode": "off" \| "advisory" \| "enforce" \| "auto" \| null }`; `null` inherits. `auto` is ADMIN-only and may answer `400 AUTO_NOT_READY`. The response carries `data.warnings`, non-empty for `enforce` when the status context is not shown to be a required check |
 | `GET /api/v1/pr-evaluations` | ENGINEER | Evaluations, newest first, for repositories you can reach. Filters `repoId`, `riskClass`, `merged`; `limit` (default 50, at most 100) and `offset`. Each row reports whether a brief exists and its length, not the brief |
 | `GET /api/v1/pr-evaluations/:id` | ENGINEER | One evaluation in full: reasons, the brief, and the branch rules it read |
 
@@ -450,8 +460,15 @@ A repository you cannot reach answers `404`. The CLI wraps the first two (§14).
   credentials.
 - **Turning evaluation off while the context is still required** leaves new heads at "Expected" in
   GitHub until the requirement is removed, because the platform no longer posts anything.
-- **Advisory mode cannot enforce approver counts**: its status is always `success`. Make the context
-  required only on repositories in `auto` mode.
+- **Advisory mode cannot enforce approver counts**: its status is `success` whatever the approval count (only an error raised while evaluating posts `failure`). Make the context
+  required only on repositories in `enforce` or `auto` mode.
+- **`enforce` is only as strong as the branch rule.** Choosing it does not require the context in
+  branch protection; the platform only warns, and only from the latest recorded evaluation (a
+  repository with none gets a warning that it is not known whether the context is required). An unpinned required context can be satisfied by any
+  token that can write statuses under that name.
+- **A person arming auto-merge on GitHub in a non-`auto` mode is undone only at the next
+  evaluation trigger** (a push, a review event or a sweep), because the arming itself is not a
+  delivered event.
 - **Disarming is bounded and indirect.** The sweeps cover open pull requests with any evaluation row
   that recorded an arming, at most 200 per repository and 500 for a deployment-wide switch, and they
   only start re-evaluations. A repository's sweep is skipped when one started for it in the last 60
@@ -462,7 +479,7 @@ A repository you cannot reach answers `404`. The CLI wraps the first two (§14).
   pull request. When none of them holds a marker but an earlier row did record an arming, the
   pull request is treated as turned off by a person and is not armed again.
 - **An evaluation disarms any auto-merge it does not want**, including one a person turned on for a
-  platform pull request in `advisory` mode or on a pull request that is not `LOW`.
+  platform pull request in `advisory` or `enforce` mode or on a pull request that is not `LOW`.
 - **Path matching is case-insensitive**, so a name such as `Contest.java` matches the `*Test.java`
   test pattern. The test detector over-detects, which can only make a change look covered.
 - **Skim proof is narrow by design**: only same-directory exact renames and trailing-whitespace-only

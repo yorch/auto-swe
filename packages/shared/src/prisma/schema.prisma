@@ -341,7 +341,7 @@ model PrEvaluation {
   /// LOW | STANDARD | HIGH (CHECK `pr_evaluations_risk_class_check`).
   riskClass         String     @map("risk_class")
   requiredApprovers Int        @map("required_approvers")
-  /// off | advisory | auto, the effective mode when evaluated (CHECK `pr_evaluations_mode_check`).
+  /// off | advisory | enforce | auto, the effective mode when evaluated (CHECK `pr_evaluations_mode_check`).
   mode              String
   reasons           Json
   brief             Json
@@ -473,7 +473,7 @@ model Connection {
   /// How the executor image was built, for the scheduled rebuild workflow:
   /// { stack: 'node'|'python'|'jvm'|'go', useRepoDockerfile: boolean }.
   executorImageBuild   Json?               @map("executor_image_build")
-  /// Per-repository PR evaluation mode: 'off' | 'advisory' | 'auto'. NULL means
+  /// Per-repository PR evaluation mode: 'off' | 'advisory' | 'enforce' | 'auto'. NULL means
   /// "inherit `prEvaluation.defaultMode`", and it must stay NULL-able with NO column
   /// default: a default writes a literal into every row and shadows the registry value.
   prEvaluationMode     String?             @map("pr_evaluation_mode")

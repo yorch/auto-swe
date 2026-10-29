@@ -142,10 +142,13 @@ pr-policy validate [file]            Check a policy file offline (default .auto-
                                      errors exit 1, warnings print and exit 0
 pr-policy status <repoId>            Show a repository's PR evaluation mode, the last evaluation
                                      and the auto-merge evidence
-pr-policy mode <repoId> <off|advisory|auto|inherit>
+pr-policy mode <repoId> <off|advisory|enforce|auto|inherit>
                                      Set a repository's PR evaluation mode; inherit restores the
-                                     deployment default. auto is platform-admin only and is refused
-                                     with the reasons it is not ready (exit 1)
+                                     deployment default. enforce holds the status pending until
+                                     enough approvals exist and never arms auto-merge; warnings
+                                     print when the status is not a required check. auto is
+                                     platform-admin only and is refused with the reasons it is
+                                     not ready (exit 1)
 
 evals list                           List eval datasets (admin token)
 evals show <id>                      Print a dataset's cases

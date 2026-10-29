@@ -724,14 +724,14 @@ export const SETTING_DEFINITIONS = {
   'prEvaluation.defaultMode': defineSetting({
     defaultValue: 'advisory',
     description:
-      'The evaluation mode of a repository that has not chosen one: off evaluates nothing, advisory posts a commit status and a review brief. Auto is never a default; it is a per-repository choice.',
+      'The evaluation mode of a repository that has not chosen one: off evaluates nothing, advisory posts a commit status and a review brief, enforce also holds the status pending until enough approvals exist (never arming auto-merge). Auto is never a default; it is a per-repository choice.',
     group: 'prEvaluation',
     label: 'Default evaluation mode',
     overridableAt: ['TEAM', 'ORGANIZATION'],
     requiredRole: 'ADMIN',
     restartRequired: false,
     runPinned: false,
-    schema: z.enum(['off', 'advisory']),
+    schema: z.enum(['off', 'advisory', 'enforce']),
   }),
   'prEvaluation.enabled': defineSetting({
     defaultValue: false,

@@ -20,7 +20,7 @@ import { canManageTeamRepos } from './repositories.js';
 const RepoParams = z.object({ id: z.string().uuid() });
 const EvaluationParams = z.object({ id: z.string().uuid() });
 
-const MODES = ['off', 'advisory', 'auto'] as const;
+const MODES = ['off', 'advisory', 'enforce', 'auto'] as const;
 const RISK_CLASSES = ['LOW', 'STANDARD', 'HIGH'] as const;
 
 const SetModeBody = z.object({ mode: z.enum(MODES).nullable() });
@@ -225,8 +225,9 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
         entityId: repo.id,
         entityType: 'Connection',
       });
-      // Anything but `auto` must not leave auto-merge armed on a pull request an earlier `auto`
-      // armed: the worker's evaluation disarms what the policy no longer wants.
+      // Anything but `auto` (`enforce` included) must not leave auto-merge armed on a pull
+      // request an earlier `auto` armed: the worker's evaluation disarms what the policy no
+      // longer wants.
       if (mode !== 'auto') {
         const swept = await sweepArmedPullRequests(fastify, request.log, {
           cap: REPOSITORY_SWEEP_CAP,
@@ -242,7 +243,8 @@ export const prEvaluationRoutes: FastifyPluginAsync = async (fastify) => {
           });
         }
       }
-      return { data: { mode, modeSource: mode === null ? 'default' : 'repository' } };
+      const warnings = await enforceWarnings(fastify, repo, mode);
+      return { data: { mode, modeSource: mode === null ? 'default' : 'repository', warnings } };
     }
   );
 
@@ -317,6 +319,67 @@ function branchRulesOf(
   return readiness && typeof readiness === 'object' && !Array.isArray(readiness)
     ? (readiness as BranchRulesLike & { statusPublished?: unknown })
     : null;
+}
+
+/**
+ * What an operator must know after a mode change, judged on the EFFECTIVE mode (`null` inherits
+ * `prEvaluation.defaultMode` at the repository's scope), not the string written. Only an
+ * effective `enforce` warns. Nothing is evaluated while `prEvaluation.enabled` is off; otherwise
+ * `enforce` only holds once the status context is a required check on the base branch, pinned to
+ * the platform's own GitHub App. Both are read from the repository's latest recorded readiness;
+ * with none recorded it is not known, which is said rather than left silent. A missing or
+ * unreadable field is as unknown as the string `'unknown'`.
+ */
+async function enforceWarnings(
+  fastify: FastifyInstance,
+  repo: { id: string; team: { orgId: string | null } | null; teamId: string },
+  mode: (typeof MODES)[number] | null
+): Promise<string[]> {
+  const scope = {
+    ...(repo.team?.orgId ? { orgId: repo.team.orgId } : {}),
+    teamId: repo.teamId,
+  };
+  const effective = mode ?? (await resolveSetting('prEvaluation.defaultMode', scope));
+  if (effective !== 'enforce') {
+    return [];
+  }
+  const [context, enabled, last] = await Promise.all([
+    resolveSetting('prEvaluation.requiredStatusContext', scope),
+    resolveSetting('prEvaluation.enabled', scope),
+    fastify.prisma.prEvaluation.findFirst({
+      orderBy: { createdAt: 'desc' },
+      select: { readiness: true },
+      where: { connectionId: repo.id },
+    }),
+  ]);
+  const warnings: string[] = [];
+  if (!enabled) {
+    warnings.push(
+      'Nothing is evaluated, so nothing is enforced: pull request evaluation is switched off (prEvaluation.enabled).'
+    );
+  }
+  if (!last) {
+    warnings.push(
+      `No evaluation has run yet, so it is not known whether "${context}" is a required status check on the base branch. Nothing is enforced until it is.`
+    );
+    return warnings;
+  }
+  const rules = branchRulesOf(last.readiness);
+  const contexts = rules?.requiredStatusContexts;
+  if (!Array.isArray(contexts)) {
+    warnings.push(
+      `Nothing is enforced until "${context}" is a required status check on the base branch, and the platform could not read whether it is. Require it in branch protection or a ruleset.`
+    );
+  } else if (!contexts.includes(context)) {
+    warnings.push(
+      `Nothing is enforced yet: "${context}" is not a required status check on the base branch. Require it in branch protection or a ruleset.`
+    );
+  } else if (rules?.requiredStatusPinnedToApp !== true) {
+    warnings.push(
+      `"${context}" is required but not pinned to the platform's GitHub App, so anyone with statuses: write can post success under it and enforcement cannot be trusted. Pin the requirement to the App; a personal access token cannot be pinned.`
+    );
+  }
+  return warnings;
 }
 
 /**

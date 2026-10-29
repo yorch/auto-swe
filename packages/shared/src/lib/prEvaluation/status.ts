@@ -66,7 +66,9 @@ export function statusFor(
   if (mode === 'off') {
     return null;
   }
-  const label = `${classification.riskClass} risk`;
+  // Any mode that is not `advisory` (an unrecognised string included) is held to the strict
+  // rules below; only `enforce` says so in the description.
+  const label = `${mode === 'enforce' ? 'enforce: ' : ''}${classification.riskClass} risk`;
   const progress = `${approval.approvers.length}/${approval.required} approvals`;
   if (mode === 'advisory') {
     return { description: clip(`advisory: ${label}, ${progress}`), state: 'success' };

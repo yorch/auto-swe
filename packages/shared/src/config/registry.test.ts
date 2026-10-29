@@ -320,6 +320,7 @@ describe('prEvaluation settings', () => {
 
   it('refuses a default mode of auto', () => {
     expect(accepts('prEvaluation.defaultMode', 'advisory')).toBe(true);
+    expect(accepts('prEvaluation.defaultMode', 'enforce')).toBe(true);
     expect(accepts('prEvaluation.defaultMode', 'off')).toBe(true);
     expect(accepts('prEvaluation.defaultMode', 'auto')).toBe(false);
   });

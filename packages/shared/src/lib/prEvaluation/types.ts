@@ -1,5 +1,6 @@
 export type RiskClass = 'LOW' | 'STANDARD' | 'HIGH';
-export type PrEvaluationMode = 'off' | 'advisory' | 'auto';
+/** `enforce` holds the status to auto's rules but never arms auto-merge. */
+export type PrEvaluationMode = 'off' | 'advisory' | 'enforce' | 'auto';
 export type ReviewSeverity = 'PASS' | 'INFO' | 'WARNING' | 'CRITICAL';
 
 export type ChangedFile = {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { approvalState, statusFor } from './status.js';
-import type { Classification, PrReview } from './types.js';
+import type { Classification, PrEvaluationMode, PrReview } from './types.js';
 
 const HEAD = 'abc123';
 const review = (login: string, state: string, commitId = HEAD): PrReview => ({
@@ -100,6 +100,25 @@ describe('statusFor', () => {
     expect(statusFor(cls(), ok, 'auto')?.state).toBe('success');
   });
 
+  it.each([
+    ['auto', /^HIGH risk/],
+    ['enforce', /^enforce: HIGH risk/],
+    ['mystery', /^HIGH risk/],
+  ])('holds %s to pending-until-approved, success once satisfied', (mode, label) => {
+    const pending = statusFor(cls({ riskClass: 'HIGH' }), none, mode as PrEvaluationMode);
+    expect(pending?.state).toBe('pending');
+    expect(pending?.description).toMatch(label);
+    expect(statusFor(cls(), ok, mode as PrEvaluationMode)?.state).toBe('success');
+  });
+
+  it.each(['auto', 'enforce', 'mystery'])('fails %s when the evaluation errored', (mode) => {
+    const errored = cls({
+      reasons: [{ code: 'evaluation-error', message: 'boom', severity: 'exclusion' }],
+      riskClass: 'HIGH',
+    });
+    expect(statusFor(errored, ok, mode as PrEvaluationMode)?.state).toBe('failure');
+  });
+
   it('fails when the evaluation errored', () => {
     const errored = cls({
       reasons: [{ code: 'evaluation-error', message: 'boom', severity: 'exclusion' }],
@@ -114,7 +133,7 @@ describe('statusFor', () => {
       required: 10 ** 150,
       satisfied: false,
     };
-    for (const mode of ['advisory', 'auto'] as const) {
+    for (const mode of ['advisory', 'auto', 'enforce'] as const) {
       expect(statusFor(cls(), huge, mode)?.description.length).toBeLessThanOrEqual(140);
     }
   });

@@ -263,6 +263,142 @@ describe('pr evaluation routes', () => {
       }
     );
 
+    describe('enforce', () => {
+      const READY_CTX = {
+        requiredStatusContexts: ['auto-swe/pr-evaluation'],
+        requiredStatusPinnedToApp: true,
+      };
+      function asLead(readiness: unknown) {
+        ctx.authState.role = 'LEAD';
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow('advisory'));
+        leadOfTeam(true);
+        ctx.prisma.prEvaluation.findFirst.mockResolvedValue(
+          readiness === undefined ? null : { readiness }
+        );
+      }
+
+      it('lets the owning-team LEAD set enforce, without any auto precondition', async () => {
+        settings.values['prEvaluation.enabled'] = false;
+        asLead(READY_CTX);
+        const res = await put('enforce');
+        expect(res.statusCode).toBe(200);
+        expect(ctx.prisma.connection.update).toHaveBeenCalledWith({
+          data: { prEvaluationMode: 'enforce' },
+          select: { id: true },
+          where: { id: REPO },
+        });
+        expect(res.json().data).toMatchObject({ mode: 'enforce', modeSource: 'repository' });
+      });
+
+      it('refuses a plain member and a LEAD of another team', async () => {
+        expect((await put('enforce')).statusCode).toBe(403);
+        ctx.authState.role = 'LEAD';
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow());
+        leadOfTeam(false);
+        expect((await put('enforce')).statusCode).toBe(403);
+        expect(ctx.prisma.connection.update).not.toHaveBeenCalled();
+      });
+
+      it('answers a non-member 404', async () => {
+        ctx.authState.role = 'LEAD';
+        ctx.prisma.connection.findFirst.mockResolvedValue(null);
+        expect((await put('enforce')).statusCode).toBe(404);
+      });
+
+      it('has no warning when the context is a required check', async () => {
+        asLead(READY_CTX);
+        expect((await put('enforce')).json().data.warnings).toEqual([]);
+      });
+
+      it.each([
+        ['the context is not required', { requiredStatusContexts: ['ci/build'] }],
+        ['the required checks are unknown', { requiredStatusContexts: 'unknown' }],
+        ['the field is missing', {}],
+        ['the readiness is not an object', 'junk'],
+      ])('warns that nothing is enforced when %s', async (_name, readiness) => {
+        asLead(readiness);
+        const res = await put('enforce');
+        expect(res.statusCode).toBe(200);
+        const warnings: string[] = res.json().data.warnings;
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain('auto-swe/pr-evaluation');
+        expect(warnings[0]).toMatch(/nothing is enforced/i);
+      });
+
+      it.each([
+        ['false', false],
+        ['unknown', 'unknown'],
+        ['missing', undefined],
+      ])(
+        'warns that the status is not pinned to the app when pinning is %s',
+        async (_n, pinned) => {
+          asLead({ ...READY_CTX, requiredStatusPinnedToApp: pinned });
+          const warnings: string[] = (await put('enforce')).json().data.warnings;
+          expect(warnings).toHaveLength(1);
+          expect(warnings[0]).toMatch(/pinned/i);
+          expect(warnings[0]).toMatch(/personal access token/i);
+        }
+      );
+
+      it('warns that it is not known whether the status is required when nothing is recorded', async () => {
+        asLead(undefined);
+        const res = await put('enforce');
+        expect(res.statusCode).toBe(200);
+        const warnings: string[] = res.json().data.warnings;
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toMatch(/no evaluation has run yet/i);
+      });
+
+      it('warns on a null (inherit) PUT when the resolved default mode is enforce', async () => {
+        settings.values['prEvaluation.defaultMode'] = 'enforce';
+        asLead({ requiredStatusContexts: [] });
+        const res = await put(null);
+        expect(res.json().data.warnings).toHaveLength(1);
+        expect(res.json().data.warnings[0]).toMatch(/nothing is enforced/i);
+      });
+
+      it.each(['off', 'advisory'])(
+        'has no warning on a null PUT when the resolved default mode is %s',
+        async (mode) => {
+          settings.values['prEvaluation.defaultMode'] = mode;
+          asLead({ requiredStatusContexts: [] });
+          expect((await put(null)).json().data.warnings).toEqual([]);
+        }
+      );
+
+      it('has no warning for auto, whatever the readiness', async () => {
+        ctx.authState.role = 'ADMIN';
+        ctx.prisma.connection.findFirst.mockResolvedValue(repoRow('advisory'));
+        ctx.prisma.prEvaluation.findFirst.mockResolvedValue({ readiness: READY });
+        evidence(10, 0);
+        const res = await put('auto');
+        expect(res.statusCode).toBe(200);
+        expect(res.json().data.warnings).toEqual([]);
+      });
+
+      it('says plainly that nothing is enforced while evaluation is switched off', async () => {
+        settings.values['prEvaluation.enabled'] = false;
+        asLead(READY_CTX);
+        const warnings: string[] = (await put('enforce')).json().data.warnings;
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toContain('prEvaluation.enabled');
+        expect(warnings[0]).toMatch(/nothing is evaluated/i);
+      });
+
+      it('says so on a null PUT inheriting enforce while evaluation is switched off', async () => {
+        settings.values['prEvaluation.enabled'] = false;
+        settings.values['prEvaluation.defaultMode'] = 'enforce';
+        asLead(READY_CTX);
+        const warnings: string[] = (await put(null)).json().data.warnings;
+        expect(warnings.join(' ')).toContain('prEvaluation.enabled');
+      });
+
+      it('gives no warnings for another mode', async () => {
+        asLead({ requiredStatusContexts: [] });
+        expect((await put('advisory')).json().data.warnings).toEqual([]);
+      });
+    });
+
     it('answers a non-member 404, not 403, so it cannot tell a repository exists', async () => {
       ctx.authState.role = 'LEAD';
       // The reach predicate finds nothing for a LEAD of another team.
@@ -295,7 +431,7 @@ describe('pr evaluation routes', () => {
           .mockResolvedValueOnce(latestRows(n));
       }
 
-      it.each(['off', 'advisory', null] as const)(
+      it.each(['off', 'advisory', 'enforce', null] as const)(
         'starts a disarm-sweep evaluation per armed pull request when auto becomes %s, and audits it',
         async (mode) => {
           arrange(2);
