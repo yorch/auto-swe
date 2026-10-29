@@ -13,6 +13,7 @@ export { EvalScreenWorkflow } from './evalScreen.js';
 export { ExecutorImageProbeWorkflow } from './executorImageProbe.js';
 export { InferRepoDependenciesWorkflow } from './inferRepoDependencies.js';
 export { ReembedMemoryWorkflow, ReembedStaleMemoryWorkflow } from './reembedMemory.js';
+export { RepoDependencyScanOneWorkflow } from './repoDependencyScanOne.js';
 export { RunnableWorkflow } from './runnable.js';
 export { ScheduledAgentTraceRollupWorkflow } from './scheduledAgentTraceRollup.js';
 export { ScheduledAgentTranscriptPruneWorkflow } from './scheduledAgentTranscriptPrune.js';
