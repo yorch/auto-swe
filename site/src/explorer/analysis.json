@@ -3294,18 +3294,23 @@
     {
       "body": "Summarize the pull requests the platform opened in a window — merge rate, time to merge, CI state — export them as a file, and measure how long human steps wait for an answer.",
       "category": "Engineering",
-      "detail": "The outcomes summary and its export are for ENGINEERs and above and use one filter: a non-ADMIN reaches only repositories they may reach, narrowed by repository, team (owning or shared), template or the caller’s own requests. Merge rate is merged over merged plus closed unmerged, so open pull requests do not count and it is empty when nothing resolved; time to merge is the median and 95th percentile of merge minus open time, skipping a merge with no time or one dated before the pull request opened. A pull request is attributed to the template of the run behind its workflow only when the caller may see that run and the pull request’s repository matches its workflow’s; the summary breaks merge rate and median time to merge down by template, the rest in an Unattributed row. The template filter is applied in the query before the row cap, over the template’s visible runs started from 30 days before the earliest window the read covers (a bounded set, flagged as truncated when exceeded), so a pull request whose run started earlier is not matched. The export streams CSV or NDJSON for the current window only, in batches, at most a fixed number of rows (a header states the limit and whether more matched), with repository, number, status, draft and CI state, timestamps and the attributed template’s id and name but no title or ticket; CSV text cells that start like a formula are prefixed so a spreadsheet does not run them. Once streaming starts a database failure can no longer become an error status. The export is recorded as an activity export event, and the in-app assistant may not call it. Workflow-template analytics add approval latency over the human steps requested in the window: only answered steps have a wait (median and 95th percentile), while timed-out, cancelled and pending steps are counts only, overall and for the templates with the most steps; the read is capped and says when it was truncated.",
+      "detail": "The outcomes summary and its export are for ENGINEERs and above and use one filter: a non-ADMIN reaches only repositories they may reach, narrowed by repository, team (owning or shared), template or the caller’s own requests. Merge rate is merged over merged plus closed unmerged, so open pull requests do not count and it is empty when nothing resolved; time to merge is the median and 95th percentile of merge minus open time, skipping a merge with no time or one dated before the pull request opened. A pull request carries its run, template and template version as columns the worker stamps. The workflow’s pull-request step looks up the run of a ledger row and uses it only when that row’s repository is the pull request’s own: a create may fall back to the request-wide row when this execution has none, an update uses only this execution’s own row, and an update that finds no run leaves the existing stamp alone. An Agent Run’s own delivery stamps its run, template and version with no repository check. The summary breaks merge rate and median time to merge down by template, and a pull request with no stamp, or one whose template a non-ADMIN caller may not see, falls in an Unattributed row. The template filter matches the stamped template in the query before the row cap, and a non-ADMIN who names a template they cannot see gets a 404. The export streams CSV or NDJSON for the current window only, in batches, at most a fixed number of rows (a header states the limit and whether more matched), with repository, number, status, draft and CI state, timestamps and the attributed template’s id and name (empty where a non-ADMIN may not see the template) but no title or ticket; CSV text cells that start like a formula are prefixed so a spreadsheet does not run them. Once streaming starts a database failure can no longer become an error status. The export is recorded as an activity export event, and the in-app assistant may not call it. Workflow-template analytics add approval latency over the human steps requested in the window, of runs attributed to the caller’s teams or administered organizations (every run for an ADMIN): only answered steps have a wait (median and 95th percentile), while timed-out, cancelled and pending steps are counts only, overall and for the templates with the most steps; the read is capped and says when it was truncated.",
       "id": "prOutcomes",
       "refs": [
         "prOutcomeFilters",
         "prOutcomeSummary",
         "prOutcomeExport",
         "approvalLatency",
+        "approvalLatencyRead",
         "prTemplateFilter",
-        "prTemplateLookback",
+        "prStamp",
+        "prStampCreate",
         "prByTemplate",
+        "prTemplateVisibility",
         "prExportTemplateCols",
-        "prTemplateAttribution"
+        "prStampUpdate",
+        "prStampRows",
+        "prAgentRunStamp"
       ],
       "status": "Implemented",
       "title": "Pull-request outcomes, approval latency and export"
@@ -3313,12 +3318,15 @@
     {
       "body": "Report the runs started in a window as a delivery funnel, gate and review quality, automation health and approval load, and project each organization’s month-end spend against its cap.",
       "category": "Operations",
-      "detail": "Five read routes under /api/v1/reports back the Reports page, which navigation offers to ENGINEERs and above and which refreshes every 30 seconds. Delivery, quality, automations and approvals require ENGINEER: an ADMIN reads across tenants, anyone else the runs the run-visibility filter allows. Automations are scoped like the automation list, to automations on a repository the caller may reach or repository-less ones of a team they belong to. Budget needs only a signed-in caller but answers 403 unless the caller is an ADMIN or an ORG_ADMIN, and lists only the organizations they administer. The window is a 7, 30 or 90 day preset or a custom range; budget ignores it and covers the current UTC month. Delivery’s cohort is the runs started in the window: runs started, succeeded and with at least one pull request, then pull requests with CI passed and merged (pull requests, not runs). Cost per merged pull request divides the cohort’s whole spend by merged pull requests, time to merge is the median from the run’s start, and CI-fix rounds are averaged over runs with a pull request; the same funnel is sliced by template and by repository. A run’s spend is its accrued cost, or its ledger row’s when that is zero, and a pull request counts toward a run only when its repository matches its workflow’s. Quality groups gate steps per run and gate, a first-attempt pass being a pass with no failure and a final pass any pass; it counts fix-loop attempts per fix step, a CI self-heal rate (runs with a CI-fix step whose pull request passed CI or merged), and per-reviewer verdicts parsed from the cohort’s reviewer trace rows (errored rows, and rows whose output has no approved field, skipped and not counted; rows that do not parse as a verdict or name an unknown reviewer counted as non-verdict rows), and compares how many runs with a pull request merged with and without a rejecting verdict. Budget reads month-to-date spend through the same orgMonthSpend the cap guard uses, projects it linearly over fractional elapsed days (low confidence under one day), reports no cap when the organization has none, else over, projected over, alert or ok in that precedence, and lists the month’s five costliest runs attributed by the billing precedence. Automations count fires by outcome and reason, starts, failed starts and suppressions, and flag noisy (ten or more fires, more than half suppressed) and broken (a failed start, or three or more starts with no successful run). Approvals give the wait median and 95th percentile of resolved steps requested in the window, timeouts, counts by kind and status, waits per resolving user, autonomy decisions by event and risk class, and the steps pending now with the oldest one’s age. Each tab exports what it shows as a CSV built in the browser, with formula-like cells prefixed. The in-app assistant may call all five routes.",
+      "detail": "Five read routes under /api/v1/reports back the Reports page, which navigation offers to ENGINEERs and above and which refreshes every 30 seconds. Delivery, quality, automations and approvals require ENGINEER and accept a team filter. A run is attributed once, when it is created, to a team and organization: the team of its connection, else of its work request’s connection, its Slack channel, its requesting service principal or its template, and that team’s organization, else the work request’s billing organization. An ADMIN reads across tenants. For delivery and quality anyone else reads the runs attributed to their teams or to organizations they are ORG_ADMIN of, so an unattributed run is ADMIN-only; delivery masks repository and template labels they could not otherwise see (Inaccessible repository, Private template), while quality returns no repository or template labels; approvals keep the run-visibility filter and add the team filter. For a non-ADMIN a team filter answers 403 unless the caller belongs to the team or is ORG_ADMIN of its organization. Automations are scoped like the automation list, to automations on a repository the caller may reach or repository-less ones of a team they belong to, and a team filter keeps those of that team or on its repositories. Budget needs only a signed-in caller but answers 403 unless the caller is an ADMIN or an ORG_ADMIN, and lists only the organizations they administer. The window is a 7, 30 or 90 day preset or a custom range; budget ignores it and covers the current UTC month. Delivery’s cohort is the runs started in the window, read from the daily run rollup for each day older than the recompute horizon (30 days by default) that the nightly sweep has built and live from the run table for every other day, where the live read is newest first and flagged as truncated past 10,000 runs: runs started, succeeded and with at least one pull request, then pull requests with CI passed and merged (pull requests, not runs). Cost per merged pull request divides the cohort’s whole spend by merged pull requests, time to merge is the median from the run’s start, estimated from duration buckets, and CI-fix rounds are averaged over runs with a pull request; the same funnel is sliced by template, repository and team. A run’s spend is its accrued cost, or its ledger row’s when that is zero, and a pull request counts toward a run through the run id the worker stamped on it when it opened or updated the pull request: the workflow’s pull-request step stamps only from a ledger row whose repository is the pull request’s, while an Agent Run’s own delivery stamps its run without that check. Quality groups gate steps per run and gate, a first-attempt pass being a pass with no failure and a final pass any pass; it counts fix-loop attempts per fix step, a CI self-heal rate (runs with a finished CI-fix step whose pull request passed CI or merged), and per-reviewer verdicts parsed from the cohort’s reviewer trace rows (errored rows, and rows whose output has no approved field, skipped and not counted; rows that do not parse as a verdict or name an unknown reviewer counted as non-verdict rows), and compares how many runs with a pull request merged with and without a rejecting verdict; those two figures come from the same rollup and live split as delivery. Budget reads month-to-date spend through the same orgMonthSpend the cap guard uses, projects it linearly over fractional elapsed days (low confidence under one day), reports no cap when the organization has none, else over, projected over, alert or ok in that precedence, and lists the month’s five costliest runs attributed by the billing precedence. Automations count fires by outcome and reason, starts, failed starts and suppressions, and flag noisy (ten or more fires, more than half suppressed) and broken (a failed start, or three or more starts with no successful run). Approvals give the wait median and 95th percentile of resolved steps requested in the window, timeouts, counts by kind and status, waits per resolving user with how many of each user’s resolutions came interactively (web, Slack) or automatically (API token, MCP, assistant), a count of every resolution by how it arrived, autonomy decisions by event and risk class, and the steps pending now with the oldest one’s age. Each report tab exports what it shows as a CSV built in the browser, with formula-like cells prefixed. The in-app assistant may call all five routes.",
       "id": "reports",
       "refs": [
         "reportRowCap",
         "reportRole",
         "deliveryCohort",
+        "rollupWindowPlan",
+        "reportAttributionScope",
+        "runAttribution",
         "budgetReportScope",
         "budgetTopRuns",
         "budgetTopRunsFive",
@@ -3326,17 +3334,23 @@
         "pendingApprovals",
         "reviewTraceRead",
         "deliveryMetrics",
+        "deliveryRollupRow",
         "qualityGates",
         "ciSelfHeal",
+        "qualityFromRollups",
         "automationFlags",
         "hitlReport",
+        "hitlRunScope",
         "budgetForecast",
         "orgSpend",
         "reportCsvExport",
         "reportCsvCell",
         "reportsNav",
         "reportsAssistant",
-        "prTemplateAttribution"
+        "prStamp",
+        "ciFixFinishedSteps",
+        "deliveryCiFixSteps",
+        "prAgentRunStamp"
       ],
       "status": "Implemented",
       "title": "Delivery, quality, budget, automation and approval reports"
@@ -3344,7 +3358,7 @@
     {
       "body": "Summarize runs, cost, autonomy and time saved across the templates a caller can see, compare one template’s versions, and export the rollup and the usage report.",
       "category": "Operations",
-      "detail": "Cross-template analytics are for ENGINEERs and above, over the runs the run-visibility filter allows. The headline, per-template, per-workspace-type and per-integration figures come from one database grouping of the window’s runs and one of the equal-length window before it, so they are not capped; a run’s workspace type is its template’s workspace provider, recorded when the run is created. Time saved sums the estimate snapshotted on successful runs only. A run whose accrued cost is zero takes its ledger row’s cost instead, from a read of at most 50,000 such runs that is flagged when cut, and the daily series comes from a separate read of at most 50,000 runs, also flagged. One template’s analytics break its runs down by version: success rate over decided runs and merge rate over merged plus closed-unmerged pull requests, each with a 95% Wilson interval, plus average cost, median duration and open pull requests; that read is capped at 10,000 runs and 10,000 steps and says when it was truncated. GET /workflow-templates/analytics/export writes the per-template rows and GET /platform/usage/export the usage report’s rows by model, agent and node, each as CSV or NDJSON and built by the same function as its JSON report, so the same role and scope checks apply; formula-like text cells are prefixed, and the in-app assistant may not call either export. The usage export leaves out the per-person and per-run rankings and the series.",
+      "detail": "Cross-template analytics are for ENGINEERs and above, over the runs attributed to the caller’s teams or administered organizations (every run for an ADMIN). The headline, per-template, per-workspace-type and per-integration figures come from one database grouping of the window’s runs and one of the equal-length window before it, so they are not capped; a run’s workspace type is its template’s workspace provider, recorded when the run is created. Time saved sums the estimate snapshotted on successful runs only. A run whose accrued cost is zero takes its ledger row’s cost instead, from a read of at most 50,000 such runs that is flagged when cut, and the daily series and the duration percentiles come from the daily rollup for each built day older than the recompute horizon plus a live read of at most 50,000 runs for each of the two windows, flagged when the current window’s read is cut. One template’s analytics break its runs down by version: success rate over decided runs and merge rate over merged plus closed-unmerged pull requests, each with a 95% Wilson interval, plus average cost, median duration and open pull requests; that read is capped at 10,000 runs and 10,000 steps and says when it was truncated. GET /workflow-templates/analytics/export writes the per-template rows and GET /platform/usage/export the usage report’s rows by model, agent and node, each as CSV or NDJSON and built by the same function as its JSON report, so the same role and scope checks apply; formula-like text cells are prefixed, and the in-app assistant may not call either export. The usage export leaves out the per-person and per-run rankings and the series.",
       "id": "templateAnalytics",
       "refs": [
         "analyticsGroups",
@@ -3354,7 +3368,10 @@
         "perVersionRates",
         "analyticsExport",
         "usageExport",
-        "usageGate"
+        "usageGate",
+        "analyticsAttributionScope",
+        "analyticsRollupRead",
+        "analyticsDailySeries"
       ],
       "status": "Implemented",
       "title": "Workflow analytics and exports"
@@ -4105,9 +4122,9 @@
       "title": "Usage is attributed when a trace is written"
     },
     {
-      "body": "Reports are live reads of at most 10,000 rows per source, the budget projection is a straight line, and the client CSV flattens nested values badly.",
+      "body": "Live report reads are capped at 10,000 rows per source, built days older than the rollup horizon come from daily rollups, the budget projection is a straight line, and the client CSV flattens nested values badly.",
       "category": "Operations",
-      "detail": "Each report’s row reads fetch one row past 10,000 and return a per-source flag beside an overall truncated flag, with two exceptions: quality’s step grouping has no row cap, and each organization’s budget top runs fetch six and keep five, flagging the sixth. Quality’s step counts are therefore an exact grouping, but only over the at most 10,000 newest cohort runs. Delivery’s ledger rows, pull requests and CI-fix steps, and quality’s pull requests and reviewer traces, are each cut at 10,000, so slices past it are partial. The pending-approval count is of the at most 10,000 oldest pending steps. Budget top runs rank by each run’s own accrued cost without the ledger fallback and pass the caller’s run visibility, so an ORG_ADMIN can see a partial top five. The projection assumes the rest of the month spends at the month-to-date daily rate. Delivery slices by template and repository only, there is no rollup table behind these reports, and approvers are grouped by resolving user id with nothing to tell a person from a machine identity. The quality merge comparison counts runs with a pull request (merged if any of its pull requests merged), not the merged-over-resolved rate of pull-request outcomes. The Reports page’s CSV writes a nested value, such as CI-fix round statistics, severity counts, top categories or an automation outcome breakdown, as one JSON cell, not as separate columns. The report routes and the usage and analytics exports are not tagged for activity events, so unlike the pull-request outcomes export they write no export row.",
+      "detail": "Each report’s row reads fetch one row past 10,000 and return a per-source flag beside an overall truncated flag, with two exceptions: quality’s step grouping has no row cap, and each organization’s budget top runs fetch six and keep five, flagging the sixth. Quality’s step counts are therefore an exact grouping, but only over the at most 10,000 newest cohort runs. Delivery’s live run read (which carries each run’s ledger rows nested, so they are bounded with it), its pull requests and its finished CI-fix steps, and quality’s live runs, pull requests, CI-fix steps and reviewer traces, are each cut at 10,000, so slices past it are partial; days read from the rollup table are not row-capped. The pending-approval count is of the at most 10,000 oldest pending steps. Budget top runs rank by each run’s own accrued cost without the ledger fallback and pass the caller’s run visibility, so an ORG_ADMIN can see a partial top five. The projection assumes the rest of the month spends at the month-to-date daily rate. Delivery slices by template, repository and team. For each built day older than the rollup horizon, delivery and quality read the workflow_run_daily_rollups table (model WorkflowRunDailyRollup), so those days carry the figures the nightly sweep built, not a fresh read of the run table. Approvers are still grouped by resolving user id: each carries counts of interactive (web, Slack) and automated (API token, MCP, assistant) resolutions and the report counts every resolution by how it arrived, but nothing marks a user id as a person or a machine identity. The quality merge comparison counts runs with a pull request (merged if any of its pull requests merged), not the merged-over-resolved rate of pull-request outcomes. The Reports page’s CSV writes a nested value, such as CI-fix round statistics, severity counts, top categories or an automation outcome breakdown, as one JSON cell, not as separate columns. The report routes and the usage and analytics exports are not tagged for activity events, so unlike the pull-request outcomes export they write no export row.",
       "id": "reportBounds",
       "refs": [
         "reportRowCap",
@@ -4120,10 +4137,16 @@
         "reportCsvCell",
         "usageExport",
         "analyticsExport",
-        "activityHook"
+        "activityHook",
+        "deliveryCohort",
+        "deliveryCiFixSteps",
+        "deliveryMetrics",
+        "rollupWindowPlan",
+        "rollupModel",
+        "qualityFromRollups"
       ],
       "status": "Confirmed boundary",
-      "title": "Reports are bounded live reads"
+      "title": "Reports are bounded reads over rollups and live rows"
     },
     {
       "body": "A run’s workflow span appears only when its workflow code ends, an externally terminated run never exports one, and a signal is a link rather than a parent.",
@@ -10540,9 +10563,9 @@
       "anchor": "function outcomesFilters(",
       "before": 5,
       "id": "prOutcomeFilters",
-      "lines": 27,
+      "lines": 36,
       "path": "packages/gateway/src/routes/pullRequests.ts",
-      "title": "Pull-request outcome reads and exports share one reach filter"
+      "title": "Pull-request outcome reads and exports share one reach filter, including the stamped template column"
     },
     {
       "anchor": "export function summarizePullRequestOutcomes(",
@@ -10567,6 +10590,14 @@
       "lines": 42,
       "path": "packages/shared/src/workflow/analytics.ts",
       "title": "Approval latency measures only answered human steps"
+    },
+    {
+      "anchor": "const stepsQuery = fastify.prisma.workflowHumanStep.findMany({",
+      "before": 1,
+      "id": "approvalLatencyRead",
+      "lines": 15,
+      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "title": "Approval latency reads the human steps requested in the window, of runs inside the caller’s attribution scope"
     },
     {
       "anchor": "export async function rollupUsageDay(",
@@ -11713,12 +11744,36 @@
       "title": "Delivery, quality, automation and approval reports need ENGINEER"
     },
     {
-      "anchor": "'admin delivery report spans every tenant',",
-      "before": 3,
+      "anchor": "const rollupRows = plan.rollupDays.length",
+      "before": 6,
       "id": "deliveryCohort",
-      "lines": 30,
+      "lines": 64,
       "path": "packages/gateway/src/routes/reports.ts",
-      "title": "Delivery cohort: visible runs started in the window, newest first, one past the cap"
+      "title": "Delivery cohort: rollup days plus live runs started in the window, newest first, one past the cap"
+    },
+    {
+      "anchor": "export function planWindow(",
+      "before": 6,
+      "id": "rollupWindowPlan",
+      "lines": 32,
+      "path": "packages/gateway/src/lib/usageWindows.ts",
+      "title": "A day is read from the rollup only when it is older than the recompute horizon and built; every other day is live"
+    },
+    {
+      "anchor": "export async function resolveWorkflowRunAttributionScope(",
+      "before": 0,
+      "id": "reportAttributionScope",
+      "lines": 63,
+      "path": "packages/gateway/src/lib/workflowRunAttributionScope.ts",
+      "title": "Report scope: an ADMIN sees everything; others see runs attributed to their teams or to organizations they are ORG_ADMIN of, and a team filter needs membership or ORG_ADMIN of its organization"
+    },
+    {
+      "anchor": "export function resolveWorkflowRunAttribution(",
+      "before": 0,
+      "id": "runAttribution",
+      "lines": 16,
+      "path": "packages/shared/src/workflow/runAttribution.ts",
+      "title": "A run is attributed once to a team and organization: connection, work-request connection, channel, service principal, template team"
     },
     {
       "anchor": "return reply.status(403).send({ error: 'ORG_ADMIN membership is required' });",
@@ -11740,9 +11795,9 @@
       "anchor": "'automation reports follow the automation list repository and team scopes',",
       "before": 3,
       "id": "automationReportScope",
-      "lines": 22,
+      "lines": 33,
       "path": "packages/gateway/src/routes/reports.ts",
-      "title": "Automation report scope: reachable repositories, or repository-less automations of the caller’s teams"
+      "title": "Automation report scope: reachable repositories, or repository-less automations of the caller’s teams, narrowed by a team filter"
     },
     {
       "anchor": "'admin pending approval report spans every tenant',",
@@ -11761,12 +11816,20 @@
       "title": "Review verdicts come from the cohort’s reviewer trace rows without an error"
     },
     {
-      "anchor": "function deliveryMetrics(runs: DeliveryRun[]): DeliveryMetrics {",
+      "anchor": "export function deliveryReportFromRollups(",
       "before": 0,
       "id": "deliveryMetrics",
-      "lines": 51,
-      "path": "packages/shared/src/workflow/reports.ts",
-      "title": "Delivery funnel, cost per merged pull request and median time to merge from run start"
+      "lines": 68,
+      "path": "packages/shared/src/workflow/workflowRunRollupReports.ts",
+      "title": "Delivery funnel, cost per merged pull request and median time to merge from rollup rows, sliced by repository, template and team"
+    },
+    {
+      "anchor": "row.runs++;",
+      "before": 0,
+      "id": "deliveryRollupRow",
+      "lines": 35,
+      "path": "packages/shared/src/workflow/workflowRunRollup.ts",
+      "title": "One run’s contribution to a rollup row: accrued or ledger cost, its stamped pull requests, merge time and CI-fix rounds"
     },
     {
       "anchor": "export function computeQualityReport(input: {",
@@ -11777,12 +11840,44 @@
       "title": "Gate pass rates are per (run, gate): first attempt is a pass with no failure"
     },
     {
-      "anchor": "const ciRunCount = ciFixRunIds.size;",
+      "anchor": "row.runsCiHealed +=",
       "before": 0,
       "id": "ciSelfHeal",
-      "lines": 6,
-      "path": "packages/shared/src/workflow/reports.ts",
-      "title": "CI self-heal rate: runs with a CI fix whose pull request passed CI or merged"
+      "lines": 2,
+      "path": "packages/shared/src/workflow/workflowRunRollup.ts",
+      "title": "CI self-heal: a run with a CI-fix step whose pull request passed CI or merged"
+    },
+    {
+      "anchor": "step.stepName === 'executeCIFixImplementation' &&",
+      "before": 1,
+      "id": "ciFixFinishedSteps",
+      "lines": 5,
+      "path": "packages/shared/src/workflow/workflowRunRollup.ts",
+      "title": "Only a CI-fix step that finished (passed or failed) counts as a fix round"
+    },
+    {
+      "anchor": "'delivery counts steps only for caller-visible live cohort runs',",
+      "before": 3,
+      "id": "deliveryCiFixSteps",
+      "lines": 16,
+      "path": "packages/gateway/src/routes/reports.ts",
+      "title": "Delivery’s live read of CI-fix steps takes finished steps only, cut at 10,000"
+    },
+    {
+      "anchor": "const metricRollups = [...rollupRows, ...metricRunsRollup];",
+      "before": 0,
+      "id": "qualityFromRollups",
+      "lines": 1,
+      "path": "packages/gateway/src/routes/reports.ts",
+      "title": "Quality’s self-heal rate and merge-by-review comparison are computed from stored rollup rows plus rollups built from the live read"
+    },
+    {
+      "anchor": "model WorkflowRunDailyRollup {",
+      "before": 0,
+      "id": "rollupModel",
+      "lines": 12,
+      "path": "packages/shared/src/prisma/schema.prisma",
+      "title": "The daily run rollup table that backs built days for delivery, quality and analytics"
     },
     {
       "anchor": "broken: failedToStart > 0 || (started >= 3 && successfulProducedRuns === 0),",
@@ -11796,9 +11891,17 @@
       "anchor": "export function computeHitlReport(input: {",
       "before": 0,
       "id": "hitlReport",
-      "lines": 30,
+      "lines": 82,
       "path": "packages/shared/src/workflow/reports.ts",
-      "title": "Approval waits count resolved steps; approvers are grouped by resolving user id"
+      "title": "Approval waits count resolved steps; approvers are grouped by resolving user id and every resolution by how it arrived"
+    },
+    {
+      "anchor": "export function workflowRunWithLegacyVisibility(",
+      "before": 0,
+      "id": "hitlRunScope",
+      "lines": 12,
+      "path": "packages/gateway/src/lib/workflowRunAttributionScope.ts",
+      "title": "Approval report scope: run visibility, plus the attributed team when a team filter is given"
     },
     {
       "anchor": "export function forecastMonthlyBudget(input: {",
@@ -11841,20 +11944,20 @@
       "title": "The in-app assistant may read all five reports"
     },
     {
-      "anchor": "function templateAttributionFilter(",
-      "before": 0,
+      "anchor": "'outcome template filters must use the workflow-template visibility rule',",
+      "before": 3,
       "id": "prTemplateFilter",
-      "lines": 21,
+      "lines": 15,
       "path": "packages/gateway/src/routes/pullRequests.ts",
-      "title": "Template filter: one OR branch per repository of the template’s workflows, in SQL"
+      "title": "Template filter: a non-admin who names a template they cannot see gets a 404"
     },
     {
-      "anchor": "const OUTCOMES_TEMPLATE_RUN_LOOKBACK_MS",
-      "before": 0,
-      "id": "prTemplateLookback",
-      "lines": 1,
+      "anchor": "const templateOf = (r: (typeof kept)[number]) =>",
+      "before": 21,
+      "id": "prTemplateVisibility",
+      "lines": 25,
       "path": "packages/gateway/src/routes/pullRequests.ts",
-      "title": "Template runs are looked up from 30 days before the window"
+      "title": "A template a non-admin caller may not see is reported as Unattributed"
     },
     {
       "anchor": "templateName: template?.templateName ?? 'Unattributed',",
@@ -11873,12 +11976,44 @@
       "title": "Outcome export columns, template id and name included"
     },
     {
-      "anchor": "export function templateAttributionForPullRequest(",
+      "anchor": "async function pullRequestAttribution(",
+      "before": 2,
+      "id": "prStamp",
+      "lines": 16,
+      "path": "packages/worker/src/activities/createOrUpdatePullRequest.ts",
+      "title": "The workflow pull-request step stamps a run only from a ledger row whose repository is the pull request’s"
+    },
+    {
+      "anchor": "...(workflowAttribution.runId ? workflowAttribution : {}),",
+      "before": 9,
+      "id": "prStampCreate",
+      "lines": 13,
+      "path": "packages/worker/src/activities/createOrUpdatePullRequest.ts",
+      "title": "A new pull request row is created with the stamp of the workflow’s ledger row, when a run was found"
+    },
+    {
+      "anchor": "...(ownAttribution.runId ? ownAttribution : {}),",
+      "before": 2,
+      "id": "prStampUpdate",
+      "lines": 6,
+      "path": "packages/worker/src/activities/createOrUpdatePullRequest.ts",
+      "title": "An update re-stamps only from this execution’s own ledger row, and only when a run was found"
+    },
+    {
+      "anchor": "const ownAttribution = await pullRequestAttribution(ownWorkflow, repo.id);",
       "before": 0,
-      "id": "prTemplateAttribution",
-      "lines": 11,
-      "path": "packages/gateway/src/lib/pullRequestAttribution.ts",
-      "title": "A pull request is attributed only when its repository matches its workflow’s"
+      "id": "prStampRows",
+      "lines": 3,
+      "path": "packages/worker/src/activities/createOrUpdatePullRequest.ts",
+      "title": "This execution’s own row is attributed first; the request-wide fallback row is attributed only for create"
+    },
+    {
+      "anchor": "runId: run?.id ?? null,",
+      "before": 6,
+      "id": "prAgentRunStamp",
+      "lines": 10,
+      "path": "packages/worker/src/activities/runAgentTask.ts",
+      "title": "An Agent Run’s delivery stamps its own run, template and version with no repository check"
     },
     {
       "anchor": "mergeRateCi95: wilsonInterval(prs.merged, decidedPrs),",
@@ -11911,6 +12046,30 @@
       "lines": 6,
       "path": "packages/gateway/src/routes/workflowTemplates.ts",
       "title": "The legacy-cost and daily-series reads are capped and flagged"
+    },
+    {
+      "anchor": "const attributionScope = await resolveWorkflowRunAttributionScope(fastify.prisma, user);",
+      "before": 0,
+      "id": "analyticsAttributionScope",
+      "lines": 1,
+      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "title": "Cross-template analytics read the runs attributed to the caller’s teams and organizations"
+    },
+    {
+      "anchor": "const rollupsQuery = (days: Date[]) =>",
+      "before": 0,
+      "id": "analyticsRollupRead",
+      "lines": 13,
+      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "title": "Built days older than the horizon are read from the daily rollup"
+    },
+    {
+      "anchor": "const currentSeriesKept = currentSeriesRows.slice(0, ANALYTICS_ROW_CAP);",
+      "before": 0,
+      "id": "analyticsDailySeries",
+      "lines": 4,
+      "path": "packages/gateway/src/routes/workflowTemplates.ts",
+      "title": "The live part of the daily series and durations is cut at 50,000 runs per window and flagged"
     },
     {
       "anchor": "'/analytics/export',",
