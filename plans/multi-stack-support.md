@@ -31,7 +31,7 @@ resolves it from the detected stack at run time.
   exit 127 on every gate; `yarn npm audit` is Berry-only so it also breaks npm, pnpm and Yarn 1.
   Fix: stack-keyed defaults resolved from the detected stack, beneath step config and repo
   `gateCommands`.
-- [~] **H2. Default workspace image is `node:24-alpine`.** *Mechanism done (phase 3): `WORKSPACE_IMAGE_PYTHON|JVM|GO` map a detected stack to a deployer-chosen image, beneath `executorImage`, and the probe tests it. Still open: nothing publishes the curated images, so a deployer builds and hosts their own.*
+- [x] **H2. Default workspace image is `node:24-alpine`.** *Done (phases 3–4): `WORKSPACE_IMAGE_PYTHON|JVM|GO` map a detected stack to a deployer-chosen image, `docker.yml` builds and publishes the four curated images (`executor-<stack>`), and the probe tests the image a repo's runs would use. A deployer still has to set the variables, by digest.*
   Node image whatever its stack. Fix: resolve a curated image from the detected stack as a
   fallback beneath `executorImage`. (Needs a published image reference per stack; open design
   question below.)
@@ -40,11 +40,11 @@ resolves it from the detected stack at run time.
 
 ### Medium
 
-- [~] **M4. Test-command detection reads only the root `package.json`.** *Done for a repo whose only stack component is a subdirectory (phase 3): the command runs there and reads that directory's `package.json`. Still open: several components with no root signal resolve as unconfigured, and a polyglot root serves only its Node side.*
+- [x] **M4. Test-command detection reads only the root `package.json`.** *Done (phases 3–4): a repo whose only stack component is a subdirectory runs there; a repo with 2–8 components and no root signal gets one command per gate that runs it in every component (a gate any component lacks stays unconfigured). Still unconfigured: more than 8 components, a mixed layout's gate some component lacks, and a polyglot root (its non-Node side gets nothing).*
   (`executeImplementation.ts`, `implementerSession.ts`, `utils.ts#detectTestCommand`.)
   Fix: `gateCommands.runTests` → detected-stack suggestion → `package.json` guess; honour
   component subdirectories in a monorepo.
-- [ ] M5. Dependency installs are npm-only (no PyPI / Maven / Go module proxy or credentialed path).
+- [~] M5. Dependency installs are npm-only (no PyPI / Maven / Go module proxy or credentialed path). *Plan recorded in `docs/adr/non-npm-package-proxies.md` (Go first, then PyPI, then Maven; reuse `PackageRegistry.ecosystem`). Nothing built.*
 - [~] M6. Go image added in phase 2 (`defaults/Dockerfile.go`, `stack` input, gateway enum). None for
   Rust/.NET/Ruby.
 - [x] M7. Dataset cases ran on `node:24-alpine` whatever their stack. A case now names a `stack`
@@ -70,7 +70,7 @@ resolves it from the detected stack at run time.
 - [x] L12. Docker-gated `executorImages.docker.test.ts` builds all four curated images and checks the
   contract and toolchain; Go also runs its real gate commands. (Python/JVM gates need a package
   index, so they are not run.)
-- [ ] L13. Detection suggestions are conservative: root manifest only; no build/lint/typecheck
+- [-] L13. Detection suggestions are conservative (root manifest only). *Decided against, deliberately: a suggestion applied through the form is copied into `gateCommands` and never updated, so a stored composite goes stale when a component is added. Run-time defaults already cover components, and suggestions stay root-only.*
   suggestions outside Node.
 
 ## Design for H1–H3 and M4
@@ -242,3 +242,36 @@ change (no audit is routed through the proxy for Classic) and not investigated.
 
 Still open after this phase: publishing the curated images (H2), several components with no root signal
 (M4), detect-on-onboard, pinning a run to its detection, M5 (PyPI/Maven/Go proxying), Rust/.NET/Ruby.
+
+### Phase 4 (M4, L13, detect-on-onboarding, run pinning, H2 publishing, M5 plan, eval follow-ups)
+
+Implementation was delegated to Sonnet through the `claude` CLI, in bounded tasks with an exact spec
+each, and reviewed by Opus 5.5 (read-only) after each: two rounds on the multi-component work, two on
+run pinning, one on the eval route. The author re-ran, mutated and extended what came back; where a
+reviewer was wrong the claim was checked before it was declined.
+
+| Area | Finding | Outcome |
+|---|---|---|
+| Composite | One failing component could hide another's real failure: the TDD loop stops on 126/127. | The first real failure's status wins; 126/127 only when nothing really failed. Tested under dash and busybox, the executors' shells. |
+| Composite | One component that ran no tests passed beside another's `12 passed`. | Per-section test evidence behind a unique marker; sums the counts. |
+| Composite | A part whose output lacks a trailing newline glued the next marker onto its last line, hiding the section. | A bare `echo` before each marker; found by the author, not the reviewer. |
+| Composite | A same-stack monorepo ran its composite in the Node image, so it could only exit 127. | The shared stack's image is used; mixed layouts take the default and need `executorImage`. |
+| Parser | `mvn -B -q test` prints nothing on success, so a Maven repo could never go green (a bug on `main`). | `mvn -B -ntp test`; Surefire totals and an executed Gradle `test` task count as evidence. |
+| Suggestions | A composite applied through the form freezes into `gateCommands`. | Suggestions stay root-only (L13 dropped). |
+| Pinning | The pin was read through a lookup that needs a matching `temporalRunId`, so a re-run or a reset silently read live. | Read by the run's workflow id, in one query. |
+| Pinning | Re-pinning against `temporalRunId` (written on create only) re-pinned on every attempt of a later execution, so a slow attempt could overwrite the pin mid-run. | A column of its own records the execution that took the pin; reproduced on real Postgres, then fixed. |
+| Pinning | An ordering test passed with the `await` removed. | Rewritten around a promise the test controls; fails without the `await`. |
+| Evals | A screen in flight on the old image could mark a moved case "screened". | Its writes (and re-validation's) are conditional on the stack; mutation-tested. |
+| Evals | The dialog promised a re-check for a quarantined case, and claimed the check started when Temporal was down. | Quarantine is cleared; the response reports `screenStarted`. |
+| Evals | JVM cases screened on the bare JDK would be scored on the Maven image. | A data migration resets them once; verified on rows. |
+| Wrong claims | "No test asserts the `yarn.lock` fetch is skipped"; an upgrade note is required for the image swap. | Checked and declined: the tests existed; `upgrade-notes.md` is for credential exposures only. |
+
+Verified on real infrastructure: the pin on Postgres (11 tests, plus mutations that each fail the
+intended test), the data migration on rows, the composite under dash and busybox. **Not run:** a real
+Maven or Gradle build (Surefire and Gradle output shapes are unit-tested), the new `docker.yml` matrix on
+GitHub Actions, and the dashboard in a browser.
+
+Still open: M5 (nothing built; start with Go), a polyglot root (a root Node project beside a Python
+service: the service gets nothing), publishing under the repository's GHCR namespace needs a human
+decision on visibility, and `workspace.test.ts` is flaky on the authoring machine (a different subset
+fails each run).
