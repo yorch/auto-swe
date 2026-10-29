@@ -1234,15 +1234,17 @@ export function createRegistryProxy(options: {
   });
 
   function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    // Only the Go route accepts Basic; decided from the raw target so the token check stays first.
-    const token = presentedToken(req.headers.authorization, (req.url ?? '').startsWith('/go/'));
+    // Only the Go route accepts Basic. That is decided from the SAME normalised path the router
+    // uses, never from the raw target: `/go/../npm/<id>/…` and `/go/%2e%2e/npm/<id>/…` both
+    // normalise to an npm path, and judging them by their raw prefix would let Basic reach it.
+    const url = new URL(req.url ?? '/', 'http://proxy');
+    const goMatch = /^\/go\/([^/]+)(\/.*)$/.exec(url.pathname);
+    const token = presentedToken(req.headers.authorization, goMatch !== null);
     const reg = token ? registrations.get(digest(token)) : undefined;
     if (!reg) {
       sendJson(res, 401, 'unknown or expired token');
       return;
     }
-    const url = new URL(req.url ?? '/', 'http://proxy');
-    const goMatch = /^\/go\/([^/]+)(\/.*)$/.exec(url.pathname);
     if (goMatch) {
       handleGo(reg, req, res, goMatch[1] ?? '', goMatch[2] ?? '');
       return;

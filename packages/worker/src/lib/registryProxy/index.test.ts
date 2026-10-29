@@ -1,4 +1,7 @@
+import { existsSync, mkdtempSync, readdirSync } from 'node:fs';
 import http from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { gzipSync } from 'node:zlib';
 import { buildGoAllowlist, parseGoSum } from '@auto-swe/shared/lib/goModuleAllowlist';
@@ -7,7 +10,7 @@ import {
   checkAuditBody,
   checkLegacyAuditBody,
   createRegistryProxy,
-  type TarballCache,
+  TarballCache,
   tarballVersion,
 } from './index.js';
 import {
@@ -1285,6 +1288,42 @@ describe('go module proxy: access', () => {
     expect((await rawGet(base, `/npm/${REG.id}/pkg`, bearer(reg.token))).status).toBe(200);
     await proxy.close();
   });
+
+  /**
+   * GET with the request target EXACTLY as written. `http.request(urlString)` runs the target
+   * through WHATWG URL parsing, which resolves `..` on the client and so hides the very requests
+   * this test is about; a `path` option is sent as given.
+   */
+  const targetGet = (base: string, path: string, authorization: string) =>
+    new Promise<number>((resolve, reject) => {
+      const u = new URL(base);
+      const req = http.request(
+        { headers: { authorization }, host: u.hostname, method: 'GET', path, port: u.port },
+        (res) => {
+          res.resume();
+          res.on('end', () => resolve(res.statusCode ?? 0));
+        }
+      );
+      req.on('error', reject);
+      req.end();
+    });
+
+  it('judges Basic by the normalised path, so /go/.. cannot smuggle it onto an npm path', async () => {
+    const { base, proxy } = await startProxy(async () => new Response('{}'));
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG] });
+    reg.setAllowlist(new Map([[REG.id, null]]));
+    for (const path of [
+      `/go/../npm/${REG.id}/pkg`,
+      `/go/%2e%2e/npm/${REG.id}/pkg`,
+      `/go/x/../../npm/${REG.id}/pkg`,
+    ]) {
+      // The router sees an npm path; Basic is refused there, exactly as on the direct path.
+      expect(await targetGet(base, path, basic('u', reg.token)), path).toBe(401);
+      // Bearer on the same path is an ordinary npm request.
+      expect(await targetGet(base, path, bearer(reg.token)), path).toBe(200);
+    }
+    await proxy.close();
+  });
 });
 
 describe('go module proxy: lockfile mode', () => {
@@ -1654,6 +1693,61 @@ describe('go and npm registries in one registration', () => {
     expect((await rawGet(base, `/go/${GO.id}${AUDIT}`, bearer(reg.token), 'POST')).status).toBe(
       405
     );
+    await proxy.close();
+  });
+});
+
+describe('go module proxy: the real tarball cache', () => {
+  // The cache is the one place a Go zip and an npm tarball share storage, so its real key layout
+  // (a directory per registry id, a file per sha256 of the upstream path) is exercised here
+  // instead of through a fake `Map`.
+  it('stores a zip on disk under its registry id, serves the second request from it, and caches nothing else', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gozip-cache-'));
+    const cache = new TarballCache(dir, 10 * 1024 * 1024);
+    const upstream = vi.fn(
+      async (url: string) => new Response(url.endsWith('.zip') ? 'ZIPDATA' : 'MODDATA')
+    );
+    const { call, proxy } = await startGoProxy(upstream, { cache });
+    expect((await call('/a/b/@v/v1.0.0.zip')).body).toBe('ZIPDATA');
+    // The entry is committed (renamed into place as `<sha>.tgz`) after the response ends, so wait
+    // for it: a request that races the commit just fetches again, which is harmless but is not
+    // what this test is about.
+    const committed = () =>
+      existsSync(join(dir, GO.id)) && readdirSync(join(dir, GO.id)).some((f) => f.endsWith('.tgz'));
+    for (let i = 0; i < 200 && !committed(); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(committed()).toBe(true);
+    expect((await call('/a/b/@v/v1.0.0.zip')).body).toBe('ZIPDATA');
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(dir, GO.id))).toBe(true);
+    expect(readdirSync(join(dir, GO.id))).toHaveLength(1);
+    // A `.mod` and an `.info` are not cached: they are small and a stale one is worse than a fetch.
+    expect((await call('/a/b/@v/v1.0.0.mod')).body).toBe('MODDATA');
+    expect(readdirSync(join(dir, GO.id))).toHaveLength(1);
+    await proxy.close();
+  });
+
+  it('never serves a cached zip the allowlist would deny', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gozip-cache-'));
+    const cache = new TarballCache(dir, 10 * 1024 * 1024);
+    const upstream = vi.fn(async () => new Response('ZIPDATA'));
+    // First an open registration fills the cache; then a lockfile registration that does not
+    // list the version must still be refused rather than answered from disk.
+    const open = await startGoProxy(upstream, { cache });
+    expect((await open.call('/a/b/@v/v1.0.0.zip')).status).toBe(200);
+    await open.proxy.close();
+    const proxy = createRegistryProxy({
+      advertisedUrl: (p) => `http://127.0.0.1:${p}`,
+      cache,
+      listenHost: '127.0.0.1',
+      listenPort: 0,
+      upstreamFetch: upstream as never,
+    });
+    const base = `http://127.0.0.1:${await proxy.listen()}`;
+    const reg = await proxy.register({ onDenied: () => {}, registries: [GO] });
+    reg.setAllowlist(new Map([[GO.id, new Map([['a/b', new Set(['v9.9.9'])]])]]));
+    expect((await rawGet(base, '/go/go-1/a/b/@v/v1.0.0.zip', bearer(reg.token))).status).toBe(403);
     await proxy.close();
   });
 });
