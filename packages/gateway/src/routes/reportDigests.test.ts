@@ -91,6 +91,13 @@ describe('report digest routes', () => {
     });
 
     expect(response.statusCode).toBe(200);
+    expect(response.headers).toMatchObject({
+      'cache-control': 'no-store',
+      'content-security-policy': "default-src 'none'; form-action 'self'; frame-ancestors 'none'",
+      'referrer-policy': 'no-referrer',
+      'x-content-type-options': 'nosniff',
+      'x-frame-options': 'DENY',
+    });
     expect(response.body).toContain('method="post"');
     expect(response.body).toContain('List-Unsubscribe');
     expect(response.body).toContain(

@@ -3,7 +3,7 @@ import {
   verifyReportDigestUnsubscribeToken,
 } from '@auto-swe/shared/lib/reportDigestUnsubscribe';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
-import type { FastifyPluginAsync } from 'fastify';
+import type { FastifyPluginAsync, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { writeAuditLog } from '../lib/auditLog.js';
@@ -27,6 +27,18 @@ const createBodySchema = bodySchema.omit({ confirmOptedOutReadd: true });
 const MAX_SUBSCRIPTIONS_PER_SCOPE = 5;
 const unsubscribeQuerySchema = z.object({ token: z.string().min(1).max(256) });
 const unsubscribeBodySchema = z.object({ 'List-Unsubscribe': z.literal('One-Click') }).strict();
+
+function setUnsubscribeResponseHeaders(reply: FastifyReply): void {
+  reply
+    .header(
+      'Content-Security-Policy',
+      "default-src 'none'; form-action 'self'; frame-ancestors 'none'"
+    )
+    .header('X-Frame-Options', 'DENY')
+    .header('Referrer-Policy', 'no-referrer')
+    .header('Cache-Control', 'no-store')
+    .header('X-Content-Type-Options', 'nosniff');
+}
 
 export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -74,6 +86,7 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { querystring: unsubscribeQuerySchema },
     },
     async (request, reply) => {
+      setUnsubscribeResponseHeaders(reply);
       const { token } = request.query;
       if (!(await verifiedUnsubscribeRecipient(token))) {
         return reply.status(400).type('text/plain').send('Invalid unsubscribe link.');
@@ -94,6 +107,7 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { body: unsubscribeBodySchema, querystring: unsubscribeQuerySchema },
     },
     async (request, reply) => {
+      setUnsubscribeResponseHeaders(reply);
       const recipient = await verifiedUnsubscribeRecipient(request.query.token);
       if (!recipient) {
         return reply.status(400).type('text/plain').send('Invalid unsubscribe link.');
