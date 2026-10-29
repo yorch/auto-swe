@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
   buildSearchIndex,
@@ -11,6 +14,7 @@ import {
   searchDocs,
   stemForms,
   tokenize,
+  words,
 } from './docSearch.js';
 import { extractToc } from './docToc.js';
 
@@ -559,5 +563,173 @@ describe('countMatchingTerms', () => {
   it('counts the query terms a text holds, by substring or stem', () => {
     expect(countMatchingTerms('Opens the pull request', 'pull requests zebra')).toBe(2);
     expect(countMatchingTerms('nothing here', 'pull')).toBe(0);
+  });
+});
+
+/**
+ * Words two stems can share without being inflections of each other. Morphology cannot tell a
+ * plural from a word that happens to end in `s`, so a merge that the reviewer has checked and
+ * accepted is recorded here with the reason. Keys are `a/b` with `a < b`. An entry must still be a
+ * merge of two distinct words in the docs (or it is stale and fails the test).
+ */
+const REVIEWED_COLLISIONS: Readonly<Record<string, string>> = {};
+
+/**
+ * Lemma candidates a word could come from under the suffix rules a plural, -ed or -ing takes,
+ * including the `e` that -ing and -ed hide and the doubled consonant. Two words are inflections
+ * of one another when their candidates overlap. Deliberately looser than `stemForms`: it has to
+ * accept every inflection the stemmer merges, so only a merge it cannot explain is reported.
+ */
+function inflectionLemmas(word: string): Set<string> {
+  const out = new Set([word]);
+  const undouble = (s: string) => (s.length > 2 && s.at(-1) === s.at(-2) ? s.slice(0, -1) : s);
+  const base = (s: string) => {
+    out.add(s);
+    out.add(`${s}e`);
+    out.add(undouble(s));
+  };
+  if (word.endsWith('ies') || word.endsWith('ied')) {
+    out.add(`${word.slice(0, -3)}y`);
+  }
+  if (word.endsWith('es')) {
+    base(word.slice(0, -2));
+  }
+  if (word.endsWith('s')) {
+    out.add(word.slice(0, -1));
+  }
+  if (word.endsWith('ed')) {
+    base(word.slice(0, -2));
+  }
+  if (word.endsWith('d')) {
+    out.add(word.slice(0, -1));
+  }
+  if (word.endsWith('ing')) {
+    base(word.slice(0, -3));
+  }
+  if (word.endsWith('ings')) {
+    base(word.slice(0, -4));
+  }
+  return out;
+}
+
+/** The distinct word pairs of `vocabulary` that share a stem form, keyed `a/b` with `a < b`. */
+function stemMerges(vocabulary: string[]): Map<string, [string, string]> {
+  const byForm = new Map<string, string[]>();
+  for (const word of vocabulary) {
+    for (const form of new Set(stemForms(word))) {
+      byForm.set(form, [...(byForm.get(form) ?? []), word]);
+    }
+  }
+  const merges = new Map<string, [string, string]>();
+  for (const group of byForm.values()) {
+    for (const [i, a] of group.entries()) {
+      for (const b of group.slice(i + 1)) {
+        const pair: [string, string] = a < b ? [a, b] : [b, a];
+        merges.set(`${pair[0]}/${pair[1]}`, pair);
+      }
+    }
+  }
+  return merges;
+}
+
+/**
+ * The merges that need a reviewer: every merge the inflection rule does not explain, and every
+ * merge already reviewed. `unreviewed` must be empty; `stale` lists reviewed entries that no
+ * longer merge (or no longer occur), so the review list cannot rot.
+ *
+ * Limit: the stemmer's merges are all suffix relations, so the inflection rule explains nearly
+ * every one. A merge that is only a plural in form (a protocol or product name ending in `s`)
+ * is explained like any plural and is not flagged; the test cannot see it, so it is caught only
+ * when a reviewer adds it to `REVIEWED_COLLISIONS` or the stemmer's lists are corrected.
+ */
+function mergeReport(
+  vocabulary: string[],
+  reviewed: Readonly<Record<string, string>>
+): { unreviewed: string[]; stale: string[] } {
+  const flagged = new Set<string>();
+  for (const [key, [a, b]] of stemMerges(vocabulary)) {
+    const lemmasOfA = inflectionLemmas(a);
+    const explained = [...inflectionLemmas(b)].some((lemma) => lemmasOfA.has(lemma));
+    if (!explained || key in reviewed) {
+      flagged.add(key);
+    }
+  }
+  return {
+    stale: Object.keys(reviewed).filter((key) => !flagged.has(key)),
+    unreviewed: [...flagged].filter((key) => !(key in reviewed)).sort(),
+  };
+}
+
+/** The docs' distinct words, split and lower-cased exactly as the index splits the text it searches. */
+function docVocabulary(): string[] {
+  const dir = fileURLToPath(new URL('../../../../docs', import.meta.url));
+  const docs = readdirSync(dir)
+    .filter((file) => file.endsWith('.md'))
+    .sort()
+    .map((file) => {
+      const content = readFileSync(join(dir, file), 'utf8');
+      return {
+        content,
+        slug: file.replace(/\.md$/, ''),
+        title: content.match(/^# (.+)$/m)?.[1] ?? file,
+      };
+    });
+  const vocabulary = new Set<string>();
+  const add = (text: string) => {
+    for (const { word } of words(text)) {
+      vocabulary.add(word.toLowerCase());
+    }
+  };
+  for (const doc of docs) {
+    add(doc.title);
+    for (const section of indexDoc(doc.content)) {
+      add(section.text);
+      add(section.heading ?? '');
+    }
+  }
+  return [...vocabulary].sort();
+}
+
+let vocabularyCache: string[] | undefined;
+/** The docs vocabulary, built once: both tests read it and each build parses every doc. */
+function docsVocabulary(): string[] {
+  vocabularyCache ??= docVocabulary();
+  return vocabularyCache;
+}
+
+describe('docs vocabulary stem collisions', () => {
+  it('reads the words of the docs, split as the index splits them', () => {
+    const vocabulary = docsVocabulary();
+    expect(vocabulary.length).toBeGreaterThan(1000);
+    expect(vocabulary).toContain('approval');
+  });
+
+  it('finds no stem merge between docs words that the inflection rule cannot explain', () => {
+    const { unreviewed, stale } = mergeReport(docsVocabulary(), REVIEWED_COLLISIONS);
+    expect(
+      unreviewed,
+      `new stem collisions in docs/*.md, not in REVIEWED_COLLISIONS: ${unreviewed.join(', ')}. ` +
+        'Check each pair: if it is a plain inflection of one word, the inflection rule should ' +
+        'have accepted it; if not, fix the stemmer list or record the pair with a reason.'
+    ).toEqual([]);
+    expect(
+      stale,
+      `REVIEWED_COLLISIONS entries that no longer merge in the docs: ${stale.join(', ')}. Remove them.`
+    ).toEqual([]);
+  });
+
+  it('passes an explained merge, accepts a reviewed one, and reports a reviewed entry that is gone', () => {
+    // `cases` and `case` are one stem and an inflection, so no review is needed.
+    expect(mergeReport(['cases', 'case'], {})).toEqual({ stale: [], unreviewed: [] });
+    // A reviewed merge that still merges is accepted.
+    expect(mergeReport(['cases', 'case'], { 'case/cases': 'reviewed' })).toEqual({
+      stale: [],
+      unreviewed: [],
+    });
+    // A reviewed entry whose words no longer merge is stale.
+    expect(mergeReport(['cases', 'case'], { 'bus/buses': 'reviewed' })).toEqual({
+      stale: ['bus/buses'],
+      unreviewed: [],
+    });
   });
 });

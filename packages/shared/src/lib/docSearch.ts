@@ -370,8 +370,8 @@ function undouble(s: string): string {
   return doubled && !'lsz'.includes(last) ? s.slice(0, -1) : s;
 }
 
-/** Every run of letters in `text`, with its position. */
-function words(text: string): { start: number; end: number; word: string }[] {
+/** Every run of letters in `text`, with its position. Exported for the docs vocabulary test. */
+export function words(text: string): { start: number; end: number; word: string }[] {
   return [...text.matchAll(/[A-Za-z]+/g)].map((m) => ({
     end: m.index + m[0].length,
     start: m.index,
