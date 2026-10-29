@@ -11,8 +11,8 @@
  * The named routes under the same prefix carry no secret in their path and are
  * left readable, so a log line still says which provider called.
  *
- * The same applies to a transcript download link: its signed token rides in the
- * `dl` query parameter, so that parameter's value is redacted wherever a URL is.
+ * The same applies to signed transcript download links (`dl`) and report-digest
+ * unsubscribe links (`token`), so those query values are redacted wherever a URL is.
  */
 
 /** Path segments under the prefix that name a route, not a token. */
@@ -31,10 +31,9 @@ export const REDACTED_SEGMENT = '[redacted]';
 
 /**
  * Query parameters that carry a credential: `dl` is a transcript download link's
- * signed token (`lib/transcriptDownloadLink.ts`), which authenticates the
- * request it rides on for its lifetime.
+ * signed token and `token` is a report-digest unsubscribe token.
  */
-export const SECRET_QUERY_PARAMS: ReadonlySet<string> = new Set(['dl']);
+export const SECRET_QUERY_PARAMS: ReadonlySet<string> = new Set(['dl', 'token']);
 
 function decodeQueryKey(key: string): string {
   try {
@@ -139,7 +138,7 @@ export function redactRequestUrl(url: string): string {
  * the request serializer never sees those.
  */
 export function redactLogText(text: string): string {
-  if (!/webhooks|%|dl=/i.test(text)) {
+  if (!/webhooks|%|(?:dl|token)=/i.test(text)) {
     return text;
   }
   return text.replace(/\S+/g, (word) => redactRequestUrl(word));
