@@ -322,7 +322,9 @@ The dependency scan also records the repository's stacks on the connection
 weekly schedule and once more when a repository is onboarded, so a new repository has its stack
 before its first run. The onboarding scan is started after the repository is saved and is
 best-effort: if it cannot be started, or runs before the repository's credentials work (it then
-records nothing and is not retried), the weekly sweep records the detection.
+records nothing and is not retried), the weekly sweep records the detection. A scan changes what
+later runs read: a run is pinned to the detection of each connection it may use as it was when the
+run began (`WorkflowRun.pinnedDetections`).
 
 - **What it scans.** Stack signals (`package.json`, `pyproject.toml`, `requirements.txt`,
   `setup.py`, `pom.xml`, `build.gradle[.kts]`, `settings.gradle[.kts]`, `go.mod`) up to four directories deep. Paths under
@@ -605,9 +607,13 @@ longer fit.
   across components.
 - **The stack fallback follows the stored detection.** A repository is scanned when it is onboarded
   and then weekly; one whose onboarding scan did not record anything keeps the built-in `yarn` gates
-  until the next weekly scan, and a root that changed stack is followed only after a rescan. Each activity reads the detection itself, so a scan that
-  lands mid-run can move the run's later steps to another image or directory than its earlier ones; a run
-  is not pinned to the detection it started with. A polyglot root (root `package.json` plus a Python
+  until the next weekly scan, and a root that changed stack is followed only after a rescan. A run
+  reads the detection its connections had when it began (for the connections it may use), found
+  through the run's workflow id, so a scan landing mid-run does not move its later steps to another
+  image or directory. A later execution that reuses the workflow id takes a fresh snapshot; every attempt and
+  retry of one execution keeps that execution's first. A repository first scanned after the run began has no
+  recorded detection for that run. Runs that began before the pin existed, and a connection
+  outside the run's authorized set, read the live value. A polyglot root (root `package.json` plus a Python
   service) is a Node target, and the service gets nothing. A single component is chosen only when it is
   the only one seen, which a repository whose real build is a `Makefile` beside one lone nested `package.json`
   would satisfy wrongly; the `cd` in the recorded command is how that shows, and `gateCommands` is the

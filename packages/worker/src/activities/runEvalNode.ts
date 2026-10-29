@@ -40,6 +40,7 @@ import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { buildJudgePrompt } from '../lib/judgePrompt.js';
 import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { resolveAutonomyPolicy } from '../lib/resolveAutonomyPolicy.js';
+import { withRunDetection } from '../lib/runDetection.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import {
   combineScores,
@@ -212,10 +213,12 @@ async function evaluateScorer(
         if (!connectionId || !externalTicketId) {
           return gateFailed;
         }
-        const repo = await prisma.connection.findUniqueOrThrow({
-          include: { installation: { select: { host: true, installationId: true } } },
-          where: { id: connectionId },
-        });
+        const repo = await withRunDetection(
+          await prisma.connection.findUniqueOrThrow({
+            include: { installation: { select: { host: true, installationId: true } } },
+            where: { id: connectionId },
+          })
+        );
         const defaults = await resolveWorkflowDefaults();
         // The run's own work branch unless the node named the candidate's ref —
         // a per-branch fan-out subtask does not live on `<prefix>/<ticketId>`,

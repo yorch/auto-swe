@@ -39,6 +39,7 @@ import { recordGateEval } from '../lib/evalCapture.js';
 import { throwIfActivityCancelled } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
+import { withRunDetection } from '../lib/runDetection.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { DEFAULT_COMMANDS, gateCommandFor } from './gateCommand.js';
 import { runImplementerFixSession } from './implementerSession.js';
@@ -186,10 +187,10 @@ export async function resolveCommand(
   }
 
   const repo = await prisma.connection.findUniqueOrThrow({
-    select: { detectedStack: true, gateCommands: true },
+    select: { detectedStack: true, gateCommands: true, id: true },
     where: { id: requireRepoId(request, 'qualityGate') },
   });
-  return gateCommandFor(gate, override, repo);
+  return gateCommandFor(gate, override, await withRunDetection(repo));
 }
 
 /**
@@ -228,10 +229,12 @@ async function provisionGateWorkspace(
   branch: string;
 }> {
   const [repo, workflowDefaults] = await Promise.all([
-    prisma.connection.findUniqueOrThrow({
-      include: { installation: { select: { host: true, installationId: true } } },
-      where: { id: requireRepoId(request, 'qualityGate') },
-    }),
+    prisma.connection
+      .findUniqueOrThrow({
+        include: { installation: { select: { host: true, installationId: true } } },
+        where: { id: requireRepoId(request, 'qualityGate') },
+      })
+      .then(withRunDetection),
     resolveWorkflowDefaults(),
   ]);
   const branch = branchOverride ?? workBranchOf(request, workflowDefaults.branchPrefix);

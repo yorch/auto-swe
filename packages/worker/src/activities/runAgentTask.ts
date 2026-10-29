@@ -39,6 +39,7 @@ import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
+import { withRunDetection } from '../lib/runDetection.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { DraftPullRequestUnsupportedError } from '../lib/scm/types.js';
 import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -177,7 +178,6 @@ export interface AgentTaskCoreResult {
  */
 export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<AgentTaskCoreResult> {
   const {
-    repo,
     key,
     version,
     baseCtx,
@@ -189,6 +189,9 @@ export async function runAgentTaskCore(input: AgentTaskCoreInput): Promise<Agent
     deliver,
     allowWorkflowChanges,
   } = input;
+  // Its callers load the row; the stack the run began with is read here, once, for both
+  // workspaces below.
+  const repo = await withRunDetection(input.repo);
   const settingsCtx: ResolveCtx = { orgId: baseCtx.orgId, teamId: baseCtx.teamId };
   const settings = await resolveSettings(
     ['workspace.agentRunAllowWorkflowChanges', 'workspace.maxToolOutputChars'],

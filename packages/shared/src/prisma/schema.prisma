@@ -1954,6 +1954,21 @@ model WorkflowRun {
   /// created before this column existed) has to be distinct from an empty set**
   /// ("authorized nothing").
   authorizedConnectionIds Json?      @map("authorized_connection_ids")
+  /// `{ [connectionId]: DetectedStack | null }` for every connection the run may use (its
+  /// `authorizedConnectionIds`), as detected when the run began, so a stack scan landing
+  /// mid-run cannot move a later step to another image or directory than an earlier one. A
+  /// key mapped to `null` means the connection had no recorded detection when the run began
+  /// (in practice a repository the scan had not reached yet), and is pinned anyway so the
+  /// run is consistent with itself; an absent key, or a null column (a run created before
+  /// this column existed), reads the live `Connection.detectedStack`. It is read through the
+  /// run's `workflowId`; a later execution that reuses the workflow id takes a fresh
+  /// snapshot, and a Temporal retry of one execution keeps the first.
+  pinnedDetections  Json?             @map("pinned_detections")
+  /// The Temporal run id of the execution that took `pinnedDetections`. A later execution that
+  /// reuses the workflow id differs from it and re-pins; an attempt of the same execution finds it
+  /// equal and keeps the pin. Separate from `temporalRunId`, which is written on create only (it
+  /// names the first execution, for the launcher-credential check).
+  pinnedDetectionsFor String?         @map("pinned_detections_for")
   /// Snapshot of the skill revisions the run's agents reference, taken when the
   /// run began: a `{ skillId: revision }` map. `resolveAgent` reads the pinned
   /// `SkillRevision` text instead of the live `Skill` row, so editing a skill

@@ -495,6 +495,15 @@ jobs:
           PINNED_SETTINGS_PG_TEST: '1'
         run: yarn test packages/worker/src/lib/config/pinnedSettings.pg.test.ts
 
+      # The run's stack-detection pin: which rows pinDetectionsOnRun writes is a
+      # predicate over a nullable JSON column and a nullable text column (a later
+      # execution of a reused workflow id re-pins, a retry and a NULL temporal
+      # run id do not), which a mocked Prisma does not evaluate.
+      - name: Run stack-detection pin (database-backed tests)
+        env:
+          RUN_DETECTION_PG_TEST: '1'
+        run: yarn test packages/worker/src/lib/runDetection.pg.test.ts
+
       # The usage report read from the daily rollup must equal the report read from
       # the traces: the rollup sums a Float column into a Decimal one and BigInt
       # sums come back as another JavaScript type, which an in-memory stand-in

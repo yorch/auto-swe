@@ -46,6 +46,7 @@ import {
 } from '../lib/repoDependencyContext.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
+import { withRunDetection } from '../lib/runDetection.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { resolveTicketContext } from '../lib/ticketFallback.js';
@@ -154,10 +155,12 @@ export async function executeImplementation(
   // cap is refused here, not after the workspace has been built.
   await assertRolePricedForUsdCap('implementer');
 
-  const repo = await prisma.connection.findUniqueOrThrow({
-    include: { installation: { select: { host: true, installationId: true } } },
-    where: { id: requireRepoId(request, 'executeImplementation') },
-  });
+  const repo = await withRunDetection(
+    await prisma.connection.findUniqueOrThrow({
+      include: { installation: { select: { host: true, installationId: true } } },
+      where: { id: requireRepoId(request, 'executeImplementation') },
+    })
+  );
 
   const workflowDefaults = await resolveWorkflowDefaults();
   const featureBranch = workBranchOf(request, workflowDefaults.branchPrefix);

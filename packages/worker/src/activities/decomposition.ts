@@ -44,6 +44,7 @@ import { failedCallAttribution } from '../lib/llmAttribution.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
+import { withRunDetection } from '../lib/runDetection.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -405,10 +406,12 @@ async function provisionMergeWorkspace(
   sourceBranches: string[],
   label: string
 ): Promise<{ workspace: Workspace; log: string[]; baseBranch: string }> {
-  const repo = await prisma.connection.findUniqueOrThrow({
-    include: { installation: { select: { host: true, installationId: true } } },
-    where: { id: requireRepoId(request, 'decomposition') },
-  });
+  const repo = await withRunDetection(
+    await prisma.connection.findUniqueOrThrow({
+      include: { installation: { select: { host: true, installationId: true } } },
+      where: { id: requireRepoId(request, 'decomposition') },
+    })
+  );
   const repoRef = toRepoRef(repo);
   const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
 

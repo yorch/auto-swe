@@ -7,6 +7,7 @@ vi.mock('@auto-swe/shared/db', () => ({
     },
     trustedKnowledgeEvidence: { createMany: vi.fn(), findUnique: vi.fn() },
     workflowArtifact: { findFirst: vi.fn() },
+    workflowRun: { findUnique: vi.fn() },
   },
 }));
 
@@ -38,6 +39,7 @@ vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
 vi.mock('../lib/activityContext.js', () => ({
   currentRunningWorkflowRunId: vi.fn(async () => 'db-run'),
   currentTemporalRunId: vi.fn(() => 'temporal-run'),
+  currentWorkflowId: vi.fn(() => 'wf-1'),
   currentWorkflowRunId: vi.fn(async () => 'db-run'),
 }));
 vi.mock('@auto-swe/shared/lib/artifactStore', () => ({
@@ -119,6 +121,23 @@ describe('resolveCommand precedence', () => {
     it("uses the stack's command instead of a yarn one", async () => {
       mockedFindUnique.mockResolvedValue({ detectedStack, gateCommands: null } as never);
       expect(await resolveCommand('runTests', baseRequest, undefined)).toBe('mvn -B -ntp test');
+    });
+
+    it('uses the stack the run pinned, not the one a later scan stored', async () => {
+      // The live row now says jvm (a scan landed mid-run); the run began on node.
+      mockedFindUnique.mockResolvedValue({
+        detectedStack,
+        gateCommands: null,
+        id: 'repo-1',
+      } as never);
+      vi.mocked(prisma.workflowRun.findUnique).mockResolvedValueOnce({
+        pinnedDetections: {
+          'repo-1': { components: [{ path: '', stacks: ['node'] }], evidence: ['package.json'] },
+        },
+      } as never);
+      expect(await resolveCommand('runTests', baseRequest, undefined)).toBe(
+        DEFAULT_COMMANDS.runTests
+      );
     });
 
     it('resolves a gate the stack has no command for to null, never to yarn', async () => {

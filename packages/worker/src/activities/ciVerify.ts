@@ -28,6 +28,7 @@ import { currentWorkflowRunId } from '../lib/activityContext.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { resolveRequestBaseBranch } from '../lib/runBaseBranch.js';
+import { withRunDetection } from '../lib/runDetection.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { scanShellCommand } from '../lib/shellCommandScanner.js';
 import type { CiTriageResult } from './ciTriage.js';
@@ -147,10 +148,12 @@ async function verify(input: {
   }
 
   const [repo, workflowDefaults] = await Promise.all([
-    prisma.connection.findUniqueOrThrow({
-      include: { installation: { select: { host: true, installationId: true } } },
-      where: { id: requireRepoId(request, 'verifyCiFix') },
-    }),
+    prisma.connection
+      .findUniqueOrThrow({
+        include: { installation: { select: { host: true, installationId: true } } },
+        where: { id: requireRepoId(request, 'verifyCiFix') },
+      })
+      .then(withRunDetection),
     resolveWorkflowDefaults(),
   ]);
   const repoRef = toRepoRef(repo);
