@@ -88,6 +88,8 @@ export type {
   StepMetadata,
 } from './registry-types.js';
 export { BUILTIN_STEPS } from './registry-types.js';
+export type { ReportDigest, ReportDigestInput } from './reportDigest.js';
+export { buildReportDigest } from './reportDigest.js';
 export type {
   AutomationFireInput,
   AutomationReportRow,
@@ -116,6 +118,17 @@ export {
   REVIEW_SEVERITIES,
   REVIEWER_TYPES,
 } from './reports.js';
+export type {
+  RunAttributionTeam,
+  WorkflowRunAttribution,
+  WorkflowRunAttributionSources,
+} from './runAttribution.js';
+export {
+  attributionTeamRelationSelect,
+  attributionTeamSelect,
+  resolveWorkflowRunAttribution,
+  runInputAttributionSelect,
+} from './runAttribution.js';
 export {
   assertShellImageAllowed,
   BUILTIN_SHELL_IMAGES,
@@ -194,3 +207,36 @@ export {
   splitGroups,
   validateSpec,
 } from './validateSpec.js';
+export type {
+  BuildWorkflowRunRollupsInput,
+  WorkflowRunRollupPullRequestInput,
+  WorkflowRunRollupRow,
+  WorkflowRunRollupRunInput,
+  WorkflowRunRollupStepInput,
+  WorkflowRunRollupTraceInput,
+} from './workflowRunRollup.js';
+export {
+  buildWorkflowRunDailyRollups,
+  CI_FIX_ROUND_BUCKETS,
+  CI_FIX_ROUND_OVERFLOW,
+  ciFixRoundsFromBuckets,
+  combineWorkflowRunRollupRows,
+  DURATION_BUCKET_BOUNDS_MS,
+  durationBucketForMs,
+  durationPercentileFromBuckets,
+  WORKFLOW_RUN_DAY_MS,
+  WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS,
+  workflowRunRollupInputFromRun,
+} from './workflowRunRollup.js';
+export type {
+  WorkflowRunDurationStats,
+  WorkflowRunTemplateVersionMetrics,
+} from './workflowRunRollupReports.js';
+export {
+  dailyRunSeriesFromRollups,
+  deliveryReportFromRollups,
+  emptyCiFixRoundsBuckets,
+  qualityMetricsFromRollups,
+  workflowRunDurationStatsFromRollups,
+  workflowTemplatePerVersionFromRollups,
+} from './workflowRunRollupReports.js';

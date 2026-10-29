@@ -138,6 +138,7 @@ describe('TemplateAnalyticsPage', () => {
 
   it('offers a definition beside each derived metric', async () => {
     renderPage();
+    expect(await screen.findByText('p50 duration (approximate)')).toBeTruthy();
     await screen.findByText('Success rate');
     for (const name of [
       'About Success rate',

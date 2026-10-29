@@ -112,6 +112,7 @@
     "./workflow/costEstimator": "./dist/workflow/costEstimator.js",
     "./workflow/testHelpers": "./dist/workflow/testHelpers.js",
     "./workflow/inventory": "./dist/workflow/inventory.js",
+    "./workflow/runAttribution": "./dist/workflow/runAttribution.js",
     "./lib/shellAudit": "./dist/lib/shellAudit.js",
     "./lib/tenantGuard": "./dist/lib/tenantGuard.js",
     "./lib/githubInstallation": "./dist/lib/githubInstallation.js",

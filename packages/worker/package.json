@@ -39,9 +39,11 @@
     "@temporalio/worker": "1.24.0",
     "@temporalio/workflow": "1.24.0",
     "ai": "7.0.126",
+    "nodemailer": "9.1.1",
     "zod": "4.6.5"
   },
   "devDependencies": {
+    "@types/nodemailer": "8.0.2",
     "@opentelemetry/sdk-trace-node": "2.11.0",
     "@temporalio/proto": "1.24.0",
     "@temporalio/testing": "1.24.0",

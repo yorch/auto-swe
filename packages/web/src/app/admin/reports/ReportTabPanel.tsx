@@ -5,6 +5,12 @@ import { EmptyState } from '@/components/ui/EmptyState';
 export type ReportTab = 'delivery' | 'quality' | 'budget' | 'automations' | 'hitl';
 
 export interface DeliveryReportData {
+  byTeam: Array<{
+    runsStarted: number;
+    spendUsd: number;
+    teamId: string | null;
+    teamName: string;
+  }>;
   byRepo: Array<{ repoId: string; repositoryName: string; runsStarted: number; spendUsd: number }>;
   byTemplate: Array<{
     spendUsd: number;
@@ -12,6 +18,7 @@ export interface DeliveryReportData {
     templateName: string;
     runsStarted: number;
   }>;
+  ciFixRounds?: { avgPerRun: number | null; p95PerRun: number | null };
   costPerMergedPr: number | null;
   medianTimeToMergeMs: number | null;
   prsCiPassed: number;
@@ -20,6 +27,8 @@ export interface DeliveryReportData {
   runsSucceeded: number;
   runsWithPr: number;
   spendUsd: number;
+  rollupDays?: number;
+  liveDays?: number;
 }
 
 export interface QualityReportData {
@@ -83,8 +92,15 @@ export interface AutomationReportData {
 
 export interface HitlReportData {
   autonomy: { byEvent: Record<string, number>; byRiskClass: Record<string, number> };
-  byApprover: Array<{ medianWaitMs: number | null; name: string; resolved: number }>;
+  byApprover: Array<{
+    automated: number;
+    interactive: number;
+    medianWaitMs: number | null;
+    name: string;
+    resolved: number;
+  }>;
   byKind: Record<string, Record<string, number>>;
+  byVia: Record<string, number>;
   medianWaitMs: number | null;
   oldestPendingAgeMs: number | null;
   p95WaitMs: number | null;
@@ -135,6 +151,16 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
             label="Cost per merged PR"
             value={report.costPerMergedPr === null ? '—' : `$${report.costPerMergedPr.toFixed(2)}`}
           />
+          {report.ciFixRounds && (
+            <Metric
+              label="CI-fix rounds per run with a PR"
+              value={
+                report.ciFixRounds.avgPerRun === null
+                  ? '—'
+                  : `${report.ciFixRounds.avgPerRun.toFixed(1)} avg · p95 ${report.ciFixRounds.p95PerRun ?? '—'}`
+              }
+            />
+          )}
           <Metric label="Median time to merge" value={duration(report.medianTimeToMergeMs)} />
         </dl>
         <h2 className="text-lg font-semibold text-paper-100">By template</h2>
@@ -151,6 +177,16 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
               `${row.repositoryName}: ${row.runsStarted} runs · $${row.spendUsd.toFixed(2)} spend`
           )}
         />
+        <h2 className="text-lg font-semibold text-paper-100">By team</h2>
+        <Rows
+          rows={report.byTeam.map(
+            (row) => `${row.teamName}: ${row.runsStarted} runs · $${row.spendUsd.toFixed(2)} spend`
+          )}
+        />
+        <p className="text-sm text-paper-500">
+          Duration and merge percentiles are approximate. {report.rollupDays ?? 0} days use daily
+          rollups; {report.liveDays ?? 0} days use live data.
+        </p>
       </section>
     );
   }
@@ -188,7 +224,7 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
             .filter((loop) => loop.runsWithFix > 0)
             .map(
               (loop) =>
-                `${loop.stepName}: ${loop.totalAttempts} attempts across ${loop.runsWithFix} runs (${loop.avgAttemptsPerRun?.toFixed(1)} average)`
+                `${loop.stepName}: ${loop.totalAttempts} attempts across ${loop.runsWithFix} runs (${loop.avgAttemptsPerRun?.toFixed(1)} attempts per run that needed a fix)`
             )}
         />
         <h2 className="text-lg font-semibold text-paper-100">Review network</h2>
@@ -309,9 +345,11 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
       <Rows
         rows={report.byApprover.map(
           (approver) =>
-            `${approver.name}: ${approver.resolved} resolved · ${duration(approver.medianWaitMs)} median wait`
+            `${approver.name}: ${approver.resolved} resolved · ${approver.interactive} interactive · ${approver.automated} automated · ${duration(approver.medianWaitMs)} median wait`
         )}
       />
+      <h2 className="text-lg font-semibold text-paper-100">By resolution channel</h2>
+      <Rows rows={Object.entries(report.byVia).map(([via, count]) => `${via}: ${count}`)} />
       <h2 className="text-lg font-semibold text-paper-100">Autonomy decisions</h2>
       <Rows
         rows={Object.entries(report.autonomy.byEvent).map(([event, count]) => `${event}: ${count}`)}

@@ -77,7 +77,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 102 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 104 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | The consolidated `20260618000000_init` baseline (generated from `schema.prisma`) plus the hand-written `20260618000001_custom_constraints_and_indexes` beside it; new changes append their own migration once the schema is deployed |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -738,7 +738,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 102 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 104 models.
 
 ```mermaid
 erDiagram
@@ -1145,6 +1145,28 @@ NDJSON from `/api/v1/workflow-templates/analytics/export`; platform usage export
 and node breakdowns from `/api/v1/platform/usage/export` with the same scope and role checks as
 the usage report.
 
+Workflow runs store nullable reporting-only team and organization attribution. The selected team is
+the run connection's team, then the work-request connection's team, channel team, requesting
+service's team, or template team, in that order. The selected team's organization is used; when no
+team is available, the work request's billing organization is used. These fields do not affect run
+visibility.
+
+Pull requests store their template id, template version, and associated run id. A worker links a PR
+only through an active workflow in the same repository. `WorkflowRun.workflowId` is unique, so the
+run is resolved by that workflow id rather than by recency;
+historical rows use the same repository guard and selection. Outcomes and template analytics read
+these persisted fields. Human-step resolutions store `resolvedVia` as `web`, `slack`, `api_token`,
+`mcp`, or `assistant`; older rows remain null.
+
+Daily workflow-run rollups serve completed days older than the configured recompute horizon; recent
+or uncovered days are read live. Global analytics daily series and durations, template per-version
+metrics, delivery, and rollup-backed quality rates combine both sources. `rollupDays` and `liveDays`
+report coverage, and truncation applies only to live reads. Non-ADMIN reporting includes a run when
+its attributed team is one of the caller's member teams or its attributed organization is one the
+caller administers. The same scope applies to rollups and live slices. `teamId` narrows both to one
+authorized team. `WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` optionally builds older history; its default
+is zero.
+
 The global analytics response also carries `approvalLatency`: how long people took to answer the
 human steps (`WorkflowHumanStep`) requested in the window, for the runs the caller may see, overall
 and per template (`computeApprovalLatency()` in `shared/src/workflow/analytics.ts`). The wait is
@@ -1284,6 +1306,8 @@ The load-bearing ones, with rationale:
 Current constraints of the system as built. Deliberate product boundaries are in
 [product-overview.md §7](./product-overview.md#7-non-goals--out-of-scope).
 
+- **Historical PRs without a repository-matched active workflow and run remain unattributed.**
+  Historical human-step and approval rows do not have a resolution source and remain null.
 - **The input cap bounds dollar-equivalent input tokens, not dollars.** Output tokens have their own
   cap, and a run's cost is the sum of both. A cache-heavy run counts well under its raw total, so
   the effective headroom of such a run is larger than a raw count gave it. Cache writes count above

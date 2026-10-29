@@ -37,6 +37,8 @@ function pr(openedAt: Date, over: Record<string, unknown> = {}) {
     repoId: UUID_A,
     repository: repo(1),
     status: 'OPEN',
+    template: null,
+    templateId: null,
     workflow: null,
     ...over,
   };
@@ -57,6 +59,10 @@ async function buildApp(role: Role = 'ADMIN') {
     pullRequest: { findMany: vi.fn().mockResolvedValue([]) },
     teamMembership: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
     workflowRun: { findMany: vi.fn().mockResolvedValue([]) },
+    workflowTemplate: {
+      findFirst: vi.fn().mockResolvedValue(null),
+      findMany: vi.fn().mockResolvedValue([]),
+    },
   };
   app.decorate('prisma', prisma as unknown as never);
   app.decorate('auth', {
@@ -115,22 +121,17 @@ describe('GET /api/v1/pull-requests/outcomes', () => {
     expect(data.previous.opened).toBe(1);
   });
 
-  it('attributes PRs by workflow run and filters the cohort by template', async () => {
+  it('uses persisted template attribution and filters the cohort before the row cap', async () => {
     const b = await buildApp();
     b.prisma.pullRequest.findMany.mockResolvedValue([
       inCurrent(0, {
         mergedAt: new Date(WINDOW_START.getTime() + DAY_MS + 3_600_000),
         repoId: UUID_A,
         status: 'MERGED',
-        workflow: { repoId: UUID_A, temporalWorkflowId: 'temporal-1' },
+        template: { name: 'Build' },
+        templateId: UUID_B,
       }),
-      inCurrent(1000, { status: 'OPEN', workflow: null }),
-    ]);
-    b.prisma.workflowRun.findMany.mockResolvedValue([
-      { template: { name: 'Build' }, templateId: UUID_B, workflowId: 'temporal-1' },
-    ]);
-    b.prisma.activeWorkflow.findMany.mockResolvedValue([
-      { repoId: UUID_A, temporalWorkflowId: 'temporal-1' },
+      inCurrent(1000, { status: 'OPEN', templateId: null }),
     ]);
     const { data } = (await get(b, `?templateId=${UUID_B}`)).json();
     expect(data.current.opened).toBe(1);
@@ -145,63 +146,22 @@ describe('GET /api/v1/pull-requests/outcomes', () => {
         templateName: 'Build',
       },
     ]);
-    expect(b.prisma.workflowRun.findMany).toHaveBeenCalled();
-    expect(whereOf(b)).toContainEqual({
-      OR: [
-        {
-          repoId: UUID_A,
-          workflow: { temporalWorkflowId: { in: ['temporal-1'] } },
-        },
-      ],
-    });
+    expect(whereOf(b)).toContainEqual({ templateId: UUID_B });
     expect(b.prisma.pullRequest.findMany.mock.calls[0]?.[0].take).toBe(10_001);
   });
 
-  it('groups repository-consistent attribution links before the capped PR read', async () => {
-    const b = await buildApp();
-    b.prisma.workflowRun.findMany.mockResolvedValue([
-      { template: { name: 'Build' }, templateId: UUID_B, workflowId: 'temporal-1' },
-      { template: { name: 'Build' }, templateId: UUID_B, workflowId: 'temporal-2' },
-      { template: { name: 'Build' }, templateId: UUID_B, workflowId: 'temporal-3' },
-    ]);
-    b.prisma.activeWorkflow.findMany.mockResolvedValue([
-      { repoId: UUID_A, temporalWorkflowId: 'temporal-1' },
-      { repoId: UUID_A, temporalWorkflowId: 'temporal-2' },
-      { repoId: UUID_B, temporalWorkflowId: 'temporal-3' },
-    ]);
-
-    await get(b, `?templateId=${UUID_B}`);
-
-    expect(b.prisma.pullRequest.findMany.mock.calls[0]?.[0]).toMatchObject({
-      take: 10_001,
-      where: {
-        AND: expect.arrayContaining([
-          {
-            OR: [
-              {
-                repoId: UUID_A,
-                workflow: {
-                  temporalWorkflowId: { in: ['temporal-1', 'temporal-2'] },
-                },
-              },
-              {
-                repoId: UUID_B,
-                workflow: { temporalWorkflowId: { in: ['temporal-3'] } },
-              },
-            ],
-          },
-        ]),
-      },
-    });
+  it('returns 404 when a non-admin filters by an inaccessible template', async () => {
+    const b = await buildApp('ENGINEER');
+    const response = await get(b, `?templateId=${UUID_B}`);
+    expect(response.statusCode).toBe(404);
+    expect(response.json().error.message).toBe('Template not found');
+    expect(b.prisma.pullRequest.findMany).not.toHaveBeenCalled();
   });
 
-  it('places PRs without a visible workflow run in the unattributed template bucket', async () => {
+  it('keeps null template attribution in the Unattributed bucket', async () => {
     const b = await buildApp();
     b.prisma.pullRequest.findMany.mockResolvedValue([
-      inCurrent(0, {
-        repoId: UUID_A,
-        workflow: { repoId: UUID_A, temporalWorkflowId: 'not-visible' },
-      }),
+      inCurrent(0, { template: null, templateId: null }),
     ]);
     const { data } = (await get(b)).json();
     expect(data.byTemplate).toEqual(
@@ -213,6 +173,30 @@ describe('GET /api/v1/pull-requests/outcomes', () => {
         }),
       ])
     );
+  });
+
+  it('does not attribute a PR to a template hidden by the template-list visibility rule', async () => {
+    const b = await buildApp('ENGINEER');
+    b.prisma.pullRequest.findMany.mockResolvedValue([
+      inCurrent(0, {
+        template: { name: 'Private template' },
+        templateId: UUID_B,
+      }),
+    ]);
+    const { data } = (await get(b)).json();
+    expect(data.byTemplate).toEqual([
+      expect.objectContaining({
+        opened: 1,
+        templateId: null,
+        templateName: 'Unattributed',
+      }),
+    ]);
+    expect(b.prisma.workflowTemplate.findMany).toHaveBeenCalledWith({
+      select: { id: true },
+      where: {
+        AND: [expect.any(Object), { id: { in: [UUID_B] } }],
+      },
+    });
   });
 
   it('bounds openedAt to [previousStart, end) and adds no repository filter for an admin', async () => {

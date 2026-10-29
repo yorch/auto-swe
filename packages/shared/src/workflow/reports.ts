@@ -32,6 +32,8 @@ export interface DeliveryRun {
   repositoryName: string | null;
   startedAt: Date;
   status: string;
+  teamId?: string | null;
+  teamName?: string | null;
   templateId: string;
   templateName: string;
   workflowId: string;
@@ -52,6 +54,7 @@ export interface DeliveryMetrics {
 
 export interface DeliveryReport extends DeliveryMetrics {
   byRepo: Array<DeliveryMetrics & { repoId: string; repositoryName: string }>;
+  byTeam: Array<DeliveryMetrics & { teamId: string | null; teamName: string }>;
   byTemplate: Array<DeliveryMetrics & { templateId: string; templateName: string }>;
 }
 
@@ -121,6 +124,7 @@ function deliveryMetrics(runs: DeliveryRun[]): DeliveryMetrics {
 export function computeDeliveryReport(runs: DeliveryRun[]): DeliveryReport {
   const templates = new Map<string, DeliveryRun[]>();
   const repositories = new Map<string, DeliveryRun[]>();
+  const teams = new Map<string | null, DeliveryRun[]>();
   for (const run of runs) {
     const templateRows = templates.get(run.templateId) ?? [];
     templateRows.push(run);
@@ -130,6 +134,9 @@ export function computeDeliveryReport(runs: DeliveryRun[]): DeliveryReport {
       repoRows.push(run);
       repositories.set(run.repoId, repoRows);
     }
+    const teamRows = teams.get(run.teamId ?? null) ?? [];
+    teamRows.push(run);
+    teams.set(run.teamId ?? null, teamRows);
   }
   return {
     ...deliveryMetrics(runs),
@@ -142,6 +149,13 @@ export function computeDeliveryReport(runs: DeliveryRun[]): DeliveryReport {
       .sort(
         (a, b) => b.runsStarted - a.runsStarted || a.repositoryName.localeCompare(b.repositoryName)
       ),
+    byTeam: [...teams.entries()]
+      .map(([teamId, rows]) => ({
+        ...deliveryMetrics(rows),
+        teamId,
+        teamName: rows[0]?.teamName ?? (teamId ? teamId : 'Unattributed'),
+      }))
+      .sort((a, b) => b.runsStarted - a.runsStarted || a.teamName.localeCompare(b.teamName)),
     byTemplate: [...templates.entries()]
       .map(([templateId, rows]) => ({
         ...deliveryMetrics(rows),
@@ -556,6 +570,7 @@ export interface HumanStepInput {
   resolvedAt: Date | null;
   resolvedBy: string | null;
   resolvedByName: string | null;
+  resolvedVia?: string | null;
   status: string;
 }
 
@@ -570,11 +585,14 @@ export interface HitlReport {
     byRiskClass: Record<string, number>;
   };
   byApprover: Array<{
+    automated: number;
+    interactive: number;
     medianWaitMs: number | null;
     name: string;
     resolved: number;
   }>;
   byKind: Record<string, Record<string, number>>;
+  byVia: Record<string, number>;
   medianWaitMs: number | null;
   oldestPendingAgeMs: number | null;
   p95WaitMs: number | null;
@@ -590,7 +608,11 @@ export function computeHitlReport(input: {
 }): HitlReport {
   const byKind: Record<string, Record<string, number>> = {};
   const resolvedWaits: number[] = [];
-  const approvers = new Map<string, { name: string; waits: number[] }>();
+  const approvers = new Map<
+    string,
+    { automated: number; interactive: number; name: string; waits: number[] }
+  >();
+  const byVia: Record<string, number> = {};
   let timedOut = 0;
   for (const step of input.windowSteps) {
     byKind[step.kind] ??= {};
@@ -599,14 +621,27 @@ export function computeHitlReport(input: {
       timedOut++;
     }
     if (step.status === 'RESOLVED' && step.resolvedAt) {
+      const via =
+        step.resolvedVia &&
+        ['web', 'slack', 'api_token', 'mcp', 'assistant'].includes(step.resolvedVia)
+          ? step.resolvedVia
+          : 'unknown';
+      byVia[via] = (byVia[via] ?? 0) + 1;
       const wait = step.resolvedAt.getTime() - step.requestedAt.getTime();
       resolvedWaits.push(wait);
       if (step.resolvedBy) {
         const group = approvers.get(step.resolvedBy) ?? {
+          automated: 0,
+          interactive: 0,
           name: step.resolvedByName ?? step.resolvedBy,
           waits: [],
         };
         group.waits.push(wait);
+        if (via === 'web' || via === 'slack') {
+          group.interactive++;
+        } else if (via === 'api_token' || via === 'mcp' || via === 'assistant') {
+          group.automated++;
+        }
         approvers.set(step.resolvedBy, group);
       }
     }
@@ -623,13 +658,16 @@ export function computeHitlReport(input: {
   return {
     autonomy: { byEvent, byRiskClass },
     byApprover: [...approvers.values()]
-      .map(({ name, waits }) => ({
+      .map(({ automated, interactive, name, waits }) => ({
+        automated,
+        interactive,
         medianWaitMs: median(waits),
         name,
         resolved: waits.length,
       }))
       .sort((a, b) => b.resolved - a.resolved || a.name.localeCompare(b.name)),
     byKind,
+    byVia,
     medianWaitMs: median(sortedWaits),
     oldestPendingAgeMs: oldestPending ? input.now.getTime() - oldestPending.getTime() : null,
     p95WaitMs: percentile(sortedWaits, 0.95),

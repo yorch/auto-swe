@@ -23,6 +23,24 @@ import { notifySlackPrReady } from '../lib/slackNotify.js';
 import { requestTicketIsSynthetic } from '../lib/trackerTicket.js';
 import { testStatusWord } from './utils.js';
 
+const EMPTY_PR_ATTRIBUTION = { runId: null, templateId: null, templateVersion: null } as const;
+
+async function pullRequestAttribution(
+  activeWorkflow: { repoId: string | null; temporalWorkflowId: string } | null,
+  repoId: string
+) {
+  if (!activeWorkflow || activeWorkflow.repoId !== repoId) {
+    return EMPTY_PR_ATTRIBUTION;
+  }
+  const run = await prisma.workflowRun.findUnique({
+    select: { id: true, templateId: true, templateVersion: true },
+    where: { workflowId: activeWorkflow.temporalWorkflowId },
+  });
+  return run
+    ? { runId: run.id, templateId: run.templateId, templateVersion: run.templateVersion }
+    : EMPTY_PR_ATTRIBUTION;
+}
+
 export interface CreatePullRequestOptions {
   /** Open the PR as a draft; a host that cannot fails the step, never falls back. */
   draft?: boolean;
@@ -69,6 +87,9 @@ async function doCreateOrUpdatePullRequest(
   const workflow =
     ownWorkflow ??
     (await prisma.activeWorkflow.findFirst({ where: { workRequestId: request.workRequestId } }));
+  const ownAttribution = await pullRequestAttribution(ownWorkflow, repo.id);
+  const workflowAttribution =
+    workflow === ownWorkflow ? ownAttribution : await pullRequestAttribution(workflow, repo.id);
 
   // The latest PR on this execution's own row, any status. Open: update it. Closed: a
   // reviewer closed it without merging, and repushing must not quietly open a replacement
@@ -125,7 +146,12 @@ async function doCreateOrUpdatePullRequest(
     // the workflow its row names, and an execution that is no longer waiting, or a concurrent
     // one, cannot use it.
     await prisma.pullRequest.update({
-      data: { ciStatus: 'PENDING', headSha: codeResult.headSha, workflowId: ownWorkflow?.id },
+      data: {
+        ...(ownAttribution.runId ? ownAttribution : {}),
+        ciStatus: 'PENDING',
+        headSha: codeResult.headSha,
+        workflowId: ownWorkflow?.id,
+      },
       where: { id: existingPR.id },
     });
 
@@ -191,6 +217,7 @@ async function doCreateOrUpdatePullRequest(
       repoId: repo.id,
       status: 'OPEN',
       title: clampPullRequestTitle(title),
+      ...(workflowAttribution.runId ? workflowAttribution : {}),
       workflowId: workflow?.id,
     },
   });

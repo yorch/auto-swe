@@ -90,11 +90,12 @@ describe('assistant route policy', () => {
     expect(stale).toEqual([]);
   });
 
-  it('lists no DELETE and no deprecated alias, which are refused by having no entry', () => {
-    const listed = Object.keys(ASSISTANT_ROUTE_POLICY).filter(
-      (key) => key.startsWith('DELETE ') || ALIASES.test(key.slice(key.indexOf(' ') + 1))
+  it('lists no deprecated alias and requires confirmation for digest deletion', () => {
+    const listed = Object.keys(ASSISTANT_ROUTE_POLICY).filter((key) =>
+      ALIASES.test(key.slice(key.indexOf(' ') + 1))
     );
     expect(listed).toEqual([]);
+    expect(ASSISTANT_ROUTE_POLICY['DELETE /api/v1/report-digests/:id']).toBe('confirm');
   });
 
   it('treats a non-GET as a read only with a stated reason, and a GET only as a plain read', () => {

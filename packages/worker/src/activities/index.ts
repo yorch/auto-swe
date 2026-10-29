@@ -245,6 +245,7 @@ export type {
 export { resolveWorkspace } from './resolveWorkspace.js';
 export type { RollupAgentTraceUsageResult } from './rollupAgentTraceUsage.js';
 export { rollupAgentTraceUsage } from './rollupAgentTraceUsage.js';
+export { rollupWorkflowRuns } from './rollupWorkflowRuns.js';
 export type { RunAgentNodeInput, RunAgentNodeResult } from './runAgentNode.js';
 export { runAgentNode } from './runAgentNode.js';
 export type { RunAgentTaskInput, RunAgentTaskResult } from './runAgentTask.js';
@@ -252,6 +253,7 @@ export { runAgentTask } from './runAgentTask.js';
 export type { RunEvalNodeInput, RunEvalNodeResult } from './runEvalNode.js';
 export { runEvalNode } from './runEvalNode.js';
 export { runReviewNetwork } from './runReviewNetwork.js';
+export { sendReportDigests } from './sendReportDigests.js';
 // Phase 6 — user-authored shell steps
 export type { ShellStepInput, ShellStepResult } from './shellStep.js';
 export { runShellStep } from './shellStep.js';

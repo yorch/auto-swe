@@ -57,6 +57,7 @@ export type RoutePolicyEntry = 'read' | 'confirm' | { read: string } | { never: 
 export type AssistantAccess = 'read' | 'confirm' | 'never';
 
 export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> = {
+  'DELETE /api/v1/report-digests/:id': 'confirm',
   'GET /api/v1/agent-runs/agents': 'read',
   'GET /api/v1/agent-runs/limits': 'read',
   'GET /api/v1/assistant/actions/:id': 'read',
@@ -169,6 +170,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'GET /api/v1/pull-requests': 'read',
   'GET /api/v1/pull-requests/outcomes': 'read',
   'GET /api/v1/pull-requests/outcomes/export': { never: 'bulkExport' },
+  'GET /api/v1/report-digests': 'read',
   'GET /api/v1/reports/automations': 'read',
   'GET /api/v1/reports/budget': 'read',
   'GET /api/v1/reports/delivery': 'read',
@@ -240,6 +242,7 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'PATCH /api/v1/platform/slack-channels/:id': 'confirm',
   'PATCH /api/v1/platform/slack-channels/:id/memory/:memoryId': 'confirm',
   'PATCH /api/v1/platform/slack-channels/:id/open-items/:itemId': 'confirm',
+  'PATCH /api/v1/report-digests/:id': 'confirm',
   'PATCH /api/v1/repositories/:id': 'confirm',
   'PATCH /api/v1/repositories/:id/dependencies/:edgeId': 'confirm',
   'PATCH /api/v1/scheduled-work-requests/:id': 'confirm',
@@ -338,6 +341,8 @@ export const ASSISTANT_ROUTE_POLICY: Readonly<Record<string, RoutePolicyEntry>> 
   'POST /api/v1/platform/slack-channels/:id/budget/reset': 'confirm',
   'POST /api/v1/platform/slack-channels/memory/erase-user': { never: 'destructive' },
   'POST /api/v1/prd-runs': 'confirm',
+  'POST /api/v1/report-digests': 'confirm',
+  'POST /api/v1/report-digests/:id/send-test': 'confirm',
   'POST /api/v1/repositories': 'confirm',
   'POST /api/v1/repositories/:id/dependencies': 'confirm',
   'POST /api/v1/repositories/:id/dependencies/infer': 'confirm',

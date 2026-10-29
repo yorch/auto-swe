@@ -2,11 +2,22 @@
 
 The admin Reports page summarizes delivery, quality, budget, automation, and human-approval
 activity. The selected UTC date range applies to delivery, quality, automation, and approval
-reports. Budget reports always use the current UTC calendar month. Each tab exports its displayed
-report as a client-generated CSV.
+reports. Budget reports always use the current UTC calendar month. Each report tab exports its
+displayed sections as a client-generated CSV. The Digests tab manages scheduled weekly reports.
 
 Platform analytics time saved is the sum of each successful run's estimate, snapshotted from the
 template when the run started.
+
+Workflow runs store nullable reporting-only team and organization attribution. The team resolver
+uses the run connection, work-request connection, channel, requesting service, then template, in
+that order; the selected team's organization wins, with the work request's billing organization as
+the fallback when no team is available. This attribution does not change run visibility.
+
+Pull requests store their template id, template version and associated run id. Writers and the
+historical backfill associate a PR only through an active workflow in the same repository.
+`WorkflowRun.workflowId` is unique, so the associated run is resolved by that exact workflow id,
+not by recency. Outcomes, per-version template analytics and report cohorts read these persisted
+fields instead of dynamically joining recent runs.
 
 ## Delivery
 
@@ -22,6 +33,11 @@ success rate from visible cohort runs grouped by repository. Delivery spend uses
 is used as the legacy fallback. Totals, template and repository slices, and cost per merged pull
 request use that same run-level amount. Pull requests whose repository does not match their linked
 workflow are not attributed to a run.
+Delivery also groups the cohort by persisted team attribution, including an `Unattributed` row.
+The optional `teamId` filter applies to both the daily rollup and live slices. Delivery labels
+repository, template, and team slices; inaccessible repository names appear as `Inaccessible
+repository`, and templates hidden by the workflow-template visibility rule appear as `Private
+template`, without dropping their counts.
 
 ## Quality
 
@@ -29,8 +45,8 @@ Gate metrics are grouped per `(run, gate)` pair. The first-attempt pass rate is 
 with a `PASSED` row and no `FAILED` row; the final pass rate is the share with any `PASSED` row.
 Attempt counts sum `PASSED` and `FAILED` rows. Fix-loop attempts count terminal `PASSED` and
 `FAILED` rows and report both runs with a fix and average attempts per such run. CI self-heal rate
-is unchanged: the share of runs with a CI fix that have a linked pull request with passed CI or a
-merge.
+is the share of runs with a CI fix that have a linked pull request with passed CI or a merge. The
+self-heal and merge-rate cohorts combine rollup and live rows using persisted run/PR attribution.
 
 Review verdicts are parsed defensively from reviewer trace output. The stored trace agent key is
 `reviewer`; the individual persona is recorded in the verdict's `reviewer` field (`SECURITY`,
@@ -62,21 +78,73 @@ successful produced workflow run.
 
 Approval reporting counts human steps by kind and status, resolution waits for resolved steps,
 timeouts, currently pending steps, and the oldest pending age. Approvers are grouped by the
-resolving user. Autonomy decisions are counted by event and risk class.
+resolving user with interactive (`web`, `slack`) and automated (`api_token`, `mcp`, `assistant`)
+counts. Resolved steps are also split by `resolvedVia`; null or unrecognized historical values are
+reported as `unknown`. Autonomy decisions are counted by event and risk class.
 
 ## Data bounds
 
-Report reads are capped at 10,000 rows and responses include a `truncated` flag when any bounded
-source exceeds that bound, alongside a per-source truncation flag. Quality workflow-step metrics
-use an uncapped `groupBy` over the bounded run cohort. Budget top-run lists intentionally show at
-most five runs per organization; each organization indicates when more ranked runs exist.
+Report live reads are capped at 10,000 rows and responses include a `truncated` flag when any
+bounded live source exceeds that bound, alongside a per-source truncation flag. Quality
+workflow-step metrics use an uncapped `groupBy` over the bounded run cohort. Budget top-run lists
+intentionally show at most five runs per organization; each organization indicates when more
+ranked runs exist.
+
+## Weekly digests
+
+Digest subscriptions target exactly one organization or team and deliver weekly summaries by email,
+Slack, or both. They compare the last seven completed UTC days with the seven days before them,
+including delivery metrics, top templates, the worst gate when at least ten run/gate pairs exist,
+pending approval age, and organization budget status. Organization subscriptions include budget
+data; team subscriptions do not. Send-test delivers immediately without changing the scheduled
+last-sent timestamp.
+
+The weekly sweep runs Mondays at 13:00 UTC when `REPORT_DIGEST_ENABLED` is true. Configure
+`REPORT_DIGEST_CRON` to change the schedule. Digests require workflow-run rollups to be enabled;
+`REPORT_DIGEST_CRON` must run after `WORKFLOW_RUN_ROLLUP_CRON`. The sweep skips delivery and
+retries on its next run when any of the 14 required completed UTC days has no rollup rows. A
+subscription is claimed once per reporting period before delivery, so a failed email or Slack
+channel is recorded but is not retried in the same period. Send-test bypasses the weekly claim and
+does not change the scheduled last-sent timestamp; its one-minute limit is stored in Postgres.
+Email uses the platform SMTP configuration when available, otherwise the configured Resend
+transport.
 
 ## Limitations
 
-- Scheduled Slack and email report digests are not available.
 - CLI and MCP report commands are not available.
-- Delivery reports do not include a team slice because workflow runs do not have a reliable
-  run-to-team relationship.
-- Reports use live bounded reads; a daily run-rollup table is not available.
+- Non-ADMIN reporting visibility is based on persisted attribution: a row is included when its
+  `teamId` (`WorkflowRun.attributedTeamId`) is one of the caller's member teams, or its `orgId`
+  (`WorkflowRun.attributedOrgId`) is an organization where the caller is `ORG_ADMIN`. ADMIN sees
+  all rows, including null-attribution rows; null-attribution rows are excluded for everyone else.
+  This rule is applied to every slice in a rollup-backed response, including headline metrics,
+  group-bys, selected runs, steps, and quality traces. ORG_ADMIN therefore sees every run
+  attributed to their organization even when `buildWorkflowRunVisibilityFilter` would hide it;
+  requester-only and shared-connection visibility do not apply to these reports. A `teamId` filter
+  is allowed only for a caller's member team or a team in an organization they administer;
+  otherwise the route returns 403. Non-rollup reads retain the normal run-visibility filter and
+  add the selected team filter.
+- Template names hidden by the workflow-template visibility rule, channel names hidden by channel
+  access, and repository names blocked by the repository-access gate are masked as `Private
+  template`, `Private channel`, and `Inaccessible repository`; the corresponding counts remain.
+- Run and merge duration percentiles are approximate: values fall into logarithmically spaced
+  buckets and the reader returns the bucket's geometric midpoint. CI-fix p95 and average use an
+  exact attempt-count histogram for 0–19; its 20+ overflow bucket is represented as 20.
+- Rollups are rebuilt daily and recomputed over the configured
+  `WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS` horizon to include late outcomes. Once a day is older than
+  that horizon it is frozen; later merges and run finalizations are not reflected in that day.
+  `rollupDays` and `liveDays` show which dates came from each source; truncation flags apply only
+  to live reads. Global analytics daily series and duration percentiles, template per-version
+  duration/PR statistics, and delivery metrics use this hybrid reader. Duration and merge
+  percentiles use logarithmically spaced buckets and return a bucket midpoint; the CI-fix histogram
+  is exact for 0–19 attempts and represents 20 or more as 20. Freshness is bounded by the daily
+  schedule and the recompute window. Set `WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` to populate older
+  history; the default of zero leaves history outside the recompute horizon on the live path.
+- Approval source counts use `resolvedVia`; historical rows with no source are reported as
+  `unknown`.
 - User records do not expose a service-principal or API-token approver flag, so approval counts
-  cannot separate people from machine identities.
+  cannot separate people from machine identities. The human-step HTTP route requires a user
+  principal and does not admit service-principal tokens.
+- Historical pull requests without a repository-matched active workflow and run remain unattributed.
+- Historical human-step and approval records do not have a resolution source and remain null.
+- Historical runs whose workspace connection (`runConnectionId`) differs from their repository
+  may be attributed differently by the backfill than by runtime attribution.
