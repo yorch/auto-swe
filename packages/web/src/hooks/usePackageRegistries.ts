@@ -3,11 +3,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
-/** An admin-managed npm registry upstream, with a write-only token. */
+/** An admin-managed package registry upstream (npm or Go), with a write-only token. */
 export interface PackageRegistryRow {
   id: string;
   name: string;
-  ecosystem: 'npm';
+  ecosystem: 'npm' | 'go';
   upstreamUrl: string;
   npmScopes: string[];
   accessMode: 'lockfile' | 'open';
@@ -22,6 +22,8 @@ export interface PackageRegistryRow {
 }
 
 export interface PackageRegistryBody {
+  /** Chosen at creation; the gateway refuses to change it afterwards. */
+  ecosystem: 'npm' | 'go';
   name: string;
   upstreamUrl: string;
   npmScopes: string[];
