@@ -29,13 +29,15 @@ export async function snapshotDetections(
 }
 
 /**
- * Pin the detections of `connectionIds` on the run. A Temporal retry of one execution keeps the
- * first pin: the column is written only while it is NULL. A LATER execution that reuses the
- * workflow id takes a fresh snapshot — `createWorkflowRun` writes `temporalRunId` on create only,
- * so such a row still names the first execution, which differs from the current one and lets the
- * write through. A row whose `temporalRunId` is NULL never matches that second clause (SQL
- * `NULL <> x` is not true), so it is filled but never overwritten. Outside an activity there is
- * no current execution, and only the NULL case writes.
+ * Pin the detections of `connectionIds` on the run, and record which execution took the pin
+ * (`pinnedDetectionsFor`). The write happens only while the column is NULL, or when it was taken
+ * by a DIFFERENT execution: so an attempt or a retry of one execution keeps that execution's
+ * first pin — including a slow earlier attempt finishing after a later one — while a later
+ * execution that reuses the workflow id takes a fresh snapshot. It is a column of its own because
+ * `temporalRunId` is written on create only (it names the FIRST execution, for the launcher
+ * credential check), so a rule built on it would re-pin on every attempt of a later execution.
+ * A pin with no recorded execution (NULL) is never overwritten, since SQL `NULL <> x` is not true.
+ * Outside an activity there is no current execution: only the NULL column is written.
  */
 export async function pinDetectionsOnRun(
   runId: string,
@@ -45,10 +47,13 @@ export async function pinDetectionsOnRun(
   const executionId = currentTemporalRunId();
   const unpinned = { pinnedDetections: { equals: Prisma.DbNull } };
   await prisma.workflowRun.updateMany({
-    data: { pinnedDetections: snapshot as Prisma.InputJsonObject },
+    data: {
+      pinnedDetections: snapshot as Prisma.InputJsonObject,
+      pinnedDetectionsFor: executionId,
+    },
     where: {
       id: runId,
-      OR: executionId ? [unpinned, { temporalRunId: { not: executionId } }] : [unpinned],
+      OR: executionId ? [unpinned, { pinnedDetectionsFor: { not: executionId } }] : [unpinned],
     },
   });
 }

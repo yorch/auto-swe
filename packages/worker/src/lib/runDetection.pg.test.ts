@@ -50,11 +50,16 @@ describe.skipIf(!enabled)('run stack-detection pin against Postgres', () => {
   let templateId = '';
   const runIds: string[] = [];
 
-  async function createRun(temporalRunId: string | null, pinned?: Prisma.InputJsonObject) {
+  async function createRun(
+    temporalRunId: string | null,
+    pinned?: Prisma.InputJsonObject,
+    pinnedFor?: string
+  ) {
     const workflowId = `rdet-pg-${suffix}-${runIds.length}`;
     const run = await prisma.workflowRun.create({
       data: {
         ...(pinned ? { pinnedDetections: pinned } : {}),
+        ...(pinnedFor ? { pinnedDetectionsFor: pinnedFor } : {}),
         specSnapshot: {},
         templateId,
         templateVersion: 1,
@@ -68,6 +73,8 @@ describe.skipIf(!enabled)('run stack-detection pin against Postgres', () => {
 
   const stored = async (id: string) =>
     (await prisma.workflowRun.findUniqueOrThrow({ where: { id } })).pinnedDetections;
+  const storedFor = async (id: string) =>
+    (await prisma.workflowRun.findUniqueOrThrow({ where: { id } })).pinnedDetectionsFor;
 
   async function setLiveDetection(id: string, detectedStack: Prisma.InputJsonValue) {
     await runUnscoped('test fixture rows', ['Connection'], () =>
@@ -119,11 +126,12 @@ describe.skipIf(!enabled)('run stack-detection pin against Postgres', () => {
   });
 
   describe('pinDetectionsOnRun', () => {
-    it('pins { id: detection | null } on a fresh row', async () => {
+    it('pins { id: detection | null } on a fresh row and records the execution that took it', async () => {
       const { runId } = await createRun('exec-1');
       ctx.temporalRunId = 'exec-1';
       await detection.pinDetectionsOnRun(runId, [CONN_A, CONN_B]);
       expect(await stored(runId)).toEqual({ [CONN_A]: STACK_A, [CONN_B]: null });
+      expect(await storedFor(runId)).toBe('exec-1');
     });
 
     it('changes nothing on a second call in the same execution', async () => {
@@ -135,7 +143,7 @@ describe.skipIf(!enabled)('run stack-detection pin against Postgres', () => {
       expect(await stored(runId)).toEqual({ [CONN_A]: STACK_A });
     });
 
-    it('overwrites from a different execution that reuses the workflow id', async () => {
+    it('re-pins from a later execution that reuses the workflow id, and records it', async () => {
       const { runId } = await createRun('exec-1');
       ctx.temporalRunId = 'exec-1';
       await detection.pinDetectionsOnRun(runId, [CONN_A]);
@@ -143,33 +151,48 @@ describe.skipIf(!enabled)('run stack-detection pin against Postgres', () => {
       ctx.temporalRunId = 'exec-2';
       await detection.pinDetectionsOnRun(runId, [CONN_A]);
       expect(await stored(runId)).toEqual({ [CONN_A]: STACK_B });
+      expect(await storedFor(runId)).toBe('exec-2');
     });
 
-    it('fills a row that has no pin and names another execution', async () => {
+    it('keeps a later execution’s pin against a retry of that same execution', async () => {
+      // The case a rule built on the row's `temporalRunId` (written on create only, so always the
+      // FIRST execution) gets wrong: every attempt of execution 2 looks "different" from it, so a
+      // slow attempt finishing after the one that won would overwrite the pin mid-run.
+      const { runId } = await createRun('exec-1');
+      ctx.temporalRunId = 'exec-1';
+      await detection.pinDetectionsOnRun(runId, [CONN_A]);
+      ctx.temporalRunId = 'exec-2';
+      await setLiveDetection(CONN_A, STACK_B);
+      await detection.pinDetectionsOnRun(runId, [CONN_A]);
+      await setLiveDetection(CONN_A, { stacks: ['go'] });
+      await detection.pinDetectionsOnRun(runId, [CONN_A]);
+      expect(await stored(runId)).toEqual({ [CONN_A]: STACK_B });
+      expect(await storedFor(runId)).toBe('exec-2');
+    });
+
+    it('fills a row that has no pin, whatever execution its temporal run id names', async () => {
       const { runId } = await createRun('exec-1');
       ctx.temporalRunId = 'exec-2';
       await detection.pinDetectionsOnRun(runId, [CONN_A]);
       expect(await stored(runId)).toEqual({ [CONN_A]: STACK_A });
+      expect(await storedFor(runId)).toBe('exec-2');
     });
 
-    it('fills an unpinned row whose temporal run id is NULL, but never overwrites a pinned one', async () => {
-      const unpinned = await createRun(null);
+    it('never overwrites a pin that records no execution (SQL `NULL <> x` is not true)', async () => {
       const pinned = await createRun(null, { [CONN_A]: STACK_B });
       ctx.temporalRunId = 'exec-2';
-      await detection.pinDetectionsOnRun(unpinned.runId, [CONN_A]);
       await detection.pinDetectionsOnRun(pinned.runId, [CONN_A]);
-      expect(await stored(unpinned.runId)).toEqual({ [CONN_A]: STACK_A });
-      // `NULL <> 'exec-2'` is not true, so the second clause never matches a NULL temporal run id.
       expect(await stored(pinned.runId)).toEqual({ [CONN_A]: STACK_B });
     });
 
     it('writes only a NULL column outside an activity', async () => {
       const unpinned = await createRun('exec-1');
-      const pinned = await createRun('exec-1', { [CONN_A]: STACK_B });
+      const pinned = await createRun('exec-1', { [CONN_A]: STACK_B }, 'exec-1');
       ctx.temporalRunId = null;
       await detection.pinDetectionsOnRun(unpinned.runId, [CONN_A]);
       await detection.pinDetectionsOnRun(pinned.runId, [CONN_A]);
       expect(await stored(unpinned.runId)).toEqual({ [CONN_A]: STACK_A });
+      expect(await storedFor(unpinned.runId)).toBeNull();
       expect(await stored(pinned.runId)).toEqual({ [CONN_A]: STACK_B });
     });
   });

@@ -163,20 +163,28 @@ describe('snapshotDetections', () => {
 describe('pinDetectionsOnRun', () => {
   const unpinned = { pinnedDetections: { equals: DB_NULL } };
 
-  it('writes where the column is unset or the row names another execution', async () => {
+  it('writes where the column is unset or was pinned by another execution, and records which', async () => {
     findMany.mockResolvedValue([{ detectedStack: PINNED, id: 'a' }]);
     await pinDetectionsOnRun('run-1', ['a']);
     expect(updateMany).toHaveBeenCalledWith({
-      data: { pinnedDetections: { a: PINNED } },
-      where: { id: 'run-1', OR: [unpinned, { temporalRunId: { not: 'exec-2' } }] },
+      data: { pinnedDetections: { a: PINNED }, pinnedDetectionsFor: 'exec-2' },
+      where: { id: 'run-1', OR: [unpinned, { pinnedDetectionsFor: { not: 'exec-2' } }] },
     });
+  });
+
+  it('does not borrow temporalRunId, which names the first execution for the launcher check', async () => {
+    await pinDetectionsOnRun('run-1', []);
+    expect(JSON.stringify(updateMany.mock.calls[0]?.[0].where)).not.toContain('temporalRunId');
   });
 
   it('writes only where the column is unset when there is no current execution', async () => {
     currentTemporalRunId.mockReturnValue(null);
     await pinDetectionsOnRun('run-1', []);
     expect(updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'run-1', OR: [unpinned] } })
+      expect.objectContaining({
+        data: expect.objectContaining({ pinnedDetectionsFor: null }),
+        where: { id: 'run-1', OR: [unpinned] },
+      })
     );
   });
 

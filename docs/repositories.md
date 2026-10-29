@@ -610,8 +610,8 @@ longer fit.
   until the next weekly scan, and a root that changed stack is followed only after a rescan. A run
   reads the detection its connections had when it began (for the connections it may use), found
   through the run's workflow id, so a scan landing mid-run does not move its later steps to another
-  image or directory. A later execution that reuses the workflow id takes a fresh snapshot; a retry
-  of the same execution keeps the first. A repository first scanned after the run began has no
+  image or directory. A later execution that reuses the workflow id takes a fresh snapshot; every attempt and
+  retry of one execution keeps that execution's first. A repository first scanned after the run began has no
   recorded detection for that run. Runs that began before the pin existed, and a connection
   outside the run's authorized set, read the live value. A polyglot root (root `package.json` plus a Python
   service) is a Node target, and the service gets nothing. A single component is chosen only when it is

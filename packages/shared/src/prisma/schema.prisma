@@ -1962,8 +1962,13 @@ model WorkflowRun {
   /// run is consistent with itself; an absent key, or a null column (a run created before
   /// this column existed), reads the live `Connection.detectedStack`. It is read through the
   /// run's `workflowId`; a later execution that reuses the workflow id takes a fresh
-  /// snapshot, a Temporal retry of one execution keeps the first.
+  /// snapshot, and a Temporal retry of one execution keeps the first.
   pinnedDetections  Json?             @map("pinned_detections")
+  /// The Temporal run id of the execution that took `pinnedDetections`. A later execution that
+  /// reuses the workflow id differs from it and re-pins; an attempt of the same execution finds it
+  /// equal and keeps the pin. Separate from `temporalRunId`, which is written on create only (it
+  /// names the first execution, for the launcher-credential check).
+  pinnedDetectionsFor String?         @map("pinned_detections_for")
   /// Snapshot of the skill revisions the run's agents reference, taken when the
   /// run began: a `{ skillId: revision }` map. `resolveAgent` reads the pinned
   /// `SkillRevision` text instead of the live `Skill` row, so editing a skill

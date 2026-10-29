@@ -47,7 +47,7 @@ vi.mock('../lib/activityLog.js', async (importOriginal) => ({
 
 // Covered by its own suite; here only that createWorkflowRun pins, and survives a failed pin.
 const { pinDetectionsOnRun } = vi.hoisted(() => ({
-  pinDetectionsOnRun: vi.fn(async () => undefined),
+  pinDetectionsOnRun: vi.fn(async (): Promise<void> => undefined),
 }));
 vi.mock('../lib/runDetection.js', () => ({ pinDetectionsOnRun }));
 
@@ -998,14 +998,30 @@ describe('createWorkflowRun', () => {
       expect(pinDetectionsOnRun).toHaveBeenCalledWith('run-1', authorized);
     });
 
-    it('pins after the run is upserted and before the activity returns', async () => {
-      let pinFinished = false;
-      pinDetectionsOnRun.mockImplementation(async () => {
-        await Promise.resolve();
-        pinFinished = true;
+    it('pins after the run is upserted, and the activity does not return until the pin is written', async () => {
+      // The pin blocks on a promise the test controls, so an activity that stopped awaiting it
+      // (a fire-and-forget `void pinDetectionsOnRun(...)`) would still return while it is held.
+      let release: () => void = () => {};
+      pinDetectionsOnRun.mockImplementation(
+        () =>
+          new Promise<void>((resolve) => {
+            release = resolve;
+          })
+      );
+      let settled = false;
+      const result = create().then((r) => {
+        settled = true;
+        return r;
       });
-      await create();
-      expect(pinFinished).toBe(true);
+      for (let i = 0; i < 200 && pinDetectionsOnRun.mock.calls.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      expect(pinDetectionsOnRun).toHaveBeenCalledTimes(1);
+      // Give every other await in the activity time to finish: it still must not have returned.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(settled).toBe(false);
+      release();
+      await expect(result).resolves.toMatchObject({ runId: 'run-1' });
       const upsertOrder = upsertRun.mock.invocationCallOrder[0] as number;
       const pinOrder = pinDetectionsOnRun.mock.invocationCallOrder[0] as number;
       expect(upsertOrder).toBeLessThan(pinOrder);
