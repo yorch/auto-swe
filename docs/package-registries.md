@@ -64,7 +64,7 @@ each scope; a Go registry has only the default) a team row beats a global one.
   allowlist is empty and every package is denied.
 
 For a **Go** registry the allowlist is every `go.sum` committed at the base ref, at any depth,
-read the same way. A module version with a plain `go.sum` line may be fetched whole (`.info`,
+read the same way (a `go.work.sum` counts as one). A module version with a plain `go.sum` line may be fetched whole (`.info`,
 `.mod`, `.zip`); one with only a `/go.mod` line gets `.mod` and `.info` but no `.zip`. A repository
 with no `go.sum` gets an empty allowlist, so every module is denied.
 
@@ -169,9 +169,10 @@ upstream path is rebuilt from those validated values alone. In lockfile mode:
 
 A zip is relayed up to 512 MiB and cached in the tarball cache; the cut-off applies to the bytes
 received, not the declared length. The token segment is never part of what the allowlist, the
-cache key, a denial report or a response sees. The same limits as npm apply: GET and HEAD only,
-redirects refused, and per-registration slots, a deadline and hang-up handling for the buffered
-requests.
+cache key, a denial report or a response sees. GET and HEAD only, redirects
+refused, an upstream deadline and hang-up handling as for npm. Go answers are streamed, so they
+take no slot in the per-registration buffered-request limit. The Go route is excluded from request
+tracing, because a span records the path and the path holds the token.
 
 **URL layout.** `<baseUrl>/npm/<registryId>/<npm path>`. Only three npm path shapes exist:
 - packument: `/<name>`
@@ -273,6 +274,10 @@ under 90%. Cache errors fall through to the upstream.
 - **npm and Go modules only, and read-only.** PyPI and Maven are not served, and neither is
   publishing. A Go registry has no audit endpoint, so `govulncheck` and similar reach their own
   database directly or not at all.
+- **Open mode needs egress to the checksum database for new Go modules.** The proxy does not
+  serve `/sumdb/…`, so a module whose hash is not yet in `go.sum` is verified by Go reaching
+  `sum.golang.org` directly (unless the repository sets `GOFLAGS`/`GONOSUMDB`/`GOSUMDB`). In
+  lockfile mode every hash is already committed and the checksum database is not consulted.
 - **Go's token is visible to the agent.** Go prints the request URL in its errors
   (`reading http://…/go/<token>/…: 403 Forbidden`), and `env` shows `GOPROXY`. The token is good
   only at this proxy, for this workspace, and in lockfile mode only for `go.sum`'s modules — the

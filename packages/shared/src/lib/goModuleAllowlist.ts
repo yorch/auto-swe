@@ -11,6 +11,8 @@
  */
 
 export const GO_SUM_NAME = 'go.sum';
+/** A `go.work` workspace keeps checksums that appear in no module's `go.sum` here; same format. */
+export const GO_WORK_SUM_NAME = 'go.work.sum';
 
 /** A hostile file contributes at most this many lines. */
 const MAX_GO_SUM_LINES = 200_000;

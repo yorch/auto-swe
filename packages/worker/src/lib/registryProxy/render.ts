@@ -98,14 +98,12 @@ export function registryWorkspaceEnv(
     env.push(`YARN_NPM_AUTH_TOKEN=${token}`, 'YARN_NPM_ALWAYS_AUTH=true');
   }
   if (goRegistry) {
-    const url = new URL(baseUrl);
-    const hostport = url.port ? `${url.hostname}:${url.port}` : url.hostname;
     // `GOPROXY` names only the proxy — no `,direct`, no second entry. Go falls through to the
     // next entry on a 404/410 and, with `direct`, would then fetch the module from its VCS,
     // past the allowlist. With the proxy alone, a module it refuses is not fetched at all.
     // The token is a path segment, not userinfo: Go refuses to send credentials from a `GOPROXY`
     // URL over plain http, and the proxy is plain http. The whole value is a secret (see below).
-    env.push(`GOPROXY=${url.protocol}//${hostport}/go/${token}/${goRegistry.id}`);
+    env.push(`GOPROXY=${baseUrl}/go/${token}/${goRegistry.id}`);
     // The toolchain downloader would fetch `golang.org/toolchain@…` through the proxy, which a
     // lockfile allowlist denies. With `local`, a repository that needs a newer Go than the
     // image has fails with Go's own clear message instead.

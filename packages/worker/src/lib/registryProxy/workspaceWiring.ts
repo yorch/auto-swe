@@ -6,7 +6,12 @@
  */
 import { prisma } from '@auto-swe/shared/db';
 import { decryptSecret } from '@auto-swe/shared/lib/crypto';
-import { buildGoAllowlist, GO_SUM_NAME, parseGoSum } from '@auto-swe/shared/lib/goModuleAllowlist';
+import {
+  buildGoAllowlist,
+  GO_SUM_NAME,
+  GO_WORK_SUM_NAME,
+  parseGoSum,
+} from '@auto-swe/shared/lib/goModuleAllowlist';
 import {
   buildAllowlist,
   LOCKFILE_NAMES,
@@ -197,7 +202,10 @@ async function buildGoSumAllowlist(
   allPaths: string[]
 ): Promise<Map<string, Set<string>>> {
   const combined = new Map<string, Set<string>>();
-  const all = allPaths.filter((p) => p.split('/').pop() === GO_SUM_NAME);
+  const all = allPaths.filter((p) => {
+    const name = p.split('/').pop();
+    return name === GO_SUM_NAME || name === GO_WORK_SUM_NAME;
+  });
   if (all.length > LOCKFILE_MAX_FILES) {
     logWarn('registry allowlist: more go.sum files than the cap, keeping the first', {
       count: all.length,

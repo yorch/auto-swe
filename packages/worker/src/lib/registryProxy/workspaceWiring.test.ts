@@ -164,6 +164,16 @@ describe('buildRegistryAllowlist', () => {
     expect(go?.get('example.com/c')).toEqual(new Set(['v0.3.0']));
   });
 
+  it('reads go.work.sum as a go.sum', async () => {
+    const exec = fakeExec({ 'go.work.sum': GO_SUM_A });
+    const map = await buildRegistryAllowlist(
+      access([{ ecosystem: 'go', id: 'go-1' }]),
+      'HEAD',
+      exec
+    );
+    expect(map.get('go-1')?.get('example.com/a')).toEqual(new Set(['v1.0.0', 'v1.0.0/go.mod']));
+  });
+
   it('gives a go registry an empty, not absent, allowlist when there is no go.sum', async () => {
     const exec = fakeExec({ 'README.md': 'x' });
     const map = await buildRegistryAllowlist(
