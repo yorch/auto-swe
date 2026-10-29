@@ -42,10 +42,17 @@ jobs:
     steps:
       - id: set
         run: |
+          # The executor images are the curated agent-workspace bases (defaults/Dockerfile.<stack>),
+          # one per stack a deployment can map with WORKSPACE_IMAGE_<STACK>. They build from the
+          # `defaults` directory, not the repository root, and ignore the app build args below.
           MATRIX=$(echo '{"include":[
             {"component":"gateway","dockerfile":"packages/gateway/Dockerfile"},
             {"component":"web","dockerfile":"packages/web/Dockerfile"},
-            {"component":"worker","dockerfile":"packages/worker/Dockerfile"}
+            {"component":"worker","dockerfile":"packages/worker/Dockerfile"},
+            {"component":"executor-node","dockerfile":"defaults/Dockerfile.node","context":"defaults"},
+            {"component":"executor-python","dockerfile":"defaults/Dockerfile.python","context":"defaults"},
+            {"component":"executor-jvm","dockerfile":"defaults/Dockerfile.jvm","context":"defaults"},
+            {"component":"executor-go","dockerfile":"defaults/Dockerfile.go","context":"defaults"}
           ]}' | tr -d '\n')
           echo "matrix=${MATRIX}" >> "${GITHUB_OUTPUT}"
 
@@ -108,7 +115,7 @@ jobs:
       - name: Build ${{ matrix.component }} (no push)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
-          context: .
+          context: ${{ matrix.context || '.' }}
           file: ${{ matrix.dockerfile }}
           platforms: ${{ env.BUILD_PLATFORMS }}
           push: false
@@ -201,7 +208,7 @@ jobs:
       - name: Build and push ${{ matrix.component }}
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
-          context: .
+          context: ${{ matrix.context || '.' }}
           file: ${{ matrix.dockerfile }}
           platforms: ${{ env.BUILD_PLATFORMS }}
           push: true

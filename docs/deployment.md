@@ -35,6 +35,17 @@ repository's own `.auto-swe/Dockerfile` instead. `defaults/` also carries `Docke
 `Dockerfile.jvm` and `Dockerfile.go`; the `stack` input (`node`|`python`|`jvm`|`go`, default `node`) selects which curated
 Dockerfile is built.
 
+**Prebuilt executor images.** `docker.yml` builds the four curated Dockerfiles on every pull request
+and, after the same CI gate as the app images, publishes them beside them as
+`ghcr.io/<repository>/executor-node`, `executor-python`, `executor-jvm` and `executor-go` (and to
+`EXTERNAL_REGISTRY_URL` when that is set), tagged `main`, `latest` and `<timestamp>-<commit>`. Point
+`WORKSPACE_IMAGE` (the Node image) and `WORKSPACE_IMAGE_PYTHON`, `_JVM` and `_GO` at them to give a
+repository the image for its detected stack ([`repositories.md`](./repositories.md#executor-images)).
+Reference them by **digest** (`…@sha256:<digest>`), not by a tag: the image runs next to the clone
+credential, and a tag that moves changes what runs there without a deploy. A GHCR package is private
+until its visibility is changed, so a worker, and on Kubernetes the pull secret named in
+`K8S_WORKSPACE_IMAGE_PULL_SECRETS`, needs access to it.
+
 Each build also records its settings on the connection (`executorImageBuild`). A weekly schedule
 (`cron: '0 6 * * 1'`) rebuilds every active repository that has such a record, so the workflow's
 `GATEWAY_TOKEN` must be able to list repositories as well as update them.
@@ -606,6 +617,7 @@ Container workspaces are ephemeral — never back them up. The Docker daemon on 
 
 ## Limitations
 
+- **The prebuilt executor images are amd64 only and rebuild only when `main` moves.** `docker.yml` builds for the platforms in `BUILD_PLATFORMS`, and has no schedule, so a base-image fix reaches `executor-*` at the next push to `main` rather than weekly; pin by digest and rebuild on your own cadence if you need one.
 - **Only `docker-compose.prod.yml` runs the production Temporal dynamic config.** It points Temporal at `infra/dynamicconfig/production-sql.yaml`, which omits the development-only `system.forceSearchAttributesCacheRefreshOnRead` (a search-attribute cache refresh on every read). A deployment built on `docker-compose.app.yml` instead keeps `development-sql.yaml`. The two files are kept identical otherwise by hand; nothing checks it.
 - **The Docker socket proxy narrows the API, not container options.** See §0: a worker that can create containers can still request privileged mode or host bind mounts.
 - **The Docker socket proxy runs as root.** It must open the host socket, which is root-owned; the container is read-only, drops every capability and runs nothing but haproxy. CI exercises the worker's Docker calls through the same image and config.
