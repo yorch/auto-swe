@@ -244,7 +244,7 @@ export function tokenize(query: string): string[] {
 const VOWELS = /[aeiou]/;
 
 /** Words the suffix rules would damage: they are their own singular, or end like a plural. */
-const UNSTEMMED = new Set(['series', 'species', 'news', 'does', 'goes']);
+const UNSTEMMED = new Set(['series', 'species', 'news', 'does', 'goes', 'https']);
 
 /** Words ending -ed that are not a past tense (`embed`, not `emb` + `ed`). */
 const NOT_PAST_TENSE = new Set(['embed', 'hundred', 'indeed', 'naked', 'sacred', 'shred']);

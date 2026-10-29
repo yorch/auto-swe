@@ -518,6 +518,8 @@ describe('stem equality, not stem prefix', () => {
     expect(sameStem('based', 'bash')).toBe(false);
     expect(sameStem('cases', 'cascade')).toBe(false);
     expect(sameStem('uses', 'user')).toBe(false);
+    // `https` is a protocol name, not the plural of `http`.
+    expect(sameStem('https', 'http')).toBe(false);
   });
 
   it('finds nothing for speed, although spend and specific start the same way', () => {
