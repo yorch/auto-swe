@@ -308,10 +308,16 @@ describe('postTicketComment on the GitHub tracker', () => {
 
   it('refuses an unlisted repository, and a listed one when the list cannot be read', async () => {
     mocks.resolveSetting.mockResolvedValue(['acme/issues']);
-    githubRun({ externalTicketId: 'acme/elsewhere#5' });
+    githubRun({
+      connection: { ...OWN_REPO, teamId: 'team-1' },
+      externalTicketId: 'acme/elsewhere#5',
+    });
     await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
     mocks.resolveSetting.mockRejectedValue(new Error('settings unavailable'));
-    githubRun({ externalTicketId: 'acme/issues#5' });
+    githubRun({
+      connection: { ...OWN_REPO, teamId: 'team-1' },
+      externalTicketId: 'acme/issues#5',
+    });
     await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
     expect(mocks.addComment).not.toHaveBeenCalled();
   });
@@ -325,6 +331,14 @@ describe('postTicketComment on the GitHub tracker', () => {
   it('refuses when the run records no repository at all', async () => {
     githubRun({ connection: null });
     await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
+  });
+
+  it('refuses a listed repository on a run with no connection, reading no list', async () => {
+    mocks.resolveSetting.mockResolvedValue(['acme/issues']);
+    githubRun({ connection: null, externalTicketId: 'acme/issues#5' });
+    await expect(postTicketComment({ body: 'X', workRequestId: 'wr-1' })).resolves.toEqual(REFUSED);
+    expect(mocks.resolveSetting).not.toHaveBeenCalled();
+    expect(mocks.addComment).not.toHaveBeenCalled();
   });
 
   it('reports a failed repository lookup without throwing', async () => {

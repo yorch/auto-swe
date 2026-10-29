@@ -48,16 +48,26 @@ export interface TrackerRepoScope {
   repos: ReadonlyArray<TrackerScopeRepo>;
 }
 
-/** The setting scope a repository's issue-repository allowlist resolves at. */
-function repoSettingCtx(repo: TrackerScopeRepo | undefined): SettingResolveCtx {
-  const ctx: SettingResolveCtx = {};
-  if (repo?.teamId) {
-    ctx.teamId = repo.teamId;
+/**
+ * The setting scope a repository's issue-repository allowlist resolves at. Null when there is no
+ * repository, or it names no owning team: an empty context would resolve at GLOBAL and skip every
+ * team and organization override, so the caller treats null as "no extra repositories".
+ */
+function repoSettingCtx(repo: TrackerScopeRepo | undefined): SettingResolveCtx | null {
+  if (!repo?.teamId) {
+    return null;
   }
-  if (repo?.team?.orgId) {
+  const ctx: SettingResolveCtx = { teamId: repo.teamId };
+  if (repo.team?.orgId) {
     ctx.orgId = repo.team.orgId;
   }
   return ctx;
+}
+
+/** {@link resolveTrackerIssueRepos} at a repository's scope; empty when it has no team context. */
+async function resolveRepoIssueRepos(repo: TrackerScopeRepo | undefined): Promise<string[]> {
+  const ctx = repoSettingCtx(repo);
+  return ctx ? resolveTrackerIssueRepos(ctx) : [];
 }
 
 /**
@@ -150,7 +160,7 @@ export async function repoTrackerScope(
   repos: ReadonlyArray<TrackerScopeRepo>
 ): Promise<TrackerRepoScope> {
   return {
-    extraRepos: await resolveTrackerIssueRepos(repoSettingCtx(repos[0])),
+    extraRepos: await resolveRepoIssueRepos(repos[0]),
     instanceBaseUrl: await resolveGitHubBaseUrl(),
     repos,
   };
@@ -203,8 +213,8 @@ export const RUN_TRACKER_SCOPE_SELECT = {
  * The repositories a run targets: its own connection when that is a git repository (a
  * connection of another type names no repository, whatever its org/repo columns say), plus every
  * git repository the launch was authorized against (`knowledgeRepoSources`, which an epic fills
- * for each target). The operator's extra repositories resolve at the run's own connection's team
- * and organization.
+ * for each target). The operator's extra repositories resolve at the run's own git connection's
+ * team and organization; a run with no such connection has no team context and gets none.
  */
 export async function runTrackerScope(run: {
   connection: (TrackerScopeRepo & { type: string }) | null;
@@ -234,7 +244,9 @@ export async function runTrackerScope(run: {
     repos.push(...rows);
   }
   return {
-    extraRepos: await resolveTrackerIssueRepos(repoSettingCtx(run.connection ?? undefined)),
+    extraRepos: await resolveRepoIssueRepos(
+      run.connection?.type === 'git_repo' ? run.connection : undefined
+    ),
     instanceBaseUrl: await resolveGitHubBaseUrl(),
     repos,
   };

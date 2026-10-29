@@ -228,7 +228,13 @@ describe('repoTrackerScope', () => {
 
   it('does not throw, and lists nothing, when the setting cannot be read', async () => {
     mocks.resolveSetting.mockRejectedValue(new Error('db down'));
+    expect((await repoTrackerScope([repo({ teamId: 'team-1' })])).extraRepos).toEqual([]);
+  });
+
+  it('lists nothing, and reads no setting, for a repository with no owning team', async () => {
+    mocks.resolveSetting.mockResolvedValue(['acme/issues']);
     expect((await repoTrackerScope([repo()])).extraRepos).toEqual([]);
+    expect(mocks.resolveSetting).not.toHaveBeenCalled();
   });
 });
 
@@ -337,6 +343,10 @@ describe('syncTrackerOnEvent', () => {
 
   it('refuses a listed repository when the setting cannot be read', async () => {
     mocks.resolveSetting.mockRejectedValue(new Error('db down'));
+    mocks.findRunInput.mockResolvedValue({
+      connection: { ...repo(), teamId: 'team-1', type: 'git_repo' },
+      knowledgeRepoSources: null,
+    });
     const warn = vi.fn();
     await syncTrackerOnEvent({ ...EVENT, issueId: 'acme/issues#5' }, GITHUB, {
       runInputId: 'wr-1',
@@ -347,6 +357,19 @@ describe('syncTrackerOnEvent', () => {
       event: 'workflow_completed',
       runInputId: 'wr-1',
     });
+  });
+
+  it('refuses a listed repository on a run with no connection', async () => {
+    mocks.resolveSetting.mockResolvedValue(['acme/issues']);
+    mocks.findRunInput.mockResolvedValue({ connection: null, knowledgeRepoSources: null });
+    const warn = vi.fn();
+    await syncTrackerOnEvent({ ...EVENT, issueId: 'acme/issues#5' }, GITHUB, {
+      runInputId: 'wr-1',
+      warn,
+    });
+    expect(mocks.resolveSetting).not.toHaveBeenCalled();
+    expect(mocks.syncOnEvent).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a GitHub ticket when the caller names no run', async () => {
@@ -361,12 +384,14 @@ describe('syncTrackerOnEvent', () => {
   });
 
   it("refuses when the run's connection is not a git repository", async () => {
+    mocks.resolveSetting.mockResolvedValue(['acme/web']);
     mocks.findRunInput.mockResolvedValue({
-      connection: { ...repo(), type: 'issue_tracker' },
+      connection: { ...repo(), teamId: 'team-1', type: 'issue_tracker' },
       knowledgeRepoSources: null,
     });
     const warn = vi.fn();
     await syncTrackerOnEvent(EVENT, GITHUB, { runInputId: 'wr-1', warn });
+    expect(mocks.resolveSetting).not.toHaveBeenCalled();
     expect(mocks.syncOnEvent).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(1);
   });
