@@ -88,6 +88,8 @@ export type {
   StepMetadata,
 } from './registry-types.js';
 export { BUILTIN_STEPS } from './registry-types.js';
+export type { ReportDigest, ReportDigestInput } from './reportDigest.js';
+export { buildReportDigest } from './reportDigest.js';
 export type {
   AutomationFireInput,
   AutomationReportRow,
@@ -224,6 +226,7 @@ export {
   durationPercentileFromBuckets,
   WORKFLOW_RUN_DAY_MS,
   WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS,
+  workflowRunRollupInputFromRun,
 } from './workflowRunRollup.js';
 export type {
   WorkflowRunDurationStats,

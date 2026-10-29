@@ -27,6 +27,7 @@ export { ScheduledEvalWorkflow } from './scheduledEval.js';
 export { ScheduledModelDiscoveryWorkflow } from './scheduledModelDiscovery.js';
 export { ScheduledRepoAccessSyncWorkflow } from './scheduledRepoAccessSync.js';
 export { ScheduledRepoDependencyScanWorkflow } from './scheduledRepoDependencyScan.js';
+export { ScheduledReportDigestWorkflow } from './scheduledReportDigest.js';
 export { ScheduledRevalidationWorkflow } from './scheduledRevalidation.js';
 export { ScheduledRunReaperWorkflow } from './scheduledRunReaper.js';
 export { ScheduledSkillSourceSyncWorkflow } from './scheduledSkillSourceSync.js';

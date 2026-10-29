@@ -328,7 +328,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                           <Th>Version</Th>
                           <Th align="right">Success rate (95% CI)</Th>
                           <Th align="right">Avg cost / run</Th>
-                          <Th align="right">p50 duration</Th>
+                          <Th align="right">p50 duration (approximate)</Th>
                           <Th align="right">Merge rate (resolved PRs, 95% CI)</Th>
                         </THead>
                         <tbody>

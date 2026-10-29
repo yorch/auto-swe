@@ -8,6 +8,7 @@ import {
   computeQualityReport,
   deliveryReportFromRollups,
   qualityMetricsFromRollups,
+  workflowRunRollupInputFromRun,
 } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -16,6 +17,7 @@ import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/date
 import { mapLimited } from '../lib/mapLimited.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
+import { teamMembershipFilter } from '../lib/templateLaunch.js';
 import { reachableConnections } from '../lib/tenantScope.js';
 import { planWindow } from '../lib/usageWindows.js';
 import {
@@ -212,30 +214,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             status: pr.status,
           }))
         ),
-        runs: liveRuns.map((run) => {
-          const active = run.workRequest?.activeWorkflows.find(
-            (workflow) => workflow.temporalWorkflowId === run.workflowId
-          );
-          return {
-            attributedOrgId: run.attributedOrgId,
-            attributedTeamId: run.attributedTeamId,
-            costUsdAccrued: Number(run.costUsdAccrued),
-            endedAt: run.endedAt,
-            estimatedHumanTimeSaved: run.estimatedHumanTimeSaved,
-            hadHumanStep: run.hadHumanStep,
-            id: run.id,
-            legacyCostUsd: Number(active?.costUsdAccrued ?? 0),
-            outcomeDomain: run.outcomeDomain,
-            outcomeType: run.outcomeType,
-            repoId: active?.repoId ?? run.connectionId,
-            startedAt: run.startedAt,
-            status: run.status,
-            templateId: run.templateId,
-            templateVersion: run.templateVersion,
-            wasAutonomous: run.wasAutonomous,
-            workflowId: run.workflowId,
-          };
-        }),
+        runs: liveRuns.map(workflowRunRollupInputFromRun),
         steps: fixSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
           runId: step.runId,
           status: step.status,
@@ -252,7 +231,12 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             fastify.prisma.connection.findMany({
               select: { id: true, organizationName: true, repoName: true },
               where: {
-                id: { in: unique(allRows.flatMap((row) => (row.repoId ? [row.repoId] : []))) },
+                AND: [
+                  {
+                    id: { in: unique(allRows.flatMap((row) => (row.repoId ? [row.repoId] : []))) },
+                  },
+                  reachableConnections(user, request.repoAccessGate),
+                ],
               },
             })
         ),
@@ -274,22 +258,44 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             fastify.prisma.workflowTemplate.findMany({
               select: { id: true, name: true },
               where: {
-                id: {
-                  in: unique(allRows.flatMap((row) => (row.templateId ? [row.templateId] : []))),
-                },
+                AND: [
+                  {
+                    id: {
+                      in: unique(
+                        allRows.flatMap((row) => (row.templateId ? [row.templateId] : []))
+                      ),
+                    },
+                  },
+                  teamMembershipFilter(user),
+                ],
               },
             })
         ),
       ]);
+      const repoNames = new Map(
+        unique(allRows.flatMap((row) => (row.repoId ? [row.repoId] : []))).map((repoId) => [
+          repoId,
+          'Inaccessible repository',
+        ])
+      );
+      for (const repo of repos) {
+        repoNames.set(
+          repo.id,
+          [repo.organizationName, repo.repoName].filter(Boolean).join('/') || repo.id
+        );
+      }
+      const templateNames = new Map(
+        unique(allRows.flatMap((row) => (row.templateId ? [row.templateId] : []))).map(
+          (templateId) => [templateId, 'Private template']
+        )
+      );
+      for (const template of templates) {
+        templateNames.set(template.id, template.name);
+      }
       const report = deliveryReportFromRollups(allRows, {
-        repos: new Map(
-          repos.map((repo) => [
-            repo.id,
-            [repo.organizationName, repo.repoName].filter(Boolean).join('/') || repo.id,
-          ])
-        ),
+        repos: repoNames,
         teams: new Map(teams.map((team) => [team.id, team.name])),
-        templates: new Map(templates.map((template) => [template.id, template.name])),
+        templates: templateNames,
       });
       return {
         data: {
@@ -342,11 +348,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             where: {
               AND: [
                 { startedAt: { gte: range.start, lt: range.end } },
-                workflowRunWithLegacyVisibility(
-                  user,
-                  visibility(user, request.repoAccessGate),
-                  request.query.teamId
-                ),
+                workflowRunAttributionWhere(scope),
               ],
             },
           })

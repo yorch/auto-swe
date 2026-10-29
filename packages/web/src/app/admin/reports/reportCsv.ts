@@ -13,11 +13,12 @@ function sectionRows(section: string, rows: Array<Record<string, unknown>>) {
 function rowsFor(tab: ReportTab, data: ReportTabData): Array<Record<string, unknown>> {
   if (tab === 'delivery') {
     const report = data as Extract<ReportTabData, { byTemplate: unknown[] }>;
-    const { byRepo, byTemplate, ...summary } = report;
+    const { byRepo, byTeam, byTemplate, ...summary } = report;
     return [
       ...sectionRows('summary', [summary]),
       ...sectionRows('byTemplate', byTemplate as Array<Record<string, unknown>>),
       ...sectionRows('byRepo', byRepo as Array<Record<string, unknown>>),
+      ...sectionRows('byTeam', byTeam as Array<Record<string, unknown>>),
     ];
   }
   if (tab === 'quality') {
@@ -64,7 +65,7 @@ function rowsFor(tab: ReportTab, data: ReportTabData): Array<Record<string, unkn
     );
   }
   const report = data as Extract<ReportTabData, { byApprover: unknown[] }>;
-  const { autonomy, byApprover, byKind, ...summary } = report;
+  const { autonomy, byApprover, byKind, byVia, ...summary } = report;
   return [
     ...sectionRows('summary', [summary]),
     ...sectionRows(
@@ -74,6 +75,10 @@ function rowsFor(tab: ReportTab, data: ReportTabData): Array<Record<string, unkn
       )
     ),
     ...sectionRows('approvers', report.byApprover as Array<Record<string, unknown>>),
+    ...sectionRows(
+      'byVia',
+      Object.entries(byVia).map(([via, count]) => ({ count, via }))
+    ),
     ...sectionRows(
       'autonomyByEvent',
       Object.entries(autonomy.byEvent).map(([event, count]) => ({ count, event }))

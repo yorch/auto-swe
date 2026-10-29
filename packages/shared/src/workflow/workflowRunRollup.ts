@@ -32,6 +32,56 @@ export interface WorkflowRunRollupRunInput {
   wasAutonomous: boolean | null;
 }
 
+export function workflowRunRollupInputFromRun(run: {
+  attributedOrgId: string | null;
+  attributedTeamId: string | null;
+  connectionId?: string | null;
+  costUsdAccrued: number | { toNumber(): number };
+  endedAt: Date | null;
+  estimatedHumanTimeSaved: number | null;
+  hadHumanStep: boolean | null;
+  id: string;
+  outcomeDomain: string | null;
+  outcomeType: string | null;
+  startedAt: Date;
+  status: string;
+  templateId: string;
+  templateVersion: number;
+  wasAutonomous: boolean | null;
+  workflowId: string;
+  workRequest?: {
+    activeWorkflows: readonly {
+      costUsdAccrued: number | { toNumber(): number };
+      repoId: string | null;
+      temporalWorkflowId: string;
+    }[];
+  } | null;
+}): WorkflowRunRollupRunInput {
+  const activeWorkflow = run.workRequest?.activeWorkflows.find(
+    (workflow) => workflow.temporalWorkflowId === run.workflowId
+  );
+  const toNumber = (value: number | { toNumber(): number }) =>
+    typeof value === 'number' ? value : value.toNumber();
+  return {
+    attributedOrgId: run.attributedOrgId,
+    attributedTeamId: run.attributedTeamId,
+    costUsdAccrued: toNumber(run.costUsdAccrued),
+    endedAt: run.endedAt,
+    estimatedHumanTimeSaved: run.estimatedHumanTimeSaved,
+    hadHumanStep: run.hadHumanStep,
+    id: run.id,
+    legacyCostUsd: activeWorkflow ? toNumber(activeWorkflow.costUsdAccrued) : 0,
+    outcomeDomain: run.outcomeDomain,
+    outcomeType: run.outcomeType,
+    repoId: activeWorkflow?.repoId ?? run.connectionId ?? null,
+    startedAt: run.startedAt,
+    status: run.status,
+    templateId: run.templateId,
+    templateVersion: run.templateVersion,
+    wasAutonomous: run.wasAutonomous,
+  };
+}
+
 export interface WorkflowRunRollupPullRequestInput {
   ciStatus: string;
   mergedAt: Date | null;
@@ -57,6 +107,7 @@ export interface WorkflowRunRollupRow {
   ciFixRoundsBuckets: number[];
   costUsd: number;
   day: Date;
+  dimensionKey: string;
   durationBuckets: number[];
   durationCount: number;
   durationMsSum: bigint;
@@ -203,8 +254,7 @@ export function buildWorkflowRunDailyRollups(
     const merged = prs.filter((pr) => pr.mergedAt !== null);
     const runCiFixes = ciFixes.get(run.id) ?? 0;
     const runRejected = rejected.has(run.id);
-    const key = JSON.stringify([
-      dayMs,
+    const dimensionKey = JSON.stringify([
       run.attributedOrgId,
       run.attributedTeamId,
       run.templateId,
@@ -216,12 +266,14 @@ export function buildWorkflowRunDailyRollups(
       run.wasAutonomous,
       run.hadHumanStep,
     ]);
+    const key = `${dayMs}:${dimensionKey}`;
     const row = rows.get(key) ?? {
       builtAt: now,
       ciFixAttempts: 0,
       ciFixRoundsBuckets: Array.from({ length: CI_FIX_ROUND_BUCKETS }, () => 0),
       costUsd: 0,
       day: new Date(dayMs),
+      dimensionKey,
       durationBuckets: durationBuckets(),
       durationCount: 0,
       durationMsSum: 0n,

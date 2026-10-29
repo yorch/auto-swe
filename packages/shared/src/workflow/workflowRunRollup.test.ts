@@ -7,6 +7,7 @@ import {
   combineWorkflowRunRollupRows,
   durationBucketForMs,
   durationPercentileFromBuckets,
+  workflowRunRollupInputFromRun,
 } from './workflowRunRollup.js';
 import {
   dailyRunSeriesFromRollups,
@@ -15,6 +16,58 @@ import {
 } from './workflowRunRollupReports.js';
 
 describe('WorkflowRun daily rollups', () => {
+  it('uses one run mapper for sweep and live inputs, including the workspace/repo fallback', () => {
+    const run = {
+      attributedOrgId: 'org',
+      attributedTeamId: 'team',
+      connectionId: 'workspace-connection',
+      costUsdAccrued: 0,
+      endedAt: null,
+      estimatedHumanTimeSaved: null,
+      hadHumanStep: null,
+      id: 'run-1',
+      outcomeDomain: null,
+      outcomeType: null,
+      startedAt: new Date('2026-10-01T10:00:00Z'),
+      status: 'SUCCESS',
+      templateId: 'template',
+      templateVersion: 1,
+      wasAutonomous: true,
+      workflowId: 'workflow-1',
+      workRequest: {
+        activeWorkflows: [
+          {
+            costUsdAccrued: 2,
+            repoId: 'repo',
+            temporalWorkflowId: 'workflow-1',
+          },
+        ],
+      },
+    };
+    const mappedForSweep = workflowRunRollupInputFromRun(run);
+    const mappedForLive = workflowRunRollupInputFromRun(run);
+    expect(mappedForSweep).toMatchObject({
+      legacyCostUsd: 2,
+      repoId: 'repo',
+    });
+    expect(
+      buildWorkflowRunDailyRollups({
+        now: run.startedAt,
+        pullRequests: [],
+        runs: [mappedForSweep],
+        steps: [],
+        traces: [],
+      })
+    ).toEqual(
+      buildWorkflowRunDailyRollups({
+        now: run.startedAt,
+        pullRequests: [],
+        runs: [mappedForLive],
+        steps: [],
+        traces: [],
+      })
+    );
+  });
   it('aggregates successful time saved, PRs, fallback spend, and CI fix histograms', () => {
     const start = new Date('2026-10-01T10:00:00Z');
     const rows = buildWorkflowRunDailyRollups({

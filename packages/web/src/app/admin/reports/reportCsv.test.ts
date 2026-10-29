@@ -61,9 +61,36 @@ describe('reportCsv', () => {
     for (const section of ['gates', 'fixLoops', 'reviewers', 'mergeByReviewOutcome']) {
       expect(quality).toContain(`"${section}"`);
     }
-    for (const section of ['summary', 'byKind', 'approvers', 'autonomyByEvent', 'autonomyByRisk']) {
+    for (const section of [
+      'summary',
+      'byKind',
+      'approvers',
+      'byVia',
+      'autonomyByEvent',
+      'autonomyByRisk',
+    ]) {
       expect(approvals).toContain(`"${section}"`);
     }
+    expect(approvals).toContain('"interactive"');
+    expect(approvals).toContain('"automated"');
+  });
+
+  it('exports the delivery by-team table', () => {
+    const csv = reportCsv('delivery', {
+      byRepo: [],
+      byTeam: [{ runsStarted: 2, spendUsd: 3, teamId: 'team-1', teamName: 'Payments' }],
+      byTemplate: [],
+      costPerMergedPr: null,
+      medianTimeToMergeMs: null,
+      prsCiPassed: 0,
+      prsMerged: 0,
+      runsStarted: 2,
+      runsSucceeded: 1,
+      runsWithPr: 0,
+      spendUsd: 3,
+    });
+    expect(csv).toContain('"byTeam"');
+    expect(csv).toContain('"Payments"');
   });
 
   it('exports budget organizations and their top runs as separate sections', () => {

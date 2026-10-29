@@ -114,11 +114,9 @@ describe('report routes', () => {
     const qualityRunQueries = prisma.workflowRun.findMany.mock.calls
       .slice(qualityStart)
       .map(([args]) => args);
-    expect(qualityRunQueries[0]?.where.AND[1].AND).toContainEqual(
-      expect.objectContaining({
-        OR: expect.arrayContaining([{ workRequest: { requestedById: 'user-1' } }]),
-      })
-    );
+    expect(qualityRunQueries[0]?.where.AND).toContainEqual({
+      OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
+    });
     expect(qualityRunQueries[1]?.where.AND).toContainEqual({
       OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
     });
@@ -210,11 +208,9 @@ describe('report routes', () => {
     }
 
     const qualityRunQuery = prisma.workflowRun.findMany.mock.calls[0]?.[0];
-    expect(qualityRunQuery?.where.AND[1].AND).toContainEqual(
-      expect.objectContaining({
-        OR: expect.arrayContaining([{ workRequest: { requestedById: 'user-1' } }]),
-      })
-    );
+    expect(qualityRunQuery?.where.AND).toContainEqual({
+      OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
+    });
     for (const [args] of prisma.workflowHumanStep.findMany.mock.calls) {
       expect(args.where.run.AND).toContainEqual(
         expect.objectContaining({

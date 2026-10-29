@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   type ClosedLedgerStatus,
   closedLedgerStatusFor,
@@ -64,6 +65,7 @@ export const CALLBACK_DELIVERY_PRUNE_SCHEDULE_ID = 'auto-swe-callback-delivery-p
 export const AGENT_TRANSCRIPT_PRUNE_SCHEDULE_ID = 'auto-swe-agent-transcript-prune';
 export const AGENT_TRACE_ROLLUP_SCHEDULE_ID = 'auto-swe-agent-trace-rollup';
 export const WORKFLOW_RUN_ROLLUP_SCHEDULE_ID = 'auto-swe-workflow-run-rollup';
+export const REPORT_DIGEST_SCHEDULE_ID = 'auto-swe-report-digest';
 export const AUDIT_ACTIVITY_PRUNE_SCHEDULE_ID = 'auto-swe-audit-activity-prune';
 
 /** Temporal Schedule ID for a ScheduledWorkRequest row. */
@@ -261,6 +263,11 @@ export interface WorkflowRunRollupScheduleConfig {
   cronExpression: string;
 }
 
+export interface ReportDigestScheduleConfig {
+  enabled: boolean;
+  cronExpression: string;
+}
+
 /**
  * The run-callback sweeps: one sends due deliveries, one deletes old ones. Each
  * workflow reads the outbox (and its retention setting) itself, so the
@@ -434,6 +441,8 @@ declare module 'fastify' {
       ) => Promise<void>;
       syncAgentTraceRollupSchedule: (config: AgentTraceRollupScheduleConfig) => Promise<void>;
       syncWorkflowRunRollupSchedule: (config: WorkflowRunRollupScheduleConfig) => Promise<void>;
+      syncReportDigestSchedule: (config: ReportDigestScheduleConfig) => Promise<void>;
+      triggerReportDigestTest: (subscriptionId: string) => Promise<void>;
       syncAuditActivityPruneSchedule: (config: AuditActivityPruneScheduleConfig) => Promise<void>;
       syncSkillSourceSyncSchedule: (config: SkillSourceSyncScheduleConfig) => Promise<void>;
       syncSlackChannelSyncSchedule: (config: SlackChannelSyncScheduleConfig) => Promise<void>;
@@ -1382,6 +1391,14 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
       });
     },
 
+    async syncReportDigestSchedule(config: ReportDigestScheduleConfig): Promise<void> {
+      await upsertSchedule(REPORT_DIGEST_SCHEDULE_ID, {
+        action: makeSweepAction('ScheduledReportDigestWorkflow'),
+        cronExpression: config.cronExpression,
+        paused: !config.enabled,
+      });
+    },
+
     // ── Re-validation schedule (one system-wide Temporal Schedule) ──
 
     async syncRevalidationSchedule(config: RevalidationScheduleConfig): Promise<void> {
@@ -1456,6 +1473,14 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
     async triggerRepoDependencyScanNow(): Promise<void> {
       const handle = schedules.getHandle(REPO_DEPENDENCY_SCAN_SCHEDULE_ID);
       await handle.trigger(ScheduleOverlapPolicy.SKIP);
+    },
+
+    async triggerReportDigestTest(subscriptionId: string): Promise<void> {
+      await client.workflow.start('ScheduledReportDigestWorkflow', {
+        args: [{ sendTest: true, subscriptionId }],
+        taskQueue: 'engineering-workflow',
+        workflowId: `report-digest-test-${subscriptionId}-${randomUUID()}`,
+      });
     },
 
     async triggerRevalidationNow(): Promise<void> {

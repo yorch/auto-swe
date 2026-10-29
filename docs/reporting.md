@@ -2,8 +2,8 @@
 
 The admin Reports page summarizes delivery, quality, budget, automation, and human-approval
 activity. The selected UTC date range applies to delivery, quality, automation, and approval
-reports. Budget reports always use the current UTC calendar month. Each tab exports its displayed
-report as a client-generated CSV.
+reports. Budget reports always use the current UTC calendar month. Each report tab exports its
+displayed sections as a client-generated CSV. The Digests tab manages scheduled weekly reports.
 
 Platform analytics time saved is the sum of each successful run's estimate, snapshotted from the
 template when the run started.
@@ -34,7 +34,10 @@ is used as the legacy fallback. Totals, template and repository slices, and cost
 request use that same run-level amount. Pull requests whose repository does not match their linked
 workflow are not attributed to a run.
 Delivery also groups the cohort by persisted team attribution, including an `Unattributed` row.
-The optional `teamId` filter applies to both the daily rollup and live slices.
+The optional `teamId` filter applies to both the daily rollup and live slices. Delivery labels
+repository, template, and team slices; inaccessible repository names appear as `Inaccessible
+repository`, and templates hidden by the workflow-template visibility rule appear as `Private
+template`, without dropping their counts.
 
 ## Quality
 
@@ -87,21 +90,42 @@ workflow-step metrics use an uncapped `groupBy` over the bounded run cohort. Bud
 intentionally show at most five runs per organization; each organization indicates when more
 ranked runs exist.
 
+## Weekly digests
+
+Digest subscriptions target exactly one organization or team and deliver weekly summaries by email,
+Slack, or both. They compare the last seven completed UTC days with the seven days before them,
+including delivery metrics, top templates, the worst gate when at least ten run/gate pairs exist,
+pending approval age, and organization budget status. Organization subscriptions include budget
+data; team subscriptions do not. Send-test delivers immediately without changing the scheduled
+last-sent timestamp.
+
+The weekly sweep runs Mondays at 13:00 UTC when `REPORT_DIGEST_ENABLED` is true. Configure
+`REPORT_DIGEST_CRON` to change the schedule. Email uses the platform SMTP configuration when
+available, otherwise the configured Resend transport.
+
 ## Limitations
 
-- Scheduled Slack and email report digests are not available.
 - CLI and MCP report commands are not available.
 - Non-ADMIN reporting visibility is based on persisted attribution: a row is included when its
   `teamId` (`WorkflowRun.attributedTeamId`) is one of the caller's member teams, or its `orgId`
   (`WorkflowRun.attributedOrgId`) is an organization where the caller is `ORG_ADMIN`. ADMIN sees
-  all rows. The same rule applies to rollup and live slices. A `teamId` filter is allowed only for
-  a team the caller belongs to or whose organization the caller administers; otherwise the route
-  returns 403. This replaces `buildWorkflowRunVisibilityFilter` for rollup-backed reports, while
-  non-rollup reads retain that visibility filter and add the team filter.
+  all rows, including null-attribution rows; null-attribution rows are excluded for everyone else.
+  This rule is applied to every slice in a rollup-backed response, including headline metrics,
+  group-bys, selected runs, steps, and quality traces. ORG_ADMIN therefore sees every run
+  attributed to their organization even when `buildWorkflowRunVisibilityFilter` would hide it;
+  requester-only and shared-connection visibility do not apply to these reports. A `teamId` filter
+  is allowed only for a caller's member team or a team in an organization they administer;
+  otherwise the route returns 403. Non-rollup reads retain the normal run-visibility filter and
+  add the selected team filter.
+- Template names hidden by the workflow-template visibility rule, channel names hidden by channel
+  access, and repository names blocked by the repository-access gate are masked as `Private
+  template`, `Private channel`, and `Inaccessible repository`; the corresponding counts remain.
 - Run and merge duration percentiles are approximate: values fall into logarithmically spaced
   buckets and the reader returns the bucket's geometric midpoint. CI-fix p95 and average use an
   exact attempt-count histogram for 0–19; its 20+ overflow bucket is represented as 20.
-- Rollups are rebuilt daily and recomputed over the configured horizon to include late outcomes.
+- Rollups are rebuilt daily and recomputed over the configured
+  `WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS` horizon to include late outcomes. Once a day is older than
+  that horizon it is frozen; later merges and run finalizations are not reflected in that day.
   `rollupDays` and `liveDays` show which dates came from each source; truncation flags apply only
   to live reads. Global analytics daily series and duration percentiles, template per-version
   duration/PR statistics, and delivery metrics use this hybrid reader. Duration and merge
@@ -116,3 +140,5 @@ ranked runs exist.
   principal and does not admit service-principal tokens.
 - Historical pull requests without a repository-matched active workflow and run remain unattributed.
 - Historical human-step and approval records do not have a resolution source and remain null.
+- Historical runs whose workspace connection (`runConnectionId`) differs from their repository
+  may be attributed differently by the backfill than by runtime attribution.

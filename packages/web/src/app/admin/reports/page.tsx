@@ -18,26 +18,30 @@ import {
   rangeQuery,
 } from '@/lib/dateRange';
 import { HELP_LINKS } from '@/lib/helpLinks';
+import { DigestsTab } from './DigestsTab';
 import { type ReportTab, type ReportTabData, ReportTabPanel } from './ReportTabPanel';
 import { reportCsv } from './reportCsv';
 
-const TABS: Array<{ id: ReportTab; label: string; filename: string }> = [
+type TabId = ReportTab | 'digests';
+
+const TABS: Array<{ id: TabId; label: string; filename: string }> = [
   { filename: 'delivery-report.csv', id: 'delivery', label: 'Delivery' },
   { filename: 'quality-report.csv', id: 'quality', label: 'Quality' },
   { filename: 'budget-report.csv', id: 'budget', label: 'Budget' },
   { filename: 'automations-report.csv', id: 'automations', label: 'Automations' },
   { filename: 'approvals-report.csv', id: 'hitl', label: 'Approvals' },
+  { filename: '', id: 'digests', label: 'Digests' },
 ];
 
-function selectedTab(value: string | null): ReportTab {
-  return TABS.some((tab) => tab.id === value) ? (value as ReportTab) : 'delivery';
+function selectedTab(value: string | null): TabId {
+  return TABS.some((tab) => tab.id === value) ? (value as TabId) : 'delivery';
 }
 
 function ReportsWorkspace() {
   const { params, update } = useUrlFilters();
   const teamsQuery = useTeams();
   const range = parseDateRange(params);
-  const [localTab, setLocalTab] = useState<ReportTab>('delivery');
+  const [localTab, setLocalTab] = useState<TabId>('delivery');
   const activeTab = selectedTab(params.get('tab') ?? localTab);
   const activeDefinition = TABS.find((tab) => tab.id === activeTab) ?? TABS[0];
   const query = new URLSearchParams(rangeQuery(range));
@@ -46,6 +50,7 @@ function ReportsWorkspace() {
     query.set('teamId', teamId);
   }
   const reportQuery = useQuery({
+    enabled: activeTab !== 'digests',
     queryFn: () =>
       api
         .get<{ data: ReportTabData }>(`/api/v1/reports/${activeTab}?${query}`)
@@ -56,6 +61,9 @@ function ReportsWorkspace() {
 
   function exportCsv() {
     if (!reportQuery.data) {
+      return;
+    }
+    if (activeTab === 'digests') {
       return;
     }
     const contents = reportCsv(activeTab, reportQuery.data);
@@ -73,15 +81,24 @@ function ReportsWorkspace() {
       <PageHeader
         actions={
           <div className="flex flex-wrap items-center gap-3">
-            <Button disabled={!reportQuery.data} onClick={exportCsv} size="sm" variant="secondary">
-              Export CSV
-            </Button>
-            <DateRangeControl
-              onChange={(next) => next && update(dateRangePatch(next))}
-              rangeIgnored={customRangeIgnored(params)}
-              value={range}
-            />
-            {activeTab !== 'budget' && (
+            {activeTab !== 'digests' && (
+              <Button
+                disabled={!reportQuery.data}
+                onClick={exportCsv}
+                size="sm"
+                variant="secondary"
+              >
+                Export CSV
+              </Button>
+            )}
+            {activeTab !== 'digests' && (
+              <DateRangeControl
+                onChange={(next) => next && update(dateRangePatch(next))}
+                rangeIgnored={customRangeIgnored(params)}
+                value={range}
+              />
+            )}
+            {activeTab !== 'budget' && activeTab !== 'digests' && (
               <label className="flex items-center gap-2 text-sm text-paper-300">
                 Team
                 <select
@@ -102,7 +119,7 @@ function ReportsWorkspace() {
           </div>
         }
         learnMore={{ ...HELP_LINKS.reporting }}
-        subtitle="Delivery, quality, budget, automation, and approval outcomes across workflow runs."
+        subtitle="Delivery, quality, budget, automation, approval outcomes, and weekly digests."
         title="Reports"
       />
       <div aria-label="Report tabs" className="flex flex-wrap gap-2" role="tablist">
@@ -122,9 +139,11 @@ function ReportsWorkspace() {
           </button>
         ))}
       </div>
-      {activeTab === 'budget' &&
-      reportQuery.error instanceof ApiError &&
-      reportQuery.error.status === 403 ? (
+      {activeTab === 'digests' ? (
+        <DigestsTab />
+      ) : activeTab === 'budget' &&
+        reportQuery.error instanceof ApiError &&
+        reportQuery.error.status === 403 ? (
         <EmptyState
           hint="An organization administrator can grant access to budget forecasts."
           title="Budget forecasts need org admin access"

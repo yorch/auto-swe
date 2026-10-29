@@ -85,6 +85,8 @@ function buildApp(state: {
   analyticsGroupByArgs?: Mutable[];
   teamRole?: string;
   teamAllowlist?: string[];
+  orgAdminOrgIds?: string[];
+  memberTeamIds?: string[];
 }): FastifyInstance {
   state.analyticsGroupByArgs ??= [];
   const app = Fastify();
@@ -171,7 +173,7 @@ function buildApp(state: {
           ).humanErrorBaselines ?? [],
       },
       organizationMembership: {
-        findMany: async () => [],
+        findMany: async () => (state.orgAdminOrgIds ?? []).map((orgId) => ({ orgId })),
       },
       pullRequest: {
         findMany: async (args: Mutable) => {
@@ -203,7 +205,7 @@ function buildApp(state: {
           teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
           userId: 'user-1',
         }),
-        findMany: async () => [],
+        findMany: async () => (state.memberTeamIds ?? []).map((teamId) => ({ teamId })),
         findUnique: async ({ where }: { where: Mutable }) => {
           const composite = where.userId_teamId as { userId: string; teamId: string };
           const teamRole = (state as { teamRole?: string }).teamRole ?? 'LEAD';
@@ -462,8 +464,22 @@ function buildApp(state: {
         },
         findMany: async ({ where }: { where?: Mutable }) => {
           (state as { listWheres?: Mutable[] }).listWheres?.push(where ?? {});
+          const ids = (where?.AND as Mutable[] | undefined)
+            ?.map((term) => term.id as { in?: string[] } | undefined)
+            .find(Boolean)?.in;
           const filtered = state.templates.filter((t) => {
+            if (ids && !ids.includes(t.id)) {
+              return false;
+            }
             if (where?.teamId && t.teamId !== where.teamId) {
+              return false;
+            }
+            if (
+              ids &&
+              state.userRole !== 'ADMIN' &&
+              t.teamId !== null &&
+              !state.memberTeamIds?.includes(t.teamId)
+            ) {
               return false;
             }
             return true;
@@ -1103,7 +1119,7 @@ describe('workflow-templates routes', () => {
         method: 'GET',
         url: '/api/v1/workflow-templates?q=%20Deploy%20',
       });
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode, res.body).toBe(200);
       const and = wheres[0]?.AND as Mutable[];
       expect(and).toHaveLength(3);
       // Term 0 is the caller's membership scope (global or a team they belong to).
@@ -2623,6 +2639,74 @@ describe('GET /workflow-templates/analytics', () => {
     );
   });
 
+  it('keeps attribution scope consistent across daily totals and masks private template names', async () => {
+    const startedAt = new Date(Date.now() - 60_000);
+    const state = {
+      orgAdminOrgIds: ['org-1'],
+      runs: [
+        {
+          attributedOrgId: 'org-1',
+          attributedTeamId: 'other-team',
+          costUsdAccrued: 0,
+          endedAt: startedAt,
+          hadHumanStep: false,
+          hasError: false,
+          id: 'org-run',
+          outcomeDomain: 'code',
+          outcomeType: null,
+          startedAt,
+          status: 'SUCCESS',
+          templateId: 'private-template',
+          wasAutonomous: true,
+        },
+      ],
+      templates: [
+        {
+          activeVersion: 1,
+          createdAt: startedAt,
+          description: '',
+          experimentSplit: null,
+          experimentVersion: null,
+          id: 'private-template',
+          isDefault: false,
+          name: 'Secret project',
+          status: 'ACTIVE',
+          team: null,
+          teamId: 'other-team',
+          updatedAt: startedAt,
+          versions: [],
+          workspaceProvider: null,
+        },
+      ],
+      userRole: 'ENGINEER',
+      versions: new Map(),
+    };
+    const scopedApp = buildApp(state);
+    await scopedApp.ready();
+    try {
+      const response = await scopedApp.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: '/api/v1/workflow-templates/analytics?window=30',
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      const data = response.json().data;
+      expect(data.totalRuns).toBe(1);
+      expect(
+        data.daily.reduce(
+          (sum: number, day: { completed: number; failed: number }) =>
+            sum + day.completed + day.failed,
+          0
+        )
+      ).toBe(data.totalRuns);
+      expect(data.perTemplate).toContainEqual(
+        expect.objectContaining({ templateName: 'Private template', totalRuns: 1 })
+      );
+    } finally {
+      await scopedApp.close();
+    }
+  });
+
   it('uses grouped aggregates beyond the duration and series cap', async () => {
     const makeRuns = (length: number) =>
       Array.from({ length }, (_, i) => ({
@@ -2807,7 +2891,9 @@ describe('GET /workflow-templates/analytics approval latency', () => {
     const caller = { exp: 9999999999, iat: 0, role: 'ENGINEER', sub: 'user-1' };
     const expected = buildWorkflowRunVisibilityFilter(caller as never, undefined);
     expect(Object.keys(expected)).toEqual(['OR']);
-    expect(where.run).toEqual(expected);
+    expect(where.run).toEqual({
+      OR: [{ attributedTeamId: { in: [] } }, { attributedOrgId: { in: [] } }],
+    });
     await app.close();
   });
 
@@ -3227,6 +3313,7 @@ describe('GET /workflow-templates/:id/analytics', () => {
       ],
       runs: [
         {
+          costUsdAccrued: 0,
           endedAt: new Date(),
           id: 'run-1',
           startedAt: new Date(Date.now() - 60 * 60 * 1000),
@@ -3293,7 +3380,7 @@ describe('GET /workflow-templates/:id/analytics', () => {
         method: 'GET',
         url: `/api/v1/workflow-templates/${TPL_ID}/analytics?window=30`,
       });
-      expect(res.statusCode).toBe(200);
+      expect(res.statusCode, res.body).toBe(200);
       expect(res.json().data.perStepFailureRates).toEqual([
         { failed: 1, failureRate: 0.5, nodeId: 'impl', total: 2 },
         { failed: 0, failureRate: 0, nodeId: 'openPR', total: 1 },

@@ -68,6 +68,7 @@ export async function syncSchedulesOnceConnected(
   app.temporal
     .syncWorkflowRunRollupSchedule(sweeps.workflowRunRollup)
     .catch(warn('workflow run rollup'));
+  app.temporal.syncReportDigestSchedule(sweeps.reportDigest).catch(warn('report digest'));
   // Deletes audit-log rows past their (opt-in) retention and activity events past theirs. On by
   // default; with no audit retention set it only prunes activity events.
   app.temporal

@@ -29,6 +29,11 @@ enum OrgRole {
   ORG_MEMBER
 }
 
+enum ReportDigestScope {
+  ORGANIZATION
+  TEAM
+}
+
 enum WorkflowRunStatus {
   RUNNING
   SUCCESS
@@ -891,6 +896,7 @@ model Organization {
   knowledgeItems      KnowledgeItem[]
   humanErrorBaselines HumanErrorBaseline[]
   attributedWorkflowRuns WorkflowRun[] @relation("WorkflowRunAttributedOrganization")
+  reportDigestSubscriptions ReportDigestSubscription[]
 
   configSettings    ConfigSetting[]
   configPermissions ConfigPermission[]
@@ -944,6 +950,7 @@ model Team {
   eventEndpoints        EventEndpoint[]
   workflowTemplates     WorkflowTemplate[]
   attributedWorkflowRuns WorkflowRun[]          @relation("WorkflowRunAttributedTeam")
+  reportDigestSubscriptions ReportDigestSubscription[]
   shellAudits           WorkflowShellAudit[]
   providerCredentials   ProviderCredential[]
   agents                Agent[]
@@ -1200,6 +1207,7 @@ model SlackChannel {
   members        SlackChannelMember[]
   monthlyUsage   ChannelMonthlyUsage[]
   openItems      ChannelOpenItem[]
+  reportDigestSubscriptions ReportDigestSubscription[]
   threadSessions ChannelThreadSession[]
   configSettings ConfigSetting[]
   workflowRuns   WorkflowRun[]
@@ -2047,6 +2055,7 @@ model WorkflowRun {
 model WorkflowRunDailyRollup {
   id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   day                      DateTime @db.Date
+  dimensionKey             String   @map("dimension_key")
   orgId                    String?  @map("org_id") @db.Uuid
   teamId                   String?  @map("team_id") @db.Uuid
   templateId               String?  @map("template_id") @db.Uuid
@@ -2079,11 +2088,33 @@ model WorkflowRunDailyRollup {
   runsWithPrMerged         Int      @map("runs_with_pr_merged")
   builtAt                  DateTime @default(now()) @map("built_at") @db.Timestamptz
 
+  @@unique([day, dimensionKey])
   @@index([day])
   @@index([orgId, day])
   @@index([teamId, day])
   @@index([templateId, day])
   @@map("workflow_run_daily_rollups")
+}
+
+model ReportDigestSubscription {
+  id               String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scope            ReportDigestScope
+  orgId            String?           @map("org_id") @db.Uuid
+  organization     Organization?     @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  teamId           String?           @map("team_id") @db.Uuid
+  team             Team?             @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  slackChannelId   String?           @map("slack_channel_id") @db.Uuid
+  slackChannel     SlackChannel?     @relation(fields: [slackChannelId], references: [id], onDelete: SetNull)
+  emailRecipients String[]          @default([]) @map("email_recipients")
+  enabled          Boolean           @default(true)
+  createdById      String            @map("created_by_id") @db.Uuid
+  lastSentAt       DateTime?         @map("last_sent_at") @db.Timestamptz
+  lastError        String?           @map("last_error")
+  createdAt        DateTime          @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime          @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([enabled])
+  @@map("report_digest_subscriptions")
 }
 
 /// Audit trail of autonomous governance decisions and human approvals for a run.

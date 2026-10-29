@@ -253,6 +253,7 @@ export { runAgentTask } from './runAgentTask.js';
 export type { RunEvalNodeInput, RunEvalNodeResult } from './runEvalNode.js';
 export { runEvalNode } from './runEvalNode.js';
 export { runReviewNetwork } from './runReviewNetwork.js';
+export { sendReportDigests } from './sendReportDigests.js';
 // Phase 6 — user-authored shell steps
 export type { ShellStepInput, ShellStepResult } from './shellStep.js';
 export { runShellStep } from './shellStep.js';

@@ -18,6 +18,7 @@ export interface DeliveryReportData {
     templateName: string;
     runsStarted: number;
   }>;
+  ciFixRounds?: { avgPerRun: number | null; p95PerRun: number | null };
   costPerMergedPr: number | null;
   medianTimeToMergeMs: number | null;
   prsCiPassed: number;
@@ -150,6 +151,16 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
             label="Cost per merged PR"
             value={report.costPerMergedPr === null ? '—' : `$${report.costPerMergedPr.toFixed(2)}`}
           />
+          {report.ciFixRounds && (
+            <Metric
+              label="CI-fix rounds per run with a PR"
+              value={
+                report.ciFixRounds.avgPerRun === null
+                  ? '—'
+                  : `${report.ciFixRounds.avgPerRun.toFixed(1)} avg · p95 ${report.ciFixRounds.p95PerRun ?? '—'}`
+              }
+            />
+          )}
           <Metric label="Median time to merge" value={duration(report.medianTimeToMergeMs)} />
         </dl>
         <h2 className="text-lg font-semibold text-paper-100">By template</h2>
@@ -213,7 +224,7 @@ export function ReportTabPanel({ data, tab }: { data: ReportTabData; tab: Report
             .filter((loop) => loop.runsWithFix > 0)
             .map(
               (loop) =>
-                `${loop.stepName}: ${loop.totalAttempts} attempts across ${loop.runsWithFix} runs (${loop.avgAttemptsPerRun?.toFixed(1)} average)`
+                `${loop.stepName}: ${loop.totalAttempts} attempts across ${loop.runsWithFix} runs (${loop.avgAttemptsPerRun?.toFixed(1)} attempts per run that needed a fix)`
             )}
         />
         <h2 className="text-lg font-semibold text-paper-100">Review network</h2>

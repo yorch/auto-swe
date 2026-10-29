@@ -1319,6 +1319,7 @@ export interface ScheduledSweepsConfig {
     backfillDays: number;
     recomputeDays: number;
   };
+  reportDigest: SweepSchedule;
   /// Deletes audit-log rows past `audit.configLogRetentionDays` and activity events past
   /// `analytics.activityRetentionDays`.
   auditActivityPrune: SweepSchedule;
@@ -1445,6 +1446,10 @@ export function resolveScheduledSweeps(): ScheduledSweepsConfig {
       cronExpression: envCron('REPO_DEPENDENCY_SCAN_CRON', '0 4 * * *'),
       enabled: envFlag('REPO_DEPENDENCY_SCAN_ENABLED', true),
     },
+    reportDigest: {
+      cronExpression: envCron('REPORT_DIGEST_CRON', '0 13 * * 1'),
+      enabled: envFlag('REPORT_DIGEST_ENABLED', true),
+    },
     runReaper: {
       cronExpression: envCron('RUN_REAPER_CRON', '*/15 * * * *'),
       enabled: envFlag('RUN_REAPER_ENABLED', true),
@@ -1522,6 +1527,8 @@ export function validateScheduledSweepsEnv(): string[] {
     (raw) => DAYS_RE.test(raw.trim()),
     'a whole number of days from 0 to 9999'
   );
+  check('REPORT_DIGEST_ENABLED', flag, "'true' or 'false'");
+  check('REPORT_DIGEST_CRON', cron, 'a five-field cron expression such as "0 13 * * 1"');
   check('AUDIT_ACTIVITY_PRUNE_ENABLED', flag, "'true' or 'false'");
   check('AUDIT_ACTIVITY_PRUNE_CRON', cron, 'a five-field cron expression such as "7 5 * * *"');
   check('SLACK_CHANNEL_SYNC_ENABLED', flag, "'true' or 'false'");
