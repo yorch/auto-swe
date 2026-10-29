@@ -244,6 +244,22 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/ciTrigger.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/prEvaluation',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/prEvaluation/index.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/prEvaluationEvidence',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/prEvaluationEvidence.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/prEvaluationPlatformPr',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/prEvaluationPlatformPr.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/prEvaluationWorkflow',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/prEvaluationWorkflow.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/canonicalPath',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/canonicalPath.ts'),
       },

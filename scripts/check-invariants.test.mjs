@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { envCredentialViolations, optInSuiteViolations } from './check-invariants.mjs';
+import {
+  autoMergeNamingViolations,
+  envCredentialViolations,
+  immediateMergeViolations,
+  optInSuiteViolations,
+} from './check-invariants.mjs';
 
 const PG = 'packages/gateway/src/routes/x.pg.test.ts';
 const DOCKER = 'packages/worker/src/agents/y.docker.test.ts';
@@ -205,5 +210,87 @@ describe('envCredentialViolations', () => {
   it('does not see an env built elsewhere (a documented gap)', () => {
     const src = S('const pairs = [`TOKEN=@{t}`];\nrun({ env: pairs });');
     expect(envCredentialViolations(src)).toEqual([]);
+  });
+});
+
+describe('immediateMergeViolations', () => {
+  it('passes auto-merge and source with no merge call', () => {
+    const src =
+      "await octokit.graphql('mutation { enablePullRequestAutoMerge(input: {}) { x } }');";
+    expect(immediateMergeViolations(src)).toEqual([]);
+    expect(immediateMergeViolations('const merged = pr.merged;\n')).toEqual([]);
+  });
+
+  it('reports pulls.merge, the REST merge route and the GraphQL mutation', () => {
+    for (const src of [
+      'await octokit.pulls.merge({ pull_number: 1 });',
+      'await octokit.rest.pulls .merge ({ pull_number: 1 });',
+      "await octokit.request('PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge', {});",
+      "await octokit.graphql('mutation { mergePullRequest(input: {}) { x } }');",
+    ]) {
+      expect(immediateMergeViolations(src)).toHaveLength(1);
+    }
+  });
+
+  it('reports the other immediate-merge spellings', () => {
+    for (const src of [
+      'await octokit.repos.merge({ base: "main", head: "x" });',
+      'await octokit.rest.repos .merge ({});',
+      "await octokit.repos['merge']({});",
+      'await octokit.rest.pulls["merge"]({});',
+      "await octokit.request('POST /repos/{owner}/{repo}/merges', {});",
+      "await fetch(api + '/repos/acme/api/merges', { method: 'POST' });",
+      "await octokit.graphql('mutation { enqueuePullRequest(input: {}) { x } }');",
+      "await octokit.graphql('mutation { mergeBranch(input: {}) { x } }');",
+      "await exec('git push origin HEAD:main');",
+      "await exec('git push origin HEAD:refs/heads/master');",
+      "await exec('git push --force origin HEAD:main');",
+    ]) {
+      expect(immediateMergeViolations(src), src).toHaveLength(1);
+    }
+  });
+
+  it('does not flag a push of a feature branch or an unrelated merge word', () => {
+    for (const src of [
+      "await exec('git push origin HEAD:auto/JIRA-1');",
+      "await exec('git push origin HEAD:mainline');",
+      'const merges = list.filter(Boolean);',
+      "await octokit.request('GET /repos/{owner}/{repo}/merges-list');",
+      'await git.merge(branch);',
+      'await mergeBranchNames(a, b);',
+    ]) {
+      expect(immediateMergeViolations(src), src).toEqual([]);
+    }
+  });
+
+  it('reports the line, and ignores comments', () => {
+    expect(immediateMergeViolations('a;\nawait c.pulls.merge({});\n')[0]?.line).toBe(2);
+    expect(immediateMergeViolations('// never call pulls.merge( here\n')).toEqual([]);
+    expect(immediateMergeViolations('/* mergePullRequest */\n')).toEqual([]);
+  });
+});
+
+describe('autoMergeNamingViolations', () => {
+  const NAMES = 'await scm.enableAutoMerge(repo, 1, opts);\n';
+  it.each([
+    'packages/worker/src/activities/evaluatePullRequest.ts',
+    'packages/worker/src/lib/scm/github.ts',
+    'packages/worker/src/lib/scm/types.ts',
+  ])('lets %s name the mutation', (file) => {
+    expect(autoMergeNamingViolations(file, NAMES)).toEqual([]);
+  });
+
+  it('reports any other file naming either spelling, with its line', () => {
+    const src =
+      'a;\nawait scm.enableAutoMerge(r, 1);\nq("mutation { enablePullRequestAutoMerge }");\n';
+    expect(autoMergeNamingViolations('packages/gateway/src/routes/x.ts', src)).toEqual([
+      { line: 2, text: 'await scm.enableAutoMerge(r, 1);' },
+      { line: 3, text: 'q("mutation { enablePullRequestAutoMerge }");' },
+    ]);
+  });
+
+  it('ignores comments and longer identifiers', () => {
+    const src = '// enableAutoMerge is not called here\nconst enableAutoMergeLater = 1;\n';
+    expect(autoMergeNamingViolations('packages/worker/src/other.ts', src)).toEqual([]);
   });
 });

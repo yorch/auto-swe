@@ -134,6 +134,19 @@ bundles install <path> [--overwrite-protected]
 bundles install-from-url <url> [--overwrite-protected]
                                      Install a bundle from a URL
 
+pr-policy init [--dir <path>] [--force]
+                                     Write .auto-swe/pr-policy.yml (local, no token), pre-filling
+                                     sensitivePaths from the sensitive directories present;
+                                     refuses to overwrite without --force
+pr-policy validate [file]            Check a policy file offline (default .auto-swe/pr-policy.yml);
+                                     errors exit 1, warnings print and exit 0
+pr-policy status <repoId>            Show a repository's PR evaluation mode, the last evaluation
+                                     and the auto-merge evidence
+pr-policy mode <repoId> <off|advisory|auto|inherit>
+                                     Set a repository's PR evaluation mode; inherit restores the
+                                     deployment default. auto is platform-admin only and is refused
+                                     with the reasons it is not ready (exit 1)
+
 evals list                           List eval datasets (admin token)
 evals show <id>                      Print a dataset's cases
 evals rescreen <id> [--case=<case-id>]
@@ -151,6 +164,9 @@ evals run <dataset-slug> --candidate=<ref> --against=<ref>
 
 help                                 Show usage
 ```
+
+`pr-policy init` and `pr-policy validate` are token-free and offline; `pr-policy status` and
+`pr-policy mode` call the gateway (see [`docs/pr-evaluation.md`](../../docs/pr-evaluation.md)).
 
 `bundle` (singular) is token-free local authoring over `@auto-swe/sdk`; `bundles`
 (plural) hits `/api/v1/platform/bundles` and needs an admin token. `evals` also needs an

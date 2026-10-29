@@ -40,7 +40,7 @@ export function withAcknowledgeHint(err: unknown): unknown {
   );
 }
 
-type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 /**
  * The request never produced a response — DNS, refused connection, TLS. Node's

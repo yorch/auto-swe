@@ -12,6 +12,7 @@
  */
 
 import type { PermissionLookup } from '@auto-swe/shared/lib/githubPermission';
+import type { ChangedFile } from '@auto-swe/shared/lib/prEvaluation';
 
 export type { PermissionLookup, RepoPermission } from '@auto-swe/shared/lib/githubPermission';
 
@@ -160,6 +161,94 @@ export interface PullRequestInfo {
   baseRef: string;
   htmlUrl: string;
 }
+
+/** A pull request as the PR evaluator reads it. */
+export interface PullRequestDetails {
+  number: number;
+  /** The author's login; null when the account was deleted. */
+  author: string | null;
+  headSha: string;
+  baseBranch: string;
+  headBranch: string;
+  draft: boolean;
+  merged: boolean;
+  state: 'open' | 'closed';
+  title: string;
+  /** The GraphQL node id, which the draft and auto-merge mutations name. */
+  nodeId: string;
+  /**
+   * GitHub's own current auto-merge state for this pull request (its `auto_merge` field), whoever
+   * enabled it. `method` is the merge method the host reports, when it does.
+   */
+  autoMerge: { enabled: boolean; method?: string };
+}
+
+/**
+ * The changed files of a pull request. `truncated` is true when the list is not provably the
+ * whole change (the file cap or page cap was hit, or the PR reports more files than came back);
+ * callers fail closed on it rather than classifying a partial list.
+ */
+export interface PullRequestFiles {
+  files: ChangedFile[];
+  truncated: boolean;
+}
+
+/** One submitted review of a pull request. Reviews by deleted accounts are not listed. */
+export interface PullRequestReviewSummary {
+  login: string;
+  /** Upper-cased: `APPROVED`, `CHANGES_REQUESTED`, `COMMENTED`, `DISMISSED`, `PENDING`. */
+  state: string;
+  /** The commit the review was submitted against. */
+  commitId: string;
+  submittedAt: string | null;
+}
+
+export type CommitStatusState = 'pending' | 'success' | 'failure' | 'error';
+
+export interface CommitStatusInput {
+  context: string;
+  state: CommitStatusState;
+  /** Truncated to 140 characters, the host's limit. */
+  description: string;
+  targetUrl?: string;
+}
+
+/** `ok: false` is a refusal by the host (no permission, a validation error), never a crash. */
+export interface ScmActionResult {
+  ok: boolean;
+  reason?: string;
+}
+
+/**
+ * What the host enforces on a branch, from classic branch protection and from rulesets, plus
+ * whether the repository allows auto-merge.
+ *
+ * Every field is `'unknown'` when it could not be established, and never `false` or empty in
+ * that case: reading protection needs admin access, so a 403 or 404 means "could not tell"
+ * (a 404 is "unprotected" only when the host says `Branch not protected`). A boolean is `true`
+ * as soon as any source says so; `false` and the numeric and list fields need EVERY source to
+ * have answered. `source` names the sources that reported a rule.
+ */
+export interface BranchRules {
+  /** True only when the effective required approving review count is at least one. */
+  requiresReviews: boolean | 'unknown';
+  requiredReviewCount: number | 'unknown';
+  requiresCodeOwnerReview: boolean | 'unknown';
+  requiredStatusContexts: string[] | 'unknown';
+  /**
+   * True only when every source that requires the configured status context ties it to OUR
+   * App (`app_id` on classic protection, `integration_id` in a ruleset, equal to the expected
+   * App id). False when a source requires it from any source or from another App, which a
+   * token that is not ours can satisfy under that name. `'unknown'` when a source was
+   * unreadable, no context was asked about, no expected App id is known, or the context is
+   * not required anywhere.
+   */
+  requiredStatusPinnedToApp: boolean | 'unknown';
+  allowsAutoMerge: boolean | 'unknown';
+  source: 'protection' | 'rulesets' | 'both' | 'none' | 'unknown';
+}
+
+export type AutoMergeMethod = 'SQUASH' | 'MERGE' | 'REBASE';
 
 /** A branch's tip and whether the host protects it. */
 export interface BranchInfo {
@@ -386,4 +475,47 @@ export interface ScmProvider {
    * because silently moving another run's branch is worse than failing.
    */
   createBranch(repo: RepoRef, branch: string, sha: string): Promise<CreateBranchResult>;
+  /** A pull request's details for evaluation, or null when it does not exist. */
+  getPullRequest(repo: RepoRef, prNumber: number): Promise<PullRequestDetails | null>;
+  /**
+   * The pull request's changed files, at most 3000 (the host's own limit) over a bounded number
+   * of pages. `truncated` is set when the list may be partial. Status values the evaluator
+   * cannot treat specially (`copied`, `changed`, `unchanged`) are reported as `modified`.
+   */
+  listPullRequestFiles(repo: RepoRef, prNumber: number): Promise<PullRequestFiles>;
+  /** Every submitted review (bounded pages), newest last, skipping reviews by deleted accounts. */
+  listPullRequestReviews(repo: RepoRef, prNumber: number): Promise<PullRequestReviewSummary[]>;
+  /**
+   * Set a commit status. Resolves `{ ok: false, reason }` when the host refuses (403, 422);
+   * other errors propagate.
+   */
+  setCommitStatus(repo: RepoRef, sha: string, input: CommitStatusInput): Promise<ScmActionResult>;
+  /**
+   * What the host enforces on `branch`; `context` is the status context whose pinning to an App
+   * is reported and `expectedAppId` is the platform's own GitHub App id it must be pinned to
+   * (null: unknown, so pinning is reported `'unknown'`). Never throws on an API refusal; see {@link BranchRules}.
+   */
+  readBranchRules(
+    repo: RepoRef,
+    branch: string,
+    context?: string,
+    expectedAppId?: number | null
+  ): Promise<BranchRules>;
+  /**
+   * Ask the host to merge the pull request once its own requirements are met, and only if the
+   * head is still `expectedHeadSha` (sent as `expectedHeadOid`, so a push after evaluation is
+   * refused by the host).
+   *
+   * It never merges immediately: the host merges when branch protection is satisfied. It is the
+   * one merge-capable call the platform makes on purpose; `yarn invariants:check` is a tripwire
+   * over source text that fails on a known immediate-merge spelling elsewhere (it does not see an
+   * aliased client or a route built from pieces). Resolves `{ ok: false, reason }` on a refusal.
+   */
+  enableAutoMerge(
+    repo: RepoRef,
+    prNumber: number,
+    input: { method: AutoMergeMethod; expectedHeadSha: string }
+  ): Promise<ScmActionResult>;
+  /** Cancel a pending auto-merge (a push invalidated the evaluation that enabled it). */
+  disableAutoMerge(repo: RepoRef, prNumber: number): Promise<ScmActionResult>;
 }

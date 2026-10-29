@@ -34,6 +34,17 @@ vi.mock('../lib/systemConfigService.js', () => ({
   writeSystemConfigAudit: (...args: unknown[]) => writeAudit(...args),
 }));
 
+const sweep = vi.fn(async (..._args: unknown[]) => ({
+  failed: 0,
+  found: 0,
+  started: 0,
+  truncated: false,
+}));
+vi.mock('../lib/prEvaluationSweep.js', async (orig) => ({
+  ...(await orig<typeof import('../lib/prEvaluationSweep.js')>()),
+  sweepArmedPullRequests: (...args: unknown[]) => sweep(...args),
+}));
+
 import { _resetConfigCacheForTests } from '@auto-swe/shared/config/cache';
 import { prisma } from '@auto-swe/shared/db';
 import { configSettingsRoutes } from './configSettings.js';
@@ -745,6 +756,61 @@ describe('grants', () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error.code).toBe('GRANT_INVALID_KEY_PATTERN');
+    await app.close();
+  });
+});
+
+describe('kill switches sweep armed pull requests', () => {
+  const put = (app: Awaited<ReturnType<typeof buildApp>>, key: string, value: unknown) =>
+    app.inject({
+      headers: auth('ADMIN'),
+      method: 'PUT',
+      payload: { value },
+      url: `/api/v1/platform/config/settings/${key}`,
+    });
+
+  it.each(['prEvaluation.enabled', 'prEvaluation.autoMergeAllowed'])(
+    'sweeps deployment-wide, capped, when %s is written false',
+    async (key) => {
+      const app = await buildApp();
+      expect((await put(app, key, false)).statusCode).toBe(200);
+      expect(sweep).toHaveBeenCalledTimes(1);
+      expect(sweep.mock.calls[0][2]).toEqual({ cap: 500 });
+      await app.close();
+    }
+  );
+
+  it('does not sweep when the switch is written true, or for another setting', async () => {
+    const app = await buildApp();
+    await put(app, 'prEvaluation.enabled', true);
+    await put(app, 'channel.historyMessageLimit', 10);
+    expect(sweep).not.toHaveBeenCalled();
+    await app.close();
+  });
+
+  it('sweeps when a stored switch is cleared, because the default is off', async () => {
+    configSetting.findFirst.mockResolvedValue({ id: 'row-1', value: true } as never);
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ADMIN'),
+      method: 'DELETE',
+      url: '/api/v1/platform/config/settings/prEvaluation.enabled',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(sweep).toHaveBeenCalledTimes(1);
+    await app.close();
+  });
+
+  it('does not sweep a write that was refused', async () => {
+    const app = await buildApp();
+    const res = await app.inject({
+      headers: auth('ENGINEER'),
+      method: 'PUT',
+      payload: { value: false },
+      url: '/api/v1/platform/config/settings/prEvaluation.enabled',
+    });
+    expect(res.statusCode).toBe(403);
+    expect(sweep).not.toHaveBeenCalled();
     await app.close();
   });
 });

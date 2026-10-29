@@ -22,6 +22,14 @@ import {
   validateBundleScannerPatterns,
   verifyContentHash,
 } from '@auto-swe/shared/bundle';
+import {
+  DEFAULT_SENSITIVE_PATHS,
+  DEFAULT_THRESHOLDS,
+  mergePolicy,
+  type PolicyFloor,
+  parsePolicyFile,
+  type RepoPolicyFile,
+} from '@auto-swe/shared/lib/prEvaluation';
 import type { ContainerStepNode } from '@auto-swe/shared/workflow';
 
 // ── Entity helpers — identity functions that pin the type for editor help. ──
@@ -147,6 +155,36 @@ export function validateBundle(manifest: unknown): ValidateBundleResult {
     };
   }
   return { bundle, ok: true };
+}
+
+// ── Repository PR policy ──
+// The validator a repository runs on `.auto-swe/pr-policy.yml` before it is merged: the same
+// parser and merge the platform applies to the file on the base branch, over the platform's
+// default thresholds and default sensitive paths. Pure; no network, no token.
+export { MAX_POLICY_FILE_BYTES } from '@auto-swe/shared/lib/prEvaluation';
+
+export interface ValidatePrPolicyResult {
+  ok: boolean;
+  errors: string[];
+  /** Rules the file tried to loosen or move past the platform floor; the file is still valid. */
+  warnings: string[];
+  policy?: RepoPolicyFile;
+}
+
+export function validatePrPolicy(text: string): ValidatePrPolicyResult {
+  const parsed = parsePolicyFile(text);
+  if (parsed.policy === undefined) {
+    return { errors: parsed.errors, ok: false, warnings: [] };
+  }
+  const floor: PolicyFloor = {
+    ...DEFAULT_THRESHOLDS,
+    sensitivePaths: [...DEFAULT_SENSITIVE_PATHS],
+  };
+  const merged = mergePolicy(floor, parsed.policy);
+  if (merged.fileRejected) {
+    return { errors: merged.warnings, ok: false, warnings: [] };
+  }
+  return { errors: [], ok: true, policy: parsed.policy, warnings: merged.warnings };
 }
 
 // ── Signed webhooks ──

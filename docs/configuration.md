@@ -59,6 +59,15 @@ The `mcp` group holds the switches and bounds of the MCP server: `mcp.enabled`,
 per request, so they take effect within the settings cache's ~30 s with no restart; see
 [mcp-server.md](./mcp-server.md#settings).
 
+The `prEvaluation` group holds the risk thresholds, approver counts, sensitive-path globs and the
+auto-merge gate for the pull requests the platform opens: `prEvaluation.enabled` (default off, the
+kill switch), `prEvaluation.defaultMode`, `prEvaluation.autoMergeAllowed` (default off),
+`prEvaluation.autoMinEvidence`, `prEvaluation.requiredStatusContext`, the size thresholds and the
+approver counts. All are ADMIN-only; the switches, the evidence minimum and the context are GLOBAL
+only, the rest overridable at team and organization. Turning `prEvaluation.enabled` or
+`prEvaluation.autoMergeAllowed` off also starts the disarm sweep described in
+[pr-evaluation.md](./pr-evaluation.md#8-when-auto-merge-is-armed).
+
 The `models` group holds `models.privateNetworkHosts` (ADMIN-only, GLOBAL only, default empty): hosts a
 provider credential's `apiBase` may name even though they are, or resolve to, a private address. It lifts
 the private-address refusal everywhere the host is checked. Saving a credential checks the `apiBase` as

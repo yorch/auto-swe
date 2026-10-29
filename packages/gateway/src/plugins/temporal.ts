@@ -13,6 +13,10 @@ import {
   assistantConversationWorkflowId,
   assistantTitleWorkflowId,
 } from '@auto-swe/shared/lib/assistantConversation';
+import {
+  PR_EVALUATION_WORKFLOW_TYPE,
+  type PrEvaluationInput,
+} from '@auto-swe/shared/lib/prEvaluationWorkflow';
 import { resolveTemporalAddress } from '@auto-swe/shared/lib/systemConfig';
 import { traceContextClientInterceptor } from '@auto-swe/shared/lib/temporalTracing';
 import type { ExecutorImageProbeResult, ImplementerRuntimeKind } from '@auto-swe/shared/types/api';
@@ -398,6 +402,11 @@ declare module 'fastify' {
        * a screen already running under the same id instead of failing.
        */
       startEvalScreenWorkflow: (workflowId: string, input: EvalScreenInput) => Promise<void>;
+      /**
+       * Evaluate one pull request. The id is derived from the webhook delivery, so a
+       * redelivery (even after the first run finished) is a no-op rather than an error.
+       */
+      startPrEvaluationWorkflow: (workflowId: string, input: PrEvaluationInput) => Promise<void>;
       startConsolidationWorkflow: (
         workflowId: string,
         input: ConsolidateLessonsInput
@@ -1192,6 +1201,23 @@ const temporalPlugin: FastifyPluginAsync<TemporalPluginOptions> = async (fastify
           taskQueue: 'engineering-workflow',
           workflowId,
           workflowIdConflictPolicy: WorkflowIdConflictPolicy.USE_EXISTING,
+        });
+      } catch (err) {
+        if (getErrorName(err) !== 'WorkflowExecutionAlreadyStartedError') {
+          throw err;
+        }
+      }
+    },
+
+    async startPrEvaluationWorkflow(workflowId: string, input: PrEvaluationInput): Promise<void> {
+      // REJECT_DUPLICATE: the id names a delivery, and a redelivered one must not evaluate
+      // again, whether the first run is still going or already closed.
+      try {
+        await client.workflow.start(PR_EVALUATION_WORKFLOW_TYPE, {
+          args: [input],
+          taskQueue: 'engineering-workflow',
+          workflowId,
+          workflowIdReusePolicy: WorkflowIdReusePolicy.REJECT_DUPLICATE,
         });
       } catch (err) {
         if (getErrorName(err) !== 'WorkflowExecutionAlreadyStartedError') {

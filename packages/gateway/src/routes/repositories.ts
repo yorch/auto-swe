@@ -26,6 +26,7 @@ import { GitHubTokenMissingError, listGitHubRepos } from '../lib/github.js';
 import { sendError } from '../lib/httpErrors.js';
 import { paginationQuery } from '../lib/pagination.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
+import { REPOSITORY_SWEEP_CAP, sweepArmedPullRequests } from '../lib/prEvaluationSweep.js';
 import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import { booleanQueryParam } from '../lib/queryParams.js';
 import { insensitiveName } from '../lib/repositoryHost.js';
@@ -1228,6 +1229,21 @@ export const repositoryRoutes: FastifyPluginAsync = async (fastify) => {
       // repository, so schedules owned by a team with no remaining claim stop.
       if (moving) {
         await deactivateSchedulesOutsideTeamsQuietly(fastify, repo.id, request.log, user.sub);
+      }
+      // A deactivated repository is evaluated no more, so an auto-merge the platform armed on one
+      // of its pull requests would otherwise stay armed. Best effort: the update has happened.
+      if (isActive === false) {
+        try {
+          await sweepArmedPullRequests(fastify, request.log, {
+            cap: REPOSITORY_SWEEP_CAP,
+            connectionId: repo.id,
+          });
+        } catch (err) {
+          request.log.error(
+            { connectionId: repo.id, err },
+            'pull request disarm sweep after a deactivation failed (non-fatal)'
+          );
+        }
       }
       // A gate command runs in every run's workspace, so who set which is kept, like a
       // template's `WorkflowShellAudit` row.

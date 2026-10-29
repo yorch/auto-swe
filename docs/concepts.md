@@ -58,8 +58,8 @@ through the **scope cascade**, so one platform can behave differently per team.
 
 - **Gate** — A place a run stops for a person. The human nodes — `humanApproval`, `humanDecision`,
   `humanInput`, and `humanReview` — park the run until someone answers in the approvals inbox or in
-  Slack, or until a timeout routes it elsewhere. Merging a pull request is the gate no template
-  automates. See [hitl-workflows.md](./hitl-workflows.md).
+  Slack, or until a timeout routes it elsewhere. By default merging a pull request is the gate no template
+  automates; the one opt-in exception is a repository's `auto` mode ([pr-evaluation.md](./pr-evaluation.md)). See [hitl-workflows.md](./hitl-workflows.md).
 
 - **Autonomy policy** — The rule that decides whether an action may happen without a person —
   posting a public reply, filing an issue — per risk class, team, and template. It fails closed. See

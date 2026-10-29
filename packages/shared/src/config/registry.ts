@@ -47,6 +47,14 @@ const githubOrgLogin = z
   .string()
   .regex(/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/, 'must be a lowercase GitHub organization login')
   .max(39);
+/// Extra sensitive-path globs: may be empty (the built-in list always applies), bounded in
+/// count and length so a stored value cannot become a regex-cost or payload problem.
+const prEvaluationSensitivePaths = z.array(z.string().trim().min(1).max(200)).max(100);
+/// A GitHub commit status context: printable, no whitespace edges, bounded.
+const prEvaluationStatusContext = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9 ._/:-]*$/, 'must be a plain status context name')
+  .max(100);
 const ratio = z.number().min(0).max(1);
 /// An `owner/repo` on the GitHub tracker's host. The characters are the ones
 /// `parseGitHubTicketId` accepts in a ticket id, so an entry can only ever name
@@ -683,6 +691,169 @@ export const SETTING_DEFINITIONS = {
     runPinned: false,
     schema: hostList,
     sensitive: true,
+  }),
+
+  // ── Pull request evaluation ────────────────────────────────────────────────
+  // Risk class, approver counts and the auto-merge gate for the pull requests the
+  // platform opens. Every knob is ADMIN-only: each one moves a safety floor.
+  'prEvaluation.autoMergeAllowed': defineSetting({
+    defaultValue: false,
+    description:
+      'Whether a repository set to auto mode may ask GitHub to auto-merge a low-risk pull request the platform opened. Off, auto mode behaves as advisory. Deployment-wide: it is the one switch that lets the platform enable GitHub auto-merge at all.',
+    group: 'prEvaluation',
+    label: 'Allow auto-merge',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'prEvaluation.autoMinEvidence': defineSetting({
+    defaultValue: 150,
+    description:
+      'How many low-risk pull requests merged in the last 90 days, with none reverted or marked a bad merge, a deployment needs before any repository may use auto mode.',
+    group: 'prEvaluation',
+    label: 'Evidence required for auto mode',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(10000),
+    unit: 'pull requests',
+  }),
+  'prEvaluation.defaultMode': defineSetting({
+    defaultValue: 'advisory',
+    description:
+      'The evaluation mode of a repository that has not chosen one: off evaluates nothing, advisory posts a commit status and a review brief. Auto is never a default; it is a per-repository choice.',
+    group: 'prEvaluation',
+    label: 'Default evaluation mode',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.enum(['off', 'advisory']),
+  }),
+  'prEvaluation.enabled': defineSetting({
+    defaultValue: false,
+    description:
+      'Whether the platform evaluates the risk of the pull requests it opens. Off, no evaluation runs and no commit status is posted, whatever a repository chose. The kill switch for the feature.',
+    group: 'prEvaluation',
+    label: 'Enable pull request evaluation',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: z.boolean(),
+  }),
+  'prEvaluation.highApprovers': defineSetting({
+    defaultValue: 2,
+    description: 'Approving reviews required on a pull request classed high risk.',
+    group: 'prEvaluation',
+    label: 'Approvers for high-risk pull requests',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(10),
+    unit: 'approvers',
+  }),
+  'prEvaluation.highLines': defineSetting({
+    defaultValue: 1000,
+    description:
+      'Changed lines (additions plus deletions, excluding files proven safe to skim) above which a pull request is classed high risk.',
+    group: 'prEvaluation',
+    label: 'High-risk line threshold',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(1000000),
+    unit: 'lines',
+  }),
+  'prEvaluation.lowApprovers': defineSetting({
+    defaultValue: 1,
+    description: 'Approving reviews required on a pull request classed low risk.',
+    group: 'prEvaluation',
+    label: 'Approvers for low-risk pull requests',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(10),
+    unit: 'approvers',
+  }),
+  'prEvaluation.maxLowDirs': defineSetting({
+    defaultValue: 5,
+    description:
+      'Distinct directories (top two path levels) a pull request may touch and still be classed low risk.',
+    group: 'prEvaluation',
+    label: 'Most directories for low risk',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(1000),
+    unit: 'directories',
+  }),
+  'prEvaluation.maxLowFiles': defineSetting({
+    defaultValue: 15,
+    description: 'Files a pull request may change and still be classed low risk.',
+    group: 'prEvaluation',
+    label: 'Most files for low risk',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(10000),
+    unit: 'files',
+  }),
+  'prEvaluation.maxLowLines': defineSetting({
+    defaultValue: 400,
+    description: 'Changed lines a pull request may carry and still be classed low risk.',
+    group: 'prEvaluation',
+    label: 'Most changed lines for low risk',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(1000000),
+    unit: 'lines',
+  }),
+  'prEvaluation.requiredStatusContext': defineSetting({
+    defaultValue: 'auto-swe/pr-evaluation',
+    description:
+      'The commit status context the evaluation posts. Mark this context required in the repository branch protection for the approver count to be enforced.',
+    group: 'prEvaluation',
+    label: 'Commit status context',
+    overridableAt: [],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: prEvaluationStatusContext,
+  }),
+  'prEvaluation.sensitivePaths': defineSetting({
+    defaultValue: [],
+    description:
+      'Globs, added to the built-in list, of paths whose change always classes a pull request high risk and never allows auto-merge. Matched case-insensitively on the repository-relative path.',
+    group: 'prEvaluation',
+    label: 'Extra sensitive path globs',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: prEvaluationSensitivePaths,
+  }),
+  'prEvaluation.standardApprovers': defineSetting({
+    defaultValue: 1,
+    description: 'Approving reviews required on a pull request classed standard risk.',
+    group: 'prEvaluation',
+    label: 'Approvers for standard-risk pull requests',
+    overridableAt: ['TEAM', 'ORGANIZATION'],
+    requiredRole: 'ADMIN',
+    restartRequired: false,
+    runPinned: false,
+    schema: positiveInt.max(10),
+    unit: 'approvers',
   }),
 
   // ── Qodo ───────────────────────────────────────────────────────────────────

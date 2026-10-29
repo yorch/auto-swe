@@ -115,7 +115,7 @@ Then watch it:
 | Temporal UI, `http://localhost:8233` | The durable workflow underneath: its event history and signals |
 
 The run ends with a pull request on your repository and then waits for a person to merge it.
-auto-swe never merges.
+By default auto-swe never merges (the opt-in `auto` mode of [pr-evaluation.md](./pr-evaluation.md) is off).
 
 ## Next
 

@@ -53,10 +53,12 @@ Two invariants shape everything else:
 - **The worker drives all execution.** No LLM call ever happens in the gateway.
 
 A third property holds across everything the platform ships, though it is a property of the
-activity catalog rather than an enforced boundary: **nothing merges a pull request.** No activity
-calls the GitHub merge API, and no seeded template merges — the SWE flow opens a PR and parks, and a
-Temporal signal bridges the GitHub merge webhook back to the waiting workflow. See §10 for where
-that stops being a guarantee.
+activity catalog rather than an enforced boundary: **by default nothing merges a pull request.** No
+activity calls an immediate-merge API, and no seeded template merges — the SWE flow opens a PR and
+parks, and a Temporal signal bridges the GitHub merge webhook back to the waiting workflow. The one
+sanctioned exception is opt-in per repository: in `auto` mode the pull-request evaluator calls
+`enablePullRequestAutoMerge`, which asks GitHub to merge later, once GitHub's own branch rules hold
+([pr-evaluation.md](./pr-evaluation.md)). See §10 for where the first part stops being a guarantee.
 
 ---
 
@@ -77,7 +79,7 @@ packages/
 | Path | Purpose |
 |------|---------|
 | `src/db.ts` | Singleton `PrismaClient` — import this everywhere |
-| `src/prisma/schema.prisma` | **Authoritative data model** — 104 models (see §6) |
+| `src/prisma/schema.prisma` | **Authoritative data model** — 105 models (see §6) |
 | `src/prisma/seed.ts` | Seeds the admin user, default team, sample connection, default template, built-in skills + scanner patterns, and the GLOBAL `Agent` rows |
 | `src/prisma/migrations/` | The consolidated `20260618000000_init` baseline (generated from `schema.prisma`) plus the hand-written `20260618000001_custom_constraints_and_indexes` beside it; new changes append their own migration once the schema is deployed |
 | `src/skills/` | Built-in skill definitions, one file per skill; `index.ts` exports `BUILTIN_SKILLS` |
@@ -738,7 +740,7 @@ What falls outside every term is visible to its requester and platform ADMINs on
 
 ## 6. Data Model
 
-`packages/shared/src/prisma/schema.prisma` is authoritative — 104 models.
+`packages/shared/src/prisma/schema.prisma` is authoritative — 105 models.
 
 ```mermaid
 erDiagram
@@ -1297,7 +1299,7 @@ The load-bearing ones, with rationale:
 | Docker by default, Kubernetes pods optional | Docker needs no cluster and runs under Compose; `WORKSPACE_BACKEND=kubernetes` runs agent workspaces as hardened pods on a cluster that enforces NetworkPolicy |
 | Temporal for orchestration | Durable execution — runs survive crashes, wait days for human and CI signals, and replay deterministically |
 | pgvector for memory | Semantic retrieval surfaces relevant past lessons into agent context |
-| Human-governed merges | Nothing shipped merges a PR; a signal bridges the merge webhook (see §10) |
+| Human-governed merges | By default nothing merges a PR and a signal bridges the merge webhook (see §10); the one opt-in exception is `auto` mode's native auto-merge ([pr-evaluation.md](./pr-evaluation.md)) |
 
 ---
 
@@ -1508,8 +1510,9 @@ Current constraints of the system as built. Deliberate product boundaries are in
   first attempt may still push; a stored spec asking for more is not rejected, it runs under the cap.
 - **Shell-step egress filtering is DNS-based.** IP-direct connections are unfiltered and wildcard
   allowlist entries are informational only. An in-path proxy or resolver would be required.
-- **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls the GitHub
-  merge API and no seeded template merges, but `shell` and `containerStep` nodes take
+- **"Nothing merges" is a property of the catalog, not a boundary.** No activity calls an
+  immediate-merge API and no seeded template merges (the opt-in `auto` mode of
+  [pr-evaluation.md](./pr-evaluation.md) only asks GitHub to auto-merge later), but `shell` and `containerStep` nodes take
   `network: 'egress'` against the team's allowlist. A team that allowlists the GitHub API host and
   supplies a token can author a DAG that merges. The guarantee covers what the platform ships; it
   is not enforced against what a team authors.

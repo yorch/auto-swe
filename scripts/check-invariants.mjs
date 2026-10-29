@@ -16,8 +16,8 @@
  * Run: `yarn invariants:check`
  */
 
-import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -753,6 +753,116 @@ function checkCredentialsAreNotInEnv() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// INVARIANT 10 — nothing merges a pull request immediately.
+//
+// The platform opens pull requests and humans merge them. The one merge-capable path is
+// `enablePullRequestAutoMerge` (the SCM provider's `enableAutoMerge`), which only asks the host
+// to merge once the host's own branch protection is satisfied, and only for the head commit that
+// was evaluated. An immediate merge would bypass that: `pulls.merge` / `repos.merge` (also
+// written `pulls['merge'](`), the REST `…/pulls/N/merge` and `POST …/merges` routes, the
+// `mergePullRequest`, `mergeBranch` and `enqueuePullRequest` GraphQL mutations, or a literal
+// `git push … HEAD:main` / `HEAD:master` refspec. Each type-checks and works, so nothing else
+// fails when one is added.
+//
+// A tripwire over source text with comments removed: it matches those spellings only. An aliased
+// client, a route or refspec built from pieces, an argv-array `git push` and any other merge
+// mechanism are not seen, so it is a floor, not proof that nothing merges. Like the MCP rule, a
+// standing constraint rather than a past incident.
+// ---------------------------------------------------------------------------
+
+const IMMEDIATE_MERGE = new RegExp(
+  [
+    String.raw`\b(?:pulls|repos)\s*\.\s*merge\s*\(`,
+    String.raw`\b(?:pulls|repos)\s*\[\s*['"\x60]merge['"\x60]\s*\]\s*\(`,
+    String.raw`\b(?:mergePullRequest|mergeBranch|enqueuePullRequest)\b`,
+    String.raw`\/pulls\/[^'"\x60\s]*\/merge\b`,
+    String.raw`\/repos\/[^'"\x60\s]*\/merges(?![\w-])`,
+    String.raw`\bgit\s+push\b[^\n]*?[\s+][^\s:]*:(?:refs\/heads\/)?(?:main|master)(?![\w/.-])`,
+  ].join('|')
+);
+
+/** Violations in one file's source: `{ line, text }` per immediate-merge call. */
+export function immediateMergeViolations(src) {
+  const found = [];
+  stripComments(src)
+    .split('\n')
+    .forEach((text, i) => {
+      if (IMMEDIATE_MERGE.test(text)) {
+        found.push({ line: i + 1, text: text.trim() });
+      }
+    });
+  return found;
+}
+
+// The one merge-capable call, `enableAutoMerge` (GraphQL `enablePullRequestAutoMerge`), is named
+// in exactly three source files: the GitHub provider that sends it, the provider interface, and
+// the evaluation activity that decides whether to. A new caller would arm auto-merge without the
+// evaluation's gates. The same tripwire caveats apply: a name assembled from pieces or reached
+// through an alias is not seen.
+export const AUTO_MERGE_NAMERS = new Set([
+  'packages/worker/src/activities/evaluatePullRequest.ts',
+  'packages/worker/src/lib/scm/github.ts',
+  'packages/worker/src/lib/scm/types.ts',
+]);
+const AUTO_MERGE_NAME = /\b(?:enableAutoMerge|enablePullRequestAutoMerge)\b/;
+
+/** Violations in one file's source (comments removed); empty for a file allowed to name it. */
+export function autoMergeNamingViolations(file, src) {
+  if (AUTO_MERGE_NAMERS.has(file.split(sep).join('/'))) {
+    return [];
+  }
+  const found = [];
+  stripComments(src)
+    .split('\n')
+    .forEach((text, i) => {
+      if (AUTO_MERGE_NAME.test(text)) {
+        found.push({ line: i + 1, text: text.trim() });
+      }
+    });
+  return found;
+}
+
+function checkNoImmediateMerge() {
+  const files = [];
+  for (const pkg of readdirSync(join(ROOT, 'packages'))) {
+    if (existsSync(join(ROOT, 'packages', pkg, 'src'))) {
+      files.push(
+        ...walk(
+          join('packages', pkg, 'src'),
+          (f) => /\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f)
+        )
+      );
+    }
+  }
+  for (const file of files) {
+    const src = read(file);
+    for (const v of autoMergeNamingViolations(file, src)) {
+      fail(
+        file,
+        v.line,
+        'no-immediate-merge',
+        `names the auto-merge mutation outside its allowed files: ${v.text.slice(0, 120)}`,
+        'Only the worker SCM provider (scm/github.ts, scm/types.ts) and the evaluation activity ' +
+          '(activities/evaluatePullRequest.ts) may name enableAutoMerge or ' +
+          'enablePullRequestAutoMerge; any other caller would arm auto-merge without the ' +
+          "evaluation's gates. If a new caller is genuinely needed, route it through the activity."
+      );
+    }
+    for (const v of immediateMergeViolations(src)) {
+      fail(
+        file,
+        v.line,
+        'no-immediate-merge',
+        `an immediate merge call: ${v.text.slice(0, 120)}`,
+        'Humans merge pull requests. The only merge-capable path is enableAutoMerge in the SCM ' +
+          'provider (enablePullRequestAutoMerge with expectedHeadOid), which the host completes ' +
+          'only once its own protection is satisfied.'
+      );
+    }
+  }
+}
+
 function main() {
   checkWorkspaceImageLiterals();
   checkDockerfileYarnProvisioning();
@@ -763,6 +873,7 @@ function main() {
   checkOptInSuitesRunInCi();
   checkComposeProfilesAreAdded();
   checkCredentialsAreNotInEnv();
+  checkNoImmediateMerge();
   report();
 }
 
@@ -780,7 +891,7 @@ function report() {
     process.exit(1);
   }
 
-  console.log('Invariant check passed — 9 invariants, no violations.');
+  console.log('Invariant check passed — 10 invariants, no violations.');
   console.log('  workspace image is inherited, never written inline at a call site');
   console.log('  every Dockerfile stage that runs yarn provides one first, and no other does');
   console.log('  the root layout renders per request when it reads NEXT_PUBLIC_* at runtime');
@@ -790,6 +901,9 @@ function report() {
   console.log('  every database- or Docker-backed test suite runs in CI with its opt-in flag set');
   console.log('  compose entry points add profiles to COMPOSE_PROFILES, never replace them');
   console.log('  credentials reach a workspace command through secretEnv, never an env list');
+  console.log(
+    '  no known immediate-merge spelling in source: auto-merge is the only merge path used'
+  );
 }
 
 const invokedDirectly =

@@ -53,6 +53,18 @@ function parseDiffAddedLines(diff: string): Array<{ content: string; file: strin
  * rather than the whole scan.
  */
 export async function scanDiffForCodeIssues(diff: string): Promise<CodeSecurityFinding[]> {
+  return (await scanDiffForCodeIssuesDetailed(diff)).findings;
+}
+
+/**
+ * {@link scanDiffForCodeIssues} plus whether the scan covered everything: `incomplete` is true
+ * when the patterns could not be loaded or the executor stopped before every target ran. A
+ * caller that must not treat "no findings" as "clean" on a partial scan reads it; the advisory
+ * callers keep using the findings alone.
+ */
+export async function scanDiffForCodeIssuesDetailed(
+  diff: string
+): Promise<{ findings: CodeSecurityFinding[]; incomplete: boolean }> {
   let patterns: Awaited<ReturnType<typeof loadCodeSecurityPatterns>>;
   try {
     patterns = await loadCodeSecurityPatterns();
@@ -62,15 +74,15 @@ export async function scanDiffForCodeIssues(diff: string): Promise<CodeSecurityF
     logError('[codeSecurityScanner] failed to load patterns; skipping the diff scan', {
       error: err instanceof Error ? err.message : String(err),
     });
-    return [];
+    return { findings: [], incomplete: true };
   }
   if (patterns.length === 0) {
-    return [];
+    return { findings: [], incomplete: false };
   }
 
   const addedLines = parseDiffAddedLines(diff);
   if (addedLines.length === 0) {
-    return [];
+    return { findings: [], incomplete: false };
   }
 
   const budgetMs = resolveRegexBudgetMs();
@@ -86,7 +98,7 @@ export async function scanDiffForCodeIssues(diff: string): Promise<CodeSecurityF
   }
 
   const order = new Map(patterns.map((p, i) => [p.label, i]));
-  return hits
+  const findings = hits
     .map((h) => ({ hit: h, index: Number(h.targetKey) }))
     .sort(
       (a, b) =>
@@ -101,6 +113,7 @@ export async function scanDiffForCodeIssues(diff: string): Promise<CodeSecurityF
         match: hit.match.slice(0, 120),
       };
     });
+  return { findings, incomplete };
 }
 
 /**
