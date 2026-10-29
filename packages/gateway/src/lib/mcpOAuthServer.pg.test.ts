@@ -1,3 +1,4 @@
+import './mcpDeviceFlow.pg.js';
 import crypto from 'node:crypto';
 import http from 'node:http';
 import { invalidateSettingsCache } from '@auto-swe/shared/config';
@@ -673,7 +674,11 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
       );
       invalidateSettingsCache();
       const real = mcpOAuthGateOptions();
-      expect(await real.getSettings()).toEqual({ enabled: false, writeToolsEnabled: false });
+      expect(await real.getSettings()).toEqual({
+        deviceFlowEnabled: false,
+        enabled: false,
+        writeToolsEnabled: false,
+      });
       await globalSettings(() =>
         prisma.configSetting.createMany({
           data: [
@@ -683,7 +688,11 @@ describe.skipIf(!enabled)('OAuth authorization server against Postgres', () => {
         })
       );
       invalidateSettingsCache();
-      expect(await real.getSettings()).toEqual({ enabled: true, writeToolsEnabled: true });
+      expect(await real.getSettings()).toEqual({
+        deviceFlowEnabled: false,
+        enabled: true,
+        writeToolsEnabled: true,
+      });
       await globalSettings(() =>
         prisma.configSetting.deleteMany({ where: { key: { startsWith: 'mcp.' } } })
       );

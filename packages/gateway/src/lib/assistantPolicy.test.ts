@@ -51,12 +51,19 @@ beforeAll(async () => {
   const seen: Route[] = [];
   app.addHook('onRoute', (route) => {
     for (const method of [route.method].flat()) {
-      if (method !== 'HEAD' && method !== 'OPTIONS') {
+      if (
+        method !== 'HEAD' &&
+        method !== 'OPTIONS' &&
+        (route.url.startsWith('/api/v1/') || route.url === '/api/auth/device/code')
+      ) {
         seen.push({ method, url: route.url });
       }
     }
   });
   await registerApiRoutes(app);
+  // The auth wildcard is registered by the gateway bootstrap; include the new explicit
+  // rate-limited device-code route in this policy walk without importing auth's DB singleton.
+  seen.push({ method: 'POST', url: '/api/auth/device/code' });
   await app.ready();
   await app.close();
   routes = seen;

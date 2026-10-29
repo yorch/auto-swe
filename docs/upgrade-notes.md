@@ -1,7 +1,7 @@
 # Upgrade notes
 
-Notes for operators of a deployment that ran earlier code. Each entry describes a defect that
-exposed a credential somewhere it should not have been, and what you do about it. An entry is
+Notes for operators of a deployment that ran earlier code. Each entry describes an operator action
+required by an upgrade, including credential exposure and database migrations. An entry is
 keyed by the condition that makes your deployment affected and by the commit that fixed it, not by
 a version number: the packages are unversioned, so a commit is the only identifier a deployment
 can compare against.
@@ -467,6 +467,20 @@ backups, per your retention policy.
 
 **Verify the fix is running.** The worker contains `4763a611` and `6b4ee97e`. In a new workspace,
 `git remote get-url origin` prints a URL with no `x-access-token:`.
+
+---
+
+### Device authorization codes require the new migration
+
+**Affected.** A deployment that enables `mcp.deviceFlowEnabled` on a database that has not applied
+`20261029132410_mcp_device_codes`.
+
+**Action.** Apply the migrations before enabling the setting. The gateway expects Better Auth's
+`device_codes` table, including its OAuth resource and client fields; do not enable the device flow
+against an older schema. The normal deployment migration step applies this migration.
+
+**Verify the fix is running.** The gateway and shared package contain `c4253ec2`, migration
+`20261029132410_mcp_device_codes`, and the generated `DeviceCode` Prisma model.
 
 ---
 

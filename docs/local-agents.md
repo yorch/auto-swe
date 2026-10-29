@@ -13,8 +13,9 @@ The administrator enables `mcp.enabled` and, for delegation, `mcp.writeToolsEnab
 Repository access, STANDARD budget limits, rate limits and the
 per-user concurrency cap remain in effect. See [MCP write guards](./mcp-server.md#write-tools).
 
-Clients discover the authorization server from the endpoint's OAuth challenge, use dynamic client
-registration and PKCE, and open a browser for the user's sign-in and consent. Read tools need
+Interactive clients discover the authorization server from the endpoint's OAuth challenge, use dynamic
+client registration and PKCE, and open a browser for the user's sign-in and consent. Headless clients
+can instead use [device authorization](#headless-ssh-and-ci-clients). Read tools need
 `mcp:read`; launching and cancelling need `mcp:write`. `offline_access` requests rotating refresh
 tokens. A personal access token (`ats_*`) is not an MCP token. Keep credentials out of tracked
 configuration, prompts and logs. If write tools are absent, check administrator switches first,
@@ -104,6 +105,69 @@ clients with different flags or no remote OAuth support need an upgrade; check `
 rather than adding obsolete configuration. Vendor documentation does not certify interoperability
 with a particular auto-swe deployment; complete browser sign-in and verify the tool inventory.
 
+## Headless SSH and CI clients
+
+The [CLI](../packages/cli/README.md#mcp-device-authorization) obtains MCP tokens without a local
+browser or callback listener. A human still signs in and approves the code in a trusted browser on
+another machine. The administrator enables `mcp.enabled` and `mcp.deviceFlowEnabled` (default false),
+plus `mcp.writeToolsEnabled` for writes. On the machine running the agent:
+
+```sh
+auto-swe mcp login --url https://auto-swe.example.com --write
+```
+
+Login prints the verification URL and user code to stderr, never a token. Approve only a code you
+started yourself; registered client names are unverified. Approval is all-or-nothing on the requested
+scopes. To refuse writes, deny and run login again without `--write`. The CLI reuses its registered
+public client per deployment and stores credentials privately under `$XDG_CONFIG_HOME/auto-swe/`
+(fallback `~/.config/auto-swe/`). The config file is mode `0600`, its directory `0700`, and refresh
+rotation is persisted atomically. Do not check it into a repository, log token output or enable shell
+tracing around these commands. `--url` defaults to `AUTO_SWE_API_URL`, then `http://localhost:8080`.
+
+For Claude Code, configure a manual HTTP server in `.mcp.json` instead of a second plugin-provided
+connection with the same name:
+
+```json
+{
+  "mcpServers": {
+    "auto-swe": {
+      "type": "http",
+      "url": "https://auto-swe.example.com/api/v1/mcp",
+      "headersHelper": "auto-swe mcp header --url https://auto-swe.example.com"
+    }
+  }
+}
+```
+
+Keep `auto-swe` on the agent process's `PATH`. Anthropic's
+[dynamic-header reference](https://code.claude.com/docs/en/mcp#use-dynamic-headers-for-custom-authentication)
+specifies `headersHelper`: a shell command printing a JSON object of string headers to stdout. Claude
+Code runs it on connection/reconnection and again after an authentication failure; a returned
+Authorization header takes precedence over OAuth. The helper has a ten-second deadline, so a slow
+network or a concurrent credential operation can require reconnecting. `auto-swe mcp header` refreshes
+near-expiry tokens before printing, without printing token values to stderr.
+
+For Codex, use a bearer environment variable instead of storing a secret in TOML:
+
+```toml
+[mcp_servers.auto-swe]
+url = "https://auto-swe.example.com/api/v1/mcp"
+bearer_token_env_var = "AUTO_SWE_MCP_TOKEN"
+tool_timeout_sec = 660
+```
+
+```sh
+AUTO_SWE_MCP_TOKEN="$(auto-swe mcp token --url https://auto-swe.example.com)" && \
+  export AUTO_SWE_MCP_TOKEN && codex
+```
+
+OpenAI's [HTTP MCP configuration reference](https://developers.openai.com/codex/extend/mcp)
+documents `bearer_token_env_var`. This environment snapshot cannot refresh inside a running Codex
+process: access tokens last ten minutes, so it suits short sessions. Restart through the wrapper on
+expiry; do not assume progress notifications renew credentials. For long sessions prefer the client's
+interactive OAuth support. `auto-swe mcp logout --url https://auto-swe.example.com` revokes the refresh
+token and removes the local entry. Dashboard Connected apps disconnects the underlying grant.
+
 ## Delegation loop
 
 1. Select the repository and agent with `list_repositories` and `list_agents`. Confirm task scope,
@@ -172,8 +236,8 @@ administrator's `mcp.templateRunsEnabled` opt-in, not another OAuth login or a C
   bounds, defaults and connection picker configuration; null means absent or unsupported, not an
   invitation to guess inputs. Use the dashboard for the full contract when necessary.
 
-- Sign-in requires an interactive browser and user consent; there is no headless/device-flow MCP
-  sign-in. The REST CLI has separate authentication, not a device-flow workaround for MCP.
+- Device authorization supports headless agent machines, not unattended sign-in: an active user still
+  approves a code in a browser. REST CLI credentials remain separate from MCP OAuth credentials.
 - Agents cannot approve, reject or answer human steps, merge PRs through MCP, or bypass governance.
 - Writes require administrator switches and `mcp:write` consent. A client skill cannot enable them.
 - Run following polls REST through MCP, not event subscriptions. Optional progress notifications

@@ -88,6 +88,13 @@ export async function revokeMcpGrants(
   const { actorId, clientId, userId } = args;
   const scope = clientId === undefined ? { userId } : { clientId, userId };
   const work = async (tx: Prisma.TransactionClient) => {
+    const devices = await tx.deviceCode.deleteMany({
+      where: {
+        userId,
+        ...(clientId ? { oauthClientId: clientId } : {}),
+        status: { in: ['pending', 'approved'] },
+      },
+    });
     const consents = await tx.oauthConsent.findMany({ where: scope });
     await tx.oauthConsent.deleteMany({ where: scope });
     const now = new Date();
@@ -126,7 +133,7 @@ export async function revokeMcpGrants(
         },
       });
     }
-    const orphaned = refresh.count + access.count + codeIds.length;
+    const orphaned = refresh.count + access.count + codeIds.length + devices.count;
     if (consents.length === 0 && orphaned > 0) {
       // Tokens or codes outlived their consent (an earlier partial failure, or the provider's
       // own deletion). There is no consent id to name, and `entity_id` is a uuid column, so
@@ -141,6 +148,7 @@ export async function revokeMcpGrants(
             accessTokens: access.count,
             clientId: clientId ?? null,
             consent: null,
+            deviceCodes: devices.count,
             pendingCodes: codeIds.length,
             refreshTokens: refresh.count,
             userId,
