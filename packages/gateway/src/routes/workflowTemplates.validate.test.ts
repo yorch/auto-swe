@@ -28,6 +28,10 @@ interface Opts {
   /** Template row `templateId` resolves to; `null` = not writable by the caller. */
   template?: { teamId: string | null; origin?: string } | null;
   teamAllowlist?: string[];
+  /** Names that already exist, as `teamId:name` (`null:` for a global one). */
+  taken?: string[];
+  /** The newest version number of the template `templateId` resolves to. */
+  latestVersion?: number;
 }
 
 function buildApp(opts: Opts = {}) {
@@ -45,6 +49,8 @@ function buildApp(opts: Opts = {}) {
   } as unknown as never);
 
   const created: unknown[] = [];
+  const nameLookups: unknown[] = [];
+  const versionLookups: unknown[] = [];
   const model = (name: string, impl: Record<string, (a: never) => unknown>) =>
     new Proxy(impl, {
       get(target, prop: string) {
@@ -91,13 +97,25 @@ function buildApp(opts: Opts = {}) {
           versions: [{ id: 'v1', version: 1 }],
         };
       }) as never,
-      findFirst: (() => (opts.template === undefined ? null : opts.template)) as never,
+      findFirst: ((a: { where: { id?: unknown; name?: string; teamId?: string | null } }) => {
+        if (a.where.name !== undefined) {
+          nameLookups.push(a.where);
+          const hit = (opts.taken ?? []).includes(`${a.where.teamId}:${a.where.name}`);
+          return hit ? { id: 'other-id' } : null;
+        }
+        return opts.template === undefined ? null : opts.template;
+      }) as never,
     }),
-    workflowTemplateVersion: model('workflowTemplateVersion', {}),
+    workflowTemplateVersion: model('workflowTemplateVersion', {
+      findFirst: ((a: unknown) => {
+        versionLookups.push(a);
+        return opts.latestVersion === undefined ? null : { version: opts.latestVersion };
+      }) as never,
+    }),
   };
   app.decorate('prisma', prisma as unknown as never);
   app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
-  return { app, created, writes };
+  return { app, created, nameLookups, versionLookups, writes };
 }
 
 const spec = (nodes: Record<string, unknown>, entry = 'start') => ({
@@ -409,6 +427,178 @@ describe('POST /workflow-templates/validate', () => {
       const res = await validate(app, { spec: SHELL, teamId: OTHER_TEAM_ID });
       expect(res.statusCode).toBe(403);
       expect(JSON.stringify(res.json())).not.toMatch(/allowlist|alpine/i);
+      await app.close();
+    });
+  });
+
+  describe('save outcomes (name and base version)', () => {
+    const saveIssues = (issues: Issue[]) => issues.filter((i) => i.source === 'save');
+
+    it('leaves a spec-only call exactly as before', async () => {
+      const { app, nameLookups, versionLookups } = buildApp({
+        latestVersion: 9,
+        taken: [`${TEAM_ID}:x`],
+        template: { teamId: TEAM_ID },
+      });
+      const res = await validate(app, { spec: VALID, teamId: TEAM_ID });
+      expect(res.json()).toEqual({ data: { issues: [], ok: true } });
+      const withTemplate = await validate(app, { spec: VALID, templateId: TEMPLATE_ID });
+      expect(withTemplate.json()).toEqual({ data: { issues: [], ok: true } });
+      expect(nameLookups).toEqual([]);
+      expect(versionLookups).toEqual([]);
+      await app.close();
+    });
+
+    it('reports a reserved name as an error, as the create route does', async () => {
+      const { app } = buildApp({ role: 'ADMIN' });
+      const { ok, issues } = (await validate(app, { name: ' agent run ', spec: VALID })).json()
+        .data as { ok: boolean; issues: Issue[] };
+      expect(ok).toBe(false);
+      expect(saveIssues(issues)).toEqual([
+        expect.objectContaining({
+          code: 'RESERVED_TEMPLATE_NAME',
+          field: 'name',
+          severity: 'error',
+        }),
+      ]);
+      const save = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'POST',
+        payload: { name: ' agent run ', spec: VALID },
+        url: '/api/v1/workflow-templates',
+      });
+      expect(save.statusCode).toBe(400);
+      expect(save.json().error.code).toBe('RESERVED_TEMPLATE_NAME');
+      expect(save.json().error.message).toBe(saveIssues(issues)[0]?.message);
+      await app.close();
+    });
+
+    it('reports a name already used in the team as NAME_CONFLICT, with the save route message', async () => {
+      const { app, nameLookups } = buildApp({ taken: [`${TEAM_ID}:Billing`] });
+      const { ok, issues } = (
+        await validate(app, { name: 'Billing', spec: VALID, teamId: TEAM_ID })
+      ).json().data as { ok: boolean; issues: Issue[] };
+      expect(ok).toBe(false);
+      expect(saveIssues(issues)).toEqual([
+        expect.objectContaining({
+          code: 'NAME_CONFLICT',
+          field: 'name',
+          message: 'A template with this name already exists',
+          severity: 'error',
+        }),
+      ]);
+      expect(nameLookups).toEqual([{ name: 'Billing', teamId: TEAM_ID }]);
+      const free = (await validate(app, { name: 'Other', spec: VALID, teamId: TEAM_ID })).json()
+        .data;
+      expect(free).toEqual({ issues: [], ok: true });
+      await app.close();
+    });
+
+    it('does not count the template being renamed as a conflict with itself', async () => {
+      const { app, nameLookups } = buildApp({
+        taken: [`${TEAM_ID}:Billing`],
+        template: { teamId: TEAM_ID },
+      });
+      await validate(app, { name: 'Billing', spec: VALID, templateId: TEMPLATE_ID });
+      expect(nameLookups).toEqual([{ id: { not: TEMPLATE_ID }, name: 'Billing', teamId: TEAM_ID }]);
+      await app.close();
+    });
+
+    it('warns, without failing the check, when the base version is behind the newest', async () => {
+      const { app } = buildApp({ latestVersion: 4, template: { teamId: TEAM_ID } });
+      const { ok, issues } = (
+        await validate(app, { baseVersion: 2, spec: VALID, templateId: TEMPLATE_ID })
+      ).json().data as { ok: boolean; issues: Issue[] };
+      expect(ok).toBe(true);
+      expect(saveIssues(issues)).toEqual([
+        expect.objectContaining({
+          code: 'STALE_BASE_VERSION',
+          field: 'baseVersion',
+          severity: 'warning',
+        }),
+      ]);
+      expect(saveIssues(issues)[0]?.message).toMatch(/version 2.*version 4.*version 5/);
+      await app.close();
+    });
+
+    it('is silent when the base version is the newest', async () => {
+      const { app } = buildApp({ latestVersion: 4, template: { teamId: TEAM_ID } });
+      const res = await validate(app, { baseVersion: 4, spec: VALID, templateId: TEMPLATE_ID });
+      expect(res.json().data).toEqual({ issues: [], ok: true });
+      await app.close();
+    });
+
+    it('400s a base version with no template', async () => {
+      const { app } = buildApp();
+      expect((await validate(app, { baseVersion: 1, spec: VALID })).statusCode).toBe(400);
+      expect(
+        (await validate(app, { baseVersion: 0, spec: VALID, templateId: TEMPLATE_ID })).statusCode
+      ).toBe(400);
+      await app.close();
+    });
+
+    describe('across tenants', () => {
+      it('is not an oracle for a name in a team the caller cannot author for', async () => {
+        const { app, nameLookups } = buildApp({
+          role: 'LEAD',
+          taken: [`${OTHER_TEAM_ID}:Secret`],
+          teamRole: null,
+        });
+        const res = await validate(app, { name: 'Secret', spec: VALID, teamId: OTHER_TEAM_ID });
+        expect(res.statusCode).toBe(403);
+        expect(JSON.stringify(res.json())).not.toMatch(/NAME_CONFLICT|already exists/);
+        expect(nameLookups).toEqual([]);
+        await app.close();
+      });
+
+      it('never looks up a global name for a non-admin, so a global template cannot be probed', async () => {
+        const { app, nameLookups } = buildApp({ role: 'LEAD', taken: ['null:Shared'] });
+        const { issues } = (await validate(app, { name: 'Shared', spec: VALID })).json().data as {
+          issues: Issue[];
+        };
+        expect(issues.map((i) => i.code)).toEqual(['FORBIDDEN']);
+        expect(nameLookups).toEqual([]);
+        await app.close();
+      });
+
+      it('does not report a repeated global name, because the save accepts it', async () => {
+        const { app, nameLookups } = buildApp({ role: 'ADMIN', taken: ['null:Shared'] });
+        const res = await validate(app, { name: 'Shared', spec: VALID });
+        expect(res.json().data).toEqual({ issues: [], ok: true });
+        expect(nameLookups).toEqual([]);
+        await app.close();
+      });
+
+      it('looks a name up only in the scope it would be saved into', async () => {
+        const { app, nameLookups } = buildApp({
+          role: 'LEAD',
+          taken: [`${OTHER_TEAM_ID}:Billing`],
+        });
+        const res = await validate(app, { name: 'Billing', spec: VALID, teamId: TEAM_ID });
+        expect(res.json().data).toEqual({ issues: [], ok: true });
+        expect(nameLookups).toEqual([{ name: 'Billing', teamId: TEAM_ID }]);
+        await app.close();
+      });
+
+      it('404s a template the caller cannot write before reading its versions', async () => {
+        const { app } = buildApp({ latestVersion: 7, template: null });
+        const res = await validate(app, { baseVersion: 1, spec: VALID, templateId: TEMPLATE_ID });
+        expect(res.statusCode).toBe(404);
+        expect(JSON.stringify(res.json())).not.toMatch(/version 7/);
+        await app.close();
+      });
+    });
+
+    it('writes nothing', async () => {
+      const { app, writes } = buildApp({
+        latestVersion: 3,
+        role: 'ADMIN',
+        taken: [`${TEAM_ID}:A`],
+        template: { teamId: TEAM_ID },
+      });
+      await validate(app, { name: 'A', spec: VALID, teamId: TEAM_ID });
+      await validate(app, { baseVersion: 1, name: 'A', spec: VALID, templateId: TEMPLATE_ID });
+      expect(writes).toEqual([]);
       await app.close();
     });
   });

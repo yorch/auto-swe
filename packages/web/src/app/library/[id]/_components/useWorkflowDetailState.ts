@@ -6,7 +6,7 @@ import {
   parseWorkflowSpec,
   validateSpec,
 } from '@auto-swe/shared/workflow';
-import { use, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   CONTAINER_AUTHORING_RULE,
   describeAuthoredCode,
@@ -73,6 +73,27 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
   } = useWorkflowTemplate(id ?? '');
   const [selectedVersion, setSelectedVersion] = useState<number | null>(null);
   const effectiveVersion = selectedVersion ?? template?.activeVersion ?? null;
+  // The newest version this page knew of when it loaded the template. The server check compares it
+  // with the template's newest version, so it reports versions saved since (another tab, another
+  // person) and not drafts that were already above the active version, nor an old version the
+  // author opened on purpose. Versions this page saves itself (a save, a refine) are folded in.
+  const [loadedLatest, setLoadedLatest] = useState<{ id: string; latest: number } | null>(null);
+  const templateLatest = template
+    ? template.versions.reduce((max, v) => Math.max(max, v.version), 0)
+    : null;
+  useEffect(() => {
+    if (id && templateLatest !== null && loadedLatest?.id !== id) {
+      setLoadedLatest({ id, latest: templateLatest });
+    }
+  }, [id, templateLatest, loadedLatest]);
+  const noteOwnVersion = useCallback(
+    (version: number) =>
+      setLoadedLatest((prev) =>
+        prev && prev.id === id ? { ...prev, latest: Math.max(prev.latest, version) } : prev
+      ),
+    [id]
+  );
+  const baseVersion = loadedLatest && loadedLatest.id === id ? loadedLatest.latest : undefined;
   const { data: versionDetail } = useWorkflowTemplateVersion(id ?? '', effectiveVersion);
   const { data: stepRegistry } = useStepRegistry();
   const { data: analytics } = useWorkflowTemplateAnalytics(id ?? '', 30);
@@ -183,6 +204,7 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
   const commitSave = async (spec: WorkflowSpec) => {
     try {
       const result = await createVersion.mutateAsync(spec);
+      noteOwnVersion(result.data.version);
       setSelectedVersion(result.data.version);
       setMode('view');
       setSaveError(null);
@@ -296,6 +318,7 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
 
   return {
     analytics,
+    baseVersion,
     canManage,
     canPromote,
     commitSave,
@@ -327,6 +350,7 @@ export function useWorkflowDetailState(params: Promise<{ id: string }>) {
     lintErrorCount,
     lintErrors,
     mode,
+    noteOwnVersion,
     pendingErrorSpec,
     pendingShellSpec,
     pendingVersion,

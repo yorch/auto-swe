@@ -267,7 +267,7 @@ export function specErrorsOf(spec: unknown): string[] {
   return validateSpec(spec as WorkflowSpec).errors.map(formatValidationIssue);
 }
 
-export type SpecCheckSource = 'schema' | 'lint' | 'refs' | 'authoring';
+export type SpecCheckSource = 'schema' | 'lint' | 'refs' | 'authoring' | 'save';
 
 /** One finding of `checkSpec`; `source` says which of the save path's checks produced it. */
 export interface SpecCheckIssue {

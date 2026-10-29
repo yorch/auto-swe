@@ -39,6 +39,7 @@ export function useTemplateEditorState({
   serverError,
   templateId,
   teamId,
+  baseVersion,
 }: TemplateEditorProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   // The outline is a rail beside the canvas, not a replacement for it, so the
@@ -197,6 +198,7 @@ export function useTemplateEditorState({
       spec,
       ...(templateId ? { templateId } : {}),
       ...(teamId ? { teamId } : {}),
+      ...(templateId && baseVersion ? { baseVersion } : {}),
     })
       .then((res): ServerCheck => {
         if (!res || !Array.isArray(res.issues)) {
@@ -233,7 +235,7 @@ export function useTemplateEditorState({
           }
         }
       });
-  }, [lint, spec, templateId, teamId, validateAsync, openIssuesPanel]);
+  }, [lint, spec, templateId, teamId, baseVersion, validateAsync, openIssuesPanel]);
   const serverIssues = useMemo(
     () =>
       (serverError ?? '')

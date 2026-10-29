@@ -47,6 +47,7 @@ function PagePad({ children }: { children: React.ReactNode }) {
 export default function TemplateDetailPage({ params }: PageProps) {
   const {
     analytics,
+    baseVersion,
     canManage,
     canPromote,
     commitSave,
@@ -78,6 +79,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
     lintErrorCount,
     lintErrors,
     mode,
+    noteOwnVersion,
     pendingErrorSpec,
     pendingShellSpec,
     pendingVersion,
@@ -184,7 +186,12 @@ export default function TemplateDetailPage({ params }: PageProps) {
           templateId={id}
         />
 
-        <RefineChatPanel onClose={() => setRefineOpen(false)} open={refineOpen} templateId={id} />
+        <RefineChatPanel
+          onClose={() => setRefineOpen(false)}
+          onSaved={noteOwnVersion}
+          open={refineOpen}
+          templateId={id}
+        />
 
         <TemplateHeader
           canManage={canManage}
@@ -221,6 +228,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
         <div className="flex min-h-0 flex-col md:flex-1">
           <TemplateEditor
             actions={editorActions}
+            baseVersion={baseVersion}
             costEstimateExclusions={costExclusions}
             costEstimateUsd={costEstimate?.totalUsd}
             observedCostUsd={analytics?.avgCostPerRun ?? null}

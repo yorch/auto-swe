@@ -149,6 +149,53 @@ describe('Check workflow', () => {
     expect(validate).toHaveBeenCalledWith({ spec: GOOD, teamId: 'team-1', templateId: 'tpl-1' });
   });
 
+  it('sends the version the edit started from, and lists a save finding with the others', async () => {
+    const props = {
+      onChange: vi.fn(),
+      onSelect: vi.fn(),
+      selectedNodeId: null,
+      spec: GOOD,
+      stepRegistry: [],
+    };
+    validate.mockResolvedValue({
+      issues: [
+        {
+          code: 'STALE_BASE_VERSION',
+          field: 'baseVersion',
+          message: 'Based on version 2, but the template is at version 4.',
+          severity: 'warning',
+          source: 'save',
+        },
+      ],
+      ok: true,
+    });
+    render(<TemplateEditor {...props} baseVersion={2} teamId="team-1" templateId="tpl-1" />);
+    await check();
+    expect(validate).toHaveBeenCalledWith({
+      baseVersion: 2,
+      spec: GOOD,
+      teamId: 'team-1',
+      templateId: 'tpl-1',
+    });
+    expect(screen.getByRole('button', { name: /server: save/ }).textContent).toMatch(
+      /STALE_BASE_VERSION.*version 4/
+    );
+    expect(screen.getByRole('status').textContent).toMatch(/^0 errors, 1 warning\./);
+  });
+
+  it('leaves the version out when there is no saved template to compare with', async () => {
+    const props = {
+      onChange: vi.fn(),
+      onSelect: vi.fn(),
+      selectedNodeId: null,
+      spec: GOOD,
+      stepRegistry: [],
+    };
+    render(<TemplateEditor {...props} baseVersion={2} />);
+    await check();
+    expect(validate).toHaveBeenCalledWith({ spec: GOOD });
+  });
+
   it('omits scope ids the page does not have (a platform-wide template has no team)', async () => {
     renderEditor(GOOD);
     await check();

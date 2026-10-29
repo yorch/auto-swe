@@ -4,7 +4,7 @@ import { useMutation } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 
 /** Which of the server's save-time checks raised an issue. */
-export type ServerIssueSource = 'schema' | 'lint' | 'refs' | 'authoring';
+export type ServerIssueSource = 'schema' | 'lint' | 'refs' | 'authoring' | 'save';
 
 export interface ServerWorkflowIssue {
   code: string;
@@ -25,6 +25,10 @@ export interface ValidateWorkflowBody {
   /** Only to evaluate scope-dependent rules; omitted for a template that is not saved yet. */
   templateId?: string;
   teamId?: string;
+  /** The version the edit started from, so a template that has moved on is reported. */
+  baseVersion?: number;
+  /** The name to save under, so a reserved or taken name is reported. */
+  name?: string;
 }
 
 /**

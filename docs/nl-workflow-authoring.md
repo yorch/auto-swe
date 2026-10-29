@@ -104,7 +104,7 @@ dynamic catalog + the user's intent go in the user message.
 | **Explain** | `POST /api/v1/workflow-templates/:id/explain` → `{ data: { explanation } }` (Markdown), CLI `auto-swe workflows explain <name>`, web "Explain" button. The inverse of authoring. |
 | **Refine (web)** | Template page (`/library/[id]`) → **"Refine with AI"** → a chat panel where each plain-language change calls `POST /api/v1/workflow-templates/:id/refine` `{ prompt }` → `{ data: version, spec, summary, attempts, warnings? }`. Each turn saves a **new DRAFT version** off the latest and updates the canvas. Gated on ADMIN/LEAD; `allowShell` is true only for a platform admin or an admin of the template's team. |
 | **Refine (Slack)** | A follow-up in the same thread ("also add a security review step") → the channel assistant's `refineWorkflow` tool → applies the change to the draft that thread generated (linked via `ChannelThreadSession.lastGeneratedTemplateId`) and saves a new version. Budget-gated; refuses shell nodes; replies with the new version (or "nothing to refine yet"). |
-| **Check without saving** | `POST /api/v1/workflow-templates/validate` `{ spec, templateId?, teamId? }` → `{ data: { ok, issues: [{ code, severity, message, nodeId?, field?, source }] } }`. Requires LEAD. Runs the checks a save runs and writes nothing (no template, version or audit row). `source` is `schema` (the strict parse a save answers `400 INVALID_SPEC` for), `lint` (`validateSpec`), `refs` (unresolved agent, MCP or eval-rubric references, warnings) or `authoring` (the shell-authoring role gate over container code and authored gate commands, and the shell image allowlist over container code, which a save answers with `403`/`400`). `ok` is true when no issue has `severity: "error"`. A well-formed request is `200` unless the scope ids are refused (`403` for a `teamId` the caller cannot author for, `404` for a `templateId` it cannot write); only a malformed body is `400`. With neither id, the spec is judged as a global template, so a non-admin gets an `authoring` issue `FORBIDDEN`, as create answers `403`. |
+| **Check without saving** | `POST /api/v1/workflow-templates/validate` `{ spec, templateId?, teamId?, name?, baseVersion? }` → `{ data: { ok, issues: [{ code, severity, message, nodeId?, field?, source }] } }`. Requires LEAD. Runs the checks a save runs and writes nothing (no template, version or audit row). `source` is `schema` (the strict parse a save answers `400 INVALID_SPEC` for), `lint` (`validateSpec`), `refs` (unresolved agent, MCP or eval-rubric references, warnings), `authoring` (the shell-authoring role gate over container code and authored gate commands, and the shell image allowlist over container code, which a save answers with `403`/`400`) or `save` (only when the request names a `name` or a `baseVersion`: `RESERVED_TEMPLATE_NAME` and `NAME_CONFLICT`, the errors a save answers with `400`/`409`, and `STALE_BASE_VERSION`, a warning). `name` is the name the template would be saved under, and with `templateId` it is a rename, in which the template's own name is not a conflict; `baseVersion` is the newest version the author knew of when the edit began and needs `templateId` (`400` without it); the dashboard editor sends the newest version the page saw when it loaded, plus any version it saved or refined itself, so only versions saved elsewhere since are reported and drafts above the active version are not. A name is looked up only in the scope it would be saved into: a team the caller may author for, never a team it may not (that is `403`, as above), and never a global name, because the unique index does not apply to a global template, so the save accepts a repeated global name and the check does not report one. A request that sends neither field is answered exactly as before. `ok` is true when no issue has `severity: "error"`. A well-formed request is `200` unless the scope ids are refused (`403` for a `teamId` the caller cannot author for, `404` for a `templateId` it cannot write); only a malformed body is `400`. With neither id, the spec is judged as a global template, so a non-admin gets an `authoring` issue `FORBIDDEN`, as create answers `403`. |
 | **CLI** | `auto-swe workflows generate "<description>" [--name=NAME] [--team=<slug>]` |
 | **Slack** | The channel assistant's `generateWorkflow` tool: ask it to "create a workflow that…" and it drafts one (scoped to the channel's team, `allowShell: false`) and replies in-thread with the draft name + a pointer to the Workflow library. The draft is **budget-gated** like a delegated task, and the channel path is never shell-authorized — a generated spec containing `shell`/`containerStep` nodes, a `runContainerStep` step, or an authored gate command is refused (those require canvas authoring with the proper RBAC + audit), and the reply points at the canvas. |
 
@@ -187,7 +187,10 @@ dynamic catalog + the user's intent go in the user message.
   `findSpecRefProblems`, the shell gates), so the endpoint cannot disagree with what a save does.
   `templateId` supplies the template's owning team; `teamId` is for a template not saved yet; with
   neither, the spec is judged as a global template, where only a platform admin may use shell nodes
-  or authored gate commands.
+  or authored gate commands. The name and version outcomes come from
+  `packages/gateway/src/lib/templateSaveCheck.ts`, which mirrors the `(team_id, name)` unique
+  index that the create and rename routes rely on (a violation there answers `409 NAME_CONFLICT`)
+  and shares their reserved-name rule and messages; a database-backed test pins the mirror.
 - **Authored code takes the shell authoring role, wherever it enters.** Two kinds of node run code
   an author wrote into the spec, both decided by the shared predicates in
   `packages/shared/src/workflow/containerCode.ts`: container code (`shell`, `containerStep`, or a
@@ -226,12 +229,16 @@ dynamic catalog + the user's intent go in the user message.
 
 - **`POST /validate` reports; it does not predict every refusal of a save.** A lint error is
   `severity: "error"` there, yet a save still accepts it (with a warning); only promote, activate
-  and experiment arms refuse it (`409 SPEC_HAS_ERRORS`). Template name conflicts and whether the
-  model, credential or connection a node needs resolves at run time are not checked. A non-admin
+  and experiment arms refuse it (`409 SPEC_HAS_ERRORS`). Whether the model, credential or
+  connection a node needs resolves at run time is not checked, and a name or base version is
+  judged only when the request carries it. A base version that is no longer the newest is a
+  warning, because a save accepts it: it adds a version built on the older content and does not
+  merge the newer ones. A non-admin
   naming a `teamId` it cannot author for gets `403`, and a `templateId` it cannot write is `404`,
   as on save. The `refs` check is an existence test at any scope, as on save. A check leaves no audit
-  trail (a save writes the template, version and audit rows), and it does not reproduce a save's
-  concurrent-write conflict (`409 VERSION_CONFLICT`).
+  trail (a save writes the template, version and audit rows). It does not predict a save's
+  concurrent-write conflict (`409 VERSION_CONFLICT`, after five lost races for the next version
+  number) or a name taken between the check and the save.
 - **MCP tool names are a guess.** The catalog lists each MCP connection without its tools: a
   connection stores no tool list, and only a live probe of the server returns one, which catalog
   building does not do. The author picks the likeliest `tool` name and says in the summary that the

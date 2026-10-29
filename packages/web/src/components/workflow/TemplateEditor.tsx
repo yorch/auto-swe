@@ -52,6 +52,7 @@ function EditorInner({
   costEstimateExclusions,
   observedCostUsd,
   parseError,
+  baseVersion,
   serverError,
   templateId,
   teamId,
@@ -93,6 +94,7 @@ function EditorInner({
     shownWarnings,
     wrapperRef,
   } = useTemplateEditorState({
+    baseVersion,
     onChange,
     onSelect,
     selectedNodeId,

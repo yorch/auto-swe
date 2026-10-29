@@ -433,6 +433,13 @@ jobs:
           MODEL_SUGGESTIONS_PG_TEST: '1'
         run: yarn test packages/shared/src/lib/modelSuggestions.pg.test.ts
 
+      # Template names: the check's name predicate must agree with the (team_id, name)
+      # unique index the save routes rely on (exact comparison, NULL team never collides).
+      - name: Template names (database-backed tests)
+        env:
+          TEMPLATE_NAME_PG_TEST: '1'
+        run: yarn test packages/gateway/src/lib/templateSaveCheck.pg.test.ts
+
       # Skill revisions: the revision-guarded update is what makes two racing
       # edits resolve to one winner, and `(skill_id, revision)` is unique.
       - name: Skill revisions (database-backed tests)

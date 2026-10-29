@@ -321,6 +321,16 @@ function buildApp(state: {
           if (!tpl) {
             throw new Error('not found');
           }
+          // The (team_id, name) unique index; a global (null) team never collides.
+          if (
+            typeof data.name === 'string' &&
+            tpl.teamId !== null &&
+            state.templates.some(
+              (o) => o.id !== tpl.id && o.teamId === tpl.teamId && o.name === data.name
+            )
+          ) {
+            throw Object.assign(new Error('Unique constraint failed'), { code: 'P2002' });
+          }
           Object.assign(tpl, data);
           tpl.updatedAt = new Date();
           return { ...tpl, _count: { versions: tpl.versions.length } };
@@ -1133,6 +1143,31 @@ describe('workflow-templates routes', () => {
     expect(body.data.b.version).toBe(3);
     expect(body.data.diff.addedNodes).toContain('done');
     expect(body.data.diff.changedNodes).toContain('start');
+  });
+
+  it('answers 409 NAME_CONFLICT when a rename lands on a name the team already uses', async () => {
+    const tpl = state.templates[0];
+    if (!tpl) {
+      throw new Error('expected template');
+    }
+    state.templates.push({
+      ...tpl,
+      id: 'other-tpl',
+      name: 'Taken',
+      versions: [],
+    });
+    const res = await app.inject({
+      headers: { authorization: 'Bearer x' },
+      method: 'PATCH',
+      payload: { name: 'Taken' },
+      url: `/api/v1/workflow-templates/${tpl.id}`,
+    });
+    expect(res.statusCode).toBe(409);
+    expect(res.json().error).toEqual({
+      code: 'NAME_CONFLICT',
+      message: 'A template with this name already exists',
+    });
+    expect(tpl.name).not.toBe('Taken');
   });
 
   it('rejects experimentSplit > 0 without an experimentVersion', async () => {

@@ -44,6 +44,7 @@ import {
 } from '../lib/launchAuthorization.js';
 import { launchBaseBranch } from '../lib/launchBaseBranch.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
+import { isUniqueConstraintError } from '../lib/prismaErrors.js';
 import {
   callbackScopeForCaller,
   resolveLaunchCallback,
@@ -81,6 +82,11 @@ import {
   teamMembershipFilter,
   templateWriteFilter,
 } from '../lib/templateLaunch.js';
+import {
+  checkTemplateSave,
+  RESERVED_TEMPLATE_NAME_MESSAGE,
+  TEMPLATE_NAME_CONFLICT_MESSAGE,
+} from '../lib/templateSaveCheck.js';
 import {
   CLEARED_SIGNING_COLUMNS,
   rotatedSigningColumns,
@@ -269,11 +275,20 @@ const UpdateTemplateBody = z.object({
 });
 
 const CreateVersionBody = z.object({ spec: z.unknown() });
-const ValidateSpecBody = z.object({
-  spec: z.unknown(),
-  teamId: z.string().uuid().optional(),
-  templateId: z.string().uuid().optional(),
-});
+const ValidateSpecBody = z
+  .object({
+    /** The version the edit started from; needs `templateId`. */
+    baseVersion: z.number().int().min(1).optional(),
+    /** The name the template would be saved under (create, or a rename with `templateId`). */
+    name: z.string().min(1).max(120).optional(),
+    spec: z.unknown(),
+    teamId: z.string().uuid().optional(),
+    templateId: z.string().uuid().optional(),
+  })
+  .refine((b) => b.baseVersion === undefined || b.templateId !== undefined, {
+    message: 'baseVersion needs templateId',
+    path: ['baseVersion'],
+  });
 const PromoteBody = z.object({ version: z.number().int().min(1) });
 const RequireSignatureBody = z.object({ required: z.boolean() });
 const ListTemplatesQuery = z.object({
@@ -810,7 +825,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         parsedSpec.name = nameOverride;
       }
       if (nameOverride && isReservedTemplateName(nameOverride)) {
-        return sendError(reply, 400, 'RESERVED_TEMPLATE_NAME', 'That template name is reserved');
+        return sendError(reply, 400, 'RESERVED_TEMPLATE_NAME', RESERVED_TEMPLATE_NAME_MESSAGE);
       }
       // A model-chosen name is not the caller's to refuse: keep it from colliding with the
       // reserved system template by renaming it.
@@ -995,7 +1010,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       const user = requireUser(request);
       const { name, description, teamId, spec, workspaceProvider } = request.body;
       if (isReservedTemplateName(name)) {
-        return sendError(reply, 400, 'RESERVED_TEMPLATE_NAME', 'That template name is reserved');
+        return sendError(reply, 400, 'RESERVED_TEMPLATE_NAME', RESERVED_TEMPLATE_NAME_MESSAGE);
       }
 
       let parsed: unknown;
@@ -1066,7 +1081,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       } catch (err: unknown) {
         const e = err as { code?: string; message?: string };
         if (e.code === 'P2002') {
-          return sendError(reply, 409, 'NAME_CONFLICT', 'A template with this name already exists');
+          return sendError(reply, 409, 'NAME_CONFLICT', TEMPLATE_NAME_CONFLICT_MESSAGE);
         }
         throw err;
       }
@@ -1088,7 +1103,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     },
     async (request, reply) => {
       const user = requireUser(request);
-      const { spec, templateId, teamId } = request.body;
+      const { spec, templateId, teamId, name, baseVersion } = request.body;
 
       let scopeTeamId: string | null = teamId ?? null;
       if (templateId) {
@@ -1110,6 +1125,17 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       }
 
       const issues = await checkSpec(fastify, user, scopeTeamId, spec);
+      // The name and version outcomes of a save. The scope was authorised above (a template the
+      // caller writes, or a team they author for), and a global scope has no name lookup at all,
+      // so only names the caller could save over are ever read.
+      issues.push(
+        ...(await checkTemplateSave(fastify.prisma, {
+          baseVersion,
+          name,
+          teamId: scopeTeamId,
+          templateId,
+        }))
+      );
       if (
         !templateId &&
         !scopeTeamId &&
@@ -1208,7 +1234,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
     async (request, reply) => {
       const user = requireUser(request);
       if (request.body.name !== undefined && isReservedTemplateName(request.body.name)) {
-        return sendError(reply, 400, 'RESERVED_TEMPLATE_NAME', 'That template name is reserved');
+        return sendError(reply, 400, 'RESERVED_TEMPLATE_NAME', RESERVED_TEMPLATE_NAME_MESSAGE);
       }
       const existing = await fastify.prisma.workflowTemplate.findFirst({
         where: { id: request.params.id, ...templateWriteFilter(user) },
@@ -1335,22 +1361,31 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       // this update run in one transaction so a concurrent read can never
       // observe a moment with zero (or more than one) default template for
       // the team.
-      const updated: TemplateWithIncludes = await fastify.prisma.$transaction(async (tx) => {
-        for (const record of servingRecords.values()) {
-          await record(tx);
-        }
-        if (request.body.isDefault === true) {
-          await tx.workflowTemplate.updateMany({
-            data: { isDefault: false },
-            where: { id: { not: existing.id }, teamId: existing.teamId },
+      let updated: TemplateWithIncludes;
+      try {
+        updated = await fastify.prisma.$transaction(async (tx) => {
+          for (const record of servingRecords.values()) {
+            await record(tx);
+          }
+          if (request.body.isDefault === true) {
+            await tx.workflowTemplate.updateMany({
+              data: { isDefault: false },
+              where: { id: { not: existing.id }, teamId: existing.teamId },
+            });
+          }
+          return tx.workflowTemplate.update({
+            data: updateData,
+            include: TEMPLATE_INCLUDE,
+            where: { id: existing.id },
           });
-        }
-        return tx.workflowTemplate.update({
-          data: updateData,
-          include: TEMPLATE_INCLUDE,
-          where: { id: existing.id },
         });
-      });
+      } catch (err) {
+        // The (team_id, name) unique index: a rename onto a name the team already uses.
+        if (request.body.name !== undefined && isUniqueConstraintError(err)) {
+          return sendError(reply, 409, 'NAME_CONFLICT', TEMPLATE_NAME_CONFLICT_MESSAGE);
+        }
+        throw err;
+      }
       await writeAuditLog(fastify, {
         action: 'UPDATE',
         actor: user,

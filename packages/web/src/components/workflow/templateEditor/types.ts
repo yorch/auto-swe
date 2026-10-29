@@ -4,6 +4,8 @@ export interface TemplateEditorProps {
   spec: WorkflowSpec;
   stepRegistry: StepMetadata[];
   selectedNodeId: string | null;
+  /** The version of `templateId` the spec was loaded from; the check reports newer ones. */
+  baseVersion?: number;
   onSelect: (id: string | null) => void;
   onChange: (next: WorkflowSpec) => void;
   costEstimateUsd?: number | null;
