@@ -26,6 +26,7 @@ import { assertBudgetAvailable } from '../lib/costTracking.js';
 import { getErrorMessage } from '../lib/errors.js';
 import { throwIfActivityCancelled, withHeartbeat } from '../lib/execUtils.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
+import { withRunDetection } from '../lib/runDetection.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { assertModelPricedForUsdCap } from '../lib/usdCapGuard.js';
 import { runAgent } from './runAgent.js';
@@ -257,10 +258,12 @@ async function runInCheckout(args: {
       ? undefined
       : HARNESSES.select(loop.runtime).bind(key, resolved.model);
 
-  const repo = await prisma.connection.findUniqueOrThrow({
-    include: { installation: { select: { host: true, installationId: true } } },
-    where: { id: args.workspace.repoId },
-  });
+  const repo = await withRunDetection(
+    await prisma.connection.findUniqueOrThrow({
+      include: { installation: { select: { host: true, installationId: true } } },
+      where: { id: args.workspace.repoId },
+    })
+  );
   const repoRef = toRepoRef(repo);
   const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
   throwIfActivityCancelled();

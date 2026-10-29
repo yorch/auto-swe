@@ -33,6 +33,7 @@ import { backfillPinnedSettings } from '../lib/config/pinnedSettings.js';
 import { type EndRunOutcome, endWorkflowRun } from '../lib/endRun.js';
 import { recordWorkerLaunchAudit, type WorkerLaunchSource } from '../lib/launchAudit.js';
 import { recordRunFinalized } from '../lib/metrics.js';
+import { pinDetectionsOnRun } from '../lib/runDetection.js';
 import {
   snapshotAgentRuntimes,
   snapshotAgentVersions,
@@ -679,6 +680,18 @@ export async function createWorkflowRun(
           return tx.workflowRun.upsert(runUpsert);
         })
       : await prisma.workflowRun.upsert(runUpsert);
+
+  // Pin the stack detection of every connection the run may use, so a scan landing mid-run cannot
+  // move a later step to another image or directory. Best-effort: without a pin the run reads the
+  // live detection, exactly as it did before the pin existed.
+  try {
+    await pinDetectionsOnRun(run.id, authorizedConnectionIds);
+  } catch (err) {
+    logWarn('could not pin stack detections on the run; it will read them live', {
+      err: String(err),
+      runId: run.id,
+    });
+  }
 
   // An epic child and a channel task start from workflow code, where no gateway request writes
   // their launch row; this activity is their first and the run row now exists. A scheduled fire

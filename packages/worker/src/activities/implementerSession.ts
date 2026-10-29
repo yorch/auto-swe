@@ -19,6 +19,7 @@ import { getErrorMessage, getExecErrorStdout } from '../lib/errors.js';
 import { recallLessonsBlock } from '../lib/lessonRecall.js';
 import { resolveSystemPrompt } from '../lib/models.js';
 import { resolveRunBaseBranch } from '../lib/runBaseBranch.js';
+import { withRunDetection } from '../lib/runDetection.js';
 import { getScmProvider, toRepoRef } from '../lib/scm/index.js';
 import { runPostDiffSecurityGate } from '../lib/securityGate.js';
 import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
@@ -144,7 +145,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
   const { mode, previousCodeResult } = input;
   // First, before a clone or a container exists (see executeImplementation).
   await assertRolePricedForUsdCap(input.agentKey);
-  const repo = await resolveSessionRepo(previousCodeResult);
+  const repo = await withRunDetection(await resolveSessionRepo(previousCodeResult));
 
   const repoRef = toRepoRef(repo);
   const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);

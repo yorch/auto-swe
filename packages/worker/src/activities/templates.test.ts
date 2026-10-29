@@ -45,6 +45,12 @@ vi.mock('../lib/activityLog.js', async (importOriginal) => ({
   logWarn: vi.fn(),
 }));
 
+// Covered by its own suite; here only that createWorkflowRun pins, and survives a failed pin.
+const { pinDetectionsOnRun } = vi.hoisted(() => ({
+  pinDetectionsOnRun: vi.fn(async () => undefined),
+}));
+vi.mock('../lib/runDetection.js', () => ({ pinDetectionsOnRun }));
+
 vi.mock('../lib/slackNotify.js', () => ({
   notifySlackRunComplete: vi.fn(),
   notifySlackStepFailure: vi.fn(),
@@ -946,6 +952,41 @@ describe('createWorkflowRun', () => {
     const args = upsertRun.mock.calls[0]?.[0] as Record<string, Record<string, unknown>>;
     expect(args.create.authorizedConnectionIds).toEqual(['conn-the-run']);
     expect(args.update).toEqual({ authorizedConnectionIds: ['conn-the-run'] });
+  });
+
+  describe('stack detection pin', () => {
+    const create = () =>
+      createWorkflowRun({
+        runConnectionId: 'conn-the-run',
+        templateId: 'tpl-1',
+        templateVersion: 1,
+        workflowId: 'wf-1',
+      });
+
+    beforeEach(() => {
+      pinDetectionsOnRun.mockReset().mockResolvedValue(undefined);
+      findVersion.mockResolvedValue({ spec: validSpec } as never);
+    });
+
+    it('pins the detections of the connections the run may use, once', async () => {
+      await create();
+      expect(pinDetectionsOnRun).toHaveBeenCalledTimes(1);
+      expect(pinDetectionsOnRun).toHaveBeenCalledWith('run-1', ['conn-the-run']);
+    });
+
+    it('does not fail run creation when the pin cannot be written', async () => {
+      pinDetectionsOnRun.mockRejectedValue(new Error('db down'));
+      await expect(create()).resolves.toMatchObject({ runId: 'run-1' });
+    });
+
+    it('asks again on a retry, leaving the first writer’s pin to the helper’s null-only write', async () => {
+      // The no-overwrite guarantee is `updateMany … WHERE pinned_detections IS NULL`, tested in
+      // runDetection.test.ts; here, that a retry simply asks again.
+      await create();
+      await create();
+      expect(pinDetectionsOnRun).toHaveBeenCalledTimes(2);
+      expect(pinDetectionsOnRun).toHaveBeenNthCalledWith(2, 'run-1', ['conn-the-run']);
+    });
   });
 
   it('pins the connections the version declares, not the template’s current schema', async () => {

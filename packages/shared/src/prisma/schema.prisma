@@ -1954,6 +1954,12 @@ model WorkflowRun {
   /// created before this column existed) has to be distinct from an empty set**
   /// ("authorized nothing").
   authorizedConnectionIds Json?      @map("authorized_connection_ids")
+  /// `{ [connectionId]: DetectedStack | null }` for every connection the run may use (its
+  /// `authorizedConnectionIds`), as detected when the run began, so a stack scan landing
+  /// mid-run cannot move a later step to another image or directory than an earlier one. A
+  /// key mapped to `null` pins "no detection"; an absent key, or a null column (a run
+  /// created before this column existed), reads the live `Connection.detectedStack`.
+  pinnedDetections  Json?             @map("pinned_detections")
   /// Snapshot of the skill revisions the run's agents reference, taken when the
   /// run began: a `{ skillId: revision }` map. `resolveAgent` reads the pinned
   /// `SkillRevision` text instead of the live `Skill` row, so editing a skill
