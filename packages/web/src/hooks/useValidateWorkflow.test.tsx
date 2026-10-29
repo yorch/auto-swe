@@ -42,6 +42,27 @@ describe('useValidateWorkflow', () => {
     });
   });
 
+  it('posts the base version and name when given', async () => {
+    const spy = setupFetchMock({
+      'POST /api/v1/workflow-templates/validate': () => ({ data: { issues: [], ok: true } }),
+    });
+    const { result } = setup();
+    await act(async () => {
+      await result.current.mutateAsync({
+        baseVersion: 3,
+        name: 'Billing',
+        spec: {},
+        templateId: 'tpl',
+      });
+    });
+    expect(bodyOf(spy, '/api/v1/workflow-templates/validate')).toEqual({
+      baseVersion: 3,
+      name: 'Billing',
+      spec: {},
+      templateId: 'tpl',
+    });
+  });
+
   it('rejects on a non-2xx answer so the caller can say the check could not run', async () => {
     vi.stubGlobal(
       'fetch',

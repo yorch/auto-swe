@@ -221,6 +221,7 @@ export default function TemplateDetailPage({ params }: PageProps) {
         <div className="flex min-h-0 flex-col md:flex-1">
           <TemplateEditor
             actions={editorActions}
+            baseVersion={effectiveVersion ?? undefined}
             costEstimateExclusions={costExclusions}
             costEstimateUsd={costEstimate?.totalUsd}
             observedCostUsd={analytics?.avgCostPerRun ?? null}
