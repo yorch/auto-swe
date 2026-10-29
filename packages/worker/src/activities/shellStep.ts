@@ -183,12 +183,7 @@ async function runHelper(
 
 interface RepoMeta {
   /**
-   * Credential-embedded clone URL from ScmProvider.cloneCredentials. Never placed in a
-   * command: the clone uses `cleanUrl` and sends the credential as `gitAuthHeader`.
-   */
-  cloneUrl: string;
-  /**
-   * `cloneUrl` with the credential stripped — what `origin` is reset to right
+   * The clone URL with the credential stripped — what `origin` is reset to right
    * after clone, so the token never sits at rest in the workspace volume the
    * author-supplied command can read.
    */
@@ -203,8 +198,8 @@ interface RepoMeta {
   teamId: string;
   teamAllowlist: string[];
   teamEgressAllowlist: string[];
-  /** The resolved token — kept alongside cloneUrl so error-path redaction works
-   * even when no GITHUB_TOKEN env var is set (DB-only token configuration). */
+  /** The resolved token — kept so error-path redaction works even when no
+   * GITHUB_TOKEN env var is set (DB-only token configuration). */
   token: string;
 }
 
@@ -224,7 +219,6 @@ async function loadRepoMeta(request: RepoWorkRequest): Promise<RepoMeta> {
   const { cleanUrl, gitAuthHeader } = splitCloneCredential(authedCloneUrl);
   return {
     cleanUrl,
-    cloneUrl: authedCloneUrl,
     // The run's base: what a step that runs before the first push falls back to cloning.
     defaultBranch: await resolveRequestBaseBranch(request, repo),
     ...(gitAuthHeader ? { gitAuthHeader } : {}),
