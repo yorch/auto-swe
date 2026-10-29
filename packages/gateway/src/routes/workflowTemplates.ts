@@ -21,16 +21,19 @@ import {
   type RepoWorkRequest,
 } from '@auto-swe/shared/types/workflow';
 import {
+  buildWorkflowRunDailyRollups,
   computeAnalytics,
   computeApprovalLatency,
-  computeDailyRunSeries,
   computeGlobalAnalyticsFromGroups,
+  dailyRunSeriesFromRollups,
   diffSpecs,
   type GlobalAnalyticsGroup,
   migrateSpec,
   parseWorkflowSpec,
   SPEC_SCHEMA_VERSION,
   type WorkflowSpec,
+  workflowRunDurationStatsFromRollups,
+  workflowTemplatePerVersionFromRollups,
 } from '@auto-swe/shared/workflow';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -108,7 +111,18 @@ import {
 import { memberOrgs } from '../lib/tenantScope.js';
 import { isValidTicketId } from '../lib/ticketId.js';
 import { refuseUnchangedRerun } from '../lib/unchangedRerun.js';
+import { planWindow } from '../lib/usageWindows.js';
 import { launchTrackedWorkflow } from '../lib/workflowLaunch.js';
+import {
+  resolveWorkflowRunAttributionScope,
+  workflowRunAttributionWhere,
+  workflowRunRollupAttributionWhere,
+} from '../lib/workflowRunAttributionScope.js';
+import {
+  coveredWorkflowRunRollupDays,
+  startedAtWhere,
+  workflowRunRollupHorizonMs,
+} from '../lib/workflowRunRollupWindows.js';
 import { type JwtPayload, requireAuth, requireCaller, requireUser } from '../plugins/auth.js';
 import { projectRunSummary, RunListPaginationQuery } from './workflowProjections.js';
 
@@ -677,12 +691,70 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         costUsdAccrued: 0,
       },
     });
-    const seriesQuery = fastify.prisma.workflowRun.findMany({
-      orderBy: { startedAt: 'desc' },
-      select: { endedAt: true, startedAt: true, status: true },
-      take: ANALYTICS_ROW_CAP + 1,
-      where: runWhere(windowStart, windowEnd),
-    });
+    const attributionScope = await resolveWorkflowRunAttributionScope(fastify.prisma, user);
+    const nowMs = Date.now();
+    const coveredDays = await coveredWorkflowRunRollupDays(
+      fastify.prisma,
+      previousStart.getTime(),
+      windowEnd.getTime(),
+      nowMs
+    );
+    const currentPlan = planWindow(
+      windowStart.getTime(),
+      windowEnd.getTime(),
+      coveredDays,
+      workflowRunRollupHorizonMs(nowMs)
+    );
+    const previousPlan = planWindow(
+      previousStart.getTime(),
+      windowStart.getTime(),
+      coveredDays,
+      workflowRunRollupHorizonMs(nowMs)
+    );
+    const rollupsQuery = (days: Date[]) =>
+      days.length
+        ? runUnscoped(
+            'global analytics rollups use the same persisted attribution scope as live rows',
+            ['WorkflowRunDailyRollup'],
+            () =>
+              fastify.prisma.workflowRunDailyRollup.findMany({
+                where: {
+                  AND: [{ day: { in: days } }, workflowRunRollupAttributionWhere(attributionScope)],
+                },
+              })
+          )
+        : Promise.resolve([]);
+    const durationSeriesQuery = (plan: ReturnType<typeof planWindow>) =>
+      plan.live.length
+        ? runUnscoped(
+            'global analytics duration rows use the same persisted attribution scope as rollups',
+            ['WorkflowRun'],
+            () =>
+              fastify.prisma.workflowRun.findMany({
+                orderBy: { startedAt: 'desc' },
+                select: {
+                  attributedOrgId: true,
+                  attributedTeamId: true,
+                  costUsdAccrued: true,
+                  endedAt: true,
+                  estimatedHumanTimeSaved: true,
+                  hadHumanStep: true,
+                  id: true,
+                  outcomeDomain: true,
+                  outcomeType: true,
+                  startedAt: true,
+                  status: true,
+                  templateId: true,
+                  templateVersion: true,
+                  wasAutonomous: true,
+                },
+                take: ANALYTICS_ROW_CAP + 1,
+                where: {
+                  AND: [startedAtWhere(plan.live), workflowRunAttributionWhere(attributionScope)],
+                },
+              })
+          )
+        : Promise.resolve([]);
     // Human-step wait times: the steps requested in the window, of the runs the caller may see
     // (the step table carries no tenant column, so visibility comes from the run).
     const stepsQuery = fastify.prisma.workflowHumanStep.findMany({
@@ -699,18 +771,30 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         run: buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
       },
     });
-    const [rawCurrentGroups, rawPreviousGroups, legacyRows, seriesRows, baselines, stepRows] =
-      await Promise.all([
-        groupsQuery(windowStart, windowEnd),
-        groupsQuery(previousStart, windowStart),
-        legacyQuery,
-        seriesQuery,
-        fastify.prisma.humanErrorBaseline.findMany({
-          select: { domain: true, errorRate: true, outcomeType: true, sampleSize: true },
-          where: { organization: memberOrgs(user) },
-        }),
-        stepsQuery,
-      ]);
+    const [
+      rawCurrentGroups,
+      rawPreviousGroups,
+      legacyRows,
+      currentRollupRows,
+      previousRollupRows,
+      currentSeriesRows,
+      previousSeriesRows,
+      baselines,
+      stepRows,
+    ] = await Promise.all([
+      groupsQuery(windowStart, windowEnd),
+      groupsQuery(previousStart, windowStart),
+      legacyQuery,
+      rollupsQuery(currentPlan.rollupDays),
+      rollupsQuery(previousPlan.rollupDays),
+      durationSeriesQuery(currentPlan),
+      durationSeriesQuery(previousPlan),
+      fastify.prisma.humanErrorBaseline.findMany({
+        select: { domain: true, errorRate: true, outcomeType: true, sampleSize: true },
+        where: { organization: memberOrgs(user) },
+      }),
+      stepsQuery,
+    ]);
     const allGroups = [...rawCurrentGroups, ...rawPreviousGroups] as GlobalAnalyticsGroup[];
     const templateRows = await runUnscoped(
       'template names for caller-visible analytics groups',
@@ -763,14 +847,68 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       })),
       stepRows.length > APPROVAL_STEP_ROW_CAP
     );
-    const seriesKept = seriesRows.slice(0, ANALYTICS_ROW_CAP);
     const legacyCostTruncated = legacyRows.length > ANALYTICS_ROW_CAP;
-    const oldestSeriesRow = seriesKept[seriesKept.length - 1];
+    const currentSeriesKept = currentSeriesRows.slice(0, ANALYTICS_ROW_CAP);
+    const previousSeriesKept = previousSeriesRows.slice(0, ANALYTICS_ROW_CAP);
     const seriesTruncated =
-      seriesRows.length > ANALYTICS_ROW_CAP &&
-      oldestSeriesRow !== undefined &&
-      oldestSeriesRow.startedAt >= windowStart;
-    const currentSeries = seriesKept.filter((row) => row.startedAt >= windowStart);
+      currentSeriesRows.length > ANALYTICS_ROW_CAP || previousSeriesRows.length > ANALYTICS_ROW_CAP;
+    const currentLiveRollups = buildWorkflowRunDailyRollups({
+      pullRequests: [],
+      runs: currentSeriesKept.map((row) => ({
+        attributedOrgId: row.attributedOrgId,
+        attributedTeamId: row.attributedTeamId,
+        costUsdAccrued: Number(row.costUsdAccrued),
+        endedAt: row.endedAt,
+        estimatedHumanTimeSaved: row.estimatedHumanTimeSaved,
+        hadHumanStep: row.hadHumanStep,
+        id: row.id,
+        outcomeDomain: row.outcomeDomain,
+        outcomeType: row.outcomeType,
+        repoId: null,
+        startedAt: row.startedAt,
+        status: row.status,
+        templateId: row.templateId,
+        templateVersion: row.templateVersion,
+        wasAutonomous: row.wasAutonomous,
+      })),
+      steps: [],
+      traces: [],
+    });
+    const previousLiveRollups = buildWorkflowRunDailyRollups({
+      pullRequests: [],
+      runs: previousSeriesKept.map((row) => ({
+        attributedOrgId: row.attributedOrgId,
+        attributedTeamId: row.attributedTeamId,
+        costUsdAccrued: Number(row.costUsdAccrued),
+        endedAt: row.endedAt,
+        estimatedHumanTimeSaved: row.estimatedHumanTimeSaved,
+        hadHumanStep: row.hadHumanStep,
+        id: row.id,
+        outcomeDomain: row.outcomeDomain,
+        outcomeType: row.outcomeType,
+        repoId: null,
+        startedAt: row.startedAt,
+        status: row.status,
+        templateId: row.templateId,
+        templateVersion: row.templateVersion,
+        wasAutonomous: row.wasAutonomous,
+      })),
+      steps: [],
+      traces: [],
+    });
+    const currentDuration = workflowRunDurationStatsFromRollups([
+      ...currentRollupRows,
+      ...currentLiveRollups,
+    ]);
+    const previousDuration = workflowRunDurationStatsFromRollups([
+      ...previousRollupRows,
+      ...previousLiveRollups,
+    ]);
+    const liveDays = (ranges: typeof currentPlan.live) =>
+      ranges.reduce(
+        (sum, range) => sum + (range.lt.getTime() - range.gte.getTime()) / 86_400_000,
+        0
+      );
     const baselineRows = baselines.map((b) => ({
       domain: b.domain,
       errorRate: b.errorRate,
@@ -788,17 +926,29 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       data: {
         ...analytics,
         approvalLatency,
-        daily: computeDailyRunSeries(currentSeries, windowStart, new Date(windowEnd.getTime() - 1)),
+        daily: dailyRunSeriesFromRollups(
+          [...currentRollupRows, ...currentLiveRollups],
+          windowStart,
+          new Date(windowEnd.getTime() - 1)
+        ),
         isTruncated: seriesTruncated,
         legacyCostTruncated,
+        liveDays: liveDays(currentPlan.live),
+        p50DurationMs: currentDuration.p50DurationMs,
+        p95DurationMs: currentDuration.p95DurationMs,
         previous: prev && {
           autonomyRate: prev.autonomyRate,
           estimatedHumanTimeSavedTotal: prev.estimatedHumanTimeSavedTotal,
           humanReviewRate: prev.humanReviewRate,
+          liveDays: liveDays(previousPlan.live),
+          p50DurationMs: previousDuration.p50DurationMs,
+          p95DurationMs: previousDuration.p95DurationMs,
+          rollupDays: previousPlan.rollupDays.length,
           successRate: prev.successRate,
           totalCost: prev.totalCost,
           totalRuns: prev.totalRuns,
         },
+        rollupDays: currentPlan.rollupDays.length,
         seriesTruncated,
       },
     };
@@ -2862,7 +3012,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
         return sendError(reply, 404, 'TEMPLATE_NOT_FOUND', 'Template not found');
       }
       // Whole UTC days, as the cross-template rollup and custom ranges are.
-      const { start: windowStart } = resolveWindow({}, request.query.window);
+      const { end: windowEnd, start: windowStart } = resolveWindow({}, request.query.window);
       // Hard cap on rows pulled into memory. Templates with high run volume
       // would otherwise OOM the gateway on a 90d window. At the cap the rollup
       // becomes an approximation of the most recent N runs/steps in the window.
@@ -2960,16 +3110,153 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
           ? [{ runId: pr.runId, status: pr.status, templateVersion: pr.templateVersion }]
           : []
       );
+      const scope = await resolveWorkflowRunAttributionScope(fastify.prisma, user);
+      const nowMs = Date.now();
+      const coveredDays = await coveredWorkflowRunRollupDays(
+        fastify.prisma,
+        windowStart.getTime(),
+        windowEnd.getTime(),
+        nowMs
+      );
+      const plan = planWindow(
+        windowStart.getTime(),
+        windowEnd.getTime(),
+        coveredDays,
+        workflowRunRollupHorizonMs(nowMs)
+      );
+      const [versionRollups, versionLiveRows] = await Promise.all([
+        plan.rollupDays.length
+          ? runUnscoped(
+              'template per-version rollups are filtered by template and caller attribution',
+              ['WorkflowRunDailyRollup'],
+              () =>
+                fastify.prisma.workflowRunDailyRollup.findMany({
+                  where: {
+                    AND: [
+                      { day: { in: plan.rollupDays }, templateId: tpl.id },
+                      workflowRunRollupAttributionWhere(scope),
+                    ],
+                  },
+                })
+            )
+          : Promise.resolve([]),
+        plan.live.length
+          ? runUnscoped(
+              'template per-version live rows use the same attribution as rollups',
+              ['WorkflowRun'],
+              () =>
+                fastify.prisma.workflowRun.findMany({
+                  orderBy: { startedAt: 'desc' },
+                  select: {
+                    attributedOrgId: true,
+                    attributedTeamId: true,
+                    costUsdAccrued: true,
+                    endedAt: true,
+                    estimatedHumanTimeSaved: true,
+                    hadHumanStep: true,
+                    id: true,
+                    outcomeDomain: true,
+                    outcomeType: true,
+                    startedAt: true,
+                    status: true,
+                    templateId: true,
+                    templateVersion: true,
+                    wasAutonomous: true,
+                    workflowId: true,
+                    workRequest: {
+                      select: {
+                        activeWorkflows: {
+                          select: { costUsdAccrued: true, temporalWorkflowId: true },
+                        },
+                      },
+                    },
+                  },
+                  take: ANALYTICS_ROW_CAP + 1,
+                  where: {
+                    AND: [
+                      { templateId: tpl.id },
+                      startedAtWhere(plan.live),
+                      workflowRunAttributionWhere(scope),
+                    ],
+                  },
+                })
+            )
+          : Promise.resolve([]),
+      ]);
+      const versionLiveTruncated = versionLiveRows.length > ANALYTICS_ROW_CAP;
+      const versionLiveRuns = versionLiveRows.slice(0, ANALYTICS_ROW_CAP);
+      const versionLivePrs = versionLiveRuns.length
+        ? await runUnscoped(
+            'template per-version live PRs are limited to caller-scoped runs',
+            ['PullRequest'],
+            () =>
+              fastify.prisma.pullRequest.findMany({
+                orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+                select: { ciStatus: true, mergedAt: true, runId: true, status: true },
+                take: ANALYTICS_ROW_CAP + 1,
+                where: { runId: { in: versionLiveRuns.map((run) => run.id) } },
+              })
+          )
+        : [];
+      const versionPrsTruncated = versionLivePrs.length > ANALYTICS_ROW_CAP;
+      const liveVersionRollups = buildWorkflowRunDailyRollups({
+        pullRequests: versionLivePrs.slice(0, ANALYTICS_ROW_CAP).flatMap((pr) =>
+          pr.runId
+            ? [
+                {
+                  ciStatus: pr.ciStatus,
+                  mergedAt: pr.mergedAt,
+                  runId: pr.runId,
+                  status: pr.status,
+                },
+              ]
+            : []
+        ),
+        runs: versionLiveRuns.map((run) => ({
+          attributedOrgId: run.attributedOrgId,
+          attributedTeamId: run.attributedTeamId,
+          costUsdAccrued: Number(run.costUsdAccrued),
+          endedAt: run.endedAt,
+          estimatedHumanTimeSaved: run.estimatedHumanTimeSaved,
+          hadHumanStep: run.hadHumanStep,
+          id: run.id,
+          legacyCostUsd: (run.workRequest?.activeWorkflows ?? [])
+            .filter((workflow) => workflow.temporalWorkflowId === run.workflowId)
+            .reduce((sum, workflow) => sum + Number(workflow.costUsdAccrued), 0),
+          outcomeDomain: run.outcomeDomain,
+          outcomeType: run.outcomeType,
+          repoId: null,
+          startedAt: run.startedAt,
+          status: run.status,
+          templateId: run.templateId,
+          templateVersion: run.templateVersion,
+          wasAutonomous: run.wasAutonomous,
+        })),
+        steps: [],
+        traces: [],
+      });
+      const versionMetrics = workflowTemplatePerVersionFromRollups([
+        ...versionRollups,
+        ...liveVersionRollups,
+      ]);
+      const analytics = computeAnalytics(
+        selectedRuns,
+        steps.slice(0, ANALYTICS_ROW_CAP),
+        request.query.window,
+        knownNodeIds,
+        runPullRequests
+      );
       return {
         data: {
-          ...computeAnalytics(
-            selectedRuns,
-            steps.slice(0, ANALYTICS_ROW_CAP),
-            request.query.window,
-            knownNodeIds,
-            runPullRequests
+          ...analytics,
+          isTruncated: isTruncated || versionLiveTruncated || versionPrsTruncated,
+          liveDays: plan.live.reduce(
+            (sum, live) => sum + (live.lt.getTime() - live.gte.getTime()) / 86_400_000,
+            0
           ),
-          isTruncated,
+          perVersion: versionMetrics,
+          perVersionCounts: versionMetrics.map(({ runs, version }) => ({ count: runs, version })),
+          rollupDays: plan.rollupDays.length,
         },
       };
     }

@@ -46,8 +46,11 @@ describe('reportCsv', () => {
     });
     const approvals = reportCsv('hitl', {
       autonomy: { byEvent: { allowed: 1 }, byRiskClass: { low: 1 } },
-      byApprover: [{ medianWaitMs: 100, name: 'Reviewer', resolved: 1 }],
+      byApprover: [
+        { automated: 0, interactive: 1, medianWaitMs: 100, name: 'Reviewer', resolved: 1 },
+      ],
       byKind: { PR: { RESOLVED: 1 } },
+      byVia: { api_token: 0, assistant: 0, mcp: 0, slack: 0, unknown: 0, web: 1 },
       medianWaitMs: 100,
       oldestPendingAgeMs: null,
       p95WaitMs: 100,

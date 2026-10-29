@@ -1158,6 +1158,15 @@ historical rows use the same repository guard and selection. Outcomes and templa
 these persisted fields. Human-step resolutions store `resolvedVia` as `web`, `slack`, `api_token`,
 `mcp`, or `assistant`; older rows remain null.
 
+Daily workflow-run rollups serve completed days older than the configured recompute horizon; recent
+or uncovered days are read live. Global analytics daily series and durations, template per-version
+metrics, delivery, and rollup-backed quality rates combine both sources. `rollupDays` and `liveDays`
+report coverage, and truncation applies only to live reads. Non-ADMIN reporting includes a run when
+its attributed team is one of the caller's member teams or its attributed organization is one the
+caller administers. The same scope applies to rollups and live slices. `teamId` narrows both to one
+authorized team. `WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` optionally builds older history; its default
+is zero.
+
 The global analytics response also carries `approvalLatency`: how long people took to answer the
 human steps (`WorkflowHumanStep`) requested in the window, for the runs the caller may see, overall
 and per template (`computeApprovalLatency()` in `shared/src/workflow/analytics.ts`). The wait is

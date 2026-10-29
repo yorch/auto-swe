@@ -2,10 +2,12 @@ import { orgMonthSpend } from '@auto-swe/shared/lib/billing';
 import { forecastMonthlyBudget } from '@auto-swe/shared/lib/budgetForecast';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
+  buildWorkflowRunDailyRollups,
   computeAutomationReport,
-  computeDeliveryReport,
   computeHitlReport,
   computeQualityReport,
+  deliveryReportFromRollups,
+  qualityMetricsFromRollups,
 } from '@auto-swe/shared/workflow';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
@@ -15,6 +17,18 @@ import { mapLimited } from '../lib/mapLimited.js';
 import { asPlatformAdmin } from '../lib/platformAdminScope.js';
 import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
 import { reachableConnections } from '../lib/tenantScope.js';
+import { planWindow } from '../lib/usageWindows.js';
+import {
+  resolveWorkflowRunAttributionScope,
+  workflowRunAttributionWhere,
+  workflowRunRollupAttributionWhere,
+  workflowRunWithLegacyVisibility,
+} from '../lib/workflowRunAttributionScope.js';
+import {
+  coveredWorkflowRunRollupDays,
+  startedAtWhere,
+  workflowRunRollupHorizonMs,
+} from '../lib/workflowRunRollupWindows.js';
 import { requireAuth, requireUser } from '../plugins/auth.js';
 
 const REPORT_ROW_CAP = 10_000;
@@ -22,6 +36,7 @@ const REPORT_WINDOW_DAYS = [7, 30, 90] as const;
 const ReportQuery = refineCustomRange(
   z.object({
     ...customRangeFields,
+    teamId: z.string().uuid().optional(),
     window: z.coerce
       .number()
       .int()
@@ -55,69 +70,98 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/delivery',
     { onRequest: readAnalytics, schema: { querystring: ReportQuery } },
-    async (request) => {
+    async (request, reply) => {
       const user = requireUser(request);
       const range = reportWindow(request.query);
-      const runsResult = await asPlatformAdmin(
+      const scope = await resolveWorkflowRunAttributionScope(
+        fastify.prisma,
         user,
-        'admin delivery report spans every tenant',
-        ['WorkflowRun'],
-        () =>
-          fastify.prisma.workflowRun.findMany({
-            orderBy: { startedAt: 'desc' },
-            select: {
-              costUsdAccrued: true,
-              id: true,
-              startedAt: true,
-              status: true,
-              template: { select: { name: true } },
-              templateId: true,
-              workflowId: true,
-            },
-            take: REPORT_ROW_CAP + 1,
-            where: {
-              AND: [
-                { startedAt: { gte: range.start, lt: range.end } },
-                visibility(user, request.repoAccessGate),
-              ],
-            },
-          })
+        request.query.teamId
       );
-      const runsTruncated = runsResult.length > REPORT_ROW_CAP;
-      const runs = runsResult.slice(0, REPORT_ROW_CAP);
-      const runIds = runs.map((run) => run.id);
-      const workflowIds = runs.map((run) => run.workflowId);
-      const [activeWorkflows, pullRequests, fixSteps] = await Promise.all([
-        workflowIds.length
-          ? runUnscoped(
-              'delivery report joins only workflow ids visible to the caller',
-              ['ActiveWorkflow'],
-              () =>
-                fastify.prisma.activeWorkflow.findMany({
-                  orderBy: { temporalWorkflowId: 'asc' },
-                  select: {
-                    costUsdAccrued: true,
-                    repoId: true,
-                    repository: { select: { organizationName: true, repoName: true } },
-                    temporalWorkflowId: true,
+      if (!scope.authorized) {
+        return reply.status(403).send({ error: 'Team report access is not authorized' });
+      }
+      const nowMs = Date.now();
+      const covered = await coveredWorkflowRunRollupDays(
+        fastify.prisma,
+        range.start.getTime(),
+        range.end.getTime(),
+        nowMs
+      );
+      const plan = planWindow(
+        range.start.getTime(),
+        range.end.getTime(),
+        covered,
+        workflowRunRollupHorizonMs(nowMs)
+      );
+      const rollupRows = plan.rollupDays.length
+        ? await runUnscoped(
+            'delivery rollups are filtered by the caller attribution scope',
+            ['WorkflowRunDailyRollup'],
+            () =>
+              fastify.prisma.workflowRunDailyRollup.findMany({
+                where: {
+                  AND: [{ day: { in: plan.rollupDays } }, workflowRunRollupAttributionWhere(scope)],
+                },
+              })
+          )
+        : [];
+      const liveRunsResult = plan.live.length
+        ? await runUnscoped(
+            'delivery live rows are filtered by the same caller attribution scope as rollups',
+            ['WorkflowRun'],
+            () =>
+              fastify.prisma.workflowRun.findMany({
+                orderBy: { startedAt: 'desc' },
+                select: {
+                  attributedOrgId: true,
+                  attributedTeamId: true,
+                  connectionId: true,
+                  costUsdAccrued: true,
+                  endedAt: true,
+                  estimatedHumanTimeSaved: true,
+                  hadHumanStep: true,
+                  hasError: true,
+                  id: true,
+                  outcomeDomain: true,
+                  outcomeType: true,
+                  startedAt: true,
+                  status: true,
+                  templateId: true,
+                  templateVersion: true,
+                  wasAutonomous: true,
+                  workflowId: true,
+                  workRequest: {
+                    select: {
+                      activeWorkflows: {
+                        select: {
+                          costUsdAccrued: true,
+                          repoId: true,
+                          temporalWorkflowId: true,
+                        },
+                      },
+                    },
                   },
-                  take: REPORT_ROW_CAP + 1,
-                  where: { temporalWorkflowId: { in: workflowIds } },
-                })
-            )
-          : [],
+                },
+                take: REPORT_ROW_CAP + 1,
+                where: {
+                  AND: [startedAtWhere(plan.live), workflowRunAttributionWhere(scope)],
+                },
+              })
+          )
+        : [];
+      const runsTruncated = liveRunsResult.length > REPORT_ROW_CAP;
+      const liveRuns = liveRunsResult.slice(0, REPORT_ROW_CAP);
+      const runIds = liveRuns.map((run) => run.id);
+      const [pullRequests, fixSteps] = await Promise.all([
         runIds.length
           ? runUnscoped(
-              'delivery report joins only run ids visible to the caller',
+              'delivery joins PRs only for caller-visible live cohort runs',
               ['PullRequest'],
               () =>
                 fastify.prisma.pullRequest.findMany({
                   orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
-                  select: {
-                    ciStatus: true,
-                    mergedAt: true,
-                    runId: true,
-                  },
+                  select: { ciStatus: true, mergedAt: true, runId: true, status: true },
                   take: REPORT_ROW_CAP + 1,
                   where: { runId: { in: runIds } },
                 })
@@ -125,75 +169,140 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
           : [],
         runIds.length
           ? runUnscoped(
-              'delivery report counts steps only for visible cohort runs',
+              'delivery counts steps only for caller-visible live cohort runs',
               ['WorkflowStep'],
               () =>
                 fastify.prisma.workflowStep.findMany({
                   orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
-                  select: { runId: true },
+                  select: { runId: true, status: true },
                   take: REPORT_ROW_CAP + 1,
                   where: {
                     runId: { in: runIds },
+                    status: { in: ['PASSED', 'FAILED'] },
                     stepName: 'executeCIFixImplementation',
                   },
                 })
             )
           : [],
       ]);
-      const activeWorkflowsTruncated = activeWorkflows.length > REPORT_ROW_CAP;
       const prsTruncated = pullRequests.length > REPORT_ROW_CAP;
       const ciFixStepsTruncated = fixSteps.length > REPORT_ROW_CAP;
-      const activeByWorkflowId = new Map(
-        activeWorkflows
-          .slice(0, REPORT_ROW_CAP)
-          .map((workflow) => [workflow.temporalWorkflowId, workflow])
-      );
-      const prsByRun = new Map<string, Array<{ ciStatus: string; mergedAt: Date | null }>>();
+      const prsByRun = new Map<
+        string,
+        Array<{ ciStatus: string; mergedAt: Date | null; status: string }>
+      >();
       for (const pr of pullRequests.slice(0, REPORT_ROW_CAP)) {
-        if (!pr.runId) {
-          continue;
+        if (pr.runId) {
+          const group = prsByRun.get(pr.runId) ?? [];
+          group.push({ ciStatus: pr.ciStatus, mergedAt: pr.mergedAt, status: pr.status });
+          prsByRun.set(pr.runId, group);
         }
-        const rows = prsByRun.get(pr.runId) ?? [];
-        rows.push({ ciStatus: pr.ciStatus, mergedAt: pr.mergedAt });
-        prsByRun.set(pr.runId, rows);
       }
       const ciRoundsByRun = new Map<string, number>();
       for (const step of fixSteps.slice(0, REPORT_ROW_CAP)) {
         ciRoundsByRun.set(step.runId, (ciRoundsByRun.get(step.runId) ?? 0) + 1);
       }
-      const reportRuns = runs.map((run) => {
-        const active = activeByWorkflowId.get(run.workflowId);
-        const repoName =
-          active?.repository?.organizationName && active.repository.repoName
-            ? `${active.repository.organizationName}/${active.repository.repoName}`
-            : (active?.repository?.repoName ?? active?.repository?.organizationName ?? null);
-        return {
-          ciFixRounds: ciRoundsByRun.get(run.id) ?? 0,
-          costUsdAccrued:
-            Number(run.costUsdAccrued) === 0
-              ? Number(active?.costUsdAccrued ?? 0)
-              : Number(run.costUsdAccrued),
-          id: run.id,
-          pullRequests: prsByRun.get(run.id) ?? [],
-          repoId: active?.repoId ?? null,
-          repositoryName: repoName,
-          startedAt: run.startedAt,
-          status: run.status,
-          templateId: run.templateId,
-          templateName: run.template.name,
-          workflowId: run.workflowId,
-        };
+      const liveRollups = buildWorkflowRunDailyRollups({
+        now: new Date(),
+        pullRequests: liveRuns.flatMap((run) =>
+          (prsByRun.get(run.id) ?? []).map((pr) => ({
+            ciStatus: pr.ciStatus,
+            mergedAt: pr.mergedAt,
+            runId: run.id,
+            status: pr.status,
+          }))
+        ),
+        runs: liveRuns.map((run) => {
+          const active = run.workRequest?.activeWorkflows.find(
+            (workflow) => workflow.temporalWorkflowId === run.workflowId
+          );
+          return {
+            attributedOrgId: run.attributedOrgId,
+            attributedTeamId: run.attributedTeamId,
+            costUsdAccrued: Number(run.costUsdAccrued),
+            endedAt: run.endedAt,
+            estimatedHumanTimeSaved: run.estimatedHumanTimeSaved,
+            hadHumanStep: run.hadHumanStep,
+            id: run.id,
+            legacyCostUsd: Number(active?.costUsdAccrued ?? 0),
+            outcomeDomain: run.outcomeDomain,
+            outcomeType: run.outcomeType,
+            repoId: active?.repoId ?? run.connectionId,
+            startedAt: run.startedAt,
+            status: run.status,
+            templateId: run.templateId,
+            templateVersion: run.templateVersion,
+            wasAutonomous: run.wasAutonomous,
+            workflowId: run.workflowId,
+          };
+        }),
+        steps: fixSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
+          runId: step.runId,
+          status: step.status,
+          stepName: 'executeCIFixImplementation',
+        })),
+        traces: [],
       });
-      const report = computeDeliveryReport(reportRuns);
+      const allRows = [...rollupRows, ...liveRollups];
+      const [repos, teams, templates] = await Promise.all([
+        runUnscoped(
+          'delivery labels are resolved only for IDs present in caller-scoped rollups',
+          ['Connection'],
+          () =>
+            fastify.prisma.connection.findMany({
+              select: { id: true, organizationName: true, repoName: true },
+              where: {
+                id: { in: unique(allRows.flatMap((row) => (row.repoId ? [row.repoId] : []))) },
+              },
+            })
+        ),
+        runUnscoped(
+          'delivery team labels are resolved only for caller-scoped rollup team IDs',
+          ['Team'],
+          () =>
+            fastify.prisma.team.findMany({
+              select: { id: true, name: true },
+              where: {
+                id: { in: unique(allRows.flatMap((row) => (row.teamId ? [row.teamId] : []))) },
+              },
+            })
+        ),
+        runUnscoped(
+          'delivery template labels are resolved only for caller-scoped rollup template IDs',
+          ['WorkflowTemplate'],
+          () =>
+            fastify.prisma.workflowTemplate.findMany({
+              select: { id: true, name: true },
+              where: {
+                id: {
+                  in: unique(allRows.flatMap((row) => (row.templateId ? [row.templateId] : []))),
+                },
+              },
+            })
+        ),
+      ]);
+      const report = deliveryReportFromRollups(allRows, {
+        repos: new Map(
+          repos.map((repo) => [
+            repo.id,
+            [repo.organizationName, repo.repoName].filter(Boolean).join('/') || repo.id,
+          ])
+        ),
+        teams: new Map(teams.map((team) => [team.id, team.name])),
+        templates: new Map(templates.map((template) => [template.id, template.name])),
+      });
       return {
         data: {
           ...report,
-          activeWorkflowsTruncated,
           ciFixStepsTruncated,
+          liveDays: plan.live.reduce(
+            (sum, live) => sum + (live.lt.getTime() - live.gte.getTime()) / 86_400_000,
+            0
+          ),
           prsTruncated,
+          rollupDays: plan.rollupDays.length,
           runsTruncated,
-          truncated:
-            runsTruncated || activeWorkflowsTruncated || prsTruncated || ciFixStepsTruncated,
+          truncated: runsTruncated || prsTruncated || ciFixStepsTruncated,
           windowEnd: range.windowEnd,
           windowStart: range.windowStart,
         },
@@ -204,9 +313,17 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/quality',
     { onRequest: readAnalytics, schema: { querystring: ReportQuery } },
-    async (request) => {
+    async (request, reply) => {
       const user = requireUser(request);
       const range = reportWindow(request.query);
+      const scope = await resolveWorkflowRunAttributionScope(
+        fastify.prisma,
+        user,
+        request.query.teamId
+      );
+      if (!scope.authorized) {
+        return reply.status(403).send({ error: 'Team report access is not authorized' });
+      }
       const runRows = await asPlatformAdmin(
         user,
         'admin quality report spans every tenant',
@@ -225,7 +342,11 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             where: {
               AND: [
                 { startedAt: { gte: range.start, lt: range.end } },
-                visibility(user, request.repoAccessGate),
+                workflowRunWithLegacyVisibility(
+                  user,
+                  visibility(user, request.repoAccessGate),
+                  request.query.teamId
+                ),
               ],
             },
           })
@@ -298,6 +419,159 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             )
           : [],
       ]);
+      const nowMs = Date.now();
+      const covered = await coveredWorkflowRunRollupDays(
+        fastify.prisma,
+        range.start.getTime(),
+        range.end.getTime(),
+        nowMs
+      );
+      const plan = planWindow(
+        range.start.getTime(),
+        range.end.getTime(),
+        covered,
+        workflowRunRollupHorizonMs(nowMs)
+      );
+      const [rollupRows, metricRunRows] = await Promise.all([
+        plan.rollupDays.length
+          ? runUnscoped(
+              'quality rollups use the same persisted attribution scope as live metric rows',
+              ['WorkflowRunDailyRollup'],
+              () =>
+                fastify.prisma.workflowRunDailyRollup.findMany({
+                  where: {
+                    AND: [
+                      { day: { in: plan.rollupDays } },
+                      workflowRunRollupAttributionWhere(scope),
+                    ],
+                  },
+                })
+            )
+          : Promise.resolve([]),
+        plan.live.length
+          ? runUnscoped(
+              'quality live metric rows use the same persisted attribution scope as rollups',
+              ['WorkflowRun'],
+              () =>
+                fastify.prisma.workflowRun.findMany({
+                  orderBy: { startedAt: 'desc' },
+                  select: {
+                    attributedOrgId: true,
+                    attributedTeamId: true,
+                    costUsdAccrued: true,
+                    endedAt: true,
+                    estimatedHumanTimeSaved: true,
+                    hadHumanStep: true,
+                    id: true,
+                    outcomeDomain: true,
+                    outcomeType: true,
+                    startedAt: true,
+                    status: true,
+                    templateId: true,
+                    templateVersion: true,
+                    wasAutonomous: true,
+                  },
+                  take: REPORT_ROW_CAP + 1,
+                  where: {
+                    AND: [startedAtWhere(plan.live), workflowRunAttributionWhere(scope)],
+                  },
+                })
+            )
+          : Promise.resolve([]),
+      ]);
+      const metricRunsTruncated = metricRunRows.length > REPORT_ROW_CAP;
+      const metricRuns = metricRunRows.slice(0, REPORT_ROW_CAP);
+      const metricRunIds = metricRuns.map((run) => run.id);
+      const [metricPrsResult, metricStepsResult, metricTracesResult] = await Promise.all([
+        metricRunIds.length
+          ? runUnscoped(
+              'quality live PR metrics are limited to caller-scoped runs',
+              ['PullRequest'],
+              () =>
+                fastify.prisma.pullRequest.findMany({
+                  orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
+                  select: { ciStatus: true, mergedAt: true, runId: true, status: true },
+                  take: REPORT_ROW_CAP + 1,
+                  where: { runId: { in: metricRunIds } },
+                })
+            )
+          : Promise.resolve([]),
+        metricRunIds.length
+          ? runUnscoped(
+              'quality live CI-fix metrics are limited to caller-scoped runs',
+              ['WorkflowStep'],
+              () =>
+                fastify.prisma.workflowStep.findMany({
+                  orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+                  select: { runId: true, status: true },
+                  take: REPORT_ROW_CAP + 1,
+                  where: {
+                    runId: { in: metricRunIds },
+                    status: { in: ['PASSED', 'FAILED'] },
+                    stepName: 'executeCIFixImplementation',
+                  },
+                })
+            )
+          : Promise.resolve([]),
+        metricRunIds.length
+          ? runUnscoped(
+              'quality live review metrics are limited to caller-scoped runs',
+              ['AgentTrace'],
+              () =>
+                fastify.prisma.agentTrace.findMany({
+                  orderBy: { createdAt: 'desc' },
+                  select: { error: true, outputJson: true, runId: true },
+                  take: REPORT_ROW_CAP + 1,
+                  where: {
+                    agentKey: 'reviewer',
+                    runId: { in: metricRunIds },
+                    type: 'llm_response',
+                  },
+                })
+            )
+          : Promise.resolve([]),
+      ]);
+      const metricPrsTruncated = metricPrsResult.length > REPORT_ROW_CAP;
+      const metricStepsTruncated = metricStepsResult.length > REPORT_ROW_CAP;
+      const metricTracesTruncated = metricTracesResult.length > REPORT_ROW_CAP;
+      const metricPrs = metricPrsResult.slice(0, REPORT_ROW_CAP);
+      const metricSteps = metricStepsResult.slice(0, REPORT_ROW_CAP);
+      const metricTraces = metricTracesResult.slice(0, REPORT_ROW_CAP);
+      const metricRunsRollup = buildWorkflowRunDailyRollups({
+        pullRequests: metricPrs.flatMap((pr) =>
+          pr.runId
+            ? [{ ciStatus: pr.ciStatus, mergedAt: pr.mergedAt, runId: pr.runId, status: pr.status }]
+            : []
+        ),
+        runs: metricRuns.map((run) => ({
+          attributedOrgId: run.attributedOrgId,
+          attributedTeamId: run.attributedTeamId,
+          costUsdAccrued: Number(run.costUsdAccrued),
+          endedAt: run.endedAt,
+          estimatedHumanTimeSaved: run.estimatedHumanTimeSaved,
+          hadHumanStep: run.hadHumanStep,
+          id: run.id,
+          outcomeDomain: run.outcomeDomain,
+          outcomeType: run.outcomeType,
+          repoId: null,
+          startedAt: run.startedAt,
+          status: run.status,
+          templateId: run.templateId,
+          templateVersion: run.templateVersion,
+          wasAutonomous: run.wasAutonomous,
+        })),
+        steps: metricSteps.map((step) => ({
+          runId: step.runId,
+          status: step.status,
+          stepName: 'executeCIFixImplementation',
+        })),
+        traces: metricTraces.map((trace) => ({
+          error: trace.error,
+          outputJson: trace.outputJson,
+          runId: trace.runId,
+        })),
+      });
+      const metricRollups = [...rollupRows, ...metricRunsRollup];
       const prsTruncated = pullRequests.length > REPORT_ROW_CAP;
       const tracesTruncated = traces.length > REPORT_ROW_CAP;
       const reportPrs = pullRequests.slice(0, REPORT_ROW_CAP).flatMap((pr) => {
@@ -321,13 +595,30 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
           stepName: step.stepName,
         })),
       });
+      Object.assign(report, qualityMetricsFromRollups(metricRollups));
       return {
         data: {
           ...report,
+          liveDays: plan.live.reduce(
+            (sum, live) => sum + (live.lt.getTime() - live.gte.getTime()) / 86_400_000,
+            0
+          ),
+          metricPrsTruncated,
+          metricRunsTruncated,
+          metricStepsTruncated,
+          metricTracesTruncated,
           prsTruncated,
+          rollupDays: plan.rollupDays.length,
           runsTruncated,
           tracesTruncated,
-          truncated: runsTruncated || prsTruncated || tracesTruncated,
+          truncated:
+            runsTruncated ||
+            prsTruncated ||
+            tracesTruncated ||
+            metricRunsTruncated ||
+            metricPrsTruncated ||
+            metricStepsTruncated ||
+            metricTracesTruncated,
           windowEnd: range.windowEnd,
           windowStart: range.windowStart,
         },
@@ -466,9 +757,17 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/automations',
     { onRequest: readAnalytics, schema: { querystring: ReportQuery } },
-    async (request) => {
+    async (request, reply) => {
       const user = requireUser(request);
       const range = reportWindow(request.query);
+      const scope = await resolveWorkflowRunAttributionScope(
+        fastify.prisma,
+        user,
+        request.query.teamId
+      );
+      if (!scope.authorized) {
+        return reply.status(403).send({ error: 'Team report access is not authorized' });
+      }
       const accessibleAutomations = await runUnscoped(
         'automation reports follow the automation list repository and team scopes',
         ['Automation'],
@@ -477,18 +776,29 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             orderBy: { id: 'asc' },
             select: { connectionId: true, id: true, teamId: true },
             take: REPORT_ROW_CAP + 1,
-            where:
-              user.role === 'ADMIN'
-                ? {}
-                : {
-                    OR: [
-                      { connection: reachableConnections(user, request.repoAccessGate) },
-                      {
-                        connectionId: null,
-                        team: { memberships: { some: { userId: user.sub } } },
-                      },
-                    ],
-                  },
+            where: {
+              AND: [
+                user.role === 'ADMIN'
+                  ? {}
+                  : {
+                      OR: [
+                        { connection: reachableConnections(user, request.repoAccessGate) },
+                        {
+                          connectionId: null,
+                          team: { memberships: { some: { userId: user.sub } } },
+                        },
+                      ],
+                    },
+                request.query.teamId
+                  ? {
+                      OR: [
+                        { teamId: request.query.teamId },
+                        { connection: { teamId: request.query.teamId } },
+                      ],
+                    }
+                  : {},
+              ],
+            },
           })
       );
       const automationsTruncated = accessibleAutomations.length > REPORT_ROW_CAP;
@@ -567,9 +877,17 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
   app.get(
     '/hitl',
     { onRequest: readAnalytics, schema: { querystring: ReportQuery } },
-    async (request) => {
+    async (request, reply) => {
       const user = requireUser(request);
       const range = reportWindow(request.query);
+      const scope = await resolveWorkflowRunAttributionScope(
+        fastify.prisma,
+        user,
+        request.query.teamId
+      );
+      if (!scope.authorized) {
+        return reply.status(403).send({ error: 'Team report access is not authorized' });
+      }
       const [windowSteps, pendingSteps, decisions] = await Promise.all([
         asPlatformAdmin(user, 'admin HITL report spans every tenant', ['WorkflowHumanStep'], () =>
           fastify.prisma.workflowHumanStep.findMany({
@@ -580,12 +898,17 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
               resolvedAt: true,
               resolvedBy: true,
               resolvedByUser: { select: { name: true } },
+              resolvedVia: true,
               status: true,
             },
             take: REPORT_ROW_CAP + 1,
             where: {
               requestedAt: { gte: range.start, lt: range.end },
-              run: visibility(user, request.repoAccessGate),
+              run: workflowRunWithLegacyVisibility(
+                user,
+                visibility(user, request.repoAccessGate),
+                request.query.teamId
+              ),
             },
           })
         ),
@@ -602,11 +925,16 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                 resolvedAt: true,
                 resolvedBy: true,
                 resolvedByUser: { select: { name: true } },
+                resolvedVia: true,
                 status: true,
               },
               take: REPORT_ROW_CAP + 1,
               where: {
-                run: visibility(user, request.repoAccessGate),
+                run: workflowRunWithLegacyVisibility(
+                  user,
+                  visibility(user, request.repoAccessGate),
+                  request.query.teamId
+                ),
                 status: 'PENDING',
               },
             })
@@ -622,7 +950,11 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
               take: REPORT_ROW_CAP + 1,
               where: {
                 createdAt: { gte: range.start, lt: range.end },
-                run: visibility(user, request.repoAccessGate),
+                run: workflowRunWithLegacyVisibility(
+                  user,
+                  visibility(user, request.repoAccessGate),
+                  request.query.teamId
+                ),
               },
             })
         ),
@@ -636,6 +968,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
           resolvedAt: step.resolvedAt,
           resolvedBy: step.resolvedBy,
           resolvedByName: step.resolvedByUser?.name ?? null,
+          resolvedVia: step.resolvedVia,
           status: step.status,
         })),
         windowSteps: windowSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
@@ -644,6 +977,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
           resolvedAt: step.resolvedAt,
           resolvedBy: step.resolvedBy,
           resolvedByName: step.resolvedByUser?.name ?? null,
+          resolvedVia: step.resolvedVia,
           status: step.status,
         })),
       });

@@ -7,6 +7,7 @@ import { DateRangeControl } from '@/components/ui/DateRangeControl';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { useTeams } from '@/hooks/useTeams';
 import { useUrlFilters } from '@/hooks/useUrlFilters';
 import { ApiError, api } from '@/lib/api';
 import {
@@ -34,17 +35,22 @@ function selectedTab(value: string | null): ReportTab {
 
 function ReportsWorkspace() {
   const { params, update } = useUrlFilters();
+  const teamsQuery = useTeams();
   const range = parseDateRange(params);
   const [localTab, setLocalTab] = useState<ReportTab>('delivery');
   const activeTab = selectedTab(params.get('tab') ?? localTab);
   const activeDefinition = TABS.find((tab) => tab.id === activeTab) ?? TABS[0];
   const query = new URLSearchParams(rangeQuery(range));
+  const teamId = params.get('teamId') ?? '';
+  if (teamId) {
+    query.set('teamId', teamId);
+  }
   const reportQuery = useQuery({
     queryFn: () =>
       api
         .get<{ data: ReportTabData }>(`/api/v1/reports/${activeTab}?${query}`)
         .then((response) => response.data),
-    queryKey: ['reports', activeTab, rangeKey(range)],
+    queryKey: ['reports', activeTab, rangeKey(range), teamId],
     refetchInterval: 30_000,
   });
 
@@ -75,6 +81,24 @@ function ReportsWorkspace() {
               rangeIgnored={customRangeIgnored(params)}
               value={range}
             />
+            {activeTab !== 'budget' && (
+              <label className="flex items-center gap-2 text-sm text-paper-300">
+                Team
+                <select
+                  aria-label="Team"
+                  className="rounded-md border border-ink-600 bg-ink-900 px-3 py-2 text-paper-100"
+                  onChange={(event) => update({ teamId: event.target.value || null })}
+                  value={teamId}
+                >
+                  <option value="">All visible teams</option>
+                  {(teamsQuery.data ?? []).map((team) => (
+                    <option key={team.id} value={team.id}>
+                      {team.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
           </div>
         }
         learnMore={{ ...HELP_LINKS.reporting }}

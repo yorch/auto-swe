@@ -312,6 +312,50 @@ describe('computeHitlReport', () => {
       pendingNow: 1,
       timedOut: 1,
     });
-    expect(report.byApprover).toEqual([{ medianWaitMs: 7_200_000, name: 'Ada', resolved: 2 }]);
+    expect(report.byApprover).toEqual([
+      {
+        automated: 0,
+        interactive: 0,
+        medianWaitMs: 7_200_000,
+        name: 'Ada',
+        resolved: 2,
+      },
+    ]);
+  });
+
+  it('groups resolution channels and interactive versus automated approver counts', () => {
+    const sources = ['web', 'slack', 'api_token', 'mcp', 'assistant', null, 'legacy'];
+    const report = computeHitlReport({
+      autonomyDecisions: [],
+      now: at,
+      pendingSteps: [],
+      windowSteps: sources.map((resolvedVia) => ({
+        kind: 'APPROVAL',
+        requestedAt: at,
+        resolvedAt: new Date(at.getTime() + 1000),
+        resolvedBy: 'user-1',
+        resolvedByName: 'Ada',
+        resolvedVia,
+        status: 'RESOLVED',
+      })),
+    });
+
+    expect(report.byVia).toEqual({
+      api_token: 1,
+      assistant: 1,
+      mcp: 1,
+      slack: 1,
+      unknown: 2,
+      web: 1,
+    });
+    expect(report.byApprover).toEqual([
+      {
+        automated: 3,
+        interactive: 2,
+        medianWaitMs: 1000,
+        name: 'Ada',
+        resolved: 7,
+      },
+    ]);
   });
 });

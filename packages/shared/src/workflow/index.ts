@@ -215,6 +215,8 @@ export type {
 } from './workflowRunRollup.js';
 export {
   buildWorkflowRunDailyRollups,
+  CI_FIX_ROUND_BUCKETS,
+  CI_FIX_ROUND_OVERFLOW,
   ciFixRoundsFromBuckets,
   combineWorkflowRunRollupRows,
   DURATION_BUCKET_BOUNDS_MS,
@@ -223,3 +225,15 @@ export {
   WORKFLOW_RUN_DAY_MS,
   WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS,
 } from './workflowRunRollup.js';
+export type {
+  WorkflowRunDurationStats,
+  WorkflowRunTemplateVersionMetrics,
+} from './workflowRunRollupReports.js';
+export {
+  dailyRunSeriesFromRollups,
+  deliveryReportFromRollups,
+  emptyCiFixRoundsBuckets,
+  qualityMetricsFromRollups,
+  workflowRunDurationStatsFromRollups,
+  workflowTemplatePerVersionFromRollups,
+} from './workflowRunRollupReports.js';

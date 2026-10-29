@@ -33,6 +33,8 @@ success rate from visible cohort runs grouped by repository. Delivery spend uses
 is used as the legacy fallback. Totals, template and repository slices, and cost per merged pull
 request use that same run-level amount. Pull requests whose repository does not match their linked
 workflow are not attributed to a run.
+Delivery also groups the cohort by persisted team attribution, including an `Unattributed` row.
+The optional `teamId` filter applies to both the daily rollup and live slices.
 
 ## Quality
 
@@ -40,8 +42,8 @@ Gate metrics are grouped per `(run, gate)` pair. The first-attempt pass rate is 
 with a `PASSED` row and no `FAILED` row; the final pass rate is the share with any `PASSED` row.
 Attempt counts sum `PASSED` and `FAILED` rows. Fix-loop attempts count terminal `PASSED` and
 `FAILED` rows and report both runs with a fix and average attempts per such run. CI self-heal rate
-is unchanged: the share of runs with a CI fix that have a linked pull request with passed CI or a
-merge.
+is the share of runs with a CI fix that have a linked pull request with passed CI or a merge. The
+self-heal and merge-rate cohorts combine rollup and live rows using persisted run/PR attribution.
 
 Review verdicts are parsed defensively from reviewer trace output. The stored trace agent key is
 `reviewer`; the individual persona is recorded in the verdict's `reviewer` field (`SECURITY`,
@@ -73,16 +75,17 @@ successful produced workflow run.
 
 Approval reporting counts human steps by kind and status, resolution waits for resolved steps,
 timeouts, currently pending steps, and the oldest pending age. Approvers are grouped by the
-resolving user. Autonomy decisions are counted by event and risk class. Resolved steps and approvals
-record `resolvedVia` as `web`, `slack`, `api_token`, `mcp` or `assistant`; historical rows remain
-null.
+resolving user with interactive (`web`, `slack`) and automated (`api_token`, `mcp`, `assistant`)
+counts. Resolved steps are also split by `resolvedVia`; null or unrecognized historical values are
+reported as `unknown`. Autonomy decisions are counted by event and risk class.
 
 ## Data bounds
 
-Report reads are capped at 10,000 rows and responses include a `truncated` flag when any bounded
-source exceeds that bound, alongside a per-source truncation flag. Quality workflow-step metrics
-use an uncapped `groupBy` over the bounded run cohort. Budget top-run lists intentionally show at
-most five runs per organization; each organization indicates when more ranked runs exist.
+Report live reads are capped at 10,000 rows and responses include a `truncated` flag when any
+bounded live source exceeds that bound, alongside a per-source truncation flag. Quality
+workflow-step metrics use an uncapped `groupBy` over the bounded run cohort. Budget top-run lists
+intentionally show at most five runs per organization; each organization indicates when more
+ranked runs exist.
 
 ## Limitations
 
@@ -100,7 +103,12 @@ most five runs per organization; each organization indicates when more ranked ru
   exact attempt-count histogram for 0–19; its 20+ overflow bucket is represented as 20.
 - Rollups are rebuilt daily and recomputed over the configured horizon to include late outcomes.
   `rollupDays` and `liveDays` show which dates came from each source; truncation flags apply only
-  to live reads. Freshness is bounded by the daily schedule and the recompute window.
+  to live reads. Global analytics daily series and duration percentiles, template per-version
+  duration/PR statistics, and delivery metrics use this hybrid reader. Duration and merge
+  percentiles use logarithmically spaced buckets and return a bucket midpoint; the CI-fix histogram
+  is exact for 0–19 attempts and represents 20 or more as 20. Freshness is bounded by the daily
+  schedule and the recompute window. Set `WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` to populate older
+  history; the default of zero leaves history outside the recompute horizon on the live path.
 - Approval source counts use `resolvedVia`; historical rows with no source are reported as
   `unknown`.
 - User records do not expose a service-principal or API-token approver flag, so approval counts

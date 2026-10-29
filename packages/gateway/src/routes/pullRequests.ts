@@ -7,6 +7,7 @@ import {
 } from '@auto-swe/shared/lib/pullRequest';
 import { summarizePullRequestOutcomes } from '@auto-swe/shared/lib/pullRequestOutcomes';
 import { resolveGitHubBaseUrl } from '@auto-swe/shared/lib/systemConfig';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type {
   PullRequestListItem,
   PullRequestOutcomesResponse,
@@ -281,15 +282,20 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
           ? null
           : new Set(
               (
-                await fastify.prisma.workflowTemplate.findMany({
-                  select: { id: true },
-                  where: {
-                    AND: [
-                      teamMembershipFilter(user),
-                      { id: { in: [...new Set(kept.flatMap((row) => row.templateId ?? []))] } },
-                    ],
-                  },
-                })
+                await runUnscoped(
+                  'outcome template labels are limited to the caller-visible template ids',
+                  ['WorkflowTemplate'],
+                  () =>
+                    fastify.prisma.workflowTemplate.findMany({
+                      select: { id: true },
+                      where: {
+                        AND: [
+                          teamMembershipFilter(user),
+                          { id: { in: [...new Set(kept.flatMap((row) => row.templateId ?? []))] } },
+                        ],
+                      },
+                    })
+                )
               ).map((template) => template.id)
             );
       const templateOf = (r: (typeof kept)[number]) =>
@@ -449,10 +455,15 @@ export const pullRequestRoutes: FastifyPluginAsync = async (fastify) => {
             ? new Set(ids)
             : new Set(
                 (
-                  await fastify.prisma.workflowTemplate.findMany({
-                    select: { id: true },
-                    where: { AND: [teamMembershipFilter(user), { id: { in: ids } }] },
-                  })
+                  await runUnscoped(
+                    'outcome export template labels are limited to the caller-visible batch ids',
+                    ['WorkflowTemplate'],
+                    () =>
+                      fastify.prisma.workflowTemplate.findMany({
+                        select: { id: true },
+                        where: { AND: [teamMembershipFilter(user), { id: { in: ids } }] },
+                      })
+                  )
                 ).map((template) => template.id)
               );
         return batch.map((row) => encode(row, visibleTemplateIds)).join('');

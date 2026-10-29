@@ -1,4 +1,5 @@
 import {
+  buildWorkflowRunDailyRollups,
   computeAnalytics,
   computeGlobalAnalytics,
   MIN_SAMPLES_FOR_SIGNIFICANCE,
@@ -69,7 +70,10 @@ function buildApp(state: {
     /** Non-admin viewers who pass run visibility; unset = everyone. */
     visibleTo?: string[];
   }>;
+  rollupRows?: Mutable[];
   pullRequests?: Array<{
+    ciStatus?: string;
+    mergedAt?: Date | null;
     runId: string | null;
     status: string;
     templateVersion: number | null;
@@ -166,13 +170,20 @@ function buildApp(state: {
             }
           ).humanErrorBaselines ?? [],
       },
+      organizationMembership: {
+        findMany: async () => [],
+      },
       pullRequest: {
         findMany: async (args: Mutable) => {
           state.pullRequestArgs?.push(args);
           const runIds = (args.where as { runId?: { in?: string[] } }).runId?.in;
-          return (state.pullRequests ?? []).filter(
-            (row) => !runIds || (row.runId !== null && runIds.includes(row.runId))
-          );
+          return (state.pullRequests ?? [])
+            .filter((row) => !runIds || (row.runId !== null && runIds.includes(row.runId)))
+            .map((row) => ({
+              ...row,
+              ciStatus: row.ciStatus ?? 'PENDING',
+              mergedAt: row.mergedAt ?? null,
+            }));
         },
       },
       team: {
@@ -192,6 +203,7 @@ function buildApp(state: {
           teamId: 'a1b2c3d4-1234-4567-89ab-cdef01234567',
           userId: 'user-1',
         }),
+        findMany: async () => [],
         findUnique: async ({ where }: { where: Mutable }) => {
           const composite = where.userId_teamId as { userId: string; teamId: string };
           const teamRole = (state as { teamRole?: string }).teamRole ?? 'LEAD';
@@ -351,6 +363,30 @@ function buildApp(state: {
             _max: { startedAt },
             templateId,
           }));
+        },
+      },
+      workflowRunDailyRollup: {
+        findMany: async ({ where }: { where: Mutable }) => {
+          const terms = where.AND as Mutable[] | undefined;
+          const dayFilter = terms?.find((term) => term.day)?.day as { in?: Date[] } | undefined;
+          const templateFilter = terms?.find((term) => term.templateId)?.templateId;
+          return (state.rollupRows ?? []).filter((row) => {
+            const dayMatches =
+              !dayFilter?.in ||
+              dayFilter.in.some((day) => day.getTime() === (row.day as Date).getTime());
+            return dayMatches && (!templateFilter || row.templateId === templateFilter);
+          });
+        },
+        groupBy: async ({ where }: { where: Mutable }) => {
+          const dayRange = where.day as { gte: Date; lt: Date };
+          const days = new Map<number, Date>();
+          for (const row of state.rollupRows ?? []) {
+            const day = row.day as Date;
+            if (day >= dayRange.gte && day < dayRange.lt) {
+              days.set(day.getTime(), day);
+            }
+          }
+          return [...days.values()].map((day) => ({ day }));
         },
       },
       workflowShellAudit: {
@@ -3174,8 +3210,20 @@ describe('GET /workflow-templates/:id/analytics', () => {
     const state = {
       pullRequestArgs: [],
       pullRequests: [
-        { runId: 'run-1', status: 'MERGED', templateVersion: 1 },
-        { runId: 'other-run', status: 'MERGED', templateVersion: 1 },
+        {
+          ciStatus: 'PASSED',
+          mergedAt: new Date(),
+          runId: 'run-1',
+          status: 'MERGED',
+          templateVersion: 1,
+        },
+        {
+          ciStatus: 'PASSED',
+          mergedAt: new Date(),
+          runId: 'other-run',
+          status: 'MERGED',
+          templateVersion: 1,
+        },
       ],
       runs: [
         {
@@ -3261,6 +3309,107 @@ describe('GET /workflow-templates/:id/analytics', () => {
           runId: { in: ['run-1'] },
           templateVersion: { not: null },
         },
+      });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('combines covered rollups and live runs for per-version analytics', async () => {
+    const now = new Date();
+    const historicalStart = new Date(now.getTime() - 60 * 86_400_000);
+    const rollupRows = buildWorkflowRunDailyRollups({
+      now,
+      pullRequests: [
+        {
+          ciStatus: 'PASSED',
+          mergedAt: new Date(historicalStart.getTime() + 60_000),
+          runId: 'historic-run',
+          status: 'MERGED',
+        },
+      ],
+      runs: [
+        {
+          attributedOrgId: 'org-1',
+          attributedTeamId: 'team-1',
+          costUsdAccrued: 4,
+          endedAt: new Date(historicalStart.getTime() + 60_000),
+          estimatedHumanTimeSaved: 10,
+          hadHumanStep: false,
+          id: 'historic-run',
+          outcomeDomain: null,
+          outcomeType: null,
+          repoId: 'repo-1',
+          startedAt: historicalStart,
+          status: 'SUCCESS',
+          templateId: TPL_ID,
+          templateVersion: 1,
+          wasAutonomous: true,
+        },
+      ],
+      steps: [],
+      traces: [],
+    });
+    const state = {
+      pullRequests: [
+        { runId: 'historic-run', status: 'MERGED', templateVersion: 1 },
+        { runId: 'live-run', status: 'OPEN', templateVersion: 1 },
+      ],
+      rollupRows: rollupRows as unknown as Mutable[],
+      runs: [
+        {
+          costUsdAccrued: 2,
+          endedAt: new Date(now.getTime() + 60_000),
+          id: 'live-run',
+          startedAt: now,
+          status: 'SUCCESS',
+          templateId: TPL_ID,
+          templateVersion: 1,
+          workflowId: 'live-workflow',
+        },
+      ],
+      templates: [
+        {
+          activeVersion: 1,
+          createdAt: now,
+          description: '',
+          experimentSplit: null,
+          experimentVersion: null,
+          id: TPL_ID,
+          isDefault: false,
+          name: 'Build',
+          status: 'ACTIVE',
+          team: { id: 'team-1', name: 'Platform', slug: 'platform' },
+          teamId: 'team-1',
+          updatedAt: now,
+          versions: [{ createdAt: now, createdBy: null, id: 'v-1', version: 1 }],
+          workspaceProvider: null,
+        },
+      ],
+      versions: new Map([[`${TPL_ID}:1`, { createdAt: now, createdBy: null, spec: VALID_SPEC }]]),
+    };
+    const app = buildApp(state);
+    await app.ready();
+    try {
+      const response = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: `/api/v1/workflow-templates/${TPL_ID}/analytics?window=90`,
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().data).toMatchObject({
+        liveDays: 89,
+        perVersion: [
+          {
+            avgCostPerRun: 3,
+            mergeRate: 1,
+            prMerged: 1,
+            prOpen: 1,
+            prOpened: 2,
+            runs: 2,
+          },
+        ],
+        rollupDays: 1,
       });
     } finally {
       await app.close();

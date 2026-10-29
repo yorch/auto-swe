@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { computeDailyRunSeries } from './analytics.js';
+import { computeDeliveryReport } from './reports.js';
 import {
   buildWorkflowRunDailyRollups,
   ciFixRoundsFromBuckets,
@@ -6,6 +8,11 @@ import {
   durationBucketForMs,
   durationPercentileFromBuckets,
 } from './workflowRunRollup.js';
+import {
+  dailyRunSeriesFromRollups,
+  deliveryReportFromRollups,
+  workflowRunDurationStatsFromRollups,
+} from './workflowRunRollupReports.js';
 
 describe('WorkflowRun daily rollups', () => {
   it('aggregates successful time saved, PRs, fallback spend, and CI fix histograms', () => {
@@ -34,7 +41,7 @@ describe('WorkflowRun daily rollups', () => {
         outcomeType: null,
         repoId: 'repo',
         startedAt: start,
-        status: 'SUCCESS',
+        status: 'SUCCESS' as const,
         templateId: 'template',
         templateVersion: 1,
         wasAutonomous: true,
@@ -102,5 +109,122 @@ describe('WorkflowRun daily rollups', () => {
       prsOpened: 0,
       runsWithPr: 0,
     });
+  });
+
+  it('matches live delivery metrics and daily series, with merge percentiles in the same bucket', () => {
+    const start = new Date('2026-10-01T10:00:00Z');
+    const liveRuns = [
+      {
+        attributedOrgId: 'org-1',
+        attributedTeamId: 'team-1',
+        costUsdAccrued: 10,
+        endedAt: new Date(start.getTime() + 60_000),
+        estimatedHumanTimeSaved: 20,
+        hadHumanStep: false,
+        id: 'run-1',
+        outcomeDomain: null,
+        outcomeType: null,
+        repoId: 'repo-1',
+        startedAt: start,
+        status: 'SUCCESS' as const,
+        templateId: 'template-1',
+        templateVersion: 1,
+        wasAutonomous: true,
+        workflowId: 'wf-1',
+      },
+      {
+        attributedOrgId: 'org-1',
+        attributedTeamId: 'team-1',
+        costUsdAccrued: 5,
+        endedAt: new Date(start.getTime() + 60 * 60_000 + 60_000),
+        estimatedHumanTimeSaved: null,
+        hadHumanStep: true,
+        id: 'run-2',
+        outcomeDomain: null,
+        outcomeType: null,
+        repoId: 'repo-1',
+        startedAt: new Date(start.getTime() + 60 * 60_000),
+        status: 'FAILED' as const,
+        templateId: 'template-1',
+        templateVersion: 1,
+        wasAutonomous: false,
+        workflowId: 'wf-2',
+      },
+    ];
+    const prs = [
+      {
+        ciStatus: 'PASSED',
+        mergedAt: new Date(start.getTime() + 60_000),
+        runId: 'run-1',
+        status: 'MERGED',
+      },
+      { ciStatus: 'PENDING', mergedAt: null, runId: 'run-2', status: 'OPEN' },
+    ];
+    const steps = [
+      { runId: 'run-1', status: 'PASSED', stepName: 'executeCIFixImplementation' },
+      { runId: 'run-2', status: 'FAILED', stepName: 'executeCIFixImplementation' },
+    ];
+    const rollups = buildWorkflowRunDailyRollups({
+      now: start,
+      pullRequests: prs,
+      runs: liveRuns,
+      steps,
+      traces: [],
+    });
+    const liveDelivery = computeDeliveryReport(
+      liveRuns.map((run) => ({
+        ciFixRounds: steps.filter((step) => step.runId === run.id).length,
+        costUsdAccrued: run.costUsdAccrued,
+        id: run.id,
+        pullRequests: prs
+          .filter((pr) => pr.runId === run.id)
+          .map(({ ciStatus, mergedAt }) => ({ ciStatus, mergedAt })),
+        repoId: run.repoId,
+        repositoryName: 'acme/api',
+        startedAt: run.startedAt,
+        status: run.status,
+        teamId: run.attributedTeamId,
+        teamName: 'Platform',
+        templateId: run.templateId,
+        templateName: 'Build',
+        workflowId: run.workflowId,
+      }))
+    );
+    const rollupDelivery = deliveryReportFromRollups(rollups, {
+      repos: new Map([['repo-1', 'acme/api']]),
+      teams: new Map([['team-1', 'Platform']]),
+      templates: new Map([['template-1', 'Build']]),
+    });
+    expect(rollupDelivery).toMatchObject({
+      byTeam: [{ runsStarted: 2, spendUsd: 15, teamId: 'team-1', teamName: 'Platform' }],
+      ciFixRounds: liveDelivery.ciFixRounds,
+      costPerMergedPr: liveDelivery.costPerMergedPr,
+      prsCiPassed: liveDelivery.prsCiPassed,
+      prsMerged: liveDelivery.prsMerged,
+      runsStarted: liveDelivery.runsStarted,
+      runsSucceeded: liveDelivery.runsSucceeded,
+      runsWithPr: liveDelivery.runsWithPr,
+      spendUsd: liveDelivery.spendUsd,
+      successRate: liveDelivery.successRate,
+    });
+    expect(durationBucketForMs(rollupDelivery.medianTimeToMergeMs ?? 0)).toBe(
+      durationBucketForMs(liveDelivery.medianTimeToMergeMs ?? 0)
+    );
+    const rollupDuration = workflowRunDurationStatsFromRollups(rollups);
+    expect(durationBucketForMs(rollupDuration.p50DurationMs ?? 0)).toBe(
+      durationBucketForMs(60_000)
+    );
+    expect(durationBucketForMs(rollupDuration.p95DurationMs ?? 0)).toBe(
+      durationBucketForMs(60_000)
+    );
+
+    const windowEnd = new Date('2026-10-02T00:00:00Z');
+    const liveDaily = computeDailyRunSeries(liveRuns, start, new Date(windowEnd.getTime() - 1));
+    const rollupDaily = dailyRunSeriesFromRollups(
+      rollups,
+      start,
+      new Date(windowEnd.getTime() - 1)
+    );
+    expect(rollupDaily).toEqual(liveDaily);
   });
 });
