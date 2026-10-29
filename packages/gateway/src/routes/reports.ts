@@ -1,0 +1,651 @@
+import { orgMonthSpend } from '@auto-swe/shared/lib/billing';
+import { forecastMonthlyBudget } from '@auto-swe/shared/lib/budgetForecast';
+import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import {
+  computeAutomationReport,
+  computeDeliveryReport,
+  computeHitlReport,
+  computeQualityReport,
+} from '@auto-swe/shared/workflow';
+import type { FastifyPluginAsync } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { z } from 'zod';
+import { customRangeFields, refineCustomRange, resolveWindow } from '../lib/dateWindow.js';
+import { mapLimited } from '../lib/mapLimited.js';
+import { asPlatformAdmin } from '../lib/platformAdminScope.js';
+import { templateAttributionForPullRequest } from '../lib/pullRequestAttribution.js';
+import { buildWorkflowRunVisibilityFilter } from '../lib/runVisibility.js';
+import { reachableConnections } from '../lib/tenantScope.js';
+import { requireAuth, requireUser } from '../plugins/auth.js';
+
+const REPORT_ROW_CAP = 10_000;
+const REPORT_WINDOW_DAYS = [7, 30, 90] as const;
+const ReportQuery = refineCustomRange(
+  z.object({
+    ...customRangeFields,
+    window: z.coerce
+      .number()
+      .int()
+      .refine((n) => (REPORT_WINDOW_DAYS as readonly number[]).includes(n), {
+        message: `window must be one of ${REPORT_WINDOW_DAYS.join(', ')}`,
+      })
+      .default(30),
+  })
+);
+
+function reportWindow(query: z.infer<typeof ReportQuery>) {
+  const { end, start } = resolveWindow(query, query.window);
+  return { end, start, windowEnd: end.toISOString(), windowStart: start.toISOString() };
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function visibility(
+  user: { role: string; sub: string },
+  gate: Parameters<typeof buildWorkflowRunVisibilityFilter>[1]
+) {
+  return user.role === 'ADMIN' ? {} : buildWorkflowRunVisibilityFilter(user, gate);
+}
+
+export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
+  const app = fastify.withTypeProvider<ZodTypeProvider>();
+  const readAnalytics = requireAuth({ requiredRole: 'ENGINEER' });
+
+  app.get(
+    '/delivery',
+    { onRequest: readAnalytics, schema: { querystring: ReportQuery } },
+    async (request) => {
+      const user = requireUser(request);
+      const range = reportWindow(request.query);
+      const runsResult = await asPlatformAdmin(
+        user,
+        'admin delivery report spans every tenant',
+        ['WorkflowRun'],
+        () =>
+          fastify.prisma.workflowRun.findMany({
+            orderBy: { startedAt: 'desc' },
+            select: {
+              costUsdAccrued: true,
+              id: true,
+              startedAt: true,
+              status: true,
+              template: { select: { name: true } },
+              templateId: true,
+              workflowId: true,
+            },
+            take: REPORT_ROW_CAP + 1,
+            where: {
+              AND: [
+                { startedAt: { gte: range.start, lt: range.end } },
+                visibility(user, request.repoAccessGate),
+              ],
+            },
+          })
+      );
+      const truncated = runsResult.length > REPORT_ROW_CAP;
+      const runs = runsResult.slice(0, REPORT_ROW_CAP);
+      const runIds = runs.map((run) => run.id);
+      const workflowIds = runs.map((run) => run.workflowId);
+      const [activeWorkflows, pullRequests, fixSteps] = await Promise.all([
+        workflowIds.length
+          ? runUnscoped(
+              'delivery report joins only workflow ids visible to the caller',
+              ['ActiveWorkflow'],
+              () =>
+                fastify.prisma.activeWorkflow.findMany({
+                  select: {
+                    costUsdAccrued: true,
+                    repoId: true,
+                    repository: { select: { organizationName: true, repoName: true } },
+                    temporalWorkflowId: true,
+                  },
+                  take: REPORT_ROW_CAP + 1,
+                  where: { temporalWorkflowId: { in: workflowIds } },
+                })
+            )
+          : [],
+        workflowIds.length
+          ? runUnscoped(
+              'delivery report joins only workflow ids visible to the caller',
+              ['PullRequest'],
+              () =>
+                fastify.prisma.pullRequest.findMany({
+                  select: {
+                    ciStatus: true,
+                    mergedAt: true,
+                    repoId: true,
+                    workflow: { select: { repoId: true, temporalWorkflowId: true } },
+                  },
+                  take: REPORT_ROW_CAP + 1,
+                  where: { workflow: { temporalWorkflowId: { in: workflowIds } } },
+                })
+            )
+          : [],
+        runIds.length
+          ? runUnscoped(
+              'delivery report counts steps only for visible cohort runs',
+              ['WorkflowStep'],
+              () =>
+                fastify.prisma.workflowStep.findMany({
+                  select: { runId: true },
+                  take: REPORT_ROW_CAP + 1,
+                  where: {
+                    runId: { in: runIds },
+                    stepName: 'executeCIFixImplementation',
+                  },
+                })
+            )
+          : [],
+      ]);
+      let wasTruncated = truncated;
+      wasTruncated ||= activeWorkflows.length > REPORT_ROW_CAP;
+      wasTruncated ||= pullRequests.length > REPORT_ROW_CAP;
+      wasTruncated ||= fixSteps.length > REPORT_ROW_CAP;
+      const runsByWorkflowId = new Map(
+        runs.map((run) => [run.workflowId, { template: run.template, templateId: run.templateId }])
+      );
+      const workflowById = new Map(runs.map((run) => [run.workflowId, run]));
+      const activeByWorkflowId = new Map(
+        activeWorkflows
+          .slice(0, REPORT_ROW_CAP)
+          .map((workflow) => [workflow.temporalWorkflowId, workflow])
+      );
+      const prsByRun = new Map<string, Array<{ ciStatus: string; mergedAt: Date | null }>>();
+      for (const pr of pullRequests.slice(0, REPORT_ROW_CAP)) {
+        const attribution = templateAttributionForPullRequest(pr, runsByWorkflowId);
+        const workflowId = pr.workflow?.temporalWorkflowId;
+        const run = workflowId ? workflowById.get(workflowId) : null;
+        if (!attribution || !workflowId || !run) {
+          continue;
+        }
+        const rows = prsByRun.get(run.id) ?? [];
+        rows.push({ ciStatus: pr.ciStatus, mergedAt: pr.mergedAt });
+        prsByRun.set(run.id, rows);
+      }
+      const ciRoundsByRun = new Map<string, number>();
+      for (const step of fixSteps.slice(0, REPORT_ROW_CAP)) {
+        ciRoundsByRun.set(step.runId, (ciRoundsByRun.get(step.runId) ?? 0) + 1);
+      }
+      const reportRuns = runs.map((run) => {
+        const active = activeByWorkflowId.get(run.workflowId);
+        const repoName =
+          active?.repository?.organizationName && active.repository.repoName
+            ? `${active.repository.organizationName}/${active.repository.repoName}`
+            : (active?.repository?.repoName ?? active?.repository?.organizationName ?? null);
+        return {
+          ciFixRounds: ciRoundsByRun.get(run.id) ?? 0,
+          costUsdAccrued: Number(run.costUsdAccrued),
+          id: run.id,
+          pullRequests: prsByRun.get(run.id) ?? [],
+          repoId: active?.repoId ?? null,
+          repoSpendUsd: active ? Number(active.costUsdAccrued) : null,
+          repositoryName: repoName,
+          startedAt: run.startedAt,
+          status: run.status,
+          templateId: run.templateId,
+          templateName: run.template.name,
+          workflowId: run.workflowId,
+        };
+      });
+      const report = computeDeliveryReport(reportRuns);
+      return {
+        data: {
+          ...report,
+          truncated: wasTruncated,
+          windowEnd: range.windowEnd,
+          windowStart: range.windowStart,
+        },
+      };
+    }
+  );
+
+  app.get(
+    '/quality',
+    { onRequest: readAnalytics, schema: { querystring: ReportQuery } },
+    async (request) => {
+      const user = requireUser(request);
+      const range = reportWindow(request.query);
+      const runRows = await asPlatformAdmin(
+        user,
+        'admin quality report spans every tenant',
+        ['WorkflowRun'],
+        () =>
+          fastify.prisma.workflowRun.findMany({
+            orderBy: { startedAt: 'desc' },
+            select: {
+              id: true,
+              startedAt: true,
+              template: { select: { name: true } },
+              templateId: true,
+              workflowId: true,
+            },
+            take: REPORT_ROW_CAP + 1,
+            where: {
+              AND: [
+                { startedAt: { gte: range.start, lt: range.end } },
+                visibility(user, request.repoAccessGate),
+              ],
+            },
+          })
+      );
+      const truncated = runRows.length > REPORT_ROW_CAP;
+      const runs = runRows.slice(0, REPORT_ROW_CAP);
+      const runIds = runs.map((run) => run.id);
+      const workflowIds = runs.map((run) => run.workflowId);
+      const [steps, pullRequests, traces] = await Promise.all([
+        runIds.length
+          ? runUnscoped(
+              'quality report reads steps only for visible cohort runs',
+              ['WorkflowStep'],
+              () =>
+                fastify.prisma.workflowStep.findMany({
+                  select: { runId: true, status: true, stepName: true },
+                  take: REPORT_ROW_CAP + 1,
+                  where: {
+                    runId: { in: runIds },
+                    stepName: {
+                      in: [
+                        'runLint',
+                        'runTypecheck',
+                        'runTests',
+                        'runBuild',
+                        'runVulnScan',
+                        'runPerfBench',
+                        'executeGateFixImplementation',
+                        'executeReviewFixImplementation',
+                        'executeCIFixImplementation',
+                      ],
+                    },
+                  },
+                })
+            )
+          : [],
+        workflowIds.length
+          ? runUnscoped(
+              'quality report joins only workflow ids visible to the caller',
+              ['PullRequest'],
+              () =>
+                fastify.prisma.pullRequest.findMany({
+                  select: {
+                    ciStatus: true,
+                    mergedAt: true,
+                    repoId: true,
+                    workflow: { select: { repoId: true, temporalWorkflowId: true } },
+                  },
+                  take: REPORT_ROW_CAP + 1,
+                  where: { workflow: { temporalWorkflowId: { in: workflowIds } } },
+                })
+            )
+          : [],
+        runIds.length
+          ? runUnscoped(
+              'quality report reads review traces only for visible cohort runs',
+              ['AgentTrace'],
+              () =>
+                fastify.prisma.agentTrace.findMany({
+                  orderBy: { createdAt: 'desc' },
+                  select: { outputJson: true, runId: true },
+                  take: REPORT_ROW_CAP + 1,
+                  where: {
+                    agentKey: 'reviewer',
+                    createdAt: { gte: range.start, lt: range.end },
+                    runId: { in: runIds },
+                    type: 'llm_response',
+                  },
+                })
+            )
+          : [],
+      ]);
+      const prsTruncated = pullRequests.length > REPORT_ROW_CAP;
+      const stepsTruncated = steps.length > REPORT_ROW_CAP;
+      const tracesTruncated = traces.length > REPORT_ROW_CAP;
+      const runsByWorkflowId = new Map(
+        runs.map((run) => [run.workflowId, { template: run.template, templateId: run.templateId }])
+      );
+      const runByWorkflowId = new Map(runs.map((run) => [run.workflowId, run]));
+      const reportPrs = pullRequests.slice(0, REPORT_ROW_CAP).flatMap((pr) => {
+        if (!templateAttributionForPullRequest(pr, runsByWorkflowId)) {
+          return [];
+        }
+        const workflowId = pr.workflow?.temporalWorkflowId;
+        const run = workflowId ? runByWorkflowId.get(workflowId) : null;
+        return run ? [{ ciStatus: pr.ciStatus, mergedAt: pr.mergedAt, runId: run.id }] : [];
+      });
+      const report = computeQualityReport({
+        pullRequests: reportPrs,
+        reviewTraces: traces.slice(0, REPORT_ROW_CAP).map((trace) => ({
+          outputJson: trace.outputJson,
+          runId: trace.runId,
+        })),
+        runs: runs.map((run) => ({ id: run.id })),
+        steps: steps.slice(0, REPORT_ROW_CAP),
+      });
+      return {
+        data: {
+          ...report,
+          truncated: truncated || prsTruncated || stepsTruncated || tracesTruncated,
+          windowEnd: range.windowEnd,
+          windowStart: range.windowStart,
+        },
+      };
+    }
+  );
+
+  app.get(
+    '/budget',
+    { onRequest: requireAuth(), schema: { querystring: ReportQuery } },
+    async (request, reply) => {
+      const user = requireUser(request);
+      const organizations =
+        user.role === 'ADMIN'
+          ? await asPlatformAdmin(
+              user,
+              'admin budget report spans every organization',
+              ['Organization'],
+              () =>
+                fastify.prisma.organization.findMany({
+                  orderBy: { name: 'asc' },
+                  select: {
+                    budgetAlertThresholdPercent: true,
+                    id: true,
+                    monthlyBudgetUsdCents: true,
+                    name: true,
+                  },
+                  take: REPORT_ROW_CAP + 1,
+                })
+            )
+          : await fastify.prisma.organization.findMany({
+              orderBy: { name: 'asc' },
+              select: {
+                budgetAlertThresholdPercent: true,
+                id: true,
+                monthlyBudgetUsdCents: true,
+                name: true,
+              },
+              take: REPORT_ROW_CAP + 1,
+              where: { memberships: { some: { role: 'ORG_ADMIN', userId: user.sub } } },
+            });
+      if (user.role !== 'ADMIN' && organizations.length === 0) {
+        return reply.status(403).send({ error: 'ORG_ADMIN membership is required' });
+      }
+      const organizationsTruncated = organizations.length > REPORT_ROW_CAP;
+      const orgs = organizations.slice(0, REPORT_ROW_CAP);
+      const now = new Date();
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+      const monthEnd = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
+      const orgReports = await mapLimited(orgs, 3, async (org) => {
+        const [spend, topRunRows] = await Promise.all([
+          orgMonthSpend(fastify.prisma, org.id),
+          asPlatformAdmin(
+            user,
+            'budget top runs are scoped to an organization',
+            ['WorkflowRun'],
+            () =>
+              fastify.prisma.workflowRun.findMany({
+                orderBy: { costUsdAccrued: 'desc' },
+                select: {
+                  costUsdAccrued: true,
+                  id: true,
+                  startedAt: true,
+                  status: true,
+                  workflowId: true,
+                },
+                take: 6,
+                where: {
+                  AND: [
+                    { startedAt: { gte: monthStart, lt: monthEnd } },
+                    {
+                      OR: [
+                        { connection: { team: { orgId: org.id } } },
+                        { workRequest: { connection: { team: { orgId: org.id } } } },
+                        { workRequest: { billingOrgId: org.id } },
+                        {
+                          workRequest: {
+                            activeWorkflows: {
+                              some: { repository: { team: { orgId: org.id } } },
+                            },
+                          },
+                        },
+                      ],
+                    },
+                    visibility(user, request.repoAccessGate),
+                  ],
+                },
+              })
+          ),
+        ]);
+        const forecast = forecastMonthlyBudget({
+          alertThresholdPercent: org.budgetAlertThresholdPercent,
+          monthlyBudgetUsdCents: org.monthlyBudgetUsdCents,
+          now,
+          spendUsd: spend.totalUsd,
+        });
+        return {
+          ...forecast,
+          monthlyBudgetUsdCents: org.monthlyBudgetUsdCents,
+          mtdUsd: spend.totalUsd,
+          name: org.name,
+          orgId: org.id,
+          topRuns: topRunRows.slice(0, 5).map((run) => ({
+            costUsd: Number(run.costUsdAccrued),
+            id: run.id,
+            startedAt: run.startedAt,
+            status: run.status,
+            workflowId: run.workflowId,
+          })),
+          topRunsTruncated: topRunRows.length > 5,
+        };
+      });
+      return {
+        data: {
+          organizations: orgReports,
+          truncated: organizationsTruncated,
+          windowEnd: monthEnd.toISOString(),
+          windowStart: monthStart.toISOString(),
+        },
+      };
+    }
+  );
+
+  app.get(
+    '/automations',
+    { onRequest: readAnalytics, schema: { querystring: ReportQuery } },
+    async (request) => {
+      const user = requireUser(request);
+      const range = reportWindow(request.query);
+      const accessibleAutomations = await runUnscoped(
+        'automation reports follow the automation list repository and team scopes',
+        ['Automation'],
+        () =>
+          fastify.prisma.automation.findMany({
+            orderBy: { id: 'asc' },
+            select: { connectionId: true, id: true, teamId: true },
+            take: REPORT_ROW_CAP + 1,
+            where:
+              user.role === 'ADMIN'
+                ? {}
+                : {
+                    OR: [
+                      { connection: reachableConnections(user, request.repoAccessGate) },
+                      {
+                        connectionId: null,
+                        team: { memberships: { some: { userId: user.sub } } },
+                      },
+                    ],
+                  },
+          })
+      );
+      const visibleAutomationIds = accessibleAutomations
+        .slice(0, REPORT_ROW_CAP)
+        .map((automation) => automation.id);
+      const fireRows = await runUnscoped(
+        'automation fires are limited to the caller visible automation ids',
+        ['AutomationFire'],
+        () =>
+          fastify.prisma.automationFire.findMany({
+            orderBy: { createdAt: 'desc' },
+            select: {
+              automation: { select: { enabled: true, name: true } },
+              automationId: true,
+              createdAt: true,
+              outcome: true,
+              reason: true,
+              temporalWorkflowId: true,
+            },
+            take: REPORT_ROW_CAP + 1,
+            where: {
+              createdAt: { gte: range.start, lt: range.end },
+              ...(user.role === 'ADMIN' ? {} : { automationId: { in: visibleAutomationIds } }),
+            },
+          })
+      );
+      const fires = fireRows.slice(0, REPORT_ROW_CAP);
+      const startedWorkflowIds = unique(
+        fires.flatMap((fire) =>
+          fire.outcome === 'STARTED' && fire.temporalWorkflowId ? [fire.temporalWorkflowId] : []
+        )
+      );
+      const runRows = startedWorkflowIds.length
+        ? await asPlatformAdmin(
+            user,
+            'automation report joins produced visible runs',
+            ['WorkflowRun'],
+            () =>
+              fastify.prisma.workflowRun.findMany({
+                select: { status: true, workflowId: true },
+                take: REPORT_ROW_CAP + 1,
+                where: {
+                  AND: [
+                    { workflowId: { in: startedWorkflowIds } },
+                    visibility(user, request.repoAccessGate),
+                  ],
+                },
+              })
+          )
+        : [];
+      const runStatuses = new Map(runRows.map((run) => [run.workflowId, run.status]));
+      const report = computeAutomationReport(
+        fires.map((fire) => ({
+          automationEnabled: fire.automation?.enabled ?? null,
+          automationId: fire.automationId,
+          automationName: fire.automation?.name ?? null,
+          createdAt: fire.createdAt,
+          outcome: fire.outcome,
+          reason: fire.reason,
+          temporalWorkflowId: fire.temporalWorkflowId,
+        })),
+        runStatuses
+      );
+      return {
+        data: {
+          automations: report,
+          truncated:
+            accessibleAutomations.length > REPORT_ROW_CAP ||
+            fireRows.length > REPORT_ROW_CAP ||
+            runRows.length > REPORT_ROW_CAP,
+          windowEnd: range.windowEnd,
+          windowStart: range.windowStart,
+        },
+      };
+    }
+  );
+
+  app.get(
+    '/hitl',
+    { onRequest: readAnalytics, schema: { querystring: ReportQuery } },
+    async (request) => {
+      const user = requireUser(request);
+      const range = reportWindow(request.query);
+      const [windowSteps, pendingSteps, decisions] = await Promise.all([
+        asPlatformAdmin(user, 'admin HITL report spans every tenant', ['WorkflowHumanStep'], () =>
+          fastify.prisma.workflowHumanStep.findMany({
+            orderBy: { requestedAt: 'desc' },
+            select: {
+              kind: true,
+              requestedAt: true,
+              resolvedAt: true,
+              resolvedBy: true,
+              resolvedByUser: { select: { name: true } },
+              status: true,
+            },
+            take: REPORT_ROW_CAP + 1,
+            where: {
+              requestedAt: { gte: range.start, lt: range.end },
+              run: visibility(user, request.repoAccessGate),
+            },
+          })
+        ),
+        asPlatformAdmin(
+          user,
+          'admin pending approval report spans every tenant',
+          ['WorkflowHumanStep'],
+          () =>
+            fastify.prisma.workflowHumanStep.findMany({
+              orderBy: { requestedAt: 'asc' },
+              select: {
+                kind: true,
+                requestedAt: true,
+                resolvedAt: true,
+                resolvedBy: true,
+                resolvedByUser: { select: { name: true } },
+                status: true,
+              },
+              take: REPORT_ROW_CAP + 1,
+              where: {
+                run: visibility(user, request.repoAccessGate),
+                status: 'PENDING',
+              },
+            })
+        ),
+        asPlatformAdmin(
+          user,
+          'admin autonomy report spans every tenant',
+          ['AutonomyDecision'],
+          () =>
+            fastify.prisma.autonomyDecision.findMany({
+              orderBy: { createdAt: 'desc' },
+              select: { event: true, riskClass: true },
+              take: REPORT_ROW_CAP + 1,
+              where: {
+                createdAt: { gte: range.start, lt: range.end },
+                run: visibility(user, request.repoAccessGate),
+              },
+            })
+        ),
+      ]);
+      const report = computeHitlReport({
+        autonomyDecisions: decisions.slice(0, REPORT_ROW_CAP),
+        now: new Date(),
+        pendingSteps: pendingSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
+          kind: step.kind,
+          requestedAt: step.requestedAt,
+          resolvedAt: step.resolvedAt,
+          resolvedBy: step.resolvedBy,
+          resolvedByName: step.resolvedByUser?.name ?? null,
+          status: step.status,
+        })),
+        windowSteps: windowSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
+          kind: step.kind,
+          requestedAt: step.requestedAt,
+          resolvedAt: step.resolvedAt,
+          resolvedBy: step.resolvedBy,
+          resolvedByName: step.resolvedByUser?.name ?? null,
+          status: step.status,
+        })),
+      });
+      return {
+        data: {
+          ...report,
+          truncated:
+            windowSteps.length > REPORT_ROW_CAP ||
+            pendingSteps.length > REPORT_ROW_CAP ||
+            decisions.length > REPORT_ROW_CAP,
+          windowEnd: range.windowEnd,
+          windowStart: range.windowStart,
+        },
+      };
+    }
+  );
+};

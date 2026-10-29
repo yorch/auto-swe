@@ -37,6 +37,7 @@ import { prdRunRoutes } from './prdRuns.js';
 import { pullRequestRoutes } from './pullRequests.js';
 import { readinessRoutes } from './readiness.js';
 import { repoDependencyRoutes } from './repoDependencies.js';
+import { reportsRoutes } from './reports.js';
 import { repositoryRoutes } from './repositories.js';
 import { scannerPatternRoutes } from './scannerPatterns.js';
 import { scheduledWorkRequestRoutes } from './scheduledWorkRequests.js';
@@ -81,6 +82,7 @@ export async function registerApiRoutes(app: FastifyInstance): Promise<void> {
   await app.register(pullRequestRoutes, { prefix: '/api/v1/pull-requests' });
   await app.register(ticketRoutes, { prefix: '/api/v1/tickets' });
   await app.register(workflowTemplateRoutes, { prefix: '/api/v1/workflow-templates' });
+  await app.register(reportsRoutes, { prefix: '/api/v1/reports' });
   await app.register(humanErrorBaselineRoutes, { prefix: '/api/v1/human-error-baselines' });
   await app.register(organizationRoutes, { prefix: '/api/v1/platform/organizations' });
   // Deprecated alias — kept for one release.

@@ -31,6 +31,7 @@
     "./lib/systemConfig": "./dist/lib/systemConfig.js",
     "./lib/agentTraceRollup": "./dist/lib/agentTraceRollup.js",
     "./lib/billing": "./dist/lib/billing.js",
+    "./lib/budgetForecast": "./dist/lib/budgetForecast.js",
     "./lib/channelBudget": "./dist/lib/channelBudget.js",
     "./lib/channelTask": "./dist/lib/channelTask.js",
     "./lib/agentRun": "./dist/lib/agentRun.js",

@@ -431,6 +431,26 @@ describe('usageRoutes GET /usage', () => {
 });
 
 describe('usageRoutes GET /usage/export', () => {
+  it('denies a team lead who cannot access the requested team', async () => {
+    const { app } = await buildApp('LEAD');
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/usage/export?teamId=${TEAM_B}`,
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
+  it('denies an organization admin who cannot access the requested organization', async () => {
+    const { app } = await buildApp('ENGINEER');
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: `/api/v1/platform/usage/export?orgId=${ORG_A}`,
+    });
+    expect(response.statusCode).toBe(403);
+  });
+
   it('exports model, agent and node breakdowns as CSV', async () => {
     const { app } = await buildApp();
     const response = await app.inject({

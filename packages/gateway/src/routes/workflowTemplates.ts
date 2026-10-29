@@ -30,7 +30,7 @@ import {
   SPEC_SCHEMA_VERSION,
   type WorkflowSpec,
 } from '@auto-swe/shared/workflow';
-import type { FastifyInstance, FastifyPluginAsync, FastifyReply } from 'fastify';
+import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import { advisoryWarnings } from '../lib/advisoryWarnings.js';
@@ -592,193 +592,194 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       window: z.coerce.number().int().min(1).max(365).default(30),
     })
   );
+  const buildGlobalAnalyticsReport = async (
+    request: FastifyRequest<{ Querystring: z.infer<typeof GlobalAnalyticsQuery> }>
+  ) => {
+    const user = requireUser(request);
+    // Whole UTC days, custom range or preset alike, so a preset covers the same span a custom
+    // range of that many days would, and the previous period lines up with it.
+    const {
+      days: windowDays,
+      end: windowEnd,
+      previousStart,
+      start: windowStart,
+    } = resolveWindow(request.query, request.query.window);
+    const ANALYTICS_ROW_CAP = 50_000;
+    const APPROVAL_STEP_ROW_CAP = 10_000;
+    const GROUP_BY = [
+      'templateId',
+      'status',
+      'outcomeDomain',
+      'outcomeType',
+      'wasAutonomous',
+      'hadHumanStep',
+      'hasError',
+    ] as const;
+    const runWhere = (start: Date, end: Date) => ({
+      startedAt: { gte: start, lt: end },
+      ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+    });
+    const groupsQuery = (start: Date, end: Date) =>
+      fastify.prisma.workflowRun.groupBy({
+        _count: { _all: true },
+        _sum: { costUsdAccrued: true, estimatedHumanTimeSaved: true },
+        by: [...GROUP_BY],
+        where: runWhere(start, end),
+      });
+    const legacyQuery = fastify.prisma.workflowRun.findMany({
+      orderBy: { startedAt: 'desc' },
+      select: {
+        costUsdAccrued: true,
+        estimatedHumanTimeSaved: true,
+        hadHumanStep: true,
+        hasError: true,
+        outcomeDomain: true,
+        outcomeType: true,
+        startedAt: true,
+        status: true,
+        templateId: true,
+        wasAutonomous: true,
+        workflowId: true,
+        workRequest: {
+          select: {
+            activeWorkflows: { select: { costUsdAccrued: true, temporalWorkflowId: true } },
+          },
+        },
+      },
+      take: ANALYTICS_ROW_CAP + 1,
+      where: {
+        ...runWhere(previousStart, windowEnd),
+        costUsdAccrued: 0,
+      },
+    });
+    const seriesQuery = fastify.prisma.workflowRun.findMany({
+      orderBy: { startedAt: 'desc' },
+      select: { endedAt: true, startedAt: true, status: true },
+      take: ANALYTICS_ROW_CAP + 1,
+      where: runWhere(windowStart, windowEnd),
+    });
+    // Human-step wait times: the steps requested in the window, of the runs the caller may see
+    // (the step table carries no tenant column, so visibility comes from the run).
+    const stepsQuery = fastify.prisma.workflowHumanStep.findMany({
+      orderBy: { requestedAt: 'desc' },
+      select: {
+        requestedAt: true,
+        resolvedAt: true,
+        run: { select: { template: { select: { name: true } }, templateId: true } },
+        status: true,
+      },
+      take: APPROVAL_STEP_ROW_CAP + 1,
+      where: {
+        requestedAt: { gte: windowStart, lt: windowEnd },
+        run: buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
+      },
+    });
+    const [rawCurrentGroups, rawPreviousGroups, legacyRows, seriesRows, baselines, stepRows] =
+      await Promise.all([
+        groupsQuery(windowStart, windowEnd),
+        groupsQuery(previousStart, windowStart),
+        legacyQuery,
+        seriesQuery,
+        fastify.prisma.humanErrorBaseline.findMany({
+          select: { domain: true, errorRate: true, outcomeType: true, sampleSize: true },
+          where: { organization: memberOrgs(user) },
+        }),
+        stepsQuery,
+      ]);
+    const allGroups = [...rawCurrentGroups, ...rawPreviousGroups] as GlobalAnalyticsGroup[];
+    const templateRows = await fastify.prisma.workflowTemplate.findMany({
+      select: { id: true, name: true },
+      where: { id: { in: [...new Set(allGroups.map((group) => group.templateId))] } },
+    });
+    const templateNames = new Map(templateRows.map((template) => [template.id, template.name]));
+    const groupKey = (group: Pick<GlobalAnalyticsGroup, (typeof GROUP_BY)[number]>) =>
+      JSON.stringify(GROUP_BY.map((key) => group[key]));
+    const addLegacyCost = (
+      groups: GlobalAnalyticsGroup[],
+      rows: typeof legacyRows
+    ): GlobalAnalyticsGroup[] => {
+      const byKey = new Map(
+        groups.map((group) => [groupKey(group), { ...group, _sum: { ...group._sum } }])
+      );
+      for (const row of rows) {
+        const fallbackCost = (row.workRequest?.activeWorkflows ?? [])
+          .filter((workflow) => workflow.temporalWorkflowId === row.workflowId)
+          .reduce((sum, workflow) => sum + workflow.costUsdAccrued, 0);
+        if (fallbackCost <= 0) {
+          continue;
+        }
+        const group = byKey.get(groupKey(row));
+        if (group) {
+          group._sum.costUsdAccrued = (group._sum.costUsdAccrued ?? 0) + fallbackCost;
+        }
+      }
+      return [...byKey.values()];
+    };
+    const currentGroups = addLegacyCost(
+      rawCurrentGroups as GlobalAnalyticsGroup[],
+      legacyRows.filter((row) => row.startedAt >= windowStart)
+    );
+    const previousGroups = addLegacyCost(
+      rawPreviousGroups as GlobalAnalyticsGroup[],
+      legacyRows.filter((row) => row.startedAt < windowStart)
+    );
+    const approvalLatency = computeApprovalLatency(
+      stepRows.slice(0, APPROVAL_STEP_ROW_CAP).map((s) => ({
+        requestedAt: s.requestedAt,
+        resolvedAt: s.resolvedAt,
+        status: s.status,
+        templateId: s.run.templateId,
+        templateName: s.run.template.name,
+      })),
+      stepRows.length > APPROVAL_STEP_ROW_CAP
+    );
+    const seriesKept = seriesRows.slice(0, ANALYTICS_ROW_CAP);
+    const legacyCostTruncated = legacyRows.length > ANALYTICS_ROW_CAP;
+    const oldestSeriesRow = seriesKept[seriesKept.length - 1];
+    const seriesTruncated =
+      seriesRows.length > ANALYTICS_ROW_CAP &&
+      oldestSeriesRow !== undefined &&
+      oldestSeriesRow.startedAt >= windowStart;
+    const currentSeries = seriesKept.filter((row) => row.startedAt >= windowStart);
+    const baselineRows = baselines.map((b) => ({
+      domain: b.domain,
+      errorRate: b.errorRate,
+      outcomeType: b.outcomeType,
+      sampleSize: b.sampleSize,
+    }));
+    const analytics = computeGlobalAnalyticsFromGroups(
+      currentGroups,
+      templateNames,
+      windowDays,
+      baselineRows
+    );
+    const prev = computeGlobalAnalyticsFromGroups(previousGroups, templateNames, windowDays);
+    return {
+      data: {
+        ...analytics,
+        approvalLatency,
+        daily: computeDailyRunSeries(currentSeries, windowStart, new Date(windowEnd.getTime() - 1)),
+        isTruncated: seriesTruncated,
+        legacyCostTruncated,
+        previous: prev && {
+          autonomyRate: prev.autonomyRate,
+          estimatedHumanTimeSavedTotal: prev.estimatedHumanTimeSavedTotal,
+          humanReviewRate: prev.humanReviewRate,
+          successRate: prev.successRate,
+          totalCost: prev.totalCost,
+          totalRuns: prev.totalRuns,
+        },
+        seriesTruncated,
+      },
+    };
+  };
   app.get(
     '/analytics',
     {
       onRequest: requireAuth({ requiredRole: 'ENGINEER' }),
       schema: { querystring: GlobalAnalyticsQuery },
     },
-    async (request) => {
-      const user = requireUser(request);
-      // Whole UTC days, custom range or preset alike, so a preset covers the same span a custom
-      // range of that many days would, and the previous period lines up with it.
-      const {
-        days: windowDays,
-        end: windowEnd,
-        previousStart,
-        start: windowStart,
-      } = resolveWindow(request.query, request.query.window);
-      const ANALYTICS_ROW_CAP = 50_000;
-      const APPROVAL_STEP_ROW_CAP = 10_000;
-      const GROUP_BY = [
-        'templateId',
-        'status',
-        'outcomeDomain',
-        'outcomeType',
-        'wasAutonomous',
-        'hadHumanStep',
-        'hasError',
-      ] as const;
-      const runWhere = (start: Date, end: Date) => ({
-        startedAt: { gte: start, lt: end },
-        ...buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
-      });
-      const groupsQuery = (start: Date, end: Date) =>
-        fastify.prisma.workflowRun.groupBy({
-          _count: { _all: true },
-          _sum: { costUsdAccrued: true, estimatedHumanTimeSaved: true },
-          by: [...GROUP_BY],
-          where: runWhere(start, end),
-        });
-      const legacyQuery = fastify.prisma.workflowRun.findMany({
-        orderBy: { startedAt: 'desc' },
-        select: {
-          costUsdAccrued: true,
-          estimatedHumanTimeSaved: true,
-          hadHumanStep: true,
-          hasError: true,
-          outcomeDomain: true,
-          outcomeType: true,
-          startedAt: true,
-          status: true,
-          templateId: true,
-          wasAutonomous: true,
-          workflowId: true,
-          workRequest: {
-            select: {
-              activeWorkflows: { select: { costUsdAccrued: true, temporalWorkflowId: true } },
-            },
-          },
-        },
-        take: ANALYTICS_ROW_CAP + 1,
-        where: {
-          ...runWhere(previousStart, windowEnd),
-          costUsdAccrued: 0,
-        },
-      });
-      const seriesQuery = fastify.prisma.workflowRun.findMany({
-        orderBy: { startedAt: 'desc' },
-        select: { endedAt: true, startedAt: true, status: true },
-        take: ANALYTICS_ROW_CAP + 1,
-        where: runWhere(previousStart, windowEnd),
-      });
-      // Human-step wait times: the steps requested in the window, of the runs the caller may see
-      // (the step table carries no tenant column, so visibility comes from the run).
-      const stepsQuery = fastify.prisma.workflowHumanStep.findMany({
-        orderBy: { requestedAt: 'desc' },
-        select: {
-          requestedAt: true,
-          resolvedAt: true,
-          run: { select: { template: { select: { name: true } }, templateId: true } },
-          status: true,
-        },
-        take: APPROVAL_STEP_ROW_CAP + 1,
-        where: {
-          requestedAt: { gte: windowStart, lt: windowEnd },
-          run: buildWorkflowRunVisibilityFilter(user, request.repoAccessGate),
-        },
-      });
-      const [rawCurrentGroups, rawPreviousGroups, legacyRows, seriesRows, baselines, stepRows] =
-        await Promise.all([
-          groupsQuery(windowStart, windowEnd),
-          groupsQuery(previousStart, windowStart),
-          legacyQuery,
-          seriesQuery,
-          fastify.prisma.humanErrorBaseline.findMany({
-            select: { domain: true, errorRate: true, outcomeType: true, sampleSize: true },
-            where: { organization: memberOrgs(user) },
-          }),
-          stepsQuery,
-        ]);
-      const allGroups = [...rawCurrentGroups, ...rawPreviousGroups] as GlobalAnalyticsGroup[];
-      const templateRows = await fastify.prisma.workflowTemplate.findMany({
-        select: { id: true, name: true },
-        where: { id: { in: [...new Set(allGroups.map((group) => group.templateId))] } },
-      });
-      const templateNames = new Map(templateRows.map((template) => [template.id, template.name]));
-      const groupKey = (group: Pick<GlobalAnalyticsGroup, (typeof GROUP_BY)[number]>) =>
-        JSON.stringify(GROUP_BY.map((key) => group[key]));
-      const addLegacyCost = (
-        groups: GlobalAnalyticsGroup[],
-        rows: typeof legacyRows
-      ): GlobalAnalyticsGroup[] => {
-        const byKey = new Map(
-          groups.map((group) => [groupKey(group), { ...group, _sum: { ...group._sum } }])
-        );
-        for (const row of rows) {
-          const fallbackCost = (row.workRequest?.activeWorkflows ?? [])
-            .filter((workflow) => workflow.temporalWorkflowId === row.workflowId)
-            .reduce((sum, workflow) => sum + workflow.costUsdAccrued, 0);
-          if (fallbackCost <= 0) {
-            continue;
-          }
-          const group = byKey.get(groupKey(row));
-          if (group) {
-            group._sum.costUsdAccrued = (group._sum.costUsdAccrued ?? 0) + fallbackCost;
-          }
-        }
-        return [...byKey.values()];
-      };
-      const currentGroups = addLegacyCost(
-        rawCurrentGroups as GlobalAnalyticsGroup[],
-        legacyRows.filter((row) => row.startedAt >= windowStart)
-      );
-      const previousGroups = addLegacyCost(
-        rawPreviousGroups as GlobalAnalyticsGroup[],
-        legacyRows.filter((row) => row.startedAt < windowStart)
-      );
-      const approvalLatency = computeApprovalLatency(
-        stepRows.slice(0, APPROVAL_STEP_ROW_CAP).map((s) => ({
-          requestedAt: s.requestedAt,
-          resolvedAt: s.resolvedAt,
-          status: s.status,
-          templateId: s.run.templateId,
-          templateName: s.run.template.name,
-        })),
-        stepRows.length > APPROVAL_STEP_ROW_CAP
-      );
-      const seriesKept = seriesRows.slice(0, ANALYTICS_ROW_CAP);
-      const oldestSeriesRow = seriesKept[seriesKept.length - 1];
-      const seriesTruncated =
-        seriesRows.length > ANALYTICS_ROW_CAP &&
-        oldestSeriesRow !== undefined &&
-        oldestSeriesRow.startedAt >= windowStart;
-      const currentSeries = seriesKept.filter((row) => row.startedAt >= windowStart);
-      const baselineRows = baselines.map((b) => ({
-        domain: b.domain,
-        errorRate: b.errorRate,
-        outcomeType: b.outcomeType,
-        sampleSize: b.sampleSize,
-      }));
-      const analytics = computeGlobalAnalyticsFromGroups(
-        currentGroups,
-        templateNames,
-        windowDays,
-        baselineRows
-      );
-      const prev = computeGlobalAnalyticsFromGroups(previousGroups, templateNames, windowDays);
-      return {
-        data: {
-          ...analytics,
-          approvalLatency,
-          daily: computeDailyRunSeries(
-            currentSeries,
-            windowStart,
-            new Date(windowEnd.getTime() - 1)
-          ),
-          isTruncated: seriesTruncated,
-          previous: prev && {
-            autonomyRate: prev.autonomyRate,
-            estimatedHumanTimeSavedTotal: prev.estimatedHumanTimeSavedTotal,
-            humanReviewRate: prev.humanReviewRate,
-            successRate: prev.successRate,
-            totalCost: prev.totalCost,
-            totalRuns: prev.totalRuns,
-          },
-          seriesTruncated,
-        },
-      };
-    }
+    buildGlobalAnalyticsReport
   );
 
   const AnalyticsExportQuery = refineCustomRange(
@@ -795,33 +796,10 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
       schema: { querystring: AnalyticsExportQuery },
     },
     async (request, reply) => {
-      const { format, ...filters } = request.query;
-      const report = await fastify.inject({
-        headers: request.headers,
-        method: 'GET',
-        url: `/api/v1/workflow-templates/analytics?${new URLSearchParams(
-          Object.entries(filters).map(([key, value]) => [key, String(value)])
-        )}`,
-      });
-      if (report.statusCode >= 400) {
-        return reply.code(report.statusCode).send(report.json());
-      }
-      const { data } = report.json<{
-        data: {
-          perTemplate: Array<{
-            avgCostPerRun: number;
-            autonomyRate: number | null;
-            estimatedHumanTimeSavedTotal: number | null;
-            failed: number;
-            succeeded: number;
-            successRate: number | null;
-            templateId: string;
-            templateName: string;
-            totalCost: number;
-            totalRuns: number;
-          }>;
-        };
-      }>();
+      const { data } = await buildGlobalAnalyticsReport(
+        request as unknown as Parameters<typeof buildGlobalAnalyticsReport>[0]
+      );
+      const { format } = request.query;
       const columns = [
         'templateId',
         'name',

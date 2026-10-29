@@ -133,6 +133,13 @@ const ADMIN_PAGES: NavItem[] = [
     minRole: 'ENGINEER',
     section: 'Spend & insights',
   },
+  {
+    href: '/admin/reports',
+    icon: 'analytics',
+    label: 'Reports',
+    minRole: 'ENGINEER',
+    section: 'Spend & insights',
+  },
   // Gated on holding a usage scope (a led team, an administered org, or ADMIN), not on
   // the platform role; the gateway enforces which scopes each may read.
   {

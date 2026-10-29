@@ -2484,6 +2484,28 @@ describe('computeGlobalAnalytics', () => {
   });
 });
 
+describe('GET /workflow-templates/analytics/export access', () => {
+  it('refuses a viewer', async () => {
+    const app = buildApp({
+      runs: [],
+      templates: [],
+      userRole: 'VIEWER',
+      versions: new Map(),
+    });
+    await app.ready();
+    try {
+      const response = await app.inject({
+        headers: { authorization: 'Bearer x' },
+        method: 'GET',
+        url: '/api/v1/workflow-templates/analytics/export',
+      });
+      expect(response.statusCode).toBe(403);
+    } finally {
+      await app.close();
+    }
+  });
+});
+
 describe('GET /workflow-templates/analytics', () => {
   let app: FastifyInstance;
   let state: Parameters<typeof buildApp>[0];
