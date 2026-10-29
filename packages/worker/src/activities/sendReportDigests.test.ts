@@ -147,7 +147,8 @@ vi.mock('@auto-swe/shared/lib/tenantGuard', () => ({
   runUnscoped: (_reason: string, _tables: string[], callback: () => unknown) => callback(),
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
-  resolveWebUrl: () => 'https://example.test',
+  resolvePublicUrl: () => 'https://gateway.example.test',
+  resolveWebUrl: () => 'https://dashboard.example.test',
 }));
 vi.mock('@auto-swe/shared/lib/reportDigestUnsubscribe', () => ({
   createReportDigestUnsubscribeToken: (id: string, email: string) => `${id}.${email}.signed`,
@@ -292,18 +293,27 @@ describe('sendReportDigests', () => {
       subscription('opt-out', {
         emailRecipients: ['keep@example.test', 'other@example.test', 'stop@example.test'],
         optedOutEmails: ['stop@example.test'],
+        slackChannel: { slackChannelId: 'C123' },
       }),
     ];
     await expect(sendReportDigests({ now, periodStart })).resolves.toMatchObject({ sent: 1 });
     expect(mocks.emails.map(({ to }) => to)).toEqual(['keep@example.test', 'other@example.test']);
-    expect(mocks.emails[0]?.listUnsubscribeUrl).toContain(
-      '/api/v1/report-digests/unsubscribe?token='
-    );
-    expect(new URL(mocks.emails[0]?.listUnsubscribeUrl ?? '').searchParams.get('token')).toBe(
+    const unsubscribeUrl = new URL(mocks.emails[0]?.listUnsubscribeUrl ?? '');
+    expect(unsubscribeUrl.origin).toBe('https://gateway.example.test');
+    expect(unsubscribeUrl.pathname).toBe('/api/v1/report-digests/unsubscribe');
+    expect(unsubscribeUrl.searchParams.get('token')).toBe(
       'opt-out.keep@example.test.signed'
     );
     expect(new URL(mocks.emails[1]?.listUnsubscribeUrl ?? '').searchParams.get('token')).toBe(
       'opt-out.other@example.test.signed'
+    );
+    expect(mocks.slackPosts[0]?.blocks).toContainEqual(
+      expect.objectContaining({
+        elements: [
+          expect.objectContaining({ url: 'https://dashboard.example.test/admin/reports' }),
+        ],
+        type: 'actions',
+      })
     );
   });
 

@@ -2,7 +2,7 @@ import { prisma } from '@auto-swe/shared/db';
 import { orgMonthSpend } from '@auto-swe/shared/lib/billing';
 import { forecastMonthlyBudget } from '@auto-swe/shared/lib/budgetForecast';
 import { createReportDigestUnsubscribeToken } from '@auto-swe/shared/lib/reportDigestUnsubscribe';
-import { resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
+import { resolvePublicUrl, resolveWebUrl } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import {
   buildReportDigest,
@@ -40,7 +40,7 @@ function cleanHeading(value: string): string {
 }
 
 function digestUnsubscribeUrl(subscriptionId: string, email: string): string {
-  const url = new URL('/api/v1/report-digests/unsubscribe', resolveWebUrl());
+  const url = new URL('/api/v1/report-digests/unsubscribe', resolvePublicUrl());
   url.searchParams.set(
     'token',
     createReportDigestUnsubscribeToken(subscriptionId, email.trim().toLowerCase())
