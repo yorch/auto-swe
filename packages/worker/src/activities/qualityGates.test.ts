@@ -33,6 +33,7 @@ vi.mock('./workspace.js', async (importOriginal) => ({
 }));
 vi.mock('@auto-swe/shared/lib/systemConfig', () => ({
   resolveWorkflowDefaults: vi.fn(async () => ({ branchPrefix: 'auto' })),
+  resolveWorkspaceInfra: vi.fn(() => ({ stackImages: {} })),
 }));
 vi.mock('../lib/activityContext.js', () => ({
   currentRunningWorkflowRunId: vi.fn(async () => 'db-run'),
@@ -61,6 +62,7 @@ import {
   runLint,
   runPerfBench,
   runQualityGates,
+  runTests,
   truncate,
 } from './qualityGates.js';
 import { createWorkspace } from './workspace.js';
@@ -116,7 +118,7 @@ describe('resolveCommand precedence', () => {
 
     it("uses the stack's command instead of a yarn one", async () => {
       mockedFindUnique.mockResolvedValue({ detectedStack, gateCommands: null } as never);
-      expect(await resolveCommand('runTests', baseRequest, undefined)).toBe('mvn -B -q test');
+      expect(await resolveCommand('runTests', baseRequest, undefined)).toBe('mvn -B -ntp test');
     });
 
     it('resolves a gate the stack has no command for to null, never to yarn', async () => {
@@ -158,7 +160,7 @@ describe('resolveCommand precedence', () => {
         gateCommands: { runLint: 'make lint' },
       } as never);
       expect(await resolveCommand('runTests', baseRequest, undefined)).toBe(
-        "cd 'backend' && mvn -B -q test"
+        "cd 'backend' && mvn -B -ntp test"
       );
       expect(await resolveCommand('runLint', baseRequest, undefined)).toBe('make lint');
       expect(await resolveCommand('runTests', baseRequest, 'step')).toBe('step');
@@ -266,6 +268,44 @@ describe('resolveCommand precedence', () => {
     const result = await runPerfBench({ request: baseRequest });
     expect(result.passed).toBe(false);
     expect(fakeWorkspace.execCapture).not.toHaveBeenCalled();
+  });
+});
+
+describe('the test gate’s timeout', () => {
+  const twoGo = {
+    components: [
+      { path: 'a', stacks: ['go'] },
+      { path: 'b', stacks: ['go'] },
+    ],
+    evidence: [],
+  };
+
+  it('scales with the components a composite runs, as the TDD loop’s does', async () => {
+    mockedFindUnique.mockResolvedValue({ detectedStack: twoGo, gateCommands: null } as never);
+    await runTests({ request: baseRequest });
+    expect(fakeWorkspace.execCapture).toHaveBeenLastCalledWith(
+      expect.stringContaining("(cd 'a' &&"),
+      { timeoutMs: 1_200_000 }
+    );
+  });
+
+  it('is the usual ten minutes for a single command, and never changes another gate', async () => {
+    mockedFindUnique.mockResolvedValue({ detectedStack: null, gateCommands: null } as never);
+    await runTests({ request: baseRequest });
+    expect(fakeWorkspace.execCapture).toHaveBeenLastCalledWith('yarn test', { timeoutMs: 600_000 });
+    mockedFindUnique.mockResolvedValue({ detectedStack: twoGo, gateCommands: null } as never);
+    await runLint({ command: 'yarn lint', request: baseRequest });
+    expect(fakeWorkspace.execCapture).toHaveBeenLastCalledWith('yarn lint', {
+      timeoutMs: undefined,
+    });
+  });
+
+  it('lets a step’s own timeout win', async () => {
+    mockedFindUnique.mockResolvedValue({ detectedStack: twoGo, gateCommands: null } as never);
+    await runTests({ request: baseRequest, timeoutMs: 5_000 });
+    expect(fakeWorkspace.execCapture).toHaveBeenLastCalledWith(expect.any(String), {
+      timeoutMs: 5_000,
+    });
   });
 });
 

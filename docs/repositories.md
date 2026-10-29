@@ -298,8 +298,12 @@ and one repository's failure doesn't stop the others.
 
 ### Detected stack
 
-The scheduled dependency scan also records the repository's stacks on the connection
-(`detectedStack`, with `detectedStackAt`). It reads the repository tree recursively.
+The dependency scan also records the repository's stacks on the connection
+(`detectedStack`, with `detectedStackAt`). It reads the repository tree recursively. It runs on the
+weekly schedule and once more when a repository is onboarded, so a new repository has its stack
+before its first run. The onboarding scan is started after the repository is saved and is
+best-effort: if it cannot be started, or runs before the repository's credentials work (it then
+records nothing and is not retried), the weekly sweep records the detection.
 
 - **What it scans.** Stack signals (`package.json`, `pyproject.toml`, `requirements.txt`,
   `setup.py`, `pom.xml`, `build.gradle[.kts]`, `settings.gradle[.kts]`, `go.mod`) up to four directories deep. Paths under
@@ -326,9 +330,15 @@ stack's test command when `runTests` is unset (the same chain, so loop and gate 
 | Root | `runTests` | `runBuild` | `runLint` |
 |---|---|---|---|
 | Python | `python -m pytest` | — | — |
-| JVM, Maven (`pom.xml`) | `mvn -B -q test` | `mvn -B -q -DskipTests package` | — |
+| JVM, Maven (`pom.xml`) | `mvn -B -ntp test` | `mvn -B -q -DskipTests package` | — |
 | JVM, Gradle | `./gradlew test --no-daemon` | `./gradlew build -x test --no-daemon` | — |
 | Go | `go test ./...` | `go build ./...` | `go vet ./...` |
+
+The Maven test command is not quiet (`-q` prints nothing on success): the test loop needs Surefire's
+`Tests run: N, Failures: 0, Errors: 0` summary as evidence that tests ran, and a run with no tests
+does not pass. For Gradle, an executed `test` task (a `> Task :test` line, not one marked
+`UP-TO-DATE` or `NO-SOURCE`) is the evidence. A custom `runTests` for a JVM repository must print one
+of those for the loop to see it pass.
 
 A gate the table leaves blank resolves to no command and fails as unconfigured (`onFail: 'warn'`
 on its node makes it optional); it is never filled with a command from another ecosystem. The
@@ -359,7 +369,7 @@ target — it keeps its `package.json` guess.
 
 - exactly **one** component, with a complete listing (`treeTruncated` and `componentsTruncated` both
   unset), is the target. The stack's default gates and test command run in that directory, so the
-  recorded command reads `cd 'backend' && mvn -B -q test` — the directory is visible in the run's gate
+  recorded command reads `cd 'backend' && mvn -B -ntp test` — the directory is visible in the run's gate
   result. A Node component's manager comes from its own lockfile (and `.yarnrc.yml`) alone; one with no
   lockfile gets npm's commands, because Yarn 4 refuses a directory that is not part of a project (its
   audit then fails, as `npm audit` needs a lockfile). Its test command is guessed from the component's
@@ -375,7 +385,7 @@ target — it keeps its `package.json` guess.
   and bash alike):
 
   ```sh
-  rc=0; ur=0; ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }; echo '== auto-swe component: api =='; (cd 'api' && mvn -B -q test); ck $?; echo '== auto-swe component: web =='; (cd 'web' && npm test); ck $?; if [ "$rc" -ne 0 ]; then exit $rc; fi; exit $ur
+  rc=0; ur=0; ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }; echo; echo '== auto-swe component: api =='; (cd 'api' && mvn -B -ntp test) 2>&1; ck $?; echo; echo '== auto-swe component: web =='; (cd 'web' && npm test) 2>&1; ck $?; if [ "$rc" -ne 0 ]; then exit $rc; fi; exit $ur
   ```
 
   The exit status is the first **real** failure's — any status other than 126 or 127, a missing
@@ -389,7 +399,10 @@ target — it keeps its `package.json` guess.
   passing and failing counts are the sums across components. The output fed back to the agent is
   bounded per component — each section keeps its marker line and its last characters, an even share
   of the 10,000-character budget — so every component's failure is represented. The test run's
-  timeout is the usual ten minutes times the number of components, at most four times.
+  timeout is the usual ten minutes times the number of components, at most four times, for the test
+  loop and for the `runTests` quality gate alike (a step's own `timeoutMs` still wins). Each
+  component's stderr is merged into its stdout inside the composite, so a gate summary that shows
+  one stream still carries the markers.
 
   The rule is all-or-nothing per gate: a gate is composite only when **every** component has a
   command for it. A gate any component lacks stays unconfigured, because running it in only some
@@ -560,9 +573,9 @@ longer fit.
 - **The composite shares one run's test budget.** The timeout scales with the number of components
   but is capped at four times the single-run limit, and the output the agent sees is split evenly
   across components.
-- **The stack fallback follows the stored detection, which is weekly.** A repository onboarded
-  since the last scan has none and keeps the built-in `yarn` gates until the next scan; a root that
-  changed stack is followed only after a rescan. Each activity reads the detection itself, so a scan that
+- **The stack fallback follows the stored detection.** A repository is scanned when it is onboarded
+  and then weekly; one whose onboarding scan did not record anything keeps the built-in `yarn` gates
+  until the next weekly scan, and a root that changed stack is followed only after a rescan. Each activity reads the detection itself, so a scan that
   lands mid-run can move the run's later steps to another image or directory than its earlier ones; a run
   is not pinned to the detection it started with. A polyglot root (root `package.json` plus a Python
   service) is a Node target, and the service gets nothing. A single component is chosen only when it is

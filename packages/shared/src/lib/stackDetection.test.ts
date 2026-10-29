@@ -90,7 +90,7 @@ describe('detectStack', () => {
     const r = detectStack(['pom.xml']);
     expect(r.suggestedGateCommands).toEqual({
       runBuild: 'mvn -B -q -DskipTests package',
-      runTests: 'mvn -B -q test',
+      runTests: 'mvn -B -ntp test',
     });
     expect(r.suggestedDockerfile).toBe('jvm');
   });
@@ -166,7 +166,7 @@ describe('detectedGateDefaults', () => {
     });
     expect(detectedGateDefaults(detect(['pom.xml']))).toEqual({
       runBuild: 'mvn -B -q -DskipTests package',
-      runTests: 'mvn -B -q test',
+      runTests: 'mvn -B -ntp test',
     });
     expect(detectedGateDefaults(detect(['build.gradle.kts']))).toEqual({
       runBuild: './gradlew build -x test --no-daemon',
@@ -348,7 +348,7 @@ describe('components as the target', () => {
     const d = D(['backend/pom.xml']);
     expect(detectedGateDefaults(d)).toEqual({
       runBuild: "cd 'backend' && mvn -B -q -DskipTests package",
-      runTests: "cd 'backend' && mvn -B -q test",
+      runTests: "cd 'backend' && mvn -B -ntp test",
     });
     // The JVM build tool is the component's, not the root's.
     expect(detectedGateDefaults(D(['backend/build.gradle']))?.runTests).toBe(
@@ -397,7 +397,7 @@ describe('components as the target', () => {
     const d = D(['README.md', 'backend/pom.xml', ...docs]);
     expect(d.componentsTruncated).toBeUndefined();
     expect(d.components).toEqual([{ path: 'backend', stacks: ['jvm'] }]);
-    expect(detectedGateDefaults(d)?.runTests).toBe("cd 'backend' && mvn -B -q test");
+    expect(detectedGateDefaults(d)?.runTests).toBe("cd 'backend' && mvn -B -ntp test");
     // A signal directory sorted behind them is still found.
     const late = D([...docs, 'zz/go.mod']);
     expect(late.components).toEqual([{ path: 'zz', stacks: ['go'] }]);
@@ -424,7 +424,7 @@ describe('components as the target', () => {
     );
     const maven = D(['svc/pom.xml', 'svc/core/pom.xml', 'svc/web/pom.xml']);
     expect(maven.components).toEqual([{ path: 'svc', stacks: ['jvm'] }]);
-    expect(detectedGateDefaults(maven)?.runTests).toBe("cd 'svc' && mvn -B -q test");
+    expect(detectedGateDefaults(maven)?.runTests).toBe("cd 'svc' && mvn -B -ntp test");
     // Not a tree: sibling JVM projects, and a JVM project beside a Node one, are still several.
     expect(detectedTarget(D(['a/pom.xml', 'b/pom.xml']))).toBe('ambiguous');
     expect(detectedTarget(D(['a/pom.xml', 'b/package.json']))).toBe('ambiguous');
@@ -525,8 +525,8 @@ describe('composite gates for several components', () => {
   it('generates the documented shape', () => {
     expect(cmd(['a', 'go test ./...'], ['b', 'go test ./...'])).toBe(
       'rc=0; ur=0; ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }; ' +
-        "echo; echo '== auto-swe component: a =='; (cd 'a' && go test ./...); ck $?; " +
-        "echo; echo '== auto-swe component: b =='; (cd 'b' && go test ./...); ck $?; " +
+        "echo; echo '== auto-swe component: a =='; (cd 'a' && go test ./...) 2>&1; ck $?; " +
+        "echo; echo '== auto-swe component: b =='; (cd 'b' && go test ./...) 2>&1; ck $?; " +
         'if [ "$rc" -ne 0 ]; then exit $rc; fi; exit $ur'
     );
   });
@@ -571,7 +571,7 @@ describe('composite gates for several components', () => {
 
   it('picks the JVM build tool per component', () => {
     expect(detectedGateDefaults(D(['a/pom.xml', 'b/build.gradle']))?.runTests).toBe(
-      cmd(['a', 'mvn -B -q test'], ['b', './gradlew test --no-daemon'])
+      cmd(['a', 'mvn -B -ntp test'], ['b', './gradlew test --no-daemon'])
     );
   });
 
@@ -717,6 +717,16 @@ describe('compositeCommand run in a real sh', () => {
     // Both sections are found, so each is judged on its own evidence.
     expect([...r.stdout.matchAll(COMPONENT_MARKER_RE)].map((m) => m[1])).toEqual(['a', 'b']);
     expect(r.stdout).toContain('12 passed\n');
+  });
+
+  it('carries a component’s stderr on stdout, under its marker, for a gate that shows one stream', () => {
+    const r = run([
+      { command: 'echo from-a-stderr >&2', dir: 'a' },
+      { command: 'echo from-b-stderr >&2; exit 4', dir: 'b' },
+    ]);
+    expect(r.status).toBe(4);
+    expect(r.stdout).toContain(`${componentMarker('b')}\nfrom-b-stderr`);
+    expect(r.stdout).toContain(`${componentMarker('a')}\nfrom-a-stderr`);
   });
 
   it('works inside a braced group with stderr merged, as the gate runner wraps it', () => {

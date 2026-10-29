@@ -185,6 +185,9 @@ const RAN_TESTS_RES: readonly RegExp[] = [
   /^--- PASS: \S/m,
   /^\s*PASS[ \t]+\S/m,
   /^Ran [1-9]\d* tests?\b/m,
+  // Gradle names a task it executed; `UP-TO-DATE` and `NO-SOURCE` follow the name on their line,
+  // so a test task that did nothing does not match.
+  /^> Task :(?:[\w.-]+:)*test$/m,
 ];
 
 /**
@@ -277,16 +280,36 @@ export function parseTestOutput(
   };
 }
 
+/**
+ * Maven Surefire's `Tests run: N, Failures: F, Errors: E, Skipped: S` lines, as counts. It prints
+ * one per test class and a total, so the line with the most tests is the total. `mvn -q` prints
+ * none, which is why the default test command is not quiet. Passing is N minus F, E and S.
+ */
+function surefireCounts(output: string): { passing: number; failing: number } | null {
+  let best: { run: number; failing: number; passing: number } | null = null;
+  for (const m of output.matchAll(
+    /Tests run: (\d+), Failures: (\d+), Errors: (\d+)(?:, Skipped: (\d+))?/g
+  )) {
+    const run = Number(m[1]);
+    const failing = Number(m[2]) + Number(m[3]);
+    if (best === null || run > best.run) {
+      best = { failing, passing: Math.max(run - failing - Number(m[4] ?? 0), 0), run };
+    }
+  }
+  return best;
+}
+
 /** One run's (or one component's) counts, and whether they show that tests ran and none failed. */
 function scanSection(
   output: string,
   exitCode?: number
 ): { passing: number; failing: number; ok: boolean } {
+  const surefire = surefireCounts(output);
   const passCount = largestCount(output, PASS_COUNT_RES);
   const failCount = largestCount(output, FAIL_COUNT_RES);
-  const passing = passCount ?? 0;
-  const failing = failCount ?? 0;
-  const countsParsed = passCount !== null || failCount !== null;
+  const passing = Math.max(passCount ?? 0, surefire?.passing ?? 0);
+  const failing = Math.max(failCount ?? 0, surefire?.failing ?? 0);
+  const countsParsed = passCount !== null || failCount !== null || surefire !== null;
   const ranTests = RAN_TESTS_RES.some((re) => re.test(output));
   const ok = countsParsed ? failing === 0 && passing > 0 : exitCode === 0 && ranTests;
   return { failing, ok, passing };
@@ -317,10 +340,16 @@ const TEST_OUTPUT_BUDGET = 10_000;
  */
 export function boundTestOutput(output: string, budget = TEST_OUTPUT_BUDGET): string {
   const sections = splitComponentSections(output);
-  if (!sections) {
+  // More sections than a composite has (the command itself covers at most 8), or markers too long
+  // to leave each a share, is not a composite's output but something printing marker lines: bound
+  // it like a single run, so the result never exceeds the budget.
+  if (!sections || sections.length > 8) {
     return output.slice(-budget);
   }
   const share = Math.floor(budget / sections.length);
+  if (sections.some(({ marker }) => marker.length + 2 > share)) {
+    return output.slice(-budget);
+  }
   return sections
     .map(({ body, marker }) => {
       const room = share - marker.length - 1;

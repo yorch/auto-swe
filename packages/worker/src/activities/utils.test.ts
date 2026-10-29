@@ -117,7 +117,7 @@ describe('detectTestCommand with a component target', () => {
     expect(detectTestCommand('{}', null, both)).toBe(
       compositeCommand([
         { command: 'go test ./...', dir: 'a' },
-        { command: 'mvn -B -q test', dir: 'b' },
+        { command: 'mvn -B -ntp test', dir: 'b' },
       ])
     );
     // A configured command still wins.
@@ -500,5 +500,58 @@ describe('a real composite run, read by parseTestOutput', () => {
     const parsed = parseTestOutput(r.output, 10, r.status);
     expect(parsed.passed).toBe(false);
     expect(parsed.failing).toBeGreaterThan(0);
+  });
+});
+
+describe('test evidence for JVM runners', () => {
+  it('counts Maven Surefire’s summary as tests having run, and a zero-test run as not', () => {
+    const ran = '[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 1\n[INFO] BUILD SUCCESS\n';
+    expect(parseTestOutput(ran, 10, 0).passed).toBe(true);
+    const none = '[INFO] Tests run: 0, Failures: 0, Errors: 0, Skipped: 0\n[INFO] BUILD SUCCESS\n';
+    expect(parseTestOutput(none, 10, 0).passed).toBe(false);
+    // `mvn -q` prints nothing on success: no evidence, so the default command is not quiet.
+    expect(parseTestOutput('', 10, 0).passed).toBe(false);
+  });
+
+  it('counts a Gradle test task that executed, not one that was skipped or up to date', () => {
+    expect(
+      parseTestOutput('> Task :compileJava\n> Task :test\n\nBUILD SUCCESSFUL\n', 10, 0).passed
+    ).toBe(true);
+    expect(parseTestOutput('> Task :app:test\nBUILD SUCCESSFUL\n', 10, 0).passed).toBe(true);
+    expect(parseTestOutput('> Task :test UP-TO-DATE\nBUILD SUCCESSFUL\n', 10, 0).passed).toBe(
+      false
+    );
+    expect(parseTestOutput('> Task :test NO-SOURCE\nBUILD SUCCESSFUL\n', 10, 0).passed).toBe(false);
+  });
+
+  it('still fails a Maven run with failures, whatever else it printed', () => {
+    const failed = '[ERROR] Tests run: 12, Failures: 2, Errors: 0, Skipped: 0\n';
+    expect(parseTestOutput(failed, 10, 1).passed).toBe(false);
+    expect(parseTestOutput(failed, 10, 0).passed).toBe(false);
+  });
+});
+
+describe('boundTestOutput is never larger than its budget', () => {
+  it('bounds output made of far more markers than a composite has', () => {
+    const flood = Array.from({ length: 5000 }, (_, i) => componentMarker(`d${i}`)).join('\n');
+    expect(boundTestOutput(flood, 10_000).length).toBeLessThanOrEqual(10_000);
+  });
+
+  it('bounds a marker too long to leave its section a share', () => {
+    const long = componentMarker('x'.repeat(6000));
+    const out = `${long}\nbody\n${componentMarker('b')}\nmore\n`;
+    expect(boundTestOutput(out, 10_000).length).toBeLessThanOrEqual(10_000);
+  });
+
+  it('still keeps a real composite’s every section', () => {
+    const out = ['a', 'b', 'c']
+      .map((d) => `${componentMarker(d)}\n${'x'.repeat(8000)}\nFAILED in ${d}\n`)
+      .join('');
+    const bounded = boundTestOutput(out, 10_000);
+    expect(bounded.length).toBeLessThanOrEqual(10_000);
+    for (const d of ['a', 'b', 'c']) {
+      expect(bounded).toContain(componentMarker(d));
+      expect(bounded).toContain(`FAILED in ${d}`);
+    }
   });
 });

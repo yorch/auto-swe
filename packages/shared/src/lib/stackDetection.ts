@@ -79,7 +79,7 @@ export function stackGateDefaults(
       return { runTests: 'python -m pytest' };
     case 'jvm':
       return rootFiles.has('pom.xml')
-        ? { runBuild: 'mvn -B -q -DskipTests package', runTests: 'mvn -B -q test' }
+        ? { runBuild: 'mvn -B -q -DskipTests package', runTests: 'mvn -B -ntp test' }
         : {
             runBuild: './gradlew build -x test --no-daemon',
             runTests: './gradlew test --no-daemon',
@@ -302,7 +302,8 @@ export function compositeComponentCount(command: string): number {
  * hide another component's failing test from the loop. Every part runs, in the order given, under
  * a {@link componentMarker} line so the output says which directory a failure belongs to. Each
  * `cd` is in a subshell: a bare one would carry into the next part, and a missing directory is a
- * real failure. The directories are pre-validated ({@link COMPONENT_PATH_RE}) and quoted.
+ * real failure. Each part's stderr is merged into its stdout, so a gate summary that shows only
+ * one stream still carries the markers. The directories are pre-validated ({@link COMPONENT_PATH_RE}) and quoted.
  */
 export function compositeCommand(parts: ReadonlyArray<{ dir: string; command: string }>): string {
   return [
@@ -313,7 +314,7 @@ export function compositeCommand(parts: ReadonlyArray<{ dir: string; command: st
       // The bare `echo` ends a previous part's output that lacks a trailing newline, so the
       // marker is always a line of its own (the parser reads it line-anchored).
       ({ dir, command }) =>
-        `echo; echo '${componentMarker(dir)}'; (cd '${dir}' && ${command}); ck $?`
+        `echo; echo '${componentMarker(dir)}'; (cd '${dir}' && ${command}) 2>&1; ck $?`
     ),
     'if [ "$rc" -ne 0 ]; then exit $rc; fi',
     'exit $ur',
