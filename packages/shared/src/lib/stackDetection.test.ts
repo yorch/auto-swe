@@ -4,7 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  COMPONENT_MARKER_RE,
+  componentMarker,
   compositeCommand,
+  compositeComponentCount,
+  compositeSharedStack,
   detectedGateDefaults,
   detectedTarget,
   detectedTargetDir,
@@ -505,28 +509,32 @@ describe('composite gates for several components', () => {
   const D = (files: string[], opts?: Parameters<typeof detectStack>[1]) => detectStack(files, opts);
   const goDirs = (n: number) => Array.from({ length: n }, (_, i) => `s${i}/go.mod`);
 
+  const cmd = (...parts: Array<[string, string]>) =>
+    compositeCommand(parts.map(([dir, command]) => ({ command, dir })));
+
   it('builds one command per gate, running each component in a subshell cd under a marker', () => {
     const d = D(['a/go.mod', 'b/go.mod']);
     expect(detectedTarget(d)).toBe('ambiguous');
     expect(detectedGateDefaults(d)).toEqual({
-      runBuild:
-        "rc=0; echo '== a =='; (cd 'a' && go build ./...) || rc=$?; " +
-        "echo '== b =='; (cd 'b' && go build ./...) || rc=$?; exit $rc",
-      runLint:
-        "rc=0; echo '== a =='; (cd 'a' && go vet ./...) || rc=$?; " +
-        "echo '== b =='; (cd 'b' && go vet ./...) || rc=$?; exit $rc",
-      runTests:
-        "rc=0; echo '== a =='; (cd 'a' && go test ./...) || rc=$?; " +
-        "echo '== b =='; (cd 'b' && go test ./...) || rc=$?; exit $rc",
+      runBuild: cmd(['a', 'go build ./...'], ['b', 'go build ./...']),
+      runLint: cmd(['a', 'go vet ./...'], ['b', 'go vet ./...']),
+      runTests: cmd(['a', 'go test ./...'], ['b', 'go test ./...']),
     });
+  });
+
+  it('generates the documented shape', () => {
+    expect(cmd(['a', 'go test ./...'], ['b', 'go test ./...'])).toBe(
+      'rc=0; ur=0; ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }; ' +
+        "echo; echo '== auto-swe component: a =='; (cd 'a' && go test ./...); ck $?; " +
+        "echo; echo '== auto-swe component: b =='; (cd 'b' && go test ./...); ck $?; " +
+        'if [ "$rc" -ne 0 ]; then exit $rc; fi; exit $ur'
+    );
   });
 
   it('leaves a gate absent when any component has no command for it', () => {
     // Python has only runTests, so the build and lint gates are not run in just the Go half.
     expect(detectedGateDefaults(D(['api/go.mod', 'ml/pyproject.toml']))).toEqual({
-      runTests:
-        "rc=0; echo '== api =='; (cd 'api' && go test ./...) || rc=$?; " +
-        "echo '== ml =='; (cd 'ml' && python -m pytest) || rc=$?; exit $rc",
+      runTests: cmd(['api', 'go test ./...'], ['ml', 'python -m pytest']),
     });
     expect(detectedGateDefaults(D(['api/go.mod', 'web/package.json']))).not.toHaveProperty(
       'runVulnScan'
@@ -541,7 +549,9 @@ describe('composite gates for several components', () => {
       ],
       evidence: [],
     };
-    expect(detectedGateDefaults(stored)?.runTests).toMatch(/== a ==.*== b ==/);
+    expect(detectedGateDefaults(stored)?.runTests).toBe(
+      cmd(['a', 'go test ./...'], ['b', 'go test ./...'])
+    );
   });
 
   it('gives each Node component its own lockfile’s manager', () => {
@@ -552,24 +562,22 @@ describe('composite gates for several components', () => {
       'web/pnpm-lock.yaml',
     ]);
     expect(detectedGateDefaults(d)?.runTests).toBe(
-      "rc=0; echo '== admin =='; (cd 'admin' && npm test) || rc=$?; " +
-        "echo '== web =='; (cd 'web' && pnpm test) || rc=$?; exit $rc"
+      cmd(['admin', 'npm test'], ['web', 'pnpm test'])
     );
     expect(detectedGateDefaults(d)?.runVulnScan).toBe(
-      "rc=0; echo '== admin =='; (cd 'admin' && npm audit --audit-level=high) || rc=$?; " +
-        "echo '== web =='; (cd 'web' && pnpm audit --audit-level high) || rc=$?; exit $rc"
+      cmd(['admin', 'npm audit --audit-level=high'], ['web', 'pnpm audit --audit-level high'])
     );
   });
 
   it('picks the JVM build tool per component', () => {
     expect(detectedGateDefaults(D(['a/pom.xml', 'b/build.gradle']))?.runTests).toBe(
-      "rc=0; echo '== a =='; (cd 'a' && mvn -B -q test) || rc=$?; " +
-        "echo '== b =='; (cd 'b' && ./gradlew test --no-daemon) || rc=$?; exit $rc"
+      cmd(['a', 'mvn -B -q test'], ['b', './gradlew test --no-daemon'])
     );
   });
 
   it('covers up to 8 components and none beyond', () => {
-    expect(detectedGateDefaults(D(goDirs(8)))?.runTests?.match(/== s\d ==/g)).toHaveLength(8);
+    expect(compositeComponentCount(detectedGateDefaults(D(goDirs(8)))?.runTests ?? '')).toBe(8);
+    expect(compositeComponentCount('npm test')).toBe(0);
     expect(detectedGateDefaults(D(goDirs(9)))).toEqual({});
     expect(detectedTarget(D(goDirs(9)))).toBe('ambiguous');
   });
@@ -625,12 +633,24 @@ describe('compositeCommand run in a real sh', () => {
   };
   const ran = (root: string, dir: string) => existsSync(join(root, dir, 'ran'));
   const touch = (dir: string) => ({ command: 'touch ran', dir });
+  const exits = (dir: string, code: number) => ({ command: `exit ${code}`, dir });
+  // Each marker follows a bare newline, which ends a previous part's unterminated last line.
+  const markers = (...dirs: string[]) => dirs.map((d) => `\n${componentMarker(d)}\n`).join('');
 
   it('exits 0 when every component passes, and prints a marker before each', () => {
     const r = run([touch('a'), touch('b')]);
     expect(r.status).toBe(0);
-    expect(r.stdout).toBe('== a ==\n== b ==\n');
+    expect(r.stdout).toBe(markers('a', 'b'));
     expect(ran(r.root, 'a') && ran(r.root, 'b')).toBe(true);
+  });
+
+  it('uses a marker a runner would not print, matched by the exported pattern', () => {
+    expect(componentMarker('a')).toBe('== auto-swe component: a ==');
+    expect([...markers('a', 'b').matchAll(COMPONENT_MARKER_RE)].map((m) => m[1])).toEqual([
+      'a',
+      'b',
+    ]);
+    expect([...'== a ==\n'.matchAll(COMPONENT_MARKER_RE)]).toHaveLength(0);
   });
 
   it('fails when the first fails, and still runs the second', () => {
@@ -638,7 +658,25 @@ describe('compositeCommand run in a real sh', () => {
     expect(r.status).toBe(3);
     expect(ran(r.root, 'a')).toBe(true);
     expect(ran(r.root, 'b')).toBe(true);
-    expect(r.stdout).toBe('== a ==\n== b ==\n');
+    expect(r.stdout).toBe(markers('a', 'b'));
+  });
+
+  it('lets a real failure outrank a part that is not runnable, in either order', () => {
+    expect(run([exits('a', 127), exits('b', 3)]).status).toBe(3);
+    expect(run([exits('a', 3), exits('b', 127)]).status).toBe(3);
+    expect(run([exits('a', 126), touch('b'), exits('c', 4)]).status).toBe(4);
+  });
+
+  it('reports the first real failure when several fail', () => {
+    expect(run([exits('a', 3), exits('b', 5)]).status).toBe(3);
+    expect(run([touch('a'), exits('b', 5), exits('c', 3)]).status).toBe(5);
+  });
+
+  it('reports the last 126 or 127 when nothing really failed', () => {
+    expect(run([exits('a', 127), exits('b', 127)]).status).toBe(127);
+    expect(run([exits('a', 126), exits('b', 127)]).status).toBe(127);
+    expect(run([exits('a', 127), exits('b', 126)]).status).toBe(126);
+    expect(run([exits('a', 127), touch('b')]).status).toBe(127);
   });
 
   it('fails when only the last or a middle component fails', () => {
@@ -648,11 +686,17 @@ describe('compositeCommand run in a real sh', () => {
     expect(ran(middle.root, 'c')).toBe(true);
   });
 
-  it('fails a component whose directory is missing, and carries on', () => {
+  it('fails a component whose directory is missing as a real failure, and carries on', () => {
     const r = run([{ command: 'true', dir: 'missing' }, touch('b')]);
-    // The shell's own status for a failed `cd` (1 or 2, by shell) — what matters is that it fails.
+    // The shell's own status for a failed `cd` (1 or 2, by shell) — what matters is that it is
+    // neither 0 nor an unrunnable status.
     expect(r.status).not.toBe(0);
+    expect([126, 127]).not.toContain(r.status);
     expect(ran(r.root, 'b')).toBe(true);
+    // ...and it outranks a later 127.
+    expect([126, 127]).not.toContain(
+      run([{ command: 'true', dir: 'missing' }, exits('b', 127)]).status
+    );
   });
 
   it('does not let one component’s cd move the next one’s starting point', () => {
@@ -666,49 +710,51 @@ describe('compositeCommand run in a real sh', () => {
     expect(ran(r.root, 'b')).toBe(true);
   });
 
+  it('keeps every marker a line of its own when a part ends its output without a newline', () => {
+    const noNewline = (dir: string) => ({ command: "printf '12 passed'", dir });
+    const r = run([noNewline('a'), noNewline('b')]);
+    expect(r.status).toBe(0);
+    // Both sections are found, so each is judged on its own evidence.
+    expect([...r.stdout.matchAll(COMPONENT_MARKER_RE)].map((m) => m[1])).toEqual(['a', 'b']);
+    expect(r.stdout).toContain('12 passed\n');
+  });
+
   it('works inside a braced group with stderr merged, as the gate runner wraps it', () => {
     expect(run([touch('a')], true).status).toBe(0);
-    // The failing part's own status survives, so an unrunnable tool (127) still reads as one.
-    expect(run([{ command: 'exit 127', dir: 'a' }, touch('b')]).status).toBe(127);
-    expect(
-      run([
-        { command: 'exit 3', dir: 'a' },
-        { command: 'exit 5', dir: 'b' },
-      ]).status
-    ).toBe(5);
-    const bad = run([{ command: 'echo oops >&2; exit 2', dir: 'a' }], true);
+    const bad = run([{ command: 'echo oops >&2; exit 2', dir: 'a' }, exits('b', 127)], true);
     expect(bad.status).toBe(2);
-    expect(bad.stdout).toBe('== a ==\noops\n');
+    expect(bad.stdout).toBe(`${markers('a')}oops\n${markers('b')}`);
+    expect(run([exits('a', 127), exits('b', 3)], true).status).toBe(3);
   });
 });
 
-describe('suggestions follow the run-time defaults', () => {
+describe('compositeSharedStack', () => {
+  const D = (files: string[]) => detectStack(files);
+  const goDirs = (n: number) => Array.from({ length: n }, (_, i) => `s${i}/go.mod`);
+
+  it('names the stack that every component of a composite layout shares', () => {
+    expect(compositeSharedStack(D(['a/go.mod', 'b/go.mod']))).toBe('go');
+    expect(compositeSharedStack(D(['a/pyproject.toml', 'b/requirements.txt']))).toBe('python');
+    expect(compositeSharedStack(D(goDirs(8)))).toBe('go');
+  });
+
+  it('is null for mixed stacks, Node, too many components, and non-composite layouts', () => {
+    expect(compositeSharedStack(D(['a/go.mod', 'b/pyproject.toml']))).toBeNull();
+    expect(compositeSharedStack(D(['a/package.json', 'b/package.json']))).toBeNull();
+    expect(compositeSharedStack(D(['a/go.mod', 'b/package.json']))).toBeNull();
+    expect(compositeSharedStack(D(goDirs(9)))).toBeNull();
+    expect(compositeSharedStack(D(['a/go.mod']))).toBeNull();
+    expect(compositeSharedStack(D(['go.mod', 'a/go.mod', 'b/go.mod']))).toBeNull();
+    expect(compositeSharedStack(null)).toBeNull();
+  });
+});
+
+describe('suggestions are root-only', () => {
   const D = (files: string[], opts?: Parameters<typeof detectStack>[1]) => detectStack(files, opts);
 
-  it('suggests a single component’s gates, in its directory', () => {
-    const d = D(['backend/pom.xml']);
-    expect(d.suggestedGateCommands).toEqual({
-      runBuild: "cd 'backend' && mvn -B -q -DskipTests package",
-      runTests: "cd 'backend' && mvn -B -q test",
-    });
-    expect(d.suggestedGateCommands).toEqual(detectedGateDefaults(d));
-    expect(D(['svc/go.mod']).suggestedGateCommands.runLint).toBe("cd 'svc' && go vet ./...");
-  });
-
-  it('suggests the composites for 2..8 components', () => {
-    const d = D(['a/go.mod', 'b/pyproject.toml']);
-    expect(d.suggestedGateCommands).toEqual({
-      runTests:
-        "rc=0; echo '== a =='; (cd 'a' && go test ./...) || rc=$?; " +
-        "echo '== b =='; (cd 'b' && python -m pytest) || rc=$?; exit $rc",
-    });
-    expect(d.suggestedGateCommands).toEqual(detectedGateDefaults(d));
-  });
-
-  it('suggests nothing where the defaults resolve to nothing', () => {
-    const nine = Array.from({ length: 9 }, (_, i) => `s${i}/go.mod`);
-    expect(D(nine).suggestedGateCommands).toEqual({});
-    expect(D(['a/go.mod', 'b/go.mod'], { treeTruncated: true }).suggestedGateCommands).toEqual({});
+  it('gives a repo with no root stack none, whatever its components resolve to', () => {
+    expect(D(['backend/pom.xml']).suggestedGateCommands).toEqual({});
+    expect(D(['a/go.mod', 'b/pyproject.toml']).suggestedGateCommands).toEqual({});
     expect(D(['README.md']).suggestedGateCommands).toEqual({});
   });
 

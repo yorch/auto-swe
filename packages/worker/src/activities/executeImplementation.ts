@@ -58,12 +58,13 @@ import {
   startPathGuard,
 } from './allowedPaths.js';
 import {
+  boundTestOutput,
   detectTestCommand,
   packageJsonReadCommand,
   parseDiffToFileChanges,
   parseTestOutput,
-  TEST_RUN_TIMEOUT_MS,
   testRunCommand,
+  testRunTimeoutMs,
   unrunnableTestCause,
 } from './utils.js';
 import { createWorkspace, fetchBranchesSubcommand, shellQuote } from './workspace.js';
@@ -371,7 +372,7 @@ export async function executeImplementation(
       const testStart = Date.now();
       try {
         const testOutput = await workspace.exec(testRunCommand(testCommand), {
-          timeoutMs: TEST_RUN_TIMEOUT_MS,
+          timeoutMs: testRunTimeoutMs(testCommand),
         });
         // exec resolves only on exit 0.
         testResult = parseTestOutput(testOutput, Date.now() - testStart, 0);
@@ -395,7 +396,7 @@ export async function executeImplementation(
           failing: 1,
           passed: false,
           passing: 0,
-          stdout: getExecErrorStdout(err),
+          stdout: boundTestOutput(getExecErrorStdout(err, Number.MAX_SAFE_INTEGER)),
           total: 0,
         };
         tracer.addActivityEvent({

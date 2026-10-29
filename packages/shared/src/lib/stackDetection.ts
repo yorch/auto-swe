@@ -277,19 +277,63 @@ export function inDir(dir: string, command: string): string {
   return dir === '' ? command : `cd '${dir}' && ${command}`;
 }
 
+/** The text before the directory in a composite command's per-component marker line. */
+const COMPONENT_MARKER_PREFIX = '== auto-swe component: ';
+
 /**
- * One `sh` command that runs each part in its own directory and fails if any part fails, with the
- * status of the last one that did (so a part that is not runnable, 126 or 127, still reads as
- * such to the test loop). Every part runs, in the order given, under an `== dir ==` marker so the output says which directory a
- * failure belongs to. Each `cd` is in a subshell: a bare one would carry into the next part. The
- * directories are pre-validated ({@link COMPONENT_PATH_RE}) and quoted.
+ * A composite command's marker line for `dir`, as it appears in the output: a runner can print
+ * `== a ==`; it will not print this.
+ */
+export const componentMarker = (dir: string): string => `${COMPONENT_MARKER_PREFIX}${dir} ==`;
+
+/** Matches one marker line in a composite command's output; capture 1 is the directory. Global: use `matchAll`. */
+export const COMPONENT_MARKER_RE = /^== auto-swe component: (.+) ==$/gm;
+
+/** How many components a command runs, by its `echo` of the marker: 0 for anything but a composite. */
+export function compositeComponentCount(command: string): number {
+  return command.split(`echo '${COMPONENT_MARKER_PREFIX}`).length - 1;
+}
+
+/**
+ * One `sh` command (dash, busybox ash and bash alike) that runs each part in its own directory
+ * and fails if any part fails. A part that fails with a status other than 126 or 127 is a real
+ * failure and the first one's status is the command's; 126 and 127 (not runnable) count only when
+ * no part really failed, and then the last of them is. So a missing tool in one component cannot
+ * hide another component's failing test from the loop. Every part runs, in the order given, under
+ * a {@link componentMarker} line so the output says which directory a failure belongs to. Each
+ * `cd` is in a subshell: a bare one would carry into the next part, and a missing directory is a
+ * real failure. The directories are pre-validated ({@link COMPONENT_PATH_RE}) and quoted.
  */
 export function compositeCommand(parts: ReadonlyArray<{ dir: string; command: string }>): string {
   return [
     'rc=0',
-    ...parts.map(({ dir, command }) => `echo '== ${dir} =='; (cd '${dir}' && ${command}) || rc=$?`),
-    'exit $rc',
+    'ur=0',
+    'ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }',
+    ...parts.map(
+      // The bare `echo` ends a previous part's output that lacks a trailing newline, so the
+      // marker is always a line of its own (the parser reads it line-anchored).
+      ({ dir, command }) =>
+        `echo; echo '${componentMarker(dir)}'; (cd '${dir}' && ${command}); ck $?`
+    ),
+    'if [ "$rc" -ne 0 ]; then exit $rc; fi',
+    'exit $ur',
   ].join('; ');
+}
+
+/**
+ * The one stack every component of a composite layout (an ambiguous one of 2..8 valid
+ * components) has as its first, when that stack is not Node — Node has no image of its own — or
+ * null for anything else.
+ */
+export function compositeSharedStack(detected: unknown): Stack | null {
+  const { target, components } = resolveTarget(detected);
+  const first = components?.[0]?.stack;
+  return target === 'ambiguous' &&
+    first !== undefined &&
+    first !== 'node' &&
+    components?.every((c) => c.stack === first)
+    ? first
+    : null;
 }
 
 /**
@@ -479,8 +523,8 @@ export function detectStack(
     }
   }
 
-  // A root stack's suggestions come from the root. A repo with no root stack gets what the
-  // run-time defaults resolve to for its components, computed below from the detection itself.
+  // Suggestions are root-only: a repo with no root stack gets none, because its run-time defaults
+  // already apply and a suggestion applied through the form would freeze into `gateCommands`.
   const rootStack = rootStacks[0] ?? null;
   const suggestedGateCommands: RepoGateCommands =
     rootStack === 'node'
@@ -531,7 +575,7 @@ export function detectStack(
     }
   }
 
-  const detection: DetectedStack = {
+  return {
     ...(components.length > 0 ? { components } : {}),
     ...(componentsTruncated ? { componentsTruncated } : {}),
     evidence,
@@ -543,8 +587,4 @@ export function detectStack(
     suggestedGateCommands,
     ...(opts?.treeTruncated ? { treeTruncated: true } : {}),
   };
-  if (rootStack === null) {
-    detection.suggestedGateCommands = detectedGateDefaults(detection) ?? {};
-  }
-  return detection;
 }

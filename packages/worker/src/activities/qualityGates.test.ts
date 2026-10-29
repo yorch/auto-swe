@@ -180,7 +180,7 @@ describe('resolveCommand precedence', () => {
         const cmd = await resolveCommand(gate, baseRequest, undefined);
         expect(cmd, gate).toContain("(cd 'api' &&");
         expect(cmd, gate).toContain("(cd 'web' &&");
-        expect(cmd, gate).toMatch(/exit \$rc$/);
+        expect(cmd, gate).toMatch(/exit \$ur$/);
       }
       // The JVM component has no lint and no audit default, so those would verify only `web`.
       for (const gate of ['runLint', 'runVulnScan'] as const) {

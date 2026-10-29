@@ -312,9 +312,9 @@ The scheduled dependency scan also records the repository's stacks on the connec
   - a suggested curated Dockerfile
   - conservative suggested gate commands: for a Node root, the scripts the root `package.json`
     declares; for a Python, JVM or Go root, the stack's fixed commands (see below). A repository
-    whose root has no stack signal gets what the run-time defaults resolve to for its components —
-    the one component's commands, or the composites below — computed from the detection itself, so
-    the form's suggestion and the run-time default cannot disagree
+    whose root has no stack signal gets no suggestions: its run-time defaults already apply, and a
+    suggestion applied through the form is copied into `gateCommands` and would freeze there, going
+    stale when a component is added
 - **Fallback.** When the tree cannot be listed, the scan falls back to the root directory. When
   neither listing works, the previous detection is kept.
 
@@ -368,19 +368,35 @@ target — it keeps its `package.json` guess.
 - **two to eight** components and no root signal, with a complete listing, resolve to **composite**
   gates: one command per gate that runs the gate in every component, in path order, and fails if
   any component fails. Every component runs even after an earlier one fails, and its output follows
-  an `== dir ==` marker line, so a failure names its directory. Each component's command is the one
-  a single component would get (its own Node manager, its own JVM build tool), run in a subshell
-  `cd` so one directory never moves the next one's starting point:
+  an `== auto-swe component: <dir> ==` marker line, so a failure names its directory (a runner can
+  print `== a ==`; it will not print this). Each component's command is the one a single component
+  would get (its own Node manager, its own JVM build tool), run in a subshell `cd` so one
+  directory never moves the next one's starting point. The script is plain `sh` (dash, busybox ash
+  and bash alike):
 
   ```sh
-  rc=0; echo '== api =='; (cd 'api' && mvn -B -q test) || rc=1; echo '== web =='; (cd 'web' && npm test) || rc=1; exit $rc
+  rc=0; ur=0; ck() { if [ "$1" -ne 0 ]; then if [ "$1" -eq 126 ] || [ "$1" -eq 127 ]; then ur=$1; elif [ "$rc" -eq 0 ]; then rc=$1; fi; fi; }; echo '== auto-swe component: api =='; (cd 'api' && mvn -B -q test); ck $?; echo '== auto-swe component: web =='; (cd 'web' && npm test); ck $?; if [ "$rc" -ne 0 ]; then exit $rc; fi; exit $ur
   ```
+
+  The exit status is the first **real** failure's — any status other than 126 or 127, a missing
+  directory included. A part that is not runnable (126, 127) decides the status only when no part
+  really failed, and then the last of them does, so a missing tool in one component cannot hide
+  another component's failing tests from the test loop. All parts passing is 0.
+
+  The test loop reads the output per section: every component must show that its tests ran (a
+  parsed passing count of at least one, or a runner's own `ok`/`PASS` lines) and none may show a
+  failure, so a component that tested nothing is not covered by another's green run. The reported
+  passing and failing counts are the sums across components. The output fed back to the agent is
+  bounded per component — each section keeps its marker line and its last characters, an even share
+  of the 10,000-character budget — so every component's failure is represented. The test run's
+  timeout is the usual ten minutes times the number of components, at most four times.
 
   The rule is all-or-nothing per gate: a gate is composite only when **every** component has a
   command for it. A gate any component lacks stays unconfigured, because running it in only some
   components would verify part of the repository and read as a pass. The TDD and fix-session test
-  loop uses the composite `runTests` by the same chain. The layout still has no single image
-  (`executorImageFor` gives it none).
+  loop uses the composite `runTests` by the same chain. When every component's first stack is the
+  same non-Node stack, `executorImageFor` gives the layout that stack's configured image; a mixed
+  layout, or one with a Node component, gets none.
 - **more than eight** components, a stored path that does not validate, or a component with no
   known stack leave every gate unconfigured instead of running a root command that cannot work
   there.
@@ -533,10 +549,17 @@ longer fit.
 - **An unknown Yarn is treated as Berry.** A root with `yarn.lock` but neither a `packageManager` pin nor a
   `.yarnrc.yml` is read from the lockfile's header; a header that names neither flavour, or a lockfile
   that could not be fetched, keeps the built-in gates, whose audit is Berry's `yarn npm audit`. On a
-  Classic repository that gate fails until a pin or `runVulnScan` says otherwise.
+  Classic repository that gate fails until a pin or `runVulnScan` says otherwise. A root `yarn.lock`
+  over 1 MB cannot be read by the scan, so the flavour stays unknown and is treated as Berry: pin
+  `packageManager` to fix it.
 - **Composite gates cover a bounded layout.** More than eight components, or a gate that some
   component has no command for (a Python component has no build or lint default, for example), is
   still unconfigured: set the repository's `gateCommands` for it.
+- **A mixed-stack layout has no single image.** Set the repository's `executorImage` to one that
+  carries every toolchain, or the components whose tools the default image lacks exit 127.
+- **The composite shares one run's test budget.** The timeout scales with the number of components
+  but is capped at four times the single-run limit, and the output the agent sees is split evenly
+  across components.
 - **The stack fallback follows the stored detection, which is weekly.** A repository onboarded
   since the last scan has none and keeps the built-in `yarn` gates until the next scan; a root that
   changed stack is followed only after a rescan. Each activity reads the detection itself, so a scan that
@@ -549,10 +572,8 @@ longer fit.
 - **Stack detection is bounded.** It ignores signals deeper than four directories, and anything
   under the ignored build/vendor directories. It records at most 50 components
   (`componentsTruncated`). When the provider truncates a very large tree (`treeTruncated`), it
-  only sees part of the repository, and a repository with no root stack gets suggestions only when
-  its components resolve to a target or to composite gates. Script-based Node suggestions come from
-  the root `package.json` alone; a Node component's suggestions are the manager's fixed commands,
-  because the component's `package.json` is not fetched.
+  only sees part of the repository. Node gate-command suggestions come from the root
+  `package.json` only, so a repository with no root stack gets none.
 - **Overrides must be base URLs on one host each.** A GitHub Enterprise server served under a path
   prefix rather than at the root of its host cannot be expressed: the web base is stored as an
   origin.

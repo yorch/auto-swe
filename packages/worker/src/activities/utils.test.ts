@@ -1,11 +1,84 @@
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { componentMarker, compositeCommand } from '@auto-swe/shared/lib/stackDetection';
 import { describe, expect, it } from 'vitest';
 import {
+  boundTestOutput,
   detectTestCommand,
   packageJsonReadCommand,
   parseTestOutput,
+  TEST_RUN_TIMEOUT_MS,
   testRunCommand,
+  testRunTimeoutMs,
   unrunnableTestCause,
 } from './utils.js';
+
+describe('composite test output', () => {
+  const section = (dir: string, body: string) => `${componentMarker(dir)}\n${body}\n`;
+
+  it('requires every component to show that tests ran, even with exit 0', () => {
+    const out = section('a', '12 passed in 0.3s') + section('b', 'ok  \tpkg\t0.1s');
+    expect(parseTestOutput(out, 5, 0).passed).toBe(true);
+    const noTests = section('a', '12 passed in 0.3s') + section('b', '?   \tpkg\t[no test files]');
+    expect(parseTestOutput(noTests, 5, 0).passed).toBe(false);
+  });
+
+  it('sums the counts across components instead of taking the largest', () => {
+    const out = section('a', '12 passed in 0.3s') + section('b', 'Tests: 3 passed, 3 total');
+    expect(parseTestOutput(out, 5, 0)).toMatchObject({
+      failing: 0,
+      passed: true,
+      passing: 15,
+      total: 15,
+    });
+  });
+
+  it('fails when any component shows a failure, or the exit is non-zero', () => {
+    const out = section('a', '12 passed') + section('b', '2 failed, 1 passed');
+    expect(parseTestOutput(out, 5, 0)).toMatchObject({ failing: 2, passed: false, passing: 13 });
+    const clean = section('a', '12 passed') + section('b', '1 passed');
+    expect(parseTestOutput(clean, 5, 1).passed).toBe(false);
+  });
+
+  it('parses output with fewer than two markers exactly as a single run', () => {
+    const one = `${componentMarker('a')}\n12 passed\n`;
+    expect(parseTestOutput(one, 5, 0)).toMatchObject({ passed: true, passing: 12 });
+    const mentioned = `see ${componentMarker('a')} in the docs\nran 3 passed\n2 passed`;
+    expect(parseTestOutput(mentioned, 5, 0)).toMatchObject({ passed: true, passing: 3 });
+    // Two bare `== a ==` lines are not markers.
+    expect(parseTestOutput('== a ==\n12 passed\n== b ==\n', 5, 0).passing).toBe(12);
+  });
+
+  it('keeps a per-component tail so every component’s failure survives', () => {
+    const a = section('a', `${'x'.repeat(30_000)}\nFAIL in a`);
+    const b = section('b', `${'y'.repeat(30_000)}\nFAIL in b`);
+    const bounded = boundTestOutput(a + b);
+    expect(bounded.length).toBeLessThanOrEqual(10_000);
+    expect(bounded).toContain(componentMarker('a'));
+    expect(bounded).toContain(componentMarker('b'));
+    expect(bounded).toContain('FAIL in a');
+    expect(bounded).toContain('FAIL in b');
+    expect(bounded.indexOf(componentMarker('a'))).toBeLessThan(bounded.indexOf('FAIL in a'));
+    expect(bounded.indexOf('FAIL in a')).toBeLessThan(bounded.indexOf(componentMarker('b')));
+  });
+
+  it('truncates a single run to its last 10,000 characters, as before', () => {
+    const big = `${'x'.repeat(20_000)}END`;
+    expect(boundTestOutput(big)).toBe(big.slice(-10_000));
+    expect(parseTestOutput(big, 5, 0).stdout).toBe(big.slice(-10_000));
+  });
+
+  it('scales the timeout by the number of components, capped at 4x', () => {
+    const parts = (n: number) =>
+      compositeCommand(Array.from({ length: n }, (_, i) => ({ command: 'true', dir: `s${i}` })));
+    expect(testRunTimeoutMs('npm test')).toBe(TEST_RUN_TIMEOUT_MS);
+    expect(testRunTimeoutMs(parts(2))).toBe(2 * TEST_RUN_TIMEOUT_MS);
+    expect(testRunTimeoutMs(parts(4))).toBe(4 * TEST_RUN_TIMEOUT_MS);
+    expect(testRunTimeoutMs(parts(8))).toBe(4 * TEST_RUN_TIMEOUT_MS);
+  });
+});
 
 describe('detectTestCommand with a component target', () => {
   const component = (path: string, stack: string, extra: object = {}) => ({
@@ -42,8 +115,10 @@ describe('detectTestCommand with a component target', () => {
       evidence: ['b/pom.xml'],
     };
     expect(detectTestCommand('{}', null, both)).toBe(
-      "rc=0; echo '== a =='; (cd 'a' && go test ./...) || rc=$?; " +
-        "echo '== b =='; (cd 'b' && mvn -B -q test) || rc=$?; exit $rc"
+      compositeCommand([
+        { command: 'go test ./...', dir: 'a' },
+        { command: 'mvn -B -q test', dir: 'b' },
+      ])
     );
     // A configured command still wins.
     expect(detectTestCommand('{}', { runTests: 'make test' }, both)).toBe('make test');
@@ -379,5 +454,51 @@ describe('unrunnableTestCause', () => {
     for (const code of [125, 128, 130, 137, 255]) {
       expect(unrunnableTestCause(execError({ code, stdout: 'sh: x: not found' }))).toBeUndefined();
     }
+  });
+});
+
+describe('a real composite run, read by parseTestOutput', () => {
+  /** Run each part's command in its own temp directory under the real composite, as the loop does. */
+  const runComposite = (parts: Array<{ dir: string; command: string }>) => {
+    const root = mkdtempSync(join(tmpdir(), 'composite-parse-'));
+    for (const { dir } of parts) {
+      mkdirSync(join(root, dir), { recursive: true });
+    }
+    const r = spawnSync('sh', ['-c', testRunCommand(compositeCommand(parts))], {
+      cwd: root,
+      encoding: 'utf8',
+    });
+    return { output: r.stdout, status: r.status ?? -1 };
+  };
+
+  it('passes when every component printed evidence, even one whose output has no final newline', () => {
+    const r = runComposite([
+      { command: "printf '12 passed'", dir: 'a' },
+      { command: "printf 'ok  example.test/b  0.01s\\n'", dir: 'b' },
+    ]);
+    expect(r.status).toBe(0);
+    const parsed = parseTestOutput(r.output, 10, r.status);
+    expect(parsed.passed).toBe(true);
+    expect(parsed.passing).toBeGreaterThanOrEqual(12);
+  });
+
+  it('does not pass when one component ran no tests, however many another ran', () => {
+    const r = runComposite([
+      { command: "printf '12 passed'", dir: 'a' },
+      { command: "printf 'ok  example.test/b [no test files]\\n' | sed 's/ok  //'", dir: 'b' },
+    ]);
+    expect(r.status).toBe(0);
+    expect(parseTestOutput(r.output, 10, r.status).passed).toBe(false);
+  });
+
+  it('does not pass when one component fails, whatever the others printed', () => {
+    const r = runComposite([
+      { command: "printf '12 passed\\n'", dir: 'a' },
+      { command: "printf '1 failed\\n'; exit 1", dir: 'b' },
+    ]);
+    expect(r.status).toBe(1);
+    const parsed = parseTestOutput(r.output, 10, r.status);
+    expect(parsed.passed).toBe(false);
+    expect(parsed.failing).toBeGreaterThan(0);
   });
 });

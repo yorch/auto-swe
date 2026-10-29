@@ -1,4 +1,6 @@
 import {
+  COMPONENT_MARKER_RE,
+  compositeComponentCount,
   detectedGateDefaults,
   detectedTarget,
   detectedTargetDir,
@@ -249,32 +251,91 @@ export function parseTestOutput(
   durationMs: number,
   exitCode?: number
 ): TestRunResult {
+  const sections = splitComponentSections(output);
+  if (sections) {
+    // A composite run: every component must show its own evidence, and the counts add up.
+    const scans = sections.map((s) => scanSection(s.body, exitCode));
+    const passing = scans.reduce((n, s) => n + s.passing, 0);
+    const failing = scans.reduce((n, s) => n + s.failing, 0);
+    return {
+      duration_ms: durationMs,
+      failing,
+      passed: (exitCode === undefined || exitCode === 0) && scans.every((s) => s.ok),
+      passing,
+      stdout: boundTestOutput(output),
+      total: passing + failing,
+    };
+  }
+  const { failing, ok, passing } = scanSection(output, exitCode);
+  return {
+    duration_ms: durationMs,
+    failing,
+    passed: exitCode !== undefined && exitCode !== 0 ? false : ok,
+    passing,
+    stdout: boundTestOutput(output),
+    total: passing + failing,
+  };
+}
+
+/** One run's (or one component's) counts, and whether they show that tests ran and none failed. */
+function scanSection(
+  output: string,
+  exitCode?: number
+): { passing: number; failing: number; ok: boolean } {
   const passCount = largestCount(output, PASS_COUNT_RES);
   const failCount = largestCount(output, FAIL_COUNT_RES);
   const passing = passCount ?? 0;
   const failing = failCount ?? 0;
   const countsParsed = passCount !== null || failCount !== null;
   const ranTests = RAN_TESTS_RES.some((re) => re.test(output));
+  const ok = countsParsed ? failing === 0 && passing > 0 : exitCode === 0 && ranTests;
+  return { failing, ok, passing };
+}
 
-  let passed: boolean;
-  if (exitCode !== undefined && exitCode !== 0) {
-    passed = false;
-  } else if (countsParsed) {
-    passed = failing === 0 && passing > 0;
-  } else if (exitCode === 0) {
-    passed = ranTests;
-  } else {
-    passed = false;
+/**
+ * A composite command's output split at its marker lines, or null when it has fewer than two (a
+ * single run, which parses and truncates exactly as it always has). `marker` is the line itself.
+ */
+function splitComponentSections(output: string): Array<{ marker: string; body: string }> | null {
+  const markers = [...output.matchAll(COMPONENT_MARKER_RE)];
+  if (markers.length < 2) {
+    return null;
   }
+  return markers.map((m, i) => {
+    const start = (m.index ?? 0) + m[0].length + 1;
+    const end = markers[i + 1]?.index ?? output.length;
+    return { body: output.slice(start, end), marker: m[0] };
+  });
+}
 
-  return {
-    duration_ms: durationMs,
-    failing,
-    passed,
-    passing,
-    stdout: output.slice(-10_000),
-    total: passing + failing,
-  };
+const TEST_OUTPUT_BUDGET = 10_000;
+
+/**
+ * Test output bounded for what the agent is shown: the last `budget` characters of a single run;
+ * for a composite run an even share (`floor(budget / sections)`) per component, each keeping its
+ * marker line and its last characters, in order, so every component's failure is represented.
+ */
+export function boundTestOutput(output: string, budget = TEST_OUTPUT_BUDGET): string {
+  const sections = splitComponentSections(output);
+  if (!sections) {
+    return output.slice(-budget);
+  }
+  const share = Math.floor(budget / sections.length);
+  return sections
+    .map(({ body, marker }) => {
+      const room = share - marker.length - 1;
+      const tail = room > 0 ? body.slice(-room) : '';
+      return `${marker}\n${tail}${tail === '' || tail.endsWith('\n') ? '' : '\n'}`;
+    })
+    .join('');
+}
+
+/**
+ * The wall-clock cap for a test command: {@link TEST_RUN_TIMEOUT_MS}, times the number of
+ * components a composite command runs, at most 4x — the components share one run's budget.
+ */
+export function testRunTimeoutMs(command: string): number {
+  return TEST_RUN_TIMEOUT_MS * Math.min(Math.max(compositeComponentCount(command), 1), 4);
 }
 
 /**

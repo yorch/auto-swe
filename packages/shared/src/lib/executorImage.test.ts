@@ -70,6 +70,49 @@ describe('executorImageFor', () => {
     expect(executorImageFor({ detectedStack: stack('../x', 'go') })).toBeUndefined();
   });
 
+  describe('a layout of several components', () => {
+    const many = (stacks: string[]) => ({
+      components: stacks.map((s, i) => ({ path: `s${i}`, stacks: [s] })),
+      evidence: [],
+    });
+
+    it('takes the image of the one non-Node stack every component shares', () => {
+      process.env.WORKSPACE_IMAGE_PYTHON = 'registry.example/executor-python:1';
+      process.env.WORKSPACE_IMAGE_GO = 'registry.example/executor-go:1';
+      expect(executorImageFor({ detectedStack: many(['python', 'python']) })).toBe(
+        'registry.example/executor-python:1'
+      );
+      expect(executorImageFor({ detectedStack: many(['go', 'go', 'go']) })).toBe(
+        'registry.example/executor-go:1'
+      );
+      expect(executorImageFor({ detectedStack: many(Array(8).fill('go')) })).toBe(
+        'registry.example/executor-go:1'
+      );
+    });
+
+    it('has no image for mixed stacks, Node, or more than eight components', () => {
+      for (const k of ENV) {
+        process.env[k] = 'registry.example/x:1';
+      }
+      expect(executorImageFor({ detectedStack: many(['go', 'python']) })).toBeUndefined();
+      expect(executorImageFor({ detectedStack: many(['node', 'node']) })).toBeUndefined();
+      expect(executorImageFor({ detectedStack: many(['go', 'node']) })).toBeUndefined();
+      expect(executorImageFor({ detectedStack: many(Array(9).fill('go')) })).toBeUndefined();
+    });
+
+    it('has no image when the shared stack’s variable is unset', () => {
+      process.env.WORKSPACE_IMAGE_PYTHON = 'registry.example/executor-python:1';
+      expect(executorImageFor({ detectedStack: many(['go', 'go']) })).toBeUndefined();
+    });
+
+    it('still lets an admin-set executorImage win', () => {
+      process.env.WORKSPACE_IMAGE_GO = 'registry.example/executor-go:1';
+      expect(
+        executorImageFor({ detectedStack: many(['go', 'go']), executorImage: 'custom/image:2' })
+      ).toBe('custom/image:2');
+    });
+  });
+
   it('ignores a variable that is not an image reference', () => {
     process.env.WORKSPACE_IMAGE_GO = 'x; rm -rf /';
     expect(executorImageFor({ detectedStack: stack('', 'go') })).toBeUndefined();
