@@ -1,3 +1,4 @@
+import { Readable } from 'node:stream';
 import type { Prisma } from '@auto-swe/shared';
 import {
   attributeLauncher,
@@ -10,6 +11,7 @@ import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import type { FastifyInstance, FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
+import { csvRow } from '../lib/csv.js';
 import {
   customRangeFields,
   refineCustomRange,
@@ -79,6 +81,9 @@ const UsageQueryBase = z
   })
   .refine((q) => !(q.teamId && q.orgId), { message: 'pass teamId or orgId, not both' });
 const UsageQuery = refineCustomRange(UsageQueryBase);
+const UsageExportQuery = refineCustomRange(
+  UsageQueryBase.extend({ format: z.enum(['csv', 'ndjson']).default('csv') })
+);
 
 type UsageScope = { teamId?: string; orgId?: string };
 
@@ -416,6 +421,76 @@ async function usageByUser(args: {
 export const usageRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
   const prisma = fastify.prisma;
+
+  app.get(
+    '/usage/export',
+    {
+      onRequest: requireAuth(),
+      schema: { querystring: UsageExportQuery },
+    },
+    async (request, reply) => {
+      const { format, ...filters } = request.query;
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(filters)) {
+        if (value !== undefined) {
+          params.set(key, String(value));
+        }
+      }
+      const report = await fastify.inject({
+        headers: request.headers,
+        method: 'GET',
+        url: `/api/v1/platform/usage?${params}`,
+      });
+      if (report.statusCode >= 400) {
+        return reply.code(report.statusCode).send(report.json());
+      }
+      const { data } = report.json<{ data: Record<string, Array<Record<string, unknown>>> }>();
+      const dimensions = [
+        { key: 'byModel', name: 'model', value: (row: Record<string, unknown>) => row.model },
+        { key: 'byAgent', name: 'agent', value: (row: Record<string, unknown>) => row.agentKey },
+        { key: 'byActivity', name: 'node', value: (row: Record<string, unknown>) => row.nodeId },
+      ] as const;
+      const columns = [
+        'dimension',
+        'value',
+        'calls',
+        'cost_usd',
+        'errors',
+        'input_tokens',
+        'output_tokens',
+        'avg_duration_ms',
+      ];
+      const rows = dimensions.flatMap(({ key, name, value }) =>
+        (data[key] ?? []).map((row) => [
+          name,
+          value(row) ?? '(unattributed)',
+          row.calls,
+          row.costUsd,
+          row.errors,
+          row.inputTokens,
+          row.outputTokens,
+          row.avgDurationMs,
+        ])
+      );
+      async function* lines() {
+        if (format === 'csv') {
+          yield csvRow(columns);
+        }
+        for (const row of rows) {
+          yield format === 'csv'
+            ? csvRow(row)
+            : `${JSON.stringify(Object.fromEntries(columns.map((key, index) => [key, row[index]])))}\n`;
+        }
+      }
+      return reply
+        .header('Content-Disposition', `attachment; filename="platform-usage.${format}"`)
+        .header(
+          'Content-Type',
+          format === 'csv' ? 'text/csv; charset=utf-8' : 'application/x-ndjson'
+        )
+        .send(Readable.from(lines()));
+    }
+  );
 
   // Which reports the caller may read, by the same rules as `mayReadUsage`.
   // The page gates on this being non-empty, so the two cannot disagree; the

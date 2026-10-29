@@ -430,6 +430,23 @@ describe('usageRoutes GET /usage', () => {
   });
 });
 
+describe('usageRoutes GET /usage/export', () => {
+  it('exports model, agent and node breakdowns as CSV', async () => {
+    const { app } = await buildApp();
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/platform/usage/export?window=7&format=csv',
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toBe('text/csv; charset=utf-8');
+    expect(response.headers['content-disposition']).toContain('platform-usage.csv');
+    expect(response.body.trim()).toBe(
+      'dimension,value,calls,cost_usd,errors,input_tokens,output_tokens,avg_duration_ms'
+    );
+  });
+});
+
 describe('usageRoutes GET /usage/scopes', () => {
   const url = '/api/v1/platform/usage/scopes';
 
