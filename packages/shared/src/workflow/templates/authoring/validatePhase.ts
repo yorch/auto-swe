@@ -21,7 +21,8 @@ export interface ValidatePhaseOptions {
   /**
    * End the run, FAILED, when `validate` reports the request is not actionable (its `actionable`
    * output is `false`: every criterion it found is an ambiguity), instead of handing over to
-   * `next`. The terminate result carries a message for the requester and the ambiguities. A
+   * `next`. The terminate result carries a message for the requester and the ambiguities (and,
+   * with `ticketContext`, why the ticket could not be read). A
    * validate step that threw, or an output with no verdict, does not stop the run. Default false.
    */
   stopIfNotActionable?: boolean;
@@ -109,6 +110,16 @@ export function validatePhase(opts: ValidatePhaseOptions): NodeMap {
                   'only the ambiguities listed here. Paste the ticket text or add acceptance ' +
                   'criteria to the request, then re-run.',
               },
+              // Why the gatherer could not read the ticket ('' when it did, or none was named),
+              // so the stop does not leave the requester guessing whether they or the tracker erred.
+              ...(withTicket
+                ? {
+                    ticketUnavailableReason: {
+                      default: '',
+                      from: 'nodes.gatherTicket.output.unavailableReason',
+                    },
+                  }
+                : {}),
             },
             title: 'Stop: the request is not actionable',
           }),

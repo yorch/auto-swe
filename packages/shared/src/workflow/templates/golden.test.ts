@@ -613,6 +613,10 @@ function withNotActionableStop(g: WorkflowSpec): WorkflowSpec {
           'only the ambiguities listed here. Paste the ticket text or add acceptance ' +
           'criteria to the request, then re-run.',
       },
+      ticketUnavailableReason: {
+        default: '',
+        from: 'nodes.gatherTicket.output.unavailableReason',
+      },
     },
     status: 'FAILED',
     type: 'terminate',
@@ -966,13 +970,15 @@ const INTENDED_CHANGES: Record<
       'of attempts, or a merge wait that times out, stores a lesson about what happened ' +
       'before the run ends, and every commitToMemory step names the outcome it records; ' +
       "the run's tracker ticket is gathered before validation and handed to validate and implement; " +
-      'a request validation finds not actionable ends the run FAILED before implement',
+      'a request validation finds not actionable ends the run FAILED before implement, saying why ' +
+      'the ticket could not be read when it could not',
   },
   'ticket-to-merge-qodo': {
     apply: (g: WorkflowSpec) => withNotActionableStop(g),
     reason:
       'it is built on the ticket-to-merge node graph, so a request validation finds not ' +
-      'actionable ends the run FAILED before implement',
+      'actionable ends the run FAILED before implement, saying why the ticket could not be read ' +
+      'when it could not',
   },
   // The two templates that ended the run on the first CI failure now fix and retry like their
   // siblings, with CI ahead of the human / consensus gates (and the setCompleted removal above).
