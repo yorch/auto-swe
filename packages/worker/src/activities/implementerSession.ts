@@ -25,10 +25,16 @@ import { assertRolePricedForUsdCap } from '../lib/usdCapGuard.js';
 import { commitStaged, diffForResult, pushRefspec, startPathGuard } from './allowedPaths.js';
 import {
   detectTestCommand,
+  type NoTestsKind,
+  noTestsFoundCause,
+  noTestsFoundEvent,
+  noTestsFoundNotes,
+  noTestsRunResult,
   packageJsonReadCommand,
   parseDiffToFileChanges,
   parseTestOutput,
   TEST_RUN_TIMEOUT_MS,
+  testCommandSource,
   testRunCommand,
 } from './utils.js';
 import {
@@ -193,6 +199,7 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
 
     const packageJson = await workspace.exec(packageJsonReadCommand(repo.detectedStack));
     const testCommand = detectTestCommand(packageJson, repo.gateCommands, repo.detectedStack);
+    const testSource = testCommandSource(packageJson, repo.gateCommands, repo.detectedStack);
 
     // The session runs as its own persona (ciFixer / reviewFixer / gateFixer):
     // that Agent row's prompt, tools, skills and MCP binding, with the model
@@ -251,6 +258,8 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
     }
 
     let testResult: TestRunResult;
+    // Set when a stack-derived command found no tests, with the output that said so.
+    let noTests: { cause: { kind: NoTestsKind; reason: string }; output: string } | undefined;
     const testStart = Date.now();
     try {
       const testOutput = await workspace.exec(testRunCommand(testCommand), {
@@ -258,15 +267,21 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       });
       // exec resolves only on exit 0.
       testResult = parseTestOutput(testOutput, Date.now() - testStart, 0);
+      const cause = noTestsFoundCause(testSource, { result: testResult });
+      noTests = cause ? { cause, output: testOutput } : undefined;
     } catch (err: unknown) {
-      testResult = {
-        duration_ms: 0,
-        failing: 1,
-        passed: false,
-        passing: 0,
-        stdout: getExecErrorStdout(err),
-        total: 0,
-      };
+      const cause = noTestsFoundCause(testSource, { error: err });
+      noTests = cause ? { cause, output: getExecErrorStdout(err) } : undefined;
+      testResult = noTests
+        ? noTestsRunResult(getExecErrorStdout(err))
+        : {
+            duration_ms: 0,
+            failing: 1,
+            passed: false,
+            passing: 0,
+            stdout: getExecErrorStdout(err),
+            total: 0,
+          };
     }
     tracer.addActivityEvent({
       durationMs: Date.now() - testStart,
@@ -278,6 +293,16 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
         total: testResult.total,
       },
     });
+    if (noTests) {
+      tracer.addActivityEvent({
+        name: noTestsFoundEvent(noTests.cause.kind),
+        outputJson: {
+          command: testCommand,
+          output: noTests.output.trim().slice(-1000),
+          reason: noTests.cause.reason,
+        },
+      });
+    }
 
     // Commit and push the fix (skip the commit if the agent made no changes
     // to avoid empty CI cycles; push is still safe — it's a no-op then).
@@ -320,7 +345,9 @@ export async function runImplementerFixSession(input: FixSessionInput): Promise<
       diff,
       filesChanged: parseDiffToFileChanges(diff),
       headSha,
-      implementationNotes: input.notes(testResult, extraNote),
+      implementationNotes: noTests
+        ? `${input.notes(testResult, extraNote)} ${noTestsFoundNotes(testCommand, noTests.cause.kind)}`
+        : input.notes(testResult, extraNote),
       repoId: repo.id,
       testResults: testResult,
     };

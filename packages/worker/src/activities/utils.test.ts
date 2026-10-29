@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import {
   detectTestCommand,
+  noTestsFoundCause,
+  noTestsFoundNotes,
+  noTestsRunResult,
   packageJsonReadCommand,
   parseTestOutput,
+  testCommandSource,
   testRunCommand,
+  testStatusWord,
   unrunnableTestCause,
 } from './utils.js';
 
@@ -357,5 +362,148 @@ describe('unrunnableTestCause', () => {
     for (const code of [125, 128, 130, 137, 255]) {
       expect(unrunnableTestCause(execError({ code, stdout: 'sh: x: not found' }))).toBeUndefined();
     }
+  });
+});
+
+describe('testCommandSource', () => {
+  const stackOf = (stack: string, dir = '') => ({
+    components: [{ path: dir, stacks: [stack] }],
+    evidence: [],
+  });
+  const pkg = JSON.stringify({ devDependencies: { vitest: '1' } });
+
+  it.each([
+    ['a configured runTests', pkg, { runTests: 'make test' }, stackOf('python'), 'configured'],
+    [
+      'a configured runTests over a Node root',
+      pkg,
+      { runTests: 'make test' },
+      undefined,
+      'configured',
+    ],
+    ['a Python root', '{}', null, stackOf('python'), 'stack'],
+    ['a Go root', '{}', null, stackOf('go'), 'stack'],
+    ['a non-Node component', '{}', null, stackOf('go', 'services/api'), 'stack'],
+    ['a Node root', pkg, null, stackOf('node'), 'node-guess'],
+    ['a Node component', pkg, null, stackOf('node', 'web'), 'node-guess'],
+    ['no detection', pkg, null, undefined, 'node-guess'],
+    ['a blank runTests', pkg, { runTests: '  ' }, null, 'node-guess'],
+  ])('%s is %s', (_name, packageJson, gate, detected, expected) => {
+    expect(testCommandSource(packageJson, gate, detected)).toBe(expected);
+  });
+
+  it('is an ambiguous layout falling back to the guess', () => {
+    const both = {
+      components: [
+        { path: 'a', stacks: ['go'] },
+        { path: 'b', stacks: ['jvm'] },
+      ],
+      evidence: [],
+    };
+    expect(testCommandSource('{}', null, both)).toBe('node-guess');
+  });
+
+  it('agrees with detectTestCommand on which link supplied the command', () => {
+    expect(detectTestCommand('{}', null, stackOf('python'))).toBe('python -m pytest');
+    expect(testCommandSource('{}', null, stackOf('python'))).toBe('stack');
+  });
+});
+
+describe('noTestsFoundCause', () => {
+  const execError = (fields: Record<string, unknown>) => Object.assign(new Error('failed'), fields);
+  const result = (fields: Partial<ReturnType<typeof noTestsRunResult>>) => ({
+    ...noTestsRunResult(''),
+    ...fields,
+  });
+
+  it('names a pytest exit 5 from a stack command', () => {
+    expect(noTestsFoundCause('stack', { error: execError({ code: 5 }) })).toEqual({
+      kind: 'none-collected',
+      reason: 'exit status 5: no tests ran',
+    });
+    expect(noTestsFoundCause('stack', { error: execError({ status: 5 }) })).toBeDefined();
+  });
+
+  it('names a zero-exit run with no counts and no failures (go test, mvn -q)', () => {
+    expect(noTestsFoundCause('stack', { result: result({}) })).toEqual({
+      kind: 'unreadable',
+      reason: 'the run exited 0 but printed no test counts',
+    });
+  });
+
+  it('keeps iterating on real failures, collection errors and compile errors', () => {
+    for (const code of [1, 2, 3, 4]) {
+      expect(noTestsFoundCause('stack', { error: execError({ code }) })).toBeUndefined();
+    }
+    expect(noTestsFoundCause('stack', { error: new Error('timeout') })).toBeUndefined();
+    expect(noTestsFoundCause('stack', { error: null })).toBeUndefined();
+  });
+
+  it('does not fire for a result that passed, ran tests or failed', () => {
+    expect(noTestsFoundCause('stack', { result: result({ passed: true }) })).toBeUndefined();
+    expect(
+      noTestsFoundCause('stack', { result: result({ passing: 3, total: 3 }) })
+    ).toBeUndefined();
+    expect(noTestsFoundCause('stack', { result: result({ failing: 1 }) })).toBeUndefined();
+  });
+
+  it('never fires for a configured or package.json command', () => {
+    for (const source of ['configured', 'node-guess'] as const) {
+      expect(noTestsFoundCause(source, { error: execError({ code: 5 }) })).toBeUndefined();
+      expect(noTestsFoundCause(source, { result: result({}) })).toBeUndefined();
+    }
+  });
+});
+
+describe('noTestsFoundNotes', () => {
+  it('says no tests were found for pytest exit 5, naming the run that stopped the loop', () => {
+    expect(noTestsFoundNotes('python -m pytest', 'none-collected', 1)).toBe(
+      'The test command `python -m pytest` found no tests to run, so the TDD loop stopped after test run 1; set `runTests` for this repository.'
+    );
+    expect(noTestsFoundNotes('python -m pytest', 'none-collected', 2)).toContain('test run 2;');
+  });
+
+  it('does not claim missing tests for an unreadable zero exit', () => {
+    const notes = noTestsFoundNotes('mvn -B -q test', 'unreadable', 2);
+    expect(notes).toBe(
+      'The test command `mvn -B -q test` exited 0 but printed no test counts, so whether tests ran could not be determined; the TDD loop stopped after test run 2. Set `runTests` for this repository for a command whose output can be read.'
+    );
+    expect(notes).not.toContain('found no tests');
+  });
+
+  it('words a fix session without any loop', () => {
+    expect(noTestsFoundNotes('pytest', 'none-collected')).toBe(
+      'The test command `pytest` found no tests to run; set `runTests` for this repository.'
+    );
+    const unreadable = noTestsFoundNotes('mvn -q test', 'unreadable');
+    expect(unreadable).toBe(
+      'The test command `mvn -q test` exited 0 but printed no test counts, so whether tests ran could not be determined. Set `runTests` for this repository for a command whose output can be read.'
+    );
+    expect(unreadable).not.toContain('loop');
+  });
+});
+
+describe('green quiet suites read as unreadable, not as missing tests', () => {
+  it.each([
+    ['mvn -B -q test (no output)', ''],
+    ['surefire verbose summary', '[INFO] Tests run: 12, Failures: 0, Errors: 0, Skipped: 0'],
+    ['gradle', 'BUILD SUCCESSFUL in 4s\n3 actionable tasks: 3 executed'],
+  ])('%s', (_name, stdout) => {
+    const parsed = parseTestOutput(stdout, 1, 0);
+    expect(noTestsFoundCause('stack', { result: parsed })?.kind).toBe('unreadable');
+  });
+});
+
+describe('testStatusWord', () => {
+  const base = { duration_ms: 0, failing: 0, passed: false, passing: 0, stdout: '', total: 0 };
+
+  it('says passing, failing and not run', () => {
+    expect(testStatusWord({ ...base, passed: true, passing: 2, total: 2 })).toBe('passing');
+    expect(testStatusWord({ ...base, failing: 2, passing: 1, total: 3 })).toBe('failing');
+    expect(testStatusWord(base)).toBe('not run');
+  });
+
+  it('keeps the unrunnable shape (failing 1, total 0) as failing', () => {
+    expect(testStatusWord({ ...base, failing: 1 })).toBe('failing');
   });
 });

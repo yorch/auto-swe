@@ -57,6 +57,7 @@ import type { ReviewThread } from '../lib/scm/types.js';
 import { neutralizeCommentText } from './ciTriage.js';
 import { fastForwardPullRequestBranch, type PushToPullRequestResult } from './pushToPullRequest.js';
 import { runAgent } from './runAgent.js';
+import { testStatusWord } from './utils.js';
 
 /** Bounds on what a round reads and carries (R11). */
 const MAX_NOTES_CHARS = 4_000;
@@ -1430,8 +1431,7 @@ export async function executePrFeedbackImplementation(
     defaultSystemPrompt: PR_FEEDBACK_SYSTEM_PROMPT,
     lessonQuery: input.brief.slice(-2_000),
     mode: 'PR_FEEDBACK',
-    notes: (testResult) =>
-      `Pull-request feedback round. Tests ${testResult.passed ? 'passing' : 'failing'}.`,
+    notes: (testResult) => `Pull-request feedback round. Tests ${testStatusWord(testResult)}.`,
     previousCodeResult: input.previousCodeResult,
     systemPromptOverride: input.systemPromptOverride,
     usageEventName: 'llm.pr_feedback',

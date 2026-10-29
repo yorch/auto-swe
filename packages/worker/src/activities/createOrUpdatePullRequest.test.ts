@@ -71,6 +71,26 @@ describe('formatPRTitle / formatPRBody', () => {
     expect(body.match(/All tests passing/g)).toHaveLength(1);
   });
 
+  it('words test results as passing, failing, or unreadable', () => {
+    const withResults = (testResults: Partial<CodeResult['testResults']>) =>
+      formatPRBody(
+        request,
+        { ...codeResult, testResults: { ...codeResult.testResults, ...testResults } },
+        '{{testStatus}}'
+      );
+    expect(withResults({})).toBe('All tests passing (2/2)');
+    expect(withResults({ failing: 1, passed: false, passing: 1, total: 2 })).toBe(
+      'Tests failing (1/2 passing)'
+    );
+    expect(withResults({ failing: 0, passed: false, passing: 0, total: 0 })).toBe(
+      'No test results could be read'
+    );
+    // The unrunnable shape is a failure, not an absence.
+    expect(withResults({ failing: 1, passed: false, passing: 0, total: 0 })).toBe(
+      'Tests failing (0/0 passing)'
+    );
+  });
+
   it('honours a custom body template', () => {
     expect(
       formatPRBody(request, codeResult, '{{branch}} ({{filesChanged}} files) {{testStatus}}')
