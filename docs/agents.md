@@ -725,6 +725,11 @@ Without the proxy the credential reaches the container as `ANTHROPIC_API_KEY`. T
 pinned through the SDK's highest-priority settings layer, so a repository's own
 `.claude/settings.json` cannot redirect the harness, and the key or token it sends, to another host.
 
+A base URL that may itself carry a credential (a path, a query or userinfo, on an unproxied run) is
+kept off every command line and environment list. The pinned layer is then a private file under the
+harness home, written over stdin at the start of each turn; the SDK is given its path, and the URL
+travels as secret environment.
+
 **MCP.** An Agent whose tool keys enable `'mcp'` and that references an `mcp` Connection — the same
 binding the Mastra loop uses (`resolveAgentMcpUrl`; a persona falls back to the implementer's) — has
 it relayed to the harness from the worker (`agents/harness/mcpRelay.ts`). The worker connects to the
@@ -1740,6 +1745,14 @@ The bulk endpoints are admin-only. Preview writes nothing; apply uses the same v
   of its own (for example one written to `/etc/claude-code/` by an earlier `Bash` call). The
   worker-side policy hook decides every call a genuine binary makes; the container's own isolation is
   what holds when the binary is not genuine.
+- **The staged pinned-settings file is writable by the agent's user.** An unproxied run whose base
+  URL may carry a credential stages the pinned settings layer as an owner-only file. No `--user` is
+  set on a Docker exec, so the harness and the agent's shell both run as the image's default user, and
+  agent-run code can rewrite the file; the worker rewrites it at the start of every turn. It does not
+  protect against the agent: code running as that user already holds the base URL and the key in the
+  harness's environment. It protects against a repository's own `.claude/settings.json`. Whether the
+  CLI re-reads a settings file during a turn is not established here. Kubernetes never stages the
+  file, because it requires the model proxy; configuring the proxy on Docker removes the gap.
 - **Claude Code and Pi are the only harnesses an agent can run on.** Codex CLI, OpenCode, Gemini CLI
   and the Pi CLI each lack a worker-answered callback before every tool call that the repository or
   the container cannot bypass, so the registry would refuse them
