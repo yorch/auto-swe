@@ -329,7 +329,7 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                           <Th align="right">Success rate (95% CI)</Th>
                           <Th align="right">Avg cost / run</Th>
                           <Th align="right">p50 duration</Th>
-                          <Th align="right">PR merge rate (95% CI)</Th>
+                          <Th align="right">Merge rate (resolved PRs, 95% CI)</Th>
                         </THead>
                         <tbody>
                           {stats.perVersion.map((v) => (
@@ -344,7 +344,8 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                               <Td align="right">{formatCost(v.avgCostPerRun)}</Td>
                               <Td align="right">{formatDuration(v.p50DurationMs)}</Td>
                               <Td align="right">
-                                {v.prMerged}/{v.prOpened} · {formatPercent(v.mergeRate)}
+                                {v.prMerged}/{v.prOpened - v.prOpen} resolved · {v.prOpen} open ·{' '}
+                                {formatPercent(v.mergeRate)}
                                 {v.mergeRateCi95
                                   ? ` (${formatPercent(v.mergeRateCi95[0])}–${formatPercent(v.mergeRateCi95[1])})`
                                   : ' (—)'}

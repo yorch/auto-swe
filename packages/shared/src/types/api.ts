@@ -525,6 +525,7 @@ export interface WorkflowTemplateAnalytics {
     avgCostPerRun: number | null;
     p50DurationMs: number | null;
     prOpened: number;
+    prOpen: number;
     prMerged: number;
     mergeRate: number | null;
     mergeRateCi95: [number, number] | null;
@@ -581,6 +582,7 @@ export interface GlobalAnalyticsResponse {
   perOutcome: Array<{ outcomeType: string; runCount: number; totalCost: number }>;
   isTruncated: boolean;
   seriesTruncated: boolean;
+  legacyCostTruncated: boolean;
   /** Headline figures for the window of equal length just before this one; null when unavailable. */
   previous?: {
     totalRuns: number;

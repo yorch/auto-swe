@@ -142,6 +142,30 @@ describe('GET /api/v1/pull-requests/outcomes', () => {
       },
     ]);
     expect(b.prisma.workflowRun.findMany).toHaveBeenCalled();
+    expect(whereOf(b)).toContainEqual({
+      workflow: { temporalWorkflowId: { in: ['temporal-1'] } },
+    });
+    expect(b.prisma.pullRequest.findMany.mock.calls[0]?.[0].take).toBe(10_001);
+  });
+
+  it('places PRs without a visible workflow run in the unattributed template bucket', async () => {
+    const b = await buildApp();
+    b.prisma.pullRequest.findMany.mockResolvedValue([
+      inCurrent(0, {
+        repoId: UUID_A,
+        workflow: { repoId: UUID_A, temporalWorkflowId: 'not-visible' },
+      }),
+    ]);
+    const { data } = (await get(b)).json();
+    expect(data.byTemplate).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          opened: 1,
+          templateId: null,
+          templateName: 'Unattributed',
+        }),
+      ])
+    );
   });
 
   it('bounds openedAt to [previousStart, end) and adds no repository filter for an admin', async () => {

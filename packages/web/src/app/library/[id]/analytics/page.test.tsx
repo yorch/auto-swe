@@ -44,6 +44,7 @@ const stats = {
       mergeRateCi95: [0.2, 0.8],
       p50DurationMs: 1000,
       prMerged: 1,
+      prOpen: 1,
       prOpened: 2,
       runs: 5,
       succeeded: 4,
@@ -57,6 +58,7 @@ const stats = {
       mergeRateCi95: null,
       p50DurationMs: 2000,
       prMerged: 0,
+      prOpen: 0,
       prOpened: 0,
       runs: 5,
       succeeded: 3,
@@ -157,13 +159,19 @@ describe('TemplateAnalyticsPage', () => {
   it('shows per-version outcome and merge-rate confidence intervals', async () => {
     renderPage();
     expect(await screen.findByText('Success rate (95% CI)')).toBeTruthy();
+    expect(screen.getByText('Merge rate (resolved PRs, 95% CI)')).toBeTruthy();
     expect(
       screen.getAllByRole('row').some((row) => row.textContent?.includes('80.0% (40.0%–95.0%)'))
     ).toBe(true);
     expect(
       screen
         .getAllByRole('row')
-        .some((row) => row.textContent?.includes('1/2 · 50.0% (20.0%–80.0%)'))
+        .some(
+          (row) =>
+            row.textContent?.includes('1/1 resolved') &&
+            row.textContent.includes('1 open') &&
+            row.textContent.includes('50.0% (20.0%–80.0%)')
+        )
     ).toBe(true);
   });
 });

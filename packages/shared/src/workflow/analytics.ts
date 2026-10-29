@@ -130,6 +130,7 @@ export interface AnalyticsResult {
     avgCostPerRun: number | null;
     p50DurationMs: number | null;
     prOpened: number;
+    prOpen: number;
     prMerged: number;
     mergeRate: number | null;
     mergeRateCi95: [number, number] | null;
@@ -269,16 +270,28 @@ export function computeAnalytics(
       runByWorkflowId.set(r.workflowId, r);
     }
   }
-  const prsByVersion = new Map<number, { opened: number; merged: number }>();
+  const prsByVersion = new Map<
+    number,
+    { closedUnmerged: number; merged: number; opened: number; open: number }
+  >();
   for (const pr of pullRequests) {
     const run = runByWorkflowId.get(pr.workflowId);
     if (!run) {
       continue;
     }
-    const grouped = prsByVersion.get(run.templateVersion) ?? { merged: 0, opened: 0 };
+    const grouped = prsByVersion.get(run.templateVersion) ?? {
+      closedUnmerged: 0,
+      merged: 0,
+      open: 0,
+      opened: 0,
+    };
     grouped.opened += 1;
     if (pr.status === 'MERGED') {
       grouped.merged += 1;
+    } else if (pr.status === 'CLOSED') {
+      grouped.closedUnmerged += 1;
+    } else if (pr.status === 'OPEN') {
+      grouped.open += 1;
     }
     prsByVersion.set(run.templateVersion, grouped);
   }
@@ -297,16 +310,23 @@ export function computeAnalytics(
         .filter((r) => isTerminalStatus(r.status) && r.endedAt)
         .map((r) => (r.endedAt as Date).getTime() - r.startedAt.getTime())
         .sort((a, b) => a - b);
-      const prs = prsByVersion.get(version) ?? { merged: 0, opened: 0 };
+      const prs = prsByVersion.get(version) ?? {
+        closedUnmerged: 0,
+        merged: 0,
+        open: 0,
+        opened: 0,
+      };
+      const decidedPrs = prs.merged + prs.closedUnmerged;
       return {
         avgCostPerRun:
           versionRows.length > 0
             ? versionCosts.reduce((sum, cost) => sum + cost, 0) / versionRows.length
             : null,
-        mergeRate: prs.opened > 0 ? prs.merged / prs.opened : null,
-        mergeRateCi95: wilsonInterval(prs.merged, prs.opened),
+        mergeRate: decidedPrs > 0 ? prs.merged / decidedPrs : null,
+        mergeRateCi95: wilsonInterval(prs.merged, decidedPrs),
         p50DurationMs: percentile(durations, 0.5),
         prMerged: prs.merged,
+        prOpen: prs.open,
         prOpened: prs.opened,
         runs: versionRows.length,
         succeeded,

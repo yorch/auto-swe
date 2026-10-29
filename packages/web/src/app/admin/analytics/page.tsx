@@ -216,10 +216,12 @@ function AnalyticsWorkspace() {
           />
         ) : (
           <>
-            {data.isTruncated && (
+            {(data.isTruncated || data.legacyCostTruncated) && (
               <Alert variant="warning">
-                Results capped at the 10,000 most recent runs. Totals and rates reflect the capped
-                window — older runs are omitted.
+                Daily series and duration percentiles use the 50,000 most recent runs; totals and
+                rates are exact.
+                {data.legacyCostTruncated &&
+                  ' The legacy zero-cost fallback is capped at the 50,000 most recent runs; some older fallback cost may be omitted.'}
               </Alert>
             )}
 
@@ -281,7 +283,7 @@ function AnalyticsWorkspace() {
                         )
                       : null
                   }
-                  hint="Template's estimated minutes × successful runs."
+                  hint="Sum of each successful run's estimate, snapshotted from the template when the run started."
                   label="Est. time saved (successful runs)"
                   tone={(data.estimatedHumanTimeSavedTotal ?? 0) > 0 ? 'success' : 'default'}
                   value={formatMinutes(data.estimatedHumanTimeSavedTotal ?? 0)}

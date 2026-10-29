@@ -13,6 +13,7 @@ import {
   computeApprovalLatency,
   computeDailyRunSeries,
   computeGlobalAnalytics,
+  computeGlobalAnalyticsFromGroups,
   normalizeRecordingNodeId,
   wilsonInterval,
 } from './analytics.js';
@@ -44,6 +45,34 @@ describe('canonical terminal-status sets', () => {
       'TIMED_OUT',
     ]);
     expect(isTerminalActiveWorkflowStatus('IMPLEMENTING')).toBe(false);
+  });
+});
+
+describe('computeGlobalAnalyticsFromGroups', () => {
+  it('handles all-null sums and unknown autonomy and human-review fields', () => {
+    const result = computeGlobalAnalyticsFromGroups(
+      [
+        {
+          _count: { _all: 2 },
+          _sum: { costUsdAccrued: null, estimatedHumanTimeSaved: null },
+          hadHumanStep: null,
+          hasError: null,
+          outcomeDomain: 'engineering',
+          outcomeType: 'ticket',
+          status: 'SUCCESS',
+          templateId: 'template-1',
+          wasAutonomous: null,
+        },
+      ],
+      new Map(),
+      30
+    );
+
+    expect(result.totalCost).toBe(0);
+    expect(result.estimatedHumanTimeSavedTotal).toBeNull();
+    expect(result.autonomyRate).toBeNull();
+    expect(result.humanReviewRate).toBeNull();
+    expect(result.perTemplate[0]?.autonomyRate).toBeNull();
   });
 });
 
@@ -404,6 +433,7 @@ describe('reporting estimates and per-version intervals', () => {
       mergeRate: 0.5,
       p50DurationMs: 600_000,
       prMerged: 1,
+      prOpen: 0,
       prOpened: 2,
       runs: 3,
       succeeded: 1,
@@ -411,5 +441,35 @@ describe('reporting estimates and per-version intervals', () => {
     });
     expect(out.perVersion[0]?.successRateCi95).not.toBeNull();
     expect(out.perVersion[0]?.mergeRateCi95).not.toBeNull();
+  });
+
+  it('excludes open pull requests from the per-version merge-rate denominator', () => {
+    const out = computeAnalytics(
+      [
+        {
+          costUsdAccrued: 0,
+          endedAt: end,
+          startedAt: at,
+          status: 'SUCCESS',
+          templateVersion: 1,
+          workflowId: 'wf-open',
+        },
+      ],
+      [],
+      30,
+      undefined,
+      [
+        ...Array.from({ length: 2 }, () => ({ status: 'MERGED', workflowId: 'wf-open' })),
+        ...Array.from({ length: 8 }, () => ({ status: 'OPEN', workflowId: 'wf-open' })),
+      ]
+    );
+
+    expect(out.perVersion[0]).toMatchObject({
+      mergeRate: 1,
+      prMerged: 2,
+      prOpen: 8,
+      prOpened: 10,
+    });
+    expect(out.perVersion[0]?.mergeRateCi95).toEqual(wilsonInterval(2, 2));
   });
 });

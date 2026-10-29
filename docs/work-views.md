@@ -82,7 +82,6 @@ Newest first, paginated like `GET /work-requests` (`limit`, `offset`; `meta.tota
 | `state` | `OPEN`, `MERGED`, `CLOSED`, `all` | `all` |
 | `draft` | `any`, `draft`, `ready` | `any` |
 | `repoId` | a repository id | any |
-| `templateId` | a workflow template id | any |
 | `ticket` | substring of the external ticket id, case-insensitive | any |
 | `scope` | `MINE` (requests the caller made) or `TEAM` (everything visible) | `MINE` |
 | `teamId` | narrow to a team's repositories, including ones shared with it | any |
@@ -137,8 +136,8 @@ Both outcomes routes accept an optional `templateId` UUID in addition to `repoId
 includes `template_id` and `template_name` columns.
 
 Visibility is the list's: an ADMIN sees every row, anyone else the PRs of repositories they may
-reach (`reachableConnections`). The read takes at most 10,000 rows, newest first. When that cap
-cuts into the window, `isTruncated` is true and `current` is computed from the rows read; when it
+reach (`reachableConnections`). The read takes at most 10,000 PR rows after filters, newest first.
+When that cap cuts into the window, `isTruncated` is true and `current` is computed from the rows read; when it
 cuts into the previous window only, `previousComplete` is false and `previous` is null.
 
 ### 3.1 `GET /api/v1/pull-requests/outcomes/export`
@@ -287,6 +286,9 @@ http(s) address.
 
 ## Limitations
 
+- Template attribution for outcomes is limited to visible workflow runs started within 30 days
+  before the selected outcomes window.
+
 - With the GitHub tracker, comments, pull-request links, issue closes and PRD issue creation go
   only to a repository the run targets, on the tracker's host, and a ticket is read only from one.
   The tracker has no configured default repository, so a ticket id naming any other repository, a
@@ -305,6 +307,8 @@ http(s) address.
   never fetched, even a bare number.
 - Outcomes group PRs by the time they were opened and judge them as of now, so a recent cohort
   under-reports merges that have not happened yet and its merge rate rises as its PRs resolve.
+- Template attribution uses visible workflow runs started no earlier than 30 days before the
+  outcomes window. Older run-to-PR links are not included in template-filtered outcomes or exports.
 - An outcomes read takes at most 10,000 PRs; beyond that the figures cover only the newest ones
   read, and `isTruncated` or `previousComplete` says so.
 - Outcomes are grouped by workflow template, but not by agent. The dashboard card on
