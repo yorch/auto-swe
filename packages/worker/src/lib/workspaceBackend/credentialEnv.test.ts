@@ -289,3 +289,129 @@ describe('assertNoCredentialEnvPairs', () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 });
+
+/** Token-like text is built from parts so no secret scanner sees a literal. */
+const rep = (ch: string, n: number): string => ch.repeat(n);
+const join = (...parts: string[]): string => parts.join('');
+
+const GH_TOKEN = join('gh', 'p', '_', rep('a1B2', 9));
+const GH_PAT = join('github', '_pat_', rep('Ab1_', 8));
+const ANTHROPIC_KEY = join('sk', '-ant-', 'api03-', rep('x9', 20));
+const PROXY_TOKEN = join('sk', '-ant-', 'proxy-', rep('a0', 16));
+const SLACK_TOKEN = join('xo', 'xb-', '1234567890-', 'abcdefghij');
+const AWS_KEY = join('AK', 'IA', 'IOSFODNN7EXAMPLE');
+const JWT = join('ey', 'JhbGciOiJIUzI1NiJ9.', 'eyJzdWIiOiIxMjM0NTY3ODkwIn0.', 'abcdefghij_-KLMNOP');
+const PEM_RSA = join('-----BEGIN ', 'RSA PRIVATE', ' KEY-----');
+const PEM_OPENSSH = join('-----BEGIN ', 'OPENSSH PRIVATE', ' KEY-----');
+
+describe('assertNoCredentialEnvPairs value shapes', () => {
+  const mustThrow: readonly (readonly [string, string])[] = [
+    ['GitHub token', GH_TOKEN],
+    ['GitHub token', GH_PAT],
+    ['API key', ANTHROPIC_KEY],
+    ['API key', PROXY_TOKEN],
+    ['Slack token', SLACK_TOKEN],
+    ['AWS access key', AWS_KEY],
+    ['JWT', JWT],
+    ['private key', PEM_RSA],
+    ['private key', PEM_OPENSSH],
+    ['HTTP authorization', 'Authorization: Bearer abcdef0123456789abcdef'],
+    ['HTTP authorization', 'Basic dXNlcjpwYXNzd29yZDEyMzQ1Ng=='],
+    ['git auth header', Buffer.from('x-access-token:ghs_x').toString('base64')],
+  ];
+
+  it('refuses a well-known credential shape, naming its kind only', () => {
+    for (const [kind, value] of mustThrow) {
+      expect(() => assertNoCredentialEnvPairs([`X=${value}`], 'docker run env'), kind).toThrow(
+        `value looks like a credential (${kind}); pass it as secretEnv`
+      );
+    }
+  });
+
+  it('refuses username-only userinfo on http, https and ftp', () => {
+    for (const value of [
+      `https://${GH_TOKEN}@github.com/org/repo`,
+      'https://tok@host/x',
+      'ftp://u@h',
+      'HTTP://tok@host',
+    ]) {
+      expect(() => assertNoCredentialEnvPairs([`X=${value}`], 'test'), value).toThrow(
+        'value carries URL credentials'
+      );
+    }
+  });
+
+  it('accepts values that only resemble a credential', () => {
+    const bytes = Array.from({ length: 40 }, (_, i) => (i * 37 + 11) % 256);
+    const accepted = [
+      `http://host.docker.internal:8787/npm/${rep('ab12', 8)}`,
+      'http://[::1]:8787/npm/abc',
+      'https://openrouter.ai/api',
+      'https://api.anthropic.com',
+      '/home/node',
+      'https://host/a@b',
+      'git+ssh://git@github.com:org/repo.git',
+      'ssh://git@github.com/org/repo',
+      'git@github.com:org/repo',
+      '{"url":"http://host:8080","email":"a@b.com"}',
+      rep('0123456789abcdef', 3).slice(0, 40),
+      '123e4567-e89b-12d3-a456-426614174000',
+      rep('0123456789abcdef', 4),
+      Buffer.from(bytes).toString('base64'),
+      'Basic setup',
+      'Bearer token auth',
+      'sk-learn',
+      'task-queue-name',
+      'disk-usage-report-2026',
+      'eyJ',
+      '-----BEGIN PUBLIC KEY-----',
+    ];
+    for (const value of accepted) {
+      expect(() => assertNoCredentialEnvPairs([`X=${value}`], 'test'), value).not.toThrow();
+    }
+  });
+
+  it('never echoes any part of a refused value', () => {
+    for (const [, value] of mustThrow) {
+      let message = '';
+      try {
+        assertNoCredentialEnvPairs([`LOG_LINE=${value}`], 'docker run env');
+      } catch (err) {
+        message = (err as Error).message;
+      }
+      expect(message).toContain('LOG_LINE');
+      expect(message).toContain('docker run env');
+      expect(message).not.toContain(value.slice(0, 8));
+      expect(message).not.toContain(value.slice(-8));
+    }
+  });
+
+  it('judges adversarial values in linear time', () => {
+    const size = 200_000;
+    for (const body of [
+      rep('gh', size / 2),
+      rep('sk-', size / 3),
+      rep('eyJ.', size / 4),
+      rep('eyJaaaaaaaaaa.', size / 14),
+      rep('Bearer ', size / 7),
+      rep('Bearer', size / 6),
+      rep('https://', size / 8),
+      rep('-----BEGIN ', size / 11),
+      rep('xox', size / 3),
+      rep('AKIA', size / 4),
+      rep('a', size),
+      rep('A', size),
+      rep('-', size),
+      rep('_', size),
+    ]) {
+      const started = Date.now();
+      try {
+        // a run of `sk-` is a legitimate match; only the time taken is judged here
+        assertNoCredentialEnvPairs([`X=${body}`], 'test');
+      } catch {
+        // refused or accepted, either is fine
+      }
+      expect(Date.now() - started).toBeLessThan(500);
+    }
+  });
+});
