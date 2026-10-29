@@ -14,21 +14,19 @@ import { requireAuth, requireUser } from '../plugins/auth.js';
 const paramsSchema = z.object({ id: z.string().uuid() });
 const bodySchema = z
   .object({
+    confirmOptedOutReadd: z.array(z.string().email()).max(20).optional(),
     emailRecipients: z.array(z.string().email()).max(20).optional(),
     enabled: z.boolean().optional(),
     orgId: z.string().uuid().nullable().optional(),
     scope: z.enum(['ORGANIZATION', 'TEAM']).optional(),
     slackChannelId: z.string().uuid().nullable().optional(),
     teamId: z.string().uuid().nullable().optional(),
-    confirmOptedOutReadd: z.array(z.string().email()).max(20).optional(),
   })
   .strict();
 const createBodySchema = bodySchema.omit({ confirmOptedOutReadd: true });
 const MAX_SUBSCRIPTIONS_PER_SCOPE = 5;
 const unsubscribeQuerySchema = z.object({ token: z.string().min(1).max(256) });
-const unsubscribeBodySchema = z
-  .object({ 'List-Unsubscribe': z.literal('One-Click') })
-  .strict();
+const unsubscribeBodySchema = z.object({ 'List-Unsubscribe': z.literal('One-Click') }).strict();
 
 export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
   const app = fastify.withTypeProvider<ZodTypeProvider>();
@@ -83,7 +81,9 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       const action = `/api/v1/report-digests/unsubscribe?token=${encodeURIComponent(token)}`;
       return reply
         .type('text/html; charset=utf-8')
-        .send(`<!doctype html><html><body><p>Confirm you want to unsubscribe from this report digest.</p><form method="post" action="${action}"><button name="List-Unsubscribe" value="One-Click" type="submit">Unsubscribe</button></form></body></html>`);
+        .send(
+          `<!doctype html><html><body><p>Confirm you want to unsubscribe from this report digest.</p><form method="post" action="${action}"><button name="List-Unsubscribe" value="One-Click" type="submit">Unsubscribe</button></form></body></html>`
+        );
     }
   );
 
@@ -118,7 +118,9 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
       }
       return reply
         .type('text/html; charset=utf-8')
-        .send('<!doctype html><html><body><p>You have been unsubscribed from this report digest.</p></body></html>');
+        .send(
+          '<!doctype html><html><body><p>You have been unsubscribed from this report digest.</p></body></html>'
+        );
     }
   );
 
@@ -316,10 +318,7 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
     };
   });
 
-  app.post(
-    '/',
-    { onRequest: auth, schema: { body: createBodySchema } },
-    async (request, reply) => {
+  app.post('/', { onRequest: auth, schema: { body: createBodySchema } }, async (request, reply) => {
     const user = requireUser(request);
     const body = request.body;
     if (!body.scope) {
@@ -364,8 +363,7 @@ export const reportDigestRoutes: FastifyPluginAsync = async (fastify) => {
         },
       }),
     });
-    }
-  );
+  });
 
   app.patch(
     '/:id',

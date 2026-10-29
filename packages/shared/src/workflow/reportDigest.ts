@@ -309,7 +309,10 @@ export function buildReportDigest(input: ReportDigestInput): ReportDigest {
   });
   const slackBlocks = [
     {
-      text: { text: Array.from(`${scopeName} weekly report`).slice(0, 150).join(''), type: 'plain_text' },
+      text: {
+        text: Array.from(`${scopeName} weekly report`).slice(0, 150).join(''),
+        type: 'plain_text',
+      },
       type: 'header',
     },
     { fields: slackFields, type: 'section' },
@@ -333,15 +336,15 @@ export function buildReportDigest(input: ReportDigestInput): ReportDigest {
     ...(slackReportsUrl
       ? [
           {
-      elements: [
-        {
-          action_id: 'open_report_digest',
-          text: { text: 'Open reports', type: 'plain_text' },
-          type: 'button',
-          url: slackReportsUrl,
-        },
-      ],
-      type: 'actions',
+            elements: [
+              {
+                action_id: 'open_report_digest',
+                text: { text: 'Open reports', type: 'plain_text' },
+                type: 'button',
+                url: slackReportsUrl,
+              },
+            ],
+            type: 'actions',
           },
         ]
       : []),

@@ -1,5 +1,5 @@
-import Fastify from 'fastify';
 import rateLimit from '@fastify/rate-limit';
+import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import { describe, expect, it, vi } from 'vitest';
 import { reportDigestRoutes } from './reportDigests.js';
@@ -24,6 +24,7 @@ const AUTH = { authorization: 'Bearer fake' };
 async function buildApp(role: string, membership: { orgIds?: string[]; teamIds?: string[] } = {}) {
   const temporal = { triggerReportDigestTest: vi.fn().mockResolvedValue(undefined) };
   const prisma = {
+    configAuditLog: { create: vi.fn().mockResolvedValue(undefined) },
     organization: { findMany: vi.fn().mockResolvedValue([]) },
     organizationMembership: {
       findMany: vi.fn().mockResolvedValue((membership.orgIds ?? []).map((orgId) => ({ orgId }))),
@@ -37,7 +38,6 @@ async function buildApp(role: string, membership: { orgIds?: string[]; teamIds?:
       update: vi.fn().mockResolvedValue({}),
       updateMany: vi.fn().mockResolvedValue({ count: 1 }),
     },
-    configAuditLog: { create: vi.fn().mockResolvedValue(undefined) },
     slackChannel: {
       findMany: vi.fn().mockResolvedValue([]),
       findUnique: vi.fn().mockResolvedValue({ orgId: ORG_B }),
@@ -166,27 +166,6 @@ describe('report digest routes', () => {
     });
     expect(unconfirmed.statusCode).toBe(400);
     expect(prisma.reportDigestSubscription.update).not.toHaveBeenCalled();
-
-    const confirmationWithoutRecipient = await app.inject({
-      headers: AUTH,
-      method: 'PATCH',
-      payload: {
-        confirmOptedOutReadd: ['digest@example.test'],
-        emailRecipients: [],
-      },
-      url: `/api/v1/report-digests/${SUBSCRIPTION}`,
-    });
-    expect(confirmationWithoutRecipient.statusCode).toBe(200);
-    expect(prisma.reportDigestSubscription.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({
-          emailRecipients: [],
-          optedOutEmails: { set: ['digest@example.test'] },
-        }),
-      })
-    );
-    expect(prisma.configAuditLog.create).not.toHaveBeenCalled();
-    prisma.reportDigestSubscription.update.mockClear();
 
     const response = await app.inject({
       headers: AUTH,

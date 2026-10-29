@@ -88,9 +88,12 @@ async function deliverTarget(
   throw new Error('Invalid report digest target');
 }
 
-export async function sendReportDigests(
-  input: { now?: Date; periodStart: Date; subscriptionId?: string; sendTest?: boolean }
-): Promise<{ failed: number; rollupIncomplete: number; sent: number; skipped: number }> {
+export async function sendReportDigests(input: {
+  now?: Date;
+  periodStart: Date;
+  subscriptionId?: string;
+  sendTest?: boolean;
+}): Promise<{ failed: number; rollupIncomplete: number; sent: number; skipped: number }> {
   const now = input.now ?? new Date();
   const currentStart = new Date(
     Date.UTC(
@@ -562,7 +565,10 @@ export async function sendReportDigests(
         subscriptionId: subscription.id,
       });
       if (!input.sendTest) {
-        await recordDigestError(subscription.id, stage === 'build' ? 'build_failed' : 'delivery_failed');
+        await recordDigestError(
+          subscription.id,
+          stage === 'build' ? 'build_failed' : 'delivery_failed'
+        );
       } else {
         await recordTestDigestError(
           subscription.id,
@@ -596,10 +602,7 @@ async function recordDigestError(subscriptionId: string, code: DigestErrorCode):
   }
 }
 
-async function recordTestDigestError(
-  subscriptionId: string,
-  code: DigestErrorCode
-): Promise<void> {
+async function recordTestDigestError(subscriptionId: string, code: DigestErrorCode): Promise<void> {
   try {
     await runUnscoped(
       'the report digest records send-test failures separately from delivery status',

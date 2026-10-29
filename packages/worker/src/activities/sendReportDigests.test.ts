@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   coverageIncomplete: false,
-  deliveryPersistenceFails: false,
   deliveries: new Map<
     string,
     {
@@ -16,12 +15,13 @@ const mocks = vi.hoisted(() => ({
       target: string;
     }
   >(),
+  deliveryPersistenceFails: false,
   emails: [] as Array<{ listUnsubscribeUrl: string; to: string }>,
   failedEmailRecipients: [] as string[],
   gatesAtLimit: false,
   heartbeats: [] as string[],
-  nextDeliveryId: 0,
   latestDeliveryPeriod: null as Date | null,
+  nextDeliveryId: 0,
   slackPosts: [] as Array<{ blocks: unknown[]; channelId: string; text: string }>,
   subscriptions: [] as Array<Record<string, unknown>>,
   updates: [] as Array<{ id: string; data: Record<string, unknown> }>,
@@ -60,6 +60,8 @@ vi.mock('@auto-swe/shared/db', () => ({
         }
         return { count: data.length };
       },
+      findFirst: async () =>
+        mocks.latestDeliveryPeriod ? { periodStart: mocks.latestDeliveryPeriod } : null,
       findMany: async ({
         where,
       }: {
@@ -79,8 +81,6 @@ vi.mock('@auto-swe/shared/db', () => ({
             status,
             target,
           })),
-      findFirst: async () =>
-        mocks.latestDeliveryPeriod ? { periodStart: mocks.latestDeliveryPeriod } : null,
       update: async ({ data, where }: { data: Record<string, unknown>; where: { id: string } }) => {
         const delivery = [...mocks.deliveries.values()].find((row) => row.id === where.id);
         if (!delivery) {
@@ -262,13 +262,15 @@ describe('sendReportDigests', () => {
     const laterSentAt = new Date('2026-10-20T12:15:00Z');
     const earlierRetryAt = new Date('2026-10-20T12:10:00Z');
 
-    await expect(
-      sendReportDigests({ now: laterSentAt, periodStart })
-    ).resolves.toMatchObject({ failed: 1, sent: 0 });
+    await expect(sendReportDigests({ now: laterSentAt, periodStart })).resolves.toMatchObject({
+      failed: 1,
+      sent: 0,
+    });
     mocks.failedEmailRecipients = [];
-    await expect(
-      sendReportDigests({ now: earlierRetryAt, periodStart })
-    ).resolves.toMatchObject({ failed: 0, sent: 1 });
+    await expect(sendReportDigests({ now: earlierRetryAt, periodStart })).resolves.toMatchObject({
+      failed: 0,
+      sent: 1,
+    });
 
     expect(mocks.updates).toContainEqual({
       data: { lastError: null, lastPeriodStart: periodStart, lastSentAt: laterSentAt },
@@ -339,9 +341,7 @@ describe('sendReportDigests', () => {
     const unsubscribeUrl = new URL(mocks.emails[0]?.listUnsubscribeUrl ?? '');
     expect(unsubscribeUrl.origin).toBe('https://gateway.example.test');
     expect(unsubscribeUrl.pathname).toBe('/api/v1/report-digests/unsubscribe');
-    expect(unsubscribeUrl.searchParams.get('token')).toBe(
-      'opt-out.keep@example.test.signed'
-    );
+    expect(unsubscribeUrl.searchParams.get('token')).toBe('opt-out.keep@example.test.signed');
     expect(new URL(mocks.emails[1]?.listUnsubscribeUrl ?? '').searchParams.get('token')).toBe(
       'opt-out.other@example.test.signed'
     );

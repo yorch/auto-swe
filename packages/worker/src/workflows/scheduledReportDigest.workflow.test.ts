@@ -44,8 +44,8 @@ beforeEach(() => {
 describe('ScheduledReportDigestWorkflow', () => {
   it('sleeps between failed-only delivery passes and stops after success', async () => {
     mocks.results = [
-      { failed: 1, sent: 0, skipped: 0 },
-      { failed: 0, sent: 1, skipped: 0 },
+      { failed: 1, rollupIncomplete: 0, sent: 0, skipped: 0 },
+      { failed: 0, rollupIncomplete: 0, sent: 1, skipped: 0 },
     ];
     const input = { subscriptionId: 'subscription-1' };
 
