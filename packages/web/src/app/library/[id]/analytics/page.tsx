@@ -198,13 +198,11 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                 <Stat label="Total cost" value={formatCost(stats.totalCost)} />
                 <Stat
                   hint={
-                    <HelpTip label="Time saved">
-                      The template’s “Estimated human time saved” per run, added up over the runs in
-                      this window. Each run records the estimate when it starts, so it counts only
-                      runs started after someone sets it under Edit details.
+                    <HelpTip label="Est. time saved (successful runs)">
+                      The template's estimated minutes × successful runs.
                     </HelpTip>
                   }
-                  label="Time saved"
+                  label="Est. time saved (successful runs)"
                   tone="success"
                   value={
                     stats.estimatedHumanTimeSavedTotal == null
@@ -324,6 +322,38 @@ export default function TemplateAnalyticsPage({ params }: PageProps) {
                         </li>
                       ))}
                     </ul>
+                    <div className="mt-5 overflow-x-auto border-t border-ink-600 pt-4">
+                      <Table>
+                        <THead>
+                          <Th>Version</Th>
+                          <Th align="right">Success rate (95% CI)</Th>
+                          <Th align="right">Avg cost / run</Th>
+                          <Th align="right">p50 duration</Th>
+                          <Th align="right">PR merge rate (95% CI)</Th>
+                        </THead>
+                        <tbody>
+                          {stats.perVersion.map((v) => (
+                            <TRow key={v.version}>
+                              <Td>v{v.version}</Td>
+                              <Td align="right">
+                                {formatPercent(v.successRate)}
+                                {v.successRateCi95
+                                  ? ` (${formatPercent(v.successRateCi95[0])}–${formatPercent(v.successRateCi95[1])})`
+                                  : ' (—)'}
+                              </Td>
+                              <Td align="right">{formatCost(v.avgCostPerRun)}</Td>
+                              <Td align="right">{formatDuration(v.p50DurationMs)}</Td>
+                              <Td align="right">
+                                {v.prMerged}/{v.prOpened} · {formatPercent(v.mergeRate)}
+                                {v.mergeRateCi95
+                                  ? ` (${formatPercent(v.mergeRateCi95[0])}–${formatPercent(v.mergeRateCi95[1])})`
+                                  : ' (—)'}
+                              </Td>
+                            </TRow>
+                          ))}
+                        </tbody>
+                      </Table>
+                    </div>
                   </Card>
                 )}
 

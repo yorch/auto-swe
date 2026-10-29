@@ -7,6 +7,7 @@ export type {
   AnalyticsStepRow,
   ApprovalLatencyRow,
   DailyRunCount,
+  GlobalAnalyticsGroup,
   GlobalAnalyticsResult,
   GlobalAnalyticsTemplateRow,
   SignificanceHint,
@@ -17,6 +18,7 @@ export {
   computeApprovalLatency,
   computeDailyRunSeries,
   computeGlobalAnalytics,
+  computeGlobalAnalyticsFromGroups,
   MIN_SAMPLES_FOR_SIGNIFICANCE,
   normalizeRecordingNodeId,
 } from './analytics.js';

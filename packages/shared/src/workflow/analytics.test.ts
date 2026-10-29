@@ -14,6 +14,7 @@ import {
   computeDailyRunSeries,
   computeGlobalAnalytics,
   normalizeRecordingNodeId,
+  wilsonInterval,
 } from './analytics.js';
 
 const at = new Date('2026-01-01T00:00:00Z');
@@ -257,5 +258,158 @@ describe('computeApprovalLatency', () => {
     expect(computeApprovalLatency(rows, false).perTemplate).toHaveLength(
       APPROVAL_LATENCY_TEMPLATE_LIMIT
     );
+  });
+});
+
+describe('reporting estimates and per-version intervals', () => {
+  it('counts estimated time saved only for successful runs in template and global cells', () => {
+    const out = computeGlobalAnalytics(
+      [
+        {
+          costUsdAccrued: 0,
+          endedAt: end,
+          estimatedHumanTimeSaved: 15,
+          outcomeDomain: 'git_repo',
+          startedAt: at,
+          status: 'SUCCESS',
+          templateId: 'a',
+          templateName: 'A',
+        },
+        {
+          costUsdAccrued: 0,
+          endedAt: end,
+          estimatedHumanTimeSaved: 30,
+          outcomeDomain: 'git_repo',
+          startedAt: at,
+          status: 'FAILED',
+          templateId: 'a',
+          templateName: 'A',
+        },
+        {
+          costUsdAccrued: 0,
+          endedAt: end,
+          estimatedHumanTimeSaved: 60,
+          outcomeDomain: 'git_repo',
+          startedAt: at,
+          status: 'CANCELLED',
+          templateId: 'a',
+          templateName: 'A',
+        },
+        {
+          costUsdAccrued: 0,
+          endedAt: null,
+          estimatedHumanTimeSaved: 45,
+          outcomeDomain: 'document',
+          startedAt: at,
+          status: 'RUNNING',
+          templateId: 'b',
+          templateName: 'B',
+        },
+      ],
+      30
+    );
+    expect(out.estimatedHumanTimeSavedTotal).toBe(15);
+    expect(out.perTemplate.find((t) => t.templateId === 'a')?.estimatedHumanTimeSavedTotal).toBe(
+      15
+    );
+    expect(
+      out.perTemplate.find((t) => t.templateId === 'b')?.estimatedHumanTimeSavedTotal
+    ).toBeNull();
+    expect(out.perDomain.find((d) => d.domain === 'git_repo')?.estimatedHumanTimeSavedTotal).toBe(
+      15
+    );
+    expect(
+      out.perDomain.find((d) => d.domain === 'document')?.estimatedHumanTimeSavedTotal
+    ).toBeNull();
+    expect(
+      computeAnalytics(
+        [
+          {
+            endedAt: end,
+            estimatedHumanTimeSaved: 15,
+            startedAt: at,
+            status: 'SUCCESS',
+            templateVersion: 1,
+          },
+          {
+            endedAt: end,
+            estimatedHumanTimeSaved: 30,
+            startedAt: at,
+            status: 'FAILED',
+            templateVersion: 1,
+          },
+          {
+            endedAt: end,
+            estimatedHumanTimeSaved: 60,
+            startedAt: at,
+            status: 'CANCELLED',
+            templateVersion: 1,
+          },
+          {
+            endedAt: null,
+            estimatedHumanTimeSaved: 45,
+            startedAt: at,
+            status: 'RUNNING',
+            templateVersion: 1,
+          },
+        ],
+        [],
+        30
+      ).estimatedHumanTimeSavedTotal
+    ).toBe(15);
+  });
+
+  it('returns Wilson intervals and joins pull-request merge rates to their run version', () => {
+    expect(wilsonInterval(0, 0)).toBeNull();
+    const known = wilsonInterval(8, 10);
+    expect(known?.[0]).toBeCloseTo(0.49, 3);
+    expect(known?.[1]).toBeCloseTo(0.943, 3);
+    const out = computeAnalytics(
+      [
+        {
+          costUsdAccrued: 2,
+          endedAt: end,
+          startedAt: at,
+          status: 'SUCCESS',
+          templateVersion: 1,
+          workflowId: 'wf-1',
+        },
+        {
+          costUsdAccrued: 4,
+          endedAt: end,
+          startedAt: at,
+          status: 'FAILED',
+          templateVersion: 1,
+          workflowId: 'wf-2',
+        },
+        {
+          costUsdAccrued: 0,
+          endedAt: null,
+          startedAt: at,
+          status: 'RUNNING',
+          templateVersion: 1,
+          workflowId: 'wf-3',
+        },
+      ],
+      [],
+      30,
+      undefined,
+      [
+        { status: 'MERGED', workflowId: 'wf-1' },
+        { status: 'CLOSED', workflowId: 'wf-2' },
+      ]
+    );
+    expect(out.perVersion[0]).toMatchObject({
+      avgCostPerRun: 2,
+      mergeRate: 0.5,
+      p50DurationMs: 600_000,
+      prMerged: 1,
+      prOpened: 2,
+      runs: 3,
+      succeeded: 1,
+      successRate: 0.5,
+    });
+    expect(out.perVersion[0]?.successRateCi95).not.toBeNull();
+    expect(out.perVersion[0]?.mergeRateCi95).not.toBeNull();
   });
 });

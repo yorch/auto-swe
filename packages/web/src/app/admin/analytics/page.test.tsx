@@ -59,8 +59,19 @@ const analytics = {
       totalCost: 4,
       totalRuns: 10,
     },
+    {
+      agentErrorRate: null,
+      baselineSampleSize: null,
+      domain: 'git_repo',
+      errorRateVsHuman: null,
+      estimatedHumanTimeSavedTotal: null,
+      humanErrorRate: null,
+      totalCost: 0.5,
+      totalRuns: 1,
+    },
   ],
   perOutcome: [
+    { outcomeType: 'git_repo', runCount: 2, totalCost: 1 },
     { outcomeType: 'unknown', runCount: 3, totalCost: 1 },
     { outcomeType: 'PR_OPENED', runCount: 7, totalCost: 3 },
   ],
@@ -104,6 +115,7 @@ const summary = (over: Record<string, unknown> = {}) => ({
 
 const outcomes = {
   byRepository: [{ repository: { id: 'r1', name: 'api', org: 'acme' }, summary: summary() }],
+  byTemplate: [],
   current: summary(),
   isTruncated: false,
   previous: summary({ merged: 2, mergeRate: 0.5, opened: 4 }),
@@ -125,7 +137,7 @@ describe('GlobalAnalyticsPage', () => {
 
     expect(await screen.findByText('Run cost')).toBeTruthy();
     expect(screen.getByText('Run cost')).toBeTruthy();
-    expect(screen.getByText('Time saved (estimate)')).toBeTruthy();
+    expect(screen.getByText('Est. time saved (successful runs)')).toBeTruthy();
     // Cost fell by half, which is good news, and the rate fell 12 points.
     expect(screen.getByText(/−50% vs previous 30 days/)).toBeTruthy();
     expect(screen.getByText(/−12\.2 pts vs previous 30 days/)).toBeTruthy();
@@ -160,6 +172,15 @@ describe('GlobalAnalyticsPage', () => {
     expect(await screen.findByText('Not classified')).toBeTruthy();
     expect(screen.getByText('Pr opened')).toBeTruthy();
     expect(screen.getByText('Too few baseline cases (10)')).toBeTruthy();
+  });
+
+  it('labels the workspace and integration breakdowns', async () => {
+    mock();
+    render(withQuery(<GlobalAnalyticsPage />));
+
+    expect(await screen.findByText('By workspace type')).toBeTruthy();
+    expect(screen.getAllByText('Git repository').length).toBeGreaterThan(0);
+    expect(screen.getByText('By integration')).toBeTruthy();
   });
 
   it('asks for the chosen window and keeps it in the URL', async () => {

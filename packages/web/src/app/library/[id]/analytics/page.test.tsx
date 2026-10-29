@@ -37,7 +37,38 @@ const stats = {
     { failed: 3, failureRate: 0.3, nodeId: 'runTests', total: 10 },
     { failed: 1, failureRate: 0.5, nodeId: 'rareStep', total: 2 },
   ],
-  perVersionCounts: [],
+  perVersion: [
+    {
+      avgCostPerRun: 1,
+      mergeRate: 0.5,
+      mergeRateCi95: [0.2, 0.8],
+      p50DurationMs: 1000,
+      prMerged: 1,
+      prOpened: 2,
+      runs: 5,
+      succeeded: 4,
+      successRate: 0.8,
+      successRateCi95: [0.4, 0.95],
+      version: 1,
+    },
+    {
+      avgCostPerRun: 2,
+      mergeRate: null,
+      mergeRateCi95: null,
+      p50DurationMs: 2000,
+      prMerged: 0,
+      prOpened: 0,
+      runs: 5,
+      succeeded: 3,
+      successRate: 0.6,
+      successRateCi95: [0.25, 0.85],
+      version: 2,
+    },
+  ],
+  perVersionCounts: [
+    { count: 5, version: 1 },
+    { count: 5, version: 2 },
+  ],
   significanceHint: {
     isSignificant: true,
     nA: 12,
@@ -110,7 +141,7 @@ describe('TemplateAnalyticsPage', () => {
       'About Success rate',
       'About p50 duration',
       'About p95 duration',
-      'About Time saved',
+      'About Est. time saved (successful runs)',
       'About Autonomy rate',
       'About Human review rate',
     ]) {
@@ -121,5 +152,18 @@ describe('TemplateAnalyticsPage', () => {
   it('names outcomes in words', async () => {
     renderPage();
     expect(await screen.findByText('Pr opened')).toBeTruthy();
+  });
+
+  it('shows per-version outcome and merge-rate confidence intervals', async () => {
+    renderPage();
+    expect(await screen.findByText('Success rate (95% CI)')).toBeTruthy();
+    expect(
+      screen.getAllByRole('row').some((row) => row.textContent?.includes('80.0% (40.0%–95.0%)'))
+    ).toBe(true);
+    expect(
+      screen
+        .getAllByRole('row')
+        .some((row) => row.textContent?.includes('1/2 · 50.0% (20.0%–80.0%)'))
+    ).toBe(true);
   });
 });
