@@ -200,10 +200,14 @@ async function evaluateScorer(
       }
       try {
         const run = await prisma.workflowRun.findUnique({
-          select: { workRequest: { select: { connectionId: true, externalTicketId: true } } },
+          select: {
+            workRequest: {
+              select: { connectionId: true, externalTicketId: true, workBranch: true },
+            },
+          },
           where: { id: runId },
         });
-        const { connectionId, externalTicketId } = run?.workRequest ?? {};
+        const { connectionId, externalTicketId, workBranch } = run?.workRequest ?? {};
         if (!connectionId || !externalTicketId) {
           return gateFailed;
         }
@@ -216,7 +220,7 @@ async function evaluateScorer(
         // a per-branch fan-out subtask does not live on `<prefix>/<ticketId>`,
         // and scoring the wrong branch fails safe, which reads as the change
         // breaking a gate it never touched.
-        const branch = candidateRef ?? `${defaults.branchPrefix}/${externalTicketId}`;
+        const branch = candidateRef ?? workBranch ?? `${defaults.branchPrefix}/${externalTicketId}`;
         const repoRef = toRepoRef(repo);
         const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
         // The command the run's own gate would have used (step → repo → stack → built-in),

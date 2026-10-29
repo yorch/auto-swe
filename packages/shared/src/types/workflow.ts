@@ -102,6 +102,12 @@ export interface RepoWorkRequest extends RunRequest {
    * a ticket.
    */
   externalTicketId: string;
+  /**
+   * The run's work branch when its launch decided one, instead of `<branchPrefix>/<ticket>`
+   * (see `workBranchOf`). Decided once, when the run starts, and carried here so every step and
+   * every re-run uses it. Absent for every run whose branch is the ticket's.
+   */
+  branchName?: string;
   description: string;
   requestPayload: string;
 }

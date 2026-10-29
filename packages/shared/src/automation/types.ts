@@ -165,6 +165,13 @@ export interface EventSource<Filters = unknown, Facts = unknown> {
    * matching the same occurrence, has the same key and is decided once.
    */
   dedupeKey(ownerKey: string, facts: Facts): string;
+  /**
+   * A suffix that makes the run's work branch `<branchPrefix>/<ticket><suffix>` instead of the
+   * ticket's own, for a source whose subject can start several runs on one ticket. Decided once
+   * when the run starts and carried in the run, so no later step recomputes it. Absent: the
+   * ticket's branch. The suffix is a safe ref tail (`-` and `[0-9a-z]`).
+   */
+  branchSuffix?(facts: Facts): string;
   /** The run's workflow id is `<prefix>-<automation8>-<part>`. */
   workflowId: { prefix: string; part(facts: Facts): string };
   /** Why the occurrence is never acted on at all — answered before any query, not recorded. */

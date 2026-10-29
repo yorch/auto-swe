@@ -20,6 +20,7 @@ import {
   normaliseRunCommand,
 } from '@auto-swe/shared/lib/ciWorkflowFile';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
+import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 import type { CodeResult, RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { currentWorkflowRunId } from '../lib/activityContext.js';
@@ -154,8 +155,7 @@ async function verify(input: {
   const repoRef = toRepoRef(repo);
   const { authedCloneUrl } = await getScmProvider(repoRef).cloneCredentials(repoRef);
   const baseBranch = await resolveRequestBaseBranch(request, repo);
-  const fixBranch =
-    codeResult.branch || `${workflowDefaults.branchPrefix}/${request.externalTicketId}`;
+  const fixBranch = codeResult.branch || workBranchOf(request, workflowDefaults.branchPrefix);
 
   heartbeat('verifyCiFix: preparing the workspace');
   // Cloned at the failing branch: the "before" run sees the code that failed.

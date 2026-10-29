@@ -180,6 +180,10 @@ function sampleStatusFacts(issueKey: string): JiraStatusChangedFacts {
 export const jiraFilterStatusChangedSource: EventSource<JiraFilterFilters, JiraStatusChangedFacts> =
   {
     ...jiraFilterNewIssueSource,
+    // One ticket can have a run for every status it reaches, so each run gets a branch of its
+    // own: a later run never resets to, or pushes onto, an earlier run's branch or pull request.
+    // The tail is the same digest as the workflow id's, so a run's branch and id name one pair.
+    branchSuffix: (x) => `-${shortDigest(statusOf(x))}`,
     dedupeKey: (ownerKey, x) => `${ownerKey}#${pairKeyOf(x)}`.toLowerCase(),
     describeOccurrence(f) {
       const text = (k: string) => (typeof f[k] === 'string' ? String(f[k]) : '');

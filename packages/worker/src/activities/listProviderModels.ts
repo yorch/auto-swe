@@ -34,6 +34,7 @@ import {
 } from '@auto-swe/shared/lib/modelPriceList';
 import { resolveWorkflowDefaults } from '@auto-swe/shared/lib/systemConfig';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { workBranchOf } from '@auto-swe/shared/lib/workflowId';
 import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { ApplicationFailure, log } from '@temporalio/activity';
 import { requireRepoId } from '../lib/requireRepoId.js';
@@ -124,7 +125,7 @@ export async function listProviderModels(
   // A schedule fires with the same ticket id, so every firing wants the same branch.
   // If the last one's commits or pull request are still there, this run would collide
   // with it (or push onto it): stop here, before any credential, workspace or agent.
-  const branch = `${(await resolveWorkflowDefaults()).branchPrefix}/${input.request.externalTicketId}`;
+  const branch = workBranchOf(input.request, (await resolveWorkflowDefaults()).branchPrefix);
   // A branch with nothing ahead of the default branch is not work: a run that changed
   // nothing still pushes its branch, and the next firing must not be stopped by it.
   const work = await scm.findBranchWork(repoRef, branch, repo.defaultBranch);

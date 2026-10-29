@@ -170,6 +170,16 @@ describe('jiraFilterStatusChangedSource', () => {
     expect(statusSrc.keys({ ...sfacts, status: 'Done' }).scope).toBe(statusSrc.keys(sfacts).scope);
   });
 
+  it('gives each status a branch suffix of its own, a safe ref tail the same for one status', () => {
+    const suffix = (status: string) => statusSrc.branchSuffix?.({ ...sfacts, status });
+    expect(suffix('Ready')).toMatch(/^-[0-9a-f]{8}$/);
+    expect(suffix('Ready')).toBe(suffix(' READY '));
+    expect(suffix('Ready')).not.toBe(suffix('Blocked'));
+    // The branch of two runs on one ticket differs, and a new-issue run's is left to the ticket.
+    expect(`auto/PAY-12${suffix('Ready')}`).not.toBe(`auto/PAY-12${suffix('Blocked')}`);
+    expect(src.branchSuffix).toBeUndefined();
+  });
+
   it('shares its in-flight guard with the new-issue source, in both directions', () => {
     expect(statusSrc.inFlightAlsoFrom).toEqual([JIRA_FILTER_NEW_ISSUE]);
     expect(src.inFlightAlsoFrom).toEqual([JIRA_FILTER_STATUS_CHANGED]);

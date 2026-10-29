@@ -96,6 +96,19 @@ export function generateBranchName(externalTicketId: string, branchPrefix: strin
 }
 
 /**
+ * The work branch of a run. A run whose launch decided a branch of its own (a Jira status-change
+ * run, whose ticket can have several runs) carries it as `branchName`; every other run works on
+ * `<branchPrefix>/<ticket>`, exactly {@link generateBranchName}. Read it from the run's request,
+ * never recompute it, so every step of a run, and a re-run, uses the one name.
+ */
+export function workBranchOf(
+  request: { externalTicketId: string; branchName?: string | null },
+  branchPrefix: string
+): string {
+  return request.branchName || generateBranchName(request.externalTicketId, branchPrefix);
+}
+
+/**
  * The workflow id of a dataset's flake screen (`EvalScreenWorkflow`). One per
  * dataset, so every starter — dataset creation, an eval run that finds
  * unscreened cases, an admin re-screen — joins a screen already running

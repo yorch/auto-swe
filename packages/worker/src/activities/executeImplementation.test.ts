@@ -176,6 +176,7 @@ const REQUEST: RepoWorkRequest = {
   description: 'Add a health endpoint',
   externalTicketId: 'JIRA-1',
   repoId: 'repo-1',
+  workRequestId: 'wr-9',
 } as RepoWorkRequest;
 
 /** The `system` message the implementer agent was generated with. */
@@ -550,8 +551,10 @@ describe('executeImplementation allowedPaths', () => {
     expect(
       commands().some((c) => c.includes('rev-parse --verify') || c.includes('--no-verify'))
     ).toBe(false);
-    expect(commands()).toContain(
-      "git diff --cached --quiet || git commit -m 'auto: implement JIRA-1'"
+    expect(commands()).toContainEqual(
+      expect.stringMatching(
+        /^git diff --cached --quiet \|\| git commit -m 'auto: implement JIRA-1\n\nAuto-SWE-Run: wr-9/
+      )
     );
     expect(commands()).toContain("git diff origin/'main'");
     expect(workspaceMock.gitAuthed).toHaveBeenCalledWith("push origin 'auto/JIRA-1'");
@@ -570,8 +573,15 @@ describe('executeImplementation retry safety', () => {
     expect(execCommands()).not.toContain("git reset --hard origin/'auto/JIRA-1'");
   });
 
-  it('syncs to the branch a previous attempt pushed when retried', async () => {
+  /** What `git log -1` on the remote branch answers: the tip commit's message. */
+  const remoteTip = (message: string) =>
+    workspaceMock.exec.mockImplementation(async (command: string) =>
+      command.startsWith('git log -1') ? message : ''
+    );
+
+  it('syncs to the branch a previous attempt of this run pushed when retried', async () => {
     vi.mocked(currentAttempt).mockReturnValue(2);
+    remoteTip('auto: implement JIRA-1\n\nAuto-SWE-Run: wr-9');
     await executeImplementation(REQUEST);
     expect(workspaceMock.gitAuthed).toHaveBeenCalledWith(
       "fetch origin '+refs/heads/auto/JIRA-1:refs/remotes/origin/auto/JIRA-1'"
@@ -579,6 +589,28 @@ describe('executeImplementation retry safety', () => {
     expect(execCommands()).toContain("git reset --hard origin/'auto/JIRA-1'");
     // The push still happens after the agent's work.
     expect(workspaceMock.gitAuthed).toHaveBeenLastCalledWith("push origin 'auto/JIRA-1'");
+  });
+
+  it('does not adopt a branch whose tip another run made, and pushes nothing', async () => {
+    // The chain this guards: run 2 on a ticket cannot push (the branch holds run 1's commits),
+    // is retried, and would reset to run 1's branch and push onto run 1's pull request.
+    vi.mocked(currentAttempt).mockReturnValue(2);
+    remoteTip('auto: implement JIRA-1\n\nAuto-SWE-Run: wr-1');
+    await expect(executeImplementation(REQUEST)).rejects.toThrow(/already exists with commits/);
+    expect(execCommands()).not.toContain("git reset --hard origin/'auto/JIRA-1'");
+    expect(workspaceMock.gitAuthed).not.toHaveBeenCalledWith(expect.stringContaining('push '));
+  });
+
+  it('does not adopt a branch whose tip carries no run trailer at all', async () => {
+    vi.mocked(currentAttempt).mockReturnValue(2);
+    remoteTip('fix: a person pushed this');
+    await expect(executeImplementation(REQUEST)).rejects.toThrow(/already exists with commits/);
+    expect(execCommands()).not.toContain("git reset --hard origin/'auto/JIRA-1'");
+  });
+
+  it('works on the branch the request carries, not the ticket’s', async () => {
+    await executeImplementation({ ...REQUEST, branchName: 'auto/JIRA-1-ab12cd34' });
+    expect(workspaceMock.gitAuthed).toHaveBeenLastCalledWith("push origin 'auto/JIRA-1-ab12cd34'");
   });
 
   it('proceeds from the clone when the retry finds nothing pushed yet', async () => {
@@ -594,8 +626,10 @@ describe('executeImplementation retry safety', () => {
 
   it('skips the commit when nothing is staged so a no-op retry still pushes', async () => {
     await executeImplementation(REQUEST);
-    expect(execCommands()).toContain(
-      "git diff --cached --quiet || git commit -m 'auto: implement JIRA-1'"
+    expect(execCommands()).toContainEqual(
+      expect.stringMatching(
+        /^git diff --cached --quiet \|\| git commit -m 'auto: implement JIRA-1\n\nAuto-SWE-Run: wr-9/
+      )
     );
   });
 

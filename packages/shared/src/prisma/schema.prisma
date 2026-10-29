@@ -1514,6 +1514,10 @@ model RunInput {
   /// when the work request was created via the Slack slash command.
   slackChannelId          String?     @map("slack_channel_id")
   isCrossRepo             Boolean     @default(false) @map("is_cross_repo")
+  /// The work branch the launch decided for this run, when it is not `<branchPrefix>/<ticket>`
+  /// (a Jira status-change run, whose ticket can have several runs). Null for every other run.
+  /// A re-run carries it, so the request keeps one branch for its whole life.
+  workBranch              String?     @map("work_branch")
   /// Optional template override; null → use team default. Snapshotted into
   /// WorkflowRun at start so live edits to templates don't affect in-flight runs.
   templateId              String?     @map("template_id") @db.Uuid
