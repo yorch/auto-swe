@@ -79,7 +79,10 @@ chat has no local Git shell: fetch/review in a local coding session using the us
 Merge the [TOML snippet](../integrations/codex/config.toml) into `~/.codex/config.toml` and replace
 the example URL with your deployment's literal MCP URL. A trusted project's `.codex/config.toml`
 is another supported location. The snippet uses `[mcp_servers.auto-swe]`, `url` for Streamable
-HTTP, and `tool_timeout_sec = 60` to accommodate the server's waits (maximum 50 seconds).
+HTTP, and `tool_timeout_sec = 660` to leave headroom for progress-enabled waits up to 600 seconds.
+The [configuration reference](https://developers.openai.com/codex/config-reference) defines this
+per-tool timeout; do not assume Codex resets it on progress. Progress-token support varies by client
+version, so without a token the server clamps waits to 50 seconds. Short repeated waits still work.
 It does not assume `${AUTO_SWE_MCP_URL}` expansion in TOML and does not store a bearer token.
 
 Authenticate with the user present:
@@ -112,6 +115,11 @@ with a particular auto-swe deployment; complete browser sign-in and verify the t
    `mcp.agentRunAllowedDeliverModes`. A draft PR passes agent delivery gates, not necessarily the
    full ticket workflow's review network. Never merge automatically.
 3. Save `workRequestId`. Repeatedly call `wait_for_run` with exactly one of it or `runId`.
+   Normally use `timeoutSeconds: 25`. If the client attaches request `_meta.progressToken` (not a
+   tool argument), waits can request up to 600 seconds and receive safe per-poll SSE progress before
+   the result. Without that token, longer values are clamped to 50 seconds. Progress counts polls,
+   not percent completion, and does not reduce REST reads. Configure client/proxy deadlines with
+   headroom and SSE streaming support; do not assume notifications reset a client timeout.
    A run row may not exist immediately. A changed status is not necessarily terminal and a wait
    timeout is not failure. Stop on a terminal status or a pending human step. For a human step,
    give the user its `inboxUrl`; agents cannot answer or approve it. Resume after the human acts.
@@ -168,7 +176,8 @@ administrator's `mcp.templateRunsEnabled` opt-in, not another OAuth login or a C
   sign-in. The REST CLI has separate authentication, not a device-flow workaround for MCP.
 - Agents cannot approve, reject or answer human steps, merge PRs through MCP, or bypass governance.
 - Writes require administrator switches and `mcp:write` consent. A client skill cannot enable them.
-- Run following polls REST through MCP, not push notifications. Each inner read uses rate quota;
+- Run following polls REST through MCP, not event subscriptions. Optional progress notifications
+  report each poll, not a push feed of run events. Each inner read uses rate quota;
   keep one wait loop per task and back off on refusals.
 - `none` leaves work in a sandbox, not a fetchable remote branch. Delivery modes depend on policy;
   no mode synchronizes uncommitted local files into the platform.

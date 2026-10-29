@@ -256,11 +256,11 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
     {
       annotations: { ...READ_ONLY, title: 'Wait for a run' },
       description:
-        'Wait for a status change, a terminal run or a pending human step. Polls every three seconds, spending the per-IP rate limit on each read. A newly submitted work request may not have a run yet; keep waiting with its workRequestId.',
+        'Wait for a status change, a terminal run or a pending human step. Polls every three seconds, spending the per-IP rate limit on each read. With request _meta.progressToken, reports fixed-vocabulary progress each poll and allows up to 600 seconds; without it, timeoutSeconds is clamped to 50. Default 25 seconds. A newly submitted work request may not have a run yet; keep waiting with its workRequestId.',
       inputSchema: z
         .object({
           runId: z.string().uuid().optional(),
-          timeoutSeconds: z.number().int().min(0).max(50).default(25),
+          timeoutSeconds: z.number().int().min(0).max(600).default(25),
           workRequestId: z.string().uuid().optional(),
         })
         .strict()
@@ -275,8 +275,11 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
       const signal = extra.http?.req
         ? AbortSignal.any([extra.mcpReq.signal, extra.http.req.signal])
         : extra.mcpReq.signal;
+      const progressToken = extra.mcpReq._meta?.progressToken;
       try {
-        const deadline = Date.now() + args.timeoutSeconds * 1000;
+        const deadline =
+          Date.now() + Math.min(args.timeoutSeconds, progressToken === undefined ? 50 : 600) * 1000;
+        let progress = 0;
         let initial: string | null | undefined;
         while (!signal.aborted) {
           let id = args.runId;
@@ -329,6 +332,26 @@ export function registerReadTools(server: McpServer, deps: McpToolDeps, caller: 
             }
           }
           const status = summary?.status ?? null;
+          if (progressToken !== undefined) {
+            const knownStatus =
+              status &&
+              ['RUNNING', 'SUCCESS', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'SKIPPED'].includes(status)
+                ? status
+                : 'UNKNOWN';
+            await extra.mcpReq.notify({
+              method: 'notifications/progress',
+              params: {
+                message: pendingHumanStep
+                  ? 'Waiting on a human step.'
+                  : summary
+                    ? `Run status: ${knownStatus}.`
+                    : 'Waiting for a run.',
+                progress: ++progress,
+                progressToken,
+              },
+            });
+            signal.throwIfAborted();
+          }
           if (initial === undefined) {
             initial = status;
           }
