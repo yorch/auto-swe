@@ -39,7 +39,7 @@ describe('runContainerStep', () => {
     expect(res).toEqual({ result: { ok: 1 } });
     expect(mockedAssert).toHaveBeenCalledWith('node:24-alpine', ['node:24-alpine']);
     expect(mockedRun).toHaveBeenCalledWith(
-      expect.objectContaining({ env: { CONTAINER_STEP_INPUT: JSON.stringify({ q: 'x' }) } })
+      expect.objectContaining({ secretEnv: { CONTAINER_STEP_INPUT: JSON.stringify({ q: 'x' }) } })
     );
   });
 
@@ -51,9 +51,10 @@ describe('runContainerStep', () => {
     const res = await runContainerStep({ ...base, inputs: { q: 'x' } });
     expect(res).toEqual({ result: { ok: 1 } });
     expect(mockedRun).toHaveBeenCalledWith(
-      expect.objectContaining({ env: { CONTAINER_STEP_INPUT: JSON.stringify({ q: 'x' }) } })
+      expect.objectContaining({ secretEnv: { CONTAINER_STEP_INPUT: JSON.stringify({ q: 'x' }) } })
     );
     expect(mockedRun.mock.calls[0]?.[0]).not.toHaveProperty('command');
+    expect(mockedRun.mock.calls[0]?.[0]).not.toHaveProperty('env');
   });
 
   it('throws when the image is not allowed (propagates the allowlist error)', async () => {
@@ -126,6 +127,7 @@ describe('runContainerStep', () => {
           network: 'egress',
           port: 8080,
           requestPath: '/run',
+          secretEnv: { CONTAINER_STEP_INPUT: JSON.stringify({ q: 'x' }) },
         })
       );
       // No command is required for a sidecar.

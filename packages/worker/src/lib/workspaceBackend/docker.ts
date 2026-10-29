@@ -447,8 +447,9 @@ function helperArgs(spec: HelperContainerSpec): string[] {
 }
 
 export function ephemeralArgs(spec: EphemeralContainerSpec, detached: boolean): string[] {
-  // Its two callers pass `CONTAINER_STEP_INPUT` and the shell step's non-secret registry env;
-  // a registry token travels as `secretEnv`, and this refuses it if it comes back as a pair.
+  // Its callers pass the shell step's non-secret registry env; a registry token and the
+  // container step's `CONTAINER_STEP_INPUT` travel as `secretEnv`, and this refuses a
+  // credential if it comes back as a pair.
   assertNoCredentialEnvPairs(spec.env, 'docker ephemeral env');
   const volumeArgs = (spec.volumes ?? []).flatMap((v) => [
     '-v',

@@ -11,7 +11,8 @@ import { workspaceBackend } from '../lib/workspaceBackend/index.js';
  * Container-contract coded step with three result transports. Runs `image` in the
  * locked-down ephemeral container (no Docker socket, `--cap-drop=ALL`, read-only
  * root, `--network=none` unless `egress`), passing the resolved node inputs as
- * JSON on the `CONTAINER_STEP_INPUT` env var. The result is bound at
+ * JSON on the `CONTAINER_STEP_INPUT` env var (delivered as `secretEnv`, so the inputs stay out
+ * of docker argv; the container reads it the same way). The result is bound at
  * `nodes.<id>.output.result`. Untrusted code never enters the worker process.
  * Same image allowlist + egress allowlist as `shell`.
  *
@@ -119,11 +120,11 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
       ...(command !== undefined ? { command } : {}),
       cpus: input.cpus,
       egressAllowlist,
-      env: { CONTAINER_STEP_INPUT: JSON.stringify(input.inputs ?? {}) },
       image: input.image,
       memory: input.memory,
       network: input.network ?? 'none',
       ...(onStdoutLine ? { onStdoutLine } : {}),
+      secretEnv: { CONTAINER_STEP_INPUT: JSON.stringify(input.inputs ?? {}) },
       timeoutMs: input.timeoutMs,
       workspaceMount: volume,
     });
@@ -172,7 +173,6 @@ async function runSidecarTransport(
       body: input.inputs ?? {},
       cpus: input.cpus,
       egressAllowlist,
-      env: { CONTAINER_STEP_INPUT: JSON.stringify(input.inputs ?? {}) },
       image: input.image,
       memory: input.memory,
       // A published port requires bridge networking.
@@ -181,6 +181,7 @@ async function runSidecarTransport(
       ...(input.sidecar.readinessPath ? { readinessPath: input.sidecar.readinessPath } : {}),
       ...(input.sidecar.readyTimeoutMs ? { readyTimeoutMs: input.sidecar.readyTimeoutMs } : {}),
       ...(input.sidecar.requestPath ? { requestPath: input.sidecar.requestPath } : {}),
+      secretEnv: { CONTAINER_STEP_INPUT: JSON.stringify(input.inputs ?? {}) },
       // For a sidecar this bounds the request only; readiness has its own
       // `readyTimeoutMs`. Capped like the other transports' wall clock.
       timeoutMs: input.timeoutMs,
