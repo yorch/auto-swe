@@ -358,7 +358,8 @@ describe.skipIf(!enabled)('registry proxy against real Maven', () => {
     expect(output).toContain('BUILD SUCCESS');
     // The super-POM's central repository did not bypass the mirror.
     expect(output).not.toContain('repo.maven.apache.org');
-    expect(output).toContain('auto-swe-proxy');
+    // Maven names the URL it fetched from in its checksum warnings: the proxy's, not Central's.
+    expect(output).toMatch(/http:\/\/[\d.]+:\d+\/maven\//);
 
     expect(upstream.requests.length).toBeGreaterThan(0);
     expect(upstream.requests.every((q) => q.auth === `Bearer ${UPSTREAM_TOKEN}`)).toBe(true);
