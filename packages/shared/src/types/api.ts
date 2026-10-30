@@ -11,6 +11,112 @@ export interface ApiResponse<T> {
   error?: { code: string; message: string };
 }
 
+export const RUN_ACTIVITY_KINDS = [
+  'step',
+  'tool_call',
+  'llm_response',
+  'activity_event',
+  'http_call',
+  'human_step',
+] as const;
+export type RunActivityKind = (typeof RUN_ACTIVITY_KINDS)[number];
+export interface RunActivityFilters {
+  kinds?: string;
+  recordingId?: string;
+  specNodeId?: string;
+  since?: string;
+}
+interface RunActivityBase {
+  id: string;
+  ts: string;
+  recordingId: string | null;
+  specNodeId: string | null;
+  stepAttempt: number | null;
+  attempt: number | null;
+  agentKey?: string;
+  summary: string;
+}
+export interface HttpCallActivityDetail {
+  callId: string;
+  source: string;
+  purpose: string;
+  method: string;
+  scheme: string;
+  host: string;
+  port: number | null;
+  path: string;
+  status: number | null;
+  durationMs: number | null;
+  requestBytes: number | null;
+  responseBytes: number | null;
+  blocked: boolean;
+  blockReason: string | null;
+  error: string | null;
+  transcriptId: string | null;
+  hasBodies: boolean;
+}
+export type RunActivityItem = RunActivityBase &
+  (
+    | { kind: 'http_call'; detail: HttpCallActivityDetail }
+    | {
+        kind: 'step';
+        detail: {
+          phase: 'started' | 'ended';
+          nodeType: string | null;
+          stepName: string | null;
+          status: string;
+          error: string | null;
+        };
+      }
+    | {
+        kind: 'human_step';
+        detail: {
+          phase: 'requested' | 'resolved';
+          humanKind: string;
+          status: string;
+          resolvedBy: string | null;
+          resolvedVia: string | null;
+        };
+      }
+    | {
+        kind: 'tool_call' | 'llm_response' | 'activity_event';
+        detail: {
+          toolName: string | null;
+          durationMs: number | null;
+          error: string | null;
+          model: string | null;
+          inputTokens: number | null;
+          outputTokens: number | null;
+          costUsd: number | null;
+        };
+      }
+  );
+export interface RunActivityPage {
+  data: RunActivityItem[];
+  nextCursor: string | null;
+}
+export interface WorkflowHttpCallDetail
+  extends Omit<HttpCallActivityDetail, 'callId' | 'hasBodies'> {
+  id: string;
+  runId: string | null;
+  workflowId: string;
+  temporalRunId: string | null;
+  activityType: string | null;
+  recordingId: string | null;
+  specNodeId: string | null;
+  stepAttempt: number | null;
+  attempt: number;
+  bodiesTruncated: boolean;
+  requestBody?: string | null;
+  responseBody?: string | null;
+  otelTraceId: string | null;
+  otelSpanId: string | null;
+  teamId: string | null;
+  orgId: string | null;
+  startedAt: string;
+  createdAt: string;
+}
+
 // ── User preferences ──
 
 /** Run-detail page layouts, in the order the toggle renders them. */

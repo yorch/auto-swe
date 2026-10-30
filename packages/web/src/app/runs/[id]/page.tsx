@@ -20,6 +20,7 @@ import { FlightRecorder } from '@/components/runs/layouts/FlightRecorder';
 import { SplitConsole } from '@/components/runs/layouts/SplitConsole';
 import { Transcript } from '@/components/runs/layouts/Transcript';
 import type { RunLayoutProps } from '@/components/runs/layouts/types';
+import { RunActivity } from '@/components/runs/RunActivity';
 import { RunCallbackDeliveries } from '@/components/runs/RunCallbackDeliveries';
 import { RunLessons } from '@/components/runs/RunLessons';
 import { RunReadingGuide } from '@/components/runs/RunReadingGuide';
@@ -198,6 +199,15 @@ export default function RunDetailPage({ params }: PageProps) {
   }, [run?.specSnapshot]);
 
   const linker = useMemo(() => buildTraceLinker(spec), [spec]);
+  const fanOutNodeIds = useMemo(
+    () =>
+      new Set(
+        Object.entries(spec?.nodes ?? {})
+          .filter(([, node]) => node.type === 'fanOut')
+          .map(([id]) => id)
+      ),
+    [spec]
+  );
 
   const securityEvents = useMemo<SecurityEvent[]>(
     () =>
@@ -509,6 +519,13 @@ export default function RunDetailPage({ params }: PageProps) {
       <RunCallbackDeliveries runId={run.id} />
 
       <RunTranscripts runId={run.id} />
+      <RunActivity
+        fanOutNodeIds={fanOutNodeIds}
+        linker={linker}
+        live={!isTerminalWorkflowRunStatus(run.status)}
+        runId={run.id}
+        selection={selectedNodeId}
+      />
 
       <RunLessons live={!isTerminalWorkflowRunStatus(run.status)} runId={run.id} />
 
