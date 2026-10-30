@@ -301,7 +301,7 @@ describe('prEvaluation settings', () => {
   ) as (keyof typeof SETTING_DEFINITIONS)[];
 
   it('are all ADMIN-only, in the prEvaluation group, and not pinned to a run', () => {
-    expect(keys).toHaveLength(13);
+    expect(keys).toHaveLength(20);
     for (const key of keys) {
       const def = SETTING_DEFINITIONS[key];
       expect(def.group, key).toBe('prEvaluation');
@@ -312,7 +312,11 @@ describe('prEvaluation settings', () => {
   });
 
   it('keeps the kill switch and auto-merge off by default and GLOBAL only', () => {
-    for (const key of ['prEvaluation.enabled', 'prEvaluation.autoMergeAllowed'] as const) {
+    for (const key of [
+      'prEvaluation.enabled',
+      'prEvaluation.autoMergeAllowed',
+      'prEvaluation.botApprovalAllowed',
+    ] as const) {
       expect(SETTING_DEFINITIONS[key].defaultValue, key).toBe(false);
       expect(SETTING_DEFINITIONS[key].overridableAt, key).toEqual([]);
     }
@@ -320,6 +324,7 @@ describe('prEvaluation settings', () => {
 
   it('refuses a default mode of auto', () => {
     expect(accepts('prEvaluation.defaultMode', 'advisory')).toBe(true);
+    expect(accepts('prEvaluation.defaultMode', 'enforce')).toBe(true);
     expect(accepts('prEvaluation.defaultMode', 'off')).toBe(true);
     expect(accepts('prEvaluation.defaultMode', 'auto')).toBe(false);
   });
@@ -351,6 +356,84 @@ describe('prEvaluation settings', () => {
         expect(accepts(key, bad), `${key} ${bad}`).toBe(false);
       }
     }
+  });
+
+  it('defines the three evidence-gate knobs, GLOBAL only and ADMIN only', () => {
+    const defaults = {
+      'prEvaluation.autoEvidenceMinChangedLines': 10,
+      'prEvaluation.autoMinDistinctRequesters': 3,
+      'prEvaluation.autoMinRepoEvidence': 20,
+    } as const;
+    for (const [key, value] of Object.entries(defaults)) {
+      const def = SETTING_DEFINITIONS[key as keyof typeof defaults];
+      expect(def.defaultValue, key).toBe(value);
+      expect(def.overridableAt, key).toEqual([]);
+      expect(def.requiredRole, key).toBe('ADMIN');
+      expect(accepts(key as keyof typeof defaults, 1), key).toBe(true);
+      for (const bad of [0, -1, 2.5, '3', 100_000_000]) {
+        expect(accepts(key as keyof typeof defaults, bad), `${key} ${String(bad)}`).toBe(false);
+      }
+    }
+  });
+
+  it('defines the bot approval caps: GLOBAL only, ADMIN only, bounded by the low-risk limits', () => {
+    const caps = [
+      ['prEvaluation.botApprovalMaxLines', 50, 400],
+      ['prEvaluation.botApprovalMaxFiles', 3, 15],
+    ] as const;
+    for (const [key, value, max] of caps) {
+      const def = SETTING_DEFINITIONS[key];
+      expect(def.defaultValue, key).toBe(value);
+      expect(def.overridableAt, key).toEqual([]);
+      expect(def.requiredRole, key).toBe('ADMIN');
+      expect(accepts(key, 1), key).toBe(true);
+      expect(accepts(key, max), key).toBe(true);
+      for (const bad of [0, -1, 2.5, '3', max + 1]) {
+        expect(accepts(key, bad), `${key} ${String(bad)}`).toBe(false);
+      }
+    }
+  });
+
+  it('defines the bot approval path allowlist: GLOBAL only, ADMIN only, validated globs, bounded', () => {
+    const key = 'prEvaluation.botApprovalPaths';
+    const def = SETTING_DEFINITIONS[key];
+    expect(def.overridableAt).toEqual([]);
+    expect(def.requiredRole).toBe('ADMIN');
+    expect(def.runPinned).toBe(false);
+    expect(def.description).toMatch(/empty/i);
+    expect(accepts(key, def.defaultValue)).toBe(true);
+    expect(def.defaultValue).toEqual([
+      '**/*.md',
+      '**/*.mdx',
+      'docs/**',
+      '**/*.test.*',
+      '**/*.spec.*',
+      '**/__tests__/**',
+      '**/test/**',
+      '**/tests/**',
+    ]);
+    // An empty list is accepted: it means no path qualifies.
+    expect(accepts(key, [])).toBe(true);
+    expect(accepts(key, ['docs/**'])).toBe(true);
+    expect(accepts(key, Array(50).fill('docs/**'))).toBe(true);
+    for (const bad of [
+      Array(51).fill('docs/**'),
+      [''],
+      ['x'.repeat(201)],
+      ['{unclosed'],
+      ['{a,{b,c}}'],
+      ['a/{1,2,3,4,5}/{1,2,3,4}'],
+      ['*a*b*c*d*e*f*g*h*i'],
+      [5],
+      'docs/**',
+      null,
+    ]) {
+      expect(accepts(key, bad), JSON.stringify(bad)).toBe(false);
+    }
+    // Each glob is within bounds, but together they cost too much per path.
+    const costly = '**/a?b?c?d?e?f?g?h?i?j?k?l?m?n?o?p?q?r?s?t?u?v?w?x?y?z?/**/*.{md,txt,rst}';
+    expect(accepts(key, [costly])).toBe(true);
+    expect(accepts(key, Array(50).fill(costly))).toBe(false);
   });
 
   it('bounds the sensitive path list and the status context', () => {

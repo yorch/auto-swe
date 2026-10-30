@@ -132,6 +132,7 @@ export {
   OutcomePublisherTypeSchema,
 } from './lib/outcomePublishers.js';
 export type {
+  ResolvedGitHubApproverAppConfig,
   ResolvedGitHubConfig,
   ResolvedGoogleOAuthConfig,
   ResolvedIssueTrackerConfig,
@@ -145,6 +146,7 @@ export type {
   WorkspaceInfraConfig,
 } from './lib/systemConfig.js';
 export {
+  resolveGitHubApproverAppConfig,
   resolveGitHubConfig,
   resolveGoogleOAuthConfig,
   resolveIssueTrackerConfig,

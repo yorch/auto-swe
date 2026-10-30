@@ -200,8 +200,25 @@ describe('pr-policy', () => {
   describe('status', () => {
     const STATUS = {
       autoMergeAllowed: false,
+      botApproval: { approverAppConfigured: true, enabled: false, globalAllowed: true },
       enabled: true,
-      evidence: { badMerges: 1, lowMerged: 3, minEvidence: 5, satisfied: false, windowDays: 90 },
+      evidence: {
+        deployment: {
+          badMerges: 1,
+          distinctRequesters: 1,
+          lowMerged: 3,
+          minDistinctRequesters: 3,
+          minEvidence: 5,
+        },
+        minChangedLines: 10,
+        repository: { badMerges: 0, lowMerged: 2, minRepoEvidence: 20 },
+        satisfied: false,
+        unmet: [
+          'deployment-wide: 3 qualifying low-risk merges in 90 days (need 5)',
+          'this repository: 2 qualifying low-risk merges in 90 days (need 20)',
+        ],
+        windowDays: 90,
+      },
       lastEvaluation: {
         createdAt: '2026-10-28T10:00:00.000Z',
         prNumber: 42,
@@ -223,8 +240,46 @@ describe('pr-policy', () => {
       expect(text).toMatch(/Mode:\s+advisory \(set on this repository\)/);
       expect(text).toMatch(/PR #42 — class HIGH, 2 approver\(s\) required, status success/);
       expect(text).toMatch(
-        /3 low-risk merge\(s\) in 90 days \(minimum 5\), 1 marked bad, auto not satisfied/
+        /Evidence \(deployment\):\s+3 qualifying low-risk merge\(s\) in 90 days \(minimum 5\), 1 marked bad, 1 requester\(s\) \(minimum 3\)/
       );
+      expect(text).toMatch(
+        /Evidence \(repository\):\s+2 qualifying low-risk merge\(s\) \(minimum 20\), 0 marked bad/
+      );
+      expect(text).toMatch(/Auto evidence:\s+not satisfied/);
+      expect(text).toContain(
+        '  - deployment-wide: 3 qualifying low-risk merges in 90 days (need 5)'
+      );
+      expect(text).toContain(
+        '  - this repository: 2 qualifying low-risk merges in 90 days (need 20)'
+      );
+    });
+
+    it('prints the bot approval block', async () => {
+      respond(200, { data: STATUS });
+      expect(await runPrPolicyCommand(['status', REPO_ID], loadEnv)).toBe(0);
+      expect(out.join('')).toMatch(
+        /Bot approval:\s+off for this repository \(allowed by this deployment, approver App configured\)/
+      );
+      out.length = 0;
+      respond(200, {
+        data: {
+          ...STATUS,
+          botApproval: { approverAppConfigured: false, enabled: true, globalAllowed: false },
+        },
+      });
+      expect(await runPrPolicyCommand(['status', REPO_ID], loadEnv)).toBe(0);
+      expect(out.join('')).toMatch(
+        /Bot approval:\s+on for this repository \(not allowed by this deployment, approver App not configured\)/
+      );
+    });
+
+    it('prints satisfied, with no list, when nothing is unmet', async () => {
+      respond(200, {
+        data: { ...STATUS, evidence: { ...STATUS.evidence, satisfied: true, unmet: [] } },
+      });
+      expect(await runPrPolicyCommand(['status', REPO_ID], loadEnv)).toBe(0);
+      expect(out.join('')).toMatch(/Auto evidence:\s+satisfied/);
+      expect(out.join('')).not.toContain('  - ');
     });
 
     it('says none when the repository has no evaluation yet', async () => {
@@ -254,6 +309,20 @@ describe('pr-policy', () => {
       expect(calls[0]?.url).toBe(`http://gw/api/v1/repositories/${REPO_ID}/pr-evaluation`);
       expect(calls[0]?.body).toEqual({ mode: 'advisory' });
       expect(out.join('')).toMatch(/Mode for .*: advisory/);
+    });
+
+    it('sends enforce, and prints the gateway warnings', async () => {
+      respond(200, {
+        data: {
+          mode: 'enforce',
+          modeSource: 'repository',
+          warnings: ['Nothing is enforced until the status is required.'],
+        },
+      });
+      expect(await runPrPolicyCommand(['mode', REPO_ID, 'enforce'], loadEnv)).toBe(0);
+      expect(calls[0]?.body).toEqual({ mode: 'enforce' });
+      expect(out.join('')).toMatch(/Mode for .*: enforce/);
+      expect(err.join('') + out.join('')).toContain('Nothing is enforced until the status');
     });
 
     it('sends null for inherit', async () => {
@@ -291,13 +360,64 @@ describe('pr-policy', () => {
     it('refuses an unknown mode without calling the gateway', async () => {
       respond(200, { data: {} });
       expect(await runPrPolicyCommand(['mode', REPO_ID, 'always'], loadEnv)).toBe(1);
-      expect(err.join('')).toMatch(/mode must be one of/);
+      expect(err.join('')).toMatch(/mode must be one of: off, advisory, enforce, auto, inherit/);
       expect(calls).toEqual([]);
     });
 
     it('requires both a repository id and a mode', async () => {
       expect(await runPrPolicyCommand(['mode', REPO_ID], loadEnv)).toBe(1);
       expect(calls).toEqual([]);
+    });
+  });
+
+  describe('bot-approval', () => {
+    it.each([
+      ['on', true],
+      ['off', false],
+    ] as const)('sends botApproval for %s and no mode', async (choice, value) => {
+      respond(200, { data: { botApproval: value, mode: 'auto', modeSource: 'repository' } });
+      expect(await runPrPolicyCommand(['bot-approval', REPO_ID, choice], loadEnv)).toBe(0);
+      expect(calls[0]?.method).toBe('PUT');
+      expect(calls[0]?.url).toBe(`http://gw/api/v1/repositories/${REPO_ID}/pr-evaluation`);
+      expect(calls[0]?.body).toEqual({ botApproval: value });
+      expect(out.join('')).toContain(`Bot approval for ${REPO_ID}: ${choice}`);
+    });
+
+    it('prints every reason on its own line and exits 1 for BOT_APPROVAL_NOT_READY', async () => {
+      const reasons = [
+        'Only a platform admin may enable bot approval.',
+        'The approver App is not configured.',
+      ];
+      respond(400, {
+        error: {
+          code: 'BOT_APPROVAL_NOT_READY',
+          details: { reasons },
+          message: 'Bot approval is not ready for this repository',
+        },
+      });
+      expect(await runPrPolicyCommand(['bot-approval', REPO_ID, 'on'], loadEnv)).toBe(1);
+      const lines = err.join('').split('\n');
+      for (const reason of reasons) {
+        expect(lines).toContain(reason);
+      }
+    });
+
+    it('exits 2 for other gateway errors', async () => {
+      respond(403, { error: { code: 'FORBIDDEN', message: 'Requires LEAD role' } });
+      expect(await runPrPolicyCommand(['bot-approval', REPO_ID, 'off'], loadEnv)).toBe(2);
+    });
+
+    it('refuses anything but on or off without calling the gateway', async () => {
+      respond(200, { data: {} });
+      expect(await runPrPolicyCommand(['bot-approval', REPO_ID, 'maybe'], loadEnv)).toBe(1);
+      expect(await runPrPolicyCommand(['bot-approval', REPO_ID], loadEnv)).toBe(1);
+      expect(err.join('')).toMatch(/on or off/);
+      expect(calls).toEqual([]);
+    });
+
+    it('is in the help text', async () => {
+      expect(await runPrPolicyCommand(['help'], loadEnv)).toBe(0);
+      expect(out.join('')).toMatch(/pr-policy bot-approval/);
     });
   });
 });

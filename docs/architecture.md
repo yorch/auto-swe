@@ -58,7 +58,9 @@ activity calls an immediate-merge API, and no seeded template merges — the SWE
 parks, and a Temporal signal bridges the GitHub merge webhook back to the waiting workflow. The one
 sanctioned exception is opt-in per repository: in `auto` mode the pull-request evaluator calls
 `enablePullRequestAutoMerge`, which asks GitHub to merge later, once GitHub's own branch rules hold
-([pr-evaluation.md](./pr-evaluation.md)). See §10 for where the first part stops being a guarantee.
+([pr-evaluation.md](./pr-evaluation.md)), and with a second GitHub App configured and a repository's
+bot-approval switch on, a low-risk change within strict limits can merge with no human approval
+([pr-evaluation.md §16](./pr-evaluation.md#16-bot-approval)). See §10 for where the first part stops being a guarantee.
 
 ---
 
@@ -1299,7 +1301,7 @@ The load-bearing ones, with rationale:
 | Docker by default, Kubernetes pods optional | Docker needs no cluster and runs under Compose; `WORKSPACE_BACKEND=kubernetes` runs agent workspaces as hardened pods on a cluster that enforces NetworkPolicy |
 | Temporal for orchestration | Durable execution — runs survive crashes, wait days for human and CI signals, and replay deterministically |
 | pgvector for memory | Semantic retrieval surfaces relevant past lessons into agent context |
-| Human-governed merges | By default nothing merges a PR and a signal bridges the merge webhook (see §10); the one opt-in exception is `auto` mode's native auto-merge ([pr-evaluation.md](./pr-evaluation.md)) |
+| Human-governed merges | By default nothing merges a PR and a signal bridges the merge webhook (see §10); the opt-in exceptions are `auto` mode's native auto-merge and bot approval of low-risk changes ([pr-evaluation.md](./pr-evaluation.md)) |
 
 ---
 

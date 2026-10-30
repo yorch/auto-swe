@@ -500,6 +500,82 @@ pull request the platform opened shows the status `auto-swe/pr-evaluation` on it
 
 ---
 
+### UN-9. Pull-request evaluation: earlier evidence no longer counts toward `auto`
+
+This entry is not a credential defect. It describes a tightening of the evidence gate
+([`pr-evaluation.md`](./pr-evaluation.md) §9).
+
+**Affected.** Every deployment with at least one repository in `auto` mode, or with evaluation rows
+recorded before commit `EVIDENCE_GATE_COMMIT`. A build before it counts every low-risk merge, whoever
+approved and whichever repository it was in.
+
+**What changes.** A migration adds the nullable columns `requester_id`, `changed_lines` and
+`trusted_approvers` to `pr_evaluations`. The gate counts a row only when all three are recorded
+(and the changed lines reach `prEvaluation.autoEvidenceMinChangedLines`, with at least one trusted
+approval), and it also requires the repository's own merges
+(`prEvaluation.autoMinRepoEvidence`) and several distinct requesters
+(`prEvaluation.autoMinDistinctRequesters`). Rows written before this change hold NULL and no longer
+count, so **a repository already in `auto` stops having new pull requests armed** until new evidence
+accumulates. Its mode and its status checks are unchanged; only arming stops.
+
+**Actions.**
+
+1. Apply the migration with the normal migrate step.
+2. Expect no arming on repositories in `auto` until the thresholds are met again from new merges,
+   or lower the four evidence settings at `/admin/platform-settings` if the new defaults are too
+   strict for the deployment. Lowering a threshold cannot revive old rows: they hold NULL and never
+   count, and `autoMinRepoEvidence` has a floor of 1, so at least one new qualifying merge in the
+   repository is needed. `auto-swe pr-policy status <repoId>` lists each unmet condition.
+3. A pull request the platform armed before the upgrade **stays armed** until its next evaluation
+   event, so GitHub may merge it in the meantime. To disarm them immediately, toggle
+   `prEvaluation.autoMergeAllowed` off at `/admin/platform-settings`, which runs the disarm sweep.
+
+**Verify.** `auto-swe pr-policy status <repoId>` shows the deployment and repository figures and
+every unmet condition.
+
+---
+
+### UN-10. Pull-request evaluation: bot approval (migrations and the steps that turn it on)
+
+This entry is not a credential defect. It lists what an operator must do, on a deployment that ran
+earlier code, for bot approval ([`pr-evaluation.md`](./pr-evaluation.md) §16) to take effect. The
+approval is **not on** after the upgrade.
+
+**Affected.** Every deployment whose gateway and worker images are built from a commit that contains
+`BOT_APPROVAL_COMMIT`. A build before it has no approver App and no bot approval.
+
+**What changes.** Migrations add the singleton table
+`github_approver_app` (`github_approver_app`), the column `connections.pr_evaluation_bot_approval`
+(default false, with a CHECK that keeps it false unless the mode is `auto`,
+`pr_evaluation_bot_approval`), the column `pr_evaluations.bot_approved` (default false,
+`pr_evaluation_bot_approved`) and the column `github_approver_app.retired_app_slugs`
+(`github_approver_retired_slugs`). The normal migrate step applies them (`prisma migrate deploy`, which
+the gateway image runs before it starts); nothing is run by hand. Nothing else changes: no approver App
+is configured, `prEvaluation.botApprovalAllowed` is off, and every repository's bot approval flag is
+false, so the platform submits no approving review and no pull request merges on a bot approval.
+
+**Actions.**
+
+1. Apply the migrations with the normal migrate step.
+2. To use bot approval, follow the setup in [`pr-evaluation.md`](./pr-evaluation.md#166-operator-setup):
+   create a separate GitHub App with only *Pull requests: Read and write*, install it on selected
+   repositories only, save its credentials at `PUT /api/v1/integrations/github-approver-app`, set the
+   base branch's rules (the required status pinned to the platform App, at least one required review,
+   dismissal of stale approvals), and then turn on, in order, `prEvaluation.enabled`,
+   `prEvaluation.autoMergeAllowed`, `prEvaluation.botApprovalAllowed`, the repository's mode `auto` and
+   the repository's bot approval. Try it on a test repository first, and read the evidence a fresh
+   repository needs before it can reach `auto` in
+   [`pr-evaluation.md`](./pr-evaluation.md#166-operator-setup).
+3. Review `prEvaluation.botApprovalMaxLines`, `prEvaluation.botApprovalMaxFiles` and
+   `prEvaluation.botApprovalPaths` before turning it on: the defaults (50 lines, 3 files,
+   documentation and test paths) are the limits a change must meet.
+
+**Verify.** `auto-swe pr-policy status <repoId>` prints a `Bot approval:` line that reads `off for this
+repository (…)` for every repository until an admin turns it on (the parenthesis says whether the
+deployment allows it and whether an approver App is configured), and `GET /api/v1/integrations/github-approver-app` reports it unconfigured.
+
+---
+
 ### Device authorization codes require the new migration
 
 **Affected.** A deployment that enables `mcp.deviceFlowEnabled` on a database that has not applied

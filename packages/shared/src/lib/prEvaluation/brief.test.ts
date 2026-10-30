@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { BRIEF_MARKER, buildBrief, skimProof, truncateBrief } from './brief.js';
+import {
+  BOT_APPROVED_BRIEF_SENTENCE,
+  BRIEF_MARKER,
+  buildBrief,
+  skimProof,
+  truncateBrief,
+} from './brief.js';
 import { classify } from './classify.js';
 import { DEFAULT_THRESHOLDS, mergePolicy } from './policy.js';
 import type { ChangedFile, EffectivePolicy, EvaluationSignals } from './types.js';
@@ -317,5 +323,43 @@ describe('brief hardening regressions', () => {
     const md = markdownOf('src/a.ts', `${'&<'.repeat(60_000)}`);
     expect(md.length).toBeLessThan(60_000);
     expect(md).not.toMatch(/&(amp|lt|gt)?$/);
+  });
+});
+
+describe('bot approval in the brief', () => {
+  const classified = () => {
+    const files = [file('src/a.ts')];
+    const signals: EvaluationSignals = {
+      draft: false,
+      files,
+      maxReviewSeverity: 'PASS',
+      policyFileChanged: false,
+      scannerFindingCount: 0,
+    };
+    return { classification: classify(signals, effective), files };
+  };
+
+  it.each(['bot-approval-posted', 'bot-approval-present'])(
+    'says one fixed sentence when the reason %s is present',
+    (code) => {
+      const { classification, files } = classified();
+      classification.reasons.push({ code, message: 'x', severity: 'info' });
+      const { markdown } = buildBrief(files, classification, effective);
+      expect(markdown).toContain(BOT_APPROVED_BRIEF_SENTENCE);
+      expect(BOT_APPROVED_BRIEF_SENTENCE).toBe(
+        'Approved by the evaluator; no human approval was required.'
+      );
+      expect(markdown.split(BOT_APPROVED_BRIEF_SENTENCE)).toHaveLength(2);
+    }
+  );
+
+  it('says nothing about it for any other reason', () => {
+    const { classification, files } = classified();
+    classification.reasons.push({
+      code: 'bot-approval-refused:risk-low',
+      message: 'x',
+      severity: 'info',
+    });
+    expect(buildBrief(files, classification, effective).markdown).not.toContain('evaluator');
   });
 });

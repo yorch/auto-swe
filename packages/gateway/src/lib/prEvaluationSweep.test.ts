@@ -72,12 +72,35 @@ describe('sweepArmedPullRequests', () => {
     t.findMany.mockResolvedValueOnce([]);
     await t.run({ cap: REPOSITORY_SWEEP_CAP, connectionId: CONN });
     expect(t.findMany.mock.calls[0][0].where).toMatchObject({
-      autoMergeEnabled: true,
       closedAt: null,
       connectionId: CONN,
       mergedAt: null,
+      OR: [{ autoMergeEnabled: true }, { botApproved: true }],
     });
     expect(t.start).not.toHaveBeenCalled();
+  });
+
+  it('selects, deployment-wide, armed pull requests and those of repositories with bot approval', async () => {
+    t.findMany.mockResolvedValueOnce([]);
+    await t.run({ cap: GLOBAL_SWEEP_CAP });
+    const where = t.findMany.mock.calls[0][0].where;
+    expect(where).toMatchObject({ closedAt: null, mergedAt: null });
+    expect(where.OR).toEqual([
+      { autoMergeEnabled: true },
+      { botApproved: true },
+      { connection: { prEvaluationBotApproval: true } },
+    ]);
+    expect(where).not.toHaveProperty('autoMergeEnabled');
+  });
+
+  it('selects every open pull request of one repository when asked, armed or not', async () => {
+    t.findMany
+      .mockResolvedValueOnce([{ connectionId: CONN, prNumber: 4 }])
+      .mockResolvedValueOnce([{ ...armedRow(CONN, 4), autoMergeEnabled: false }]);
+    const res = await t.run({ allOpen: true, cap: REPOSITORY_SWEEP_CAP, connectionId: CONN });
+    const where = t.findMany.mock.calls[0][0].where;
+    expect(where).toEqual({ closedAt: null, connectionId: CONN, mergedAt: null });
+    expect(res).toMatchObject({ found: 1, started: 1 });
   });
 
   it('sweeps a pull request whose newest row is unarmed but an older row armed it', async () => {

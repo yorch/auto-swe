@@ -76,6 +76,8 @@ describe('pull request evaluation webhook handling', () => {
   let platformPr: { workflow: { temporalWorkflowId: string } } | null = null;
   let armedRow: { id: string } | null = null;
   const armedLookups: Array<Record<string, unknown>> = [];
+  let botRow: { id: string } | null = null;
+  const botLookups: Array<Record<string, unknown>> = [];
   const connectionWheres: Array<Record<string, unknown>> = [];
   const platformLookups: Array<Record<string, unknown>> = [];
 
@@ -92,10 +94,16 @@ describe('pull request evaluation webhook handling', () => {
       },
       prEvaluation: {
         findFirst: vi.fn(
-          async (args: { where: { autoMergeEnabled?: boolean; headSha: string } }) => {
+          async (args: {
+            where: { autoMergeEnabled?: boolean; botApproved?: boolean; headSha: string };
+          }) => {
             if (args.where.autoMergeEnabled) {
               armedLookups.push(args.where);
               return armedRow;
+            }
+            if (args.where.botApproved) {
+              botLookups.push(args.where);
+              return botRow;
             }
             findFirstCalls.push(args as never);
             const match = rows
@@ -147,6 +155,8 @@ describe('pull request evaluation webhook handling', () => {
     startFailure = null;
     platformPr = { workflow: { temporalWorkflowId: 'wf-1' } };
     armedRow = null;
+    botRow = null;
+    botLookups.length = 0;
     armedLookups.length = 0;
     connectionWheres.length = 0;
     platformLookups.length = 0;
@@ -258,6 +268,18 @@ describe('pull request evaluation webhook handling', () => {
       expect(starts).toHaveLength(0);
     });
 
+    it('evaluates a repository in enforce mode, chosen or inherited, without needing an armed row', async () => {
+      connections = [{ ...CONN, prEvaluationMode: 'enforce' }];
+      await deliver('pull_request', { action: 'opened', pull_request: pr() });
+      expect(starts).toHaveLength(1);
+      starts.length = 0;
+      connections = [{ ...CONN, prEvaluationMode: null }];
+      settingsState.defaultMode = 'enforce';
+      await deliver('pull_request', { action: 'synchronize', pull_request: pr() });
+      expect(starts).toHaveLength(1);
+      expect(armedLookups).toEqual([]);
+    });
+
     it('starts nothing for a pull request the platform did not open', async () => {
       platformPr = null;
       const res = await deliver('pull_request', { action: 'opened', pull_request: pr() });
@@ -304,6 +326,51 @@ describe('pull request evaluation webhook handling', () => {
       armedRow = { id: 'row-1' };
       await deliver('pull_request', { action: 'synchronize', pull_request: pr() }, 'D3adBeef-0002');
       expect(starts).toHaveLength(1);
+    });
+
+    it('still starts one when the feature is off but a bot approval of an open pull request stands', async () => {
+      settingsState.enabled = false;
+      armedRow = null;
+      botRow = { id: 'row-bot' };
+      await deliver('pull_request', { action: 'synchronize', pull_request: pr() });
+      expect(starts).toHaveLength(1);
+      expect(botLookups).toEqual([
+        {
+          botApproved: true,
+          closedAt: null,
+          connectionId: CONN.id,
+          mergedAt: null,
+          prNumber: 7,
+        },
+      ]);
+      botRow = null;
+    });
+
+    it('starts one for an off-mode or deactivated repository with a standing bot approval only', async () => {
+      armedRow = null;
+      for (const patch of [{ prEvaluationMode: 'off' }, { isActive: false }]) {
+        connections = [{ ...CONN, ...patch }];
+        botRow = null;
+        const before = starts.length;
+        await deliver('pull_request', { action: 'synchronize', pull_request: pr() });
+        expect(starts).toHaveLength(before);
+        botRow = { id: 'row-bot' };
+        await deliver(
+          'pull_request',
+          { action: 'synchronize', pull_request: pr() },
+          'D3adBeef-0003'
+        );
+        expect(starts).toHaveLength(before + 1);
+      }
+      botRow = null;
+    });
+
+    it('does not look for a bot approval when an armed row already starts the evaluation', async () => {
+      settingsState.enabled = false;
+      armedRow = { id: 'row-1' };
+      const lookups = botLookups.length;
+      await deliver('pull_request', { action: 'synchronize', pull_request: pr() });
+      expect(botLookups).toHaveLength(lookups);
     });
 
     it('starts nothing when switched off and nothing was armed', async () => {
@@ -383,6 +450,39 @@ describe('pull request evaluation webhook handling', () => {
       settingsState.enabled = false;
       rows = [{ createdAt: new Date(), headSha: 'sha-1', id: 'r1' }];
       await deliver('pull_request', merged());
+      expect(updateCalls).toHaveLength(1);
+    });
+
+    it('starts a merged recount for the pull request once the merged row is stamped', async () => {
+      rows = [{ createdAt: new Date(), headSha: 'sha-1', id: 'r1' }];
+      await deliver('pull_request', merged());
+      expect(starts).toHaveLength(1);
+      expect(starts[0]?.input).toEqual({ connectionId: CONN.id, prNumber: 7, trigger: 'merged' });
+      expect(starts[0]?.id).toBe('preval-c0ffee00-7-d3adbeef');
+    });
+
+    it('starts the recount even when the feature is off', async () => {
+      settingsState.enabled = false;
+      rows = [{ createdAt: new Date(), headSha: 'sha-1', id: 'r1' }];
+      await deliver('pull_request', merged());
+      expect(starts).toHaveLength(1);
+    });
+
+    it('starts no recount when no row matched the merged head, or the close was no merge', async () => {
+      rows = [{ createdAt: new Date(), headSha: 'sha-other', id: 'x' }];
+      await deliver('pull_request', merged());
+      rows = [{ createdAt: new Date(), headSha: 'sha-1', id: 'r1' }];
+      await deliver('pull_request', {
+        action: 'closed',
+        pull_request: pr({ closed_at: '2026-10-02T00:00:00Z', merged: false }),
+      });
+      expect(starts).toHaveLength(0);
+    });
+
+    it('still answers 200 when the recount cannot be started', async () => {
+      rows = [{ createdAt: new Date(), headSha: 'sha-1', id: 'r1' }];
+      startFailure = new Error('temporal down');
+      expect((await deliver('pull_request', merged())).statusCode).toBe(200);
       expect(updateCalls).toHaveLength(1);
     });
   });

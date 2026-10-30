@@ -353,6 +353,7 @@ change, stays in the environment ([`docs/configuration.md`](./docs/configuration
 |---|---|---|
 | `/admin/integrations → GitHub` | PAT, webhook secret, GHE URLs, GitHub App creds; per-host GHE webhook secrets (`GitHubHostWebhookSecret`) | `resolveGitHubConfig()`; `resolveWebhookSecret()` for a delivery naming a GHE host |
 | `/admin/integrations → GitHub → Per-host credentials` | PAT and/or GitHub App (id + private key) for each approved host that is not the instance's (`GitHubHostCredential`) | `resolvePlatformCredential()` (`shared/lib/githubHostCredential.ts`) |
+| `PUT /api/v1/integrations/github-approver-app` (ADMIN; API only, no admin page) | `appId`, slug, private key (a second App identity; DB-only, no env fallback) | `resolveGitHubApproverAppConfig()`; `resolveApproverBotSlugs()` for the slugs (active and retired) its reviews are recognised by |
 | `/admin/integrations → Slack` | bot token, client ID/secret, signing secret | `resolveSlackConfig()` |
 | `/admin/integrations → Tracker` | issue tracker (Jira / Linear / GitHub Issues) | `resolveIssueTrackerConfig()` |
 | `/admin/integrations → Knowledge Base` | Confluence / Notion connector | `resolveKnowledgeBaseConfig()` |
@@ -872,7 +873,7 @@ Dockerfile; it has the specific rules and what has already been tried and does n
 
 - Do **NOT** use Express.js — the project uses **Fastify 5.x**
 - Do **NOT** use K8s APIs — workspaces use Docker-in-Docker for isolation
-- Do **NOT** merge PRs on target repositories — by default humans merge, and nothing the platform runs calls an immediate-merge API. The one sanctioned path is opt-in `auto` mode of pull-request evaluation (per repository, admin-set, off by default): it only asks GitHub to auto-merge later through `enablePullRequestAutoMerge`, and `yarn invariants:check` fails any other merge call. See [`docs/pr-evaluation.md`](./docs/pr-evaluation.md)
+- Do **NOT** merge PRs on target repositories — by default humans merge, and nothing the platform runs calls an immediate-merge API. The one sanctioned path is opt-in `auto` mode of pull-request evaluation (per repository, admin-set, off by default): it only asks GitHub to auto-merge later through `enablePullRequestAutoMerge`, and `yarn invariants:check` fails any other merge call. With the approver App configured and a repository's bot-approval switch on, a `LOW` change within strict size and path limits can merge with no human approval; that is off by default and sits behind four ADMIN-controlled switches (`prEvaluation.autoMergeAllowed`, `prEvaluation.botApprovalAllowed`, the repository's `auto` mode and its bot-approval flag, beneath the `prEvaluation.enabled` kill switch). See [`docs/pr-evaluation.md`](./docs/pr-evaluation.md)
 - Do **NOT** store secrets in code or commit `.env` files
 - Do **NOT** modify the Temporal server or its configuration. The one sanctioned difference is
   `infra/dynamicconfig/production-sql.yaml`, which `docker-compose.prod.yml` mounts instead of
@@ -954,4 +955,4 @@ Full production runbook: [`docs/deployment.md`](./docs/deployment.md).
 | pgvector for memory          | Vector embeddings on `MemoryItem`                         | Semantic similarity search for agent context enrichment           |
 | Yarn 4 `node-modules` linker | Not PnP                                                   | Maximum tool compatibility with Prisma, Temporal, Docker          |
 | Agent identity as a string   | No enum; agents are data                                  | New agents ship as seed content, not code changes                 |
-| Human-governed merges        | By default nothing merges a PR; the one opt-in path is `auto` mode's native auto-merge | A human merges unless an admin opted a repository in and GitHub's own rules hold |
+| Human-governed merges        | By default nothing merges a PR; the opt-in paths are `auto` mode's native auto-merge and, with the approver App and a repository's bot-approval switch on, a `LOW` change within strict limits merging with no human approval | A human merges unless an admin opted a repository in (four ADMIN switches, off by default) and GitHub's own rules hold |

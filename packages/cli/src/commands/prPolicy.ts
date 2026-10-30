@@ -10,7 +10,7 @@ import { missingValue, parseFlags } from '../lib/flags.js';
  * evaluation settings.
  *
  * `init` and `validate` are token-free and offline (dispatched before credentials are
- * loaded). `status` and `mode` call the gateway with `AUTO_SWE_TOKEN`.
+ * loaded). `status`, `mode` and `bot-approval` call the gateway with `AUTO_SWE_TOKEN`.
  */
 
 const POLICY_PATH = path.join('.auto-swe', 'pr-policy.yml');
@@ -33,7 +33,7 @@ const DETECT_NAMES: readonly string[] = [
 const DETECT_SKIP = new Set(['node_modules', '.git', 'dist', 'build', 'vendor']);
 const DETECT_DEPTH = 3;
 
-const MODE_CHOICES = ['off', 'advisory', 'auto', 'inherit'] as const;
+const MODE_CHOICES = ['off', 'advisory', 'enforce', 'auto', 'inherit'] as const;
 
 const SUB_HELP = `auto-swe pr-policy — a repository's PR policy file and evaluation settings
 
@@ -46,10 +46,18 @@ const SUB_HELP = `auto-swe pr-policy — a repository's PR policy file and evalu
                                    Errors exit 1; warnings print and exit 0. Token-free.
   pr-policy status <repoId>        Show a repository's evaluation mode, enablement, last
                                    evaluation and auto-merge evidence (gateway, needs a token).
-  pr-policy mode <repoId> <off|advisory|auto|inherit>
+  pr-policy mode <repoId> <off|advisory|enforce|auto|inherit>
                                    Set a repository's evaluation mode; "inherit" restores the
-                                   deployment default. auto is refused with the reasons it is not
-                                   ready (exit 1). Needs a team lead or platform admin.
+                                   deployment default. enforce holds the status pending until
+                                   enough approvals exist and never arms auto-merge. auto is
+                                   refused with the reasons it is not ready (exit 1). Needs a
+                                   team lead or platform admin.
+  pr-policy bot-approval <repoId> <on|off>
+                                   Let the approver App approve a repository's LOW pull
+                                   requests, so they merge with no human approval (auto mode
+                                   only). "on" is platform-admin only and is refused with every
+                                   unmet reason (exit 1); "off" needs a team lead or platform
+                                   admin and withdraws the approvals.
 `;
 
 const POLICY_TEMPLATE_HEADER = `# auto-swe pull request policy (.auto-swe/pr-policy.yml)
@@ -93,22 +101,35 @@ interface LastEvaluation {
 
 interface PrEvaluationStatus {
   enabled: boolean;
-  mode: 'off' | 'advisory' | 'auto';
+  mode: 'off' | 'advisory' | 'enforce' | 'auto';
   modeSource: 'repository' | 'default';
   autoMergeAllowed: boolean;
+  botApproval: { enabled: boolean; globalAllowed: boolean; approverAppConfigured: boolean };
   lastEvaluation: LastEvaluation | null;
   evidence: {
-    lowMerged: number;
-    badMerges: number;
     windowDays: number;
-    minEvidence: number;
+    minChangedLines: number;
+    deployment: {
+      lowMerged: number;
+      badMerges: number;
+      distinctRequesters: number;
+      minEvidence: number;
+      minDistinctRequesters: number;
+    };
+    repository: { lowMerged: number; badMerges: number; minRepoEvidence: number };
     satisfied: boolean;
+    unmet: string[];
   };
 }
 
 interface ModeResult {
   mode: string | null;
   modeSource: 'repository' | 'default';
+  warnings?: string[];
+}
+
+interface BotApprovalResult {
+  botApproval: boolean;
 }
 
 export async function runPrPolicyCommand(
@@ -132,6 +153,9 @@ export async function runPrPolicyCommand(
     }
     if (sub === 'mode') {
       return await cmdMode(rest, await loadEnv());
+    }
+    if (sub === 'bot-approval') {
+      return await cmdBotApproval(rest, await loadEnv());
     }
     return UNKNOWN_SUBCOMMAND;
   });
@@ -301,10 +325,14 @@ async function cmdStatus(args: string[], env: CliEnv): Promise<number> {
     `Enabled:         ${status.enabled ? 'yes' : 'no'}`,
     `Mode:            ${status.mode} (${status.modeSource === 'repository' ? 'set on this repository' : 'deployment default'})`,
     `Auto-merge:      ${status.autoMergeAllowed ? 'allowed by this deployment' : 'not allowed by this deployment'}`,
+    `Bot approval:    ${status.botApproval.enabled ? 'on' : 'off'} for this repository (${status.botApproval.globalAllowed ? 'allowed' : 'not allowed'} by this deployment, approver App ${status.botApproval.approverAppConfigured ? 'configured' : 'not configured'})`,
     last
       ? `Last evaluation:  PR #${last.prNumber} — class ${last.riskClass}, ${last.requiredApprovers} approver(s) required, status ${last.statusState ?? 'none'}, evaluated ${last.createdAt}`
       : 'Last evaluation:  none',
-    `Evidence:        ${ev.lowMerged} low-risk merge(s) in ${ev.windowDays} days (minimum ${ev.minEvidence}), ${ev.badMerges} marked bad, auto ${ev.satisfied ? 'satisfied' : 'not satisfied'}`,
+    `Evidence (deployment): ${ev.deployment.lowMerged} qualifying low-risk merge(s) in ${ev.windowDays} days (minimum ${ev.deployment.minEvidence}), ${ev.deployment.badMerges} marked bad, ${ev.deployment.distinctRequesters} requester(s) (minimum ${ev.deployment.minDistinctRequesters})`,
+    `Evidence (repository):  ${ev.repository.lowMerged} qualifying low-risk merge(s) (minimum ${ev.repository.minRepoEvidence}), ${ev.repository.badMerges} marked bad`,
+    `Auto evidence:   ${ev.satisfied ? 'satisfied' : 'not satisfied'}`,
+    ...ev.unmet.map((reason) => `  - ${reason}`),
   ];
   process.stdout.write(`${lines.join('\n')}\n`);
   return 0;
@@ -314,7 +342,9 @@ async function cmdMode(args: string[], env: CliEnv): Promise<number> {
   const { positional, flags } = parseFlags(args);
   const [repoId, choice, ...extra] = positional;
   if (!repoId || !choice || extra.length > 0) {
-    process.stderr.write(`Usage: pr-policy mode <repoId> <off|advisory|auto|inherit>\n${SUB_HELP}`);
+    process.stderr.write(
+      `Usage: pr-policy mode <repoId> <off|advisory|enforce|auto|inherit>\n${SUB_HELP}`
+    );
     return 1;
   }
   if (rejectUnknownFlags(flags, [])) {
@@ -336,9 +366,53 @@ async function cmdMode(args: string[], env: CliEnv): Promise<number> {
     const source =
       result.modeSource === 'repository' ? 'set on this repository' : 'deployment default';
     process.stdout.write(`Mode for ${repoId}: ${shown} (${source})\n`);
+    for (const warning of result.warnings ?? []) {
+      process.stderr.write(`Warning: ${warning}\n`);
+    }
     return 0;
   } catch (err) {
     if (err instanceof GatewayError && err.statusCode === 400 && err.code === 'AUTO_NOT_READY') {
+      const reasons = refusalReasons(err.details);
+      if (reasons.length === 0) {
+        process.stderr.write(`${err.message}\n`);
+      } else {
+        process.stderr.write(`${err.message}:\n${reasons.join('\n')}\n`);
+      }
+      return 1;
+    }
+    throw err;
+  }
+}
+
+async function cmdBotApproval(args: string[], env: CliEnv): Promise<number> {
+  const { positional, flags } = parseFlags(args);
+  const [repoId, choice, ...extra] = positional;
+  if (!repoId || !choice || extra.length > 0) {
+    process.stderr.write(`Usage: pr-policy bot-approval <repoId> <on|off>\n${SUB_HELP}`);
+    return 1;
+  }
+  if (rejectUnknownFlags(flags, [])) {
+    return 1;
+  }
+  if (choice !== 'on' && choice !== 'off') {
+    process.stderr.write(`bot-approval must be on or off (got "${choice}")\n`);
+    return 1;
+  }
+  try {
+    await apiRequest<BotApprovalResult>(
+      env,
+      'PUT',
+      `/api/v1/repositories/${encodeURIComponent(repoId)}/pr-evaluation`,
+      { botApproval: choice === 'on' }
+    );
+    process.stdout.write(`Bot approval for ${repoId}: ${choice}\n`);
+    return 0;
+  } catch (err) {
+    if (
+      err instanceof GatewayError &&
+      err.statusCode === 400 &&
+      err.code === 'BOT_APPROVAL_NOT_READY'
+    ) {
       const reasons = refusalReasons(err.details);
       if (reasons.length === 0) {
         process.stderr.write(`${err.message}\n`);

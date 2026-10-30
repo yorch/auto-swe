@@ -1,6 +1,10 @@
 import { Prisma } from '@auto-swe/shared';
 import { describe, expect, it } from 'vitest';
-import { isRecordNotFoundError, isUniqueConstraintError } from './prismaErrors.js';
+import {
+  isCheckConstraintError,
+  isRecordNotFoundError,
+  isUniqueConstraintError,
+} from './prismaErrors.js';
 
 const known = (code: string) =>
   new Prisma.PrismaClientKnownRequestError('x', { clientVersion: 'test', code });
@@ -19,6 +23,31 @@ describe('prisma error helpers', () => {
     for (const value of [null, undefined, 'P2025', 2025]) {
       expect(isRecordNotFoundError(value)).toBe(false);
       expect(isUniqueConstraintError(value)).toBe(false);
+    }
+  });
+
+  it('recognises a check violation by the engine code and by the driver adapter pg reports', () => {
+    expect(isCheckConstraintError(known('P2004'))).toBe(true);
+    const adapter = new Prisma.PrismaClientKnownRequestError('Database error', {
+      clientVersion: 'test',
+      code: 'P2039',
+      meta: { driverAdapterError: { cause: { kind: 'postgres', originalCode: '23514' } } },
+    });
+    expect(isCheckConstraintError(adapter)).toBe(true);
+    expect(isCheckConstraintError(Object.assign(new Error('c'), { code: 'P2004' }))).toBe(true);
+  });
+
+  it('does not take another database error for a check violation', () => {
+    const other = new Prisma.PrismaClientKnownRequestError('Database error', {
+      clientVersion: 'test',
+      code: 'P2039',
+      meta: { driverAdapterError: { cause: { kind: 'postgres', originalCode: '40001' } } },
+    });
+    expect(isCheckConstraintError(other)).toBe(false);
+    expect(isCheckConstraintError(known('P2002'))).toBe(false);
+    expect(isCheckConstraintError(known('P2039'))).toBe(false);
+    for (const value of [null, undefined, 'P2004', 2004, {}]) {
+      expect(isCheckConstraintError(value)).toBe(false);
     }
   });
 });

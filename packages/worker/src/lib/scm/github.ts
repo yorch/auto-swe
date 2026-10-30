@@ -1426,9 +1426,11 @@ export class GitHubScmProvider implements ScmProvider {
         }
         reviews.push({
           commitId: r.commit_id ?? '',
+          ...(typeof r.id === 'number' ? { id: String(r.id) } : {}),
           login: r.user.login,
           state: r.state.toUpperCase(),
           submittedAt: r.submitted_at ?? null,
+          ...(typeof r.user.id === 'number' ? { userId: String(r.user.id) } : {}),
         });
       }
       if (data.length < 100) {
@@ -1478,6 +1480,43 @@ export class GitHubScmProvider implements ScmProvider {
       readAllowsAutoMerge(octokit, where),
     ]);
     return combineBranchRules(protection, rules, allowsAutoMerge, expectedAppId !== null);
+  }
+
+  async dismissReview(
+    repo: RepoRef,
+    prNumber: number,
+    reviewId: string,
+    message: string
+  ): Promise<ScmActionResult> {
+    if (!/^[0-9]+$/.test(reviewId)) {
+      return { ok: false, reason: 'invalid-input' };
+    }
+    const octokit = await octokitFor(repo);
+    try {
+      await octokit.request(
+        'PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals',
+        {
+          message: message.slice(0, MAX_DISMISSAL_MESSAGE_CHARS),
+          owner: repo.organizationName,
+          pull_number: prNumber,
+          repo: repo.repoName,
+          review_id: Number(reviewId),
+        }
+      );
+      return { ok: true };
+    } catch (err) {
+      const status = (err as { status?: number }).status;
+      if (status === 403) {
+        return { ok: false, reason: 'refused' };
+      }
+      if (status === 404) {
+        return { ok: false, reason: 'not-found' };
+      }
+      if (status === 422) {
+        return { ok: false, reason: 'unprocessable' };
+      }
+      throw err;
+    }
   }
 
   async enableAutoMerge(
@@ -1530,6 +1569,7 @@ const MAX_REVIEW_PAGES = 30;
 /** A patch longer than this is treated as absent, so a huge diff never reaches the classifier. */
 const MAX_PATCH_CHARS = 200_000;
 const COMMIT_STATUS_DESCRIPTION_MAX = 140;
+const MAX_DISMISSAL_MESSAGE_CHARS = 1000;
 const MAX_REASON_CHARS = 300;
 
 type PullFile = {
@@ -1595,6 +1635,8 @@ type ProtectionRules = {
   reviewCount: number;
   codeOwners: boolean;
   contexts: string[];
+  /** Whether this source's review rules dismiss stale approvals; null when it has no review rule. */
+  dismissStale: boolean | null;
   /** The configured context: tied to an App, required without one, or not required (null). */
   pinned: boolean | null;
 };
@@ -1632,6 +1674,7 @@ async function readProtection(
       contexts: [
         ...new Set([...(checks?.contexts ?? []), ...(checks?.checks ?? []).map((c) => c.context)]),
       ],
+      dismissStale: reviews ? reviews.dismiss_stale_reviews === true : null,
       pinned: listed ? isAppId(entry?.app_id, expectedAppId) : null,
       requiresReviews: (reviews?.required_approving_review_count ?? 0) >= 1,
       reviewCount: reviews?.required_approving_review_count ?? 0,
@@ -1645,6 +1688,7 @@ async function readProtection(
         active: false,
         codeOwners: false,
         contexts: [],
+        dismissStale: null,
         pinned: null,
         requiresReviews: false,
         reviewCount: 0,
@@ -1677,6 +1721,7 @@ async function readRulesetRules(
     active: data.length > 0,
     codeOwners: false,
     contexts: [],
+    dismissStale: null,
     pinned: null,
     requiresReviews: false,
     reviewCount: 0,
@@ -1692,6 +1737,9 @@ async function readRulesetRules(
       // A pull_request rule with zero required approvals demands a PR, not a review.
       out.requiresReviews ||= typeof count === 'number' && count >= 1;
       out.codeOwners ||= params.require_code_owner_review === true;
+      // Two review rules: stale approvals are dismissed only if every one of them says so.
+      out.dismissStale =
+        (out.dismissStale ?? true) && params.dismiss_stale_reviews_on_push === true;
     } else if (rule.type === 'required_status_checks') {
       const checks = params.required_status_checks;
       for (const c of Array.isArray(checks) ? checks : []) {
@@ -1761,8 +1809,12 @@ function combineBranchRules(
   }
   const anyTrue = (pick: (s: ProtectionRules) => boolean): boolean | 'unknown' =>
     known.some(pick) ? true : complete ? false : 'unknown';
+  const reviewRules = known.filter((s) => s.dismissStale !== null);
   return {
     allowsAutoMerge,
+    dismissStaleReviews: complete
+      ? reviewRules.every((s) => s.dismissStale === true) && reviewRules.length > 0
+      : 'unknown',
     requiredReviewCount: complete ? Math.max(...known.map((s) => s.reviewCount)) : 'unknown',
     requiredStatusContexts: complete ? [...new Set(known.flatMap((s) => s.contexts))] : 'unknown',
     requiredStatusPinnedToApp: combinePinned(known, complete, haveExpectedApp),

@@ -251,6 +251,24 @@ describe('listPullRequestReviews', () => {
     ]);
   });
 
+  it('returns the reviewer numeric id as a string, and omits it when the host gave none', async () => {
+    octokit.listReviews.mockResolvedValue({
+      data: [review({ user: { id: 583231, login: 'alice' } }), review({ user: { login: 'bob' } })],
+    });
+    const listed = await provider.listPullRequestReviews(repo, 7);
+    expect(listed[0]).toMatchObject({ login: 'alice', userId: '583231' });
+    expect(listed[1]).not.toHaveProperty('userId');
+  });
+
+  it('returns the review id as a string, and omits it when the host gave none', async () => {
+    octokit.listReviews.mockResolvedValue({
+      data: [review({ id: 9001 }), review({ user: { login: 'bob' } })],
+    });
+    const listed = await provider.listPullRequestReviews(repo, 7);
+    expect(listed[0]).toMatchObject({ id: '9001', login: 'alice' });
+    expect(listed[1]).not.toHaveProperty('id');
+  });
+
   it('reads every page, up to the cap', async () => {
     const full = Array.from({ length: 100 }, () => review());
     octokit.listReviews
@@ -344,6 +362,7 @@ describe('readBranchRules', () => {
     octokit.reposGet.mockResolvedValue({ data: { allow_auto_merge: true } });
     expect(await provider.readBranchRules(repo, 'main')).toEqual({
       allowsAutoMerge: true,
+      dismissStaleReviews: false,
       requiredReviewCount: 2,
       requiredStatusContexts: ['ci', 'lint', 'e2e'],
       requiredStatusPinnedToApp: 'unknown',
@@ -375,6 +394,7 @@ describe('readBranchRules', () => {
     octokit.reposGet.mockResolvedValue({ data: { allow_auto_merge: false } });
     expect(await provider.readBranchRules(repo, 'main')).toEqual({
       allowsAutoMerge: false,
+      dismissStaleReviews: false,
       requiredReviewCount: 0,
       requiredStatusContexts: [],
       requiredStatusPinnedToApp: 'unknown',
@@ -390,6 +410,7 @@ describe('readBranchRules', () => {
     octokit.reposGet.mockRejectedValue(forbidden());
     expect(await provider.readBranchRules(repo, 'main')).toEqual({
       allowsAutoMerge: 'unknown',
+      dismissStaleReviews: 'unknown',
       requiredReviewCount: 'unknown',
       requiredStatusContexts: 'unknown',
       requiredStatusPinnedToApp: 'unknown',
@@ -544,6 +565,113 @@ describe('readBranchRules: requiresReviews means at least one approving review',
     octokit.request.mockResolvedValue(ruleset(1));
     octokit.reposGet.mockResolvedValue({ data: { allow_auto_merge: true } });
     expect(await provider.readBranchRules(repo, 'main')).toMatchObject({ requiresReviews: true });
+  });
+});
+
+describe('readBranchRules: dismissStaleReviews', () => {
+  const notProtected = Object.assign(new Error('Branch not protected'), { status: 404 });
+  const classic = (over: Record<string, unknown>) => ({
+    data: { required_pull_request_reviews: { required_approving_review_count: 1, ...over } },
+  });
+  const ruleset = (...rules: Record<string, unknown>[]) => ({
+    data: rules.map((parameters) => ({ parameters, type: 'pull_request' })),
+  });
+  const read = async (p: unknown, r: unknown) => {
+    if (p instanceof Error) {
+      octokit.getBranchProtection.mockRejectedValue(p);
+    } else {
+      octokit.getBranchProtection.mockResolvedValue(p);
+    }
+    if (r instanceof Error) {
+      octokit.request.mockRejectedValue(r);
+    } else {
+      octokit.request.mockResolvedValue(r);
+    }
+    octokit.reposGet.mockResolvedValue({ data: { allow_auto_merge: true } });
+    return provider.readBranchRules(repo, 'main');
+  };
+
+  it('is true when classic protection dismisses stale reviews', async () => {
+    expect(await read(classic({ dismiss_stale_reviews: true }), { data: [] })).toMatchObject({
+      dismissStaleReviews: true,
+    });
+  });
+
+  it('is false when classic protection requires reviews but keeps stale ones', async () => {
+    expect(await read(classic({ dismiss_stale_reviews: false }), { data: [] })).toMatchObject({
+      dismissStaleReviews: false,
+    });
+    expect(await read(classic({}), { data: [] })).toMatchObject({ dismissStaleReviews: false });
+  });
+
+  it('is true from a ruleset pull_request rule that dismisses on push', async () => {
+    expect(
+      await read(notProtected, ruleset({ dismiss_stale_reviews_on_push: true }))
+    ).toMatchObject({ dismissStaleReviews: true });
+  });
+
+  it('is false when any pull_request rule keeps stale reviews (conservative combination)', async () => {
+    expect(
+      await read(
+        notProtected,
+        ruleset({ dismiss_stale_reviews_on_push: true }, { dismiss_stale_reviews_on_push: false })
+      )
+    ).toMatchObject({ dismissStaleReviews: false });
+    expect(
+      await read(
+        classic({ dismiss_stale_reviews: true }),
+        ruleset({ required_approving_review_count: 1 })
+      )
+    ).toMatchObject({ dismissStaleReviews: false });
+  });
+
+  it('is false when no source has a review rule, and unknown when a source is unreadable', async () => {
+    expect(await read(notProtected, { data: [] })).toMatchObject({ dismissStaleReviews: false });
+    const forbidden = Object.assign(new Error('Forbidden'), { status: 403 });
+    expect(await read(forbidden, ruleset({ dismiss_stale_reviews_on_push: true }))).toMatchObject({
+      dismissStaleReviews: 'unknown',
+    });
+    expect(await read(classic({ dismiss_stale_reviews: true }), new Error('boom'))).toMatchObject({
+      dismissStaleReviews: 'unknown',
+    });
+  });
+});
+
+describe('dismissReview', () => {
+  it('dismisses one review with a fixed message', async () => {
+    octokit.request.mockResolvedValue({ data: {} });
+    expect(await provider.dismissReview(repo, 7, '901', 'm'.repeat(2000))).toEqual({ ok: true });
+    const [route, params] = octokit.request.mock.calls.at(-1) ?? [];
+    expect(route).toBe(
+      'PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}/dismissals'
+    );
+    expect(params).toMatchObject({ owner: 'acme', pull_number: 7, repo: 'api', review_id: 901 });
+    expect((params as { message: string }).message.length).toBeLessThanOrEqual(1000);
+  });
+
+  it.each([
+    [403, 'refused'],
+    [404, 'not-found'],
+    [422, 'unprocessable'],
+  ] as const)(
+    'reports a %s as the fixed reason %s, never the host text',
+    async (status, reason) => {
+      octokit.request.mockRejectedValueOnce(
+        Object.assign(new Error('host says secret-text'), { status })
+      );
+      expect(await provider.dismissReview(repo, 7, '901', 'm')).toEqual({ ok: false, reason });
+    }
+  );
+
+  it('rethrows other errors and refuses a review id that is not numeric without calling the host', async () => {
+    octokit.request.mockRejectedValueOnce(Object.assign(new Error('boom'), { status: 500 }));
+    await expect(provider.dismissReview(repo, 7, '901', 'm')).rejects.toThrow('boom');
+    octokit.request.mockClear();
+    expect(await provider.dismissReview(repo, 7, '9/../1', 'm')).toEqual({
+      ok: false,
+      reason: 'invalid-input',
+    });
+    expect(octokit.request).not.toHaveBeenCalled();
   });
 });
 

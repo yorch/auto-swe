@@ -7,7 +7,7 @@ everything else is data an operator can change without a deploy.**
 | Tier | Lives in | Contents | Changed by |
 |---|---|---|---|
 | Bootstrap | Environment, permanently | `DATABASE_URL`, `CONFIG_ENCRYPTION_KEY`, `TEMPORAL_ADDRESS`, `PORT`, JWT/auth secrets, `BUNDLE_TRUSTED_KEYS`, `NEXT_PUBLIC_*`; sign-in credentials (`GITHUB_CLIENT_*`, `GOOGLE_CLIENT_*`, `OKTA_*`); artifact storage (`ARTIFACT_S3_*`, `AWS_*`); workspace sizing, images and network (`WORKSPACE_*`); the harness model proxy (`HARNESS_MODEL_PROXY_*`, `REGISTRY_PROXY_*`); `WORKER_MAX_CONCURRENT_ACTIVITIES`; `SCANNER_REGEX_BUDGET_MS`; the scheduled sweeps (`REPO_ACCESS_SYNC_*`, `REPO_DEPENDENCY_SCAN_*`, `MODEL_DISCOVERY_*`, `RUN_REAPER_*`, `AUTOMATION_DECISION_PRUNE_*`, `SKILL_SOURCE_SYNC_*`, `SLACK_CHANNEL_SYNC_*`, `CALLBACK_DELIVERY_*`, `CALLBACK_DELIVERY_PRUNE_*`, `AGENT_TRANSCRIPT_PRUNE_*`, `AGENT_TRACE_ROLLUP_*`, `AUDIT_ACTIVITY_PRUNE_*`) | The deploy pipeline |
-| Integrations | Singleton config tables | GitHub, Slack, issue tracker, knowledge base, Figma, workflow defaults | Admins, at `/admin/integrations` and `/admin/workflow-defaults` |
+| Integrations | Singleton config tables | GitHub, the GitHub approver App (database only, no environment fallback), Slack, issue tracker, knowledge base, Figma, workflow defaults | Admins, at `/admin/integrations` and `/admin/workflow-defaults`; the approver App only through `PUT /api/v1/integrations/github-approver-app` (API only, no admin page) |
 | Policy | The setting registry | Operator knobs, not constants in the worker | Admins and grant holders, at `/admin/platform-settings` |
 
 Each integration tab compares its form with the saved config: Save stays disabled with "No unsaved
@@ -61,12 +61,17 @@ per request, so they take effect within the settings cache's ~30 s with no resta
 
 The `prEvaluation` group holds the risk thresholds, approver counts, sensitive-path globs and the
 auto-merge gate for the pull requests the platform opens: `prEvaluation.enabled` (default off, the
-kill switch), `prEvaluation.defaultMode`, `prEvaluation.autoMergeAllowed` (default off),
-`prEvaluation.autoMinEvidence`, `prEvaluation.requiredStatusContext`, the size thresholds and the
-approver counts. All are ADMIN-only; the switches, the evidence minimum and the context are GLOBAL
-only, the rest overridable at team and organization. Turning `prEvaluation.enabled` or
-`prEvaluation.autoMergeAllowed` off also starts the disarm sweep described in
-[pr-evaluation.md](./pr-evaluation.md#8-when-auto-merge-is-armed).
+kill switch), `prEvaluation.defaultMode`, `prEvaluation.autoMergeAllowed` (default off), `prEvaluation.botApprovalAllowed` (default off), `prEvaluation.botApprovalPaths`,
+`prEvaluation.botApprovalMaxLines`, `prEvaluation.botApprovalMaxFiles`,
+`prEvaluation.autoMinEvidence`, `prEvaluation.autoMinRepoEvidence`,
+`prEvaluation.autoMinDistinctRequesters`, `prEvaluation.autoEvidenceMinChangedLines`,
+`prEvaluation.requiredStatusContext`, the size thresholds and the
+approver counts. All are ADMIN-only; the switches, the bot approval paths and caps, the four evidence
+settings and the context are GLOBAL only, the rest overridable at team and organization. Turning
+`prEvaluation.enabled`, `prEvaluation.autoMergeAllowed` or `prEvaluation.botApprovalAllowed` off also
+starts the disarm sweep described in
+[pr-evaluation.md](./pr-evaluation.md#8-when-auto-merge-is-armed); so does any change to, or clearing of,
+`prEvaluation.botApprovalPaths`, `prEvaluation.botApprovalMaxLines` or `prEvaluation.botApprovalMaxFiles`.
 
 The `models` group holds `models.privateNetworkHosts` (ADMIN-only, GLOBAL only, default empty): hosts a
 provider credential's `apiBase` may name even though they are, or resolve to, a private address. It lifts

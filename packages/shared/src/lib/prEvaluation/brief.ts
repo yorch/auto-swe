@@ -8,6 +8,15 @@ import type {
   SkimProof,
 } from './types.js';
 
+/** Info reason codes that say the evaluator's own approval stood behind the status. */
+export const BOT_APPROVED_REASON_CODES: readonly string[] = [
+  'bot-approval-posted',
+  'bot-approval-present',
+];
+/** The one sentence the brief says about a bot approval; fixed text, never a name or an id. */
+export const BOT_APPROVED_BRIEF_SENTENCE =
+  'Approved by the evaluator; no human approval was required.';
+
 /** First line of the comment, so the writer can find and update its own comment. */
 export const BRIEF_MARKER = '<!-- auto-swe:pr-evaluation -->';
 export const MAX_FOCUS = 10;
@@ -303,6 +312,9 @@ function renderMarkdown(
     `Approvals required: ${classification.requiredApprovers}`,
     '',
   ];
+  if (classification.reasons.some((r) => BOT_APPROVED_REASON_CODES.includes(r.code))) {
+    lines.push(BOT_APPROVED_BRIEF_SENTENCE, '');
+  }
   const reasons = classification.reasons.filter((reason) => reason.severity !== 'info');
   if (reasons.length > 0) {
     lines.push('**Why this class**', '');

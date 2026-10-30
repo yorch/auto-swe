@@ -17,7 +17,7 @@ Teams drive all of it from the **Slack channel teammate**: a channel-resident as
 3. **Review network runs** — Three parallel review agents (Security Auditor, Domain Logic, Performance) inspect the diff and can request fixes
 4. **PR opens** — A pull request is created on GitHub with the implementation
 5. **CI self-heals** — If pipeline checks fail, the agent wakes up, reads the logs, and pushes a fix
-6. **Human merges** — The workflow waits (up to 7 days) for a human to merge the PR, then commits learnings to semantic memory (pgvector) for future runs. A repository can opt into native auto-merge for low-risk changes ([`docs/pr-evaluation.md`](./docs/pr-evaluation.md)); it is off by default
+6. **Human merges** — The workflow waits (up to 7 days) for a human to merge the PR, then commits learnings to semantic memory (pgvector) for future runs. A repository can opt into native auto-merge for low-risk changes, and, with a second GitHub App and its own switch, into having the lowest-risk changes approved with no human ([`docs/pr-evaluation.md`](./docs/pr-evaluation.md)); it is off by default
 
 All execution is durable via Temporal.io — workflows survive crashes, restarts, and API rate limits.
 
@@ -272,7 +272,7 @@ See [AGENTS.md](./AGENTS.md) for full conventions, critical implementation notes
 | ----------------------------- | ------------------------------------------------------------------------------- |
 | Docker, or Kubernetes pods    | Docker needs no cluster; `WORKSPACE_BACKEND=kubernetes` runs agent workspaces as pods |
 | Temporal.io for orchestration | Durable execution — workflows survive crashes and wait days for human signals   |
-| Human-governed merges         | By default nothing merges a PR; the one opt-in path is per-repository native auto-merge, see [`docs/pr-evaluation.md`](./docs/pr-evaluation.md) |
+| Human-governed merges         | By default nothing merges a PR; the opt-in paths are per-repository native auto-merge and, behind further admin switches, bot approval of the lowest-risk changes, see [`docs/pr-evaluation.md`](./docs/pr-evaluation.md) |
 | PAT or GitHub App             | PAT for simplicity; GitHub App (short-lived installation tokens) for production — see [`docs/github-app-setup.md`](./docs/github-app-setup.md) |
 | pgvector for agent memory     | Semantic similarity search surfaces relevant past lessons into agent context    |
 | Mastra + Vercel AI SDK        | Mastra agents bind models through the AI SDK provider adapters; `getModel(key, ctx)` picks the provider from DB config, so agent code never imports a provider directly |

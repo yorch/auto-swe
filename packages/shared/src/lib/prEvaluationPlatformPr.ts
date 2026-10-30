@@ -10,13 +10,23 @@ export type PlatformPullRequestDb = {
   pullRequest: {
     findFirst(args: {
       orderBy: Array<{ openedAt: 'desc' } | { id: 'desc' }>;
-      select: { workflow: { select: { temporalWorkflowId: true } } };
+      select: {
+        runId: true;
+        workflow: { select: { temporalWorkflowId: true; workRequestId: true } };
+      };
       where: { prNumber: number; repoId: string; workflowId: { not: null } };
-    }): Promise<{ workflow: { temporalWorkflowId: string } | null } | null>;
+    }): Promise<{
+      runId: string | null;
+      workflow: { temporalWorkflowId: string; workRequestId: string | null } | null;
+    } | null>;
   };
 };
 
-/** The newest linked pull-request row for `prNumber` in the repository, or null. */
+/**
+ * The newest linked pull-request row for `prNumber` in the repository, or null. `runId` is a
+ * mutable pointer (a re-run that adopts the pull request overwrites it), so it names one run of
+ * the work, not the whole of it; the work request is what finds the rest.
+ */
 export function findPlatformPullRequest(
   db: PlatformPullRequestDb,
   connectionId: string,
@@ -24,7 +34,10 @@ export function findPlatformPullRequest(
 ) {
   return db.pullRequest.findFirst({
     orderBy: [{ openedAt: 'desc' }, { id: 'desc' }],
-    select: { workflow: { select: { temporalWorkflowId: true } } },
+    select: {
+      runId: true,
+      workflow: { select: { temporalWorkflowId: true, workRequestId: true } },
+    },
     where: { prNumber, repoId: connectionId, workflowId: { not: null } },
   });
 }

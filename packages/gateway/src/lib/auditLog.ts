@@ -19,6 +19,7 @@ export type AuditEntityType =
   | 'EvalRun'
   | 'EvalRubric'
   | 'EventEndpoint'
+  | 'GitHubApproverApp'
   | 'GitHubConfig'
   | 'GitHubHostCredential'
   | 'GitHubHostWebhookSecret'

@@ -86,7 +86,7 @@ COMMANDS
   pr-policy validate [file]            Validate a PR policy file (local, no token)
   pr-policy status <repoId>            Show a repository's PR evaluation mode, last evaluation
                                        and auto-merge evidence
-  pr-policy mode <repoId> <off|advisory|auto|inherit>
+  pr-policy mode <repoId> <off|advisory|enforce|auto|inherit>
                                        Set a repository's PR evaluation mode
 
   skills sources list                  List tracked external skill sources (admin token)
