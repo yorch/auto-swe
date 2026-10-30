@@ -52,11 +52,18 @@ export function parseMavenPath(rest: string): MavenPath | null {
   if (lower.startsWith('maven-metadata')) {
     return { kind: 'metadata', path };
   }
+  // A snapshot is any version ending in SNAPSHOT in any spelling (`1.0-SNAPSHOT`, `1.0.SNAPSHOT`,
+  // `1.0SNAPSHOT`) or a timestamped one; it changes under the same name, so it is never cached.
   if (
-    segments.some((s) => s.toUpperCase().includes('-SNAPSHOT')) ||
+    segments.some((s) => s.toUpperCase().includes('SNAPSHOT')) ||
     TIMESTAMPED_SNAPSHOT_RE.test(file)
   ) {
     return { kind: 'snapshot', path };
+  }
+  // Only `<group…>/<artifact>/<version>/<file>` is an immutable release artifact. A file anywhere else
+  // (`archetype-catalog.xml` at the repository root, an index beside a group) is mutable: never cached.
+  if (segments.length < 4) {
+    return { kind: 'metadata', path };
   }
   return { kind: 'release', path };
 }

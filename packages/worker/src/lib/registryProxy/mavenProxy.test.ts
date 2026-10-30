@@ -39,6 +39,23 @@ describe('parseMavenPath', () => {
     expect(parseMavenPath('/a/b/20240101/b-20240101.jar')?.kind).toBe('release');
   });
 
+  it('treats every SNAPSHOT spelling, and files outside a version directory, as uncacheable', () => {
+    for (const p of [
+      '/a/b/1.0.SNAPSHOT/b-1.0.SNAPSHOT.jar',
+      '/a/b/1.0SNAPSHOT/b-1.0SNAPSHOT.jar',
+      '/a/b/1.0-snapshot/b-1.0-snapshot.jar',
+      '/a/b/1.0-SNAPSHOT/b-1.0-20240101.000000-1.jar',
+      '/a/b/1.0/b-1.0-20240101.000000-1.jar',
+    ]) {
+      expect(parseMavenPath(p)?.kind, p).toBe('snapshot');
+    }
+    for (const p of ['/archetype-catalog.xml', '/a/index.html', '/a/b/readme.txt']) {
+      expect(parseMavenPath(p)?.kind, p).toBe('metadata');
+    }
+    expect(parseMavenPath('/a/b/1.0/b-1.0.jar')?.kind).toBe('release');
+    expect(parseMavenPath('/org/x/y/1.0/y-1.0.pom')?.kind).toBe('release');
+  });
+
   it('refuses anything that is not a plain file path', () => {
     const long = 'a'.repeat(201);
     const deep = `/${Array.from({ length: 25 }, () => 'a').join('/')}.jar`;
