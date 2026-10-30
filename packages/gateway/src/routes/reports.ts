@@ -1139,6 +1139,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       const approverNames = new Map<string, string | null>(
         approverIds.map((id) => [id, user.role === 'ADMIN' ? 'Unknown approver' : 'Other approver'])
       );
+      const visibleApproverIds = new Set<string>();
       if (approverIds.length) {
         const visibleApprovers = await runUnscoped(
           'HITL approver labels are resolved only for caller-visible users',
@@ -1167,18 +1168,32 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
             })
         );
         for (const approver of visibleApprovers) {
+          visibleApproverIds.add(approver.id);
           approverNames.set(approver.id, approver.name);
         }
       }
+      const otherApproverId = '__other_approver__';
+      if (user.role !== 'ADMIN') {
+        approverNames.set(otherApproverId, 'Other approver');
+      }
+      const reportApproverId = (id: string | null) =>
+        user.role !== 'ADMIN' && id && !visibleApproverIds.has(id) ? otherApproverId : id;
       const liveWindowSteps = windowSteps.slice(0, REPORT_ROW_CAP).map((step) => ({
         kind: step.kind,
         requestedAt: step.requestedAt,
         resolvedAt: step.resolvedAt,
-        resolvedBy: step.resolvedBy,
+        resolvedBy: reportApproverId(step.resolvedBy),
         resolvedByName: step.resolvedBy ? (approverNames.get(step.resolvedBy) ?? null) : null,
         resolvedVia: step.resolvedVia,
         status: step.status,
       }));
+      const reportHitlRollupRows =
+        user.role === 'ADMIN'
+          ? hitlRollupRows
+          : hitlRollupRows.map((row) => ({
+              ...row,
+              resolvedBy: reportApproverId(row.resolvedBy),
+            }));
       const report = computeHitlReport({
         autonomyDecisions: decisions.slice(0, REPORT_ROW_CAP),
         now: new Date(),
@@ -1200,7 +1215,7 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       if (hitlPlan.rollupDays.length) {
         Object.assign(
           report,
-          humanStepMetricsFromRollups([...hitlRollupRows, ...liveHumanRows], approverNames)
+          humanStepMetricsFromRollups([...reportHitlRollupRows, ...liveHumanRows], approverNames)
         );
       }
       Object.assign(report, {

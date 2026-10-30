@@ -423,16 +423,17 @@ describe('report routes', () => {
       run,
       { ...run, attributedRepoId: null, attributedTeamId: 'own-team', id: 'own-team-run' },
     ] as never);
-    prisma.workflowHumanStep.findMany.mockResolvedValueOnce([
-      {
+    prisma.workflowHumanStep.findMany.mockResolvedValueOnce(
+      ['foreign-approver-1', 'foreign-approver-2', 'own-approver'].map((resolvedBy) => ({
         kind: 'APPROVAL',
-        requestedAt: new Date(),
+        requestedAt: new Date(Date.now() - 1_000),
         resolvedAt: new Date(),
-        resolvedBy: 'foreign-approver',
+        resolvedBy,
         resolvedVia: 'web',
         status: 'RESOLVED',
-      },
-    ] as never);
+      })) as never
+    );
+    prisma.user.findMany.mockResolvedValue([{ id: 'own-approver', name: 'Own approver' }] as never);
 
     const delivery = await app.inject({
       headers: AUTH,
@@ -454,7 +455,20 @@ describe('report routes', () => {
       url: '/api/v1/reports/hitl?window=30',
     });
     expect(hitl.statusCode, hitl.body).toBe(200);
-    expect(hitl.json().data.byApprover).toMatchObject([{ name: 'Other approver' }]);
+    expect(hitl.json().data.byApprover).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'Other approver', resolved: 2 }),
+        expect.objectContaining({ name: 'Own approver', resolved: 1 }),
+      ])
+    );
+    expect(
+      hitl
+        .json()
+        .data.byApprover.filter((approver: { name: string }) => approver.name === 'Other approver')
+    ).toHaveLength(1);
+    expect(JSON.stringify(hitl.json())).not.toContain('foreign-approver-1');
+    expect(JSON.stringify(hitl.json())).not.toContain('foreign-approver-2');
+    expect(JSON.stringify(hitl.json())).not.toContain('__other_approver__');
     expect(JSON.stringify(prisma.workflowHumanStep.findMany.mock.calls[0]?.[0].where)).toContain(
       `"attributedRepoId":{"in":["${repoId}"]}`
     );
