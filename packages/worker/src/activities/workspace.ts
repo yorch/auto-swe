@@ -1,4 +1,7 @@
 import crypto from 'node:crypto';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
@@ -20,6 +23,7 @@ import {
 } from '../lib/registryProxy/workspaceWiring.js';
 import { shellQuote } from '../lib/shellQuote.js';
 import { workspaceBackend } from '../lib/workspaceBackend/index.js';
+import { readSingleFileFromArchive } from '../lib/workspaceBackend/kubernetes/safeTar.js';
 import { agentWorkspaceSpec } from '../lib/workspaceBackend/spec.js';
 import type { WorkspaceHandle } from '../lib/workspaceBackend/types.js';
 
@@ -58,6 +62,8 @@ export interface Workspace {
    * argv limit, a pipe is not.
    */
   execStdin: (command: string, stdin: string | Buffer) => Promise<string>;
+  /** Read one regular file from the workspace without sending its contents through stdout. */
+  readFile: (path: string, maxBytes: number) => Promise<Buffer>;
   /**
    * Run a git subcommand (e.g. `push origin main`) against `origin` with the
    * clone credential injected for this call only via `-c http.extraheader`,
@@ -948,5 +954,31 @@ export async function createWorkspace(
       }
     },
     gitIdentity,
+    readFile: async (filePath: string, maxBytes: number) => {
+      if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
+        throw new RangeError('maxBytes must be a non-negative safe integer');
+      }
+      const dir = await mkdtemp(path.join(os.tmpdir(), 'workspace-file-'));
+      const archivePath = path.join(dir, 'file.tar');
+      try {
+        const archiveLimit = Math.min(Number.MAX_SAFE_INTEGER, maxBytes + 128 * 1024);
+        const copied = await backend.copyOut(handle, filePath, archivePath, {
+          heartbeatLabel: 'workspace: reading a file',
+          maxBytes: archiveLimit,
+          timeoutMs: 60_000,
+        });
+        if (copied.exceeded) {
+          throw new RangeError(`workspace file exceeds the ${maxBytes} byte limit`);
+        }
+        if (copied.exitCode !== 0) {
+          throw new Error(
+            `Could not read workspace file "${filePath}": ${copied.stderr.trim() || 'copy failed'}`
+          );
+        }
+        return await readSingleFileFromArchive(archivePath, maxBytes);
+      } finally {
+        await rm(dir, { force: true, recursive: true });
+      }
+    },
   };
 }
