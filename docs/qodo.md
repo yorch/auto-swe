@@ -50,8 +50,8 @@ agent or run input names a connection, and another team's connection is never re
 
 ## 2. Read-only guarantee
 
-Qodo's catalog has 64 tools: 41 read and 23 write (comments, approvals, labels, rules and notes
-changes). `QODO_READ_TOOLS` (`packages/shared/src/lib/qodoConnection.ts`) lists the 41 read tools by
+Qodo's catalog has read tools and write tools (comments, approvals, labels, rules and notes
+changes). `QODO_READ_TOOLS` (`packages/shared/src/lib/qodoConnection.ts`) lists the read tools by
 name, audited by hand. A tool Qodo adds later, or reclassifies from read to write, stays out until
 the list is edited. The loader binds only listed tools, and for a marked connection whatever list is
 stored is intersected with the read list, so a write tool cannot be called through the platform.

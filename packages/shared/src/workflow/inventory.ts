@@ -506,10 +506,6 @@ function renderTemplates(inventory: WorkflowInventory): string[] {
 /** The full markdown of `docs/workflow-inventory.md`. */
 export function renderWorkflowInventory(): string {
   const inventory = collectWorkflowInventory();
-  const types = inventory.nodeTypes;
-  const steps = inventory.steps;
-  const templateCount = inventory.templates.length;
-  const internal = steps.filter((s) => s.internal).length;
   const lines = [
     '# Workflow inventory',
     '',
@@ -517,8 +513,6 @@ export function renderWorkflowInventory(): string {
     'steps the step registry holds, and which built-in templates use each. It lists what exists;',
     '[workflow-nodes.md](./workflow-nodes.md) explains how to use it. This page is generated from',
     `the code by ${code(INVENTORY_COMMAND)}, and a test fails when it no longer matches.`,
-    '',
-    `There are ${types.length} node types, ${plural(steps.length, 'registered step')} (${internal} of them internal) and ${plural(templateCount, 'built-in template')}.`,
     '',
     ...renderNodeTypes(inventory),
     '',

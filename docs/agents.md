@@ -260,7 +260,7 @@ These tools translate agent calls to `docker exec` commands inside the workspace
 | `listDirectory` | List directory contents (`ls -la`) | Path traversal check |
 | `bash` | Execute a shell command in the workspace | Shell command scanner (soft-block; returns error string to agent) |
 
-`Agent.toolKeys` is a nullable Json string array of tool IDs to allow. `null` means all 4 tools are enabled.
+`Agent.toolKeys` is a nullable Json string array of tool IDs to allow. `null` means every tool is enabled.
 
 Governed knowledge adds two separate tool IDs, `searchKnowledge` and `submitLearning`. They are not workspace tools and are excluded when `toolKeys` is null or legacy. Grant each explicitly on the resolved Agent to enable it. Search returns bounded, cited, trust-labeled knowledge as untrusted context; submission captures only local LEARNING items and requires persisted evidence. See [knowledge.md](./knowledge.md) for scope, lifecycle, and limitations.
 

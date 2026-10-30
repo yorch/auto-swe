@@ -5,8 +5,6 @@ steps the step registry holds, and which built-in templates use each. It lists w
 [workflow-nodes.md](./workflow-nodes.md) explains how to use it. This page is generated from
 the code by `yarn docs:inventory`, and a test fails when it no longer matches.
 
-There are 15 node types, 57 registered steps (1 of them internal) and 30 built-in templates.
-
 ## Node types
 
 Each type links to its section of [workflow-nodes.md](./workflow-nodes.md), which documents

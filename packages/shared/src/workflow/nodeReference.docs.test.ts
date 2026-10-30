@@ -174,12 +174,6 @@ describe('docs/workflow-nodes.md', () => {
     expect(HEADINGS).toEqual([...DOC_ORDER]);
   });
 
-  it('states the node-type count the schema has', () => {
-    const m = DOC.match(/The spec\s+supports (\d+) node types/);
-    expect(m, 'an intro sentence "The spec supports N node types"').not.toBeNull();
-    expect(Number(m?.[1])).toBe(SPEC_TYPES.length);
-  });
-
   it('documents every common field in §5', () => {
     const common = chapter('5. Common fields');
     const present = new Set([...SCHEMA_KEYS.values()].flat());

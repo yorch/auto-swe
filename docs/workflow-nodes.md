@@ -5,7 +5,7 @@
 
 A workflow template version is a `WorkflowSpec`: a JSON graph of nodes that the interpreter walks on
 Temporal, one node at a time, from the entry node until a `terminate` node ends the run. The spec
-supports 15 node types. This page is the reference for all of them; for how the engine is put
+supports the node types listed below. This page is the reference for all of them; for how the engine is put
 together see [architecture.md](./architecture.md#4-workflow-engine), and for the vocabulary see
 [concepts.md](./concepts.md). [workflow-inventory.md](./workflow-inventory.md) is the generated
 catalog beside it: every node type and registered step, and which built-in templates use each.
