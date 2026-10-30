@@ -206,40 +206,83 @@ function readTomlString(s: string): string | null {
   return tail === '' || tail.startsWith('#') ? value : null;
 }
 
-/** The right-hand side of `key = …` on `line`, or `null` when the line is not that key. */
-function valueOfKey(line: string, key: string): string | null {
-  if (!line.startsWith(key)) {
+/** The dotted-key segments left of the first `=` on `line` (quotes removed), and its right-hand side. */
+function splitKeyLine(line: string): { segments: string[]; rhs: string } | null {
+  const eq = line.indexOf('=');
+  if (eq <= 0) {
     return null;
   }
-  const rest = line.slice(key.length).trimStart();
-  return rest.startsWith('=') ? rest.slice(1).trim() : null;
+  const segments: string[] = [];
+  let cur = '';
+  let quote: string | null = null;
+  for (const ch of line.slice(0, eq)) {
+    if (quote !== null) {
+      if (ch === quote) {
+        quote = null;
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+    } else if (ch === '.') {
+      segments.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  segments.push(cur.trim());
+  return { rhs: line.slice(eq + 1).trim(), segments };
 }
 
 /** PEP 751 keys that make a `[[packages]]` table something other than an index package, inline or as a sub-table. */
 const PYLOCK_NON_INDEX_KEYS = ['vcs', 'directory', 'archive'];
 
+interface TomlSourceLine {
+  /** The dotted key, quotes removed: `source = …` is `['source']`, `source.git = …` is `['source', 'git']`. */
+  segments: string[];
+  rhs: string;
+}
+
 interface TomlTable {
-  /** Top-level string keys, read only before the first sub-table header. */
+  /** Plain top-level string keys, read only before the first sub-table header. */
   keys: Map<string, string>;
-  /** The raw right-hand side of a top-level `source = …` line. */
-  inlineSource: string | null;
-  /** The `PYLOCK_NON_INDEX_KEYS` present as top-level keys, whatever their value. */
+  /** Every top-level line whose key starts with `source`, whatever its spelling. */
+  sources: TomlSourceLine[];
+  /** The `PYLOCK_NON_INDEX_KEYS` present as the first segment of a top-level key, whatever their value. */
   inlineKeys: Set<string>;
-  /** Header text (`package.source`) → its string keys. */
+  /** Normalised header text (`package.source`) → its string keys. */
   subs: Map<string, Map<string, string>>;
 }
 
-/** The sub-table header text of a `[a.b]` / `[[a.b]]` line. */
+/** The normalised sub-table header of a `[a.b]` / `[[a.b]]` line: no whitespace, no quotes. */
 function headerOf(line: string): string {
   const hash = line.indexOf('#');
   const bare = hash >= 0 ? line.slice(0, hash) : line;
-  return bare.trim().replace(/^\[+/, '').replace(/\]+$/, '').trim();
+  return bare
+    .trim()
+    .replace(/^\[+/, '')
+    .replace(/\]+$/, '')
+    .replace(/[\s"']/g, '');
+}
+
+/** True when a sub-table header is `<parent>.<key>` or nested below it. */
+function hasSubTable(table: TomlTable, parent: string, key: string): boolean {
+  const prefix = `${parent}.${key}`;
+  for (const header of table.subs.keys()) {
+    if (header === prefix || header.startsWith(`${prefix}.`)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
  * The `[[<array>]]` tables of a TOML file. Inside one, only top-level `name`/`version` (and the
- * `source` line) are read; once a `[…]` line opens a sub-table, string keys go to that sub-table
- * so a wheel's or dependency's `version` can never be mistaken for the package's.
+ * `source` and non-index keys) are read; once a `[…]` line opens a sub-table, string keys go to that
+ * sub-table so a wheel's or dependency's `version` can never be mistaken for the package's.
+ * Headers and keys are normalised first (whitespace, quotes, dotted spellings), because the readers
+ * decide that a package is NOT an index package and must fail closed on every valid spelling.
  */
 function readTomlTables(text: string, array: string): TomlTable[] {
   if (text.length > MAX_TEXT_CHARS) {
@@ -254,16 +297,17 @@ function readTomlTables(text: string, array: string): TomlTable[] {
     }
     const line = raw.trim();
     if (line.startsWith('[')) {
-      if (headerOf(line) === array && line.startsWith('[[')) {
+      const header = headerOf(line);
+      if (header === array && line.startsWith('[[')) {
         if (tables.length >= MAX_ENTRIES) {
           break;
         }
-        current = { inlineKeys: new Set(), inlineSource: null, keys: new Map(), subs: new Map() };
+        current = { inlineKeys: new Set(), keys: new Map(), sources: [], subs: new Map() };
         tables.push(current);
         sub = null;
-      } else if (current !== null && headerOf(line).startsWith(`${array}.`)) {
-        sub = current.subs.get(headerOf(line)) ?? new Map<string, string>();
-        current.subs.set(headerOf(line), sub);
+      } else if (current !== null && header.startsWith(`${array}.`)) {
+        sub = current.subs.get(header) ?? new Map<string, string>();
+        current.subs.set(header, sub);
       } else {
         // Another top-level table ends the package.
         current = null;
@@ -274,37 +318,70 @@ function readTomlTables(text: string, array: string): TomlTable[] {
     if (current === null) {
       continue;
     }
-    const target = sub ?? current.keys;
-    for (const key of ['name', 'version', 'type']) {
-      const rhs = valueOfKey(line, key);
-      const value = rhs === null ? null : readTomlString(rhs);
+    const parsed = splitKeyLine(line);
+    if (parsed === null) {
+      continue;
+    }
+    const { segments, rhs } = parsed;
+    const first = segments[0] ?? '';
+    if (segments.length === 1 && (first === 'name' || first === 'version' || first === 'type')) {
+      const value = readTomlString(rhs);
       if (value !== null) {
-        target.set(key, value);
+        (sub ?? current.keys).set(first, value);
       }
     }
-    if (sub === null && current.inlineSource === null) {
-      current.inlineSource = valueOfKey(line, 'source');
-    }
     if (sub === null) {
-      for (const key of PYLOCK_NON_INDEX_KEYS) {
-        if (valueOfKey(line, key) !== null) {
-          current.inlineKeys.add(key);
-        }
+      if (first === 'source') {
+        current.sources.push({ rhs, segments });
+      }
+      if (PYLOCK_NON_INDEX_KEYS.includes(first)) {
+        current.inlineKeys.add(first);
       }
     }
   }
   return tables;
 }
 
-/** An inline `source = { … }` that names a key other than an index. */
-const NON_INDEX_SOURCE_KEY_RE = /[{,\s](?:editable|virtual|path|directory|git|url)\s*=/;
+/** The one spelling of a uv.lock source that is positively the index. */
+const UV_REGISTRY_SOURCE_RE = /^\{\s*registry\s*=\s*(?:"[^"]*"|'[^']*')\s*\}\s*(?:#.*)?$/;
 
-function hasNonIndexInlineSource(source: string | null): boolean {
-  if (source === null) {
+/**
+ * uv.lock skips a package whose `source`, in any spelling, is not positively an inline
+ * `{ registry = "…" }`: a sub-table, a dotted key, a repeated key or a value that does not fit on
+ * the line. A package with no `source` at all is left alone.
+ */
+function uvSourceIsNotProvablyRegistry(table: TomlTable): boolean {
+  if (hasSubTable(table, 'package', 'source')) {
+    return true;
+  }
+  const [only, ...extra] = table.sources;
+  if (only === undefined) {
     return false;
   }
-  const withoutStrings = source.replace(/"[^"]*"|'[^']*'/g, '""');
-  return NON_INDEX_SOURCE_KEY_RE.test(withoutStrings);
+  return extra.length > 0 || only.segments.length !== 1 || !UV_REGISTRY_SOURCE_RE.test(only.rhs);
+}
+
+const POETRY_NON_INDEX_SOURCE_TYPES = ['git', 'directory', 'file', 'url'];
+const POETRY_INLINE_TYPE_RE = /\btype\s*=\s*["']([^"']*)["']/;
+
+/** poetry.lock: whether a package's `source.type` — sub-table, dotted key or inline table — is not the index. */
+function poetrySourceIsNotIndex(table: TomlTable): boolean {
+  const types: string[] = [];
+  const subType = table.subs.get('package.source')?.get('type');
+  if (subType !== undefined) {
+    types.push(subType);
+  }
+  for (const { segments, rhs } of table.sources) {
+    if (segments.length === 1) {
+      const inline = POETRY_INLINE_TYPE_RE.exec(rhs)?.[1];
+      if (inline !== undefined) {
+        types.push(inline);
+      }
+    } else if (segments[1] === 'type') {
+      types.push(readTomlString(rhs) ?? 'git');
+    }
+  }
+  return types.some((t) => POETRY_NON_INDEX_SOURCE_TYPES.includes(t));
 }
 
 function requirementsFromTables(
@@ -328,16 +405,12 @@ function requirementsFromTables(
 
 /** `uv.lock`: `[[package]]` tables; editable, virtual, path, directory, git and url sources are not the index. */
 export function parseUvLock(text: string): PypiRequirement[] {
-  return requirementsFromTables(readTomlTables(text, 'package'), (t) =>
-    hasNonIndexInlineSource(t.inlineSource)
-  );
+  return requirementsFromTables(readTomlTables(text, 'package'), uvSourceIsNotProvablyRegistry);
 }
 
 /** `poetry.lock`: `[[package]]` tables; a `[package.source]` of type git, directory, file or url is not the index. */
 export function parsePoetryLock(text: string): PypiRequirement[] {
-  return requirementsFromTables(readTomlTables(text, 'package'), (t) =>
-    ['git', 'directory', 'file', 'url'].includes(t.subs.get('package.source')?.get('type') ?? '')
-  );
+  return requirementsFromTables(readTomlTables(text, 'package'), poetrySourceIsNotIndex);
 }
 
 /**
@@ -346,7 +419,7 @@ export function parsePoetryLock(text: string): PypiRequirement[] {
  */
 export function parsePylockToml(text: string): PypiRequirement[] {
   return requirementsFromTables(readTomlTables(text, 'packages'), (t) =>
-    PYLOCK_NON_INDEX_KEYS.some((k) => t.inlineKeys.has(k) || t.subs.has(`packages.${k}`))
+    PYLOCK_NON_INDEX_KEYS.some((k) => t.inlineKeys.has(k) || hasSubTable(t, 'packages', k))
   );
 }
 

@@ -183,7 +183,7 @@ cross-origin file outside what the lockfile allows being refused.
 
 ## 5. The proxy
 
-**PyPI route.** `<baseUrl>/pypi/<token>/<registryId>/simple/<project>/` serves a project index and
+**PyPI route.** `<baseUrl>/pypi/<registryId>/simple/<project>/` serves a project index and
 `…/files/<fileId>/<filename>` a file, as `/pypi/<registryId>/…`; the credential is an HTTP Basic
 password equal to the token (the user name is ignored, a Bearer header is not accepted, and Basic is
 honoured only on this route, decided on the normalised path). A request without it gets 401 with a
@@ -388,3 +388,6 @@ under 90%. Cache errors fall through to the upstream.
   a Poetry `legacy` source or a Pipfile `index` naming another index still allowlists `name==version`
   against the one configured upstream, so a public package with the same name and version as an
   internal one is served if the upstream carries it.
+- **The PyPI route needs the proxy at the root of its host.** File links in the rewritten index are
+  root-absolute paths (`/pypi/<registryId>/files/…`), so a `REGISTRY_PROXY_URL` with a path prefix
+  works for npm and Go but not for PyPI.
