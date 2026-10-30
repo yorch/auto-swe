@@ -262,6 +262,16 @@ These tools translate agent calls to `docker exec` commands inside the workspace
 
 `Agent.toolKeys` is a nullable Json string array of tool IDs to allow. `null` means every tool is enabled.
 
+**`browser` is a separate, explicit grant.** It is the one tool key that binds a toolset instead of a
+`docker exec` tool: `browser_start_app`, `browser_navigate`, `browser_click`, `browser_fill`,
+`browser_press`, `browser_select`, `browser_wait`, `browser_snapshot`, `browser_screenshot` and
+`browser_console`. It is granted only when `browser` is named — `null`, `[]` and a list naming only
+workspace tools never grant it — to the implementer path on all three runtimes (Mastra, Pi, Claude
+Code) and to an agent run; an `agent` node in a checkout does not bind it. Screenshots it takes become
+run evidence under `source: 'agent'`, and every page text, title and snapshot it returns is screened
+by the same MCP result screen before the model sees it. See
+[ui-validation.md §Browser tool for agents](./ui-validation.md#browser-tool-for-agents).
+
 Governed knowledge adds two separate tool IDs, `searchKnowledge` and `submitLearning`. They are not workspace tools and are excluded when `toolKeys` is null or legacy. Grant each explicitly on the resolved Agent to enable it. Search returns bounded, cited, trust-labeled knowledge as untrusted context; submission captures only local LEARNING items and requires persisted evidence. See [knowledge.md](./knowledge.md) for scope, lifecycle, and limitations.
 
 ### 3.2 `loadSkill` Tool (always present when skills exist)
@@ -1465,6 +1475,8 @@ The preview body is `{ host?, owner, repo, path?, ref, scriptMode?, scope?, team
 **Cascade:** `loadAgentToolConfig(role, ctx)` in `packages/worker/src/lib/config/agentSkills.ts` (a thin shim over `resolveAgent`) follows the same WORKFLOW_TEMPLATE → CHANNEL → TEAM → ORGANIZATION → GLOBAL order. Returns `null` when the resolved Agent has no `toolKeys`, which means all tools are enabled.
 
 **`mcp` pseudo-tool key:** in addition to the workspace tool IDs, the worker honours an `'mcp'` entry in `toolKeys` to gate MCP tool loading (see section 3.5). It is not part of `IMPLEMENTER_TOOL_IDS` but is included in the canonical `AGENT_TOOL_KEYS` set (`packages/shared/src/workflow/stepRegistry.ts`), so the gateway tool-key validation accepts it. A non-empty `toolKeys` must explicitly list `'mcp'` to enable MCP; absence disables it, mirroring the built-in gating.
+
+**`browser` grant:** likewise not part of `IMPLEMENTER_TOOL_IDS` but accepted by the gateway (`AGENT_TOOL_KEYS`). Unlike the workspace tools, `null` never grants it: the key must name `browser` (§3.1).
 
 **Agent runs read `toolKeys` differently.** The implementer reads `null`, `[]` and a list with no
 workspace tool in it as every tool. An [agent run](./agent-runs.md) launches an arbitrary library agent

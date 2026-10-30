@@ -776,6 +776,8 @@ erDiagram
     WorkflowRun ||--o{ WorkflowStep : contains
     WorkflowRun ||--o{ WorkflowArtifact : stores
     WorkflowRun ||--o{ AgentTrace : traces
+    WorkflowRun ||--o{ RunEvidence : records
+    WorkflowArtifact ||--o| RunEvidence : backs
 
     ActiveWorkflow ||--o{ PullRequest : opens
     ActiveWorkflow ||--o{ MemoryItem : generates
@@ -797,6 +799,7 @@ erDiagram
 | Execution state | `ActiveWorkflow`, `PullRequest` | Temporal ↔ DB state sync |
 | Workflow engine | `WorkflowTemplate`, `WorkflowTemplateVersion`, `WorkflowRun`, `WorkflowStep`, `WorkflowArtifact`, `WorkflowShellAudit` | Versioning, run tracking, artifact storage, shell audit |
 | Observability | `AgentTrace` | Per-activity tool-call / LLM-response / activity-event rows |
+| UI evidence | `RunEvidence` | One screenshot, video, trace or log attached to a run, backed 1:1 by a `WorkflowArtifact`; carries kind, source (`uiVerify` or `agent`), workflow node, attempt, caption, page URL and image dimensions. Read through short-lived user-bound links ([ui-validation.md](./ui-validation.md)) |
 | Agent transcripts | `AgentTranscript`, `AgentTranscriptPart`, `TranscriptAccessLog` | One transcript per activity attempt, its gzipped NDJSON parts (each a `WorkflowArtifact` with a sha256), and the audit trail of who read, exported, verified or held them. See [transcripts.md](./transcripts.md) |
 | Memory | `MemoryItem`, `LessonFlag` | pgvector semantic memory, 1536-dim with an HNSW index; `scope` partitions domains (`swe-lessons`, `channel-memory`); `entityType`/`entityId` are written alongside the repo and channel columns, but every reader filters on `repo_id`, `channel_id`, `team_id` or `org_id`; a `LessonFlag` is one reader's report that a repository lesson is wrong |
 | Agent config | `Agent`, `AgentSkillRef`, `Skill`, `SkillRevision`, `SkillSource` | Versioned agents scoped GLOBAL / ORGANIZATION / TEAM / CHANNEL / WORKFLOW_TEMPLATE, joined to skills via `AgentSkillRef` |
@@ -1196,6 +1199,15 @@ anything else in the system. `createWorkspace()` (`activities/workspace.ts`) app
 | Docker socket | **Not** mounted into the workspace — there is no daemon-level escape path |
 | Timed-out commands | Every `docker exec` carries a per-call `AUTO_SWE_EXEC_ID` tag; when a command overruns its timeout, its whole in-container process tree (found by that tag in `/proc/*/environ`) is stopped and killed, not just the local `docker exec` client. The container runs under `--init`, so the killed processes are reaped rather than left holding PIDs |
 | Provisioning failure | The container is named before `docker run`, and any failure from `docker run` onward removes it by that name |
+
+**The browser runs inside that same container.** UI validation does not get a privileged sidecar or
+the Docker socket: a driver daemon starts beside the app under test, Chromium reaches the preview over
+`localhost`, and every other host is blocked in a Playwright route handler except those the recipe
+allowlists. Chromium runs without its own sandbox (`chromiumSandbox: false`) in a container that
+already drops every capability and forbids privilege escalation, and its egress is the workspace's own
+proxy configuration. It needs an image that carries Playwright and a glibc Chromium —
+`defaults/Dockerfile.node-browser`, which is not the default Alpine Node image
+([ui-validation.md](./ui-validation.md)).
 
 Everything the worker does to a workspace goes through `WorkspaceBackend`
 (`lib/workspaceBackend/`): create, attach, exec (capture and throwing variants), spawn, copy
@@ -1821,3 +1833,17 @@ Current constraints of the system as built. Deliberate product boundaries are in
   bundle-installed ones are not in it, so "which templates use this step" counts built-in templates
   only; the assistant reads a team's templates through `callApi`. A `searchDocs` section is
   capped, so a long table answered from the docs shows only some of its rows.
+- **UI evidence is stored, then linked.** A recording, trace or screenshot is written to the artifact
+  store as a ready artifact before its `RunEvidence` row is created. A worker that dies between the
+  two writes leaves a ready `ui.*` artifact no evidence row points at; the retention sweep reads
+  `RunEvidence`, so that object outlives the configured retention. The compensating delete covers a
+  failed insert but not a killed process, and the existing ready-artifact orphan sweep handles
+  transcript parts only. The payload also transfers through the worker, not a streaming upload: a
+  50 MB recording is held in worker memory while it is read out of the container and written to the
+  store.
+- **The browser image is not published with the executor images, and it is not the default image.**
+  `docker.yml` builds and publishes `executor-node`, `executor-python`, `executor-jvm` and
+  `executor-go`; `defaults/Dockerfile.node-browser` is built only by the CI browser job. A
+  deployment that wants UI validation builds it and names it as the repository's executor image
+  (or leaves the repository without a preview recipe, which skips the step). A preview service
+  sidecar running under Kubernetes as root or with added capabilities needs a namespace exception.

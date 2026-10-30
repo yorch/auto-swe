@@ -85,6 +85,7 @@ flowchart TB
         IMPL[Implementer\nDinD TDD loop]
         REVNET[Review network\nSecurity / Domain / Performance]
         GATES[Quality gates\nlint / typecheck / test / build / vuln / perf]
+        UIVAL[App preview validation\nheadless browser + run evidence]
         CIHEAL[CI self-healing loop]
         MEM[Semantic memory\npgvector lessons]
     end
@@ -114,6 +115,7 @@ flowchart TB
 | **Skills** | Built-in prompt-fragment skills; progressive disclosure (`loadSkill`) for the implementer; custom skills with content scanning + verification flag; scope cascade |
 | **Multi-model** | DB-driven model selection per role per scope; Anthropic / OpenAI / Google + any OpenAI-compatible provider; AES-256-GCM encrypted credentials. See [model-configuration.md](./model-configuration.md). |
 | **Workflow engine** | Node types (incl. the declarative `agent` node and the `eval` node); versioned immutable template versions; visual React-Flow editor; deterministic A/B routing; per-template/team/global analytics; frozen spec snapshot per run |
+| **UI validation & evidence** | A per-repository app-preview recipe; a `uiVerify` gate step that runs a headless Chromium beside the app in the workspace, checks smoke paths and an optional e2e command, and records screenshots, video, Playwright traces and app logs as access-controlled run evidence shown on the run page and linked from the PR; an explicitly granted `browser` tool for agents. See [ui-validation.md](./ui-validation.md). |
 | **Orchestration** | Temporal durable execution; budget tiers (STANDARD / LARGE / EPIC) with hard token caps and `BUDGET_EXCEEDED` enforcement |
 | **Memory** | pgvector (HNSW) semantic lessons; per-repo cosine retrieval at run start; weekly consolidation ("dreaming") of similar lessons |
 | **Security** | Runtime scanners (shell, sensitive-file, pre-write content, code-security, skill-content, LLM-output, memory-content); built-in admin-extensible regex patterns, grouped by type (INJECTION, EXFILTRATION, SHELL_COMMAND, CODE_SECURITY, SENSITIVE_FILE, PII); locked-down ephemeral shell containers |
@@ -138,15 +140,22 @@ a composition of ordinary node types, not a hard-coded pipeline. (Sequence diagr
 flowchart LR
     A[Submit ticket] --> B[Validate context\n+ retrieve lessons]
     B --> C[Implement\nTDD loop max 5]
-    C --> D[Review network\nSec / Domain / Perf]
-    D --> E[Quality gates]
-    E --> F[Open PR]
-    F --> G{CI}
-    G -->|fail| H[CI self-heal\nread logs, push fix]
-    H --> G
-    G -->|pass| I[Await human merge\nup to 7 days]
-    I --> J[Commit lesson\nto memory]
+    C --> D[Verify app preview\nbrowser + run evidence]
+    D --> E[Review network\nSec / Domain / Perf]
+    E --> F[Quality gates]
+    F --> G[Open PR]
+    G --> H{CI}
+    H -->|fail| I[CI self-heal\nread logs, push fix]
+    I --> H
+    H -->|pass| J[Await human merge\nup to 7 days]
+    J --> K[Commit lesson\nto memory]
 ```
+
+The preview check runs the repository's configured recipe in the workspace the implementation
+passed: it starts the app, visits the smoke paths, saves a screenshot, a recording, a trace and the
+app log as run evidence, and runs the e2e command when one is configured. A repository with no
+`previewConfig` skips it; the built-in template treats a failed check as a warning on the run
+([ui-validation.md](./ui-validation.md)).
 
 ### 5.2 Multi-repo epic
 

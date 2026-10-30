@@ -46,6 +46,14 @@ credential, and a tag that moves changes what runs there without a deploy. A GHC
 until its visibility is changed, so a worker, and on Kubernetes the pull secret named in
 `K8S_WORKSPACE_IMAGE_PULL_SECRETS`, needs access to it.
 
+The browser image is a fifth curated Dockerfile, `defaults/Dockerfile.node-browser`, and `docker.yml`
+does **not** build it — only the CI browser test does. Build it where the workers can pull it
+(`docker build -f defaults/Dockerfile.node-browser -t <registry>/executor-node-browser:<tag> defaults`)
+and set it as a repository's executor image when the run should verify the app preview
+([`ui-validation.md`](./ui-validation.md)). It is Debian-based because Playwright's Chromium needs
+glibc, and it carries the same Node toolchain as the Node image (Corepack, Yarn and pnpm) so a
+repository's own gates still run in it. A repository without it simply skips the preview check.
+
 Each build also records its settings on the connection (`executorImageBuild`). A weekly schedule
 (`cron: '0 6 * * 1'`) rebuilds every active repository that has such a record, so the workflow's
 `GATEWAY_TOKEN` must be able to list repositories as well as update them.

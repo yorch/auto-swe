@@ -73,6 +73,16 @@ starts the disarm sweep described in
 [pr-evaluation.md](./pr-evaluation.md#8-when-auto-merge-is-armed); so does any change to, or clearing of,
 `prEvaluation.botApprovalPaths`, `prEvaluation.botApprovalMaxLines` or `prEvaluation.botApprovalMaxFiles`.
 
+The `uiValidation` group holds the bounds and switches of run UI evidence: all ADMIN-only and GLOBAL
+only, read where they are used rather than pinned to a run.
+`uiValidation.agentRecordVideo` (default on) decides whether an agent's browser session records video;
+`uiValidation.evidenceRetentionDays` (default 90) is how long the daily sweep keeps evidence; and
+`uiValidation.maxScreenshotBytes` (5,000,000), `uiValidation.maxVideoBytes` (50,000,000) and
+`uiValidation.maxEvidencePerRun` (200) bound what is kept. `uiValidation.prInlineImages` (default off)
+allows the PR body to inline screenshots, which requires `UI_EVIDENCE_PUBLIC_BUCKET` and
+`UI_EVIDENCE_PUBLIC_BASE_URL` in the worker's environment as well. See
+[ui-validation.md](./ui-validation.md).
+
 The `models` group holds `models.privateNetworkHosts` (ADMIN-only, GLOBAL only, default empty): hosts a
 provider credential's `apiBase` may name even though they are, or resolve to, a private address. It lifts
 the private-address refusal everywhere the host is checked. Saving a credential checks the `apiBase` as
