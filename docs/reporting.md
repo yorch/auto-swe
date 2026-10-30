@@ -65,7 +65,11 @@ projection from less than one elapsed day is still shown and marked low confiden
 prioritizes actual overspend, projected overspend, an alert threshold, and then an in-budget state.
 Organizations without a cap show `no_cap`. The report lists the five highest-cost runs started in
 the current month for each organization, selected by the run's persisted organization attribution
-(`WorkflowRun.attributedOrgId`), the same field the other reports scope by; month-to-date spend
+(`WorkflowRun.attributedOrgId`), the same field the other reports scope by. An ORG_ADMIN sees
+those runs across the whole organization only when a platform ADMIN has enabled
+`analytics.orgWideReports` for it; otherwise the list is limited to the runs the caller can see
+through their teams, reachable repositories or own launches, as in the other reports. A platform
+ADMIN sees every run. Month-to-date spend
 keeps its own billing ownership precedence, so the two can differ for a run whose attribution and
 billing disagree.
 

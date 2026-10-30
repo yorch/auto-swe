@@ -804,6 +804,11 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
       if (user.role !== 'ADMIN' && organizations.length === 0) {
         return reply.status(403).send({ error: 'ORG_ADMIN membership is required' });
       }
+      const scope = await resolveWorkflowRunAttributionScope(
+        fastify.prisma,
+        user,
+        request.repoAccessGate
+      );
       const organizationsTruncated = organizations.length > REPORT_ROW_CAP;
       const orgs = organizations.slice(0, REPORT_ROW_CAP);
       const now = new Date();
@@ -828,8 +833,13 @@ export const reportsRoutes: FastifyPluginAsync = async (fastify) => {
                 },
                 take: 6,
                 where: {
-                  attributedOrgId: org.id,
-                  startedAt: { gte: monthStart, lt: monthEnd },
+                  AND: [
+                    {
+                      attributedOrgId: org.id,
+                      startedAt: { gte: monthStart, lt: monthEnd },
+                    },
+                    workflowRunAttributionWhere(scope),
+                  ],
                 },
               })
           ),

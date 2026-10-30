@@ -1,11 +1,16 @@
+import { resolveSetting } from '@auto-swe/shared/config';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { reportsRoutes } from './reports.js';
 
 vi.mock('@auto-swe/shared/config', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   resolveSetting: vi.fn(async () => true),
+}));
+
+vi.mock('@auto-swe/shared/lib/billing', () => ({
+  orgMonthSpend: vi.fn(async () => ({ totalUsd: 0 })),
 }));
 
 function mockPrisma() {
@@ -96,6 +101,62 @@ describe('report routes', () => {
         where: { memberships: { some: { role: 'ORG_ADMIN', userId: 'user-1' } } },
       })
     );
+  });
+
+  describe('budget top runs', () => {
+    const budgetOrg = {
+      budgetAlertThresholdPercent: 80,
+      id: 'org-1',
+      monthlyBudgetUsdCents: null,
+      name: 'Org',
+    };
+
+    async function topRunsWhere(role: string, orgWide: boolean) {
+      vi.mocked(resolveSetting).mockResolvedValue(orgWide);
+      const { app, prisma } = await buildApp(role);
+      prisma.organization.findMany.mockResolvedValue([budgetOrg]);
+      prisma.organizationMembership.findMany.mockResolvedValue([{ orgId: 'org-1' }]);
+      const response = await app.inject({
+        headers: AUTH,
+        method: 'GET',
+        url: '/api/v1/reports/budget',
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      const topRuns = prisma.workflowRun.findMany.mock.calls.find(
+        ([args]) => args?.take === 6
+      )?.[0];
+      return topRuns?.where.AND;
+    }
+
+    afterEach(() => {
+      vi.mocked(resolveSetting).mockResolvedValue(true);
+    });
+
+    it('limits an ORG_ADMIN without org-wide reports to their scoped runs', async () => {
+      const and = await topRunsWhere('ENGINEER', false);
+      expect(and).toContainEqual(expect.objectContaining({ attributedOrgId: 'org-1' }));
+      expect(and).toContainEqual({
+        OR: [
+          { attributedTeamId: { in: [] } },
+          { attributedOrgId: { in: [] } },
+          { attributedRepoId: { in: [] } },
+          { launchedById: 'user-1' },
+        ],
+      });
+    });
+
+    it('lets an ORG_ADMIN with org-wide reports see the organization runs', async () => {
+      const and = await topRunsWhere('ENGINEER', true);
+      expect(and).toContainEqual({
+        OR: expect.arrayContaining([{ attributedOrgId: { in: ['org-1'] } }]),
+      });
+    });
+
+    it('does not narrow the organization runs for an ADMIN', async () => {
+      const and = await topRunsWhere('ADMIN', false);
+      expect(and).toContainEqual(expect.objectContaining({ attributedOrgId: 'org-1' }));
+      expect(and).toContainEqual({});
+    });
   });
 
   it('requires an engineer-level role for delivery, quality, automation, and approval reports', async () => {

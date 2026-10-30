@@ -157,6 +157,9 @@ hints reduce rendering work; the section does not use a dedicated virtualization
   its subdomains), so git traffic to it, including a GitHub Enterprise host on a private address, is neither subject to the team
   allowlist nor recorded as proxy rows. Other hosts a run clones from (dependency repositories on
   a different host) go through the proxy and need an allowlist entry.
+- The same `NO_PROXY` entry covers the git host's subdomains, so workspace traffic to hosts such
+  as `api.github.com`, `gist.github.com` and `uploads.github.com` also bypasses the team
+  allowlist and is not recorded as proxy rows.
 - The proxy is cooperative, not transparent interception. Direct sockets and clients that ignore
   proxy environment variables bypass its enforcement and logging. The DNS filter remains; its
   hostname restriction alone does not prevent literal-IP connections.

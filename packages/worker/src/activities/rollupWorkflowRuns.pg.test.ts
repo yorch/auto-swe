@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { WORKFLOW_RUN_ROLLUP_BUCKET_VERSION } from '@auto-swe/shared/workflow';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
@@ -158,15 +159,17 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
     const [rows, humanRows, reviewRows] = await Promise.all([
       runUnscoped('read the workflow-run rollup test fixture', ['WorkflowRunDailyRollup'], () =>
         prisma.workflowRunDailyRollup.findMany({
-          where: { bucketVersion: 4, day: dayStart },
+          where: { bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION, day: dayStart },
         })
       ),
       runUnscoped('read the human-step rollup test fixture', ['HumanStepDailyRollup'], () =>
-        prisma.humanStepDailyRollup.findMany({ where: { bucketVersion: 4, day: dayStart } })
+        prisma.humanStepDailyRollup.findMany({
+          where: { bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION, day: dayStart },
+        })
       ),
       runUnscoped('read the review-verdict rollup test fixture', ['ReviewVerdictDailyRollup'], () =>
         prisma.reviewVerdictDailyRollup.findMany({
-          where: { bucketVersion: 4, day: dayStart },
+          where: { bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION, day: dayStart },
         })
       ),
     ]);
@@ -189,12 +192,16 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
       () => prisma.workflowRunDailyRollup.count({ where: { day: emptyWindow } })
     );
     const markers = await runUnscoped('read the built-day markers', ['RollupBuiltDay'], () =>
-      prisma.rollupBuiltDay.findMany({ where: { bucketVersion: 4, day: emptyWindow } })
+      prisma.rollupBuiltDay.findMany({
+        where: { bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION, day: emptyWindow },
+      })
     );
     expect(emptyRows).toBe(0);
     expect(markers.length).toBeGreaterThan(0);
-    expect(await prisma.rollupBuiltDay.count({ where: { bucketVersion: 4, day: dayStart } })).toBe(
-      1
-    );
+    expect(
+      await prisma.rollupBuiltDay.count({
+        where: { bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION, day: dayStart },
+      })
+    ).toBe(1);
   });
 });

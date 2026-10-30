@@ -16,7 +16,7 @@ export function workflowRunRollupHorizonMs(nowMs: number): number {
  * single transaction, so one marker covers all three; a day with no runs has no rows and is
  * still covered.
  */
-export async function coveredRollupDays(
+export async function coveredWorkflowRunBuiltDays(
   prisma: Pick<PrismaClient, 'rollupBuiltDay'>,
   startMs: number,
   endMs: number,
@@ -33,9 +33,9 @@ export async function coveredRollupDays(
   );
 }
 
-export const coveredWorkflowRunRollupDays = coveredRollupDays;
-export const coveredHumanStepRollupDays = coveredRollupDays;
-export const coveredReviewVerdictRollupDays = coveredRollupDays;
+export const coveredWorkflowRunRollupDays = coveredWorkflowRunBuiltDays;
+export const coveredHumanStepRollupDays = coveredWorkflowRunBuiltDays;
+export const coveredReviewVerdictRollupDays = coveredWorkflowRunBuiltDays;
 
 export function startedAtWhere(
   ranges: readonly Range[]
