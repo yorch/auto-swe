@@ -164,6 +164,16 @@ jobs:
           docker build -f defaults/Dockerfile.node -t asw-executor-node:ci defaults
           yarn test packages/worker/src/lib/registryProxy/clients.docker.test.ts
 
+      # A real Go toolchain against the registry proxy through the Go executor image — module
+      # fetches in lockfile and open mode, and the denial text, end to end.
+      - name: Go module proxy client tests (Docker-backed)
+        env:
+          GO_PROXY_DOCKER_TEST: '1'
+          GO_PROXY_TEST_IMAGE: asw-executor-go:ci
+        run: |
+          docker build -f defaults/Dockerfile.go -t asw-executor-go:ci defaults
+          yarn test packages/worker/src/lib/registryProxy/goClient.docker.test.ts
+
       # Builds each curated defaults/Dockerfile.<stack> and checks it against the executor
       # image contract and its own toolchain, as the user the executor runs as.
       - name: Curated executor images (Docker-backed)

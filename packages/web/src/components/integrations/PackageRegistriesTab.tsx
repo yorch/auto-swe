@@ -23,6 +23,7 @@ const EMPTY: PackageRegistryBody = {
   accessMode: 'lockfile',
   allowPrivateNetwork: false,
   authKind: 'bearer',
+  ecosystem: 'npm',
   name: '',
   npmScopes: [],
   teamId: null,
@@ -49,7 +50,9 @@ function RegistryModal({
     const body = { ...form, token: form.token || undefined };
     try {
       if (registry) {
-        await update.mutateAsync(body);
+        // The ecosystem is immutable once created.
+        const { ecosystem: _ecosystem, ...changes } = body;
+        await update.mutateAsync(changes);
       } else {
         await create.mutateAsync(body);
       }
@@ -67,6 +70,30 @@ function RegistryModal({
     >
       <div className="space-y-4">
         {error && <Alert variant="error">{error}</Alert>}
+        {registry ? (
+          <p className="text-sm text-paper-300">
+            Ecosystem: {form.ecosystem === 'go' ? 'Go' : 'npm'}
+          </p>
+        ) : (
+          <label className="block text-sm text-paper-300">
+            Ecosystem{' '}
+            <select
+              className="rounded border border-ink-400 bg-ink-700 px-2 py-1"
+              onChange={(e) => {
+                const ecosystem = e.target.value as 'npm' | 'go';
+                setForm({
+                  ...form,
+                  ecosystem,
+                  npmScopes: ecosystem === 'go' ? [] : form.npmScopes,
+                });
+              }}
+              value={form.ecosystem}
+            >
+              <option value="npm">npm</option>
+              <option value="go">Go</option>
+            </select>
+          </label>
+        )}
         <Input
           label="Name"
           onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -80,20 +107,26 @@ function RegistryModal({
           required
           value={form.upstreamUrl}
         />
-        <Input
-          hint="Comma-separated, e.g. @acme,@acme-internal. Empty means the default registry for unscoped packages."
-          label="npm scopes"
-          onChange={(e) =>
-            setForm({
-              ...form,
-              npmScopes: e.target.value
-                .split(',')
-                .map((s) => s.trim())
-                .filter(Boolean),
-            })
-          }
-          value={form.npmScopes.join(',')}
-        />
+        {form.ecosystem === 'go' ? (
+          <p className="text-sm text-paper-400">
+            A Go registry has no scopes: it serves every module for its team.
+          </p>
+        ) : (
+          <Input
+            hint="Comma-separated, e.g. @acme,@acme-internal. Empty means the default registry for unscoped packages."
+            label="npm scopes"
+            onChange={(e) =>
+              setForm({
+                ...form,
+                npmScopes: e.target.value
+                  .split(',')
+                  .map((s) => s.trim())
+                  .filter(Boolean),
+              })
+            }
+            value={form.npmScopes.join(',')}
+          />
+        )}
         <Input
           hint={
             registry
@@ -164,6 +197,7 @@ const columns: DataTableColumn<PackageRegistryRow>[] = [
     primary: true,
     secondary: (r) => r.upstreamUrl,
   },
+  { cell: (r) => r.ecosystem, header: 'Ecosystem', id: 'ecosystem' },
   {
     cell: (r) => (r.npmScopes.length ? r.npmScopes.join(', ') : 'default'),
     header: 'Scopes',
@@ -184,7 +218,7 @@ export function PackageRegistriesTab() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-sm text-paper-400">
-          npm registries workspaces install through the worker's registry proxy. The upstream
+          npm and Go registries workspaces install through the worker's registry proxy. The upstream
           credential stays in the worker; a workspace holds only its own proxy token.
         </p>
         <Button onClick={() => setModal('create')}>Add registry</Button>
@@ -233,6 +267,7 @@ export function PackageRegistriesTab() {
             accessMode: modal.accessMode,
             allowPrivateNetwork: modal.allowPrivateNetwork,
             authKind: modal.authKind,
+            ecosystem: modal.ecosystem,
             isActive: modal.isActive,
             name: modal.name,
             npmScopes: modal.npmScopes,

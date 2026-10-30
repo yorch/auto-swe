@@ -86,6 +86,7 @@ function summary(row: Row) {
   return {
     accessMode: p.accessMode,
     authKind: p.authKind,
+    ecosystem: p.ecosystem,
     hasToken: p.hasToken,
     name: p.name,
     npmScopes: p.npmScopes,
@@ -105,15 +106,35 @@ function tokenColumns(token: string) {
   };
 }
 
+const GO_HAS_NO_SCOPES = 'A Go registry has no scopes: it serves every module for its team';
+
+/** The Go proxy appends paths to the upstream, so it must be a bare base URL. */
+function goUrlProblem(url: string): string | null {
+  const parsed = new URL(url);
+  if (parsed.username || parsed.password) {
+    return 'A Go registry URL must not carry credentials; put them in the token field';
+  }
+  if (url.includes('?') || url.includes('#')) {
+    return 'A Go registry URL must not carry a query string or a fragment';
+  }
+  return null;
+}
+
 /**
  * Write-time uniqueness, as a 409 problem string or null: among active rows
- * of one team group (null is its own group), at most one default registry and
- * each scope at most once. `excludeId` keeps a PATCH from colliding with
+ * of one ecosystem and team group (null is its own group), at most one default
+ * registry and each scope at most once. A Go registry has no scopes, so its
+ * only key is the default one. `excludeId` keeps a PATCH from colliding with
  * itself.
  */
 async function scopeProblem(
   prisma: { packageRegistry: { findMany: (a: unknown) => Promise<Row[]> } },
-  candidate: { isActive: boolean; npmScopes: string[]; teamId: string | null },
+  candidate: {
+    ecosystem: string;
+    isActive: boolean;
+    npmScopes: string[];
+    teamId: string | null;
+  },
   excludeId?: string
 ): Promise<string | null> {
   if (!candidate.isActive) {
@@ -121,6 +142,7 @@ async function scopeProblem(
   }
   const rows = (await prisma.packageRegistry.findMany({
     where: {
+      ecosystem: candidate.ecosystem,
       id: excludeId ? { not: excludeId } : undefined,
       isActive: true,
       teamId: candidate.teamId,
@@ -130,6 +152,9 @@ async function scopeProblem(
   for (const row of rows) {
     const rowKeys = row.npmScopes.length ? row.npmScopes : [''];
     const clash = candKeys.find((k) => rowKeys.includes(k));
+    if (clash === '' && candidate.ecosystem === 'go') {
+      return `an active default Go registry already exists for ${candidate.teamId ? 'this team' : 'all teams'} (${row.name})`;
+    }
     if (clash === '') {
       return `an active default registry already exists for ${candidate.teamId ? 'this team' : 'all teams'} (${row.name})`;
     }
@@ -172,7 +197,17 @@ export const packageRegistryRoutes: FastifyPluginAsync = async (fastify) => {
       if (!safety.ok) {
         return sendError(reply, 400, 'BASE_URL_REFUSED', safety.reason);
       }
+      if (body.ecosystem === 'go') {
+        if (body.npmScopes.length) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', GO_HAS_NO_SCOPES);
+        }
+        const urlProblem = goUrlProblem(upstreamUrl);
+        if (urlProblem) {
+          return sendError(reply, 400, 'BASE_URL_REFUSED', urlProblem);
+        }
+      }
       const problem = await scopeProblem(fastify.prisma as never, {
+        ecosystem: body.ecosystem,
         isActive: true,
         npmScopes: body.npmScopes,
         teamId: body.teamId,
@@ -235,9 +270,19 @@ export const packageRegistryRoutes: FastifyPluginAsync = async (fastify) => {
       if (!safety.ok) {
         return sendError(reply, 400, 'BASE_URL_REFUSED', safety.reason);
       }
+      if (existing.ecosystem === 'go') {
+        if (body.npmScopes?.length) {
+          return sendError(reply, 400, 'VALIDATION_ERROR', GO_HAS_NO_SCOPES);
+        }
+        const urlProblem = goUrlProblem(nextUrl);
+        if (urlProblem) {
+          return sendError(reply, 400, 'BASE_URL_REFUSED', urlProblem);
+        }
+      }
       const problem = await scopeProblem(
         fastify.prisma as never,
         {
+          ecosystem: existing.ecosystem,
           isActive: body.isActive ?? existing.isActive,
           npmScopes: body.npmScopes ?? existing.npmScopes,
           teamId: body.teamId === undefined ? existing.teamId : body.teamId,

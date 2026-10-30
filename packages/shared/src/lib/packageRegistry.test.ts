@@ -1,7 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { resolvePackageRegistries } from './packageRegistry.js';
+import { registriesFor, resolvePackageRegistries } from './packageRegistry.js';
 
-const row = (id: string, teamId: string | null, npmScopes: string[] = [], isActive = true) => ({
+const row = (
+  id: string,
+  teamId: string | null,
+  npmScopes: string[] = [],
+  isActive = true,
+  ecosystem?: string
+) => ({
+  ecosystem,
   id,
   isActive,
   npmScopes,
@@ -46,5 +53,49 @@ describe('resolvePackageRegistries', () => {
     const rows = [row('off', null, [], false), row('other', 'team-b')];
     expect(resolvePackageRegistries(rows, 'team-a')).toEqual([]);
     expect(resolvePackageRegistries(rows, null)).toEqual([]);
+  });
+});
+
+describe('registriesFor', () => {
+  const rows = [
+    row('npm-g', null),
+    row('npm-implicit', null, ['@acme'], true, undefined),
+    row('npm-explicit', null, [], true, 'npm'),
+    row('go-g', null, [], true, 'go'),
+    row('go-t', 'team-a', [], true, 'go'),
+    row('go-other', 'team-b', [], true, 'go'),
+  ];
+
+  it('treats a row with no ecosystem as npm', () => {
+    expect(registriesFor(rows, 'npm').map((r) => r.id)).toEqual([
+      'npm-g',
+      'npm-implicit',
+      'npm-explicit',
+    ]);
+    expect(registriesFor(rows, 'go').map((r) => r.id)).toEqual(['go-g', 'go-t', 'go-other']);
+  });
+
+  it('resolves go rows as one default, a team row beating a global one', () => {
+    const forTeam = resolvePackageRegistries(registriesFor(rows, 'go'), 'team-a');
+    expect(forTeam.map((r) => [r.registry.id, r.isDefault, r.scopes])).toEqual([
+      ['go-t', true, []],
+    ]);
+    const noTeamRow = resolvePackageRegistries(registriesFor(rows, 'go'), 'team-c');
+    expect(noTeamRow.map((r) => [r.registry.id, r.isDefault])).toEqual([['go-g', true]]);
+  });
+
+  it('makes a go row with no scopes the default, whatever its npm neighbours claim', () => {
+    const only = [row('go-1', null, [], true, 'go')];
+    const [resolved] = resolvePackageRegistries(registriesFor(only, 'go'), null);
+    expect(resolved?.isDefault).toBe(true);
+  });
+
+  it('never lets go rows affect npm resolution once filtered', () => {
+    const mixed = [row('npm-g', null), row('go-t', 'team-a', [], true, 'go')];
+    // Unfiltered, the go team row would shadow the npm default.
+    expect(resolvePackageRegistries(mixed, 'team-a').map((r) => r.registry.id)).toEqual(['go-t']);
+    expect(
+      resolvePackageRegistries(registriesFor(mixed, 'npm'), 'team-a').map((r) => r.registry.id)
+    ).toEqual(['npm-g']);
   });
 });

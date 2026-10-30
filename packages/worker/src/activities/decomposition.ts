@@ -424,7 +424,7 @@ async function provisionMergeWorkspace(
     executorImageFor(repo),
     undefined,
     undefined,
-    { teamId: repo.teamId }
+    { detectedStack: repo.detectedStack, teamId: repo.teamId }
   );
   heartbeat(`${label}: workspace provisioned`);
 

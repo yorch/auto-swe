@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { detectedStacks } from '@auto-swe/shared/lib/stackDetection';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import type { CapturedResult, OnTimeout } from '../lib/execUtils.js';
@@ -602,7 +603,14 @@ export async function createWorkspace(
    * when `checkoutSha` is set (the pinned-fixture path takes precedence).
    */
   existingBranch?: boolean,
-  options?: { teamId?: string | null }
+  options?: {
+    teamId?: string | null;
+    /**
+     * The repository's stored stack detection (`repo.detectedStack`). It decides which
+     * non-npm registries are wired; absent or unusable means "unknown".
+     */
+    detectedStack?: unknown;
+  }
 ): Promise<Workspace> {
   // Container caps, default base image and metadata-blocking policy all come
   // from the environment. A caller-supplied `image` still wins (executor-image
@@ -667,7 +675,14 @@ export async function createWorkspace(
   // lockfile allowlist is set — a state the agent never reaches.
   let registry: WorkspaceRegistryAccess | null = null;
   try {
-    registry = await beginWorkspaceRegistries(options?.teamId ?? null, containerName);
+    // A detected non-Go repository is not given a Go proxy it has no use for (a smaller
+    // reach for the token). An unknown detection wires Go: the registry only exists when
+    // the team configured one, and a Go module fetched around it would bypass the allowlist.
+    const stacks = detectedStacks(options?.detectedStack);
+    const wantGo = stacks === null || stacks.includes('go');
+    registry = await beginWorkspaceRegistries(options?.teamId ?? null, containerName, {
+      go: wantGo,
+    });
   } catch (err) {
     // A resolution/registration failure fails workspace creation — a workspace
     // with the wrong registries (or none, when some should apply) is not safe
@@ -768,37 +783,40 @@ export async function createWorkspace(
     );
 
     if (registry) {
-      // npmrc via stdin: the token lands in a file, never on a command line.
-      const npmrc = renderNpmrc(registry.registries, registry.baseUrl, registry.token);
-      await rootExec('mkdir -p /workspace/.auto-swe');
-      await backend.exec(
-        handle,
-        ['sh', '-c', 'cat > /workspace/.auto-swe/npmrc && chmod 600 /workspace/.auto-swe/npmrc'],
-        {
-          heartbeatLabel: 'workspace: writing registry config',
-          stdin: npmrc,
+      // A Go-only workspace has no npm registry, so it gets none of the npm client files.
+      if (registry.registries.some((r) => r.ecosystem === 'npm')) {
+        // npmrc via stdin: the token lands in a file, never on a command line.
+        const npmrc = renderNpmrc(registry.registries, registry.baseUrl, registry.token);
+        await rootExec('mkdir -p /workspace/.auto-swe');
+        await backend.exec(
+          handle,
+          ['sh', '-c', 'cat > /workspace/.auto-swe/npmrc && chmod 600 /workspace/.auto-swe/npmrc'],
+          {
+            heartbeatLabel: 'workspace: writing registry config',
+            stdin: npmrc,
+          }
+        );
+        // The same npmrc lands in the exec user's home: Yarn classic reads
+        // `~/.npmrc` (it never honours NPM_CONFIG_USERCONFIG), and npm/pnpm pick
+        // it up too — the project .npmrc a repo might carry cannot weaken it.
+        const home = (await rootExec('echo $HOME')).trim();
+        await backend.exec(
+          handle,
+          ['sh', '-c', `cat > ${shellQuote(home)}/.npmrc && chmod 600 ${shellQuote(home)}/.npmrc`],
+          {
+            heartbeatLabel: 'workspace: writing registry config',
+            stdin: npmrc,
+          }
+        );
+        // Berry scope overrides live in the exec user's home rc — a project
+        // .yarnrc.yml scope entry wins over it, which fails closed.
+        const yarnrc = renderYarnrc(registry.registries, registry.baseUrl);
+        if (yarnrc) {
+          await backend.exec(handle, ['sh', '-c', `cat >> ${shellQuote(home)}/.yarnrc.yml`], {
+            heartbeatLabel: 'workspace: writing yarn registry config',
+            stdin: yarnrc,
+          });
         }
-      );
-      // The same npmrc lands in the exec user's home: Yarn classic reads
-      // `~/.npmrc` (it never honours NPM_CONFIG_USERCONFIG), and npm/pnpm pick
-      // it up too — the project .npmrc a repo might carry cannot weaken it.
-      const home = (await rootExec('echo $HOME')).trim();
-      await backend.exec(
-        handle,
-        ['sh', '-c', `cat > ${shellQuote(home)}/.npmrc && chmod 600 ${shellQuote(home)}/.npmrc`],
-        {
-          heartbeatLabel: 'workspace: writing registry config',
-          stdin: npmrc,
-        }
-      );
-      // Berry scope overrides live in the exec user's home rc — a project
-      // .yarnrc.yml scope entry wins over it, which fails closed.
-      const yarnrc = renderYarnrc(registry.registries, registry.baseUrl);
-      if (yarnrc) {
-        await backend.exec(handle, ['sh', '-c', `cat >> ${shellQuote(home)}/.yarnrc.yml`], {
-          heartbeatLabel: 'workspace: writing yarn registry config',
-          stdin: yarnrc,
-        });
       }
       // The allowlist comes from the ref the workspace was cut from, never the
       // working tree: HEAD after clone, the pinned SHA, or — for an existing

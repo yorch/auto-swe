@@ -1,10 +1,10 @@
 # Package proxies beyond npm — decision log
 
-The worker's registry proxy serves npm only ([`package-registries.md`](../package-registries.md)).
-Python, JVM and Go repositories install straight from the network: no private index, no credential
+The worker's registry proxy serves npm and Go modules ([`package-registries.md`](../package-registries.md)).
+Python and JVM repositories install straight from the network: no private index, no credential
 that stays out of the agent's hands, no lockfile-scoped access. This records how to extend the
-proxy, in what order, and what is deliberately left out. Nothing here is built yet; each decision
-is **Proposed** until the slice that carries it merges.
+proxy, in what order, and what is deliberately left out. Each decision is **Proposed** until the
+slice that carries it merges; the Go slice is **Accepted**.
 
 ## D1 — 2026-10-29 — One proxy per ecosystem, the npm proxy's model
 
@@ -25,13 +25,14 @@ fronts such a mirror, it does not replace it.
 
 ## D2 — 2026-10-29 — Go modules first, then PyPI, then Maven
 
-**Status**: Proposed
+**Status**: Accepted for Go; PyPI and Maven Proposed
 **Decision**: Build in that order, one pull request per ecosystem, each shippable alone.
 - **Go**: the `GOPROXY` protocol is four read-only paths (`/<module>/@v/list`, `.info`, `.mod`, `.zip`),
   and `go.sum` is a committed, content-hashed list of exactly the modules and versions a build may
   fetch, so lockfile mode is exact. Wired with `GOPROXY`, `GOSUMDB` left at its default so the
-  checksum database still verifies what the proxy serves, and `GOFLAGS=-mod=mod` only where the
-  repository needs it.
+  committed hashes still verify what the proxy serves, and `GOTOOLCHAIN=local`. The client token is a
+  path segment of the `GOPROXY` URL: the Go tool refuses to send userinfo credentials over plain
+  http (checked against Go 1.26), and `GOINSECURE` and `GOAUTH` do not change that.
 - **PyPI**: the simple index (PEP 503, with PEP 691's JSON form) plus the file URLs it names, which the
   proxy rewrites to itself as the npm proxy rewrites `dist.tarball`. The allowlist comes from
   `uv.lock`, `poetry.lock` or a `requirements.txt` that pins versions; an unpinned requirements file
@@ -51,7 +52,7 @@ registry serves; it gets the credential protection but not the lockfile scope.
 
 ## D3 — 2026-10-29 — Reuse `PackageRegistry`, keyed by its `ecosystem`
 
-**Status**: Proposed
+**Status**: Accepted for Go; PyPI and Maven Proposed
 **Decision**: The admin-managed `PackageRegistry` row already carries `ecosystem` (default `npm`). New
 ecosystems use it: `go`, `pypi`, `maven`. `npmScopes` stays npm's; routing for the others is by the
 registry that claims the repository's ecosystem, with the same default/override rules. The admin
@@ -65,7 +66,7 @@ name.
 
 ## D4 — 2026-10-29 — The workspace is wired by what the repository's stack needs
 
-**Status**: Proposed
+**Status**: Accepted for Go; PyPI and Maven Proposed
 **Decision**: `beginWorkspaceRegistries` wires an ecosystem only when the repository's detected stack
 (or component, for a layout of several) uses it, and renders that ecosystem's client configuration
 into the workspace the way it renders `.npmrc` today: the Go environment variables, `pip.conf` and

@@ -380,6 +380,124 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
     expect((wrapped as Error).message).toBe('plain string failure');
   });
 
+  describe('registry wiring follows the detected stack', () => {
+    const wiredWith = async (detectedStack: unknown): Promise<unknown> => {
+      vi.mocked(beginWorkspaceRegistries).mockClear();
+      vi.mocked(beginWorkspaceRegistries).mockResolvedValueOnce(null);
+      const ws = await createWorkspace(
+        AUTHED,
+        'auto/T-1',
+        'main',
+        undefined,
+        undefined,
+        undefined,
+        {
+          detectedStack,
+          teamId: 'team-a',
+        }
+      );
+      await ws.destroy();
+      const [teamId, container, wanted] = vi.mocked(beginWorkspaceRegistries).mock.calls[0] ?? [];
+      expect(teamId).toBe('team-a');
+      expect(container).toMatch(/^workspace-/);
+      return wanted;
+    };
+
+    it('wires Go for a detected Go repository', async () => {
+      expect(
+        await wiredWith({ components: [{ path: '', stacks: ['go'] }], primary: 'go' })
+      ).toEqual({
+        go: true,
+      });
+    });
+
+    it('wires Go for a polyglot repository that has a Go component', async () => {
+      expect(
+        await wiredWith({
+          components: [
+            { path: '', stacks: ['node'] },
+            { path: 'svc', stacks: ['go'] },
+          ],
+        })
+      ).toEqual({ go: true });
+    });
+
+    it('does not wire Go for a detected Node repository', async () => {
+      expect(
+        await wiredWith({ components: [{ path: '', stacks: ['node'] }], primary: 'node' })
+      ).toEqual({
+        go: false,
+      });
+    });
+
+    it('wires Go when the detection is unknown', async () => {
+      expect(await wiredWith(undefined)).toEqual({ go: true });
+      expect(await wiredWith(null)).toEqual({ go: true });
+      expect(await wiredWith({ components: [] })).toEqual({ go: true });
+    });
+
+    it('writes no npm client files for a Go-only workspace and keeps the token off argv', async () => {
+      const TOKEN = 'cafe0123deadbeef';
+      const setAllowlist = vi.fn();
+      vi.mocked(beginWorkspaceRegistries).mockResolvedValueOnce({
+        baseUrl: 'http://proxy.internal:9999',
+        env: [`GOPROXY=http://proxy.internal:9999/go/${TOKEN}/go-1`, 'GOTOOLCHAIN=local'],
+        registration: {
+          baseUrl: 'http://proxy.internal:9999',
+          release: async () => {},
+          setAllowlist,
+          token: TOKEN,
+        },
+        registries: [
+          {
+            accessMode: 'lockfile',
+            ecosystem: 'go',
+            id: 'go-1',
+            isDefault: true,
+            name: 'goproxy',
+            scopes: [],
+          },
+        ],
+        token: TOKEN,
+      });
+      const ws = await createWorkspace(
+        AUTHED,
+        'auto/T-1',
+        'main',
+        undefined,
+        undefined,
+        undefined,
+        {
+          detectedStack: { primary: 'go' },
+          teamId: 'team-a',
+        }
+      );
+      await ws.destroy();
+      const commands = vi.mocked(execShellAsync).mock.calls.map((c) => c[0] as string);
+      const startCmd = commands.find((c) => c.includes('docker run -d --name')) ?? '';
+      // The secret entry is named on argv (`-e GOPROXY`) and its value is not.
+      expect(startCmd).toContain('-e GOPROXY');
+      expect(startCmd).not.toContain(TOKEN);
+      expect(startCmd).toContain('GOTOOLCHAIN=local');
+      expect(
+        vi
+          .mocked(execShellAsync)
+          .mock.calls.some((c) =>
+            (c[1] as { env?: Record<string, string> })?.env?.GOPROXY?.includes(TOKEN)
+          )
+      ).toBe(true);
+      // No npmrc / yarnrc is written (they go through spawnWithStdinAsync).
+      expect(vi.mocked(spawnWithStdinAsync).mock.calls.map((c) => String(c[0]))).not.toEqual(
+        expect.arrayContaining([expect.stringContaining('npmrc')])
+      );
+      expect(commands.some((c) => c.includes('.auto-swe'))).toBe(false);
+      // The go registry still gets its (empty here, no go.sum) allowlist.
+      expect(setAllowlist).toHaveBeenCalledTimes(1);
+      const allowlist = setAllowlist.mock.calls[0]?.[0] as Map<string, unknown>;
+      expect(allowlist.get('go-1')).toEqual(new Map());
+    });
+  });
+
   it('terminates options with `--` on the pinned-SHA and existing-branch clone paths too', async () => {
     await createWorkspace(AUTHED, 'auto/T-1', 'main', undefined, 'deadbeef');
     await createWorkspace(AUTHED, 'auto/T-1', 'main', undefined, undefined, true);

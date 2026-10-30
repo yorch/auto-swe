@@ -1,8 +1,8 @@
 # Package registries
 
-> Admin-managed npm registries that agent workspaces install through a worker-side proxy. The
-> upstream credential never enters the container; the workspace holds only a per-workspace proxy
-> token.
+> Admin-managed npm and Go-module registries that agent workspaces install through a worker-side
+> proxy. The upstream credential never enters the container; the workspace holds only a
+> per-workspace proxy token.
 
 ---
 
@@ -25,6 +25,11 @@ The threat model covers both accidental leakage and a prompt-injected agent. The
 credential never enters the container, so neither a log line nor an agent can expose it. The
 proxy enforces read-only, lockfile-scoped access server-side rather than trusting the client.
 
+A Go registry is served the same way, on a second route (`/go/…`, §4 and §5). A workspace is wired
+to a Go registry only when its repository's stored stack detection
+([`repositories.md`](./repositories.md#detected-stack)) lists Go, or is unknown, so a repository
+detected as Node-only never receives a `GOPROXY` it has no use for.
+
 ## 2. Registries
 
 `PackageRegistry` rows are managed by platform admins in **Admin → Integrations → Package
@@ -36,10 +41,16 @@ upstreams — Artifactory is usually internal), an optional `teamId` (null = eve
 encrypted token (`hasToken`/`tokenLastFour` is all the API reports). Every change writes a config
 audit-log entry.
 
-Write-time uniqueness: among active rows of one team group (null is its own group), at most one
+A row's `ecosystem` is `npm` (the default) or `go`, and is fixed when the row is created. A `go` row
+has no scopes — it is the team's single Go registry — and its `upstreamUrl` may carry no userinfo,
+query string or fragment, because the proxy appends module paths to it. Resolution for the two
+ecosystems never mixes: an npm default and a Go registry coexist for one team, and a `go` row can
+never be taken for npm's default or claim an npm scope.
+
+Write-time uniqueness: among active rows of one ecosystem of one team group (null is its own group), at most one
 default registry and each scope at most once — clashes are refused with `409`. Resolution for a
 workspace of team T takes active rows where `teamId IN (T, null)`; per key (the default key and
-each scope) a team row beats a global one.
+each scope; a Go registry has only the default) a team row beats a global one.
 
 ## 3. Access modes
 
@@ -51,6 +62,11 @@ each scope) a team row beats a global one.
   `pnpm-lock.yaml`, never from the working tree, so an agent cannot widen its own allowlist. A
   lockfile that cannot be parsed contributes nothing (fail closed); no lockfiles means the
   allowlist is empty and every package is denied.
+
+For a **Go** registry the allowlist is every `go.sum` committed at the base ref, at any depth,
+read the same way (a `go.work.sum` counts as one). A module version with a plain `go.sum` line may be fetched whole (`.info`,
+`.mod`, `.zip`); one with only a `/go.mod` line gets `.mod` and `.info` but no `.zip`. A repository
+with no `go.sum` gets an empty allowlist, so every module is denied.
 
 ## 4. How clients are configured
 
@@ -110,6 +126,25 @@ It also has Corepack download a pin that the image doesn't have, through the pro
 cover a valid signature, a forged one (refused), a hash pin with no signatures, and a pin outside
 the allowlist (denied).
 
+**Go.** A workspace wired to a Go registry carries two more env entries:
+- `GOPROXY=<proxy URL>/go/<token>/<registryId>` — the proxy alone, with no `,direct` and no second
+  entry, because Go falls through to the next entry on a 404 and `direct` would fetch the module
+  from its VCS host, past the allowlist. The token is a **path segment, not userinfo**: the Go
+  tool refuses to send credentials from a `GOPROXY` URL over plain http, and the proxy is plain
+  http on the container network. The value contains the token, so it is `secretEnv`, set the way
+  `COREPACK_NPM_TOKEN` is.
+- `GOTOOLCHAIN=local` — otherwise a repository whose `go.mod` names a newer Go than the image has
+  would download a toolchain through the proxy, which a lockfile allowlist denies. With `local`
+  it fails with Go's own message instead.
+
+`GOSUMDB` is left at its default, so the `go.sum` hashes the repository commits are what Go checks
+the served bytes against. A Go-only workspace gets none of the npm, Yarn or Corepack variables and
+no npmrc.
+
+The suite is `registryProxy/goClient.docker.test.ts`, run in CI against the curated Go image. It runs
+a real `go build` and `go get` through the proxy in both modes and shows the denial of a module
+outside `go.sum`.
+
 **Shell steps.** A `network: 'egress'` shell step gets the same wiring, with these differences:
 - Its container's root filesystem is read-only, so its `HOME` is `/workspace/.auto-swe/home` in
   the step volume, outside the checkout the finalize commits.
@@ -121,6 +156,23 @@ the allowlist (denied).
 - The token is revoked as soon as the command exits.
 
 ## 5. The proxy
+
+**Go route.** `<baseUrl>/go/<token>/<registryId>/<GOPROXY path>`, authenticated only by the token
+in the path (a Bearer or Basic header is ignored). The protocol is five read-only requests:
+`@v/list`, `@latest`, and `@v/<version>.info|.mod|.zip`, with module paths case-encoded as Go
+does (`!` before a lowercase letter). The module and version are decoded and validated, and the
+upstream path is rebuilt from those validated values alone. In lockfile mode:
+- `@v/list` is answered by the proxy from the allowlist and never reaches the upstream, so
+  `go get m@latest` resolves to a version the repository already pins;
+- `@latest` is denied;
+- `.zip` is served only for a version with a plain `go.sum` line.
+
+A zip is relayed up to 512 MiB and cached in the tarball cache; the cut-off applies to the bytes
+received, not the declared length. The token segment is never part of what the allowlist, the
+cache key, a denial report or a response sees. GET and HEAD only, redirects
+refused, an upstream deadline and hang-up handling as for npm. Go answers are streamed, so they
+take no slot in the per-registration buffered-request limit. The Go route is excluded from request
+tracing, because a span records the path and the path holds the token.
 
 **URL layout.** `<baseUrl>/npm/<registryId>/<npm path>`. Only three npm path shapes exist:
 - packument: `/<name>`
@@ -219,8 +271,24 @@ under 90%. Cache errors fall through to the upstream.
 
 ## Limitations
 
-- **npm only, and read-only.** Other ecosystems (PyPI, Maven, Go modules) are not served, and
-  neither is publishing.
+- **npm and Go modules only, and read-only.** PyPI and Maven are not served, and neither is
+  publishing. A Go registry has no audit endpoint, so `govulncheck` and similar reach their own
+  database directly or not at all.
+- **Open mode needs egress to the checksum database for new Go modules.** The proxy does not
+  serve `/sumdb/…`, so a module whose hash is not yet in `go.sum` is verified by Go reaching
+  `sum.golang.org` directly (unless the repository sets `GOFLAGS`/`GONOSUMDB`/`GOSUMDB`). In
+  lockfile mode every hash is already committed and the checksum database is not consulted.
+- **Go's token is visible to the agent.** Go prints the request URL in its errors
+  (`reading http://…/go/<token>/…: 403 Forbidden`), and `env` shows `GOPROXY`. The token is good
+  only at this proxy, for this workspace, and in lockfile mode only for `go.sum`'s modules — the
+  same reach as the npm token the container already holds — but a transcript can contain it.
+- **A Go workspace needs a Go image.** The image comes from `WORKSPACE_IMAGE_GO`
+  ([`repositories.md`](./repositories.md#detected-stack)); the default image has no Go toolchain.
+- **Go wiring follows the stored detection.** A repository whose detection lists Go in any
+  component is wired, including a Go module beside a Node root. A repository with no usable
+  detection, or a truncated one, is wired too, because "unknown" is not "uses no Go"; a detection
+  that names only other stacks gets no Go proxy.
+- **Shell steps get no Go wiring.** They are wired for npm only.
 - **Upstream redirects are refused** (`redirect: 'error'`). An Artifactory that redirects
   downloads to object storage does not work.
 - **Yarn classic must have a default-host lockfile.** Yarn classic rewrites only

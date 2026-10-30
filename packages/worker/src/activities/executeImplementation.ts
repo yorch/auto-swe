@@ -180,7 +180,7 @@ export async function executeImplementation(
     executorImageFor(repo),
     undefined,
     undefined,
-    { teamId: repo.teamId }
+    { detectedStack: repo.detectedStack, teamId: repo.teamId }
   );
 
   const tracer = new AgentTracer();

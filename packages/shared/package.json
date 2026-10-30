@@ -73,6 +73,7 @@
     "./lib/lockfileAllowlist": "./dist/lib/lockfileAllowlist.js",
     "./lib/manifestParsers": "./dist/lib/manifestParsers.js",
     "./lib/packageRegistry": "./dist/lib/packageRegistry.js",
+    "./lib/goModuleAllowlist": "./dist/lib/goModuleAllowlist.js",
     "./lib/repoDependency": "./dist/lib/repoDependency.js",
     "./lib/repoDependencyMatch": "./dist/lib/repoDependencyMatch.js",
     "./lib/repoDependencyResolver": "./dist/lib/repoDependencyResolver.js",

@@ -1,0 +1,247 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { findMany, register } = vi.hoisted(() => ({ findMany: vi.fn(), register: vi.fn() }));
+vi.mock('@auto-swe/shared/db', () => ({ prisma: { packageRegistry: { findMany } } }));
+vi.mock('./index.js', () => ({ workerRegistryProxy: () => ({ register }) }));
+
+import type { ResolvedRegistry } from './index.js';
+import {
+  beginWorkspaceRegistries,
+  buildRegistryAllowlist,
+  type WorkspaceRegistryAccess,
+} from './workspaceWiring.js';
+
+const row = (over: Record<string, unknown>) => ({
+  accessMode: 'lockfile',
+  allowPrivateNetwork: false,
+  authKind: 'bearer',
+  ecosystem: 'npm',
+  id: 'r',
+  isActive: true,
+  name: 'registry',
+  npmScopes: [] as string[],
+  teamId: null,
+  tokenAuthTag: null,
+  tokenCiphertext: null,
+  tokenKeyVersion: null,
+  tokenNonce: null,
+  upstreamUrl: 'https://upstream.test',
+  ...over,
+});
+
+const NPM_ROW = row({ id: 'npm-1' });
+const GO_ROW = row({ ecosystem: 'go', id: 'go-1', upstreamUrl: 'https://goproxy.test' });
+
+let registered: { registries: ResolvedRegistry[] } | undefined;
+
+beforeEach(() => {
+  registered = undefined;
+  findMany.mockReset();
+  register.mockReset().mockImplementation(async (r: { registries: ResolvedRegistry[] }) => {
+    registered = r;
+    return {
+      baseUrl: 'http://proxy.internal:9999',
+      release: async () => {},
+      setAllowlist: () => {},
+      token: 'tok',
+    };
+  });
+});
+
+describe('beginWorkspaceRegistries', () => {
+  it('never takes a go row for an npm registry', async () => {
+    findMany.mockResolvedValue([GO_ROW]);
+    // Not asked for Go: nothing resolves at all, in particular no npm registry from the go row.
+    expect(await beginWorkspaceRegistries('team-a', 'workspace-x')).toBeNull();
+    expect(await beginWorkspaceRegistries('team-a', 'workspace-x', { go: false })).toBeNull();
+    expect(register).not.toHaveBeenCalled();
+  });
+
+  it('wires the go registry as the only registry when asked and no npm row exists', async () => {
+    findMany.mockResolvedValue([GO_ROW]);
+    const access = await beginWorkspaceRegistries('team-a', 'workspace-x', { go: true });
+    expect(access?.registries).toEqual([
+      {
+        accessMode: 'lockfile',
+        ecosystem: 'go',
+        id: 'go-1',
+        isDefault: true,
+        name: 'registry',
+        scopes: [],
+      },
+    ]);
+    expect(registered?.registries.map((r) => [r.id, r.ecosystem, r.isDefault, r.scopes])).toEqual([
+      ['go-1', 'go', true, []],
+    ]);
+    // No npm client config for a Go-only workspace.
+    expect(access?.env.some((p) => p.startsWith('NPM_CONFIG_'))).toBe(false);
+    expect(access?.env.some((p) => p.startsWith('GOPROXY='))).toBe(true);
+  });
+
+  it('keeps the npm result unchanged when a go row sits beside npm rows and Go is not wanted', async () => {
+    findMany.mockResolvedValue([GO_ROW, NPM_ROW]);
+    const access = await beginWorkspaceRegistries('team-a', 'workspace-x');
+    expect(access?.registries.map((r) => [r.id, r.ecosystem])).toEqual([['npm-1', 'npm']]);
+    expect(access?.env.some((p) => p.startsWith('GOPROXY='))).toBe(false);
+  });
+
+  it('wires both ecosystems, and a go row does not shadow the npm default', async () => {
+    findMany.mockResolvedValue([GO_ROW, NPM_ROW]);
+    const access = await beginWorkspaceRegistries('team-a', 'workspace-x', { go: true });
+    expect(access?.registries.map((r) => [r.id, r.ecosystem, r.isDefault])).toEqual([
+      ['npm-1', 'npm', true],
+      ['go-1', 'go', true],
+    ]);
+    expect(access?.env).toContain('NPM_CONFIG_REGISTRY=http://proxy.internal:9999/npm/npm-1');
+  });
+
+  it('keeps one go default, a team row beating a global one', async () => {
+    findMany.mockResolvedValue([
+      row({ ecosystem: 'go', id: 'go-global' }),
+      row({ ecosystem: 'go', id: 'go-team', teamId: 'team-a' }),
+    ]);
+    const access = await beginWorkspaceRegistries('team-a', 'workspace-x', { go: true });
+    expect(access?.registries.map((r) => r.id)).toEqual(['go-team']);
+  });
+
+  it('is null with no team or no registry', async () => {
+    expect(await beginWorkspaceRegistries(null, 'workspace-x', { go: true })).toBeNull();
+    findMany.mockResolvedValue([]);
+    expect(await beginWorkspaceRegistries('team-a', 'workspace-x', { go: true })).toBeNull();
+  });
+});
+
+describe('buildRegistryAllowlist', () => {
+  const GO_SUM_A = [
+    'example.com/a v1.0.0 h1:aaaa=',
+    'example.com/a v1.0.0/go.mod h1:bbbb=',
+    'example.com/b v2.1.0/go.mod h1:cccc=',
+  ].join('\n');
+  const GO_SUM_B = 'example.com/c v0.3.0 h1:dddd=\n';
+  const PACKAGE_LOCK = JSON.stringify({
+    lockfileVersion: 3,
+    packages: { '': {}, 'node_modules/left-pad': { version: '1.3.0' } },
+  });
+
+  /** A fake `exec` serving `git ls-tree`, `git cat-file -s` and `git show` over a path → text map. */
+  const fakeExec = (files: Record<string, string>) =>
+    vi.fn(async (command: string, _max?: number) => {
+      if (command.includes('git ls-tree')) {
+        return { stdout: `${Object.keys(files).join('\0')}\0` };
+      }
+      const path = /'[^:']*:([^']*)'/.exec(command)?.[1] ?? '';
+      const text = files[path] ?? '';
+      return {
+        stdout: command.includes('cat-file -s') ? String(Buffer.byteLength(text)) : text,
+      };
+    });
+
+  const access = (
+    registries: Partial<WorkspaceRegistryAccess['registries'][number]>[]
+  ): WorkspaceRegistryAccess =>
+    ({
+      registries: registries.map((r) => ({
+        accessMode: 'lockfile',
+        ecosystem: 'npm',
+        id: 'r',
+        isDefault: true,
+        name: 'n',
+        scopes: [],
+        ...r,
+      })),
+    }) as unknown as WorkspaceRegistryAccess;
+
+  it('builds a go registry allowlist from every go.sum, at any depth', async () => {
+    const exec = fakeExec({ 'go.sum': GO_SUM_A, 'svc/tools/go.sum': GO_SUM_B });
+    const map = await buildRegistryAllowlist(
+      access([{ ecosystem: 'go', id: 'go-1' }]),
+      'HEAD',
+      exec
+    );
+    const go = map.get('go-1');
+    expect(go?.get('example.com/a')).toEqual(new Set(['v1.0.0', 'v1.0.0/go.mod']));
+    expect(go?.get('example.com/b')).toEqual(new Set(['v2.1.0/go.mod']));
+    expect(go?.get('example.com/c')).toEqual(new Set(['v0.3.0']));
+  });
+
+  it('reads go.work.sum as a go.sum', async () => {
+    const exec = fakeExec({ 'go.work.sum': GO_SUM_A });
+    const map = await buildRegistryAllowlist(
+      access([{ ecosystem: 'go', id: 'go-1' }]),
+      'HEAD',
+      exec
+    );
+    expect(map.get('go-1')?.get('example.com/a')).toEqual(new Set(['v1.0.0', 'v1.0.0/go.mod']));
+  });
+
+  it('gives a go registry an empty, not absent, allowlist when there is no go.sum', async () => {
+    const exec = fakeExec({ 'README.md': 'x' });
+    const map = await buildRegistryAllowlist(
+      access([{ ecosystem: 'go', id: 'go-1' }]),
+      'HEAD',
+      exec
+    );
+    expect(map.has('go-1')).toBe(true);
+    expect(map.get('go-1')).toEqual(new Map());
+  });
+
+  it('leaves an open-mode go registry unchecked', async () => {
+    const exec = fakeExec({ 'go.sum': GO_SUM_A });
+    const map = await buildRegistryAllowlist(
+      access([{ accessMode: 'open', ecosystem: 'go', id: 'go-1' }]),
+      'HEAD',
+      exec
+    );
+    expect(map.get('go-1')).toBeNull();
+  });
+
+  it('feeds npm registries from npm lockfiles only, and go registries from go.sum only', async () => {
+    const exec = fakeExec({ 'go.sum': GO_SUM_A, 'package-lock.json': PACKAGE_LOCK });
+    const map = await buildRegistryAllowlist(
+      access([
+        { ecosystem: 'npm', id: 'npm-1' },
+        { ecosystem: 'go', id: 'go-1' },
+      ]),
+      'HEAD',
+      exec
+    );
+    expect([...(map.get('npm-1')?.keys() ?? [])]).toEqual(['left-pad']);
+    expect([...(map.get('go-1')?.keys() ?? [])].sort()).toEqual(['example.com/a', 'example.com/b']);
+  });
+
+  it('skips an unparsable or oversized go.sum and keeps the others', async () => {
+    const exec = fakeExec({ 'a/go.sum': GO_SUM_B, 'b/go.sum': '\u0000not a go.sum\n garbage' });
+    const map = await buildRegistryAllowlist(
+      access([{ ecosystem: 'go', id: 'go-1' }]),
+      'HEAD',
+      exec
+    );
+    expect([...(map.get('go-1')?.keys() ?? [])]).toEqual(['example.com/c']);
+
+    const big = vi.fn(async (command: string) =>
+      command.includes('git ls-tree')
+        ? { stdout: 'go.sum\0' }
+        : { stdout: command.includes('cat-file -s') ? String(60 * 1024 * 1024) : GO_SUM_B }
+    );
+    const skipped = await buildRegistryAllowlist(
+      access([{ ecosystem: 'go', id: 'go-1' }]),
+      'HEAD',
+      big
+    );
+    expect(skipped.get('go-1')).toEqual(new Map());
+    // Oversized: never read.
+    expect(big.mock.calls.some(([c]) => c.includes('git show'))).toBe(false);
+  });
+
+  it('caps the go.sum files read at 50', async () => {
+    const files = Object.fromEntries(
+      Array.from({ length: 55 }, (_, i) => [`m${i}/go.sum`, `example.com/m${i} v1.0.0 h1:aaaa=\n`])
+    );
+    const map = await buildRegistryAllowlist(
+      access([{ ecosystem: 'go', id: 'go-1' }]),
+      'HEAD',
+      fakeExec(files)
+    );
+    expect(map.get('go-1')?.size).toBe(50);
+  });
+});

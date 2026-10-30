@@ -10,6 +10,7 @@ import {
   compositeComponentCount,
   compositeSharedStack,
   detectedGateDefaults,
+  detectedStacks,
   detectedTarget,
   detectedTargetDir,
   detectStack,
@@ -767,6 +768,64 @@ describe('compositeSharedStack', () => {
     expect(compositeSharedStack(D(['a/go.mod']))).toBeNull();
     expect(compositeSharedStack(D(['go.mod', 'a/go.mod', 'b/go.mod']))).toBeNull();
     expect(compositeSharedStack(null)).toBeNull();
+  });
+});
+
+describe('detectedStacks', () => {
+  it('is the union of the stacks of every component', () => {
+    const stacks = detectedStacks({
+      components: [
+        { path: '', stacks: ['node'] },
+        { path: 'svc', stacks: ['go', 'python'] },
+        { path: 'tools', stacks: ['go'] },
+      ],
+    });
+    expect([...(stacks ?? [])].sort()).toEqual(['go', 'node', 'python']);
+    expect(detectedStacks(detectStack(['a/go.mod', 'b/package.json']))?.sort()).toEqual([
+      'go',
+      'node',
+    ]);
+  });
+
+  it('reads a record from before components existed by its primary', () => {
+    expect(detectedStacks({ primary: 'go' })).toEqual(['go']);
+    expect(detectedStacks({ primary: 'ruby' })).toBeNull();
+  });
+
+  it('is null when the detection is absent or unusable', () => {
+    for (const bad of [
+      null,
+      undefined,
+      'x',
+      7,
+      [],
+      {},
+      { components: 'no' },
+      { components: [null] },
+    ]) {
+      expect(detectedStacks(bad)).toBeNull();
+    }
+    expect(detectedStacks({ components: [] })).toBeNull();
+    expect(detectedStacks({ components: [{ path: '', stacks: ['ruby'] }] })).toBeNull();
+  });
+
+  it('is null for a truncated detection: a stack past the truncation is not in it', () => {
+    const components = [{ path: '', stacks: ['node'] }];
+    expect(detectedStacks({ components })).toEqual(['node']);
+    expect(detectedStacks({ components, treeTruncated: true })).toBeNull();
+    expect(detectedStacks({ components, componentsTruncated: true })).toBeNull();
+  });
+
+  it('ignores a component whose path fails validation but keeps the others', () => {
+    expect(
+      detectedStacks({
+        components: [
+          { path: '../etc', stacks: ['go'] },
+          { path: 'ok', stacks: ['node'] },
+        ],
+      })
+    ).toEqual(['node']);
+    expect(detectedStacks({ components: [{ path: '../etc', stacks: ['go'] }] })).toBeNull();
   });
 });
 

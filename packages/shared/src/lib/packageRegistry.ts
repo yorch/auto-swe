@@ -8,8 +8,8 @@
  * both sides agree on.
  */
 
-/** The only ecosystem the registry proxy serves. */
-export const PACKAGE_REGISTRY_ECOSYSTEMS = ['npm'] as const;
+/** The ecosystems the registry proxy serves. */
+export const PACKAGE_REGISTRY_ECOSYSTEMS = ['npm', 'go'] as const;
 export type PackageRegistryEcosystem = (typeof PACKAGE_REGISTRY_ECOSYSTEMS)[number];
 
 /**
@@ -25,6 +25,8 @@ export type PackageRegistryAuthKind = (typeof PACKAGE_REGISTRY_AUTH_KINDS)[numbe
 /** The fields of a `PackageRegistry` row the resolution reads. */
 export interface PackageRegistryLike {
   id: string;
+  /** Absent means `npm`. */
+  ecosystem?: string;
   isActive: boolean;
   npmScopes: string[];
   teamId: string | null;
@@ -44,6 +46,22 @@ const DEFAULT_KEY = '';
 /** The keys a registry row claims: one per scope, or the default key when it has none. */
 function keysOf(row: PackageRegistryLike): string[] {
   return row.npmScopes.length > 0 ? row.npmScopes : [DEFAULT_KEY];
+}
+
+/**
+ * The rows of one ecosystem (a row that names none is `npm`). Callers filter by
+ * ecosystem *before* `resolvePackageRegistries`, so one ecosystem's rows never
+ * shadow another's.
+ *
+ * Only npm has scopes. A `go` row has none, so it is a default-only registry:
+ * `resolvePackageRegistries(registriesFor(rows, 'go'), teamId)` yields at most one
+ * default, a team row beating a global one.
+ */
+export function registriesFor<T extends PackageRegistryLike>(
+  rows: T[],
+  ecosystem: PackageRegistryEcosystem
+): T[] {
+  return rows.filter((r) => (r.ecosystem ?? 'npm') === ecosystem);
 }
 
 /**
