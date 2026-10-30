@@ -11,7 +11,6 @@ import {
   buildWorkflowRunDailyRollups,
   WORKFLOW_RUN_DAY_MS,
   WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
-  workflowRunRepoIdFromRun,
   workflowRunRollupInputFromRun,
 } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
@@ -280,8 +279,8 @@ export async function rollupWorkflowRuns(
           orderBy: [{ startedAt: 'asc' }, { id: 'asc' }],
           select: {
             attributedOrgId: true,
+            attributedRepoId: true,
             attributedTeamId: true,
-            connectionId: true,
             costUsdAccrued: true,
             endedAt: true,
             estimatedHumanTimeSaved: true,
@@ -299,7 +298,7 @@ export async function rollupWorkflowRuns(
             workRequest: {
               select: {
                 activeWorkflows: {
-                  select: { costUsdAccrued: true, repoId: true, temporalWorkflowId: true },
+                  select: { costUsdAccrued: true, temporalWorkflowId: true },
                 },
               },
             },
@@ -363,15 +362,9 @@ export async function rollupWorkflowRuns(
               run: {
                 select: {
                   attributedOrgId: true,
+                  attributedRepoId: true,
                   attributedTeamId: true,
-                  connectionId: true,
                   launchedById: true,
-                  workflowId: true,
-                  workRequest: {
-                    select: {
-                      activeWorkflows: { select: { repoId: true, temporalWorkflowId: true } },
-                    },
-                  },
                 },
               },
               status: true,
@@ -395,7 +388,7 @@ export async function rollupWorkflowRuns(
         kind: step.kind,
         launchedById: step.run.launchedById,
         orgId: step.run.attributedOrgId,
-        repoId: workflowRunRepoIdFromRun(step.run),
+        repoId: step.run.attributedRepoId,
         requestedAt: step.requestedAt,
         resolvedAt: step.resolvedAt,
         resolvedBy: step.resolvedBy,
@@ -410,7 +403,7 @@ export async function rollupWorkflowRuns(
         attributedTeamId: run.attributedTeamId,
         id: run.id,
         launchedById: run.launchedById,
-        repoId: workflowRunRepoIdFromRun(run),
+        repoId: run.attributedRepoId,
         startedAt: run.startedAt,
       })),
       traces,

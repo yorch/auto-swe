@@ -16,7 +16,11 @@ describe('resolveWorkflowRunAttribution', () => {
           requestedByService: team('service-team'),
         },
       })
-    ).toEqual({ attributedOrgId: 'run-team-org', attributedTeamId: 'run-team' });
+    ).toEqual({
+      attributedOrgId: 'run-team-org',
+      attributedRepoId: null,
+      attributedTeamId: 'run-team',
+    });
   });
 
   it('uses the work-request connection when the run has none', () => {
@@ -29,7 +33,11 @@ describe('resolveWorkflowRunAttribution', () => {
           requestedByService: team('service-team'),
         },
       })
-    ).toEqual({ attributedOrgId: 'request-team-org', attributedTeamId: 'request-team' });
+    ).toEqual({
+      attributedOrgId: 'request-team-org',
+      attributedRepoId: null,
+      attributedTeamId: 'request-team',
+    });
   });
 
   it('uses the channel when the run and work request have no connection', () => {
@@ -39,7 +47,11 @@ describe('resolveWorkflowRunAttribution', () => {
         template: team('template-team'),
         workRequest: { requestedByService: team('service-team') },
       })
-    ).toEqual({ attributedOrgId: 'channel-team-org', attributedTeamId: 'channel-team' });
+    ).toEqual({
+      attributedOrgId: 'channel-team-org',
+      attributedRepoId: null,
+      attributedTeamId: 'channel-team',
+    });
   });
 
   it('uses the service-principal team before the template team', () => {
@@ -48,12 +60,17 @@ describe('resolveWorkflowRunAttribution', () => {
         template: team('template-team'),
         workRequest: { requestedByService: team('service-team') },
       })
-    ).toEqual({ attributedOrgId: 'service-team-org', attributedTeamId: 'service-team' });
+    ).toEqual({
+      attributedOrgId: 'service-team-org',
+      attributedRepoId: null,
+      attributedTeamId: 'service-team',
+    });
   });
 
   it('falls back to the template team', () => {
     expect(resolveWorkflowRunAttribution({ template: team('template-team') })).toEqual({
       attributedOrgId: 'template-team-org',
+      attributedRepoId: null,
       attributedTeamId: 'template-team',
     });
   });
@@ -63,13 +80,26 @@ describe('resolveWorkflowRunAttribution', () => {
       resolveWorkflowRunAttribution({
         workRequest: { billingOrgId: 'billing-org', connection: null, requestedByService: null },
       })
-    ).toEqual({ attributedOrgId: 'billing-org', attributedTeamId: null });
+    ).toEqual({ attributedOrgId: 'billing-org', attributedRepoId: null, attributedTeamId: null });
   });
 
   it('returns null attribution when every source is absent', () => {
     expect(resolveWorkflowRunAttribution({})).toEqual({
       attributedOrgId: null,
+      attributedRepoId: null,
       attributedTeamId: null,
     });
+  });
+
+  it('prefers the linked active-workflow repository over the run connection', () => {
+    expect(
+      resolveWorkflowRunAttribution({
+        activeWorkflowRepoId: 'active-repo',
+        connectionId: 'run-repo',
+      }).attributedRepoId
+    ).toBe('active-repo');
+    expect(resolveWorkflowRunAttribution({ connectionId: 'run-repo' }).attributedRepoId).toBe(
+      'run-repo'
+    );
   });
 });

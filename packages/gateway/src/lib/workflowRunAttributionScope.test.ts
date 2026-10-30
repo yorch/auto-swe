@@ -22,7 +22,6 @@ const REPO = 'repo-1';
 
 function mockPrisma() {
   return {
-    activeWorkflow: { findMany: vi.fn().mockResolvedValue([{ temporalWorkflowId: 'temporal-1' }]) },
     connection: { findMany: vi.fn().mockResolvedValue([{ id: REPO }]) },
     organizationMembership: {
       findMany: vi.fn().mockResolvedValue([{ orgId: ORG }]),
@@ -76,7 +75,6 @@ describe('workflow run attribution scope', () => {
       isAdmin: false,
       orgIds: [ORG],
       repoIds: [REPO],
-      repoWorkflowIds: ['temporal-1'],
       teamIds: ['member-team'],
       userId: USER.sub,
     };
@@ -86,18 +84,53 @@ describe('workflow run attribution scope', () => {
       expect.arrayContaining([
         { attributedTeamId: { in: ['member-team'] } },
         { attributedOrgId: { in: [ORG] } },
+        { attributedRepoId: { in: [REPO] } },
         { launchedById: USER.sub },
       ])
     );
-    expect(live.OR).toContainEqual({
-      OR: [{ connectionId: { in: [REPO] } }, { workflowId: { in: ['temporal-1'] } }],
-    });
     expect(rollup.OR).toEqual([
       { teamId: { in: ['member-team'] } },
       { orgId: { in: [ORG] } },
       { repoId: { in: [REPO] } },
       { launchedById: USER.sub },
     ]);
+    const liveRows = [
+      {
+        attributedOrgId: null,
+        attributedRepoId: null,
+        attributedTeamId: null,
+        id: 'launched-only',
+        launchedById: USER.sub,
+      },
+      {
+        attributedOrgId: null,
+        attributedRepoId: REPO,
+        attributedTeamId: null,
+        id: 'repo-only',
+        launchedById: null,
+      },
+      {
+        attributedOrgId: null,
+        attributedRepoId: REPO,
+        attributedTeamId: null,
+        id: 'shared-match',
+        launchedById: USER.sub,
+      },
+    ];
+    const liveVisible = liveRows.filter((row) =>
+      live.OR?.some((term) => {
+        const repoFilter = term.attributedRepoId;
+        const repoIds =
+          typeof repoFilter === 'object' && repoFilter !== null && 'in' in repoFilter
+            ? repoFilter.in
+            : null;
+        return (
+          term.launchedById === row.launchedById ||
+          (Array.isArray(repoIds) && repoIds.includes(row.attributedRepoId ?? ''))
+        );
+      })
+    );
+    expect(liveVisible.map(({ id }) => id)).toEqual(['launched-only', 'repo-only', 'shared-match']);
 
     const rows = [
       { id: 'launched-only', launchedById: USER.sub },

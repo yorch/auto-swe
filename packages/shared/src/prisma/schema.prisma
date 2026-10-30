@@ -542,6 +542,7 @@ model Connection {
   runInputs             RunInput[]
   scheduledWorkRequests ScheduledWorkRequest[]
   workflowRuns          WorkflowRun[]
+  attributedRepoRuns    WorkflowRun[]         @relation("WorkflowRunAttributedRepo")
   mcpAgents             Agent[]                @relation("AgentMcpConnection")
   /// Repo dependency graph edges (repo-dependency-graph feature). `dependenciesFrom`
   /// are edges where this repo is the dependent; `dependenciesTo` where it is depended upon.
@@ -2038,6 +2039,8 @@ model WorkflowRun {
   /// Reporting-only attribution; these fields do not affect run visibility.
   attributedTeamId  String?           @map("attributed_team_id") @db.Uuid
   attributedTeam    Team?             @relation("WorkflowRunAttributedTeam", fields: [attributedTeamId], references: [id], onDelete: SetNull)
+  attributedRepoId  String?           @map("attributed_repo_id") @db.Uuid
+  attributedRepo    Connection?       @relation("WorkflowRunAttributedRepo", fields: [attributedRepoId], references: [id], onDelete: SetNull)
   attributedOrgId   String?           @map("attributed_org_id") @db.Uuid
   attributedOrganization Organization? @relation("WorkflowRunAttributedOrganization", fields: [attributedOrgId], references: [id], onDelete: SetNull)
   /// True when this run was routed to the canary arm (evals P2 canary).
@@ -2116,6 +2119,7 @@ model WorkflowRun {
   @@index([templateId])
   @@index([workRequestId])
   @@index([attributedTeamId, startedAt])
+  @@index([attributedRepoId, startedAt])
   @@index([attributedOrgId, startedAt])
   @@index([launchedById])
   @@index([channelId])
@@ -2133,7 +2137,7 @@ model WorkflowRun {
 model WorkflowRunDailyRollup {
   id                       String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   day                      DateTime @db.Date
-  bucketVersion            Int      @default(3) @map("bucket_version")
+  bucketVersion            Int      @default(4) @map("bucket_version")
   dimensionKey             String   @map("dimension_key")
   orgId                    String?  @map("org_id") @db.Uuid
   teamId                   String?  @map("team_id") @db.Uuid
@@ -2181,7 +2185,7 @@ model WorkflowRunDailyRollup {
 model HumanStepDailyRollup {
   id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   day            DateTime @db.Date
-  bucketVersion  Int      @default(3) @map("bucket_version")
+  bucketVersion  Int      @default(4) @map("bucket_version")
   dimensionKey   String   @map("dimension_key")
   orgId          String?  @map("org_id") @db.Uuid
   teamId         String?  @map("team_id") @db.Uuid
@@ -2209,7 +2213,7 @@ model HumanStepDailyRollup {
 model ReviewVerdictDailyRollup {
   id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   day             DateTime @db.Date
-  bucketVersion   Int      @default(3) @map("bucket_version")
+  bucketVersion   Int      @default(4) @map("bucket_version")
   dimensionKey    String   @map("dimension_key")
   orgId           String?  @map("org_id") @db.Uuid
   teamId          String?  @map("team_id") @db.Uuid

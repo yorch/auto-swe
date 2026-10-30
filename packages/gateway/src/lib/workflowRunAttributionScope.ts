@@ -8,7 +8,6 @@ export interface WorkflowRunAttributionScope {
   isAdmin: boolean;
   orgIds: string[];
   repoIds: string[];
-  repoWorkflowIds: string[];
   teamId?: string;
   teamIds: string[];
   userId: string;
@@ -23,10 +22,7 @@ export interface RollupAttributionWhere {
 }
 
 export async function resolveWorkflowRunAttributionScope(
-  prisma: Pick<
-    PrismaClient,
-    'activeWorkflow' | 'connection' | 'organizationMembership' | 'team' | 'teamMembership'
-  >,
+  prisma: Pick<PrismaClient, 'connection' | 'organizationMembership' | 'team' | 'teamMembership'>,
   user: { role: string; sub: string },
   repoAccessGate: MaybeGate,
   teamId?: string
@@ -37,7 +33,6 @@ export async function resolveWorkflowRunAttributionScope(
       isAdmin: true,
       orgIds: [],
       repoIds: [],
-      repoWorkflowIds: [],
       teamId,
       teamIds: [],
       userId: user.sub,
@@ -81,24 +76,12 @@ export async function resolveWorkflowRunAttributionScope(
     )
   ).filter((orgId): orgId is string => orgId !== null);
   const repoIds = connections.map((connection) => connection.id);
-  const repoWorkflowIds = repoIds.length
-    ? await runUnscoped(
-        'report repository visibility maps reachable repositories to their active workflows',
-        ['ActiveWorkflow'],
-        () =>
-          prisma.activeWorkflow.findMany({
-            select: { temporalWorkflowId: true },
-            where: { repoId: { in: repoIds } },
-          })
-      ).then((workflows) => workflows.map((workflow) => workflow.temporalWorkflowId))
-    : [];
   if (!teamId) {
     return {
       authorized: true,
       isAdmin: false,
       orgIds,
       repoIds,
-      repoWorkflowIds,
       teamIds,
       userId: user.sub,
     };
@@ -109,7 +92,6 @@ export async function resolveWorkflowRunAttributionScope(
       isAdmin: false,
       orgIds,
       repoIds,
-      repoWorkflowIds,
       teamId,
       teamIds,
       userId: user.sub,
@@ -125,7 +107,6 @@ export async function resolveWorkflowRunAttributionScope(
     isAdmin: false,
     orgIds,
     repoIds,
-    repoWorkflowIds,
     teamId,
     teamIds,
     userId: user.sub,
@@ -144,9 +125,7 @@ export function workflowRunAttributionWhere(
   const visibleRuns: Prisma.WorkflowRunWhereInput[] = [
     { attributedTeamId: { in: scope.teamIds } },
     { attributedOrgId: { in: scope.orgIds } },
-    {
-      OR: [{ connectionId: { in: scope.repoIds } }, { workflowId: { in: scope.repoWorkflowIds } }],
-    },
+    { attributedRepoId: { in: scope.repoIds } },
     { launchedById: scope.userId },
   ];
   return {

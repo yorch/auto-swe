@@ -348,6 +348,48 @@ describe('report routes', () => {
     });
   });
 
+  it('masks a hidden template on a run visible only through its repository', async () => {
+    const { app, prisma } = await buildApp('ENGINEER');
+    const repoId = '00000000-0000-4000-8000-000000000001';
+    prisma.connection.findMany.mockResolvedValue([
+      { id: repoId, organizationName: 'acme', repoName: 'private-repo' },
+    ] as never);
+    prisma.workflowRun.findMany.mockResolvedValue([
+      {
+        attributedOrgId: null,
+        attributedRepoId: repoId,
+        attributedTeamId: null,
+        costUsdAccrued: 0,
+        endedAt: null,
+        estimatedHumanTimeSaved: null,
+        hadHumanStep: null,
+        hasError: false,
+        id: 'repo-visible-run',
+        launchedById: null,
+        outcomeDomain: null,
+        outcomeType: null,
+        startedAt: new Date(),
+        status: 'SUCCESS',
+        templateId: 'hidden-template',
+        templateVersion: 1,
+        wasAutonomous: null,
+        workflowId: 'repo-visible-workflow',
+        workRequest: { activeWorkflows: [] },
+      },
+    ] as never);
+
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'GET',
+      url: '/api/v1/reports/delivery?window=30',
+    });
+
+    expect(response.statusCode, response.body).toBe(200);
+    expect(response.json().data.byTemplate).toMatchObject([{ templateName: 'Private template' }]);
+    const runWhere = prisma.workflowRun.findMany.mock.calls[0]?.[0].where;
+    expect(JSON.stringify(runWhere)).toContain(`"attributedRepoId":{"in":["${repoId}"]}`);
+  });
+
   it('reports each bounded quality source truncation flag', async () => {
     const { app, prisma } = await buildApp();
     prisma.workflowRun.findMany.mockResolvedValue([

@@ -234,7 +234,6 @@ export {
   WORKFLOW_RUN_DAY_MS,
   WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
   WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS,
-  workflowRunRepoIdFromRun,
   workflowRunRollupInputFromRun,
 } from './workflowRunRollup.js';
 export type {

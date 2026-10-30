@@ -153,11 +153,11 @@ export const SETTING_DEFINITIONS = {
   }),
   'analytics.orgWideReports': defineSetting({
     defaultValue: false,
-    description: 'Whether ORG_ADMINs can view organization-wide reporting data and digests.',
+    description: 'Whether platform admins enable organization-wide reporting data and digests.',
     group: 'analytics',
     label: 'Organization-wide reports',
     overridableAt: ['ORGANIZATION'],
-    requiredRole: 'ENGINEER',
+    requiredRole: 'ADMIN',
     restartRequired: false,
     runPinned: false,
     schema: z.boolean(),

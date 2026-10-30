@@ -2,7 +2,7 @@ import { parseReviewVerdict } from './reports.js';
 
 export const WORKFLOW_RUN_DAY_MS = 24 * 60 * 60 * 1000;
 export const WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS = 30;
-export const WORKFLOW_RUN_ROLLUP_BUCKET_VERSION = 3;
+export const WORKFLOW_RUN_ROLLUP_BUCKET_VERSION = 4;
 export const CI_FIX_ROUND_BUCKETS = 21;
 export const CI_FIX_ROUND_OVERFLOW = 20;
 
@@ -36,8 +36,8 @@ export interface WorkflowRunRollupRunInput {
 
 export function workflowRunRollupInputFromRun(run: {
   attributedOrgId: string | null;
+  attributedRepoId: string | null;
   attributedTeamId: string | null;
-  connectionId?: string | null;
   costUsdAccrued: number | { toNumber(): number };
   endedAt: Date | null;
   estimatedHumanTimeSaved: number | null;
@@ -55,7 +55,6 @@ export function workflowRunRollupInputFromRun(run: {
   workRequest?: {
     activeWorkflows: readonly {
       costUsdAccrued: number | { toNumber(): number };
-      repoId: string | null;
       temporalWorkflowId: string;
     }[];
   } | null;
@@ -77,29 +76,13 @@ export function workflowRunRollupInputFromRun(run: {
     legacyCostUsd: activeWorkflow ? toNumber(activeWorkflow.costUsdAccrued) : 0,
     outcomeDomain: run.outcomeDomain,
     outcomeType: run.outcomeType,
-    repoId: activeWorkflow?.repoId ?? run.connectionId ?? null,
+    repoId: run.attributedRepoId,
     startedAt: run.startedAt,
     status: run.status,
     templateId: run.templateId,
     templateVersion: run.templateVersion,
     wasAutonomous: run.wasAutonomous,
   };
-}
-
-export function workflowRunRepoIdFromRun(run: {
-  connectionId?: string | null;
-  workflowId: string;
-  workRequest?: {
-    activeWorkflows: readonly { repoId: string | null; temporalWorkflowId: string }[];
-  } | null;
-}): string | null {
-  return (
-    run.workRequest?.activeWorkflows.find(
-      (workflow) => workflow.temporalWorkflowId === run.workflowId
-    )?.repoId ??
-    run.connectionId ??
-    null
-  );
 }
 
 export interface WorkflowRunRollupPullRequestInput {

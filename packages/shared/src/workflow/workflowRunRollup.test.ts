@@ -26,8 +26,8 @@ describe('WorkflowRun daily rollups', () => {
   it('uses one run mapper for sweep and live inputs, including the workspace/repo fallback', () => {
     const run = {
       attributedOrgId: 'org',
+      attributedRepoId: 'repo',
       attributedTeamId: 'team',
-      connectionId: 'workspace-connection',
       costUsdAccrued: 0,
       endedAt: null,
       estimatedHumanTimeSaved: null,
@@ -46,7 +46,6 @@ describe('WorkflowRun daily rollups', () => {
         activeWorkflows: [
           {
             costUsdAccrued: 2,
-            repoId: 'repo',
             temporalWorkflowId: 'workflow-1',
           },
         ],
@@ -76,6 +75,15 @@ describe('WorkflowRun daily rollups', () => {
         traces: [],
       })
     );
+    expect(
+      buildWorkflowRunDailyRollups({
+        now: run.startedAt,
+        pullRequests: [],
+        runs: [mappedForSweep],
+        steps: [],
+        traces: [],
+      })[0]
+    ).toMatchObject({ launchedById: 'launcher-1', repoId: 'repo' });
   });
   it('aggregates successful time saved, PRs, fallback spend, and CI fix histograms', () => {
     const start = new Date('2026-10-01T10:00:00Z');
@@ -129,7 +137,7 @@ describe('WorkflowRun daily rollups', () => {
   });
 
   it('uses versioned sub-second and logarithmic duration buckets', () => {
-    expect(WORKFLOW_RUN_ROLLUP_BUCKET_VERSION).toBe(3);
+    expect(WORKFLOW_RUN_ROLLUP_BUCKET_VERSION).toBe(4);
     expect(DURATION_BUCKET_BOUNDS_MS.slice(0, 7)).toEqual([10, 25, 50, 100, 250, 500, 1000]);
     expect(durationBucketForMs(10)).toBe(0);
     expect(durationBucketForMs(11)).toBe(1);
@@ -178,7 +186,7 @@ describe('WorkflowRun daily rollups', () => {
       steps: [],
       traces: [],
     })[0];
-    expect(row?.bucketVersion).toBe(3);
+    expect(row?.bucketVersion).toBe(4);
     expect(row?.durationBuckets[durationBucketForMs(250)]).toBe(1);
 
     const rounds = Array.from({ length: 21 }, () => 0);
@@ -219,6 +227,7 @@ describe('WorkflowRun daily rollups', () => {
       templateVersion: 1,
       ...{
         attributedOrgId: null,
+        attributedRepoId: null,
         attributedTeamId: null,
         costUsdAccrued: 0,
         estimatedHumanTimeSaved: null,

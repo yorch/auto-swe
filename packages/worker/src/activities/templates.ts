@@ -421,6 +421,10 @@ async function writeScheduledFireLedgerRow(
     update: links,
     where: { temporalWorkflowId: input.workflowId },
   });
+  await prisma.workflowRun.updateMany({
+    data: { attributedRepoId: anchor.repoId },
+    where: { workflowId: input.workflowId },
+  });
 }
 
 /**
@@ -608,8 +612,14 @@ export async function createWorkflowRun(
         })
       : null,
   ]);
+  const activeWorkflow = await prisma.activeWorkflow.findUnique({
+    select: { repoId: true },
+    where: { temporalWorkflowId: input.workflowId },
+  });
   const attribution = resolveWorkflowRunAttribution({
+    activeWorkflowRepoId: activeWorkflow?.repoId,
     connection: attributionConnection,
+    connectionId: (input.parentWorkflowId && input.repoId ? input.repoId : scheduledRepoId) ?? null,
     template: { team: version.template?.team ?? null },
     workRequest: attributionWorkRequest,
   });
@@ -633,6 +643,7 @@ export async function createWorkflowRun(
     create: {
       agentVersions,
       attributedOrgId: attribution.attributedOrgId,
+      attributedRepoId: attribution.attributedRepoId,
       attributedTeamId: attribution.attributedTeamId,
       ...(agentRuntimes ? { agentRuntimes: agentRuntimes as Prisma.InputJsonObject } : {}),
       ...sourceSnapshot,

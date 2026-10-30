@@ -2897,7 +2897,7 @@ describe('GET /workflow-templates/analytics approval latency', () => {
       OR: [
         { attributedTeamId: { in: [] } },
         { attributedOrgId: { in: [] } },
-        { OR: [{ connectionId: { in: [] } }, { workflowId: { in: [] } }] },
+        { attributedRepoId: { in: [] } },
         { launchedById: caller.sub },
       ],
     });

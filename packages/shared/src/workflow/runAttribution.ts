@@ -6,6 +6,8 @@ export interface RunAttributionTeam {
 type TeamRelation = { team: RunAttributionTeam | null } | null | undefined;
 
 export interface WorkflowRunAttributionSources {
+  activeWorkflowRepoId?: string | null;
+  connectionId?: string | null;
   connection?: TeamRelation;
   workRequest?: {
     billingOrgId?: string | null;
@@ -19,6 +21,7 @@ export interface WorkflowRunAttributionSources {
 export interface WorkflowRunAttribution {
   attributedTeamId: string | null;
   attributedOrgId: string | null;
+  attributedRepoId: string | null;
 }
 
 export const attributionTeamSelect = {
@@ -49,6 +52,7 @@ export function resolveWorkflowRunAttribution(
 
   return {
     attributedOrgId: team?.orgId ?? sources.workRequest?.billingOrgId ?? null,
+    attributedRepoId: sources.activeWorkflowRepoId ?? sources.connectionId ?? null,
     attributedTeamId: team?.id ?? null,
   };
 }

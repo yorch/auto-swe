@@ -746,6 +746,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
                 orderBy: { startedAt: 'desc' },
                 select: {
                   attributedOrgId: true,
+                  attributedRepoId: true,
                   attributedTeamId: true,
                   connectionId: true,
                   costUsdAccrued: true,
@@ -3162,6 +3163,7 @@ export const workflowTemplateRoutes: FastifyPluginAsync = async (fastify) => {
                   orderBy: { startedAt: 'desc' },
                   select: {
                     attributedOrgId: true,
+                    attributedRepoId: true,
                     attributedTeamId: true,
                     connectionId: true,
                     costUsdAccrued: true,

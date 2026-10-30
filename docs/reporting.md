@@ -145,8 +145,8 @@ otherwise the configured Resend transport.
   otherwise the route returns 403. Live and rollup report slices use the same run-to-repository
   mapping. HITL uses this same scope for live and historical rows.
 - Organization-wide digest creation, updates, test sends, and scheduled delivery require
-  `analytics.orgWideReports`; disabled subscriptions remain stored but scheduled delivery skips
-  them without creating delivery rows.
+  `analytics.orgWideReports`, which only a platform ADMIN can enable per organization; disabled
+  subscriptions remain stored but scheduled delivery skips them without creating delivery rows.
 - Template names hidden by the workflow-template visibility rule, channel names hidden by channel
   access, and repository names blocked by the repository-access gate are masked as `Private
   template`, `Private channel`, and `Inaccessible repository`; the corresponding counts remain.
