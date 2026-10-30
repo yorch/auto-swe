@@ -640,6 +640,20 @@ worker uses them to find changed source rows for frozen rollup days.
 rebuilt, older report windows use live reads. ORG_ADMINs do not receive organization-wide reports
 or digests until the organization enables `analytics.orgWideReports`.
 
+### Persisted workflow-run repository attribution (`23a0cc67`)
+
+**Affected.** Deployments applying commit `23a0cc67` or a descendant that have not yet applied
+`20261030170000_workflow_run_repo_attribution`.
+
+**Expected cost.** The migration backfills repository attribution by rewriting `workflow_runs` and
+blocks writes while it runs. Large deployments should schedule a maintenance window.
+
+**Actions.** The standard migration deploy applies the backfill. The rollup bucket version changes,
+so older report windows use live reads until they are rebuilt; set
+`WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS` to the desired history. A platform ADMIN enables
+`analytics.orgWideReports` per organization before ORG_ADMINs receive organization-wide reports or
+digests for it.
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,
