@@ -632,7 +632,7 @@ maintenance window when workflow, step, and trace writes can pause for the index
 **Actions.** No manual SQL is required. The standard migration deploy applies the indexes; the
 worker uses them to find changed source rows for frozen rollup days.
 
-### Reporting visibility rollup dimensions
+### Reporting visibility rollup dimensions (`d0b3cf004a93593f8c03378f64fb67984d553790`)
 
 **Affected.** Deployments applying the report visibility rollup-dimension migration.
 
