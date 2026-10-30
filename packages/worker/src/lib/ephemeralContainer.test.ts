@@ -328,7 +328,12 @@ describe('runSidecarContainer request timeouts (docker + fetch mocked)', () => {
       timeoutMs: 120_000,
       workspaceMount: 'cstep-abc',
     });
-    expect(out).toEqual({ result: { ok: true }, status: 200 });
+    expect(out).toEqual({ result: { ok: true }, status: 200, stderr: '', stdout: 'cid\n' });
+    expect(spawnCaptureAsync).toHaveBeenCalledWith(
+      'docker',
+      ['logs', expect.stringMatching(/^sidecar-/)],
+      expect.any(Object)
+    );
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const [readiness, request] = fetchMock.mock.calls as [string, RequestInit][];
     expect(readiness[0]).toBe('http://127.0.0.1:49162/');

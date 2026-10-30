@@ -11,6 +11,7 @@ import { activityNodeTagInterceptor } from './lib/activityNodeTag.js';
 import { activitySpanInterceptor } from './lib/activitySpans.js';
 import { assertConfigReady } from './lib/config/assertReady.js';
 import { ignoredPriceOverrideVars } from './lib/costTracking.js';
+import { activityHttpCaptureInterceptor, installHttpCapture } from './lib/httpCapture.js';
 import { startLivenessFile } from './lib/livenessFile.js';
 import { initMetrics } from './lib/metrics.js';
 import { OtelForwardingLogger } from './lib/otelLogger.js';
@@ -21,6 +22,7 @@ import { workspaceBackend } from './lib/workspaceBackend/index.js';
 import { assertKubernetesReady } from './lib/workspaceBackend/kubernetes/ready.js';
 
 async function run() {
+  installHttpCapture();
   // Every provider credential and integration secret decrypts through this
   // key; without it the first LLM call fails inside an activity instead of
   // the process refusing to start. Check before anything else is initialised.
@@ -120,6 +122,7 @@ async function run() {
         activitySpanInterceptor,
         activityNodeTagInterceptor,
         activityTranscriptInterceptor,
+        activityHttpCaptureInterceptor,
       ],
       workflowModules: [nodeTagInterceptorPath, traceContextInterceptorPath],
     },

@@ -269,6 +269,13 @@ function causeChainBlocked(err: unknown): SsrfBlockedError | null {
  */
 let defaultFetch = undiciFetch as unknown as typeof fetch;
 
+let observeFetch: (inner: typeof fetch) => typeof fetch = (inner) => inner;
+
+/** Observe exchanges without replacing the pinned dispatcher or its security checks. */
+export function setGuardedFetchObserver(observer: (inner: typeof fetch) => typeof fetch): void {
+  observeFetch = observer;
+}
+
 /**
  * Test seam: swaps the fetch that drives the dispatcher, for a suite whose
  * doubles live on `globalThis.fetch`. Refused in production, so a deployed
@@ -321,7 +328,10 @@ export function createGuardedFetch(opts: GuardedFetchOptions = {}): typeof fetch
     // fail where direct egress is blocked.
     const doFetch = opts.fetchImpl ?? (proxied ? proxiedFetch() : defaultFetch);
     try {
-      return await doFetch(input, (dispatcher ? { ...init, dispatcher } : init) as RequestInit);
+      return await observeFetch(doFetch)(
+        input,
+        (dispatcher ? { ...init, dispatcher } : init) as RequestInit
+      );
     } catch (err) {
       const blocked = causeChainBlocked(err);
       if (blocked) {

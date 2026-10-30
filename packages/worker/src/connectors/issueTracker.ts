@@ -2,6 +2,7 @@ import type { IssueTrackerConnectionConfig } from '@auto-swe/shared';
 import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { resolveIssueTrackerOrigin } from '@auto-swe/shared/lib/systemConfig';
 import { ApplicationFailure } from '@temporalio/activity';
+import { capturingFetch } from '../lib/httpCapture.js';
 import { assertSafeConnectionBaseUrl } from './baseUrlGuard.js';
 
 const ISSUE_TRACKER_TIMEOUT_MS = 30_000;
@@ -67,16 +68,19 @@ async function linearFetch<T>(
   query: string,
   variables?: Record<string, unknown>
 ): Promise<T> {
-  const response = await fetch('https://api.linear.app/graphql', {
-    body: JSON.stringify({ query, variables }),
-    headers: {
-      Authorization: connection.apiToken,
-      'Content-Type': 'application/json',
-    },
-    method: 'POST',
-    redirect: 'error',
-    signal: AbortSignal.timeout(ISSUE_TRACKER_TIMEOUT_MS),
-  });
+  const response = await capturingFetch(globalThis.fetch, 'connector')(
+    'https://api.linear.app/graphql',
+    {
+      body: JSON.stringify({ query, variables }),
+      headers: {
+        Authorization: connection.apiToken,
+        'Content-Type': 'application/json',
+      },
+      method: 'POST',
+      redirect: 'error',
+      signal: AbortSignal.timeout(ISSUE_TRACKER_TIMEOUT_MS),
+    }
+  );
 
   if (!response.ok) {
     const body = await response.text().catch(() => 'unknown');
@@ -114,7 +118,7 @@ async function jiraFetch<T>(
   const url = `${baseUrl}${path}`;
   const timeoutSignal = AbortSignal.timeout(ISSUE_TRACKER_TIMEOUT_MS);
   // The text check above vets the URL; this one vets what it resolves to and pins the connection.
-  const response = await createGuardedFetch({ allowPrivate })(url, {
+  const response = await capturingFetch(createGuardedFetch({ allowPrivate }), 'connector')(url, {
     ...init,
     headers: {
       Authorization: `Basic ${Buffer.from(`${email}:${connection.apiToken}`).toString('base64')}`,

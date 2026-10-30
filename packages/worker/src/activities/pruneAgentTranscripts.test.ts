@@ -125,6 +125,10 @@ vi.mock('@auto-swe/shared/db', () => ({
             : h.orphanArtifacts
       ),
     },
+    workflowHttpCall: {
+      deleteMany: vi.fn(async () => ({ count: 0 })),
+      findMany: vi.fn(async () => []),
+    },
   },
 }));
 

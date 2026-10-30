@@ -177,6 +177,8 @@ export interface WorkspaceBackend {
    * start result — a non-zero exitCode means it never started.
    */
   startDetached(spec: EphemeralContainerSpec, opts: EphemeralRunOptions): Promise<CapturedResult>;
+  /** Read a detached container's stdout/stderr before removing it. */
+  containerLogs(name: string): Promise<CapturedResult>;
   /**
    * The platform's own helper containers (shellStep's git clone/finalize
    * runs): `docker run --rm -v … --entrypoint … image argv` with no lockdown,

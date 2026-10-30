@@ -38,6 +38,7 @@ import { currentWorkflowId, currentWorkflowRunId } from '../lib/activityContext.
 import { logWarn } from '../lib/activityLog.js';
 import { currentRequestContext } from '../lib/config/contextLookup.js';
 import { runEphemeralContainer } from '../lib/ephemeralContainer.js';
+import { executionAudit } from '../lib/executionAudit.js';
 import {
   type GitIdentity,
   gitIdentityEntries,
@@ -489,6 +490,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     heartbeat('shell-step: cloning branch into workspace volume');
     await cloneIntoVolume(volumeName, meta, branch, helperImage, gitIdentity, registry !== null);
 
+    const executionStarted = performance.now();
     let result: Awaited<ReturnType<typeof runEphemeralContainer>>;
     try {
       if (registry) {
@@ -570,6 +572,21 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
         workdir: '/workspace/repo',
         workspaceMount: volumeName,
       });
+    } catch (err) {
+      const out = err as { stdout?: string; stderr?: string; exitCode?: number };
+      await executionAudit({
+        command: redactToken(input.command, meta.token),
+        durationMs: Math.round(performance.now() - executionStarted),
+        egressAllowlist: meta.teamEgressAllowlist,
+        error: redactToken(String(err), meta.token),
+        exitCode: out?.exitCode,
+        image: input.image,
+        name: 'shell',
+        network: input.network ?? 'none',
+        stderr: redactToken(out?.stderr ?? '', meta.token),
+        stdout: redactToken(out?.stdout ?? '', meta.token),
+      });
+      throw err;
     } finally {
       // Revoke the step's proxy token as soon as the command is done; the
       // outer finally covers a failure before this point (clone, allowlist).
@@ -588,7 +605,7 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     const redactedStdout = redactToken(result.stdout, meta.token);
     const redactedStderr = redactToken(result.stderr, meta.token);
 
-    const fullLog = `$ ${input.command}\n--- stdout ---\n${redactedStdout}\n--- stderr ---\n${redactedStderr}`;
+    const fullLog = `$ ${maskCredentialShapes(redactToken(input.command, meta.token))}\n--- stdout ---\n${redactedStdout}\n--- stderr ---\n${redactedStderr}`;
     const runId = await currentWorkflowRunId();
     const artifact = await putArtifact({
       body: fullLog,
@@ -608,6 +625,18 @@ export async function runShellStep(input: ShellStepInput): Promise<ShellStepResu
     const maskedCommand = maskCredentialShapes(
       redactSecrets(input.command, [meta.token, meta.gitAuthHeader])
     );
+    await executionAudit({
+      artifactId: artifact?.id,
+      command: maskedCommand,
+      durationMs: Math.round(performance.now() - executionStarted),
+      egressAllowlist: meta.teamEgressAllowlist,
+      exitCode: result.exitCode,
+      image: input.image,
+      name: 'shell',
+      network: input.network ?? 'none',
+      stderr: redactedStderr,
+      stdout: redactedStdout,
+    });
     let finalize: FinalizeResult = { filesChanged: [] };
     let finalizeError: string | undefined;
     if (commandPassed) {

@@ -4,6 +4,7 @@ import type { RepoWorkRequest } from '@auto-swe/shared/types/workflow';
 import { assertShellImageAllowed } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { runEphemeralContainer, runSidecarContainer } from '../lib/ephemeralContainer.js';
+import { executionAudit } from '../lib/executionAudit.js';
 import { requireRepoId } from '../lib/requireRepoId.js';
 import { workspaceBackend } from '../lib/workspaceBackend/index.js';
 
@@ -116,6 +117,7 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
   const backend = workspaceBackend();
   await backend.createVolume(volume);
   try {
+    const started = performance.now();
     const res = await runEphemeralContainer({
       ...(command !== undefined ? { command } : {}),
       cpus: input.cpus,
@@ -127,6 +129,32 @@ export async function runContainerStep(input: ContainerStepInput): Promise<Conta
       secretEnv: { CONTAINER_STEP_INPUT: JSON.stringify(input.inputs ?? {}) },
       timeoutMs: input.timeoutMs,
       workspaceMount: volume,
+    }).catch(async (err: unknown) => {
+      const out = err as { stdout?: string; stderr?: string; exitCode?: number };
+      await executionAudit({
+        command,
+        durationMs: Math.round(performance.now() - started),
+        egressAllowlist,
+        error: String(err),
+        exitCode: out?.exitCode,
+        image: input.image,
+        name: 'container',
+        network: input.network ?? 'none',
+        stderr: out?.stderr ?? '',
+        stdout: out?.stdout ?? '',
+      });
+      throw err;
+    });
+    await executionAudit({
+      command: input.command,
+      durationMs: Math.round(performance.now() - started),
+      egressAllowlist,
+      exitCode: res.exitCode,
+      image: input.image,
+      name: 'container',
+      network: input.network ?? 'none',
+      stderr: res.stderr,
+      stdout: res.stdout,
     });
     if (res.exitCode !== 0) {
       throw new Error(
@@ -168,6 +196,7 @@ async function runSidecarTransport(
   const backend = workspaceBackend();
   await backend.createVolume(volume);
   try {
+    const started = performance.now();
     const res = await runSidecarContainer({
       ...(input.command ? { command: input.command } : {}),
       body: input.inputs ?? {},
@@ -186,6 +215,31 @@ async function runSidecarTransport(
       // `readyTimeoutMs`. Capped like the other transports' wall clock.
       timeoutMs: input.timeoutMs,
       workspaceMount: volume,
+    }).catch(async (err: unknown) => {
+      const out = err as { stdout?: string; stderr?: string; exitCode?: number };
+      await executionAudit({
+        command: input.command,
+        durationMs: Math.round(performance.now() - started),
+        egressAllowlist,
+        error: String(err),
+        exitCode: out?.exitCode,
+        image: input.image,
+        name: 'container',
+        network: 'egress',
+        stderr: out?.stderr ?? '',
+        stdout: out?.stdout ?? '',
+      });
+      throw err;
+    });
+    await executionAudit({
+      command: input.command,
+      durationMs: Math.round(performance.now() - started),
+      egressAllowlist,
+      image: input.image,
+      name: 'container',
+      network: 'egress',
+      stderr: res.stderr ?? '',
+      stdout: res.stdout ?? '',
     });
     return { result: res.result };
   } finally {

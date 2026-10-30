@@ -21,6 +21,7 @@ import { deleteArtifact, deletePendingArtifact } from '@auto-swe/shared/lib/arti
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { logWarn } from '../lib/activityLog.js';
 import { PRUNE_BATCH, PRUNE_MAX_BATCHES } from './pruneAutomationDecisions.js';
+import { pruneWorkflowHttpCalls } from './pruneWorkflowHttpCalls.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** A `started` access row older than this belongs to a gateway that never completed it. */
@@ -51,6 +52,7 @@ export async function pruneAgentTranscripts(
   now: Date = new Date()
 ): Promise<PruneAgentTranscriptsResult> {
   const retentionDays = await resolveSetting('workflow.transcriptRetentionDays', {});
+  await pruneWorkflowHttpCalls(now);
   const accessLogRetentionDays = await resolveSetting(
     'workflow.transcriptAccessLogRetentionDays',
     {}

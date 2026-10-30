@@ -173,6 +173,7 @@ export interface RegistryDenial {
 }
 
 interface Registration {
+  run<T>(body: () => T): T;
   registries: Map<string, ResolvedRegistry>;
   /** Per registry: its allowlist, or `null` for an `open` registry. */
   allowlists: Map<string, Map<string, Set<string>> | null> | undefined;
@@ -1604,7 +1605,7 @@ export function createRegistryProxy(options: {
         sendJson(res, 401, 'unknown or expired token');
         return;
       }
-      handlePypi(pypiReg, req, res, pypiRoute[1] ?? '', pypiRoute[2] ?? '');
+      pypiReg.run(() => handlePypi(pypiReg, req, res, pypiRoute[1] ?? '', pypiRoute[2] ?? ''));
       return;
     }
     const goRoute = /^\/go\/([^/]+)\/([^/]+)(\/.*)$/.exec(url.pathname);
@@ -1615,7 +1616,7 @@ export function createRegistryProxy(options: {
       return;
     }
     if (goRoute) {
-      handleGo(reg, req, res, goRoute[2] ?? '', goRoute[3] ?? '');
+      reg.run(() => handleGo(reg, req, res, goRoute[2] ?? '', goRoute[3] ?? ''));
       return;
     }
     const m = /^\/npm\/([^/]+)(\/.*)$/.exec(url.pathname);
@@ -1646,9 +1647,11 @@ export function createRegistryProxy(options: {
       return;
     }
     if (isAudit) {
-      const audit = serveAudit(reg, req, res, m[2] as string).catch(() => {
-        sendJson(res, 502, 'the upstream registry could not be reached');
-      });
+      const audit = reg
+        .run(() => serveAudit(reg, req, res, m[2] as string))
+        .catch(() => {
+          sendJson(res, 502, 'the upstream registry could not be reached');
+        });
       reg.inFlight.add(audit);
       void audit.finally(() => reg.inFlight.delete(audit));
       return;
@@ -1663,11 +1666,11 @@ export function createRegistryProxy(options: {
       sendJson(res, 404, `no registry serves ${parsed.name}`);
       return;
     }
-    const call = (async () => {
-      await serve(reg, req, res, registry, parsed.name, parsed.tarball, parsed.version);
-    })().catch(() => {
-      sendJson(res, 502, 'the upstream registry could not be reached');
-    });
+    const call = reg
+      .run(() => serve(reg, req, res, registry, parsed.name, parsed.tarball, parsed.version))
+      .catch(() => {
+        sendJson(res, 502, 'the upstream registry could not be reached');
+      });
     reg.inFlight.add(call);
     void call.finally(() => reg.inFlight.delete(call));
   }
@@ -1786,6 +1789,7 @@ export function createRegistryProxy(options: {
         onDenied: AsyncResource.bind(ws.onDenied),
         pypiFiles: new Map(),
         registries: new Map(ws.registries.map((r) => [r.id, r])),
+        run: AsyncResource.bind(<T>(body: () => T): T => body()),
       };
       registrations.set(key, reg);
       let released: Promise<void> | undefined;

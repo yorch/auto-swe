@@ -379,6 +379,8 @@ export interface SidecarRunInput extends Omit<EphemeralRunInput, 'command'> {
 export interface SidecarRunResult {
   status: number;
   result: unknown;
+  stdout?: string;
+  stderr?: string;
 }
 
 /**
@@ -438,7 +440,14 @@ export async function runSidecarContainer(input: SidecarRunInput): Promise<Sidec
     } catch {
       throw new Error(`sidecar did not return JSON: ${text.slice(0, 500)}`);
     }
-    return { result, status: res.status };
+    const logs = await backend.containerLogs(containerName).catch(() => undefined);
+    return { result, status: res.status, stderr: logs?.stderr, stdout: logs?.stdout };
+  } catch (err) {
+    const logs = await backend.containerLogs(containerName).catch(() => undefined);
+    if (err instanceof Error && logs) {
+      Object.assign(err, { stderr: logs.stderr, stdout: logs.stdout });
+    }
+    throw err;
   } finally {
     await backend.remove(containerName);
   }

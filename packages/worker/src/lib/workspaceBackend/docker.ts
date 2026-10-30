@@ -406,6 +406,13 @@ class DockerWorkspaceBackend implements WorkspaceBackend {
     });
   }
 
+  async containerLogs(name: string): Promise<CapturedResult> {
+    return spawnCaptureAsync('docker', ['logs', name], {
+      heartbeatLabel: 'container: collecting logs',
+      timeoutMs: 10_000,
+    });
+  }
+
   canReachWorkerProxy(url: string): boolean {
     return new URL(url).hostname === DOCKER_HOST_ALIAS;
   }

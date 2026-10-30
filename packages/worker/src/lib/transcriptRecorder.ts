@@ -43,6 +43,7 @@ import {
 import { logWarn } from './activityLog.js';
 import { currentNodeTag, nodeTagColumns } from './activityNodeTag.js';
 import { AgentTracer, redactJsonValues } from './agentTracer.js';
+import { capturingFetch } from './httpCapture.js';
 import { recordTranscriptPersistFailure } from './metrics.js';
 import { currentSpendOwner } from './spendOwner.js';
 
@@ -202,7 +203,7 @@ function truncatedValue(value: unknown): unknown {
 }
 
 /** Path plus query, minus every query parameter that could carry a credential. */
-function sanitizedPath(url: string): { host: string; path: string } {
+export function sanitizedPath(url: string): { host: string; path: string } {
   try {
     const parsed = new URL(url);
     for (const name of [...parsed.searchParams.keys()]) {
@@ -218,6 +219,11 @@ function sanitizedPath(url: string): { host: string; path: string } {
 }
 
 export class TranscriptRecorder {
+  async transcriptId(): Promise<string | undefined> {
+    this.openPromise ??= this.open();
+    await this.openPromise;
+    return this.rowId;
+  }
   private seq = 0;
   private lines: string[] = [];
   private bufferedBytes = 0;
@@ -777,6 +783,7 @@ export function recordingFetch(
   inner: typeof fetch,
   opts: { maxRecordBytes?: number; purpose?: 'embedding' } = {}
 ): typeof fetch {
+  inner = capturingFetch(inner, opts.purpose ?? 'model');
   const cap = opts.maxRecordBytes ?? MAX_RECORD_BYTES;
   const purpose = opts.purpose;
   const wrapped = async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {

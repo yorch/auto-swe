@@ -10,6 +10,7 @@ import {
   type CallbackDeliveryError,
 } from '@auto-swe/shared/lib/runCallbacks';
 import { signWebhookBody, WEBHOOK_SIGNATURE_HEADER } from '@auto-swe/shared/lib/webhookSigning';
+import { capturingFetch } from './httpCapture.js';
 
 /**
  * One HTTP attempt of a run callback (docs/run-callbacks.md).
@@ -59,13 +60,16 @@ export async function sendCallback(
   input: SendCallbackInput,
   deps: SendCallbackDeps = {}
 ): Promise<CallbackAttempt> {
-  const guardedFetch = createGuardedFetch({
-    allowPrivate: input.allowPrivateNetwork,
-    ...(deps.classify ? { classify: deps.classify } : {}),
-    ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
-    ...(deps.proxied !== undefined ? { proxied: deps.proxied } : {}),
-    ...(deps.resolver ? { resolver: deps.resolver } : {}),
-  });
+  const guardedFetch = capturingFetch(
+    createGuardedFetch({
+      allowPrivate: input.allowPrivateNetwork,
+      ...(deps.classify ? { classify: deps.classify } : {}),
+      ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+      ...(deps.proxied !== undefined ? { proxied: deps.proxied } : {}),
+      ...(deps.resolver ? { resolver: deps.resolver } : {}),
+    }),
+    'callback'
+  );
   let response: Response;
   try {
     response = await guardedFetch(input.url, {
