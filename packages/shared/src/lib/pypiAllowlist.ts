@@ -215,11 +215,16 @@ function valueOfKey(line: string, key: string): string | null {
   return rest.startsWith('=') ? rest.slice(1).trim() : null;
 }
 
+/** PEP 751 keys that make a `[[packages]]` table something other than an index package, inline or as a sub-table. */
+const PYLOCK_NON_INDEX_KEYS = ['vcs', 'directory', 'archive'];
+
 interface TomlTable {
   /** Top-level string keys, read only before the first sub-table header. */
   keys: Map<string, string>;
   /** The raw right-hand side of a top-level `source = …` line. */
   inlineSource: string | null;
+  /** The `PYLOCK_NON_INDEX_KEYS` present as top-level keys, whatever their value. */
+  inlineKeys: Set<string>;
   /** Header text (`package.source`) → its string keys. */
   subs: Map<string, Map<string, string>>;
 }
@@ -253,7 +258,7 @@ function readTomlTables(text: string, array: string): TomlTable[] {
         if (tables.length >= MAX_ENTRIES) {
           break;
         }
-        current = { inlineSource: null, keys: new Map(), subs: new Map() };
+        current = { inlineKeys: new Set(), inlineSource: null, keys: new Map(), subs: new Map() };
         tables.push(current);
         sub = null;
       } else if (current !== null && headerOf(line).startsWith(`${array}.`)) {
@@ -279,6 +284,13 @@ function readTomlTables(text: string, array: string): TomlTable[] {
     }
     if (sub === null && current.inlineSource === null) {
       current.inlineSource = valueOfKey(line, 'source');
+    }
+    if (sub === null) {
+      for (const key of PYLOCK_NON_INDEX_KEYS) {
+        if (valueOfKey(line, key) !== null) {
+          current.inlineKeys.add(key);
+        }
+      }
     }
   }
   return tables;
@@ -328,10 +340,13 @@ export function parsePoetryLock(text: string): PypiRequirement[] {
   );
 }
 
-/** `pylock.toml` (PEP 751): `[[packages]]` tables; a vcs, directory or archive package is not the index. */
+/**
+ * `pylock.toml` (PEP 751): `[[packages]]` tables; a vcs, directory or archive package is not the index,
+ * whether written as a sub-table or as an inline table on the package.
+ */
 export function parsePylockToml(text: string): PypiRequirement[] {
   return requirementsFromTables(readTomlTables(text, 'packages'), (t) =>
-    ['packages.vcs', 'packages.directory', 'packages.archive'].some((h) => t.subs.has(h))
+    PYLOCK_NON_INDEX_KEYS.some((k) => t.inlineKeys.has(k) || t.subs.has(`packages.${k}`))
   );
 }
 

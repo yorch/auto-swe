@@ -182,7 +182,7 @@ jobs:
           PYPI_PROXY_TEST_IMAGE: asw-executor-python:ci
         run: |
           docker build -f defaults/Dockerfile.python -t asw-executor-python:ci defaults
-          yarn test packages/worker/src/lib/registryProxy/pypiClient.docker.test.ts
+          yarn test packages/worker/src/lib/registryProxy/pypiClient.docker.test.ts packages/worker/src/lib/registryProxy/pypiLock.docker.test.ts
 
       # Builds each curated defaults/Dockerfile.<stack> and checks it against the executor
       # image contract and its own toolchain, as the user the executor runs as.

@@ -367,6 +367,49 @@ describe('parsePylockToml', () => {
   it('reads [[packages]] and skips vcs, directory and archive', () => {
     expect(parsePylockToml(PYLOCK)).toEqual([{ name: 'attrs', version: '23.2' }]);
   });
+
+  it('skips vcs, directory and archive written as inline tables', () => {
+    const inline = `lock-version = "1.0"
+
+[[packages]]
+name = "keep"
+version = "1.0"
+index = "https://pypi.org/simple"
+
+[[packages]]
+name = "ivcs"
+version = "1.0"
+vcs = { type = "git", url = "https://github.com/x/y", commit-id = "abc" }
+
+[[packages]]
+name = "idir"
+version = "2.0"
+directory = { path = "." }
+
+[[packages]]
+name = "iarc"
+version = "3.0"
+archive = { url = "https://example.com/a.tar.gz", hashes = { sha256 = "aa" } }
+
+[[packages]]
+name = "edit"
+version = "4.0"
+directory = { path = ".", editable = true }
+`;
+    expect(parsePylockToml(inline)).toEqual([{ name: 'keep', version: '1' }]);
+  });
+
+  it('does not read a vcs, directory or archive key from inside a wheel sub-table', () => {
+    const nested = `[[packages]]
+name = "keep"
+version = "1.0"
+
+[[packages.wheels]]
+name = "keep-1.0-py3-none-any.whl"
+vcs = "not a pin"
+`;
+    expect(parsePylockToml(nested)).toEqual([{ name: 'keep', version: '1' }]);
+  });
 });
 
 const REQUIREMENTS = `# a comment
@@ -542,5 +585,32 @@ describe('allowlist', () => {
       { name: 'ok2', version: 'nope' },
     ]);
     expect([...built.keys()]).toEqual(['ok']);
+  });
+});
+
+describe('local version labels', () => {
+  it('a pin without a local label does not allow a local build of it', () => {
+    const list = buildPypiAllowlist([{ name: 'torch', version: '2.1' }]);
+    expect(isPypiAllowed(list, 'torch', '2.1')).toBe(true);
+    expect(isPypiAllowed(list, 'torch', '2.1+cpu')).toBe(false);
+  });
+
+  it('a pin with a local label allows that label and refuses other labels', () => {
+    const list = buildPypiAllowlist([{ name: 'torch', version: '2.1+cpu' }]);
+    expect(isPypiAllowed(list, 'torch', '2.1+cpu')).toBe(true);
+    expect(isPypiAllowed(list, 'torch', '2.1+CPU')).toBe(true);
+    expect(isPypiAllowed(list, 'torch', '2.1')).toBe(false);
+    expect(isPypiAllowed(list, 'torch', '2.1+gpu')).toBe(false);
+  });
+
+  it('treats only PEP 440 separator and case variants of a local label as equal', () => {
+    const list = buildPypiAllowlist([{ name: 'torch', version: '2.1+cpu' }]);
+    expect(isPypiAllowed(list, 'torch', '2.1+c_p_u')).toBe(false);
+    expect(isPypiAllowed(list, 'torch', '2.1+c.p.u')).toBe(false);
+
+    const numeric = buildPypiAllowlist([{ name: 'torch', version: '2.0+ubuntu-1' }]);
+    expect(isPypiAllowed(numeric, 'torch', '2.0+ubuntu.1')).toBe(true);
+    expect(isPypiAllowed(numeric, 'torch', '2.0+Ubuntu_1')).toBe(true);
+    expect(isPypiAllowed(numeric, 'torch', '2.0+ubuntu.2')).toBe(false);
   });
 });

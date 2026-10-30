@@ -240,6 +240,16 @@ function presentedToken(auth: string | undefined): string | undefined {
   return typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : undefined;
 }
 
+/** The password of an HTTP Basic header (the username is ignored). */
+function basicPassword(auth: string | undefined): string | undefined {
+  if (typeof auth !== 'string' || !auth.startsWith('Basic ')) {
+    return undefined;
+  }
+  const decoded = Buffer.from(auth.slice(6), 'base64').toString('utf8');
+  const colon = decoded.indexOf(':');
+  return colon < 0 ? undefined : decoded.slice(colon + 1);
+}
+
 function sendJson(
   res: http.ServerResponse,
   status: number,
@@ -1371,7 +1381,9 @@ export function createRegistryProxy(options: {
       rendered.push({
         filename: f.filename,
         hash: f.hash,
-        href: `/pypi/${token}/${registry.id}/files/${id}/${f.filename}`,
+        href: token
+          ? `/pypi/${token}/${registry.id}/files/${id}/${f.filename}`
+          : `/pypi/${registry.id}/files/${id}/${f.filename}`,
         requiresPython: f.requiresPython,
         yanked: f.yanked,
       });
@@ -1581,6 +1593,19 @@ export function createRegistryProxy(options: {
     // `/go/../npm/<id>/…` and `/go/%2e%2e/npm/<id>/…` normalise to an npm path and are then judged
     // as npm, so a path token cannot stand in for the Bearer header there.
     const url = new URL(req.url ?? '/', 'http://proxy');
+    // EXPERIMENT: `/pypi/<id>/(simple|files)/…`, authenticated by the Basic password.
+    const basicPypi = /^\/pypi\/([^/]+)(\/(?:simple|files)\/.*)$/.exec(url.pathname);
+    if (basicPypi) {
+      const basic = basicPassword(req.headers.authorization);
+      const bReg = basic ? registrations.get(digest(basic)) : undefined;
+      if (!bReg) {
+        res.setHeader('www-authenticate', 'Basic realm="registry"');
+        sendJson(res, 401, 'unknown or expired token');
+        return;
+      }
+      handlePypi(bReg, req, res, '', basicPypi[1] ?? '', basicPypi[2] ?? '');
+      return;
+    }
     const pathRoute = /^\/(go|pypi)\/([^/]+)\/([^/]+)(\/.*)$/.exec(url.pathname);
     const token = pathRoute ? pathRoute[2] : presentedToken(req.headers.authorization);
     const reg = token ? registrations.get(digest(token)) : undefined;
