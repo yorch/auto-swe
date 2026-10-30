@@ -2,13 +2,18 @@
 
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { api } from '@/lib/api';
+import { Alert } from '@/components/ui/Alert';
+import { ConfirmModal } from '@/components/ui/ConfirmModal';
+import { QueryBoundary } from '@/components/ui/QueryBoundary';
+import { ApiError, api } from '@/lib/api';
+import { errMsg } from '@/lib/errors';
 
 type Scope = { id: string; name: string; orgId?: string | null };
 type Digest = {
   emailRecipients: string[];
   enabled: boolean;
   id: string;
+  lastError: string | null;
   lastPeriodStart: string | null;
   lastTestError: string | null;
   organization: Scope | null;
@@ -26,12 +31,85 @@ type DigestData = {
   subscriptions: Digest[];
   teams: Scope[];
 };
+type UpdateInput = {
+  confirmOptedOutReadd?: string[];
+  emailRecipients?: string[];
+  id: string;
+  enabled?: boolean;
+  slackChannelId?: string | null;
+};
+
+/**
+ * Readable text for each status code the digest sweep records in `lastError` (scheduled
+ * runs) and `lastTestError` (send-test). A code not listed here is shown as it is.
+ */
+const DIGEST_ERRORS: Record<string, string> = {
+  build_failed: 'The digest could not be built from the workflow-run rollups.',
+  delivery_failed: 'The digest was built but could not be delivered.',
+  email_failed: 'The test email could not be sent to at least one recipient.',
+  org_wide_reports_disabled:
+    'Organization-wide reports are turned off, so this digest was skipped.',
+  period_out_of_order: 'An earlier digest covers a later period, so this digest was skipped.',
+  period_too_soon:
+    'The last digest was sent for a period too close to this one, so it was skipped.',
+  recipients_out_of_scope:
+    'No recipient is still an active member of the digest scope, so nothing was sent.',
+  rollup_incomplete:
+    'The workflow-run rollups for this period are incomplete, so it was not built.',
+  slack_failed: 'The test message could not be posted to the Slack channel.',
+};
+
+function digestErrorText(code: string): string {
+  return Object.hasOwn(DIGEST_ERRORS, code) ? DIGEST_ERRORS[code] : code;
+}
 
 function recipients(value: string) {
   return value
     .split(',')
     .map((email) => email.trim())
     .filter(Boolean);
+}
+
+/** The write that re-adds one opted-out address and confirms it. */
+function readdInput(digest: Digest, email: string): UpdateInput {
+  return {
+    confirmOptedOutReadd: [email],
+    emailRecipients: [
+      ...digest.emailRecipients,
+      ...(!digest.emailRecipients.some(
+        (recipient) => recipient.toLowerCase() === email.toLowerCase()
+      )
+        ? [email]
+        : []),
+    ],
+    id: digest.id,
+  };
+}
+
+/**
+ * A failed request's message, with the addresses the gateway named beneath it, so the
+ * person can see which recipients were refused and why.
+ */
+function ErrorDetail({ error }: { error: unknown }) {
+  const addresses =
+    error instanceof ApiError
+      ? [
+          ...(error.offendingAddresses ?? []).map((address) => ({ address, list: 'refused' })),
+          ...(error.optedOutAddresses ?? []).map((address) => ({ address, list: 'opted-out' })),
+        ]
+      : [];
+  return (
+    <>
+      <span>{errMsg(error, 'Request failed')}</span>
+      {addresses.length > 0 && (
+        <ul className="mt-2 list-disc space-y-0.5 pl-5">
+          {addresses.map(({ address, list }) => (
+            <li key={`${list}:${address}`}>{address}</li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
 }
 
 export function DigestsTab() {
@@ -41,6 +119,8 @@ export function DigestsTab() {
   const [editing, setEditing] = useState<string | null>(null);
   const [editEmail, setEditEmail] = useState('');
   const [editChannel, setEditChannel] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<Digest | null>(null);
+  const [readdTarget, setReaddTarget] = useState<{ digest: Digest; email: string } | null>(null);
   const query = useQuery({
     queryFn: () => api.get<{ data: DigestData }>('/api/v1/report-digests').then(({ data }) => data),
     queryKey: ['report-digests'],
@@ -60,13 +140,7 @@ export function DigestsTab() {
     onSuccess: refresh,
   });
   const update = useMutation({
-    mutationFn: (input: {
-      confirmOptedOutReadd?: string[];
-      emailRecipients?: string[];
-      id: string;
-      enabled?: boolean;
-      slackChannelId?: string | null;
-    }) =>
+    mutationFn: (input: UpdateInput) =>
       api.patch(`/api/v1/report-digests/${input.id}`, {
         ...(input.enabled !== undefined
           ? { enabled: input.enabled }
@@ -148,18 +222,25 @@ export function DigestsTab() {
             onClick={() => create.mutate()}
             type="button"
           >
-            Create
+            {create.isPending ? 'Creating…' : 'Create'}
           </button>
         </div>
         {create.error && (
-          <p className="mt-2 text-danger-400" role="alert">
-            {create.error.message}
-          </p>
+          <Alert className="mt-2">
+            <ErrorDetail error={create.error} />
+          </Alert>
         )}
       </div>
-      {query.isLoading ? (
-        <p>Loading digests…</p>
-      ) : (
+      <QueryBoundary
+        error={query.error}
+        isError={query.isError}
+        isFetching={query.isFetching}
+        isLoading={query.isLoading}
+        label="digest subscriptions"
+        onRetry={refresh}
+        rows={2}
+        shape="cards"
+      >
         <div className="space-y-3">
           {(data?.subscriptions ?? []).map((digest) => {
             const orgId = digest.orgId ?? digest.team?.orgId;
@@ -186,21 +267,26 @@ export function DigestsTab() {
                       Edit
                     </button>
                     <button
-                      className="rounded border border-ink-600 px-3 py-1"
+                      className="rounded border border-ink-600 px-3 py-1 disabled:opacity-50"
+                      disabled={sendTest.isPending && sendTest.variables === digest.id}
                       onClick={() => sendTest.mutate(digest.id)}
                       type="button"
                     >
-                      Send test
+                      {sendTest.isPending && sendTest.variables === digest.id
+                        ? 'Sending…'
+                        : 'Send test'}
                     </button>
                     <button
-                      className="rounded border border-danger-400/30 px-3 py-1"
-                      onClick={() => remove.mutate(digest.id)}
+                      className="rounded border border-danger-400/30 px-3 py-1 disabled:opacity-50"
+                      disabled={remove.isPending}
+                      onClick={() => setDeleteTarget(digest)}
                       type="button"
                     >
                       Delete
                     </button>
                     <button
-                      className="rounded border border-ink-600 px-3 py-1"
+                      className="rounded border border-ink-600 px-3 py-1 disabled:opacity-50"
+                      disabled={update.isPending}
                       onClick={() => update.mutate({ enabled: !digest.enabled, id: digest.id })}
                       type="button"
                     >
@@ -215,18 +301,35 @@ export function DigestsTab() {
                 <p className="mt-1 text-xs text-paper-400">
                   Last completed period:{' '}
                   {digest.lastPeriodStart
-                    ? new Date(digest.lastPeriodStart).toLocaleDateString()
+                    ? // The period starts on a UTC Monday; formatting in local time shows the
+                      // previous Monday west of UTC.
+                      new Date(digest.lastPeriodStart).toLocaleDateString(undefined, {
+                        timeZone: 'UTC',
+                      })
                     : 'None'}
                 </p>
-                {sendTest.error && sendTest.variables === digest.id && (
-                  <p className="mt-1 text-sm text-danger-400" role="alert">
-                    {sendTest.error.message}
-                  </p>
+                {sendTest.isError && sendTest.variables === digest.id && (
+                  <Alert className="mt-2">
+                    <ErrorDetail error={sendTest.error} />
+                  </Alert>
+                )}
+                {sendTest.isSuccess && sendTest.variables === digest.id && (
+                  <Alert className="mt-2" variant="success">
+                    Test digest queued for delivery.
+                  </Alert>
+                )}
+                {digest.lastError && (
+                  <Alert className="mt-2">{digestErrorText(digest.lastError)}</Alert>
                 )}
                 {digest.lastTestError && (
-                  <p className="mt-1 text-xs text-danger-400" role="status">
-                    Last test delivery failed: {digest.lastTestError}
-                  </p>
+                  <Alert className="mt-2">
+                    Last test delivery failed. {digestErrorText(digest.lastTestError)}
+                  </Alert>
+                )}
+                {update.isError && update.variables?.id === digest.id && readdTarget === null && (
+                  <Alert className="mt-2">
+                    <ErrorDetail error={update.error} />
+                  </Alert>
                 )}
                 {digest.optedOutEmails.length > 0 && (
                   <div className="mt-3 rounded border border-ink-700 p-3">
@@ -236,24 +339,9 @@ export function DigestsTab() {
                         <li className="flex items-center justify-between gap-3" key={email}>
                           <span className="text-sm text-paper-300">{email}</span>
                           <button
-                            className="rounded border border-ink-600 px-3 py-1 text-sm"
-                            onClick={() => {
-                              if (!window.confirm(`Re-add ${email} to this digest?`)) {
-                                return;
-                              }
-                              update.mutate({
-                                confirmOptedOutReadd: [email],
-                                emailRecipients: [
-                                  ...digest.emailRecipients,
-                                  ...(!digest.emailRecipients.some(
-                                    (recipient) => recipient.toLowerCase() === email.toLowerCase()
-                                  )
-                                    ? [email]
-                                    : []),
-                                ],
-                                id: digest.id,
-                              });
-                            }}
+                            className="rounded border border-ink-600 px-3 py-1 text-sm disabled:opacity-50"
+                            disabled={update.isPending}
+                            onClick={() => setReaddTarget({ digest, email })}
                             type="button"
                           >
                             Re-add
@@ -285,11 +373,12 @@ export function DigestsTab() {
                       ))}
                     </select>
                     <button
-                      className="rounded bg-accent-500 px-3 py-2"
+                      className="rounded bg-accent-500 px-3 py-2 disabled:opacity-50"
+                      disabled={update.isPending}
                       onClick={() => update.mutate({ id: digest.id })}
                       type="button"
                     >
-                      Save
+                      {update.isPending ? 'Saving…' : 'Save'}
                     </button>
                   </div>
                 )}
@@ -298,6 +387,45 @@ export function DigestsTab() {
           })}
           {!data?.subscriptions.length && <p>No digest subscriptions.</p>}
         </div>
+      </QueryBoundary>
+      {deleteTarget && (
+        <ConfirmModal
+          confirmLabel="Delete"
+          dangerous
+          error={remove.error ? <ErrorDetail error={remove.error} /> : undefined}
+          message="This digest stops sending to its email recipients and Slack channel. You can create it again later."
+          onClose={() => {
+            remove.reset();
+            setDeleteTarget(null);
+          }}
+          onConfirm={async () => {
+            await remove.mutateAsync(deleteTarget.id);
+          }}
+          open
+          pendingLabel="Deleting…"
+          title="Delete this digest?"
+        />
+      )}
+      {readdTarget && (
+        <ConfirmModal
+          confirmLabel="Re-add"
+          error={
+            update.isError && update.variables?.id === readdTarget.digest.id ? (
+              <ErrorDetail error={update.error} />
+            ) : undefined
+          }
+          message={`${readdTarget.email} opted out of this digest. Re-adding them sends it to them again.`}
+          onClose={() => {
+            update.reset();
+            setReaddTarget(null);
+          }}
+          onConfirm={async () => {
+            await update.mutateAsync(readdInput(readdTarget.digest, readdTarget.email));
+          }}
+          open
+          pendingLabel="Re-adding…"
+          title="Re-add opted-out address?"
+        />
       )}
     </section>
   );

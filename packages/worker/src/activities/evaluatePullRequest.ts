@@ -1199,6 +1199,12 @@ export async function evaluatePullRequestWith(
   const context = settings['prEvaluation.requiredStatusContext'];
   // Set before any call that could arm, so a failure afterwards still cancels it.
   const armAttempt = { made: false };
+  // A bot approval made by this evaluation and not yet recorded on a row. A retryable error in
+  // that window must not leave it standing beside a `success` the retry may never replace.
+  const unrecorded: { active: boolean; approvals: PullRequestReviewSummary[] } = {
+    active: false,
+    approvals: [],
+  };
 
   try {
     // ── Policy: the registry is the floor; the repository file (from the BASE branch) can
@@ -1385,6 +1391,8 @@ export async function evaluatePullRequestWith(
       classification.reasons.push(...bot.reasons);
     }
     const botApproved = bot?.botApproved === true;
+    unrecorded.active = botApproved;
+    unrecorded.approvals = botApproved && bot ? bot.posted : [];
     const status = statusFor(classification, approval, statusMode, {
       evaluatorApproved: botApproved,
     });
@@ -1540,6 +1548,7 @@ export async function evaluatePullRequestWith(
       },
       select: { id: true },
     });
+    unrecorded.active = false;
 
     // An arming cancelled before the final status is only recorded here, on the row of this head.
     const autoMerge = disarmedEarly
@@ -1566,6 +1575,20 @@ export async function evaluatePullRequestWith(
     };
   } catch (err) {
     if (isRetryableEvaluationError(err)) {
+      if (unrecorded.active) {
+        await retractUnrecordedApproval({
+          approvals: unrecorded.approvals,
+          connectionId: connection.id,
+          context,
+          highApprovers: settings['prEvaluation.highApprovers'],
+          mode: statusMode,
+          pr,
+          prNumber: input.prNumber,
+          repo,
+          scm,
+          trigger: input.trigger,
+        });
+      }
       throw err;
     }
     return failClosed({
@@ -1681,6 +1704,8 @@ type BotStage = {
   eligible: boolean;
   /** An own approval, of any commit, stood at some point of this stage. */
   hadOwnApproval: boolean;
+  /** The approver's approvals standing after this stage's submit; set only with `botApproved`. */
+  posted: PullRequestReviewSummary[];
   reasons: Reason[];
   state: 'approved' | 'none' | 'withdrawn' | 'refused';
   /** Every standing approval of the approver that must not stand; dismissed after the status. */
@@ -1776,7 +1801,7 @@ async function runBotApproval(args: {
   maxLines: number;
   paths: unknown;
   pr: PullRequestDetails;
-  priorBotRow: { botApproved: boolean } | null;
+  priorBotRow: { botApproved: boolean; headSha: string } | null;
   prNumber: number;
   readiness: BranchRules | null;
   recheck: () => Promise<FreshBotInputs>;
@@ -1797,6 +1822,7 @@ async function runBotApproval(args: {
     botApproved: false,
     eligible: false,
     hadOwnApproval: false,
+    posted: [],
     reasons: [],
     state: repoFlag ? 'refused' : 'none',
     withdraw: [],
@@ -1810,11 +1836,14 @@ async function runBotApproval(args: {
   let session: ApproverSession | undefined;
   let botLogin: string | null = null;
   let standing: PullRequestReviewSummary[] = [];
+  let submittedOk = false;
+  let allLogins: readonly string[] = [];
   try {
     const config = await loadApproverConfig(approver);
     const identity = await approverLogins(approver, config);
     botLogin = identity.active;
     const everyLogin = identity.all;
+    allLogins = everyLogin;
     /** An approval of an App that was removed or replaced: it must not stand, even beside a valid one. */
     const retiredOnly = (list: readonly PullRequestReviewSummary[]): PullRequestReviewSummary[] =>
       approvalsOf(list, everyLogin).filter((r) => r.login.toLowerCase() !== botLogin);
@@ -1989,6 +2018,11 @@ async function runBotApproval(args: {
     result.eligible = true;
     if (existing) {
       result.botApproved = true;
+      if (args.priorBotRow?.headSha !== pr.headSha || !args.priorBotRow.botApproved) {
+        // No row records this approval (an earlier attempt's retraction may have failed): a later
+        // failure must be able to retract it.
+        result.posted = [existing];
+      }
       result.withdraw = retiredOnly(args.reviews);
       result.state = 'approved';
       result.reasons.push(
@@ -2007,6 +2041,7 @@ async function runBotApproval(args: {
       return result;
     }
     result.hadOwnApproval = true;
+    submittedOk = true;
     // Believe the review list, not the answer to the submit.
     const relisted = await scm.listPullRequestReviews(args.repo, args.prNumber);
     if (!botLogin || !findOwnApproval(relisted, botLogin, pr.headSha)) {
@@ -2022,6 +2057,7 @@ async function runBotApproval(args: {
       return result;
     }
     result.botApproved = true;
+    result.posted = approvalsOf(relisted, everyLogin);
     result.withdraw = retiredOnly(relisted);
     result.state = 'approved';
     result.reasons.push(infoReason('bot-approval-posted', 'The evaluator approved this head.'));
@@ -2032,6 +2068,18 @@ async function runBotApproval(args: {
     result.botApproved = false;
     result.withdraw = standing;
     result.reasons = result.reasons.filter((r) => !BOT_REASON_CODES.includes(r.code));
+    if (submittedOk) {
+      // The submit succeeded but what followed failed: `standing` predates the new approval, so
+      // read the list again and withdraw everything of the App's. A list that cannot be read
+      // twice leaves an approval nobody can name, so the activity is retried instead.
+      try {
+        const fresh = await scm.listPullRequestReviews(args.repo, args.prNumber);
+        result.withdraw = approvalsOf(fresh, allLogins);
+        result.hadOwnApproval = true;
+      } catch {
+        throw botNotWithdrawn();
+      }
+    }
     return result;
   } finally {
     try {
@@ -2242,6 +2290,73 @@ async function applyAutoMerge(args: {
     return 'not-eligible';
   }
   return (await recordArmed()) ? 'enabled' : 'disabled';
+}
+
+/**
+ * Best effort, before a retryable failure is rethrown: the status goes back to `pending` and the
+ * approval this evaluation made (recorded on no row yet, so no sweep would find it) is dismissed.
+ * The retry evaluates afresh and approves again if it still qualifies. Nothing here may throw.
+ */
+async function retractUnrecordedApproval(args: {
+  approvals: readonly PullRequestReviewSummary[];
+  connectionId: string;
+  context: string;
+  highApprovers: number;
+  mode: PrEvaluationMode;
+  pr: PullRequestDetails;
+  prNumber: number;
+  repo: RepoRef;
+  scm: ScmProvider;
+  trigger: string;
+}): Promise<void> {
+  // Each step stands alone: a status the host will not take must not leave the approval standing.
+  try {
+    const out = await dismissAll({
+      approvals: args.approvals,
+      connectionId: args.connectionId,
+      prNumber: args.prNumber,
+      repo: args.repo,
+      scm: args.scm,
+    });
+    const reasons = withdrawnReasons(out.dismissed, args.pr.headSha).filter(
+      (r) => r.code === BOT_WITHDRAWN
+    );
+    if (reasons.length > 0) {
+      // Without a row saying the platform made these dismissals, the retry counts them as a
+      // person's (`readPrHistory` withdrawn count) and suppresses the bot on this pull request.
+      await prisma.prEvaluation.create({
+        data: {
+          baseBranch: args.pr.baseBranch,
+          brief: asJson(EMPTY_BRIEF),
+          connectionId: args.connectionId,
+          headSha: args.pr.headSha,
+          mode: args.mode,
+          prNumber: args.prNumber,
+          reasons: asJson(reasons),
+          requiredApprovers: args.highApprovers,
+          riskClass: 'HIGH',
+          statusState: 'pending',
+          triggeredBy: args.trigger,
+        },
+      });
+    }
+  } catch (err) {
+    logWarn('pr evaluation: an unrecorded bot approval could not be retracted', safeErrorMeta(err));
+  }
+  try {
+    await postPending(
+      args.scm,
+      args.repo,
+      args.pr.headSha,
+      args.context,
+      EVALUATION_CHANGED_STATUS
+    );
+  } catch (err) {
+    logWarn(
+      'pr evaluation: the status behind a retracted approval was not reset',
+      safeErrorMeta(err)
+    );
+  }
 }
 
 /**

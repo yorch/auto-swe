@@ -110,6 +110,26 @@ describe('activity HTTP capture', () => {
     await capture.close();
     expect(h.rows[0]).toMatchObject({ bodiesTruncated: true, responseBody: 'hello wo' });
   });
+  it('redacts PEM keys and JWTs in non-JSON bodies', async () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmnop';
+    const pem = '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----';
+    const capture = new HttpCapture(8192);
+    await runWithHttpCapture(capture, () =>
+      capturingFetch(
+        vi.fn(
+          async () =>
+            new Response(`token ${jwt} and ${pem} done`, {
+              headers: { 'content-type': 'text/plain' },
+            })
+        )
+      )('https://example.com')
+    );
+    await capture.close();
+    const stored = String(h.rows[0].responseBody);
+    expect(stored).not.toContain('eyJhbGci');
+    expect(stored).not.toContain('MIIEvQ');
+    expect(stored).toContain('done');
+  });
   it('records model metadata only once and links its transcript', async () => {
     const capture = new HttpCapture(8192);
     await runWithHttpCapture(capture, () =>

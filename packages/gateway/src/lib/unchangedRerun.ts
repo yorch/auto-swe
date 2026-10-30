@@ -21,12 +21,14 @@ export const UNCHANGED_AFTER_NOT_ACTIONABLE = 'UNCHANGED_AFTER_NOT_ACTIONABLE';
 export const NOT_ACTIONABLE_RERUN_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * How many recent stops (and, separately, later runs) are compared. The lookup is bounded three
- * ways: it is skipped unless the template version can stop at all, the relational filters
+ * How many recent stops (and, separately, later runs) are read per page. The lookup is bounded
+ * three ways: it is skipped unless the template version can stop at all, the relational filters
  * (template, version, status, window, repository, ticket id) narrow rows before the JSON-path
- * ones run, and at most this many rows come back.
+ * ones run, and at most `CANDIDATE_PAGES` pages of this size are compared.
  */
 const CANDIDATE_LIMIT = 25;
+/** Pages of stops compared, newest first, so a flood of other stops cannot hide a match. */
+const CANDIDATE_PAGES = 8;
 
 /** Whether a template version's spec can stop as not actionable, by `templateId:version`. A
  * version's spec never changes, so a verdict is kept for good; the map only needs a bound. */
@@ -168,35 +170,41 @@ export async function refuseUnchangedRerun(
           : {}),
       },
     };
-    const candidates = await deps.prisma.workflowRun.findMany({
-      orderBy: { startedAt: 'desc' },
-      select: {
-        id: true,
-        startedAt: true,
-        workRequest: { select: { description: true, payload: true } },
-        workRequestId: true,
-      },
-      take: CANDIDATE_LIMIT,
-      where: {
-        AND: [
-          visible,
-          {
-            ...sameRequest,
-            startedAt: { gte: since },
-            status: 'FAILED',
-            templateId: identity.templateId,
-            templateVersion: identity.templateVersion,
+    const candidateWhere = {
+      AND: [
+        visible,
+        {
+          ...sameRequest,
+          startedAt: { gte: since },
+          status: 'FAILED' as const,
+          templateId: identity.templateId,
+          templateVersion: identity.templateVersion,
+        },
+        {
+          contextSnapshot: {
+            equals: false,
+            path: ['nodes', 'validate', 'output', 'actionable'],
           },
-          {
-            contextSnapshot: { equals: false, path: ['nodes', 'validate', 'output', 'actionable'] },
-            specSnapshot: {
-              equals: 'terminate',
-              path: ['nodes', 'terminateNotActionable', 'type'],
-            },
+          specSnapshot: {
+            equals: 'terminate',
+            path: ['nodes', 'terminateNotActionable', 'type'],
           },
-        ],
-      },
-    });
+        },
+      ],
+    };
+    const readCandidates = (cursorId?: string) =>
+      deps.prisma.workflowRun.findMany({
+        ...(cursorId ? { cursor: { id: cursorId }, skip: 1 } : {}),
+        orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+        select: {
+          id: true,
+          startedAt: true,
+          workRequest: { select: { description: true, payload: true } },
+          workRequestId: true,
+        },
+        take: CANDIDATE_LIMIT,
+        where: candidateWhere,
+      });
     const wanted = fingerprintRequest(identity.description, identity.payload);
     const fingerprintOf = (run: {
       workRequest: { description: string; payload: unknown } | null;
@@ -207,7 +215,16 @@ export async function refuseUnchangedRerun(
             isRecord(run.workRequest.payload) ? run.workRequest.payload : {}
           )
         : null;
-    const match = candidates.find((run) => fingerprintOf(run) === wanted);
+    let match: Awaited<ReturnType<typeof readCandidates>>[number] | undefined;
+    let cursorId: string | undefined;
+    for (let page = 0; page < CANDIDATE_PAGES && !match; page++) {
+      const candidates = await readCandidates(cursorId);
+      match = candidates.find((run) => fingerprintOf(run) === wanted);
+      if (candidates.length < CANDIDATE_LIMIT) {
+        break;
+      }
+      cursorId = candidates.at(-1)?.id;
+    }
     if (!match) {
       return false;
     }

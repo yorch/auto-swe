@@ -2,6 +2,7 @@
 
 import { Suspense, useMemo, useState } from 'react';
 import { DailyCostChart } from '@/components/charts/DailyCostChart';
+import { Alert } from '@/components/ui/Alert';
 import { Button, ButtonLink } from '@/components/ui/Button';
 import { Card, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DataTable } from '@/components/ui/DataTable';
@@ -32,6 +33,7 @@ import {
 import { formatDelta } from '@/lib/delta';
 import { downloadFile } from '@/lib/downloadFile';
 import { runHref } from '@/lib/entityLinks';
+import { errMsg } from '@/lib/errors';
 import { humanizeKey } from '@/lib/govLabels';
 import {
   cn,
@@ -350,6 +352,8 @@ function UsageWorkspace() {
   const scopeOptions = useScopeOptions();
   const chosenScope = params.get('scope');
   const [dimension, setDimension] = useState<Dimension>('model');
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   // Until the caller picks one, the first scope they may read: the whole
   // platform for an ADMIN, their first team (or organization) otherwise.
   const scopeValue =
@@ -373,18 +377,30 @@ function UsageWorkspace() {
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <Button
-              onClick={() => {
+              disabled={exporting}
+              onClick={async () => {
                 const query = new URLSearchParams({
                   ...rangeQuery(range),
                   ...scopeOf(scopeValue ?? ''),
                   format: 'csv',
                 });
-                void downloadFile(`/api/v1/platform/usage/export?${query}`, 'platform-usage.csv');
+                setExportError(null);
+                setExporting(true);
+                try {
+                  await downloadFile(
+                    `/api/v1/platform/usage/export?${query}`,
+                    'platform-usage.csv'
+                  );
+                } catch (err) {
+                  setExportError(errMsg(err, 'Export failed'));
+                } finally {
+                  setExporting(false);
+                }
               }}
               size="sm"
               variant="secondary"
             >
-              Export CSV
+              {exporting ? 'Exporting…' : 'Export CSV'}
             </Button>
             {scopeOptions && scopeOptions.length > 0 && (
               <Select
@@ -411,6 +427,7 @@ function UsageWorkspace() {
         subtitle="Every LLM and embedding call, by team and organization."
         title="LLM usage"
       />
+      {exportError && <Alert variant="error">{exportError}</Alert>}
 
       {scopeOptions?.length === 0 && (
         <EmptyState

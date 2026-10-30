@@ -33,6 +33,8 @@
     "./lib/canary": "./dist/lib/canary.js",
     "./lib/systemConfig": "./dist/lib/systemConfig.js",
     "./lib/agentTraceRollup": "./dist/lib/agentTraceRollup.js",
+    "./lib/runActiveWorkflows": "./dist/lib/runActiveWorkflows.js",
+    "./lib/rollupBuiltDays": "./dist/lib/rollupBuiltDays.js",
     "./lib/billing": "./dist/lib/billing.js",
     "./lib/budgetForecast": "./dist/lib/budgetForecast.js",
     "./lib/channelBudget": "./dist/lib/channelBudget.js",

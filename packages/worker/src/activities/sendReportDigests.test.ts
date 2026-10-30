@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   failedEmailRecipients: [] as string[],
   gatesAtLimit: false,
   heartbeats: [] as string[],
+  inactiveEmails: [] as string[],
   latestDeliveryPeriod: null as Date | null,
   nextDeliveryId: 0,
   orgWideReportsEnabled: false,
@@ -122,14 +123,20 @@ vi.mock('@auto-swe/shared/db', () => ({
         mocks.updates.push({ data, id: where.id });
       },
     },
-    workflowHumanStep: { count: async () => 0, findFirst: async () => null },
-    workflowRunDailyRollup: {
-      findMany: async () => [],
-      groupBy: async () =>
+    rollupBuiltDay: {
+      findMany: async () =>
         Array.from({ length: mocks.coverageIncomplete ? 13 : 14 }, (_, index) => ({
           day: new Date(Date.UTC(2026, 9, 5 + index)),
         })),
     },
+    user: {
+      findMany: async ({ where }: { where: { email: { in: string[] } } }) =>
+        where.email.in
+          .filter((email) => !mocks.inactiveEmails.includes(email))
+          .map((email) => ({ email })),
+    },
+    workflowHumanStep: { count: async () => 0, findFirst: async () => null },
+    workflowRunDailyRollup: { findMany: async () => [] },
     workflowStep: {
       groupBy: async () =>
         mocks.gatesAtLimit
@@ -223,6 +230,7 @@ beforeEach(() => {
   mocks.deliveryPersistenceFails = false;
   mocks.gatesAtLimit = false;
   mocks.heartbeats = [];
+  mocks.inactiveEmails = [];
   mocks.slackPosts = [];
   mocks.emails = [];
   mocks.failedEmailRecipients = [];
@@ -266,6 +274,38 @@ describe('sendReportDigests', () => {
       expect.objectContaining({ reason: 'org_wide_reports_disabled' })
     );
   });
+
+  it('sends when the built days include days with no rollup rows', async () => {
+    mocks.subscriptions = [subscription('quiet', { emailRecipients: ['digest@example.test'] })];
+    await expect(sendReportDigests(baseInput)).resolves.toEqual({
+      failed: 0,
+      rollupIncomplete: 0,
+      sent: 1,
+      skipped: 0,
+    });
+    expect(mocks.emails.map((email) => email.to)).toEqual(['digest@example.test']);
+  });
+
+  it('skips a recipient who is no longer an active member of the scope at send time', async () => {
+    mocks.inactiveEmails = ['left@example.test'];
+    mocks.subscriptions = [
+      subscription('recheck', { emailRecipients: ['stays@example.test', 'Left@example.test'] }),
+    ];
+    await expect(sendReportDigests(baseInput)).resolves.toMatchObject({ failed: 0, sent: 1 });
+    expect(mocks.emails.map((email) => email.to)).toEqual(['stays@example.test']);
+  });
+
+  it('records recipients_out_of_scope when no target remains', async () => {
+    mocks.inactiveEmails = ['left@example.test'];
+    mocks.subscriptions = [subscription('gone', { emailRecipients: ['left@example.test'] })];
+    await expect(sendReportDigests(baseInput)).resolves.toMatchObject({ sent: 0, skipped: 1 });
+    expect(mocks.emails).toEqual([]);
+    expect(mocks.updates).toContainEqual({
+      data: { lastError: 'recipients_out_of_scope' },
+      id: 'gone',
+    });
+  });
+
   it('persists each target once and does not resend a sent target for the same period', async () => {
     mocks.subscriptions = [
       subscription('idempotent', { emailRecipients: ['digest@example.test'] }),

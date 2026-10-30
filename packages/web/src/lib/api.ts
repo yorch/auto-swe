@@ -30,14 +30,34 @@ export class ApiError extends Error {
   readonly code: string | null;
   /** The gateway's `error.details`, when it sends some (e.g. the names behind a 409). Untrusted. */
   readonly details: unknown;
+  /**
+   * Addresses the gateway names beside a string-form error (e.g. recipients that are not members
+   * of the scope). Untrusted; null when the response named none.
+   */
+  readonly offendingAddresses: string[] | null;
+  /** Opted-out addresses a write must confirm before re-adding; null when none were named. Untrusted. */
+  readonly optedOutAddresses: string[] | null;
 
-  constructor(message: string, status: number, code: string | null, details?: unknown) {
+  constructor(
+    message: string,
+    status: number,
+    code: string | null,
+    details?: unknown,
+    addresses?: { offendingAddresses?: string[]; optedOutAddresses?: string[] }
+  ) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
     this.details = details;
+    this.offendingAddresses = addresses?.offendingAddresses ?? null;
+    this.optedOutAddresses = addresses?.optedOutAddresses ?? null;
   }
+}
+
+/** The string-array fields a gateway may attach to an error body; anything else is dropped. */
+function addressList(value: unknown): string[] | undefined {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : undefined;
 }
 
 export class ApiClient {
@@ -210,7 +230,12 @@ export class ApiClient {
       return new ApiError(
         bodyError.length > 0 ? bodyError : `HTTP ${res.status}`,
         res.status,
-        null
+        null,
+        undefined,
+        {
+          offendingAddresses: addressList(isRecord(body) ? body.offendingAddresses : undefined),
+          optedOutAddresses: addressList(isRecord(body) ? body.optedOutAddresses : undefined),
+        }
       );
     }
     const err = isRecord(bodyError) ? bodyError : null;

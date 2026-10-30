@@ -25,9 +25,18 @@ const latency = (over: Partial<ApprovalLatencySummary> = {}): ApprovalLatencySum
 });
 
 describe('ApprovalLatencyCard', () => {
+  it('uses the singular for a single answered step', () => {
+    render(
+      <ApprovalLatencyCard
+        latency={latency({ resolved: { count: 1, p50Ms: 60_000, p95Ms: 60_000 } })}
+      />
+    );
+    expect(screen.getByText('Based on 1 answered step')).toBeTruthy();
+  });
+
   it('shows the wait percentiles and keeps timed-out, cancelled and pending out of them', () => {
     render(<ApprovalLatencyCard latency={latency()} />);
-    expect(screen.getByText('Over 4 answered')).toBeTruthy();
+    expect(screen.getByText('Based on 4 answered steps')).toBeTruthy();
     expect(screen.getByText('Wait, median')).toBeTruthy();
     expect(screen.getAllByText('2m').length).toBeGreaterThan(0);
     expect(screen.getAllByText('10m').length).toBeGreaterThan(0);
@@ -61,7 +70,7 @@ describe('ApprovalLatencyCard', () => {
         })}
       />
     );
-    expect(screen.getByText('Over 0 answered')).toBeTruthy();
+    expect(screen.getByText('Based on 0 answered steps')).toBeTruthy();
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2);
   });
 

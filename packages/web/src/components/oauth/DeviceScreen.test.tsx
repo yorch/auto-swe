@@ -60,6 +60,70 @@ describe('DeviceScreen', () => {
     expect(await screen.findByText('Device approved')).toBeTruthy();
   });
 
+  it('still lets the person approve when the app name cannot be looked up', async () => {
+    const spy = setupFetchMock({
+      '/api/auth/device': () => ({
+        client_id: 'c1',
+        resource: 'https://auto.test/api/v1/mcp',
+        scope: 'mcp:read',
+        status: 'pending',
+      }),
+      '/api/auth/get-session': () => SESSION,
+      '/api/auth/oauth2/public-client': () => {
+        throw new Error('name service down');
+      },
+      'POST /api/auth/device/approve': () => ({ success: true }),
+    });
+    render(withQuery(<DeviceScreen search="user_code=ABC-123" />));
+
+    expect(await screen.findByText(/Could not look up this app's name/)).toBeTruthy();
+    const approve = screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement;
+    expect(approve.disabled).toBe(false);
+    fireEvent.click(approve);
+    await waitFor(() =>
+      expect(bodyOf(spy, '/api/auth/device/approve')).toEqual({ userCode: 'ABC-123' })
+    );
+  });
+
+  it('keeps Approve disabled, with a neutral note, while the app name is loading', async () => {
+    let openGate: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const inner = setupFetchMock({
+      '/api/auth/device': () => ({
+        client_id: 'c1',
+        resource: 'https://auto.test/api/v1/mcp',
+        scope: 'mcp:read',
+        status: 'pending',
+      }),
+      '/api/auth/get-session': () => SESSION,
+      '/api/auth/oauth2/public-client': () => ({ client_name: 'SSH Agent' }),
+    });
+    // The name lookup is held back until the test lets it through.
+    vi.stubGlobal('fetch', async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/oauth2/public-client')) {
+        await gate;
+      }
+      return (inner as unknown as typeof fetch)(input, init);
+    });
+    render(withQuery(<DeviceScreen search="user_code=ABC-123" />));
+
+    expect(await screen.findByText('Loading app details…')).toBeTruthy();
+    expect(screen.queryByText('App name unavailable')).toBeNull();
+    expect((screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement).disabled).toBe(
+      true
+    );
+    openGate();
+    expect(await screen.findByText('SSH Agent')).toBeTruthy();
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: 'Approve' }) as HTMLButtonElement).disabled).toBe(
+        false
+      )
+    );
+    expect(screen.queryByText('Loading app details…')).toBeNull();
+  });
+
   it('supports denial and presents the terminal status', async () => {
     const spy = mockGateway();
     render(withQuery(<DeviceScreen search="user_code=ABC-123" />));

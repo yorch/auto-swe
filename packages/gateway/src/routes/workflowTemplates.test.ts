@@ -192,6 +192,19 @@ function buildApp(state: {
             }));
         },
       },
+      rollupBuiltDay: {
+        findMany: async ({ where }: { where: Mutable }) => {
+          const dayRange = where.day as { gte: Date; lt: Date };
+          const days = new Map<number, Date>();
+          for (const row of state.rollupRows ?? []) {
+            const day = row.day as Date;
+            if (day >= dayRange.gte && day < dayRange.lt) {
+              days.set(day.getTime(), day);
+            }
+          }
+          return [...days.values()].map((day) => ({ day }));
+        },
+      },
       team: {
         findUnique: async ({ where }: { where: Mutable }) => {
           // For the shell allowlist check; tests can override via state.teamAllowlist

@@ -192,6 +192,14 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/agentTraceRollup.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/runActiveWorkflows',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/runActiveWorkflows.ts'),
+      },
+      {
+        find: '@auto-swe/shared/lib/rollupBuiltDays',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/rollupBuiltDays.ts'),
+      },
+      {
         find: '@auto-swe/shared/lib/billing',
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/billing.ts'),
       },

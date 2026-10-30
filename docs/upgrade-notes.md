@@ -654,6 +654,75 @@ so older report windows use live reads until they are rebuilt; set
 `analytics.orgWideReports` per organization before ORG_ADMINs receive organization-wide reports or
 digests for it.
 
+---
+
+### HTTP capture on by default, and the workspace egress proxy (`<fixing commit SHA>`)
+
+**Affected.** Deployments that ran a build without `workflow.httpCaptureEnabled` (now `true` by
+default) and that did not set it themselves, and deployments that set `EGRESS_PROXY_PORT` while
+running an earlier build.
+
+**HTTP capture.** Worker activity fetch metadata and capped, redacted bodies are now stored in
+`workflow_http_calls` and kept for `workflow.httpCaptureRetentionDays` (default 90). Redaction is
+best-effort, not a general PII scrub. If your data-handling policy does not allow storing
+third-party request or response bodies for 90 days, set `workflow.httpCaptureEnabled` to `false` or
+lower the retention in `/admin/platform-settings` before the upgrade reaches production, and purge
+existing rows with the retention job or by hand. Rows written by an earlier build under the
+non-JSON path were masked for credential shapes only; PEM keys and JWTs in them may be stored.
+
+**Egress proxy.** With `EGRESS_PROXY_PORT` set, every agent workspace routes HTTP and HTTPS through
+the worker proxy, and the team egress allowlist and the private-address guard apply to it. The
+repository's own git host is excluded (`NO_PROXY`, which also covers its subdomains: `github.com` covers `api.github.com`), so clone, fetch and push go direct; any other
+host a run reaches, including a dependency repository on a different host, needs an allowlist
+entry. A GitHub Enterprise host on a private address no longer fails through the proxy for git, but
+other traffic to private addresses is refused.
+
+**Actions.** Decide the capture setting and retention before upgrading; add allowlist entries for
+non-git hosts your workspaces need; no migration is involved.
+
+**Verify the fix is running.** `NO_PROXY` in a new workspace contains the repository's host, and a
+`git ls-remote origin` there succeeds with a restrictive team allowlist.
+
+### Reporting rollups: built-day markers, first-sweep rebuild load and index builds (`<fixing commit SHA>`)
+
+**Affected.** Deployments that applied `20261029201256_rollup_dirty_source_timestamps` or
+`20261029195849_rollup_duration_buckets_and_dirty_days`, or that apply
+`20261030180000_rollup_built_days`.
+
+**What changes.**
+
+- `20261030180000_rollup_built_days` adds the small table `rollup_built_days` and marks every day
+  that already has workflow-run rollup rows. It runs after the rollup bucket-version migration,
+  which removes all rows of the previous version, so on an upgrade from earlier code it seeds
+  nothing. A built day with no runs has no rows, so a day is marked when the sweep rebuilds it:
+  the recompute window on its next pass, older days through the backfill
+  (`WORKFLOW_RUN_ROLLUP_BACKFILL_DAYS`, off unless set, at most ten days per sweep). Until a day is
+  rebuilt it reads from live data, and a weekly digest that spans it records `rollup_incomplete`.
+  The default recompute window (`WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS`, 30) covers the 14 days a
+  digest reads, so digests recover after the first sweep; the backfill matters only for older
+  report history. Nothing is run by hand.
+- `20261029201256_rollup_dirty_source_timestamps` stamps every existing `workflow_runs` and
+  `pull_requests` row with the migration time in `updated_at`. The first sweep after it treats
+  every historical run day as changed and queues them all; the sweep rebuilds at most 60 dirty
+  days per sweep, oldest first, so a long history takes several sweeps and adds read load on
+  `workflow_runs`, `pull_requests`, `workflow_steps` and `agent_traces` while it drains. Rollup
+  results stay correct throughout; no action clears the backlog sooner.
+- `20261029195849_rollup_duration_buckets_and_dirty_days` builds plain (not concurrent) indexes on
+  `workflow_runs(ended_at, started_at)`, `pull_requests(merged_at, run_id)`,
+  `pull_requests(closed_at, run_id)` and `workflow_human_steps(resolved_at, run_id)`. PostgreSQL
+  blocks writes to each table while its index is built. The indexes that
+  `20261029201256_rollup_dirty_source_timestamps` builds, including the ones on `agent_traces` and
+  `workflow_steps`, are described in the entry "Workflow-run dirty-day source indexes" above. A
+  migration that has to run in a transaction cannot build any of these concurrently, so the
+  supported route is a maintenance window with the gateway and worker stopped, or a raised
+  `statement_timeout` on the migration session. Do not create these indexes by hand beforehand: the
+  migration then fails on the existing name.
+
+**Actions.** Apply the migrations with the normal migrate step, in a window sized for all of the
+index builds above.
+
+---
+
 ## 4. If you cannot tell
 
 If you cannot establish which commit your workers ran, whether per-user credentials were on,

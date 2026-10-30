@@ -66,10 +66,25 @@ describe('ReportsPage', () => {
 
     render(<ReportsPage />);
 
-    expect((screen.getByLabelText('Team') as HTMLSelectElement).value).toBe('team-1');
-    expect(screen.getByRole('option', { name: 'Platform' })).toBeTruthy();
+    const trigger = screen.getByRole('button', { name: /team/i });
+    expect(trigger.textContent).toContain('Platform');
     expect(vi.mocked(useQuery).mock.calls.at(-1)?.[0].queryKey).toContain('team-1');
-    fireEvent.change(screen.getByLabelText('Team'), { target: { value: '' } });
+    fireEvent.click(trigger);
+    expect(screen.getByRole('option', { name: 'Platform' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('option', { name: 'All visible teams' }));
     expect(update).toHaveBeenCalledWith({ teamId: null });
+  });
+
+  it('marks the tab the URL names as selected, and exposes it as a tabpanel', () => {
+    filters.search = 'tab=quality';
+    render(<ReportsPage />);
+
+    expect(screen.getByRole('tab', { name: 'Quality' }).getAttribute('aria-selected')).toBe('true');
+    expect(screen.getByRole('tab', { name: 'Delivery' }).getAttribute('aria-selected')).toBe(
+      'false'
+    );
+    expect(screen.getByRole('tabpanel').getAttribute('aria-labelledby')).toBe(
+      'reports-tab-quality'
+    );
   });
 });

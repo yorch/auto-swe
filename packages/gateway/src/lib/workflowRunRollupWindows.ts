@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@auto-swe/shared';
 import { DAY_MS } from '@auto-swe/shared/lib/agentTraceRollup';
+import { builtRollupDays } from '@auto-swe/shared/lib/rollupBuiltDays';
 import { resolveScheduledSweeps } from '@auto-swe/shared/lib/systemConfig';
-import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
 import { WORKFLOW_RUN_ROLLUP_BUCKET_VERSION } from '@auto-swe/shared/workflow';
 import type { Range } from './usageWindows.js';
 
@@ -10,8 +10,14 @@ export function workflowRunRollupHorizonMs(nowMs: number): number {
   return Math.floor(nowMs / DAY_MS) * DAY_MS - recomputeDays * DAY_MS;
 }
 
-export async function coveredWorkflowRunRollupDays(
-  prisma: Pick<PrismaClient, 'workflowRunDailyRollup'>,
+/**
+ * UTC days inside `[startMs, endMs)` and below the recompute horizon that the rollup sweep has
+ * built. One sweep builds the workflow-run, human-step and review-verdict rollups of a day in a
+ * single transaction, so one marker covers all three; a day with no runs has no rows and is
+ * still covered.
+ */
+export async function coveredWorkflowRunBuiltDays(
+  prisma: Pick<PrismaClient, 'rollupBuiltDay'>,
   startMs: number,
   endMs: number,
   nowMs: number
@@ -20,70 +26,16 @@ export async function coveredWorkflowRunRollupDays(
   if (startMs >= horizon) {
     return new Set();
   }
-  const rows = await runUnscoped(
-    'which UTC days the workflow run rollup has built, without exposing tenant data',
-    ['WorkflowRunDailyRollup'],
-    () =>
-      prisma.workflowRunDailyRollup.groupBy({
-        by: ['day'],
-        where: {
-          bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
-          day: { gte: new Date(startMs), lt: new Date(Math.min(endMs, horizon)) },
-        },
-      })
+  return builtRollupDays(
+    prisma,
+    { gte: new Date(startMs), lt: new Date(Math.min(endMs, horizon)) },
+    WORKFLOW_RUN_ROLLUP_BUCKET_VERSION
   );
-  return new Set(rows.map((row) => row.day.getTime()));
 }
 
-export async function coveredHumanStepRollupDays(
-  prisma: Pick<PrismaClient, 'humanStepDailyRollup'>,
-  startMs: number,
-  endMs: number,
-  nowMs: number
-): Promise<Set<number>> {
-  const horizon = workflowRunRollupHorizonMs(nowMs);
-  if (startMs >= horizon) {
-    return new Set();
-  }
-  const rows = await runUnscoped(
-    'which UTC days the human-step rollup has built, without exposing tenant data',
-    ['HumanStepDailyRollup'],
-    () =>
-      prisma.humanStepDailyRollup.groupBy({
-        by: ['day'],
-        where: {
-          bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
-          day: { gte: new Date(startMs), lt: new Date(Math.min(endMs, horizon)) },
-        },
-      })
-  );
-  return new Set(rows.map((row) => row.day.getTime()));
-}
-
-export async function coveredReviewVerdictRollupDays(
-  prisma: Pick<PrismaClient, 'reviewVerdictDailyRollup'>,
-  startMs: number,
-  endMs: number,
-  nowMs: number
-): Promise<Set<number>> {
-  const horizon = workflowRunRollupHorizonMs(nowMs);
-  if (startMs >= horizon) {
-    return new Set();
-  }
-  const rows = await runUnscoped(
-    'which UTC days the review-verdict rollup has built, without exposing tenant data',
-    ['ReviewVerdictDailyRollup'],
-    () =>
-      prisma.reviewVerdictDailyRollup.groupBy({
-        by: ['day'],
-        where: {
-          bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION,
-          day: { gte: new Date(startMs), lt: new Date(Math.min(endMs, horizon)) },
-        },
-      })
-  );
-  return new Set(rows.map((row) => row.day.getTime()));
-}
+export const coveredWorkflowRunRollupDays = coveredWorkflowRunBuiltDays;
+export const coveredHumanStepRollupDays = coveredWorkflowRunBuiltDays;
+export const coveredReviewVerdictRollupDays = coveredWorkflowRunBuiltDays;
 
 export function startedAtWhere(
   ranges: readonly Range[]

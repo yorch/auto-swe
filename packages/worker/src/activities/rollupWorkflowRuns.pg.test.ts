@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { runUnscoped } from '@auto-swe/shared/lib/tenantGuard';
+import { WORKFLOW_RUN_ROLLUP_BUCKET_VERSION } from '@auto-swe/shared/workflow';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@temporalio/activity', () => ({ heartbeat: vi.fn() }));
 
-const enabled = process.env.RUN_DETECTION_PG_TEST === '1';
+const enabled = process.env.ROLLUP_WORKFLOW_RUNS_PG_TEST === '1';
 const SWEEP_NAME = 'workflow_run_daily';
 
 describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
@@ -17,6 +18,8 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
   let dayStart: Date;
   let previousState: { lastSuccessfulStartAt: Date | null } | null = null;
   let now: Date;
+  /** November 2026: no fixture run starts there, so a day built in it has no rollup rows. */
+  const emptyWindow = { gte: new Date(Date.UTC(2026, 10, 1)), lt: new Date(Date.UTC(2026, 11, 1)) };
 
   beforeAll(async () => {
     vi.stubEnv('WORKFLOW_RUN_ROLLUP_RECOMPUTE_DAYS', '1');
@@ -107,6 +110,11 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
         ['ReviewVerdictDailyRollup'],
         () => prisma.reviewVerdictDailyRollup.deleteMany({ where: { day: dayStart } })
       );
+      await runUnscoped('remove the built-day marker test fixture', ['RollupBuiltDay'], () =>
+        prisma.rollupBuiltDay.deleteMany({
+          where: { OR: [{ day: dayStart }, { day: { gte: emptyWindow.gte, lt: emptyWindow.lt } }] },
+        })
+      );
       if (traceId) {
         await runUnscoped('remove the review trace test fixture', ['AgentTrace'], () =>
           prisma.agentTrace.deleteMany({ where: { id: traceId } })
@@ -151,15 +159,17 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
     const [rows, humanRows, reviewRows] = await Promise.all([
       runUnscoped('read the workflow-run rollup test fixture', ['WorkflowRunDailyRollup'], () =>
         prisma.workflowRunDailyRollup.findMany({
-          where: { bucketVersion: 4, day: dayStart },
+          where: { bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION, day: dayStart },
         })
       ),
       runUnscoped('read the human-step rollup test fixture', ['HumanStepDailyRollup'], () =>
-        prisma.humanStepDailyRollup.findMany({ where: { bucketVersion: 4, day: dayStart } })
+        prisma.humanStepDailyRollup.findMany({
+          where: { bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION, day: dayStart },
+        })
       ),
       runUnscoped('read the review-verdict rollup test fixture', ['ReviewVerdictDailyRollup'], () =>
         prisma.reviewVerdictDailyRollup.findMany({
-          where: { bucketVersion: 4, day: dayStart },
+          where: { bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION, day: dayStart },
         })
       ),
     ]);
@@ -174,5 +184,24 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
     expect(humanRows).toMatchObject([{ resolvedVia: 'web', steps: 1 }]);
     expect(reviewRows).toMatchObject([{ findings: 1, reviewer: 'SECURITY', verdicts: 1 }]);
     expect(state.lastSuccessfulStartAt).toEqual(now);
+
+    // A day with no runs writes no rollup rows, yet it is marked built so it is not rebuilt forever.
+    const emptyRows = await runUnscoped(
+      'read the rollup rows of a day with no runs',
+      ['WorkflowRunDailyRollup'],
+      () => prisma.workflowRunDailyRollup.count({ where: { day: emptyWindow } })
+    );
+    const markers = await runUnscoped('read the built-day markers', ['RollupBuiltDay'], () =>
+      prisma.rollupBuiltDay.findMany({
+        where: { bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION, day: emptyWindow },
+      })
+    );
+    expect(emptyRows).toBe(0);
+    expect(markers.length).toBeGreaterThan(0);
+    expect(
+      await prisma.rollupBuiltDay.count({
+        where: { bucketVersion: WORKFLOW_RUN_ROLLUP_BUCKET_VERSION, day: dayStart },
+      })
+    ).toBe(1);
   });
 });

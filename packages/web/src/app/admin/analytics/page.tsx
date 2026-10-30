@@ -34,6 +34,7 @@ import {
 import { formatDelta } from '@/lib/delta';
 import { downloadFile } from '@/lib/downloadFile';
 import { templateHref } from '@/lib/entityLinks';
+import { errMsg } from '@/lib/errors';
 import { outcomeTypeLabel } from '@/lib/govLabels';
 import { successTone } from '@/lib/tone';
 import { formatCost, formatDuration, formatPercent } from '@/lib/utils';
@@ -91,6 +92,8 @@ function AnalyticsWorkspace() {
   const windowDays = rangeDays(range);
   const filter = (params.get('q') ?? '').slice(0, 100);
   const [page, setPage] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const templateSort = useSort<TemplateSort>('runs', { ascendingFirst: ['name'] });
   const domainSort = useSort<DomainSort>('runs', { ascendingFirst: ['domain'] });
   const outcomeSort = useSort<OutcomeSort>('runs', { ascendingFirst: ['outcome'] });
@@ -168,17 +171,26 @@ function AnalyticsWorkspace() {
         actions={
           <div className="flex flex-wrap items-center gap-3">
             <Button
-              onClick={() => {
+              disabled={exporting}
+              onClick={async () => {
                 const query = new URLSearchParams({ ...rangeQuery(range), format: 'csv' });
-                void downloadFile(
-                  `/api/v1/workflow-templates/analytics/export?${query}`,
-                  'workflow-template-analytics.csv'
-                );
+                setExportError(null);
+                setExporting(true);
+                try {
+                  await downloadFile(
+                    `/api/v1/workflow-templates/analytics/export?${query}`,
+                    'workflow-template-analytics.csv'
+                  );
+                } catch (err) {
+                  setExportError(errMsg(err, 'Export failed'));
+                } finally {
+                  setExporting(false);
+                }
               }}
               size="sm"
               variant="secondary"
             >
-              Export CSV
+              {exporting ? 'Exporting…' : 'Export CSV'}
             </Button>
             <DateRangeControl
               onChange={(r) => {
@@ -195,6 +207,7 @@ function AnalyticsWorkspace() {
         subtitle="Run volume, outcomes, cost, and time saved across every workflow template on the platform."
         title="Platform analytics"
       />
+      {exportError && <Alert variant="error">{exportError}</Alert>}
 
       <QueryBoundary
         error={error}

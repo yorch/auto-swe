@@ -60,6 +60,25 @@ describe('ApiClient request shaping', () => {
       status: 429,
     });
   });
+
+  it('keeps the addresses a string-form gateway error names beside its message', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: 'Recipients must be active users who belong to the subscription scope',
+          offendingAddresses: ['outsider@example.test'],
+        }),
+        { headers: { 'content-type': 'application/json' }, status: 400 }
+      )
+    );
+    const client = new ApiClient();
+
+    await expect(client.get('/api/v1/report-digests')).rejects.toMatchObject({
+      offendingAddresses: ['outsider@example.test'],
+      optedOutAddresses: null,
+      status: 400,
+    });
+  });
 });
 
 describe('ApiClient 401 handling', () => {

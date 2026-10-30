@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   events: [] as string[],
   failCreateMany: false,
   lastSuccessfulStartAt: null as Date | null,
+  markedDays: [] as Date[],
   oldest: null as Date | null,
   pendingDirtyDays: [] as Date[],
   present: [] as Date[],
@@ -59,6 +60,11 @@ vi.mock('@auto-swe/shared/db', () => {
         mocks.transactionDays.push(where.day);
       },
     },
+    rollupBuiltDay: {
+      upsert: async ({ create }: { create: { day: Date } }) => {
+        mocks.markedDays.push(create.day);
+      },
+    },
     workflowRunDailyRollup: {
       createMany: async ({ data }: { data: unknown[] }) => {
         mocks.createManySizes.push(data.length);
@@ -80,8 +86,15 @@ vi.mock('@auto-swe/shared/db', () => {
         mocks.transactionOptions.push(options);
         return callback(txClient);
       },
+      activeWorkflow: { findMany: async () => [] },
       agentTrace: { findMany: async () => mocks.dirtyReviewerTraces },
       pullRequest: { findMany: async () => mocks.dirtyPullRequests },
+      rollupBuiltDay: {
+        findMany: async ({ where }: { where: { day: { gte: Date; lt: Date } } }) =>
+          mocks.present
+            .filter((day) => day >= where.day.gte && day < where.day.lt)
+            .map((day) => ({ day })),
+      },
       rollupSweepState: {
         findUnique: async () =>
           mocks.lastSuccessfulStartAt
@@ -222,6 +235,7 @@ beforeEach(() => {
   mocks.dirtyReviewerTraces = [];
   mocks.failCreateMany = false;
   mocks.lastSuccessfulStartAt = null;
+  mocks.markedDays = [];
   mocks.oldest = null;
   mocks.pendingDirtyDays = [];
   mocks.present = [];
@@ -255,6 +269,30 @@ describe('rollupWorkflowRuns', () => {
     mocks.oldest = new Date(TODAY - 500 * DAY_MS);
     const result = await rollupWorkflowRuns(NOW.toISOString());
     expect(result.days).toBe(2 + MAX_BACKFILL_DAYS_PER_SWEEP);
+  });
+
+  it('marks a day with no runs as built', async () => {
+    mocks.recomputeDays = 1;
+    mocks.runsPerDay = 0;
+    await rollupWorkflowRuns(NOW.toISOString());
+    expect(mocks.markedDays).toEqual([new Date(TODAY - DAY_MS)]);
+    expect(mocks.createManySizes).toEqual([]);
+  });
+
+  it('does not let built days without runs consume the backfill budget', async () => {
+    mocks.backfillDays = 365;
+    mocks.oldest = new Date(TODAY - 500 * DAY_MS);
+    const newestBackfill = TODAY - DAY_MS - 2 * DAY_MS;
+    mocks.present = Array.from(
+      { length: MAX_BACKFILL_DAYS_PER_SWEEP },
+      (_, index) => new Date(newestBackfill - index * DAY_MS)
+    );
+    const result = await rollupWorkflowRuns(NOW.toISOString());
+    expect(result.days).toBe(2 + MAX_BACKFILL_DAYS_PER_SWEEP);
+    const oldestBuilt = newestBackfill - (MAX_BACKFILL_DAYS_PER_SWEEP - 1) * DAY_MS;
+    const read = mocks.events.filter((event) => event.startsWith('read:'));
+    expect(read).toContain(`read:${new Date(oldestBuilt - DAY_MS).toISOString().slice(0, 10)}`);
+    expect(read).not.toContain(`read:${new Date(newestBackfill).toISOString().slice(0, 10)}`);
   });
 
   it('replaces each day in a bounded transaction and chunks large inserts', async () => {
