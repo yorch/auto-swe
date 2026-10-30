@@ -21,6 +21,7 @@
     "./lib/agentPrompts": "./dist/lib/agentPrompts.js",
     "./lib/artifactStore": "./dist/lib/artifactStore.js",
     "./lib/runEvidence": "./dist/lib/runEvidence.js",
+    "./lib/previewConfig": "./dist/lib/previewConfig.js",
     "./lib/transcripts/normalize": "./dist/lib/transcripts/normalize.js",
     "./lib/transcripts/piiScrub": "./dist/lib/transcripts/piiScrub.js",
     "./lib/assistantAction": "./dist/lib/assistantAction.js",

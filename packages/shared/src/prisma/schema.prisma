@@ -501,6 +501,7 @@ model Connection {
   /// { runLint?: string; runTypecheck?: string; runTests?: string; ... }
   /// Resolution order: step config → this field → built-in defaults.
   gateCommands         Json?               @map("gate_commands")
+  previewConfig        Json?               @map("preview_config")
 
   /// The stack the scheduled dependency scan detected from the repository's
   /// root files, as `DetectedStack` (stacks, primary, suggestedGateCommands,

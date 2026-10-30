@@ -1,5 +1,6 @@
 import type { InputSchema } from '../lib/inputSchema.js';
 import { isAnthropicSpec } from '../lib/modelSpec.js';
+import type { PreviewConfig } from '../lib/previewConfig.js';
 import type { PullRequestState } from '../lib/pullRequest.js';
 import type { WorkspaceProviderType } from '../lib/workspaceProviders.js';
 import type { BudgetTier, WorkflowStatus } from './workflow.js';
@@ -333,6 +334,8 @@ export interface RepositorySummary {
   } | null;
   /** Per-gate command overrides; null when the repository overrides none. */
   gateCommands?: RepoGateCommands | null;
+  /** Validated per-repository application preview recipe. */
+  previewConfig?: PreviewConfig | null;
   /** Stack detected from root manifests by the dependency scan; null until one ran. */
   detectedStack?: DetectedStack | null;
   language: string | null;

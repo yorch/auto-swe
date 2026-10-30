@@ -68,6 +68,10 @@ export default defineConfig({
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/runEvidence.ts'),
       },
       {
+        find: '@auto-swe/shared/lib/previewConfig',
+        replacement: path.resolve(__dirname, 'packages/shared/src/lib/previewConfig.ts'),
+      },
+      {
         find: /^@auto-swe\/shared\/lib\/transcripts\/(.*)$/,
         replacement: path.resolve(__dirname, 'packages/shared/src/lib/transcripts/$1.ts'),
       },

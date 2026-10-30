@@ -1,6 +1,7 @@
 'use client';
 
 import type { ConnectionType } from '@auto-swe/shared/lib/connectionTypes';
+import type { PreviewConfig } from '@auto-swe/shared/lib/previewConfig';
 import {
   type ExecutorImageProbeResult,
   REPO_GATE_COMMAND_KEYS,
@@ -91,6 +92,9 @@ export function ConnectionFormModal({
   const [gateCommands, setGateCommands] = useState<GateCommandsForm>(() =>
     gateCommandsForm(initial?.gateCommands)
   );
+  const [previewConfigJson, setPreviewConfigJson] = useState(() =>
+    initial?.previewConfig != null ? JSON.stringify(initial.previewConfig, null, 2) : ''
+  );
   const [language, setLanguage] = useState(initial?.language ?? prefill?.language ?? '');
 
   // non-git fields (name + type-specific config)
@@ -122,6 +126,9 @@ export function ConnectionFormModal({
     setDefaultBranch(initial?.defaultBranch ?? prefill?.defaultBranch ?? 'main');
     setExecutorImage(initial?.executorImage ?? '');
     setGateCommands(gateCommandsForm(initial?.gateCommands));
+    setPreviewConfigJson(
+      initial?.previewConfig != null ? JSON.stringify(initial.previewConfig, null, 2) : ''
+    );
     setLanguage(initial?.language ?? prefill?.language ?? '');
     setName(initial?.name ?? '');
     setConfigJson(initial?.config != null ? JSON.stringify(initial.config, null, 2) : '');
@@ -151,6 +158,24 @@ export function ConnectionFormModal({
       }
       parsedConfig = parsed.config;
     }
+    let parsedPreviewConfig: PreviewConfig | null | undefined;
+    if (connType === 'git_repo' && previewConfigJson.trim()) {
+      try {
+        const value: unknown = JSON.parse(previewConfigJson);
+        if (value === null || Array.isArray(value) || typeof value !== 'object') {
+          setError('App preview must be a JSON object');
+          return;
+        }
+        parsedPreviewConfig = value as PreviewConfig;
+      } catch (err) {
+        setError(
+          `App preview JSON is invalid: ${err instanceof Error ? err.message : String(err)}`
+        );
+        return;
+      }
+    } else if (mode.kind === 'edit' && initial?.previewConfig != null) {
+      parsedPreviewConfig = null;
+    }
 
     try {
       if (mode.kind === 'create') {
@@ -162,6 +187,9 @@ export function ConnectionFormModal({
             description: description.trim() || undefined,
             executorImage: executorImage.trim() || undefined,
             ...(gateCreate ? { gateCommands: gateCreate } : {}),
+            ...(parsedPreviewConfig !== undefined
+              ? { previewConfig: parsedPreviewConfig as PreviewConfig }
+              : {}),
             githubApiUrl: prefill?.githubApiUrl || undefined,
             githubUrl: prefill?.githubUrl || undefined,
             language: language.trim() || undefined,
@@ -188,6 +216,7 @@ export function ConnectionFormModal({
             description: description.trim() || null,
             executorImage: executorImage.trim() || null,
             ...(gatePatch !== undefined ? { gateCommands: gatePatch } : {}),
+            ...(parsedPreviewConfig !== undefined ? { previewConfig: parsedPreviewConfig } : {}),
             isActive,
             language: language.trim() || null,
             teamId,
@@ -432,6 +461,27 @@ export function ConnectionFormModal({
                   />
                 ))}
               </div>
+            </fieldset>
+            <fieldset className="space-y-3">
+              <legend className="text-sm font-medium text-paper-200">
+                App preview (UI validation)
+              </legend>
+              <p className="text-xs leading-relaxed text-paper-400">
+                Optional JSON recipe for starting this repository in a workspace. Clearing this
+                field removes the saved recipe.
+              </p>
+              <Textarea
+                disabled={!canEditGateCommands}
+                id="app-preview-config"
+                label="App preview (UI validation)"
+                onChange={(e) => setPreviewConfigJson(e.target.value)}
+                placeholder={
+                  '{\n  "start": "npm run dev",\n  "readyUrl": "http://localhost:3000"\n}'
+                }
+                rows={10}
+                spellCheck={false}
+                value={previewConfigJson}
+              />
             </fieldset>
           </>
         ) : (
