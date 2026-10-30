@@ -42,6 +42,11 @@
  * file on another origin is fetched anonymously, over https, through a guard that does not inherit
  * the registry's private-network opt-in.
  *
+ * A fourth route, `<baseUrl>/maven/<registryId>/<repository path>`, serves a Maven repository in
+ * open mode only (`mavenProxy.ts`), authenticated by HTTP Basic exactly like PyPI. Release files are
+ * cached; metadata and snapshots never are. The Go route also relays the checksum database
+ * (`/sumdb/sum.golang.org/…`), public signed data, in both access modes.
+ *
  * Modelled on `agents/claudeCode/modelProxy.ts`.
  */
 import { AsyncResource } from 'node:async_hooks';
@@ -61,7 +66,9 @@ import {
   goListBody,
   goUpstreamPath,
   parseGoProxyPath,
+  parseGoSumdbPath,
 } from './goProxy.js';
+import { isSmallMavenFile, mavenContentType, parseMavenPath } from './mavenProxy.js';
 import {
   fileCredentialPolicy,
   fileIdFor,
@@ -82,6 +89,12 @@ const MAX_GO_ZIP_BYTES = 512 * 1024 * 1024;
 
 /** A PyPI file past this is cut off mid-stream, which makes pip and uv fail the download. */
 const MAX_PYPI_FILE_BYTES = 512 * 1024 * 1024;
+
+/** A Maven file past this is cut off mid-stream, which makes the build tool fail the download. */
+const MAX_MAVEN_FILE_BYTES = 512 * 1024 * 1024;
+
+/** A checksum-database answer is a signed tree head, a record or one tile: tiny. */
+const MAX_SUMDB_BYTES = 8 * 1024 * 1024;
 
 /** The files one registration may have indexed at once; past it the index omits further files. */
 const MAX_PYPI_FILES = 100_000;
@@ -149,10 +162,10 @@ const MAX_PREFIX_SEGMENTS = 8;
 export interface ResolvedRegistry {
   id: string;
   /**
-   * Absent means `npm`. A `go` registry is reached only through `/go/<token>/<id>`, a `pypi` one
-   * only through `/pypi/<id>`, the token being the Basic password.
+   * Absent means `npm`. A `go` registry is reached only through `/go/<token>/<id>`, a `pypi` or
+   * `maven` one only through `/pypi/<id>` or `/maven/<id>`, the token being the Basic password.
    */
-  ecosystem?: 'npm' | 'go' | 'pypi';
+  ecosystem?: 'npm' | 'go' | 'pypi' | 'maven';
   name: string;
   upstreamUrl: string;
   authKind: 'bearer' | 'basic';
@@ -661,6 +674,8 @@ export function createRegistryProxy(options: {
   maxGoZipBytes?: number;
   /** Largest PyPI file relayed (default 512 MiB); past it the response is cut off. */
   maxPypiFileBytes?: number;
+  /** Largest Maven file relayed (default 512 MiB); past it the response is cut off. */
+  maxMavenFileBytes?: number;
 }): RegistryProxy {
   const registrations = new Map<string, Registration>();
 
@@ -1530,6 +1545,89 @@ export function createRegistryProxy(options: {
     });
   }
 
+  /**
+   * A file of a Maven repository, in open mode only (`handleMaven` refuses anything else). The
+   * upstream URL is built from the validated path; release files are cached, metadata and
+   * snapshots never are (they change under the same name). Small text files run under the
+   * upstream deadline, jars and other archives stream for as long as they take. A 404/410 is a
+   * 404: Maven reads that as "not in this repository" and tries the next one.
+   */
+  async function serveMaven(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    registry: ResolvedRegistry,
+    p: NonNullable<ReturnType<typeof parseMavenPath>>
+  ): Promise<void> {
+    const cacheable = p.kind === 'release';
+    await relayUpstream(res, req, {
+      accept: '*/*',
+      badGatewayMessage: 'the upstream Maven repository could not be reached',
+      cache: { read: cacheable, write: cacheable },
+      contentType: mavenContentType(p.path),
+      deadlineMs: isSmallMavenFile(p.path)
+        ? (options.upstreamDeadlineMs ?? DEFAULT_UPSTREAM_DEADLINE_MS)
+        : undefined,
+      errorMessage: 'the upstream Maven repository answered with an error',
+      fetchImpl: () => upstreamFetchFor(registry),
+      maxBytes: options.maxMavenFileBytes ?? MAX_MAVEN_FILE_BYTES,
+      notFoundMessage: 'the upstream Maven repository does not have this file',
+      passContentLength: true,
+      registry,
+      relayGone: 'as404',
+      tooLargeMessage: 'the upstream Maven file is too large to proxy',
+      url: `${registry.upstreamUrl}/${p.path}`,
+      withCredential: true,
+    });
+  }
+
+  /**
+   * A Go checksum-database request (`/sumdb/sum.golang.org/…`). The data is public and signed
+   * by the database, so it is served in lockfile mode too. It is never cached, and it is a small
+   * answer, so it takes one of the registration's buffered slots for the whole relay, which runs
+   * under the upstream deadline. A 404/410 is a 404, and the Go tool then falls back to its own
+   * route to the database.
+   */
+  async function serveGoSumdb(
+    reg: Registration,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    registry: ResolvedRegistry,
+    p: NonNullable<ReturnType<typeof parseGoSumdbPath>>
+  ): Promise<void> {
+    const slot = await reg.buffered.acquire();
+    if (slot === null) {
+      res.setHeader('retry-after', '5');
+      sendJson(res, 503, 'the registry proxy is busy; retry shortly');
+      return;
+    }
+    // The client may have hung up while it waited.
+    if (res.destroyed) {
+      slot();
+      return;
+    }
+    try {
+      await relayUpstream(res, req, {
+        accept: '*/*',
+        badGatewayMessage: 'the upstream Go checksum database could not be reached',
+        cache: { read: false, write: false },
+        contentType: p.tile ? 'application/octet-stream' : 'text/plain; charset=utf-8',
+        deadlineMs: options.upstreamDeadlineMs ?? DEFAULT_UPSTREAM_DEADLINE_MS,
+        errorMessage: 'the upstream Go checksum database answered with an error',
+        fetchImpl: () => upstreamFetchFor(registry),
+        maxBytes: MAX_SUMDB_BYTES,
+        notFoundMessage: 'the upstream Go checksum database does not have this answer',
+        passContentLength: false,
+        registry,
+        relayGone: 'as404',
+        tooLargeMessage: 'the upstream Go checksum database answer is too large to proxy',
+        url: `${registry.upstreamUrl}${p.path}`,
+        withCredential: true,
+      });
+    } finally {
+      slot();
+    }
+  }
+
   const advertised = (): string => {
     if (typeof options.advertisedUrl === 'string') {
       return options.advertisedUrl;
@@ -1554,19 +1652,23 @@ export function createRegistryProxy(options: {
     // `/go/../npm/<id>/…` and `/go/%2e%2e/npm/<id>/…` normalise to an npm path and are then judged
     // as npm, so a path token cannot stand in for the Bearer header there.
     const url = new URL(req.url ?? '/', 'http://proxy');
-    // PyPI alone reads a Basic header, and only on a normalised `/pypi/…` path: `/pypi/../npm/…`
-    // is an npm request and gets npm's Bearer-only judgement. The challenge comes before anything
-    // else because pip and uv send URL credentials only on the first request or after a 401.
-    const pypiRoute = /^\/pypi\/([^/]*)(\/.*)?$/.exec(url.pathname);
-    if (pypiRoute) {
+    // PyPI and Maven alone read a Basic header, and only on a normalised `/pypi/…` or `/maven/…`
+    // path: `/maven/../npm/…` is an npm request and gets npm's Bearer-only judgement. The
+    // challenge comes before anything else because pip, uv and Maven send URL credentials only
+    // on the first request or after a 401.
+    const basicRoute = /^\/(pypi|maven)\/([^/]*)(\/.*)?$/.exec(url.pathname);
+    if (basicRoute) {
       const password = basicPassword(req.headers.authorization);
-      const pypiReg = password ? registrations.get(digest(password)) : undefined;
-      if (!pypiReg) {
+      const basicReg = password ? registrations.get(digest(password)) : undefined;
+      if (!basicReg) {
         res.setHeader('www-authenticate', 'Basic realm="registry"');
         sendJson(res, 401, 'unknown or expired token');
         return;
       }
-      pypiReg.run(() => handlePypi(pypiReg, req, res, pypiRoute[1] ?? '', pypiRoute[2] ?? ''));
+      const handle = basicRoute[1] === 'maven' ? handleMaven : handlePypi;
+      basicReg.run(() =>
+        handle(basicReg, req, res, basicRoute[2] ?? '', basicRoute[3] ?? '')
+      );
       return;
     }
     const goRoute = /^\/go\/([^/]+)\/([^/]+)(\/.*)$/.exec(url.pathname);
@@ -1585,7 +1687,7 @@ export function createRegistryProxy(options: {
       sendJson(
         res,
         404,
-        'only /npm/<registry>/…, /go/<token>/<registry>/… and /pypi/<registry>/… paths exist here'
+        'only /npm/<registry>/…, /go/<token>/<registry>/…, /pypi/<registry>/… and /maven/<registry>/… paths exist here'
       );
       return;
     }
@@ -1656,6 +1758,19 @@ export function createRegistryProxy(options: {
       sendJson(res, 503, 'the registry allowlist is not ready yet');
       return;
     }
+    if (rest.startsWith('/sumdb/')) {
+      const sumdb = parseGoSumdbPath(rest);
+      if (!sumdb) {
+        sendJson(res, 404, 'unrecognized Go checksum database path');
+        return;
+      }
+      const sumdbCall = serveGoSumdb(reg, req, res, registry, sumdb).catch(() => {
+        sendJson(res, 502, 'the upstream Go checksum database could not be reached');
+      });
+      reg.inFlight.add(sumdbCall);
+      void sumdbCall.finally(() => reg.inFlight.delete(sumdbCall));
+      return;
+    }
     const parsed = parseGoProxyPath(rest);
     if (!parsed) {
       sendJson(res, 404, 'unrecognized Go module path');
@@ -1700,6 +1815,45 @@ export function createRegistryProxy(options: {
         : servePypiFile(reg, req, res, registry, parsed.fileId, parsed.filename)
     ).catch(() => {
       sendJson(res, 502, 'the upstream package index could not be reached');
+    });
+    reg.inFlight.add(call);
+    void call.finally(() => reg.inFlight.delete(call));
+  }
+
+  /** `/maven/<registryId><rest>`: the Basic password is already verified and is not passed on. */
+  function handleMaven(
+    reg: Registration,
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    registryId: string,
+    rest: string
+  ): void {
+    const registry = reg.registries.get(registryId);
+    if (registry?.ecosystem !== 'maven') {
+      sendJson(res, 404, 'unknown registry');
+      return;
+    }
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      sendJson(res, 405, 'read-only: GET and HEAD only');
+      return;
+    }
+    if (!reg.allowlists) {
+      sendJson(res, 503, 'the registry allowlist is not ready yet');
+      return;
+    }
+    // Open mode (`null`) is the only mode there is; anything else is a wiring error, and the
+    // safe answer to it is to serve nothing.
+    if (reg.allowlists.get(registry.id) !== null) {
+      sendJson(res, 503, 'a Maven registry serves open mode only');
+      return;
+    }
+    const parsed = parseMavenPath(rest);
+    if (!parsed) {
+      sendJson(res, 404, 'unrecognized Maven path');
+      return;
+    }
+    const call = serveMaven(req, res, registry, parsed).catch(() => {
+      sendJson(res, 502, 'the upstream Maven repository could not be reached');
     });
     reg.inFlight.add(call);
     void call.finally(() => reg.inFlight.delete(call));
