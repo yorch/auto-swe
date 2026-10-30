@@ -1,7 +1,8 @@
 /**
- * Whether an inbound request must stay out of tracing because its path carries a registry-proxy
- * workspace token (`/go/<token>/…`, `/pypi/<token>/…`). No imports: telemetry loads this before
- * anything else.
+ * Whether an inbound request must stay out of tracing: `/go/<token>/…` carries a registry-proxy
+ * workspace token in its path, and `/pypi/<id>/…` carries none (its token is a Basic password) but
+ * is kept out beside it, so the two proxy routes are traced alike (not at all) and the trace stays
+ * small. No imports: telemetry loads this before anything else.
  *
  * The proxy routes on `new URL(raw, 'http://proxy').pathname`, which resolves `.` segments, `%2e`
  * and absolute-form targets, so the decision here is taken on the same normalised path. The raw

@@ -447,7 +447,7 @@ describe('createWorkspace clone credential handling (execShellAsync mocked)', ()
 
     it('keeps the PyPI token in secretEnv, off argv, and scrubs it from a failing exec', async () => {
       const TOKEN = 'cafe0123deadbeef';
-      const index = `http://proxy.internal:9999/pypi/${TOKEN}/pypi-1/simple/`;
+      const index = `http://token:${TOKEN}@proxy.internal:9999/pypi/pypi-1/simple/`;
       const setAllowlist = vi.fn();
       vi.mocked(beginWorkspaceRegistries).mockResolvedValueOnce({
         baseUrl: 'http://proxy.internal:9999',

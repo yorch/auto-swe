@@ -57,7 +57,7 @@ const FILENAME_RE = /^[A-Za-z0-9._+!~-]{1,300}$/;
 /** `algo=hex`: a hash named by an index. */
 const HASH_RE = /^[a-z0-9_]{1,16}=[0-9a-f]{8,512}$/;
 
-/** `rest` is the path after `/pypi/<token>/<registryId>`: a leading `/`, no query. */
+/** `rest` is the path after `/pypi/<registryId>`: a leading `/`, no query. */
 export function parsePypiPath(rest: string): PypiPath | null {
   if (!rest.startsWith('/')) {
     return null;

@@ -132,7 +132,10 @@ describe('beginWorkspaceRegistries', () => {
       ['pypi-1', 'pypi', true, []],
     ]);
     expect(access?.env.some((p) => p.startsWith('NPM_CONFIG_'))).toBe(false);
-    expect(access?.env.some((p) => p.startsWith('PIP_INDEX_URL='))).toBe(true);
+    // The token rides as the userinfo password of the index URL, not in its path.
+    expect(access?.env).toContain(
+      'PIP_INDEX_URL=http://token:tok@proxy.internal:9999/pypi/pypi-1/simple/'
+    );
   });
 
   it('resolves npm, go and pypi separately, none shadowing another', async () => {

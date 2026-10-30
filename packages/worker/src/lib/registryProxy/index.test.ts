@@ -1801,7 +1801,7 @@ describe('go module proxy: the real tarball cache', () => {
   });
 });
 
-// ---- PyPI proxy (`/pypi/<token>/<registryId>/…`) ----
+// ---- PyPI proxy (`/pypi/<registryId>/…`, the token as the Basic password) ----
 
 const PY = {
   ...REG,
@@ -1876,14 +1876,17 @@ async function startPyProxy(
     registries: [opts.registry ?? PY],
   });
   reg.setAllowlist(new Map([[PY.id, opts.allowlist === undefined ? null : opts.allowlist]]));
-  const at = (rest: string, method = 'GET', authorization?: string) =>
-    rawGet(base, `/pypi/${reg.token}/${PY.id}${rest}`, authorization, method);
+  const at = (rest: string, method = 'GET', authorization = basic('token', reg.token)) =>
+    rawGet(base, `/pypi/${PY.id}${rest}`, authorization, method);
   /** The served index of `flask`, and a request for the rewritten link to `filename`. */
   const file = async (filename: string, method = 'GET') => {
     const index = await at('/simple/flask/');
     const link = linksOf(index.body).find((l) => l.text === filename);
     expect(link, `${filename} is listed`).toBeDefined();
-    return { index, response: await rawGet(base, link?.href as string, undefined, method) };
+    return {
+      index,
+      response: await rawGet(base, link?.href as string, basic('token', reg.token), method),
+    };
   };
   return { at, base, denials, file, proxy, reg };
 }
@@ -1893,8 +1896,10 @@ describe('pypi proxy: access', () => {
     const { base, proxy } = await startProxy(async () => html(FLASK_HTML));
     const reg = await proxy.register({ onDenied: () => {}, registries: [PY, REG, GO] });
     const idx = (id: string, method = 'GET') =>
-      rawGet(base, `/pypi/${reg.token}/${id}/simple/flask/`, undefined, method);
-    expect((await rawGet(base, '/pypi/wrong/py-1/simple/flask/')).status).toBe(401);
+      rawGet(base, `/pypi/${id}/simple/flask/`, basic('token', reg.token), method);
+    expect((await rawGet(base, '/pypi/py-1/simple/flask/', basic('token', 'wrong'))).status).toBe(
+      401
+    );
     expect((await idx('nope')).status).toBe(404);
     // Neither an npm nor a Go registry id is a PyPI registry.
     expect((await idx(REG.id)).status).toBe(404);
@@ -1917,7 +1922,7 @@ describe('pypi proxy: access', () => {
       '/files/x/y',
       '/other/flask/',
     ]) {
-      const res = await rawGet(base, `/pypi/${reg.token}/py-1${rest}`);
+      const res = await rawGet(base, `/pypi/py-1${rest}`, basic('token', reg.token));
       expect(res.status, rest).toBe(404);
       expect(res.body, rest).toContain('unrecognized PyPI path');
     }
@@ -1925,19 +1930,65 @@ describe('pypi proxy: access', () => {
     await proxy.close();
   });
 
-  it('authenticates by its path token alone, never by a header', async () => {
+  it('authenticates by the Basic password alone, whatever the user name', async () => {
     const { at, base, proxy, reg } = await startPyProxy(async () => html(FLASK_HTML));
     const index = '/simple/flask/';
-    expect((await rawGet(base, `/pypi/wrong/py-1${index}`, bearer(reg.token))).status).toBe(401);
-    expect((await rawGet(base, `/pypi${index}`, bearer(reg.token))).status).toBe(401);
-    expect((await rawGet(base, `/pypi/wrong/py-1${index}`, basic('x', reg.token))).status).toBe(
-      401
+    expect((await at(index, 'GET', basic('token', reg.token))).status).toBe(200);
+    expect((await at(index, 'GET', basic('', reg.token))).status).toBe(200);
+    expect((await at(index, 'GET', basic('anything', reg.token))).status).toBe(200);
+    // The token as the user name, or nothing after the colon, is not the password.
+    expect((await at(index, 'GET', basic(reg.token, 'x'))).status).toBe(401);
+    expect((await at(index, 'GET', basic(reg.token, ''))).status).toBe(401);
+    expect(
+      (await at(index, 'GET', `Basic ${Buffer.from(reg.token).toString('base64')}`)).status
+    ).toBe(401);
+    expect((await at(index, 'GET', 'Basic !!!')).status).toBe(401);
+    expect((await at(index, 'GET', basic('token', 'wrong'))).status).toBe(401);
+    // A token in the path is no credential: the path has no place for one.
+    expect((await rawGet(base, `/pypi/${reg.token}/py-1${index}`)).status).toBe(401);
+    expect(
+      (await rawGet(base, `/pypi/${reg.token}/py-1${index}`, basic('token', reg.token))).status
+    ).toBe(404);
+    await proxy.close();
+  });
+
+  it('refuses a Bearer header, or none, on a pypi path with a Basic challenge', async () => {
+    const { base, proxy, reg } = await startPyProxy(async () => html(FLASK_HTML));
+    const index = `/pypi/${PY.id}/simple/flask/`;
+    for (const authorization of [bearer(reg.token), undefined]) {
+      const res = await rawGet(base, index, authorization);
+      expect(res.status).toBe(401);
+      expect(res.headers['www-authenticate']).toBe('Basic realm="registry"');
+    }
+    // The challenge is the first answer, even for a path that is nothing the route serves.
+    for (const path of ['/pypi/nope/simple/x/', '/pypi/py-1/other', '/pypi/']) {
+      const res = await rawGet(base, path, bearer(reg.token));
+      expect(res.status, path).toBe(401);
+      expect(res.headers['www-authenticate'], path).toBe('Basic realm="registry"');
+    }
+    // Only this route challenges.
+    const npm = await rawGet(base, `/npm/${REG.id}/pkg`, undefined);
+    expect(npm.status).toBe(401);
+    expect(npm.headers['www-authenticate']).toBeUndefined();
+    await proxy.close();
+  });
+
+  it('reads Basic on no route but PyPI: npm stays Bearer-only and Go path-token-only', async () => {
+    const { base, proxy } = await startProxy(async () => new Response('{}'));
+    const reg = await proxy.register({ onDenied: () => {}, registries: [REG, GO, PY] });
+    reg.setAllowlist(
+      new Map([
+        [PY.id, null],
+        [REG.id, null],
+        [GO.id, null],
+      ])
     );
-    expect((await rawGet(base, `/pypi/wrong/py-1${index}`, basic(reg.token, 'x'))).status).toBe(
-      401
-    );
-    expect((await at(index, 'GET', bearer('bogus'))).status).toBe(200);
-    expect((await at(index, 'GET', 'Basic !!!')).status).toBe(200);
+    const creds = basic('token', reg.token);
+    expect((await rawGet(base, `/npm/${REG.id}/pkg`, creds)).status).toBe(401);
+    expect((await rawGet(base, `/npm/${REG.id}/pkg`, bearer(reg.token))).status).toBe(200);
+    expect((await rawGet(base, `/go/wrong/${GO.id}/a/b/@latest`, creds)).status).toBe(401);
+    expect((await rawGet(base, `/go/${GO.id}/a/b/@latest`, creds)).status).toBe(401);
+    expect((await rawGet(base, `/go/${reg.token}/${GO.id}/a/b/@latest`)).status).toBe(200);
     await proxy.close();
   });
 
@@ -1980,11 +2031,13 @@ describe('pypi proxy: access', () => {
       expect(await target(path, basic('u', reg.token)), path).toBe(401);
       expect(await target(path, bearer(reg.token)), path).toBe(200);
     }
-    // With the path token alone nothing on npm or Go is reachable.
+    // Nor does Basic stand in for Go's path token, and with no header at all nothing is reachable.
+    expect(await target(`/pypi/../go/wrong/${GO.id}/a/b/@latest`, basic('u', reg.token))).toBe(401);
     for (const path of [
-      `/pypi/${reg.token}/../npm/${REG.id}/pkg`,
-      `/pypi/${reg.token}/%2e%2e/npm/${REG.id}/pkg`,
-      `/pypi/${reg.token}/../go/${reg.token}/${GO.id}/a/b/@latest`,
+      `/pypi/../npm/${REG.id}/pkg`,
+      `/pypi/%2e%2e/npm/${REG.id}/pkg`,
+      `/pypi/${PY.id}/../npm/${REG.id}/pkg`,
+      `/pypi/${PY.id}/%2e%2e/npm/${REG.id}/pkg`,
     ]) {
       expect(await target(path), path).toBe(401);
     }
@@ -2024,7 +2077,7 @@ describe('pypi proxy: access', () => {
     await proxy.close();
   });
 
-  it('never puts the path token in a response, header or denial report except inside the index links', async () => {
+  it('never puts the token in a response, header or denial report, the index links included', async () => {
     const denials: unknown[] = [];
     const { base, proxy } = await startProxy(async (url) =>
       url.endsWith('/flask/') ? html(FLASK_HTML) : new Response('SECRET', { status: 500 })
@@ -2032,7 +2085,7 @@ describe('pypi proxy: access', () => {
     const reg = await proxy.register({ onDenied: (d) => denials.push(d), registries: [PY] });
     reg.setAllowlist(new Map([[PY.id, pyLockfile(['flask', '3.0.0'])]]));
     const at = (rest: string, method = 'GET') =>
-      rawGet(base, `/pypi/${reg.token}/${PY.id}${rest}`, undefined, method);
+      rawGet(base, `/pypi/${PY.id}${rest}`, basic('token', reg.token), method);
     const index = await at('/simple/flask/');
     const id = fileIdFor(PY.id, WHL_URL);
     const responses = [
@@ -2042,15 +2095,17 @@ describe('pypi proxy: access', () => {
       await at(`/files/${id}/${WHL}`),
       await at(`/files/${id}/other.whl`),
       await at(`/files/${'0'.repeat(32)}/${WHL}`),
-      await rawGet(base, `/pypi/${reg.token}/nope/simple/flask/`),
+      await rawGet(base, '/pypi/nope/simple/flask/', basic('token', reg.token)),
+      await rawGet(base, `/pypi/${PY.id}/simple/flask/`, bearer(reg.token)),
+      await rawGet(base, `/pypi/${PY.id}/simple/flask/`, basic('token', `${reg.token}x`)),
+      await rawGet(base, `/pypi/${reg.token}/${PY.id}/simple/flask/`),
     ];
     expect(index.status).toBe(200);
-    expect(responses.map((r) => r.status)).toEqual([403, 404, 405, 502, 404, 404, 404]);
-    // In the index the token appears once per link, and only as the prefix of that link's path.
-    const links = linksOf(index.body);
-    expect(links).toHaveLength(1);
-    expect(index.body.split(reg.token)).toHaveLength(links.length + 1);
-    expect(index.body.replaceAll(`/pypi/${reg.token}/`, '')).not.toContain(reg.token);
+    expect(responses.map((r) => r.status)).toEqual([
+      403, 404, 405, 502, 404, 404, 404, 401, 401, 401,
+    ]);
+    expect(linksOf(index.body)).toHaveLength(1);
+    expect(index.body).not.toContain(reg.token);
     expect(JSON.stringify(index.headers)).not.toContain(reg.token);
     for (const r of responses) {
       expect(r.body).not.toContain(reg.token);
@@ -2080,24 +2135,22 @@ describe('pypi proxy: the project index', () => {
     const b = await fromJson.at('/simple/flask/');
     await fromJson.proxy.close();
     expect(a.status).toBe(200);
-    // Two registrations, two tokens: the links differ in nothing else.
-    expect(b.body.replaceAll(fromJson.reg.token, 'T')).toBe(
-      a.body.replaceAll(fromHtml.reg.token, 'T')
-    );
+    // The links name no token, so two registrations render byte-identical indexes.
+    expect(b.body).toBe(a.body);
+    expect(a.body).not.toContain(fromHtml.reg.token);
     expect(a.headers['content-type']).toBe('text/html; charset=utf-8');
     expect(a.headers['cache-control']).toBe('no-store');
     expect(seen[0]?.url).toBe('http://pyup.test/simple/flask/');
-    const { token } = fromHtml.reg;
     const links = linksOf(a.body);
     expect(links).toEqual([
       {
         hash: `sha256=${SHA}`,
-        href: `/pypi/${token}/py-1/files/${fileIdFor(PY.id, WHL_URL)}/${WHL}`,
+        href: `/pypi/py-1/files/${fileIdFor(PY.id, WHL_URL)}/${WHL}`,
         text: WHL,
       },
       {
         hash: `sha256=${SHA}`,
-        href: `/pypi/${token}/py-1/files/${fileIdFor(PY.id, SDIST_URL)}/${SDIST}`,
+        href: `/pypi/py-1/files/${fileIdFor(PY.id, SDIST_URL)}/${SDIST}`,
         text: SDIST,
       },
     ]);
@@ -2207,7 +2260,9 @@ describe('pypi proxy: the project index', () => {
     const { base, proxy } = await startProxy(upstream);
     const reg = await proxy.register({ onDenied: () => {}, registries: [PY] });
     reg.setAllowlist(new Map());
-    expect((await rawGet(base, `/pypi/${reg.token}/py-1/simple/flask/`)).status).toBe(403);
+    expect((await rawGet(base, '/pypi/py-1/simple/flask/', basic('token', reg.token))).status).toBe(
+      403
+    );
     expect(upstream).not.toHaveBeenCalled();
     await proxy.close();
   });
@@ -2330,7 +2385,9 @@ describe('pypi proxy: the project index', () => {
         })
     );
     await new Promise<void>((resolve) => {
-      const req = http.request(`${base}/pypi/${reg.token}/py-1/simple/flask/`);
+      const req = http.request(`${base}/pypi/py-1/simple/flask/`, {
+        headers: { authorization: basic('token', reg.token) },
+      });
       req.on('error', () => {});
       req.end();
       setTimeout(() => {
@@ -2682,12 +2739,16 @@ describe('pypi proxy: files', () => {
     );
     const link = linksOf((await at('/simple/flask/')).body)[0]?.href as string;
     await new Promise<void>((resolve) => {
-      const req = http.request(`${base}${link}`, (res) => {
-        res.once('data', () => {
-          req.destroy();
-          resolve();
-        });
-      });
+      const req = http.request(
+        `${base}${link}`,
+        { headers: { authorization: basic('token', reg.token) } },
+        (res) => {
+          res.once('data', () => {
+            req.destroy();
+            resolve();
+          });
+        }
+      );
       req.on('error', () => {});
       req.end();
     });
@@ -2722,7 +2783,7 @@ describe('pypi proxy: files', () => {
     await vi.waitFor(() => expect(store.has(`py-1 ${WHL_URL}`)).toBe(true));
     expect((await file(WHL)).response.body).toBe('WHEELBYTES');
     expect(fileFetch).toHaveBeenCalledTimes(1);
-    // The key holds the file URL, never the path token.
+    // The key holds the file URL, never the token.
     expect([...store.keys()].join('\n')).not.toContain(reg.token);
     expect((await at(`/files/${fileIdFor(PY.id, WHL_URL)}/${WHL}`, 'HEAD')).status).toBe(200);
     await proxy.close();

@@ -111,11 +111,19 @@ export function registryWorkspaceEnv(
     env.push('GOTOOLCHAIN=local');
   }
   if (pypiRegistry) {
-    // The token is a path segment of the index URL, as for Go, so no client has to support
-    // URL userinfo over plain http. The whole URL is a secret. `UV_INDEX_URL` is the older
+    // The token is the password of URL userinfo, unlike Go's path segment. pip and uv both send
+    // userinfo over plain http (Go refuses to), and both redact it in the files and error text
+    // they write; a token in the path would land in `uv.lock` and `pyproject.toml`. The user name
+    // is a placeholder the proxy ignores. The whole URL is a secret. `UV_INDEX_URL` is the older
     // uv spelling of `UV_DEFAULT_INDEX`.
-    const index = `${baseUrl}/pypi/${token}/${pypiRegistry.id}/simple/`;
     const url = new URL(baseUrl);
+    const indexUrl = new URL(url);
+    indexUrl.username = 'token';
+    indexUrl.password = token;
+    indexUrl.pathname = `${url.pathname.replace(/\/+$/, '')}/pypi/${pypiRegistry.id}/simple/`;
+    indexUrl.search = '';
+    indexUrl.hash = '';
+    const index = indexUrl.href;
     env.push(
       `PIP_INDEX_URL=${index}`,
       `UV_DEFAULT_INDEX=${index}`,

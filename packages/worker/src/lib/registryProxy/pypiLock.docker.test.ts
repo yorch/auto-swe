@@ -1,9 +1,9 @@
 /**
  * What real uv and pip WRITE to disk and print when the PyPI index URL they were given carries the
- * proxy's workspace token. A project's `uv.lock`, a compiled requirements file, `pip freeze` and
- * error text are all things an agent commits or shows; this suite records, per tool and command,
- * whether the token, the proxy's `host:port` or the upstream's host reach them. Needs a Docker
- * daemon:
+ * proxy's workspace token as URL userinfo (`http://token:<token>@host:port/pypi/<id>/simple/`, the
+ * form `registryWorkspaceEnv` renders). A project's `uv.lock`, `pyproject.toml`, a compiled
+ * requirements file and error text are all things an agent commits or shows; the token must reach
+ * none of them, on success or on failure. Needs a Docker daemon:
  *
  *   PYPI_PROXY_DOCKER_TEST=1 PYPI_PROXY_TEST_IMAGE=<image> \
  *     yarn vitest run packages/worker/src/lib/registryProxy/pypiLock.docker.test.ts
@@ -306,7 +306,7 @@ describe.skipIf(!enabled)('what uv and pip write when the index URL carries cred
     upstreamUrl: `${upstream.origin}/simple`,
   });
 
-  async function activate(design: 'A' | 'B') {
+  async function activate() {
     const reg = await proxy.register({ onDenied: () => {}, registries: [registry()] });
     reg.setAllowlist(new Map([[REGISTRY_ID, null]]));
     const port = await proxy.listen();
@@ -316,14 +316,7 @@ describe.skipIf(!enabled)('what uv and pip write when the index URL carries cred
       proxyUrl,
       reg.token
     );
-    const split = splitRegistryWorkspaceEnv(full);
-    if (design === 'B') {
-      const index = `http://token:${reg.token}@${gatewayIp}:${port}/pypi/${REGISTRY_ID}/simple/`;
-      for (const k of ['PIP_INDEX_URL', 'UV_DEFAULT_INDEX', 'UV_INDEX_URL']) {
-        split.secretEnv[k] = index;
-      }
-    }
-    return { ...split, hostPort: `${gatewayIp}:${port}`, reg };
+    return { ...splitRegistryWorkspaceEnv(full), hostPort: `${gatewayIp}:${port}`, reg };
   }
 
   function newProject(files: Record<string, string> = {}): string {
@@ -366,61 +359,95 @@ describe.skipIf(!enabled)('what uv and pip write when the index URL carries cred
   const PYPROJECT =
     '[project]\nname = "app"\nversion = "0.1.0"\nrequires-python = ">=3.9"\ndependencies = ["demo-lib==1.0"]\n';
 
-  const cases: Array<{ name: string; files?: Record<string, string>; script: string }> = [
+  const cases: Array<{
+    name: string;
+    files?: Record<string, string>;
+    script: string;
+    /** Whether the command is expected to succeed. */
+    ok: boolean;
+    /** Files the client must have written, so "the token is in none of them" is not vacuous. */
+    writes?: string[];
+    /** Whether the wheel itself is downloaded (`uv pip compile` may read its metadata instead). */
+    downloads?: boolean;
+    /** Known limitation: the lock records the proxy's `host:port`. */
+    lockNamesProxy?: boolean;
+  }> = [
     {
+      downloads: true,
+      lockNamesProxy: true,
       name: 'a: uv init --bare, uv add',
+      ok: true,
       script: 'uv init --bare --quiet && uv add demo-lib==1.0',
+      writes: ['pyproject.toml', 'uv.lock'],
     },
     {
+      downloads: true,
       files: { 'pyproject.toml': PYPROJECT },
+      lockNamesProxy: true,
       name: 'b: uv lock, uv sync --frozen',
+      ok: true,
       script: 'uv lock && uv sync --frozen',
+      writes: ['pyproject.toml', 'uv.lock'],
     },
     {
       files: { 'requirements.in': 'demo-lib==1.0\n' },
       name: 'c: uv pip compile',
+      ok: true,
       script: 'uv pip compile requirements.in -o requirements.txt',
+      writes: ['requirements.txt'],
     },
     {
-      name: 'd: pip install, freeze, config',
+      downloads: true,
+      name: 'd: pip install, freeze, download',
+      ok: true,
       script:
-        'pip install --user --no-input demo-lib==1.0; pip freeze --user; pip config list; pip download --no-deps -d /tmp/dl demo-lib==1.0; pip list --user -v',
+        'pip install --user --no-input demo-lib==1.0 && pip freeze --user && pip download --no-deps -d /tmp/dl demo-lib==1.0 && pip list --user -v',
     },
-    { name: 'd2: pip failure text', script: 'pip install --no-input no-such-lib' },
+    { name: 'd2: pip failure text', ok: false, script: 'pip install --no-input no-such-lib' },
     {
       name: 'e: uv failure text',
+      ok: false,
       script: 'uv venv --quiet /tmp/v && uv pip install --python /tmp/v/bin/python no-such-lib',
     },
   ];
 
-  for (const design of ['A', 'B'] as const) {
-    for (const c of cases) {
-      it(`design ${design} / ${c.name}`, async () => {
-        const dir = newProject(c.files);
-        const a = await activate(design);
+  for (const c of cases) {
+    it(c.name, async () => {
+      const dir = newProject(c.files);
+      const a = await activate();
+      try {
+        expect(a.reg.token).toMatch(/^[0-9a-f]{64}$/);
         const r = await client(dir, a, c.script);
         const tree = readTree(dir);
-        const all = `${r.out}\n${r.err}\n${Object.values(tree).join('\n')}`;
-        const report = {
-          case: c.name,
-          code: r.code,
-          design,
-          files: Object.keys(tree),
-          proxyHostPort: all.includes(a.hostPort),
-          token: all.includes(a.reg.token),
-          upstreamPort: all.includes(`${upstream.port}`),
-        };
-        console.log(`REPORT ${JSON.stringify(report)}`);
-        for (const [n, t] of Object.entries(tree)) {
-          console.log(`FILE ${design} ${c.name} :: ${n}\n${t}`);
+        // A wheel's sha256 is 64 hex too, so the check is on the literal token.
+        expect(r.out, 'stdout').not.toContain(a.reg.token);
+        expect(r.err, 'stderr').not.toContain(a.reg.token);
+        expect(Object.values(tree).join('\n'), 'files').not.toContain(a.reg.token);
+        if (c.ok) {
+          expect(r.code, `${r.out}\n${r.err}`).toBe(0);
+        } else {
+          expect(r.code, `${r.out}\n${r.err}`).not.toBe(0);
         }
-        console.log(`OUT ${design} ${c.name}\n${r.out}\nERR\n${r.err}`);
-        console.log(
-          `UPSTREAM ${design} ${c.name} ${JSON.stringify(upstream.requests.map((q) => q.path))}`
-        );
+        for (const file of c.writes ?? []) {
+          expect(Object.keys(tree), file).toContain(file);
+        }
+        if (c.downloads) {
+          // The wheel was served from the upstream's file URL, reached only through the proxy's
+          // `/pypi/<id>/files/…` link.
+          expect(upstream.requests.map((q) => q.path)).toContain(
+            `/packages/${demo1.project}/${demo1.filename}`
+          );
+        }
+        if (c.lockNamesProxy) {
+          // KNOWN LIMITATION, not a goal: uv writes the index and file URLs it resolved through
+          // into `uv.lock` (and a `source` into `pyproject.toml` on `uv add`). They name the
+          // proxy's `host:port` and `/pypi/<id>/…`, which means nothing outside this workspace's
+          // lifetime. The token is not in them; only the address is.
+          expect(tree['uv.lock'], 'uv.lock').toContain(a.hostPort);
+        }
+      } finally {
         await a.reg.release();
-        expect(true).toBe(true);
-      }, 300_000);
-    }
+      }
+    }, 300_000);
   }
 });

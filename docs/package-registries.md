@@ -159,11 +159,13 @@ a real `go build` and `go get` through the proxy in both modes and shows the den
 outside `go.sum`.
 
 **PyPI.** A workspace wired to a PyPI registry carries, as `secretEnv` because the URL holds the token:
-`PIP_INDEX_URL`, `UV_DEFAULT_INDEX` and `UV_INDEX_URL`, each `<proxy URL>/pypi/<token>/<registryId>/simple/`.
+`PIP_INDEX_URL`, `UV_DEFAULT_INDEX` and `UV_INDEX_URL`, each
+`http://token:<token>@<proxy host>/pypi/<registryId>/simple/`.
 In plain env it carries `PIP_TRUSTED_HOST` (pip ignores a plain-http index otherwise),
 `PIP_DISABLE_PIP_VERSION_CHECK=1` and empty `PIP_EXTRA_INDEX_URL` / `UV_EXTRA_INDEX_URL`, so a second
-index cannot be added from the environment. The token is a path segment for the same reason as Go's.
-Only pip and uv are wired.
+index cannot be added from the environment. Unlike Go, the token travels as URL **userinfo**, because pip
+and uv send it over http and redact it in the files and messages they produce; a token in the path
+would be written into `uv.lock`. Only pip and uv are wired.
 
 The suite is `registryProxy/pypiClient.docker.test.ts`, run in CI against the curated Python image. It
 runs real `pip` and `uv` installs through the proxy in both modes, and shows a version, a project and a
@@ -182,8 +184,10 @@ cross-origin file outside what the lockfile allows being refused.
 ## 5. The proxy
 
 **PyPI route.** `<baseUrl>/pypi/<token>/<registryId>/simple/<project>/` serves a project index and
-`…/files/<fileId>/<filename>` a file; the token in the path is the only credential (a header is
-ignored). The proxy asks the upstream for the project's index (JSON or HTML), parses it, and answers
+`…/files/<fileId>/<filename>` a file, as `/pypi/<registryId>/…`; the credential is an HTTP Basic
+password equal to the token (the user name is ignored, a Bearer header is not accepted, and Basic is
+honoured only on this route, decided on the normalised path). A request without it gets 401 with a
+`WWW-Authenticate: Basic` challenge. The proxy asks the upstream for the project's index (JSON or HTML), parses it, and answers
 with its **own** PEP 503 page: only the files the allowlist admits (all of them in open mode), each link
 rewritten to the proxy's file route with its `sha256` fragment, `requires-python` and `yanked`
 attributes kept, and the PEP 658 metadata attributes dropped so a client downloads the wheel itself.
@@ -371,3 +375,16 @@ under 90%. Cache errors fall through to the upstream.
   slower than against a mirror.
 - **PyPI wiring follows the stored detection**, as Go's does; a Node-only detection gets no index.
 - **Shell steps get no PyPI wiring.**
+- **uv project mode writes the proxy's address into the repository.** `uv add`, `uv lock` and `uv sync`
+  record the index they resolved from — `http://<proxy host>/pypi/<registryId>/simple/` — in `uv.lock`
+  and, for `uv add`, in `pyproject.toml`'s `[[tool.uv.index]]`. The token is not written (it is
+  userinfo, which uv strips), but a lockfile committed from a workspace points at an address only that
+  deployment can reach. `uv pip` and pip write nothing. Review such a diff before it ships.
+- **A project can name its own index.** pip honours `--index-url`/`--extra-index-url` lines inside a
+  `requirements.txt`, and uv honours `[[tool.uv.index]]` and `tool.uv.sources` in `pyproject.toml`; both
+  win over the environment and reach that index directly, without the proxy or its allowlist. In a
+  lockfile-mode deployment, treat a diff that adds one as a change to review.
+- **The allowlist ignores which index a lockfile entry came from.** A `uv.lock` `registry` source,
+  a Poetry `legacy` source or a Pipfile `index` naming another index still allowlists `name==version`
+  against the one configured upstream, so a public package with the same name and version as an
+  internal one is served if the upstream carries it.

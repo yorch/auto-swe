@@ -27,17 +27,20 @@
  * The token segment is a secret: it is never part of what the allowlist, the cache key, a
  * denial report or a response sees.
  *
- * A third route, `<baseUrl>/pypi/<token>/<registryId>/…`, serves Python packages from a PEP 503 /
+ * A third route, `<baseUrl>/pypi/<registryId>/…`, serves Python packages from a PEP 503 /
  * PEP 691 simple index (`pypiProxy.ts` holds the protocol): `simple/<project>/` is the project
- * index and `files/<fileId>/<filename>` a download. It authenticates by its path token for the same
- * reason as Go — pip and uv are configured with this URL, and credentials in a URL are unusable over
- * plain http. The index is re-rendered with every link pointing back here, so the upstream's file
- * URLs (which may be on another host) are never given to the client; each is kept server-side under
- * an opaque id and fetched only from there. The one place the token is echoed is those rewritten
- * links, as the client's own path prefix; it is never in a log, a denial report, a cache key or any
- * other response. The registry credential goes to the index and to files on the index's own origin
- * only; a file on another origin is fetched anonymously, over https, through a guard that does not
- * inherit the registry's private-network opt-in.
+ * index and `files/<fileId>/<filename>` a download. Unlike Go it authenticates by HTTP Basic, the
+ * token being the password (the user name is ignored): pip and uv are configured with a URL whose
+ * userinfo carries it, both send it over plain http, and both redact userinfo in the files and
+ * error text they write — a token in the path would be written into `uv.lock` and
+ * `pyproject.toml`. A request with no or an unknown credential is a 401 carrying a Basic challenge,
+ * because pip and uv answer a challenge. Bearer is not read on this route, and Basic is read on no
+ * other. The index is re-rendered with every link pointing back here, so the upstream's file URLs
+ * (which may be on another host) are never given to the client; each is kept server-side under an
+ * opaque id and fetched only from there. The token is in no response, log, denial report or cache
+ * key. The registry credential goes to the index and to files on the index's own origin only; a
+ * file on another origin is fetched anonymously, over https, through a guard that does not inherit
+ * the registry's private-network opt-in.
  *
  * Modelled on `agents/claudeCode/modelProxy.ts`.
  */
@@ -146,7 +149,7 @@ export interface ResolvedRegistry {
   id: string;
   /**
    * Absent means `npm`. A `go` registry is reached only through `/go/<token>/<id>`, a `pypi` one
-   * only through `/pypi/<token>/<id>`.
+   * only through `/pypi/<id>`, the token being the Basic password.
    */
   ecosystem?: 'npm' | 'go' | 'pypi';
   name: string;
@@ -1264,15 +1267,13 @@ export function createRegistryProxy(options: {
    * upstream call; the rest is a buffered fetch like a packument (one of the registration's slots,
    * the upstream deadline, a hang-up gives the slot back). The answer is parsed, filtered to the
    * pinned versions, and re-rendered with every file link pointing at this proxy: the upstream's
-   * file URLs are registered under opaque ids in `pypiFiles` and go no further. `token` is only
-   * the request's own path prefix, written back into those links.
+   * file URLs are registered under opaque ids in `pypiFiles` and go no further.
    */
   async function servePypiIndex(
     reg: Registration,
     req: http.IncomingMessage,
     res: http.ServerResponse,
     registry: ResolvedRegistry,
-    token: string,
     project: string
   ): Promise<void> {
     const stored = reg.allowlists?.get(registry.id);
@@ -1381,9 +1382,7 @@ export function createRegistryProxy(options: {
       rendered.push({
         filename: f.filename,
         hash: f.hash,
-        href: token
-          ? `/pypi/${token}/${registry.id}/files/${id}/${f.filename}`
-          : `/pypi/${registry.id}/files/${id}/${f.filename}`,
+        href: `/pypi/${registry.id}/files/${id}/${f.filename}`,
         requiresPython: f.requiresPython,
         yanked: f.yanked,
       });
@@ -1593,32 +1592,30 @@ export function createRegistryProxy(options: {
     // `/go/../npm/<id>/…` and `/go/%2e%2e/npm/<id>/…` normalise to an npm path and are then judged
     // as npm, so a path token cannot stand in for the Bearer header there.
     const url = new URL(req.url ?? '/', 'http://proxy');
-    // EXPERIMENT: `/pypi/<id>/(simple|files)/…`, authenticated by the Basic password.
-    const basicPypi = /^\/pypi\/([^/]+)(\/(?:simple|files)\/.*)$/.exec(url.pathname);
-    if (basicPypi) {
-      const basic = basicPassword(req.headers.authorization);
-      const bReg = basic ? registrations.get(digest(basic)) : undefined;
-      if (!bReg) {
+    // PyPI alone reads a Basic header, and only on a normalised `/pypi/…` path: `/pypi/../npm/…`
+    // is an npm request and gets npm's Bearer-only judgement. The challenge comes before anything
+    // else because pip and uv send URL credentials only on the first request or after a 401.
+    const pypiRoute = /^\/pypi\/([^/]*)(\/.*)?$/.exec(url.pathname);
+    if (pypiRoute) {
+      const password = basicPassword(req.headers.authorization);
+      const pypiReg = password ? registrations.get(digest(password)) : undefined;
+      if (!pypiReg) {
         res.setHeader('www-authenticate', 'Basic realm="registry"');
         sendJson(res, 401, 'unknown or expired token');
         return;
       }
-      handlePypi(bReg, req, res, '', basicPypi[1] ?? '', basicPypi[2] ?? '');
+      handlePypi(pypiReg, req, res, pypiRoute[1] ?? '', pypiRoute[2] ?? '');
       return;
     }
-    const pathRoute = /^\/(go|pypi)\/([^/]+)\/([^/]+)(\/.*)$/.exec(url.pathname);
-    const token = pathRoute ? pathRoute[2] : presentedToken(req.headers.authorization);
+    const goRoute = /^\/go\/([^/]+)\/([^/]+)(\/.*)$/.exec(url.pathname);
+    const token = goRoute ? goRoute[1] : presentedToken(req.headers.authorization);
     const reg = token ? registrations.get(digest(token)) : undefined;
     if (!reg) {
       sendJson(res, 401, 'unknown or expired token');
       return;
     }
-    if (pathRoute) {
-      if (pathRoute[1] === 'pypi') {
-        handlePypi(reg, req, res, token ?? '', pathRoute[3] ?? '', pathRoute[4] ?? '');
-      } else {
-        handleGo(reg, req, res, pathRoute[3] ?? '', pathRoute[4] ?? '');
-      }
+    if (goRoute) {
+      handleGo(reg, req, res, goRoute[2] ?? '', goRoute[3] ?? '');
       return;
     }
     const m = /^\/npm\/([^/]+)(\/.*)$/.exec(url.pathname);
@@ -1626,7 +1623,7 @@ export function createRegistryProxy(options: {
       sendJson(
         res,
         404,
-        'only /npm/<registry>/…, /go/<token>/<registry>/… and /pypi/<token>/<registry>/… paths exist here'
+        'only /npm/<registry>/…, /go/<token>/<registry>/… and /pypi/<registry>/… paths exist here'
       );
       return;
     }
@@ -1707,12 +1704,11 @@ export function createRegistryProxy(options: {
     void call.finally(() => reg.inFlight.delete(call));
   }
 
-  /** `/pypi/<token>/<registryId><rest>`: the token is already verified; it is only echoed into index links. */
+  /** `/pypi/<registryId><rest>`: the Basic password is already verified and is not passed on. */
   function handlePypi(
     reg: Registration,
     req: http.IncomingMessage,
     res: http.ServerResponse,
-    token: string,
     registryId: string,
     rest: string
   ): void {
@@ -1736,7 +1732,7 @@ export function createRegistryProxy(options: {
     }
     const call = (
       parsed.kind === 'index'
-        ? servePypiIndex(reg, req, res, registry, token, parsed.project)
+        ? servePypiIndex(reg, req, res, registry, parsed.project)
         : servePypiFile(reg, req, res, registry, parsed.fileId, parsed.filename)
     ).catch(() => {
       sendJson(res, 502, 'the upstream package index could not be reached');

@@ -374,11 +374,13 @@ describe.skipIf(!enabled)('registry proxy against real pip and uv', () => {
       'UV_INDEX_URL',
     ]);
     for (const v of Object.values(a.secretEnv)) {
-      expect(v).toContain(`/pypi/${a.reg.token}/${REGISTRY_ID}/simple/`);
-      expect(v).not.toContain('@');
+      const url = new URL(v);
+      expect(url.password).toBe(a.reg.token);
+      expect(url.pathname).toBe(`/pypi/${REGISTRY_ID}/simple/`);
     }
     expect(a.env.some((e) => e.startsWith('PIP_TRUSTED_HOST='))).toBe(true);
-    expect(a.env.some((e) => e.includes(a.reg.token))).toBe(false);
+    // Nothing in the plain env carries the token or a userinfo `@`.
+    expect(a.env.some((e) => e.includes(a.reg.token) || e.includes('@'))).toBe(false);
     await a.reg.release();
   });
 

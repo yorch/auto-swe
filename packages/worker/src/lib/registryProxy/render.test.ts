@@ -115,15 +115,35 @@ describe('npm renderers skip go registries', () => {
 });
 
 const PYPI = { ecosystem: 'pypi' as const, id: 'pypi-1', isDefault: true, scopes: [] };
-const PYPI_INDEX = `http://proxy.internal:9999/pypi/${TOKEN}/pypi-1/simple/`;
+const PYPI_INDEX = `http://token:${TOKEN}@proxy.internal:9999/pypi/pypi-1/simple/`;
 
 describe('registryWorkspaceEnv with a pypi registry', () => {
-  it('points pip and uv at the index, with the token as a path segment', () => {
+  it('points pip and uv at the index, with the token as the userinfo password', () => {
     const env = registryWorkspaceEnv([PYPI], BASE, TOKEN);
     expect(env).toContain(`PIP_INDEX_URL=${PYPI_INDEX}`);
     expect(env).toContain(`UV_DEFAULT_INDEX=${PYPI_INDEX}`);
     expect(env).toContain(`UV_INDEX_URL=${PYPI_INDEX}`);
     expect(env).toContain('PIP_DISABLE_PIP_VERSION_CHECK=1');
+  });
+
+  it('keeps the token out of the path, and the base URL’s own path prefix in it', () => {
+    const index = (base: string) =>
+      registryWorkspaceEnv([PYPI], base, TOKEN)
+        .find((p) => p.startsWith('PIP_INDEX_URL='))
+        ?.slice('PIP_INDEX_URL='.length) ?? '';
+    const plain = new URL(index(BASE));
+    expect(plain.password).toBe(TOKEN);
+    expect(plain.pathname).toBe('/pypi/pypi-1/simple/');
+    expect(index('http://proxy.internal:9999/')).toBe(PYPI_INDEX);
+    const prefixed = new URL(index('http://proxy.internal:9999/worker-proxy/'));
+    expect(prefixed.pathname).toBe('/worker-proxy/pypi/pypi-1/simple/');
+    expect(prefixed.password).toBe(TOKEN);
+    // `@` appears only in the userinfo separator, which exists only in the secret values.
+    const { env, secretEnv } = splitRegistryWorkspaceEnv(registryWorkspaceEnv([PYPI], BASE, TOKEN));
+    expect(env.filter((p) => p.includes('@'))).toEqual([]);
+    for (const value of Object.values(secretEnv)) {
+      expect(value.split('@')).toHaveLength(2);
+    }
   });
 
   it('trusts the proxy host, with the port when there is one', () => {
