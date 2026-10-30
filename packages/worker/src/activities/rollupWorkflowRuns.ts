@@ -162,9 +162,18 @@ async function dirtyDaysSince(since: Date, now: Date, horizon: Date): Promise<nu
   return [...dirtyDays].sort((a, b) => a - b);
 }
 
+function parseUtcTimestamp(value: string): Date {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime()) || date.toISOString() !== value) {
+    throw new Error('now must be a canonical UTC timestamp');
+  }
+  return date;
+}
+
 export async function rollupWorkflowRuns(
-  now = new Date()
+  nowInput?: string
 ): Promise<{ days: number; rows: number }> {
+  const now = nowInput === undefined ? new Date() : parseUtcTimestamp(nowInput);
   const settings = resolveScheduledSweeps().workflowRunRollup;
   const today = Math.floor(now.getTime() / DAY_MS) * DAY_MS;
   const newest = today - WORKFLOW_RUN_DAY_MS;

@@ -12,7 +12,10 @@ vi.mock('@temporalio/client', () => ({
   ScheduleNotFoundError: class extends Error {},
   ScheduleOverlapPolicy: {},
   WorkflowIdConflictPolicy: { USE_EXISTING: 'USE_EXISTING' },
-  WorkflowIdReusePolicy: { REJECT_DUPLICATE: 'REJECT_DUPLICATE' },
+  WorkflowIdReusePolicy: {
+    ALLOW_DUPLICATE: 'ALLOW_DUPLICATE',
+    REJECT_DUPLICATE: 'REJECT_DUPLICATE',
+  },
   WorkflowNotFoundError: class extends Error {},
 }));
 
@@ -61,7 +64,7 @@ describe('startEvalScreenWorkflow', () => {
     ).rejects.toThrow('unreachable');
   });
 
-  it('coalesces repeated digest test triggers under a deterministic workflow id', async () => {
+  it('allows a later digest test trigger to reuse the deterministic workflow id', async () => {
     const app = await build();
     await app.temporal.triggerReportDigestTest('subscription-1');
     expect(start).toHaveBeenCalledWith('ScheduledReportDigestWorkflow', {
@@ -69,7 +72,7 @@ describe('startEvalScreenWorkflow', () => {
       taskQueue: 'engineering-workflow',
       workflowId: 'report-digest-test-subscription-1',
       workflowIdConflictPolicy: 'USE_EXISTING',
-      workflowIdReusePolicy: 'REJECT_DUPLICATE',
+      workflowIdReusePolicy: 'ALLOW_DUPLICATE',
     });
   });
 });

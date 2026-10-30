@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   }>,
   runStartTime: new Date('2026-10-26T23:50:00.000Z'),
   sleeps: [] as string[],
+  workflowInputs: [] as Array<unknown[]>,
 }));
 
 vi.mock('@temporalio/workflow', () => ({
@@ -22,7 +23,8 @@ vi.mock('@temporalio/workflow', () => ({
     return {
       sendReportDigests: async (...args: unknown[]) => {
         for (let attempt = 1; ; attempt++) {
-          mocks.calls.push(args);
+          mocks.workflowInputs.push(args);
+          mocks.calls.push(JSON.parse(JSON.stringify(args)) as unknown[]);
           if (mocks.activityFailures > 0) {
             mocks.activityFailures -= 1;
             if (attempt === maximumAttempts) {
@@ -49,6 +51,7 @@ beforeEach(() => {
   mocks.results = [];
   mocks.sleeps = [];
   mocks.calls = [];
+  mocks.workflowInputs = [];
   mocks.runStartTime = new Date('2026-10-26T23:50:00.000Z');
 });
 
@@ -67,8 +70,8 @@ describe('ScheduledReportDigestWorkflow', () => {
     });
 
     expect(mocks.calls).toEqual([
-      [{ ...input, periodStart: new Date('2026-10-19T00:00:00.000Z') }],
-      [{ ...input, periodStart: new Date('2026-10-19T00:00:00.000Z') }],
+      [{ ...input, periodStart: '2026-10-19' }],
+      [{ ...input, periodStart: '2026-10-19' }],
     ]);
     expect(mocks.sleeps).toEqual(['15 minutes']);
   });
@@ -79,8 +82,17 @@ describe('ScheduledReportDigestWorkflow', () => {
     await ScheduledReportDigestWorkflow();
 
     expect(mocks.calls[0]?.[0]).toEqual({
-      periodStart: new Date('2026-10-19T00:00:00.000Z'),
+      periodStart: '2026-10-19',
     });
+  });
+
+  it('passes a JSON-round-tripped ISO period string to the activity', async () => {
+    await ScheduledReportDigestWorkflow();
+
+    expect(mocks.workflowInputs[0]?.[0]).toEqual({ periodStart: '2026-10-19' });
+    const activityInput = mocks.calls[0]?.[0] as { periodStart: unknown };
+    expect(activityInput.periodStart).toBe('2026-10-19');
+    expect(typeof activityInput.periodStart).toBe('string');
   });
 
   it('retries activity failures without changing the anchored ISO-week period', async () => {
@@ -93,10 +105,7 @@ describe('ScheduledReportDigestWorkflow', () => {
       skipped: 0,
     });
 
-    expect(mocks.calls).toEqual([
-      [{ periodStart: new Date('2026-10-19T00:00:00.000Z') }],
-      [{ periodStart: new Date('2026-10-19T00:00:00.000Z') }],
-    ]);
+    expect(mocks.calls).toEqual([[{ periodStart: '2026-10-19' }], [{ periodStart: '2026-10-19' }]]);
     expect(mocks.proxyOptions[0]).toEqual({
       retry: {
         backoffCoefficient: 2,

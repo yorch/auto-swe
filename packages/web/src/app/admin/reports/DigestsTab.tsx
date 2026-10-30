@@ -218,6 +218,11 @@ export function DigestsTab() {
                     ? new Date(digest.lastPeriodStart).toLocaleDateString()
                     : 'None'}
                 </p>
+                {sendTest.error && sendTest.variables === digest.id && (
+                  <p className="mt-1 text-sm text-danger-400" role="alert">
+                    {sendTest.error.message}
+                  </p>
+                )}
                 {digest.lastTestError && (
                   <p className="mt-1 text-xs text-danger-400" role="status">
                     Last test delivery failed: {digest.lastTestError}

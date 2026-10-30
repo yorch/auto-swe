@@ -405,4 +405,32 @@ describe('report digest routes', () => {
     );
     await app.close();
   });
+
+  it('returns 409 when a test digest is already running', async () => {
+    const { app, prisma, temporal } = await buildApp('ADMIN');
+    prisma.reportDigestSubscription.findUnique.mockResolvedValue({
+      id: SUBSCRIPTION,
+      orgId: ORG_A,
+      scope: 'ORGANIZATION',
+      teamId: null,
+    });
+    prisma.reportDigestSubscription.updateMany.mockResolvedValueOnce({ count: 1 });
+    temporal.triggerReportDigestTest.mockRejectedValue(
+      Object.assign(new Error('already started'), {
+        name: 'WorkflowExecutionAlreadyStartedError',
+      })
+    );
+
+    const response = await app.inject({
+      headers: AUTH,
+      method: 'POST',
+      url: `/api/v1/report-digests/${SUBSCRIPTION}/send-test`,
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: 'A test digest is already running for this subscription',
+    });
+    await app.close();
+  });
 });

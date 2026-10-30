@@ -89,19 +89,13 @@ async function deliverTarget(
 }
 
 export async function sendReportDigests(input: {
-  now?: Date;
-  periodStart: Date;
+  now?: string;
+  periodStart?: string;
   subscriptionId?: string;
   sendTest?: boolean;
 }): Promise<{ failed: number; rollupIncomplete: number; sent: number; skipped: number }> {
-  const now = input.now ?? new Date();
-  const currentStart = new Date(
-    Date.UTC(
-      input.periodStart.getUTCFullYear(),
-      input.periodStart.getUTCMonth(),
-      input.periodStart.getUTCDate()
-    )
-  );
+  const now = input.now === undefined ? new Date() : parseUtcTimestamp(input.now, 'now');
+  const currentStart = parseDigestPeriodStart(input.periodStart);
   const currentEnd = new Date(currentStart.getTime() + 7 * DAY_MS);
   const previousStart = new Date(currentStart.getTime() - 7 * DAY_MS);
   const subscriptions = await runUnscoped(
@@ -581,6 +575,29 @@ export async function sendReportDigests(input: {
     }
   }
   return { failed, rollupIncomplete, sent, skipped };
+}
+
+function parseDigestPeriodStart(value: string | undefined): Date {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    throw new Error('periodStart must be a valid UTC midnight on a Monday in YYYY-MM-DD format');
+  }
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (
+    !Number.isFinite(date.getTime()) ||
+    date.toISOString().slice(0, 10) !== value ||
+    date.getUTCDay() !== 1
+  ) {
+    throw new Error('periodStart must be a valid UTC midnight on a Monday in YYYY-MM-DD format');
+  }
+  return date;
+}
+
+function parseUtcTimestamp(value: string, field: string): Date {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime()) || date.toISOString() !== value) {
+    throw new Error(`${field} must be a canonical UTC timestamp`);
+  }
+  return date;
 }
 
 async function recordDigestError(subscriptionId: string, code: DigestErrorCode): Promise<void> {

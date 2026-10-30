@@ -235,8 +235,14 @@ beforeEach(() => {
 });
 
 describe('rollupWorkflowRuns', () => {
+  it('rejects a non-canonical timestamp input', async () => {
+    await expect(rollupWorkflowRuns('2026-10-20T12:00:00Z')).rejects.toThrow(
+      'now must be a canonical UTC timestamp'
+    );
+  });
+
   it('reads only the selected completed days', async () => {
-    const result = await rollupWorkflowRuns(NOW);
+    const result = await rollupWorkflowRuns(NOW.toISOString());
     expect(result.days).toBe(2);
     expect(mocks.events.filter((event) => event.startsWith('read:'))).toEqual([
       `read:${new Date(TODAY - 2 * DAY_MS).toISOString().slice(0, 10)}`,
@@ -247,14 +253,14 @@ describe('rollupWorkflowRuns', () => {
   it('caps historical backfill work per sweep', async () => {
     mocks.backfillDays = 365;
     mocks.oldest = new Date(TODAY - 500 * DAY_MS);
-    const result = await rollupWorkflowRuns(NOW);
+    const result = await rollupWorkflowRuns(NOW.toISOString());
     expect(result.days).toBe(2 + MAX_BACKFILL_DAYS_PER_SWEEP);
   });
 
   it('replaces each day in a bounded transaction and chunks large inserts', async () => {
     mocks.recomputeDays = 1;
     mocks.runsPerDay = 501;
-    const result = await rollupWorkflowRuns(NOW);
+    const result = await rollupWorkflowRuns(NOW.toISOString());
     expect(result.rows).toBe(501);
     expect(mocks.createManySizes).toEqual([500, 1]);
     expect(mocks.transactionDays).toEqual([
@@ -266,7 +272,7 @@ describe('rollupWorkflowRuns', () => {
   });
 
   it('heartbeats before and after every selected day', async () => {
-    await rollupWorkflowRuns(NOW);
+    await rollupWorkflowRuns(NOW.toISOString());
     expect(mocks.events.filter((event) => event.startsWith('heartbeat:'))).toEqual([
       'heartbeat:checking workflow rollup dirty days',
       'heartbeat:finished checking workflow rollup dirty days',
@@ -286,7 +292,7 @@ describe('rollupWorkflowRuns', () => {
       },
     ];
     mocks.runsPerDay = 1;
-    const result = await rollupWorkflowRuns(NOW);
+    const result = await rollupWorkflowRuns(NOW.toISOString());
     expect(result.days).toBe(3);
     expect(mocks.events).toContain(
       `read:${new Date(TODAY - 45 * DAY_MS).toISOString().slice(0, 10)}`
@@ -305,7 +311,7 @@ describe('rollupWorkflowRuns', () => {
       },
     ];
     mocks.runsPerDay = 1;
-    const result = await rollupWorkflowRuns(NOW);
+    const result = await rollupWorkflowRuns(NOW.toISOString());
     expect(result.days).toBe(3);
     expect(mocks.transactionDays.map((day) => day.getTime())).toContain(TODAY - 45 * DAY_MS);
     expect(mocks.stateUpdates).toEqual([NOW]);
@@ -325,7 +331,7 @@ describe('rollupWorkflowRuns', () => {
     mocks.dirtyReviewerTraces = [{ run: { startedAt: new Date(TODAY - 42 * DAY_MS) } }];
     mocks.dirtyHumanSteps = [{ requestedAt: new Date(TODAY - 43 * DAY_MS) }];
 
-    const result = await rollupWorkflowRuns(NOW);
+    const result = await rollupWorkflowRuns(NOW.toISOString());
 
     expect(result.days).toBe(5);
     expect(new Set(mocks.transactionDays.map((day) => day.getTime()))).toEqual(
@@ -345,7 +351,7 @@ describe('rollupWorkflowRuns', () => {
       endedAt: new Date('2026-10-20T10:00:00.000Z'),
       startedAt: new Date(TODAY - (index + 40) * DAY_MS),
     }));
-    const result = await rollupWorkflowRuns(NOW);
+    const result = await rollupWorkflowRuns(NOW.toISOString());
     expect(result.days).toBe(2 + MAX_DIRTY_DAYS_PER_SWEEP);
     expect(mocks.stateUpdates).toEqual([NOW]);
     expect(mocks.lastSuccessfulStartAt).toEqual(NOW);
@@ -359,14 +365,14 @@ describe('rollupWorkflowRuns', () => {
       id: `run-${index}`,
       startedAt: new Date(TODAY - (index + 40) * DAY_MS),
     }));
-    await rollupWorkflowRuns(NOW);
+    await rollupWorkflowRuns(NOW.toISOString());
     expect(mocks.pendingDirtyDays).toHaveLength(1);
     const latestDay = mocks.pendingDirtyDays[0];
     mocks.dirtyEndedRuns = [];
     mocks.transactionDays = [];
 
     const nextSweep = new Date(NOW.getTime() + DAY_MS);
-    await rollupWorkflowRuns(nextSweep);
+    await rollupWorkflowRuns(nextSweep.toISOString());
 
     expect(mocks.transactionDays.map((day) => day.getTime())).toContain(latestDay?.getTime());
     expect(mocks.pendingDirtyDays).toEqual([]);
@@ -381,7 +387,7 @@ describe('rollupWorkflowRuns', () => {
       startedAt: new Date(TODAY - (index + 40) * DAY_MS),
     }));
 
-    await rollupWorkflowRuns(NOW);
+    await rollupWorkflowRuns(NOW.toISOString());
 
     expect(mocks.detectionPageSizes).toEqual([1_000, 1_000]);
     expect(mocks.pendingDirtyDays.length).toBeGreaterThan(0);
@@ -391,14 +397,14 @@ describe('rollupWorkflowRuns', () => {
     mocks.recomputeDays = 1;
     mocks.runsPerDay = 1;
     mocks.failCreateMany = true;
-    await expect(rollupWorkflowRuns(NOW)).rejects.toThrow('createMany failed');
+    await expect(rollupWorkflowRuns(NOW.toISOString())).rejects.toThrow('createMany failed');
     expect(mocks.stateUpdates).toEqual([]);
     expect(mocks.lastSuccessfulStartAt).toBeNull();
   });
 
   it('detects a source change committed after the previous day read through the overlap', async () => {
     mocks.recomputeDays = 1;
-    await rollupWorkflowRuns(NOW);
+    await rollupWorkflowRuns(NOW.toISOString());
     mocks.transactionDays = [];
     mocks.dirtyEndedRuns = [
       {
@@ -407,7 +413,7 @@ describe('rollupWorkflowRuns', () => {
       },
     ];
 
-    await rollupWorkflowRuns(new Date(NOW.getTime() + 30 * 60_000));
+    await rollupWorkflowRuns(new Date(NOW.getTime() + 30 * 60_000).toISOString());
 
     expect(mocks.transactionDays.map((day) => day.getTime())).toContain(TODAY - 50 * DAY_MS);
   });
