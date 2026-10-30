@@ -52,6 +52,7 @@ import { gunzipSync } from 'node:zlib';
 import { createGuardedFetch } from '@auto-swe/shared/lib/guardedDispatcher';
 import { isPypiAllowed, parsePypiFilename } from '@auto-swe/shared/lib/pypiAllowlist';
 import { resolveWorkspaceInfra } from '@auto-swe/shared/lib/systemConfig';
+import { withHttpPurpose } from '../httpCapture.js';
 import { TarballCache } from './cache.js';
 import {
   type GoProxyKind,
@@ -1789,7 +1790,7 @@ export function createRegistryProxy(options: {
         onDenied: AsyncResource.bind(ws.onDenied),
         pypiFiles: new Map(),
         registries: new Map(ws.registries.map((r) => [r.id, r])),
-        run: AsyncResource.bind(<T>(body: () => T): T => body()),
+        run: AsyncResource.bind(<T>(body: () => T): T => withHttpPurpose('egress', body)),
       };
       registrations.set(key, reg);
       let released: Promise<void> | undefined;

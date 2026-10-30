@@ -22,6 +22,7 @@ import path from 'node:path';
 import { DOCKER_IMAGE_REF_RE } from '@auto-swe/shared/workflow';
 import { heartbeat } from '@temporalio/activity';
 import { activityCancellationSignal } from './cancellation.js';
+import { beginEgressAccess } from './egressWiring.js';
 import { type CapturedResult, withHeartbeat } from './execUtils.js';
 import { workspaceBackend } from './workspaceBackend/index.js';
 import type { EphemeralContainerSpec } from './workspaceBackend/types.js';
@@ -296,16 +297,19 @@ export function sandboxCommandTimeoutMs(requested: number | undefined): number {
  */
 export async function runEphemeralContainer(input: EphemeralRunInput): Promise<EphemeralRunResult> {
   const containerName = `shellstep-${crypto.randomBytes(8).toString('hex')}`;
-  const spec = await ephemeralSpec(input, containerName);
   const timeoutMs = sandboxCommandTimeoutMs(input.timeoutMs);
   const backend = workspaceBackend();
+  const egress =
+    input.network === 'egress' ? await beginEgressAccess(input.egressAllowlist ?? []) : null;
   try {
+    const spec = await ephemeralSpec(egressInput(input, egress), containerName);
     return await backend.runEphemeral(spec, {
       heartbeatLabel: 'shell-step: command running',
       ...(input.onStdoutLine ? { onStdoutLine: input.onStdoutLine } : {}),
       timeoutMs,
     });
   } finally {
+    await egress?.registration.release();
     // `docker run --rm` removes the container on exit; this only covers a
     // host-process kill mid-run. remove() is a no-op when already gone.
     await backend.remove(containerName);
@@ -395,10 +399,11 @@ export async function runSidecarContainer(input: SidecarRunInput): Promise<Sidec
   const requestPath = input.requestPath ?? '/';
   const readinessPath = input.readinessPath ?? requestPath;
   const readyTimeoutMs = input.readyTimeoutMs ?? 30_000;
+  const egress = await beginEgressAccess(input.egressAllowlist ?? []);
 
   try {
     // A non-zero exit means the sidecar never started — surface stderr.
-    const spec = await ephemeralSpecFromInput({ ...input, command: input.command }, containerName);
+    const spec = await ephemeralSpecFromInput(egressInput(input, egress), containerName);
     spec.publishPort = input.port;
     const started = await backend.startDetached(spec, {
       heartbeatLabel: 'sidecar: starting',
@@ -449,8 +454,23 @@ export async function runSidecarContainer(input: SidecarRunInput): Promise<Sidec
     }
     throw err;
   } finally {
+    await egress?.registration.release();
     await backend.remove(containerName);
   }
+}
+
+function egressInput<T extends EphemeralRunInput>(
+  input: T,
+  access: Awaited<ReturnType<typeof beginEgressAccess>>
+): T {
+  return access
+    ? {
+        ...input,
+        env: { ...input.env, ...Object.fromEntries(access.env.map((pair) => pair.split('='))) },
+        reachWorker: true,
+        secretEnv: { ...input.secretEnv, ...access.secretEnv },
+      }
+    : input;
 }
 
 /** Upper bound on one readiness probe, so a stalled accept cannot eat the whole deadline. */

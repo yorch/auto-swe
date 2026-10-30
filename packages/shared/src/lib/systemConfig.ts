@@ -826,6 +826,7 @@ export interface WorkspaceInfraConfig {
   /// so the registry credential stays in the worker. `null` when
   /// `REGISTRY_PROXY_PORT` is unset: no registry wiring then happens at all.
   registryProxy: RegistryProxyConfig | null;
+  egressProxy: HarnessModelProxyConfig | null;
   /// A Docker network every workspace container joins in place of the default
   /// bridge (`WORKSPACE_NETWORK`), or `null` for the default bridge. A network
   /// the worker also joins is how a workspace reaches the worker's model proxy
@@ -956,6 +957,21 @@ function resolveRegistryProxy(): RegistryProxyConfig | null {
       1024 * 1024,
       Number.MAX_SAFE_INTEGER
     ),
+    port: Number(port),
+    url: (url && isHttpUrl(url) ? url : `http://${DOCKER_HOST_ALIAS}:${port}`)
+      .replaceAll(HOSTNAME_PLACEHOLDER, hostname())
+      .replace(/\/+$/, ''),
+  };
+}
+
+function resolveEgressProxy(): HarnessModelProxyConfig | null {
+  const port = process.env.EGRESS_PROXY_PORT;
+  if (!port || !isPort(port)) {
+    return null;
+  }
+  const url = process.env.EGRESS_PROXY_URL;
+  return {
+    bindHost: process.env.EGRESS_PROXY_BIND || '0.0.0.0',
     port: Number(port),
     url: (url && isHttpUrl(url) ? url : `http://${DOCKER_HOST_ALIAS}:${port}`)
       .replaceAll(HOSTNAME_PLACEHOLDER, hostname())
@@ -1111,6 +1127,7 @@ export function resolveWorkspaceInfra(): WorkspaceInfraConfig {
     blockMetadata: process.env.WORKSPACE_BLOCK_METADATA !== 'false',
     cpus: Number.isFinite(cpus) && cpus > 0 ? cpus : 2,
     dns: workspaceDnsFromEnv(),
+    egressProxy: resolveEgressProxy(),
     harnessModelProxy: resolveHarnessModelProxy(),
     image: validatedEnv('WORKSPACE_IMAGE', 'node:24-alpine', DOCKER_IMAGE_REF_RE, IMAGE_HINT),
     kubernetes: {
@@ -1216,6 +1233,9 @@ export function validateWorkspaceInfraEnv(): string[] {
   check('HARNESS_MODEL_PROXY_PORT', isPort, 'a port number (1-65535)');
   check('HARNESS_MODEL_PROXY_URL', isHttpUrl, 'an http(s) URL with no credentials');
   check('REGISTRY_PROXY_PORT', isPort, 'a port number (1-65535)');
+  check('EGRESS_PROXY_PORT', isPort, 'a port number (1-65535)');
+  check('EGRESS_PROXY_URL', isHttpUrl, 'an http(s) URL with no credentials');
+  check('EGRESS_PROXY_BIND', (raw) => raw.length > 0 && !raw.includes(' '), 'a listen address');
   check('REGISTRY_PROXY_URL', isHttpUrl, 'an http(s) URL with no credentials');
   check('REGISTRY_PROXY_BIND', (raw) => raw.length > 0 && !raw.includes(' '), 'a listen address');
   check('REGISTRY_PROXY_CACHE_MAX_BYTES', positiveInt, 'a positive integer (bytes)');
