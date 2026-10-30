@@ -12,14 +12,14 @@ const testActivities = proxyActivities<{ sendReportDigests: typeof sendReportDig
   startToCloseTimeout: '30 minutes',
 });
 
-function previousIsoWeekStart(startTime: Date): Date {
+function previousIsoWeekStart(startTime: Date): string {
   const day = startTime.getUTCDay() || 7;
   const thisMonday = Date.UTC(
     startTime.getUTCFullYear(),
     startTime.getUTCMonth(),
     startTime.getUTCDate() - day + 1
   );
-  return new Date(thisMonday - 7 * 24 * 60 * 60 * 1000);
+  return new Date(thisMonday - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 }
 
 export async function ScheduledReportDigestWorkflow(input?: {

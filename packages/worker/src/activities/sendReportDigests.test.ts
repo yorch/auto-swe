@@ -123,7 +123,7 @@ vi.mock('@auto-swe/shared/db', () => ({
       findMany: async () => [],
       groupBy: async () =>
         Array.from({ length: mocks.coverageIncomplete ? 13 : 14 }, (_, index) => ({
-          day: new Date(Date.UTC(2026, 9, 6 + index)),
+          day: new Date(Date.UTC(2026, 9, 5 + index)),
         })),
     },
     workflowStep: {
@@ -182,7 +182,11 @@ vi.mock('../lib/reportDigestEmail.js', () => ({
 import { sendReportDigests } from './sendReportDigests.js';
 
 const now = new Date('2026-10-20T12:00:00Z');
-const periodStart = new Date(Date.UTC(2026, 9, 13));
+const periodStart = new Date(Date.UTC(2026, 9, 12));
+const baseInput = {
+  now: now.toISOString(),
+  periodStart: periodStart.toISOString().slice(0, 10),
+};
 
 function subscription(id: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -220,23 +224,40 @@ beforeEach(() => {
 });
 
 describe('sendReportDigests', () => {
+  it.each([undefined, '2026-10-20', '2026-02-30', '2026-10-19T01:00:00.000Z'])(
+    'rejects invalid periodStart %s',
+    async (periodStart) => {
+      await expect(sendReportDigests({ ...baseInput, periodStart })).rejects.toThrow(
+        'valid UTC midnight on a Monday'
+      );
+    }
+  );
+
+  it('rejects a non-canonical now timestamp', async () => {
+    await expect(sendReportDigests({ ...baseInput, now: '2026-10-20T12:00:00Z' })).rejects.toThrow(
+      'now must be a canonical UTC timestamp'
+    );
+  });
+
   it('persists each target once and does not resend a sent target for the same period', async () => {
     mocks.subscriptions = [
       subscription('idempotent', { emailRecipients: ['digest@example.test'] }),
     ];
-    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+    await expect(sendReportDigests(baseInput)).resolves.toEqual({
       failed: 0,
       rollupIncomplete: 0,
       sent: 1,
       skipped: 0,
     });
     const retryNow = new Date(now.getTime() + 15 * 60 * 1000);
-    await expect(sendReportDigests({ now: retryNow, periodStart })).resolves.toEqual({
-      failed: 0,
-      rollupIncomplete: 0,
-      sent: 1,
-      skipped: 0,
-    });
+    await expect(sendReportDigests({ ...baseInput, now: retryNow.toISOString() })).resolves.toEqual(
+      {
+        failed: 0,
+        rollupIncomplete: 0,
+        sent: 1,
+        skipped: 0,
+      }
+    );
     expect(mocks.emails.map(({ to }) => to)).toEqual(['digest@example.test']);
     expect(
       mocks.deliveries.get(deliveryKey('idempotent', periodStart, 'email:digest@example.test'))
@@ -262,15 +283,13 @@ describe('sendReportDigests', () => {
     const laterSentAt = new Date('2026-10-20T12:15:00Z');
     const earlierRetryAt = new Date('2026-10-20T12:10:00Z');
 
-    await expect(sendReportDigests({ now: laterSentAt, periodStart })).resolves.toMatchObject({
-      failed: 1,
-      sent: 0,
-    });
+    await expect(
+      sendReportDigests({ ...baseInput, now: laterSentAt.toISOString() })
+    ).resolves.toMatchObject({ failed: 1, sent: 0 });
     mocks.failedEmailRecipients = [];
-    await expect(sendReportDigests({ now: earlierRetryAt, periodStart })).resolves.toMatchObject({
-      failed: 0,
-      sent: 1,
-    });
+    await expect(
+      sendReportDigests({ ...baseInput, now: earlierRetryAt.toISOString() })
+    ).resolves.toMatchObject({ failed: 0, sent: 1 });
 
     expect(mocks.updates).toContainEqual({
       data: { lastError: null, lastPeriodStart: periodStart, lastSentAt: laterSentAt },
@@ -279,7 +298,10 @@ describe('sendReportDigests', () => {
     mocks.updates = [];
 
     await expect(
-      sendReportDigests({ now: new Date('2026-10-20T12:30:00Z'), periodStart })
+      sendReportDigests({
+        ...baseInput,
+        now: new Date('2026-10-20T12:30:00Z').toISOString(),
+      })
     ).resolves.toMatchObject({ failed: 0, sent: 1 });
     expect(mocks.updates.at(-1)).toEqual({
       data: { lastError: null, lastPeriodStart: periodStart },
@@ -294,14 +316,14 @@ describe('sendReportDigests', () => {
       }),
     ];
     mocks.failedEmailRecipients = ['second@example.test'];
-    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+    await expect(sendReportDigests(baseInput)).resolves.toEqual({
       failed: 1,
       rollupIncomplete: 0,
       sent: 0,
       skipped: 0,
     });
     mocks.failedEmailRecipients = [];
-    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+    await expect(sendReportDigests(baseInput)).resolves.toEqual({
       failed: 0,
       rollupIncomplete: 0,
       sent: 1,
@@ -320,7 +342,7 @@ describe('sendReportDigests', () => {
     mocks.subscriptions = [subscription('bounded', { emailRecipients: ['fail@example.test'] })];
     mocks.failedEmailRecipients = ['fail@example.test'];
     for (let attempt = 0; attempt < 4; attempt++) {
-      await sendReportDigests({ now, periodStart });
+      await sendReportDigests(baseInput);
     }
     expect(mocks.emails.filter(({ to }) => to === 'fail@example.test')).toHaveLength(3);
     expect(
@@ -336,7 +358,7 @@ describe('sendReportDigests', () => {
         slackChannel: { slackChannelId: 'C123' },
       }),
     ];
-    await expect(sendReportDigests({ now, periodStart })).resolves.toMatchObject({ sent: 1 });
+    await expect(sendReportDigests(baseInput)).resolves.toMatchObject({ sent: 1 });
     expect(mocks.emails.map(({ to }) => to)).toEqual(['keep@example.test', 'other@example.test']);
     const unsubscribeUrl = new URL(mocks.emails[0]?.listUnsubscribeUrl ?? '');
     expect(unsubscribeUrl.origin).toBe('https://gateway.example.test');
@@ -363,7 +385,7 @@ describe('sendReportDigests', () => {
       }),
     ];
     await expect(
-      sendReportDigests({ now, periodStart, sendTest: true, subscriptionId: 'test-send' })
+      sendReportDigests({ ...baseInput, sendTest: true, subscriptionId: 'test-send' })
     ).resolves.toEqual({ failed: 0, rollupIncomplete: 0, sent: 1, skipped: 0 });
     expect(mocks.slackPosts).toHaveLength(1);
     expect(mocks.slackPosts[0]?.blocks).toEqual(
@@ -384,8 +406,7 @@ describe('sendReportDigests', () => {
 
     await expect(
       sendReportDigests({
-        now,
-        periodStart,
+        ...baseInput,
         sendTest: true,
         subscriptionId: 'test-failure',
       })
@@ -406,7 +427,7 @@ describe('sendReportDigests', () => {
       subscription('healthy', { slackChannel: { slackChannelId: 'C123' } }),
     ];
     mocks.failedEmailRecipients = ['broken@example.test'];
-    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+    await expect(sendReportDigests(baseInput)).resolves.toEqual({
       failed: 1,
       rollupIncomplete: 0,
       sent: 1,
@@ -427,7 +448,7 @@ describe('sendReportDigests', () => {
   it('skips an uncovered day without creating delivery rows', async () => {
     mocks.subscriptions = [subscription('uncovered', { slackChannel: { slackChannelId: 'C123' } })];
     mocks.coverageIncomplete = true;
-    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+    await expect(sendReportDigests(baseInput)).resolves.toEqual({
       failed: 1,
       rollupIncomplete: 1,
       sent: 0,
@@ -445,7 +466,7 @@ describe('sendReportDigests', () => {
       subscription('gate-limit', { slackChannel: { slackChannelId: 'C123' } }),
     ];
     mocks.gatesAtLimit = true;
-    await sendReportDigests({ now, periodStart });
+    await sendReportDigests(baseInput);
     expect(mocks.slackPosts[0]?.text).toContain('Worst gate: not computed');
     expect(mocks.slackPosts[0]?.blocks).toEqual(
       expect.arrayContaining([
@@ -465,7 +486,7 @@ describe('sendReportDigests', () => {
       }),
     ];
 
-    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+    await expect(sendReportDigests(baseInput)).resolves.toEqual({
       failed: 0,
       rollupIncomplete: 0,
       sent: 0,
@@ -480,7 +501,7 @@ describe('sendReportDigests', () => {
     mocks.subscriptions = [subscription('stale', { emailRecipients: ['digest@example.test'] })];
     mocks.latestDeliveryPeriod = new Date('2026-10-20T00:00:00Z');
 
-    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+    await expect(sendReportDigests(baseInput)).resolves.toEqual({
       failed: 0,
       rollupIncomplete: 0,
       sent: 0,
@@ -497,7 +518,7 @@ describe('sendReportDigests', () => {
     ];
     mocks.deliveryPersistenceFails = true;
 
-    await expect(sendReportDigests({ now, periodStart })).resolves.toEqual({
+    await expect(sendReportDigests(baseInput)).resolves.toEqual({
       failed: 1,
       rollupIncomplete: 0,
       sent: 0,

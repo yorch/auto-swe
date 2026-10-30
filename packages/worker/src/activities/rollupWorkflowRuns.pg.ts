@@ -147,7 +147,7 @@ describe.skipIf(!enabled)('workflow run rollup sweep against Postgres', () => {
         })
     );
     expect(dirtyCandidates.map((run) => run.id)).toContain(runId);
-    const result = await rollupWorkflowRuns(now);
+    const result = await rollupWorkflowRuns(now.toISOString());
     const [rows, humanRows, reviewRows] = await Promise.all([
       runUnscoped('read the workflow-run rollup test fixture', ['WorkflowRunDailyRollup'], () =>
         prisma.workflowRunDailyRollup.findMany({
